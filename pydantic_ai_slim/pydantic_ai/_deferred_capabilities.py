@@ -172,9 +172,16 @@ class LoadExchanges:
     [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability] records without a call. A return
     loads the capability its call named, when the call was seen first and its arguments parsed. A failed load is a
     plain `ToolReturnPart`, so it loads nothing.
+
+    A capability loads once: a later load of a capability an earlier part already loaded loads nothing. The
+    no-op return for an already-active capability still confirms the load to the model, but counting it as a
+    load again would state the capability's instructions a second time and reset what later changes are
+    diffed against.
     """
 
     _calls: dict[str, str] = field(default_factory=dict[str, str])
+
+    _loaded: set[str] = field(default_factory=set[str])
 
     def observe(self, part: ModelRequestPart | ModelResponsePart) -> str | None:
         """Fold in `part`, returning the capability it loads if it's a `load_capability` return completing a load.
@@ -185,11 +192,20 @@ class LoadExchanges:
             if part.capability_id is not None:
                 self._calls[part.tool_call_id] = part.capability_id
         elif isinstance(part, LoadCapabilityReturnPart):
-            return self._calls.get(part.tool_call_id)
+            capability_id = self._calls.get(part.tool_call_id)
+            if capability_id is not None and capability_id not in self._loaded:
+                self._loaded.add(capability_id)
+                return capability_id
         return None
 
     def loads(self, part: ModelRequestPart | ModelResponsePart) -> list[str]:
         """Fold in `part`, returning the capabilities it loads, in order."""
         if isinstance(part, CapabilityLoadDeltaPart):
-            return list(part.loaded)
+            fresh = [capability_id for capability_id in part.loaded if capability_id not in self._loaded]
+            self._loaded.update(fresh)
+            return fresh
         return [capability_id] if (capability_id := self.observe(part)) is not None else []
+
+    def forget(self, capability_id: str) -> None:
+        """Stop counting `capability_id` as loaded, so a later load of it counts as a load again."""
+        self._loaded.discard(capability_id)

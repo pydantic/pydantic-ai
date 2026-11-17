@@ -41,6 +41,8 @@ def _run_bump(
     existing_title: str = '',
     branch_exists: bool = False,
     branch_content: str | None = None,
+    pin_prs: str | None = None,
+    current_pr: str = '',
 ) -> tuple[subprocess.CompletedProcess[str], list[str], str, str, str]:
     workflow: object = yaml.safe_load(WORKFLOW.read_text(encoding='utf-8'))
     jobs = WORKFLOW_ADAPTER.validate_python(workflow)['jobs']
@@ -52,6 +54,11 @@ def _run_bump(
     )
     bump_run = next(
         step['run'] for step in job['steps'] if step.get('name') == 'Open the pin bump pull request' and 'run' in step
+    )
+    close_run = next(
+        step['run']
+        for step in job['steps']
+        if step.get('name') == 'Close the superseded pin bump pull requests' and 'run' in step
     )
     snapshot = snapshot_version or pinned
     definition = tmp_path / DEFINITION.rsplit('/', maxsplit=1)[-1]
@@ -106,6 +113,9 @@ fi
 set -e
 printf '%s\\n' "$*" >> "$GH_CALLS"
 case "$*" in
+  "pr list --state open --head gh-aw-engine-pin-"*) printf '%s' "$GH_CURRENT_PR" ;;
+  "pr list --state open --app pydantic-docs "*) printf '%s' "$GH_PIN_PRS" ;;
+  "pr close "*) ;;
   "pr list "*) if [[ -n "$GH_EXISTING_TITLE" ]]; then printf '%s\\n' "$GH_EXISTING_TITLE"; fi ;;
   "api repos/fixture/repository/git/ref/heads/main --jq .object.sha") printf 'base-sha\\n' ;;
   *"/contents/src/pydantic_ai_harness/gh-aw/pydantic.md?ref=base-sha"*) cat "$GH_SNAPSHOT" ;;
@@ -161,6 +171,8 @@ esac
         'GH_BRANCH_EXISTS': str(branch_exists).lower(),
         'GH_BRANCH_CONTENT': str(branch_definition),
         'GH_BRANCH_READ': str(tmp_path / 'branch-read.md'),
+        'GH_PIN_PRS': pin_prs or '',
+        'GH_CURRENT_PR': current_pr,
     }
     shell = shutil.which('bash')
     assert shell is not None
@@ -168,6 +180,10 @@ esac
     should_bump = output.exists() and 'bump=true' in output.read_text(encoding='utf-8').splitlines()
     if guard.returncode == 0 and should_bump:
         process = subprocess.run([shell, '-e', '-c', bump_run], env=env, text=True, capture_output=True, check=False)
+        if process.returncode == 0 and pin_prs is not None:
+            process = subprocess.run(
+                [shell, '-e', '-c', close_run], env=env, text=True, capture_output=True, check=False
+            )
     else:
         process = guard
     calls = ledger.read_text(encoding='utf-8').splitlines() if ledger.exists() else []
@@ -304,3 +320,38 @@ def test_unexpected_version_shape_fails_closed_before_writes(tmp_path: Path, pin
     assert process.returncode != 0
     assert 'numeric' in process.stderr.lower() or 'numeric' in process.stdout.lower()
     assert not any('-X PUT' in call or call.startswith('pr create ') or '/git/refs ' in call for call in calls)
+
+
+PIN_PRS = (
+    '40\tgh-aw-engine-pin-0.54.0\n'
+    '41\tgh-aw-engine-pin-0.9.99\n'
+    '42\tgh-aw-engine-pin-0.56.0\n'
+    '43\tclai2-web-bundle\n'
+    '44\tgh-aw-engine-pin-0.54.0-fix\n'
+    '45\tgh-aw-engine-pin-0.55.0\n'
+)
+
+
+@pytest.mark.parametrize('existing_title', ['', 'Bump the gh-aw engine pin to `0.55.0`'])
+def test_open_pin_bump_closes_the_app_pin_bumps_for_lower_versions(tmp_path: Path, existing_title: str):
+    process, calls, _, _, _ = _run_bump(
+        tmp_path, '0.53.0', '0.55.0', existing_title=existing_title, pin_prs=PIN_PRS, current_pr='45\n'
+    )
+
+    assert process.returncode == 0, process.stderr
+    assert any(call.startswith('pr list --state open --head gh-aw-engine-pin-0.55.0 ') for call in calls)
+    assert any(call.startswith('pr list --state open --app pydantic-docs ') for call in calls)
+    assert [call for call in calls if call.startswith('pr close ')] == [
+        'pr close 40 --comment Superseded by #45, which bumps the pin to `0.55.0`.',
+        'pr close 41 --comment Superseded by #45, which bumps the pin to `0.55.0`.',
+    ]
+
+
+def test_no_open_pin_bump_for_the_release_closes_nothing(tmp_path: Path):
+    process, calls, _, _, _ = _run_bump(
+        tmp_path, '0.55.0', '0.55.0', pin_prs='40\tgh-aw-engine-pin-0.54.0\n42\tgh-aw-engine-pin-0.56.0\n'
+    )
+
+    assert process.returncode == 0, process.stderr
+    assert any(call.startswith('pr list --state open --head gh-aw-engine-pin-0.55.0 ') for call in calls)
+    assert not any(call.startswith(('pr list --state open --app ', 'pr close ')) for call in calls)

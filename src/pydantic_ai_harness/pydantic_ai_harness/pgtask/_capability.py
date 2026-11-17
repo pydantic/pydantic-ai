@@ -105,7 +105,8 @@ class PGTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         steps = current_task_steps()
         # Only called in the durable context, which guarantees a task.
         assert steps is not None
-        await steps.sleep(f'{self.name}__sleep', seconds)
+        # pgtask rejects a negative delay.
+        await steps.sleep_for(f'{self.name}__sleep', max(seconds, 0))
 
     def get_durable_operation_backend(self) -> PGTaskOperationBackend:
         return PGTaskOperationBackend(agent_name=self.name, default_model_id=self.default_model_id)
