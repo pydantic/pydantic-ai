@@ -21,13 +21,6 @@ _REMOTE_BASE = 'https://raw.githubusercontent.com/pydantic/pydantic-ai/{ref}/doc
 _RELEASE_VERSION_RE = re.compile(r'\d+\.\d+\.\d+((a|b|rc)\d+)?')
 """A released `pydantic_ai` version, which has a `v{version}` tag. Dev and local builds have none."""
 
-
-def _installed_docs_ref() -> str:
-    """The git tag of the installed `pydantic_ai` release, or `main` for a build that has no tag."""
-    version = pydantic_ai.__version__
-    return f'v{version}' if _RELEASE_VERSION_RE.fullmatch(version) else 'main'
-
-
 _FETCH_TIMEOUT = 30.0
 """Per-request timeout (seconds) for the remote markdown fetch."""
 
@@ -41,6 +34,12 @@ _MODEL_ALIASES_FILE = 'model_aliases/aliases.json'
 """The file, relative to the docs directory, that maps each model alias to the model it stands for."""
 
 _MODEL_ALIASES_ADAPTER = TypeAdapter(dict[str, str])
+
+
+def _installed_docs_ref() -> str:
+    """The git tag of the installed `pydantic_ai` release, or `main` for a build that has no tag."""
+    version = pydantic_ai.__version__
+    return f'v{version}' if _RELEASE_VERSION_RE.fullmatch(version) else 'main'
 
 
 # Preserve string formatting of existing public enum members.
@@ -108,7 +107,7 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
         """Return the Pydantic AI documentation for `topic` as markdown.
 
         Reads from a configured local docs checkout when available, otherwise
-        fetches the page from the live docs source. Returns the full page; call
+        fetches the page for the installed Pydantic AI version. Returns the full page; call
         it once per topic you need.
 
         Args:
@@ -140,7 +139,7 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
         return markdown
 
     async def _read(self, ctx: RunContext[AgentDepsT], file: str) -> str:
-        """Return `file`, relative to the docs directory, from the local checkout, else from the live source."""
+        """Return `file`, relative to the docs directory, from the local checkout, else from the remote source."""
         text = await self._read_local(ctx, file)
         if text is None:
             text = await self._fetch_remote(file)
@@ -158,7 +157,7 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
             return None
 
     async def _fetch_remote(self, file: str) -> str:
-        """Fetch `file` from the live source, or raise a descriptive error."""
+        """Fetch `file` from the remote source, or raise a descriptive error."""
         url = f'{_REMOTE_BASE.format(ref=self._remote_ref or _installed_docs_ref())}/{file}'
         try:
             async with httpx2.AsyncClient(timeout=_FETCH_TIMEOUT) as client:
