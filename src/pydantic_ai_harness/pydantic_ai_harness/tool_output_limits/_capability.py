@@ -37,7 +37,7 @@ from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._typeguards import is_mapping, is_object_list, is_object_list_or_tuple
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
-from pydantic_ai_harness.file_system import GREP_KIND, READ_FILE_KIND, SEARCH_FILES_KIND
+from pydantic_ai_harness.file_system import READ_FILE_KIND
 from pydantic_ai_harness.file_system._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
@@ -393,7 +393,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     ) -> Any:
         """Reduce the tool result -- both `return_value` and model-visible `content`."""
         original: object = result
-        if tool_def.tool_kind in _EXEMPT_KINDS or await _queries_a_spill(ctx, tool_def, args):
+        if tool_def.tool_kind in _EXEMPT_KINDS or await _reads_a_spill(ctx, tool_def, args):
             return original
         if not await matches_tool_selector(self.tool_filter, ctx, tool_def):
             return original
@@ -764,25 +764,22 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         return action
 
 
-_SPILL_READER_KINDS = frozenset({READ_FILE_KIND.id, SEARCH_FILES_KIND.id, GREP_KIND.id})
-"""`FileSystem` tools whose reads and searches of a spill are exempt from reduction."""
+async def _reads_a_spill(ctx: RunContext[Any], tool_def: ToolDefinition, args: dict[str, Any]) -> bool:
+    """Whether this is a `READ_FILE_KIND` read of a file under the run workspace's spill directory.
 
-
-async def _queries_a_spill(ctx: RunContext[Any], tool_def: ToolDefinition, args: dict[str, Any]) -> bool:
-    """Whether this is a `FileSystem` read or search of a path in the run workspace's spill directory.
-
-    Its result is the spill itself, or part of it, so reducing it again would spill the spill.
+    Its result is the spill itself, or a page of it, so reducing it again would spill the spill.
     Only the path is compared, so a spill written by an earlier run, or another configuration, counts too.
+    `read_file` bounds its own output; `FileSystem`'s searches bound only their match count, so their
+    results are reduced as usual.
     """
-    if tool_def.tool_kind not in _SPILL_READER_KINDS or not isinstance(path := args.get('path'), str):
+    if tool_def.tool_kind != READ_FILE_KIND.id or not isinstance(path := args.get('path'), str):
         return False
     # Ordinary reads are told apart without asking the workspace for its working directory.
     workspace = ctx.workspace
-    if f'{METADATA_DIR}/{SPILL_DIR}' not in posixpath.normpath(path) or not workspace.attached:
+    if f'{METADATA_DIR}/{SPILL_DIR}/' not in posixpath.normpath(path) or not workspace.attached:
         return False
     spill_dir = posixpath.join(await workspace.working_dir(), METADATA_DIR, SPILL_DIR)
-    resolved = await workspace.resolve(path)
-    return resolved == spill_dir or resolved.startswith(spill_dir + '/')
+    return (await workspace.resolve(path)).startswith(spill_dir + '/')
 
 
 def _next_action(action: Action) -> Action | None:

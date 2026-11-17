@@ -86,7 +86,9 @@ class TestReaderStepsAside:
         assert 'Tool output too large' not in output
 
     @pytest.mark.parametrize('tool', ['search_files', 'grep'])
-    async def test_searching_a_spill_is_not_reduced(self, tmp_path: Path, tool: str) -> None:
+    async def test_searching_a_spill_is_reduced_as_usual(self, tmp_path: Path, tool: str) -> None:
+        """A search bounds how many lines match, not how long a line is, so a one-line spill comes back reduced."""
+
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             returns = _returns(messages)
             if searched := [part for part in returns if part.tool_name == tool]:
@@ -94,7 +96,7 @@ class TestReaderStepsAside:
             if returns:
                 assert returns[0].metadata is not None
                 spill_dir = posixpath.dirname(returns[0].metadata['overflow_handle'])
-                return ModelResponse(parts=[ToolCallPart(tool, {'pattern': 'line', 'path': spill_dir})])
+                return ModelResponse(parts=[ToolCallPart(tool, {'pattern': 'id', 'path': spill_dir})])
             return ModelResponse(parts=[ToolCallPart('big_tool', {})])
 
         agent = Agent(
@@ -105,11 +107,9 @@ class TestReaderStepsAside:
 
         @agent.tool_plain
         def big_tool() -> str:
-            return _PAYLOAD
+            return '[' + ','.join(f'{{"id":{i}}}' for i in range(2_000)) + ']'
 
-        output = (await agent.run('go')).output
-        assert 'line 400' in output
-        assert 'Tool output too large' not in output
+        assert (await agent.run('go')).output.startswith('[Tool output too large')
 
     async def test_prefixed_read_file_is_named(self, tmp_path: Path) -> None:
         recorder, output = await _run(tmp_path, _limits(), PrefixTools(FileSystem(), prefix='repo'))

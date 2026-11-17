@@ -343,9 +343,9 @@ slices raw bytes, at most 50,000, for output without line breaks) and searches i
 With `FileSystem` on the agent and the default `WorkspaceOverflowStore()` (no `workspace=` of its
 own), `read_tool_result` and `grep_tool_result` are left out (`unless_tool_kind=READ_FILE_KIND`) and
 the marker reads `... Read it with read_file(path='<handle>').]`, naming the tool as it is called in
-the run (`fs_read_file` under `FileSystem().prefix_tools('fs')`). `read_file`, `search_files` and
-`grep` calls on paths in `.pydantic-ai-harness/tool-output/` are not reduced, so a spill read or
-search is never re-spilled. `read_file` has no `from_end`. Scripted tests should pick the reader by
+the run (`fs_read_file` under `FileSystem().prefix_tools('fs')`). `read_file` calls on paths under
+`.pydantic-ai-harness/tool-output/` are not reduced, so a spill read is never re-spilled; searches of
+a spill are reduced as usual. `read_file` has no `from_end`. Scripted tests should pick the reader by
 kind (`READ_FILE_KIND`, `READ_TOOL_RESULT_KIND`, `GREP_TOOL_RESULT_KIND`), not by name.
 
 ```python

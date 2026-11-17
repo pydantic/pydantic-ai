@@ -218,8 +218,7 @@ they stay the same either way; the spill marker and `Memory`'s per-call notices 
 is called in the run:
 
 - `ToolOutputLimits`' `read_tool_result` and `grep_tool_result`, with the default
-  `WorkspaceOverflowStore()`. Reads and searches of its spill files through `read_file`,
-  `search_files` or `grep` are not reduced again.
+  `WorkspaceOverflowStore()`. Reads of its spill files through `read_file` are not reduced again.
 - `Memory`'s `read_memory`, with a `FileMemoryStore` that has no `workspace=` of its own and a relative
   `directory` inside the working directory.
 - `RepoContext`'s inventory tool, when its asset roots are inside the working directory.
