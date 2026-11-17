@@ -6,6 +6,7 @@ It speaks only OP_MSG: the workspace constrains `pymongo>=4.18.2`, which sends t
 from __future__ import annotations
 
 import asyncio
+import re
 import struct
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -19,9 +20,12 @@ from tests.harness.conftest import IsStr
 
 _OP_MSG = 2013
 
+# PyMongo joins its own entries and the harness's with `|`. From 4.19.0 it also gives every name
+# entry (`c`, `async`) a version slot, empty for those, so the separators between its version and
+# the harness's vary.
 HARNESS_DRIVER: dict[str, object] = {
     'name': IsStr(regex=r'PyMongo\|.*\|pydantic-ai-harness'),
-    'version': f'{pymongo.version}|{version("pydantic-ai-harness")}',
+    'version': IsStr(regex=rf'{re.escape(pymongo.version)}\|+{re.escape(version("pydantic-ai-harness"))}'),
 }
 
 

@@ -1868,6 +1868,8 @@ jobs:
       # builds every harness capability, and under the overlay the non-MCP ones can't find their
       # binaries and data files; each hosted MCP capability's own module runs here. `tests/durable_exec` runs with `BLOCKBUSTER_ENABLED=false`, as in
       # `test-durable-exec`: Prefect writes its result cache from inside the event loop.
+      # `tests/test_conftest.py` tests BlockBuster itself, which skips in lanes that turn it off; this
+      # is the only BlockBuster-on lane that uploads coverage.
       - name: run tests
         shell: bash
         run: |
@@ -1881,6 +1883,7 @@ jobs:
           mapfile -t modules < <({
             git grep -lE "$pattern" -- 'tests/**/test_*.py' 'tests/test_*.py'
             git grep -lE "$pattern" -- 'tests/**/conftest.py' | sed 's|/conftest\.py$||'
+            echo tests/test_conftest.py
           } | sort -u)
           durable=() other=()
           for module in "${modules[@]}"; do
