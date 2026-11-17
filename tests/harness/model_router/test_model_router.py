@@ -414,7 +414,7 @@ class TestModelRouter:
 
         span = next(span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'model_router.select')
         attributes = span['attributes']
-        assert attributes['model_router.choice'] == 'capable'
+        assert 'model_router.choice' not in attributes
         assert attributes['model_router.fallback_reason'] == 'error'
         assert attributes['model_router.mode'] == 'once'
         assert attributes['model_router.run_step'] == 1

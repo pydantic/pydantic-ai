@@ -22,6 +22,7 @@ from pydantic_ai.capabilities import (
     ModelSelector,
     durable_operation,
 )
+from pydantic_ai.durable_exec import DurableRunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import ModelSelectionContext
@@ -159,28 +160,28 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
             run_ctx.tracer.start_as_current_span(
                 _SPAN_NAME, record_exception=False, set_status_on_exception=False
             ) as span,
-            record_uncaught_errors(span, include_content=_instrumentation_settings(run_ctx).include_content),
+            record_uncaught_errors(span, include_content=run_ctx.trace_include_content),
         ):
             attributes: dict[str, str | int | float] = {
                 'model_router.mode': self.mode,
                 'model_router.run_step': ctx.run_step,
             }
             try:
-                candidate, probability, error_type = await self._route(
+                candidate, probability, error_type, user_error = await self._route(
                     replace(run_ctx, run_step=ctx.run_step), ctx.messages
                 )
-            except UserError as error:
-                # A request the router can never make, such as files sent to a decision model,
-                # is a configuration problem, so it surfaces rather than routing to `default`.
-                attributes['model_router.error.type'] = type(error).__name__
-                _record(span, attributes, self.default, 'error')
-                raise
             except Exception as error:
+                user_error = str(error) if isinstance(error, UserError) else None
                 candidate, probability, error_type = None, None, type(error).__name__
             if probability is not None:
                 attributes['model_router.probability'] = probability
             if error_type is not None:
                 attributes['model_router.error.type'] = error_type
+                if user_error is not None:
+                    # A request the router can never make, such as files sent to a decision model,
+                    # is a configuration problem, so it surfaces rather than routing to `default`.
+                    _record(span, attributes, None, 'error')
+                    raise UserError(user_error)
                 if span.is_recording():
                     span.set_status(Status(StatusCode.ERROR, 'Router request failed; used the default choice.'))
             picked, fallback_reason = self._accept(candidate, probability)
@@ -202,26 +203,26 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
     @durable_operation('route')
     async def _route(
         self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage]
-    ) -> tuple[str | None, float | None, str | None]:
-        """Ask the router agent for a choice key, its probability, and the error type if it failed.
+    ) -> tuple[str | None, float | None, str | None, str | None]:
+        """Ask the router agent for a choice key and its probability, or the error that stopped it.
 
         A durable operation, so replay restores the recorded pick instead of asking again and
         possibly choosing another model. A failure is recorded as the fallback rather than
         inheriting the engine's retry policy, which could stall the run on a best-effort choice.
+        A `UserError` is returned rather than raised, since an engine such as Temporal would wrap
+        it in its own error type on the way out of the activity.
         """
         try:
             result = await self._router_agent.run(
                 message_history=messages,
                 usage=ctx.usage,
                 usage_limits=reserved_usage_limits(ctx.usage_limits),
-                capabilities=[Instrumentation(settings=_instrumentation_settings(ctx))],
+                capabilities=_instrumentation(ctx),
             )
-        except UserError:
-            raise
         except Exception as error:
-            return None, None, type(error).__name__
+            return None, None, type(error).__name__, str(error) if isinstance(error, UserError) else None
         choice = result.output.choice
-        return choice, _pick_probability(result.response.provider_details, choice), None
+        return choice, _pick_probability(result.response.provider_details, choice), None, None
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -229,24 +230,28 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
         return None
 
 
-def _record(span: Span, attributes: dict[str, str | int | float], choice: str, fallback_reason: str) -> None:
+def _record(span: Span, attributes: dict[str, str | int | float], choice: str | None, fallback_reason: str) -> None:
     if span.is_recording():
-        span.set_attributes(
-            {**attributes, 'model_router.choice': choice, 'model_router.fallback_reason': fallback_reason}
-        )
+        span.set_attributes({**attributes, 'model_router.fallback_reason': fallback_reason})
+        if choice is not None:
+            span.set_attribute('model_router.choice', choice)
 
 
-def _instrumentation_settings(ctx: RunContext[AgentDepsT]) -> InstrumentationSettings:
+def _instrumentation(ctx: RunContext[AgentDepsT]) -> list[AbstractCapability[None]]:
     """The parent run's instrumentation, so the router run is traced exactly when the parent is.
 
     An uninstrumented parent gets settings that record nothing rather than none at all: an agent
     run without instrumentation settings shows Pydantic AI's first-run banner, which would then
-    describe the internal router instead of the agent the user wrote.
+    describe the internal router instead of the agent the user wrote. A durable engine's worker
+    doesn't carry the run's capabilities, so there the router run follows the worker's own
+    instrumentation.
     """
+    if isinstance(ctx, DurableRunContext):
+        return []
     for capability in (ctx.capabilities or {}).values():
         if isinstance(capability, Instrumentation):
-            return capability.settings
-    return _uninstrumented()
+            return [Instrumentation(settings=capability.settings)]
+    return [Instrumentation(settings=_uninstrumented())]
 
 
 @cache

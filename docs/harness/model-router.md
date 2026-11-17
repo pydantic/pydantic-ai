@@ -100,7 +100,7 @@ Each routing decision emits a `model_router.select` span on the parent run's tra
 
 | Attribute | Meaning |
 |---|---|
-| `model_router.choice` | Choice actually used after fallback. |
+| `model_router.choice` | Choice actually used after fallback; unset when a `UserError` fails the run. |
 | `model_router.probability` | The probability the router gave its pick, when reported. |
 | `model_router.fallback_reason` | `none`, `low_probability`, or `error`. |
 | `model_router.mode` | `once` or `per_step`. |
