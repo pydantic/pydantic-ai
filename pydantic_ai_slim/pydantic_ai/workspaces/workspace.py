@@ -748,9 +748,14 @@ async def lowest_authority_under(workspace: Workspace, directory: str) -> Author
     paths = workspace.paths
     root = await workspace.working_dir()
     written = await workspace.resolve(directory)
+    layers = workspace._authority_layers()  # pyright: ignore[reportPrivateUsage]
+    lowers = any(level != 'operator' or 'operator' != lowest_authority(entries.values()) for level, entries in layers)
+    if not lowers and is_within(written, root, sep=paths.sep):
+        # No wrapper lowers any path, so everything in the working directory is at `'operator'`: no need to follow links.
+        return 'operator'
     locations = {written.casefold(), (await workspace.realpath(written)).casefold()}
-    levels = [await workspace.authority_of(directory)]
-    for level, path_authority in workspace._authority_layers():  # pyright: ignore[reportPrivateUsage]
+    levels: list[Authority] = [await workspace.authority_of(directory)]
+    for level, path_authority in layers:
         resolved = await workspace._resolve_path_authority(path_authority, level, root)  # pyright: ignore[reportPrivateUsage]
         levels.extend(
             entry_level
