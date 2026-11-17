@@ -8,7 +8,7 @@ from functools import cache
 from typing import Annotated, Literal, TypeGuard, Union
 
 from opentelemetry.metrics import NoOpMeterProvider
-from opentelemetry.trace import NoOpTracerProvider, Status, StatusCode
+from opentelemetry.trace import NoOpTracerProvider, Span, Status, StatusCode
 from pydantic import BaseModel, Field, create_model
 from typing_extensions import TypeForm
 
@@ -155,9 +155,10 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
             return self.choices[self._cached_choice].model
 
         with run_ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
-            picked = self.default
-            probability: float | None = None
-            fallback_reason = 'none'
+            attributes: dict[str, str | int | float] = {
+                'model_router.mode': self.mode,
+                'model_router.run_step': ctx.run_step,
+            }
             try:
                 candidate, probability, error_type = await self._route(
                     replace(run_ctx, run_step=ctx.run_step), ctx.messages
@@ -165,48 +166,32 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
             except UserError as error:
                 # A request the router can never make, such as files sent to a decision model,
                 # is a configuration problem, so it surfaces rather than routing to `default`.
-                if span.is_recording():
-                    span.set_attributes(
-                        {
-                            'model_router.choice': picked,
-                            'model_router.fallback_reason': 'error',
-                            'model_router.mode': self.mode,
-                            'model_router.run_step': ctx.run_step,
-                            'model_router.error.type': type(error).__name__,
-                        }
-                    )
+                attributes['model_router.error.type'] = type(error).__name__
+                _record(span, attributes, self.default, 'error')
                 raise
             except Exception as error:
-                candidate, error_type = None, type(error).__name__
-            if candidate is None:
-                fallback_reason = 'error'
-                assert error_type is not None
+                candidate, probability, error_type = None, None, type(error).__name__
+            if probability is not None:
+                attributes['model_router.probability'] = probability
+            if error_type is not None:
+                attributes['model_router.error.type'] = error_type
                 if span.is_recording():
-                    span.set_attribute('model_router.error.type', error_type)
                     span.set_status(Status(StatusCode.ERROR, 'Router request failed; used the default choice.'))
-            elif (
-                probability is not None
-                and self.probability_threshold is not None
-                and probability < self.probability_threshold
-            ):
-                fallback_reason = 'low_probability'
-            else:
-                picked = candidate
-
-            if span.is_recording():
-                attributes: dict[str, str | int | float] = {
-                    'model_router.choice': picked,
-                    'model_router.fallback_reason': fallback_reason,
-                    'model_router.mode': self.mode,
-                    'model_router.run_step': ctx.run_step,
-                }
-                if probability is not None:
-                    attributes['model_router.probability'] = probability
-                span.set_attributes(attributes)
+            picked, fallback_reason = self._accept(candidate, probability)
+            _record(span, attributes, picked, fallback_reason)
 
         if self.mode == 'once':
             self._cached_choice = picked
         return self.choices[picked].model
+
+    def _accept(self, candidate: str | None, probability: float | None) -> tuple[str, str]:
+        """The choice to use and the fallback reason, given the router's pick and its probability."""
+        if candidate is None:
+            return self.default, 'error'
+        threshold = self.probability_threshold
+        if probability is not None and threshold is not None and probability < threshold:
+            return self.default, 'low_probability'
+        return candidate, 'none'
 
     @durable_operation('route')
     async def _route(
@@ -236,6 +221,13 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         """Not spec-serializable because choices can hold live `Model` instances."""
         return None
+
+
+def _record(span: Span, attributes: dict[str, str | int | float], choice: str, fallback_reason: str) -> None:
+    if span.is_recording():
+        span.set_attributes(
+            {**attributes, 'model_router.choice': choice, 'model_router.fallback_reason': fallback_reason}
+        )
 
 
 def _instrumentation_settings(ctx: RunContext[AgentDepsT]) -> InstrumentationSettings:
