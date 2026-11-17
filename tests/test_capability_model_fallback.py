@@ -3117,6 +3117,7 @@ async def test_instruction_parts_a_hook_changed_reach_every_model():
 
     def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         max_tokens.append((info.model_settings or {}).get('max_tokens'))
+        sent.append(('primary', info.instructions, (info.model_settings or {}).get('temperature')))
         raise ModelAPIError(model_name='primary', message='down')
 
     def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -3129,7 +3130,28 @@ async def test_instruction_parts_a_hook_changed_reach_every_model():
         capabilities=[_PerModel(seen), Rewrite(), ModelFallback(FunctionModel(backup, model_name='backup'))],
     )
     result = await agent.run('x')
-    assert sent == snapshot([('backup', 'You are primary.\n\nBe brief.', 0.9)])
+    assert sent == snapshot(
+        [
+            (
+                'primary',
+                """\
+You are primary.
+
+Be brief.\
+""",
+                0.1,
+            ),
+            (
+                'backup',
+                """\
+You are primary.
+
+Be brief.\
+""",
+                0.9,
+            ),
+        ]
+    )
     assert max_tokens == [10, 10]
     assert _recorded_instructions(result.all_messages()) == snapshot(['You are primary.\n\nBe brief.'])
 

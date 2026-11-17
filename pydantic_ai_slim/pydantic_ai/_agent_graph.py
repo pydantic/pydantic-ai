@@ -712,10 +712,13 @@ class _StepRecording:
         """
         replaced = [part for records in self.settings_records for part in records]
         buffer = ctx.state.event_stream_buffer
-        for index in reversed(range(len(buffer))):
-            event = buffer[index]
-            if isinstance(event, _messages.ModelSettingsDeltaEvent) and any(event.part is part for part in replaced):
-                del buffer[index]
+        buffer[:] = [
+            event
+            for event in buffer
+            if not (
+                isinstance(event, _messages.ModelSettingsDeltaEvent) and any(event.part is part for part in replaced)
+            )
+        ]
 
     def _take_records(self, replaced: list[list[_messages.ModelRequestPart]]) -> list[list[_messages.ModelRequestPart]]:
         """Cut each target back to where the instruction changes start, returning what followed without `replaced`."""
