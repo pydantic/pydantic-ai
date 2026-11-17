@@ -8,9 +8,11 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai.capabilities import AbstractCapability, on_event
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, SystemPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import Workspace, WorkspaceError, WorkspacePaths
+from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness.file_system import FileReadEvent, FileWrittenEvent
 from pydantic_ai_harness.file_system._content import bytes_hash
 
@@ -32,8 +34,16 @@ _SHOWN_PATH = re.compile(r'[A-Za-z0-9._/:@+-]{1,200}')
 _CONVERSATIONS_KEPT = 1024
 """How many conversations' observations an instance keeps, most recently used first."""
 
-_Observations = OrderedDict[str, str]
-"""Content hashes by absolute workspace path, least recently observed first."""
+
+@dataclass(frozen=True)
+class _Observation:
+    content_hash: str
+    root: str
+    """The root of the file tool that read or wrote the file, which a check doesn't follow a symlink out of."""
+
+
+_Observations = OrderedDict[str, _Observation]
+"""Observations by absolute workspace path, least recently observed first."""
 
 
 @dataclass
@@ -98,10 +108,18 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
                 self._conversations.popitem(last=False)
         return run
 
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Refuse durable execution, whose replays and workers don't share this process's records."""
+        if in_durable_context(ctx):
+            raise UserError(
+                '`ReportStaleFiles` cannot run under durable execution: its records of the files the model read are '
+                'in process memory, which a replay or another worker does not have.'
+            )
+
     @on_event(FileReadEvent, FileWrittenEvent)
     async def _observe(self, ctx: RunContext[AgentDepsT], event: FileReadEvent | FileWrittenEvent) -> None:
         path = await ctx.workspace.resolve(event.path, base=event.root_dir)
-        self._observations[path] = event.content_hash
+        self._observations[path] = _Observation(event.content_hash, event.root_dir)
         self._observations.move_to_end(path)
         while len(self._observations) > self.max_tracked_files:
             self._observations.popitem(last=False)
@@ -117,8 +135,8 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
         changed: list[str] = []
         deleted: list[str] = []
         budget = self.max_checked_bytes
-        for path, content_hash in reversed(list(self._observations.items())):
-            state, read = await _state(ctx.workspace, path, content_hash, budget)
+        for path, observation in reversed(list(self._observations.items())):
+            state, read = await _state(ctx.workspace, path, observation, budget)
             budget -= read
             if state == 'deleted':
                 self._observations.pop(path, None)
@@ -138,13 +156,15 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
 
 
 async def _state(
-    workspace: Workspace, path: str, content_hash: str, budget: int
+    workspace: Workspace, path: str, observation: _Observation, budget: int
 ) -> tuple[Literal['fresh', 'changed', 'deleted', 'unknown'], int]:
-    """Whether the file at `path` still has `content_hash`, and how many bytes were read to tell.
+    """Whether the file at `path` still has the observed content, and how many bytes were read to tell.
 
-    `'unknown'` when it can't be read, or is larger than `budget`.
+    `'unknown'` when it can't be read, is larger than `budget`, or now resolves outside the observing tool's root.
     """
     try:
+        if not _contains(workspace.paths, observation.root, await workspace.realpath(path)):
+            return 'unknown', 0
         entry = await workspace.stat(path)
         if entry.is_dir or (entry.size is not None and entry.size > budget):
             return 'unknown', 0
@@ -155,18 +175,18 @@ async def _state(
         return 'unknown', 0
     if len(content) > budget:
         return 'unknown', len(content)
-    return ('fresh' if bytes_hash(content) == content_hash else 'changed'), len(content)
+    return ('fresh' if bytes_hash(content) == observation.content_hash else 'changed'), len(content)
+
+
+def _contains(paths: WorkspacePaths, root: str, path: str) -> bool:
+    return paths.normcase(path).startswith(paths.normcase(paths.join(root, '')))
 
 
 def _shown(path: str, working_dir: str, paths: WorkspacePaths) -> str:
     """`path` as the file tools take it: relative to the working directory when inside it, else absolute."""
-    try:
-        relative = paths.relpath(path, working_dir)
-    except ValueError:  # pragma: no cover - a Windows path on another drive than the working directory
-        relative = path
-    if relative.split(paths.sep)[0] == '..':
-        relative = path
-    return relative.replace(paths.sep, '/')
+    if _contains(paths, working_dir, path):
+        path = paths.relpath(path, working_dir)
+    return path.replace(paths.sep, '/')
 
 
 def _render(changed: list[str], deleted: list[str], limit: int) -> str:

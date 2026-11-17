@@ -53,6 +53,8 @@ Every check reads each recorded file in full, which detects a rewrite that keeps
 - **Observations are in-process memory, per conversation.** They are held on the instance the agent was built with and keyed by the run's `conversation_id`, so a run continued from an earlier run's `message_history` is told about changes made between the runs. A conversation continued through another instance, process, or worker starts with no records. An instance keeps the 1,024 most recently used conversations.
 - **Paths are named only when they are plain.** The notice is in system voice, so a path is named only when it holds letters, digits and `._/:@+-`, up to 200 characters. Other paths, such as one with a space, are counted with the rest.
 - **It sees only files reported through the events.** A file the model read with a shell command is not recorded.
+- **A check doesn't follow a link out of the file tool's root.** A recorded file that now resolves outside the root of the tool that read it, such as one replaced by a symlink, is skipped rather than read.
+- **Durable execution is refused.** Under a durability capability such as `TemporalDurability`, the run fails at its start: the records are process memory, which a replay or another worker does not have.
 
 ## Telemetry
 

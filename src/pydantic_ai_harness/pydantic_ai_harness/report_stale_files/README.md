@@ -70,6 +70,10 @@ file is also a round trip, so lower `max_tracked_files` if requests slow down.
   holds letters, digits and `._/:@+-`, up to 200 characters. Other paths, such as one with a space, are counted
   with the rest.
 - **It sees only files reported through the events.** A file the model read with a shell command is not recorded.
+- **A check doesn't follow a link out of the file tool's root.** A recorded file that now resolves outside the root
+  of the tool that read it, such as one replaced by a symlink, is skipped rather than read.
+- **Durable execution is refused.** Under a durability capability such as `TemporalDurability`, the run fails at its
+  start: the records are process memory, which a replay or another worker does not have.
 
 ## Telemetry
 

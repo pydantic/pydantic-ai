@@ -14,6 +14,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, RunContext
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -31,6 +32,7 @@ from pydantic_ai.workspaces import FileEntry, LocalWorkspaceBackend, Workspace, 
 from pydantic_ai_harness import FileSystem, ReportStaleFiles
 from pydantic_ai_harness.report_stale_files import STALE_FILES_ORIGIN
 from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
+from tests.harness._recording_durability import RecordingDurability
 from tests.harness.file_system.test_windows_paths import DriveBackend
 
 Step = tuple[Callable[[], object] | None, ToolCallPart | str]
@@ -299,6 +301,27 @@ These files you read were deleted from the workspace:
         )
         result = await agent.run('go', workspace=backend)
         assert _notices(result.all_messages()) == [[], [], [], [f'{CHANGED}\n- `data.txt`']]
+
+    async def test_file_replaced_by_a_link_out_of_the_root_is_not_read(self, tmp_path: Path) -> None:
+        """A link the file tools would refuse to follow isn't followed to check the file either."""
+        project = tmp_path / 'project'
+        project.mkdir()
+        target = project / 'data.txt'
+        target.write_text('one\n')
+        (tmp_path / 'outside.txt').write_text('two\n')
+
+        def link_out() -> None:
+            target.unlink()
+            target.symlink_to(tmp_path / 'outside.txt')
+
+        agent = _agent(project, (None, _read('data.txt')), (link_out, _LIST), (None, 'done'))
+        result = await agent.run('go')
+        assert _notices(result.all_messages()) == [[], [], []]
+
+    async def test_durable_execution_is_refused(self) -> None:
+        agent = Agent(TestModel(), name='stale', capabilities=[ReportStaleFiles(), RecordingDurability()])
+        with pytest.raises(UserError, match='`ReportStaleFiles` cannot run under durable execution'):
+            await agent.run('go')
 
     async def test_least_recently_observed_file_is_dropped_past_the_limit(self, tmp_path: Path) -> None:
         for name in ('a.txt', 'b.txt'):
