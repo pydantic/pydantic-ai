@@ -136,8 +136,12 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
         return create_model('ModelRoute', __base__=_Route, choice=(choice_type, ...))
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> ModelRouter[AgentDepsT]:
-        """Return a run-scoped router with its own selection cache and the run's context."""
-        return replace_no_init(self, _run_ctx=ctx, _cached_choice=None)
+        """Return a run-scoped router with its own selection cache."""
+        return replace_no_init(self, _run_ctx=None, _cached_choice=None)
+
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Keep the run's context, whose capability registry is seeded by now, for the router request."""
+        self._run_ctx = ctx
 
     def get_model(self) -> ModelSelector[AgentDepsT]:
         """Return the selector used by Pydantic AI before each request step."""
