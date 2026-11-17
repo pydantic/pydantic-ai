@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from .ipython_code_mode import IPythonCodeMode
     from .keenable import KeenableSearch
     from .kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
+    from .label_cross_model_history import DEFAULT_CROSS_MODEL_NOTICE, LabelCrossModelHistory
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -124,6 +125,7 @@ __all__ = [
     'Coder',
     'CompactOnRequest',
     'ConversationSearch',
+    'DEFAULT_CROSS_MODEL_NOTICE',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
     'DayAI',
@@ -151,6 +153,7 @@ __all__ = [
     'KeenableSearch',
     'KubernetesSandbox',
     'KubernetesSandboxBackend',
+    'LabelCrossModelHistory',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
@@ -242,6 +245,7 @@ _LAZY_EXPORTS = {
     'DaytonaSandbox': 'daytona_sandbox',
     'DaytonaSandboxBackend': 'daytona_sandbox',
     'DeduplicateFileReads': 'compaction',
+    'DEFAULT_CROSS_MODEL_NOTICE': 'label_cross_model_history',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS': 'refine_output',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'DetectLoops': 'detect_loops',
@@ -264,6 +268,7 @@ _LAZY_EXPORTS = {
     'KeenableSearch': 'keenable',
     'KubernetesSandbox': 'kubernetes_sandbox',
     'KubernetesSandboxBackend': 'kubernetes_sandbox',
+    'LabelCrossModelHistory': 'label_cross_model_history',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',

@@ -2,7 +2,8 @@
 
 Capabilities that keep a long run inside the model's context window and its prompt cache healthy:
 the compaction family (edit history before each request), `ToolOutputLimits` (shrink or spill big
-tool returns when they are produced), `WarnOnCacheBusts` (observe cache collapses), and the media
+tool returns when they are produced), `WarnOnCacheBusts` (observe cache collapses), `LabelCrossModelHistory` (label turns
+another model wrote), and the media
 stores `StepPersistence` uses. None needs an extra, except `MongoMediaStore`, which needs
 `pydantic-ai-harness[mongodb]` (`PostgresMediaStore` takes your own `asyncpg` pool and needs no
 harness extra). All compaction strategies keep tool-call /
@@ -25,6 +26,7 @@ tool-return pairs intact, and their edits persist into the run's message history
 | UI needs a live "context: 73%" gauge | `ReportContextUsage` |
 | A single tool return is huge (file read, logs, JSON) | `ToolOutputLimits` |
 | Cache hit rate drops / costs jump with no error | `WarnOnCacheBusts` |
+| The model switched mid-conversation and treats the old model's answers as its own | `LabelCrossModelHistory` |
 | OpenAI Responses or Anthropic only, server-side compaction is fine | core `OpenAICompaction` / `AnthropicCompaction` |
 | Need exact details compaction dropped | `ConversationSearch` (see KNOWLEDGE-AND-MEMORY.md) |
 
@@ -427,6 +429,24 @@ it only fires when the provider reports cache tokens; route to Logfire with
 `logging.captureWarnings(True)`. On a provider with no published retention window (`unknown`)
 it can't tell a moved prefix from an expired cache.
 
+## LabelCrossModelHistory
+
+Adds a fixed instruction (`notice=`, default `DEFAULT_CROSS_MODEL_NOTICE`) to each request whose history has a
+`ModelResponse` whose `model_id` differs from the model the request goes to. It is a dynamic instruction, not
+a message part, so the history is not changed, and it never names the other model.
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import LabelCrossModelHistory
+
+agent = Agent('test', capabilities=[LabelCrossModelHistory()])
+```
+
+Gotchas: responses without a `model_id` (old saved history) are not counted; a `FallbackModel`'s candidates
+all count as the current model; under `ModelFallback` the notice is decided for the first model tried. Returning
+to an earlier model adds the notice to its instructions, which moves that model's cached prompt prefix once.
+
 ## Media externalization (not a capability)
 
 `pydantic_ai_harness.media` holds content-addressed stores (`FileMediaStore`, `SqliteMediaStore`,
@@ -448,5 +468,6 @@ Use `warn_on_cache_busts.WarnOnCacheBusts` (not `cache_stability` / `CacheStabil
 - https://pydantic.dev/docs/ai/harness/compaction/
 - https://pydantic.dev/docs/ai/harness/tool-output-limits/
 - https://pydantic.dev/docs/ai/harness/warn-on-cache-busts/
+- https://pydantic.dev/docs/ai/harness/label-cross-model-history/
 - https://pydantic.dev/docs/ai/harness/media/
 - https://pydantic.dev/docs/ai/capabilities/compaction/
