@@ -296,6 +296,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Tool Budgets](pydantic_ai_harness/tool_budgets/) | Harness | Cap calls per tool and per run, and refuse exact repeats, with a tool result the model can act on instead of an exception |
 | [Trajectory Judge](pydantic_ai_harness/trajectory_judge/) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
 | [Refine Output](pydantic_ai_harness/refine_output/) | Harness | Send the agent back to review and revise its output before the run ends |
+| [Require Verification](pydantic_ai_harness/require_verification/) | Harness | Send the agent back to run its checks when it tries to finish after editing code without a passing check since its last edit |
 
 ### Self-extension
 

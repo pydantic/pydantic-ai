@@ -395,6 +395,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'DetectLoops': Anonymous('only hooks; several detectors with their own thresholds and actions compose'),
     'ToolBudgets': Anonymous('only a hook; each counts the calls it lets run, so stacked budgets all apply'),
     'RefineOutput': Anonymous('only a hook; each counts its own rounds and adds its instructions to a round'),
+    'RequireVerification': Anonymous('only hooks; each keeps its own record of edits, checks, and attempts'),
     'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '

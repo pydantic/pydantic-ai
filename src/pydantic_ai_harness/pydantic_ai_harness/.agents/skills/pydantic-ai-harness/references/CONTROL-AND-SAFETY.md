@@ -34,6 +34,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Interrupt an agent that keeps repeating the same tool call, result, or response, or repeats itself within a streaming response | `DetectLoops` |
 | Cap calls per tool or per run, or refuse exact repeats, and let the run continue | `ToolBudgets(per_tool=..., total=..., refuse_repeats=...)` |
 | Have the agent review and revise its answer before the run ends | `RefineOutput` |
+| Send a coding agent back to run its checks before it finishes after an edit | `RequireVerification` |
 
 ## RepairToolArguments
 
@@ -899,6 +900,35 @@ print(agent.run_sync('Explain the change').output)
   every answer, the first one included.
 - Several on one agent each count their own rounds and add their instructions to a round. Emits no spans.
 
+## RequireVerification
+
+When a run would end after an edit (a `FileSystem` `write_file`/`edit_file` call, matched by tool kind, or a
+shell command matching `edit_commands`) and the latest run of every check since then (a shell command
+matching `verification_commands`) did not pass, adds a system prompt telling the model to run its checks or
+explain the blocker. Up to `max_attempts=2` times per run; after that the run ends and emits a
+`CompletionUnverifiedEvent` (`attempts`, `failed_commands`), dispatched immediately so `Hooks.on.event`
+listeners get it before the run returns.
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import FileSystem, RequireVerification, Shell
+
+agent = Agent('test', capabilities=[FileSystem(), Shell(), RequireVerification()])
+```
+
+- Any edit makes every earlier check stale. Edits to `exempt_paths` (`*.md`, `*.mdx`, `*.rst`) don't count.
+- Commands come from tools whose metadata sets `code_arg_language='shell'` and `code_arg_name`, as
+  `Shell`'s do. A check is an `&&`-joined step starting with a `verification_commands` match; `;`, `|`,
+  `||`, background `&`, and command substitution disqualify it. Pass/fail is read from `Shell`'s
+  `[exit code: N]`/timeout trailer or the `shell` tool's `exit_code`; a still-running command is no result.
+- The redirect is a `SystemPromptPart`; find it by
+  `metadata['origin'] == 'pydantic-ai-harness.require_verification.v1'` (with `attempt`), never by text.
+- State is per run (`for_run`); hooks run in workflow code under Temporal, DBOS, and Prefect. Skipped like
+  `RefineOutput`: deferred or pending output, output from no model request, and `run_stream()`.
+- Emits `verification required` (`require_verification.attempt`) and `completion unverified`
+  (`require_verification.attempts`) spans.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/repair-tool-arguments/
@@ -912,4 +942,5 @@ print(agent.run_sync('Explain the change').output)
 - https://pydantic.dev/docs/ai/harness/trajectory-judge/
 - https://pydantic.dev/docs/ai/harness/detect-loops/
 - https://pydantic.dev/docs/ai/harness/refine-output/
+- https://pydantic.dev/docs/ai/harness/require-verification/
 - https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/ (core tool approval and deferred tools)

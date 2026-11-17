@@ -82,6 +82,7 @@ if TYPE_CHECKING:
     from .render import RenderWorkflows
     from .render_sandbox import RenderSandbox, RenderSandboxBackend
     from .repo_context import RepoContext
+    from .require_verification import DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS, RequireVerification
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
@@ -125,6 +126,7 @@ __all__ = [
     'CompactOnRequest',
     'ConversationSearch',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS',
+    'DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
     'DayAI',
     'DaytonaSandbox',
@@ -183,6 +185,7 @@ __all__ = [
     'RenderWorkflows',
     'ReportContextUsage',
     'RepoContext',
+    'RequireVerification',
     'Researcher',
     'SSHWorkspace',
     'SSHWorkspaceBackend',
@@ -243,6 +246,7 @@ _LAZY_EXPORTS = {
     'DaytonaSandboxBackend': 'daytona_sandbox',
     'DeduplicateFileReads': 'compaction',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS': 'refine_output',
+    'DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS': 'require_verification',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'DetectLoops': 'detect_loops',
     'DockerContainer': 'docker_container',
@@ -294,6 +298,7 @@ _LAZY_EXPORTS = {
     'RenderSandboxBackend': 'render_sandbox',
     'RenderWorkflows': 'render',
     'RepoContext': 'repo_context',
+    'RequireVerification': 'require_verification',
     'ReportContextUsage': 'compaction',
     'Researcher': 'researcher',
     'Shell': 'shell',

@@ -203,6 +203,7 @@ _CAPABILITY_PAGE_META = {
     'tool-budgets.md': ('tool_budgets', 'Tool Budgets'),
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
     'refine-output.md': ('refine_output', 'Refine Output'),
+    'require-verification.md': ('require_verification', 'Require Verification'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),
     'github.md': ('github', 'GitHub'),
