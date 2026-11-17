@@ -460,10 +460,11 @@ def _task_line(owner: DelegationTasks, record: DelegationTask) -> str:
     return line
 
 
-def _snapshot_text(snapshot: DelegationSnapshot) -> str:
+def _snapshot_text(snapshot: DelegationSnapshot, *, background: bool) -> str:
     task, elapsed = f'Task {snapshot.task_id} ({snapshot.agent_name})', f'{snapshot.elapsed_seconds:.0f}s'
     if snapshot.status != 'running':
-        return f'{task} finished ({snapshot.outcome}) after {elapsed}. Its report is delivered separately.'
+        result = 'Its report is delivered separately.' if background else 'Its result went to the call that started it.'
+        return f'{task} finished ({snapshot.outcome}) after {elapsed}. {result}'
     if snapshot.usage is None:
         lines = [
             f'{task} has been running for {elapsed}. No activity is visible: it runs elsewhere, or has not made its first model request yet.'
@@ -1158,7 +1159,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             task_id: The task's ID.
         """
         owner = self._owner()
-        return _snapshot_text(owner.snapshot(self._visible(ctx, owner, task_id).id))
+        record = self._visible(ctx, owner, task_id)
+        return _snapshot_text(owner.snapshot(record.id), background=record.background)
 
     async def message_task(self, ctx: RunContext[AgentDepsT], task_id: str, message: str) -> str:
         """Send a message to a running task you started, to steer it. It reads the message at its next model request.

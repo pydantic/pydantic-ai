@@ -634,6 +634,20 @@ class TestSubAgentsTaskControl:
         assert 'final answer' not in returns[1]
         assert returns[2].startswith(f'Task {task_id} (researcher) finished (ok) after ')
         assert returns[2].endswith('s. Its report is delivered separately.')
+        assert 'final answer' not in returns[2]
+
+    async def test_check_task_on_a_finished_foreground_task(self) -> None:
+        def check(messages: list[ModelMessage]) -> ModelResponse:
+            return call('check_task', task_id=task_id_in(tool_returns(messages)[-1]))
+
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Find x.'), check, echo_last_return),
+            capabilities=[controlled()],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert result.output.endswith('s. Its result went to the call that started it.')
+        assert 'child output' not in result.output
 
     async def test_check_task_on_a_task_with_no_response_yet(self) -> None:
         started, opened = anyio.Event(), anyio.Event()
