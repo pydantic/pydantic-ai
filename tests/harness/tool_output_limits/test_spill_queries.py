@@ -139,6 +139,14 @@ class TestGrepToolResult:
         )
         assert body == '1:hit ' + 'a' * 30_000
 
+    async def test_omitted_context_stops_at_the_next_group(self, tmp_path: Path) -> None:
+        payload = '\n'.join(['hit a ' + 'x' * 30_000, 'a' * 30_000, 'g1', 'g2', 'hit b'])
+        out = await _query(tmp_path, payload, GREP_TOOL_NAME, {'pattern': 'hit', 'context': 1})
+        assert out.split('\n', 1)[0].endswith(
+            ': 2 matching line(s); showing 1, 1 more; continue with offset=1, output capped at 50,000 chars; '
+            'context lines 2-2 omitted (line offset=1, limit=1)]'
+        )
+
     async def test_cap_leaves_the_next_groups_context_to_the_next_page(self, tmp_path: Path) -> None:
         payload = '\n'.join(['hit a ' + 'x' * 30_000, 'g1', 'g2', 'g3', 'c' * 30_000, 'hit b'])
         out = await _query(tmp_path, payload, GREP_TOOL_NAME, {'pattern': 'hit', 'context': 1})
