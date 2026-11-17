@@ -364,7 +364,8 @@ module and `PyaiDocs` names are deprecated (keep `PyaiDocs` only to load old spe
 ## CurrentTime
 
 Adds one instruction stating the weekday and date (`precision='date'`, the default) or the hour
-(`precision='hour'`) in `timezone` (an IANA name or a `tzinfo`, default UTC). The time comes from the
+(`precision='hour'`) in `timezone` (an IANA name or a `tzinfo`, default UTC; a name needs the system
+time zone database or the `tzdata` package, which Windows lacks by default). The time comes from the
 timestamp of the request being sent, so it reads no clock and is safe in durable workflow code. A new
 value is appended to the history (`on_change='append'`, keyed by `id='current_time'`), so the prompt
 cache holds; there is no finer precision than the hour.

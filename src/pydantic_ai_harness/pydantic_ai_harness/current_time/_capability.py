@@ -32,7 +32,11 @@ class CurrentTime(AbstractCapability[AgentDepsT]):
     `None` or `''` means the default, `current_time`.
     """
     timezone: str | tzinfo = UTC
-    """An IANA time zone name such as `'Europe/Amsterdam'`, or a `tzinfo`."""
+    """An IANA time zone name such as `'Europe/Amsterdam'`, or a `tzinfo`.
+
+    A name is looked up in the system time zone database, or the `tzdata` package where there is none (Windows,
+    minimal containers). A `tzinfo` such as `datetime.UTC` needs neither.
+    """
     precision: Literal['date', 'hour'] = 'date'
     """`'date'` states the weekday and date. `'hour'` also states the hour, adding an update to the history every
     hour of a conversation."""
