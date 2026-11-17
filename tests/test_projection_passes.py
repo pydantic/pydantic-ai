@@ -44,6 +44,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     ModelResponsePart,
     ModelSettingsDeltaPart,
+    NativeToolSearchCallPart,
+    NativeToolSearchReturnPart,
     OperatorSource,
     RetryFeedbackPart,
     RetryInfo,
@@ -177,6 +179,33 @@ def _records() -> list[ModelMessage]:
     ]
 
 
+def _native_tool_search() -> list[ModelMessage]:
+    """A provider's own tool-search exchange, which the `local_tool_search` pass translates for other models."""
+    return [
+        _request(UserPromptPart('What is the exchange rate?', timestamp=_at(0)), at=0),
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(
+                    args={'queries': ['exchange rate']}, tool_call_id='srvtoolu_1', provider_name='anthropic'
+                ),
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_rate'}]},
+                    tool_call_id='srvtoolu_1',
+                    provider_name='anthropic',
+                ),
+                ToolCallPart('get_rate', {'currency': 'EUR'}, 'call_1'),
+            ],
+            timestamp=_at(1),
+            model_name='test-model',
+            provider_name='anthropic',
+        ),
+        _request(ToolReturnPart('get_rate', '1.08', 'call_1', timestamp=_at(2)), at=2),
+        _response(TextPart('1.08'), at=3),
+        _request(UserPromptPart('Thanks.', timestamp=_at(4)), at=4),
+        _response(TextPart('Sure.'), at=5),
+    ]
+
+
 def _capability_parts() -> list[ModelMessage]:
     return [
         _request(
@@ -272,6 +301,7 @@ HISTORIES: list[HistoryCase] = [
     HistoryCase('tool-rounds', _tool_rounds),
     HistoryCase('records', _records),
     HistoryCase('capability-parts', _capability_parts),
+    HistoryCase('native-tool-search', _native_tool_search),
     HistoryCase('speech', _speech),
     HistoryCase('thinking-after-a-tool-round', _thinking_after_a_tool_round),
     HistoryCase(
