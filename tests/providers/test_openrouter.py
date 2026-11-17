@@ -301,16 +301,17 @@ def test_openrouter_model_profile_cache_capabilities(model_name: str, expected_f
         # incompatibility by dropping `reasoning`, so the gateway marks the combination unsupported.
         ('anthropic/claude-sonnet-4.6', False),
         ('~anthropic/claude-sonnet-latest', False),
-        # These routes return a 400 for a forced `tool_choice` while reasoning.
-        ('meta/muse-spark-1.3', False),
+        # Qwen3.8 Flash returns a 400 for a forced `tool_choice` while reasoning.
         ('qwen/qwen3.8-flash', False),
-        ('qwen/qwen3.8-2.4t-a95b', False),
         # Other downstream providers honor `reasoning` alongside a forced `tool_choice`.
         ('google/gemini-2.5-flash', True),
         ('openai/gpt-5-mini', True),
         ('unknown/model', True),
-        # Routes outside the table keep the default. GLM-5.3 accepts `'required'` while reasoning but rejects a
-        # named function, which this flag can't express.
+        # Routes outside the table keep the default. Muse Spark 1.3 and Qwen3.8 2.4T are also served by hosts that
+        # accept forcing while reasoning. GLM-5.3 accepts `'required'` while reasoning but rejects a named function,
+        # which this flag can't express.
+        ('meta/muse-spark-1.3', True),
+        ('qwen/qwen3.8-2.4t-a95b', True),
         ('qwen/qwen3.8-27b', True),
         ('z-ai/glm-5.3', True),
     ],
@@ -323,25 +324,14 @@ def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: s
     assert profile.get('supports_forced_tool_choice_with_thinking') is expected
 
 
-@pytest.mark.parametrize(
-    ('model_name', 'expected_flags'),
-    [
-        # These always reason, so forcing is never accepted.
-        ('meta/muse-spark-1.3', {'supports_forced_tool_choice': False, 'thinking_always_enabled': True}),
-        ('qwen/qwen3.8-2.4t-a95b', {'supports_forced_tool_choice': False, 'thinking_always_enabled': True}),
-        # This one reasons unless told not to, so a request without a thinking setting counts as reasoning.
-        ('qwen/qwen3.8-flash', {'thinking_enabled_by_default': True}),
-        ('qwen/qwen3.8-27b', {}),
-    ],
-)
+@pytest.mark.parametrize(('model_name', 'expected'), [('qwen/qwen3.8-flash', True), ('qwen/qwen3.8-27b', None)])
 def test_openrouter_model_profile_on_routes_that_reject_forcing_while_reasoning(
-    model_name: str, expected_flags: dict[str, object]
+    model_name: str, expected: bool | None
 ) -> None:
-    """A route that always reasons can't be forced at all; one that reasons by default counts as reasoning."""
+    """Qwen3.8 Flash reasons unless told not to, so a request without a thinking setting counts as reasoning."""
     profile = OpenRouterProvider.model_profile(model_name)
     assert profile is not None
-    flags = ('supports_forced_tool_choice', 'thinking_always_enabled', 'thinking_enabled_by_default')
-    assert {flag: value for flag, value in profile.items() if flag in flags} == expected_flags
+    assert profile.get('thinking_enabled_by_default') is expected
 
 
 def test_openrouter_model_profile_requires_provider_prefix() -> None:

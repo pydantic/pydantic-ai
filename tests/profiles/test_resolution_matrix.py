@@ -3667,7 +3667,6 @@ _RouteProvider = Literal[
     'groq',
     'heroku',
     'litellm',
-    'meta',
     'nebius',
     'ollama',
     'openrouter',
@@ -3678,7 +3677,7 @@ _RouteProvider = Literal[
 """The provider names the forced-tool-choice route tests use."""
 
 
-def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:  # noqa: C901
+def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:
     """The provider class behind a route name in the forced-tool-choice route tests below.
 
     Only the requested class is looked up, so a test needs only the extras of the routes it uses.
@@ -3700,8 +3699,6 @@ def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:  # no
             return HerokuProvider
         case 'litellm':
             return LiteLLMProvider
-        case 'meta':
-            return MetaProvider
         case 'nebius':
             return NebiusProvider
         case 'ollama':
@@ -3765,7 +3762,6 @@ _DEEPSEEK_V4_1: tuple[_RouteProvider, str] = ('deepseek', 'deepseek-flash')
 """DeepSeek's API serves V4.1 Flash as `deepseek-flash`."""
 _GPT_OSS: tuple[_RouteProvider, str] = ('cerebras', 'gpt-oss-120b')
 """gpt-oss follows the Harmony format, whose profile restricts forced tool choice."""
-_MUSE_SPARK_1_3: tuple[_RouteProvider, str] = ('meta', 'muse-spark-1.3')
 
 
 @pytest.mark.skipif(
@@ -3844,7 +3840,6 @@ _MUSE_SPARK_1_3: tuple[_RouteProvider, str] = ('meta', 'muse-spark-1.3')
             ('together', 'openai/gpt-oss-120b'),
             id='gpt-oss-together',
         ),
-        pytest.param(_MUSE_SPARK_1_3, ('openrouter', 'meta/muse-spark-1.3'), id='muse-spark-1.3-openrouter'),
     ],
 )
 def test_forced_tool_choice_guard_agrees_across_routes(

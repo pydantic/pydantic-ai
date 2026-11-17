@@ -1292,7 +1292,8 @@ class OpenRouterModel(OpenAIChatModel):
         self, model_settings: OpenAIChatModelSettings, model_request_parameters: ModelRequestParameters
     ) -> bool:
         thinking = self._request_thinks(model_settings, model_request_parameters)
-        disables_thinking = self._resolved_profile.get('forced_tool_choice_disables_thinking', False)
+        profile = self._resolved_profile
+        disables_thinking = profile.get('forced_tool_choice_disables_thinking', False)
         # A route that can't force while thinking returns a 400 whenever the request reasons. On Anthropic routes,
         # where a forced choice answers without thinking, OpenRouter instead drops `reasoning` and answers without any,
         # so a resolved forced choice falls back to `'auto'` rather than losing it, and an explicit forcing
@@ -1311,13 +1312,24 @@ class OpenRouterModel(OpenAIChatModel):
                 )
             )
             thinking_remedy = f'OpenRouter would silently drop reasoning. {thinking_remedy}'
+        unavailable_reason = tool_forcing_unavailable_reason(
+            profile, thinking=forcing_thinking, thinking_remedy=thinking_remedy
+        )
+        explicit_choice = model_settings.get('tool_choice')
+        if (
+            unavailable_reason is not None
+            and not disables_thinking
+            and profile.get('supports_forced_tool_choice', True)
+            and (explicit_choice == 'required' or (isinstance(explicit_choice, list) and bool(explicit_choice)))
+        ):
+            # The error is the category of the route's 400, so `FallbackModel` and `except ModelAPIError` handle it as
+            # they handle the 400.
+            raise ModelRequestRejectedError(
+                self.model_name,
+                f'tool_choice={explicit_choice!r} is not supported by model {self.model_name!r}. {unavailable_reason}',
+            )
         return support_tool_forcing(
-            self.model_name,
-            model_settings,
-            tool_forcing_unavailable_reason(
-                self._resolved_profile, thinking=forcing_thinking, thinking_remedy=thinking_remedy
-            ),
-            disables_thinking=thinking and disables_thinking,
+            self.model_name, model_settings, unavailable_reason, disables_thinking=thinking and disables_thinking
         )
 
     @override
