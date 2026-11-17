@@ -44,7 +44,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.profiles import ModelProfile
 
-from ...conftest import RequestCapture, try_import
+from ...conftest import RequestCapture, retrying_client, try_import
 from ..conftest import AnthropicModelFactory
 
 with try_import() as otel_sdk_imports_successful:
@@ -749,6 +749,44 @@ async def test_unsupported_request_is_sent_without_a_thread(allow_model_requests
     assert second_details['thread_unsupported'] is True
     assert second_details['thread_fingerprint'] == first_details['thread_fingerprint']
     assert first.response.history_digest is None
+
+
+@pytest.mark.parametrize('error_code', ['thread_not_found', 'thread_unsupported_request'])
+async def test_thread_error_a_retrying_transport_gave_up_on(allow_model_requests: None, error_code: str):
+    """A thread error a retrying transport gave up on is recovered from as the SDK's error is.
+
+    The transport raises `httpx2.HTTPStatusError` once its attempts run out, and `anthropic` wraps it in
+    `APIConnectionError`, so the recovery reads the error code from the transport's response: a continue request
+    that can't be served is replayed in a new thread, and a create request threads don't support is sent without one.
+    """
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        thread: dict[str, str] = body.get('thread') or {}
+        if error_code == 'thread_not_found' and thread.get('type') == 'continue':
+            return _thread_error(404, error_code)
+        if error_code == 'thread_unsupported_request' and thread:
+            return _thread_error(400, error_code)
+        message = {'id': f'msg_{len(bodies)}', 'type': 'message', 'role': 'assistant', 'model': 'claude-sonnet-4-5'}
+        usage = {'input_tokens': 5, 'output_tokens': 1}
+        return httpx2.Response(
+            200,
+            json={**message, 'content': [{'type': 'text', 'text': 'OK'}], 'stop_reason': 'end_turn', 'usage': usage},
+        )
+
+    provider = AnthropicProvider(api_key='x', http_client=retrying_client(handler))
+    agent = Agent(AnthropicModel('claude-sonnet-4-5', provider=provider), model_settings=_SETTINGS)
+    if error_code == 'thread_not_found':
+        first = await agent.run('Hi')
+        await agent.run('Again', message_history=first.all_messages())
+        assert bodies[-1]['thread'] == {'type': 'create'}
+        assert _user_texts(bodies[-1]) == ['Hi', 'OK', 'Again']
+    else:
+        with pytest.warns(UserWarning, match="Threads don't support this request"):
+            await agent.run('Hi')
+        assert 'thread' not in bodies[-1]
 
 
 def weather_with_metadata(city: str) -> ToolReturn:

@@ -1906,8 +1906,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         ) is not None:
             try:
                 response = await send(thread)
-            except APIStatusError as error:
-                if not is_thread_replay_error(error):
+            except (APIStatusError, APIConnectionError) as error:
+                # Like the recoveries in `_messages_create`, this reads a status a retrying transport gave up on too.
+                failure = status_and_body(error)
+                if failure is None or not is_thread_replay_error(failure[1]):
                     raise
             else:
                 thread_record.fingerprint = fingerprint
@@ -1915,8 +1917,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 return response
         try:
             response = await send(Thread(cache_breakpoints=prepared.cache_breakpoints))
-        except APIStatusError as error:
-            if not is_thread_unsupported_error(error):
+        except (APIStatusError, APIConnectionError) as error:
+            failure = status_and_body(error)
+            if failure is None or not is_thread_unsupported_error(failure[1]):
                 raise
             # The request uses something threads don't support, like context management: send it without one.
             warnings.warn(
