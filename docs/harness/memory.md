@@ -38,7 +38,7 @@ The model gets four tools:
 
 | Tool | Purpose |
 | --- | --- |
-| `write_memory` | Append to a file or replace one unique text fragment. Writes use optimistic concurrency and an idempotency identifier derived from the run, its step, and the tool call. |
+| `write_memory` | Append to a file or replace one unique text fragment. In a file with `\r\n` line endings, an `old_text` with `\n` line endings, as the injected snapshot shows them, matches too. Writes use optimistic concurrency and an idempotency identifier derived from the run, its step, and the tool call. |
 | `read_memory` | Read a bounded prefix of one memory file. Left out when `FileSystem` can read the files ([Reading memory with `FileSystem`](#reading-memory-with-filesystem)). |
 | `delete_memory` | Delete a file. The main notebook is protected. |
 | `search_memory` | Search across notebook files, subject to configured result, character, and file-scan limits. |
@@ -137,6 +137,8 @@ sqlite_memory = Memory(SqliteMemoryStore(database='.agent-memory.db'))
 If a memory path resolves outside its store, the tool asks the model to correct the path. A corrupt receipts file produces a warning and starts a fresh operation journal; restore a backup if replay protection for earlier operations matters.
 
 `FileMemoryStore` keeps receipts for its 1,024 most recent mutations in `.memory-operations.json` beside the Markdown files, so a replayed tool call is not applied twice; copy it with them. It serializes its own operations but not those of another store or process writing the same directory, so share one `FileMemoryStore` instance, or use `SqliteMemoryStore` or `PostgresMemoryStore` for concurrent writers. Editing a Markdown file outside the capability changes its version, so a write based on the old content fails with a conflict. `FileMemoryStore` listings and searches skip symlinked directories, including links that point outside the store.
+
+On its first call, each `PostgresMemoryStore` instance checks for its three tables, its `{table}_versions` sequence and the columns later releases added, and creates or adds whatever is missing under `pg_advisory_xact_lock`. Only that step needs `CREATE` on the schema and ownership of an existing table: once the schema is current, a role granted `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the tables and `USAGE` on the sequence is enough.
 
 `PostgresMemoryStore` accepts the driver-neutral `PostgresPool` protocol, so the harness does not require a particular PostgreSQL driver. Install and manage the driver in your application, for example:
 
