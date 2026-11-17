@@ -1465,7 +1465,7 @@ class TestCompactNowSpan:
         class NamedStrategy:
             strategy_id = 'persisted_name'
 
-            async def compact(self, messages: list[ModelMessage], ctx: RunContext[Any]) -> list[ModelMessage]:
+            async def compact(self, messages: list[ModelMessage], ctx: RunContext[None]) -> list[ModelMessage]:
                 return messages[1:]
 
         await compact_now(NamedStrategy(), _history(3), model=TestModel(), tracer=get_tracer('test'))

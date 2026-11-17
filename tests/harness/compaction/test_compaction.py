@@ -39,6 +39,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryContent,
     CachePoint,
+    CapabilityEvent,
     CapabilityInstructionSource,
     CapabilitySource,
     CompactionPart,
@@ -202,7 +203,7 @@ def _make_ctx(
         def enqueue(self, *content: Any) -> None:
             self.enqueued.extend(content)
 
-        async def emit(self, event: Any) -> Any:
+        async def emit(self, event: CapabilityEvent) -> CapabilityEvent:
             # Like the real `RunContext.emit` with no listeners: immediate dispatch
             # returns the (unmutated) event for the emitter to inspect.
             return event

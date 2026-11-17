@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import pydantic
 from inline_snapshot import snapshot
@@ -25,19 +24,19 @@ def _history(*values: str) -> list[ModelMessage]:
 
 
 @dataclass
-class _CancelFirst(AbstractCapability[Any]):
+class _CancelFirst(AbstractCapability[None]):
     events: list[CompactionStartEvent | CompactionEndEvent]
     cancelled: bool = False
 
     @on_event(CompactionStartEvent)
-    async def cancel_first(self, ctx: RunContext[Any], event: CompactionStartEvent) -> None:
+    async def cancel_first(self, ctx: RunContext[None], event: CompactionStartEvent) -> None:
         self.events.append(event)
         if not self.cancelled:
             event.cancel('activity in progress')
             self.cancelled = True
 
     @on_event(CompactionEndEvent)
-    async def record_end(self, ctx: RunContext[Any], event: CompactionEndEvent) -> None:
+    async def record_end(self, ctx: RunContext[None], event: CompactionEndEvent) -> None:
         self.events.append(event)
 
 
@@ -76,10 +75,10 @@ async def test_cancelled_attempt_retries_and_then_emits_end() -> None:
 
 
 async def test_hooks_capability_can_cancel_compaction() -> None:
-    hooks = Hooks[Any]()
+    hooks = Hooks[None]()
 
     @hooks.on.event(CompactionStartEvent)
-    async def hold(ctx: RunContext[Any], event: CompactionStartEvent) -> None:
+    async def hold(ctx: RunContext[None], event: CompactionStartEvent) -> None:
         event.cancel('application is mid-activity')
 
     history = _history('old one', 'old two')
@@ -115,11 +114,11 @@ async def test_agent_listener_can_cancel_compaction() -> None:
 
 
 @dataclass
-class _RecordAll(AbstractCapability[Any]):
+class _RecordAll(AbstractCapability[None]):
     events: list[CompactionStartEvent | CompactionEndEvent]
 
     @on_event(CompactionStartEvent, CompactionEndEvent)
-    async def record(self, ctx: RunContext[Any], event: CompactionStartEvent | CompactionEndEvent) -> None:
+    async def record(self, ctx: RunContext[None], event: CompactionStartEvent | CompactionEndEvent) -> None:
         self.events.append(event)
 
 
@@ -182,7 +181,7 @@ async def test_fallback_events_measure_with_the_configured_tokenizer() -> None:
 class _InPlaceStrategy:
     strategy_id = 'in_place'
 
-    async def compact(self, messages: list[ModelMessage], ctx: RunContext[Any]) -> list[ModelMessage]:
+    async def compact(self, messages: list[ModelMessage], ctx: RunContext[None]) -> list[ModelMessage]:
         messages.pop(0)
         return messages
 
@@ -210,7 +209,7 @@ async def test_in_place_strategy_reports_its_end_event() -> None:
 class _FailingStrategy:
     calls: list[str]
 
-    async def compact(self, messages: list[ModelMessage], ctx: RunContext[Any]) -> list[ModelMessage]:
+    async def compact(self, messages: list[ModelMessage], ctx: RunContext[None]) -> list[ModelMessage]:
         self.calls.append('failed')
         raise RuntimeError('failed')
 
@@ -219,7 +218,7 @@ class _FailingStrategy:
 class _DroppingStrategy:
     calls: list[str]
 
-    async def compact(self, messages: list[ModelMessage], ctx: RunContext[Any]) -> list[ModelMessage]:
+    async def compact(self, messages: list[ModelMessage], ctx: RunContext[None]) -> list[ModelMessage]:
         self.calls.append('dropped')
         return messages[1:]
 
@@ -233,9 +232,9 @@ async def test_fallback_cancellation_does_not_advance_but_failure_does() -> None
     cancelled = False
 
     @dataclass
-    class Listener(AbstractCapability[Any]):
+    class Listener(AbstractCapability[None]):
         @on_event(CompactionStartEvent)
-        async def cancel_failure(self, ctx: RunContext[Any], event: CompactionStartEvent) -> None:
+        async def cancel_failure(self, ctx: RunContext[None], event: CompactionStartEvent) -> None:
             nonlocal cancelled
             if event.strategy == 'failing_strategy' and not cancelled:
                 event.cancel()
@@ -291,7 +290,7 @@ class _Named:
     strategy_id: str
     drops: bool = True
 
-    async def compact(self, messages: list[ModelMessage], ctx: RunContext[Any]) -> list[ModelMessage]:
+    async def compact(self, messages: list[ModelMessage], ctx: RunContext[None]) -> list[ModelMessage]:
         return messages[1:] if self.drops else messages
 
 
@@ -301,11 +300,11 @@ async def test_a_cancelled_tier_is_skipped_and_escalation_continues() -> None:
     @dataclass
     class _CancelCheap(_RecordAll):
         @on_event(CompactionStartEvent)
-        async def cancel_cheap(self, ctx: RunContext[Any], event: CompactionStartEvent) -> None:
+        async def cancel_cheap(self, ctx: RunContext[None], event: CompactionStartEvent) -> None:
             if event.strategy == 'cheap':
                 event.cancel('not now')
 
-    tiered = TieredCompaction[Any](tiers=[_Named('cheap'), _Named('expensive')], target_tokens=1)
+    tiered = TieredCompaction[None](tiers=[_Named('cheap'), _Named('expensive')], target_tokens=1)
     agent = Agent(TestModel(custom_output_text='ok'), capabilities=[tiered, _CancelCheap(events)])
 
     await agent.run('trigger', message_history=_history('old one ' * 20, 'old two ' * 20))
@@ -321,7 +320,7 @@ async def test_a_cancelled_tier_is_skipped_and_escalation_continues() -> None:
 
 async def test_an_attempt_that_changes_nothing_emits_no_end_event() -> None:
     events: list[CompactionStartEvent | CompactionEndEvent] = []
-    tiered = TieredCompaction[Any](tiers=[_Named('unchanged', drops=False)], target_tokens=1)
+    tiered = TieredCompaction[None](tiers=[_Named('unchanged', drops=False)], target_tokens=1)
     agent = Agent(TestModel(custom_output_text='ok'), capabilities=[tiered, _RecordAll(events)])
 
     await agent.run('trigger', message_history=_history('old one ' * 20, 'old two ' * 20))
