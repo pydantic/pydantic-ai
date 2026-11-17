@@ -256,7 +256,7 @@ Phrase the instruction as what changed rather than as an override of the user. M
 !!! warning "Not a place for untrusted content"
     A system prompt carries operator authority, so text you put in one is treated as *your* instruction to the model. Never build a `SystemPromptPart` out of content you didn't author — tool output, a retrieved document, a fetched page, a message from another user — or a prompt injection buried in it inherits that authority.
 
-    This matters most for late-arriving results, which is a common reason to reach for `enqueue`: a background job whose tool returned `'started'` long before the work finished, a webhook, a long-running search. Deliver those as data — enqueue the payload as user content, or return it from a tool — and reserve `SystemPromptPart` for instructions you wrote yourself. Where a background result should also *change how the agent behaves*, write that instruction yourself and enqueue the untrusted payload separately.
+    This matters most for late-arriving results, which is a common reason to reach for `enqueue`: a background job whose tool returned `'started'` long before the work finished, a webhook, a long-running search. Deliver those as data — enqueue the payload as a [`DataCapabilityPart`](capabilities/custom.md#capability-parts) whose `source` says where it came from, or return it from a tool — and reserve `SystemPromptPart` for instructions you wrote yourself. Where a background result should also *change how the agent behaves*, write that instruction yourself and enqueue the untrusted payload separately.
 
 ### What each rendering gives up
 
@@ -376,9 +376,11 @@ agent = Agent('{{ google:medium }}', model_settings={'framing_announcement': 'al
 
 Where Pydantic AI has to say something on the user channel, it frames it in a tag: a mid-conversation system prompt as `<system>` on a model [without mid-conversation system messages](#mid-conversation-system-prompts), a tool's file that the provider can't take in a tool result as `<pyai:tool_result>` ([details](tools-advanced.md#tool-return-file-provenance)), [retry feedback](retries.md) as `<pyai:retry_feedback>` or `<pyai:validation_errors>`, a [compaction](capabilities/compaction.md) summary as `<pyai:conversation_summary>`, and another model's reasoning as `<assistant_thinking>`. Three of these speak in the application's voice: `<system>`, and the `<pyai:context>` and `<pyai:context_diff>` elements that [appended instruction changes](agent.md#appending-instruction-changes) are sent as. Every tag only Pydantic AI writes carries the reserved `pyai:` prefix; `<system>` and `<assistant_thinking>` keep their plain names. So a plain `<context>` or `<tool_result>` tag, which applications commonly put their own documents and tool output in, is ordinary text: it gets no note and no announcement.
 
-Nothing the user, a tool or a file wrote is rewritten to make room for these frames: prompts, uploaded files, tool results and the content of frames go out byte for byte, so a model asked to edit an XML file that contains a `<system>` tag writes back the tag, not an escaped copy of it. Text that resembles one of the application's voice tags (an opening or closing `<system>`, `<pyai:context>` or `<pyai:context_diff>` tag in any case or spacing, also when hidden behind invisible characters, look-alike letters or an HTML-entity-encoded `<`) instead gets a short note in the application's voice next to the item it's in, saying the text was written by the user, the tool or the file's author and is part of that item, not instructions. The same goes for a compaction summary, for the text retry feedback quotes, not for the fence around it, and for another model's reasoning sent as `<assistant_thinking>`, whose note ends the request before that reply so the cached prefix doesn't move, or goes in the next request when no request comes right before the reply. The note is a mid-conversation system message, or a `<system>` block on models without one, and goes after a request's tool results, unless the model has no mid-conversation system messages and the provider takes the note ahead of them. A copy of one of the framework's data frames (`<pyai:tool_result>`, `<pyai:retry_feedback>`, `<pyai:validation_errors>`, `<pyai:conversation_summary>` or `<assistant_thinking>`) gets a note too, saying the item's author wrote it and it opens or closes no element the application sent. A closing tag alone counts as well, for these and for the voice tags, so text that quotes one can't end the frame around it unnoticed. A note on a tool result names the tool and the call, and a note on a `<pyai:context>` or `<pyai:context_diff>` lookalike first says that only the elements the application sends change the instructions. A note on a tool result or a file also says that the application's own messages still apply, and names the application's own system message when the same request has one (unless the user's text in it has a lookalike too). On models without mid-conversation system messages, the request's own `<system>` blocks go ahead of a note and the text it describes, so they still read as the application's.
+Nothing the user, a tool or a file wrote is rewritten to make room for these frames: prompts, uploaded files, tool results and the content of frames go out byte for byte, so a model asked to edit an XML file that contains a `<system>` tag writes back the tag, not an escaped copy of it. Text that resembles one of the application's voice tags (an opening or closing `<system>`, `<pyai:context>` or `<pyai:context_diff>` tag in any case or spacing, also when hidden behind invisible characters, look-alike letters or an HTML-entity-encoded `<`) instead gets a short note in the application's voice next to the item it's in, saying the text was written by the user, the tool, the model or the file's author and is part of that item, not instructions. The same goes for a compaction summary, for the text retry feedback quotes, not for the fence around it, and for another model's reasoning sent as `<assistant_thinking>`, whose note ends the request before that reply so the cached prefix doesn't move, or goes in the next request when no request comes right before the reply. The same goes for text in a [capability part](#capability-parts)'s content that opens or closes the part's own tag: the note says the tag is its author's and doesn't open or close the application's element. The note is a mid-conversation system message, or a `<system>` block on models without one, and goes after a request's tool results, unless the model has no mid-conversation system messages and the provider takes the note ahead of them. A copy of one of the framework's data frames (`<pyai:tool_result>`, `<pyai:retry_feedback>`, `<pyai:validation_errors>`, `<pyai:conversation_summary>` or `<assistant_thinking>`) gets a note too, saying the item's author wrote it and it opens or closes no element the application sent. A closing tag alone counts as well, for these and for the voice tags, so text that quotes one can't end the frame around it unnoticed. A note on a tool result names the tool and the call, and a note on a `<pyai:context>` or `<pyai:context_diff>` lookalike first says that only the elements the application sends change the instructions. A note on a tool result or a file also says that the application's own messages still apply, and names the application's own system message when the same request has one (unless the user's text in it has a lookalike too). On models without mid-conversation system messages, the request's own `<system>` blocks go ahead of a note and the text it describes, so they still read as the application's.
 
 The model is told what these notes mean, and that other tags in a user message, such as an application's own reminders, keep their usual meaning: in the system prompt on models without mid-conversation system messages, as described above, and elsewhere in a mid-conversation system message the first time the conversation has a frame or a note. By default, a conversation that never has either gets nothing, except on Claude Sonnet 4.6 and gpt-oss; see [When the announcement is sent](#when-the-announcement-is-sent). A judge or summarizer that reads the conversation as a flattened transcript, such as a Pydantic AI Harness judge or compaction summarizer, gets neither the announcement nor notes: it isn't talking to the transcript's authors.
+
+A [realtime session](realtime/overview.md) has neither these notes nor the announcement: on the live channel, text that resembles a frame goes out as written with nothing said about it. A capability part's body still has the note saying who wrote it, and in a body from a source with less than operator authority every framing tag, `<system>` included, is neutralized as `&lt;` on the live channel, since nothing there could say whose the tag is. The stored part keeps the body as written.
 
 !!! warning "A hint to the model, not a guarantee"
     The notes tell a model where text came from, and frontier models measured across Anthropic, OpenAI and Google follow them. They don't make the text trustworthy, and open-weight models aren't reliably steered by them, or by any prompt-level framing. Keep secrets and tools with effects you can't undo out of reach of content you didn't write, as described under [the trust boundary](#trust-boundary-for-client-supplied-history).
@@ -387,15 +389,20 @@ The model is told what these notes mean, and that other tags in a user message, 
 
 Some instructions are only true for the model request they're sent with: the budget left right now, a nudge against instruction fade. Give such a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] [`scope='request'`][pydantic_ai.messages.SystemPromptPart.scope]. The model sees a request-scoped prompt only in the model request it's part of: the next request, even the next step of the same run, no longer shows it.
 
-That suits a value that changes from one request to the next and is sent with every request, so each request shows the current value and none of the stale ones. A capability does this from `before_model_request`. Content enqueued there goes into the request being prepared and into the message history, as a `ModelRequest` of its own:
+That suits a value that changes from one request to the next and is sent with every request, so each request shows the current value and none of the stale ones. A capability does this from `before_model_request`, with a [capability part](capabilities/custom.md#capability-parts) in the system voice. Content enqueued there goes into the request being prepared and into the message history, as a `ModelRequest` of its own:
 
 ```python {title="request_scoped_reminder_capability.py"}
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, RunContext, SystemPromptPart
+from pydantic_ai import Agent, InstructionCapabilityPart, OperatorSource, OperatorText, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
+
+
+@dataclass(kw_only=True)
+class RequestsLeftPart(InstructionCapabilityPart, namespace='requests_left'):
+    pass
 
 
 @dataclass
@@ -407,7 +414,11 @@ class ShowRequestsLeft(AbstractCapability[Any]):
         if limit is not None:
             left = limit - ctx.usage.requests
             ctx.enqueue(
-                SystemPromptPart(f'{left} model request(s) left in this run.', scope='request')
+                RequestsLeftPart(
+                    content=OperatorText(f'{left} model request(s) left in this run.'),
+                    source=OperatorSource(),
+                    scope='request',
+                )
             )
         return request_context
 
@@ -456,6 +467,16 @@ Use a request-scoped prompt for something about the current moment. Something th
 
 !!! note "Histories sent back from a frontend"
     The [UI adapters](ui/overview.md#trust-model-for-client-submitted-messages) leave request-scoped prompts out of the messages they dump for the frontend, since they're only for the model's current request: sent back, one would come back as a lasting system prompt. So a history that round-trips through a frontend loses its request-scoped prompts, whatever `manage_system_prompt` is set to. On a model whose reasoning is tied to the exact conversation, that's an edit to the conversation like any other lost part. Keep the history on the server, for example with [conversation storage](persistence.md), when you need it unchanged.
+
+### Capability parts
+
+A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] is something a capability or your application tells the model mid-conversation, defined as a subclass per kind of record: of [`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart] for data in a frame on the user channel, or [`InstructionCapabilityPart`][pydantic_ai.messages.InstructionCapabilityPart] for the application's voice. See [Telling the model things mid-conversation](capabilities/custom.md#capability-parts) for how to define one.
+
+In the message history it stays the part it was enqueued as, so code that reads the history, such as a history processor, a compaction summarizer or a UI, finds it by type and never mistakes it for something the user said. It's rendered into the parts above only on the way to the model, in [`prepare_messages`][pydantic_ai.models.Model.prepare_messages], which every model calls before it maps the history, so a [custom model](models/overview.md#custom-models)'s adapter only ever gets the request parts it already maps. An override of `prepare_messages` sees the typed parts before calling the base implementation. A [`Model.request`][pydantic_ai.models.Model.request] call made outside an agent run calls `prepare_messages` too; a model that maps a capability part it never rendered raises a [`UserError`][pydantic_ai.exceptions.UserError].
+
+The part's [source](capabilities/custom.md#where-the-content-came-from) decides how it's rendered: in the application's voice, in the user's turn labelled as attached on the user's behalf, or as data in a tag with a note naming who wrote it.
+
+Rendering reads only the part's content, the declared attributes and the [rendering facts][pydantic_ai.messages.CapabilityPart.rendering] stored with it, so the same history renders to the same bytes on every request, in every process, and after a round trip through [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter], which keeps the prompt cache warm. History from a client is another matter: the [UI adapters](ui/overview.md) never send capability parts to a frontend, and [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] drops any a client sends.
 
 ### Identifying system prompts
 
