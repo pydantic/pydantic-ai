@@ -79,7 +79,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     By default (`tools='all'`) every eligible regular tool the agent has is wrapped
     behind a single `run_code` tool -- the model writes Python that calls them as
     functions instead of issuing tool calls directly. Framework control tools,
-    undiscovered deferred tools, approval-required and external tools, native
+    undiscovered deferred tools, `requires_approval=True` and external tools, native
     fallbacks, and other code-execution tools remain native.
 
     Pass a list of tool names or a callable predicate to `tools` to split the
@@ -122,13 +122,14 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     """Which wrapped tools should be sandboxed inside `run_code`.
 
     - `'all'` (default): every eligible regular tool the agent has is sandboxed.
-      Approval-required and external tools stay native, so their deferred calls
-      pause the run as usual.
+      Tools registered with `requires_approval=True` and external tools stay native,
+      so their deferred calls pause the run as usual. Tools gated by `.approval_required()`
+      keep `kind='function'` and are still sandboxed.
     - `Sequence[str]`: only tools whose names are listed are sandboxed.
     - Callable `(ctx, tool_def) -> bool | Awaitable[bool]`: tools where the
       callable returns `True` are sandboxed; the rest stay as native tool calls.
 
-    An explicit selector can sandbox approval-required and external tools, but calling one
+    An explicit selector can sandbox `requires_approval=True` and external tools, but calling one
     from `run_code` then needs a `HandleDeferredToolCalls` capability to resolve it inline.
     """
 

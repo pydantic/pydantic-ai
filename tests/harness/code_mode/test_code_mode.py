@@ -2195,6 +2195,25 @@ class TestCodeMode:
         assert description is not None
         assert 'async def approve_action' in description
 
+    async def test_approval_required_toolset_stays_sandboxed_under_all(self) -> None:
+        """`.approval_required()` gates calls without changing `kind`, so `tools='all'` still sandboxes its tools."""
+
+        def delete_file(path: str) -> str:
+            """Delete a file."""
+            return f'deleted {path}'  # pragma: no cover
+
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(
+            _build_function_toolset(delete_file).approval_required()
+        )
+        assert isinstance(wrapper, CodeModeToolset)
+
+        tools = await wrapper.get_tools(build_run_context(None))
+
+        assert set(tools) == {'run_code'}
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        assert 'async def delete_file' in description
+
     async def test_approval_required_tool_follows_deferred_flow_under_default_selector(self) -> None:
         """A bare `CodeMode()` leaves an approval-required tool native, so the run pauses for approval and resumes."""
 

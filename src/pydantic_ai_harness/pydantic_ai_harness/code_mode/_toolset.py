@@ -892,7 +892,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     - `unless_native` tools, so `Model.prepare_request` can drop them when the
       provider supports the native tool.
 
-    Under the default `'all'` selector, approval-required and external tools
+    Under the default `'all'` selector, `requires_approval=True` and external tools
     (`ToolDefinition.defer`) also stay native, so their deferred calls work as usual. An
     explicit selector can sandbox them for an agent with a `HandleDeferredToolCalls` handler.
 
@@ -1233,7 +1233,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         return 'native'
 
     async def _selects(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> bool:
-        """Whether `tool_selector` sandboxes `tool_def`; `'all'` leaves approval-required and external tools native."""
+        """Whether `tool_selector` sandboxes `tool_def`; `'all'` leaves `ToolDefinition.defer` tools native."""
         if self.tool_selector == 'all' and tool_def.defer:
             return False
         return await matches_tool_selector(self.tool_selector, ctx, tool_def)
