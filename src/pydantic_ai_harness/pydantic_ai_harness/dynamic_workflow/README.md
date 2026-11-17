@@ -171,6 +171,30 @@ it left pending is cancelled, best effort: a
 [batch](https://pydantic.dev/docs/ai/core-concepts/batch/) is only cancelled once no other request in
 it is still waiting.
 
+### Choosing the shape per call
+
+The script can also choose the shape of a single call's result: pass `output_schema`, a JSON schema
+with `"type": "object"`, and that call returns a `dict` in that shape instead of the sub-agent's own
+output. This lets the orchestrating model define the format a later step consumes:
+
+```python
+finding = await researcher(task="Who first described the effect?", output_schema={
+    "type": "object",
+    "properties": {"claim": {"type": "string"}, "source_url": {"type": "string"}},
+    "required": ["claim", "source_url"],
+})
+finding["source_url"]
+```
+
+The schema replaces the sub-agent's `output_type` for that run, through
+[`StructuredDict`](https://pydantic.dev/docs/ai/core-concepts/output/#structured-dict), so the same
+caveats apply: it is sent to the model as the output schema, and the returned `dict` is not
+validated against it. A schema that is not an object schema fails the call before it counts against
+`max_agent_calls`. A sub-agent with
+[output validators](https://pydantic.dev/docs/ai/core-concepts/output/#output-validator-functions)
+cannot take a per-run output type, so a call to it with `output_schema` raises a `RuntimeError` in
+the script.
+
 ## A complete, runnable example
 
 This orchestrator drafts three candidate answers in parallel, scores each one, picks the winner,

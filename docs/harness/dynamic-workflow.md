@@ -118,6 +118,21 @@ The catalog the model sees renders each output type as a `TypedDict`, so it know
 
 An `output_type` can include [`DeferredToolRequests`](../deferred-tools.md) so a top-level caller can approve tools and resume the run, or [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits) so it can check on a model request the provider is still processing later. A workflow script cannot do either, so the catalog leaves both out of the sub-agent's return type, and a sub-agent run that ends with one raises a `RuntimeError` in the script, like any other sub-agent failure. A model request it left pending is cancelled, best effort: a [batch](../batch.md) is only cancelled once no other request in it is still waiting.
 
+### Choosing the shape per call
+
+The script can also choose the shape of a single call's result: pass `output_schema`, a JSON schema with `"type": "object"`, and that call returns a `dict` in that shape instead of the sub-agent's own output. This lets the orchestrating model define the format a later step consumes:
+
+```python
+finding = await researcher(task="Who first described the effect?", output_schema={
+    "type": "object",
+    "properties": {"claim": {"type": "string"}, "source_url": {"type": "string"}},
+    "required": ["claim", "source_url"],
+})
+finding["source_url"]
+```
+
+The schema replaces the sub-agent's `output_type` for that run, through [`StructuredDict`](../output.md#structured-dict), so the same caveats apply: it is sent to the model as the output schema, and the returned `dict` is not validated against it. A schema that is not an object schema fails the call before it counts against `max_agent_calls`. A sub-agent with [output validators](../output.md#output-validator-functions) cannot take a per-run output type, so a call to it with `output_schema` raises a `RuntimeError` in the script.
+
 ## How results come back
 
 The value of the script's last expression becomes the tool result -- the model does not `print()` it.
