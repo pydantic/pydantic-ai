@@ -1,26 +1,36 @@
 from __future__ import annotations as _annotations
 
 import os
+from collections.abc import Callable
+from functools import partial
+from types import TracebackType
 from typing import overload
-
-from httpx import AsyncClient
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.openai import _GptOssInlineDefsJsonSchemaTransformer  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from huggingface_hub import AsyncInferenceClient
-except ImportError as _import_error:  # pragma: no cover
+    from huggingface_hub.constants import INFERENCE_PROXY_TEMPLATE
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `huggingface_hub` package to use the HuggingFace provider, '
         "you can use the `huggingface` optional group — `pip install 'pydantic-ai-slim[huggingface]'`"
     ) from _import_error
+
+# Below the guard on purpose: `huggingface_hub` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+from httpx import AsyncClient
 
 from . import Provider
 
@@ -28,19 +38,33 @@ from . import Provider
 class HuggingFaceProvider(Provider[AsyncInferenceClient]):
     """Provider for Hugging Face."""
 
+    _client_factory: Callable[[], AsyncInferenceClient] | None = None
+    """Builds the `AsyncInferenceClient` again, when this provider built it."""
+
+    _client_closed: bool = False
+    """Whether the `AsyncInferenceClient` this provider built was closed on exit, so the next use needs a new one."""
+
     @property
     def name(self) -> str:
         return 'huggingface'
 
     @property
     def base_url(self) -> str:
-        return self.client.model  # type: ignore
+        if self._client.model is not None:
+            return self._client.model
+        if self._client.provider is not None:
+            return INFERENCE_PROXY_TEMPLATE.format(provider=self._client.provider)
+        raise UserError(
+            'Unable to determine base URL for HuggingFace provider. '
+            'Please provide `base_url`, `provider_name`, or a pre-configured `hf_client`.'
+        )
 
     @property
     def client(self) -> AsyncInferenceClient:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile = {
             'deepseek-ai': deepseek_model_profile,
             'google': google_model_profile,
@@ -50,15 +74,33 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             'moonshotai': moonshotai_model_profile,
         }
 
-        if '/' not in model_name:
-            return None
+        profile: ModelProfile | None = None
+        recognized = False
+        route_profile = special_token_route_profile('huggingface', model_name)
+        if '/' in model_name:
+            model_name = model_name.lower()
+            provider, model_name = model_name.split('/', 1)
+            if provider in provider_to_profile:
+                recognized = True
+                profile = provider_to_profile[provider](model_name)
+            elif provider == 'zai-org':
+                # Only GLM-5.3's schema fix: every other GLM id only gets the route's special-token setting.
+                return merge_profile(_glm_5_3_schema_profile(model_name), route_profile)
+            elif provider == 'openai':
+                # gpt-oss doesn't see a tool schema's `$defs`, so they're inlined. The route applies no other schema
+                # transformation, and other OpenAI ids only get its special-token setting.
+                gpt_oss = model_name.startswith('gpt-oss')
+                schema_profile = (
+                    ModelProfile(json_schema_transformer=_GptOssInlineDefsJsonSchemaTransformer) if gpt_oss else None
+                )
+                return merge_profile(schema_profile, route_profile)
 
-        model_name = model_name.lower()
-        provider, model_name = model_name.split('/', 1)
-        if provider in provider_to_profile:
-            return provider_to_profile[provider](model_name)
-
-        return None
+        # Only recognized `provider/model` names get a profile; bare names and unknown providers
+        # only get the route's special-token setting. Recognized providers always advertise inline system
+        # prompt support, even when the upstream profile lookup itself returns `None`.
+        if not recognized:
+            return route_profile
+        return merge_profile(profile, ModelProfile(supports_inline_system_prompts=True), route_profile)
 
     @overload
     def __init__(self, *, base_url: str, api_key: str | None = None) -> None: ...
@@ -88,10 +130,10 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             api_key: The API key to use for authentication, if not provided, the `HF_TOKEN` environment variable
                 will be used if available.
             hf_client: An existing
-                [`AsyncInferenceClient`](https://huggingface.co/docs/huggingface_hub/v0.29.3/en/package_reference/inference_client#huggingface_hub.AsyncInferenceClient)
+                [`AsyncInferenceClient`](https://huggingface.co/docs/huggingface_hub/en/package_reference/inference_client#huggingface_hub.AsyncInferenceClient)
                 client to use. If not provided, a new instance will be created.
             http_client: (currently ignored) An existing `httpx.AsyncClient` to use for making HTTP requests.
-            provider_name : Name of the provider to use for inference. available providers can be found in the [HF Inference Providers documentation](https://huggingface.co/docs/inference-providers/index#partners).
+            provider_name: Name of the provider to use for inference. available providers can be found in the [HF Inference Providers documentation](https://huggingface.co/docs/inference-providers/index#partners).
                 defaults to "auto", which will select the first available provider for the model, the first of the providers available for the model, sorted by the user's order in https://hf.co/settings/inference-providers.
                 If `base_url` is passed, then `provider_name` is not used.
         """
@@ -100,7 +142,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
         if api_key is None:
             raise UserError(
                 'Set the `HF_TOKEN` environment variable or pass it via `HuggingFaceProvider(api_key=...)`'
-                'to use the HuggingFace provider.'
+                ' to use the HuggingFace provider.'
             )
 
         if http_client is not None:
@@ -110,6 +152,39 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             raise ValueError('Cannot provide both `base_url` and `provider_name`.')
 
         if hf_client is None:
-            self._client = AsyncInferenceClient(api_key=api_key, provider=provider_name, base_url=base_url)  # type: ignore
+            self._client_factory = partial(
+                AsyncInferenceClient,
+                api_key=api_key,
+                provider=provider_name,  # pyright: ignore[reportArgumentType]
+                base_url=base_url,
+            )
+            self._client = self._client_factory()
         else:
             self._client = hf_client
+
+    def _refresh_http_client(self) -> None:
+        """Rebuild the `AsyncInferenceClient` this provider built if it's closed or was used on a loop that isn't running.
+
+        The client opens its HTTP client on first use and keeps it, so it can't be used from another event loop,
+        or again once closed.
+        """
+        if self._client_factory is None or self._entered_count:
+            return
+        if self._moved_to_another_event_loop() or self._client_closed:
+            self._client = self._client_factory()
+            self._client_closed = False
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        if self._entered_count == 0:
+            return
+        async with self._enter_lock:
+            self._entered_count -= 1
+            if self._entered_count == 0 and self._client_factory is not None:
+                # Close the client this provider built, but never one that was passed in.
+                await self._client.close()
+                self._client_closed = True

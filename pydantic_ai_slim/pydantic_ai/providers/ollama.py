@@ -2,32 +2,36 @@ from __future__ import annotations as _annotations
 
 import os
 
-import httpx
-from openai import AsyncOpenAI
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.providers import Provider
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Ollama provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+else:
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
-class OllamaProvider(Provider[AsyncOpenAI]):
+class OllamaProvider(_OpenAISDKProvider):
     """Provider for local or remote Ollama API."""
 
     @property
@@ -42,7 +46,8 @@ class OllamaProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         prefix_to_profile = {
             'llama': meta_model_profile,
             'gemma': google_model_profile,
@@ -52,24 +57,40 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             'mistral': mistral_model_profile,
             'command': cohere_model_profile,
             'gpt-oss': harmony_model_profile,
+            'glm': _glm_5_3_schema_profile,
+            'kimi': moonshotai_model_profile,
         }
 
+        model_name = model_name.lower()
         profile = None
         for prefix, profile_func in prefix_to_profile.items():
-            model_name = model_name.lower()
             if model_name.startswith(prefix):
                 profile = profile_func(model_name)
 
-        # As OllamaProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        # `json_schema_transformer` is a fallback (upstream wins if it set one). The other Ollama-specific
+        # overrides win on top of upstream — Ollama's /v1/chat/completions endpoint supports response_format
+        # with json_schema natively, but strict mode is not supported (https://github.com/pydantic/pydantic-ai/issues/4116).
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            OpenAIModelProfile(
+                openai_chat_thinking_field='reasoning',
+                openai_supports_strict_tool_definition=False,
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+                # Ollama's chat request reads only `max_tokens` and silently ignores `max_completion_tokens`.
+                # See `ChatCompletionRequest` in https://github.com/ollama/ollama/blob/main/openai/openai.go.
+                openai_chat_supports_max_completion_tokens=False,
+            ),
+            special_token_route_profile('ollama', model_name),
+        )
 
     def __init__(
         self,
         base_url: str | None = None,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Create a new Ollama provider.
 
@@ -81,7 +102,7 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             openai_client: An existing
                 [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
         if openai_client is not None:
             assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
@@ -93,15 +114,11 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             if not base_url:
                 raise UserError(
                     'Set the `OLLAMA_BASE_URL` environment variable or pass it via `OllamaProvider(base_url=...)`'
-                    'to use the Ollama provider.'
+                    ' to use the Ollama provider.'
                 )
 
             # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
             # openai compatible models do not always need an API key, but a placeholder (non-empty) key is required.
             api_key = api_key or os.getenv('OLLAMA_API_KEY') or 'api-key-not-set'
 
-            if http_client is not None:
-                self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
-            else:
-                http_client = cached_async_http_client(provider='ollama')
-                self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
+            self._client = self._create_openai_client(base_url=base_url, api_key=api_key, http_client=http_client)

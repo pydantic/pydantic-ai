@@ -1,33 +1,95 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import functools
 import sys
+import warnings
 from collections.abc import Callable
 from functools import partial
-from typing import Any, cast
+from typing import Any
 
+import anyio.from_thread
+import anyio.to_thread
 import pytest
-from _pytest.python_api import RaisesContext
+import trio
 from dirty_equals import HasRepr
 
-from ..conftest import try_import
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
-
+from ..conftest import no_leaked_tasks, try_import
 
 with try_import() as imports_successful:
     from pydantic_evals._utils import (
         UNSET,
         Unset,
+        get_event_loop,
         get_unwrapped_function_name,
         is_set,
+        run_until_complete,
+        running_on_asyncio,
         task_group_gather,
     )
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
+
+
+def test_run_until_complete_cleans_up_own_task_on_interrupt():
+    """A `KeyboardInterrupt` during `run_until_complete` must cancel only its own task and drive its
+    cleanup, leaving no pending task and not touching other tasks on the caller-owned loop.
+
+    Simulated by patching the loop because a real interrupt mid-`run_until_complete` while the
+    coroutine is suspended can't be triggered reliably through the public API.
+    """
+    cleaned: list[str] = []
+
+    async def coro() -> None:
+        try:
+            await asyncio.Event().wait()  # suspends forever
+        finally:
+            cleaned.append('cleaned')
+
+    loop = get_event_loop()
+    real_run_until_complete = loop.run_until_complete
+    calls = 0
+
+    def interrupt_once(future: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # Let our task start and suspend, then simulate Ctrl-C reaching the caller.
+            loop.call_soon(loop.stop)
+            loop.run_forever()
+            raise KeyboardInterrupt
+        return real_run_until_complete(future)
+
+    with no_leaked_tasks(loop), pytest.MonkeyPatch.context() as mp:
+        mp.setattr(loop, 'run_until_complete', interrupt_once)
+        with pytest.raises(KeyboardInterrupt):
+            run_until_complete(coro())
+
+    assert cleaned == ['cleaned']  # our coroutine's cleanup ran
+
+
+async def test_run_until_complete_cancels_a_task_passed_in_when_the_drive_fails():
+    """A `Task` passed in is the task `run_until_complete` drives, so a failed drive cancels it.
+
+    Inside a running loop, `loop.run_until_complete()` raises before driving anything, and the cleanup
+    cancels the task. Pinned so that changing who owns a passed-in task is a deliberate decision.
+    """
+    task = asyncio.create_task(asyncio.sleep(0, result=True))
+    with pytest.raises(RuntimeError, match='This event loop is already running'):
+        run_until_complete(task)
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+def test_run_until_complete_propagates_coroutine_error():
+    """When the coroutine itself raises, the task is already done so no cleanup is attempted and the
+    exception propagates unchanged."""
+
+    async def coro() -> None:
+        raise ValueError('boom')
+
+    with pytest.raises(ValueError, match='boom'):
+        run_until_complete(coro())
 
 
 def test_unset():
@@ -109,7 +171,7 @@ def test_get_unwrapped_function_name_error():
         pass
 
     with pytest.raises(AttributeError) as exc_info:
-        get_unwrapped_function_name(InvalidCallable())  # type: ignore
+        get_unwrapped_function_name(InvalidCallable())  # pyright: ignore[reportArgumentType]
 
     assert str(exc_info.value) == "'InvalidCallable' object has no attribute '__name__'"
 
@@ -144,9 +206,51 @@ async def test_task_group_gather_with_error():
         return 3
 
     tasks = [task1, task2, task3]
-    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
+    with pytest.raises(ExceptionGroup) as exc_info:
         await task_group_gather(tasks)
 
     assert exc_info.value == HasRepr(
         repr(ExceptionGroup('unhandled errors in a TaskGroup', [ValueError('Task 2 failed')]))
     )
+
+
+async def test_running_on_asyncio():
+    assert running_on_asyncio()
+    # `anyio.from_thread.run_sync` calls it on the loop, but outside any asyncio task.
+    assert await anyio.to_thread.run_sync(anyio.from_thread.run_sync, running_on_asyncio)
+    assert not await anyio.to_thread.run_sync(running_on_asyncio)
+
+
+def test_trio_guest_mode_is_not_asyncio():
+    # Trio guest mode runs Trio tasks on a thread whose asyncio loop is running.
+    results: list[bool] = []
+
+    async def guest() -> None:
+        results.append(running_on_asyncio())
+
+    async def host() -> None:
+        done = asyncio.Event()
+        trio.lowlevel.start_guest_run(
+            guest,
+            run_sync_soon_threadsafe=asyncio.get_running_loop().call_soon_threadsafe,
+            done_callback=lambda _: done.set(),
+        )
+        await done.wait()
+
+    asyncio.run(host())
+    assert results == [False]
+
+
+async def test_running_on_asyncio_without_sniffio(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr('pydantic_evals._utils._sniffio', None)
+    assert running_on_asyncio()
+    assert not await anyio.to_thread.run_sync(running_on_asyncio)
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 14), reason='Python 3.14 raises instead of warning, which is handled')
+@pytest.mark.usefixtures('fresh_event_loop_policy')
+def test_get_event_loop_does_not_warn_without_a_current_loop():
+    """On Python 3.12 and 3.13, `evaluate_sync` in a script used to warn `There is no current event loop` (#1196)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        get_event_loop()

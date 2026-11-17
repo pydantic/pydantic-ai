@@ -1,14 +1,14 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Awaitable, Generator, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -22,7 +22,7 @@ with try_import() as imports_successful:
     )
     from pydantic_evals.otel._errors import SpanTreeRecordingError
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 
 def test_evaluation_reason():
@@ -77,15 +77,37 @@ def test_evaluation_result():
 
 def test_strict_abc_meta():
     """Test _StrictABCMeta metaclass."""
-    # Test that abstract methods must be implemented
-    with pytest.raises(TypeError) as exc_info:
+    from abc import abstractmethod
+
+    from pydantic_evals.evaluators.report_evaluator import ReportEvaluator
+
+    # Subclasses that don't implement inherited abstract methods are rejected at definition time
+    with pytest.raises(TypeError, match=r"must implement all abstract methods.*'evaluate'"):
 
         @dataclass
-        class InvalidEvaluator(Evaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
+        class InvalidEvaluator(Evaluator[Any, Any, Any]):
             pass
 
-    assert 'must implement all abstract methods' in str(exc_info.value)
-    assert 'evaluate' in str(exc_info.value)
+    with pytest.raises(TypeError, match=r"must implement all abstract methods.*'evaluate'"):
+
+        @dataclass
+        class InvalidReportEvaluator(ReportEvaluator[Any, Any, Any]):
+            pass
+
+    # Subclasses that add new abstract methods but don't implement inherited ones are also rejected
+    with pytest.raises(TypeError, match=r"must implement all abstract methods.*'evaluate'"):
+
+        @dataclass
+        class PartialAbstract(Evaluator[Any, Any, Any]):
+            @abstractmethod
+            def other(self) -> None: ...
+
+    # Classes that define their own abstract methods (new abstract layers) are allowed
+    # — this is how Evaluator and ReportEvaluator themselves work
+    assert hasattr(Evaluator, '__abstractmethods__')
+    assert 'evaluate' in Evaluator.__abstractmethods__
+    assert hasattr(ReportEvaluator, '__abstractmethods__')
+    assert 'evaluate' in ReportEvaluator.__abstractmethods__
 
 
 if TYPE_CHECKING or imports_successful():  # pragma: no branch
@@ -114,15 +136,32 @@ if TYPE_CHECKING or imports_successful():  # pragma: no branch
         def evaluate(self, ctx: EvaluatorContext) -> dict[str, bool]:
             return {'test1': True, 'test2': False}
 
+    class Deferred:
+        """An awaitable that isn't a coroutine, like an `asyncio.Future` or `asyncio.Task`."""
+
+        def __init__(self, value: bool) -> None:
+            self.value = value
+
+        def __await__(self) -> Generator[Any, Any, bool]:
+            return self._resolve().__await__()
+
+        async def _resolve(self) -> bool:
+            return self.value
+
+    @dataclass
+    class DeferredEvaluator(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> Awaitable[bool]:
+            return Deferred(True)
+
 
 async def test_evaluator_sync():
     """Test synchronous evaluator execution."""
     ctx = EvaluatorContext(
         name='test',
-        inputs={},
+        inputs=dict[str, Any](),
         metadata=None,
         expected_output=None,
-        output={},
+        output=dict[str, Any](),
         duration=0.0,
         _span_tree=SpanTreeRecordingError('did not record spans'),
         attributes={},
@@ -153,10 +192,10 @@ async def test_evaluator_async():
     """Test asynchronous evaluator execution."""
     ctx = EvaluatorContext(
         name='test',
-        inputs={},
+        inputs=dict[str, Any](),
         metadata=None,
         expected_output=None,
-        output={},
+        output=dict[str, Any](),
         duration=0.0,
         _span_tree=SpanTreeRecordingError('did not record spans'),
         attributes={},
@@ -174,11 +213,82 @@ async def test_evaluator_async():
     assert result is True
 
 
+def _make_context() -> EvaluatorContext:
+    return EvaluatorContext(
+        name='test',
+        inputs=dict[str, Any](),
+        metadata=None,
+        expected_output=None,
+        output=dict[str, Any](),
+        duration=0.0,
+        _span_tree=SpanTreeRecordingError('did not record spans'),
+        attributes={},
+        metrics={},
+    )
+
+
+def test_evaluator_sync_awaits_non_coroutine_awaitable():
+    """`evaluate_sync` runs an awaitable that isn't a coroutine to completion instead of returning it."""
+    assert DeferredEvaluator().evaluate_sync(_make_context()) is True
+
+
+async def test_evaluator_async_awaits_non_coroutine_awaitable():
+    """`evaluate_async` awaits an awaitable that isn't a coroutine instead of returning it."""
+    assert await DeferredEvaluator().evaluate_async(_make_context()) is True
+
+
 async def test_evaluation_name():
     """Test evaluator name method."""
     evaluator = SimpleEvaluator()
     assert evaluator.get_serialization_name() == 'SimpleEvaluator'
     assert evaluator.get_default_evaluation_name() == 'SimpleEvaluator'
+
+
+def test_evaluation_name_method_override():
+    """Overriding `get_default_evaluation_name` customizes the name in reports."""
+
+    @dataclass
+    class CustomName(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            raise NotImplementedError
+
+        def get_default_evaluation_name(self) -> str:
+            return 'overridden'
+
+    assert CustomName().get_default_evaluation_name() == 'overridden'
+
+
+def test_evaluator_version_default_is_none():
+    """The base `get_evaluator_version` returns None when no version is declared."""
+
+    @dataclass
+    class Unversioned(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            raise NotImplementedError
+
+    assert Unversioned().get_evaluator_version() is None
+
+
+def test_evaluator_version_method_override():
+    """Overriding `get_evaluator_version` exposes the version to dispatch."""
+
+    @dataclass
+    class VersionedViaMethod(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            raise NotImplementedError
+
+        def get_evaluator_version(self) -> str | None:
+            return 'v3'
+
+    assert VersionedViaMethod().get_evaluator_version() == 'v3'
+
+
+def test_builtin_evaluators_evaluation_name_field():
+    """Built-in evaluators expose `evaluation_name` as a constructor-set dataclass field."""
+    from pydantic_evals.evaluators.common import Equals
+
+    assert Equals(value=42, evaluation_name='int_match').get_default_evaluation_name() == 'int_match'
+    assert Equals(value=42).get_default_evaluation_name() == 'Equals'
 
 
 async def test_evaluator_serialization():
@@ -189,7 +299,7 @@ async def test_evaluator_serialization():
         value: int = 42
         optional: str | None = None
         default_value: bool = False
-        default_factory_value: list[int] = field(default_factory=list)
+        default_factory_value: list[int] = field(default_factory=list[int])
 
         def evaluate(self, ctx: EvaluatorContext) -> bool:
             raise NotImplementedError
@@ -200,10 +310,21 @@ async def test_evaluator_serialization():
     assert adapter.dump_python(evaluator, context=None) == snapshot({'arguments': None, 'name': 'ExampleEvaluator'})
     assert adapter.dump_python(evaluator, context={'use_short_form': True}) == snapshot('ExampleEvaluator')
 
-    # Test with a single non-default value
+    # Test with a single non-default value (first field) — uses tuple form
     evaluator = ExampleEvaluator(value=100)
     assert adapter.dump_python(evaluator, context=None) == snapshot({'arguments': [100], 'name': 'ExampleEvaluator'})
     assert adapter.dump_python(evaluator, context={'use_short_form': True}) == snapshot({'ExampleEvaluator': 100})
+
+    # Test with a single non-default value (non-first field) — uses dict form
+    evaluator = ExampleEvaluator(optional='test')
+    spec = evaluator.as_spec()
+    assert spec.arguments == {'optional': 'test'}
+    assert adapter.dump_python(evaluator, context=None) == snapshot(
+        {'arguments': {'optional': 'test'}, 'name': 'ExampleEvaluator'}
+    )
+    assert adapter.dump_python(evaluator, context={'use_short_form': True}) == snapshot(
+        {'ExampleEvaluator': {'optional': 'test'}}
+    )
 
     # Test with multiple non-default values
     evaluator = ExampleEvaluator(value=100, optional='test', default_value=True)
@@ -229,10 +350,10 @@ async def test_run_evaluator():
     """Test run_evaluator function."""
     ctx = EvaluatorContext(
         name='test',
-        inputs={},
+        inputs=dict[str, Any](),
         metadata=None,
         expected_output=None,
-        output={},
+        output=dict[str, Any](),
         duration=0.0,
         _span_tree=SpanTreeRecordingError('did not record spans'),
         attributes={},
@@ -250,6 +371,7 @@ async def test_run_evaluator():
                 'reason': None,
                 'source': {'arguments': None, 'name': 'SimpleEvaluator'},
                 'value': True,
+                'evaluator_version': None,
             }
         ]
     )
@@ -264,6 +386,7 @@ async def test_run_evaluator():
                 'reason': 'Failed',
                 'source': {'arguments': {'reason': 'Failed', 'value': False}, 'name': 'SimpleEvaluator'},
                 'value': False,
+                'evaluator_version': None,
             }
         ]
     )
@@ -273,8 +396,20 @@ async def test_run_evaluator():
     results = await run_evaluator(evaluator, ctx)
     assert adapter.dump_python(results) == snapshot(
         [
-            {'name': 'test1', 'reason': None, 'source': {'arguments': None, 'name': 'MultiEvaluator'}, 'value': True},
-            {'name': 'test2', 'reason': None, 'source': {'arguments': None, 'name': 'MultiEvaluator'}, 'value': False},
+            {
+                'name': 'test1',
+                'reason': None,
+                'source': {'arguments': None, 'name': 'MultiEvaluator'},
+                'value': True,
+                'evaluator_version': None,
+            },
+            {
+                'name': 'test2',
+                'reason': None,
+                'source': {'arguments': None, 'name': 'MultiEvaluator'},
+                'value': False,
+                'evaluator_version': None,
+            },
         ]
     )
 
@@ -288,6 +423,7 @@ async def test_run_evaluator():
                 'reason': None,
                 'source': {'arguments': None, 'name': 'AsyncEvaluator'},
                 'value': True,
+                'evaluator_version': None,
             }
         ]
     )

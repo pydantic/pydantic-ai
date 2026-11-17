@@ -1,0 +1,207 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '680'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather for Paris and summarize
+        role: user
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      tool_choice: any
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '463'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019c0b9d-2c0f-7737-a0e2-85f22d375c9a
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "Paris"}'
+              name: get_weather
+            id: rHU0eZiMa
+            index: 0
+      created: 1769721375
+      id: 50fb748699f4490fa9a67f656fd878d6
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 12
+        num_cached_tokens: 151
+        prompt_tokens: 152
+        total_tokens: 164
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '960'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=AGdZDIito2pOD.Lt7.o5b8NepRWLKFWZc.2_dy9f.Kg-1769721376-1.0.1.1-UkWx.H2QNhWkXFeBLY.3_MwZUpM5xJauaR5bCw3qBvfPzXuKi3_ahhHguYVrjpi9g_rKxMxjpViDrx8dEbVZ0s3cC1lkIwlggYOIVQMeObA;
+        _cfuvid=uXVF1QgJOufYD3BoBxiFNnIbALjEenuMKnHbXVFrXW0-1769721376289-0.0.1.1-604800000
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather for Paris and summarize
+        role: user
+      - content: []
+        prefix: false
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city": "Paris"}'
+            name: get_weather
+          id: rHU0eZiMa
+          index: 0
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: rHU0eZiMa
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      tool_choice: any
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '583'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019c0b9d-2f4a-7b48-8abd-4d70767fc58a
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "Paris", "summary": "The current weather in Paris is sunny with a temperature of 22 degrees
+                Celsius. It''s a pleasant day!"}'
+              name: final_result
+            id: tfn2AP3zy
+            index: 0
+      created: 1769721376
+      id: be70b7928a384c99bac87e7882c342e8
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 39
+        num_cached_tokens: 174
+        prompt_tokens: 175
+        total_tokens: 214
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,13 +1,1291 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+import itertools
+import json
+import sys
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
+from contextlib import AbstractContextManager, contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, replace
+from decimal import Decimal
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
+from urllib.parse import urlparse
+
+from opentelemetry import context as otel_context
+from opentelemetry.baggage import get_baggage
+from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, Tracer, get_current_span
+from opentelemetry.util.types import AttributeValue
+from pydantic import ConfigDict, PydanticUserError, TypeAdapter
+from pydantic_core import PydanticSerializationError, to_json
+
+from pydantic_graph._utils import get_traceparent
+
+from ._durable_replay import ReplaySnapshot, snapshot as replay_snapshot_now, start_as_current_span
+from ._genai_prices import best_effort_price
+from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 
 if TYPE_CHECKING:
-    from typing_extensions import Self
+    from typing import Self
 
-DEFAULT_INSTRUMENTATION_VERSION = 2
+    from genai_prices.types import PriceCalculation
+
+    from pydantic_ai.capabilities.abstract import AbstractCapability
+    from pydantic_ai.messages import InstructionPart, ModelMessage, ModelRequest, ModelResponse
+    from pydantic_ai.models import AbstractModel, ModelRequestContext, ModelRequestParameters
+    from pydantic_ai.models.instrumented import InstrumentationSettings
+    from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool
+    from pydantic_ai.settings import ModelSettings
+    from pydantic_ai.tools import AgentDepsT, ToolDefinition
+    from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
+
+DEFAULT_INSTRUMENTATION_VERSION = 5
 """Default instrumentation version for `InstrumentationSettings`."""
+
+AGENT_NAME_BAGGAGE_KEY = 'gen_ai.agent.name'
+RUN_ID_BAGGAGE_KEY = 'gen_ai.agent.call.id'
+CONVERSATION_ID_BAGGAGE_KEY = 'gen_ai.conversation.id'
+
+GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
+GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
+GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
+
+MODEL_SETTING_ATTRIBUTES: tuple[
+    Literal[
+        'max_tokens',
+        'top_p',
+        'seed',
+        'temperature',
+        'presence_penalty',
+        'frequency_penalty',
+    ],
+    ...,
+] = (
+    'max_tokens',
+    'top_p',
+    'seed',
+    'temperature',
+    'presence_penalty',
+    'frequency_penalty',
+)
+
+ANY_ADAPTER = TypeAdapter[Any](Any)
+_BASE64_ANY_ADAPTER = TypeAdapter[Any](Any, config=ConfigDict(ser_json_bytes='base64'))
+
+# These are in the spec:
+# https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
+TOKEN_HISTOGRAM_BOUNDARIES = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
+
+# These are advised by the spec (the metric is "Development" stability, so this may change):
+# https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-metrics.md#metric-gen_aiclientoperationtime_to_first_chunk
+# Like any bucket advisory it's only advice: users can override it by configuring a View for this
+# instrument on their MeterProvider, and SDKs configured for exponential-bucket histogram
+# aggregation (e.g. logfire) ignore it entirely.
+TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES = (
+    0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92,
+)  # fmt: skip
+
+_model_request_span_captures: ContextVar[
+    tuple[tuple[ModelRequestContext, Callable[[ModelRequestContext], ModelRequestContext]], ...]
+] = ContextVar('model_request_span_captures', default=())
+_model_response_span_captures: ContextVar[
+    tuple[tuple[ModelRequestContext, Callable[[ModelResponse | None, float | None], None]], ...]
+] = ContextVar('model_response_span_captures', default=())
+
+
+@dataclass(frozen=True)
+class ContentPolicy:
+    """One span's `include_content`, tagged with the span it was set for.
+
+    The tag is what makes the variable safe to read. Restoring it is a plain `set` rather than a
+    `reset` (an interrupted streamed run finalizes the context manager in a different `Context`,
+    where `reset` raises), and a `set` lands only in the `Context` that runs it, so the `Context`
+    that opened the request can be left holding a finished request's value. Naming the span means a
+    reader can only honour a policy set for the span in front of it, and anything else fails closed.
+
+    It also carries the tracer the span was opened with, so that a span opened inside the request
+    (a decision model's `decide`, or a `FallbackModel` attempt that failed) goes to the same tracer
+    provider as the request's own span, even when that is not the global one. Such a span reads the
+    policy through `open_request_policy`.
+    """
+
+    span: Span
+    include_content: bool
+    tracer: Tracer
+
+
+include_content_ctx: ContextVar[ContentPolicy | None] = ContextVar('include_content', default=None)
+"""Carries the open `chat` span's `include_content` to code that updates that span without holding
+the settings -- `FallbackModel`, which refreshes `model_request_parameters` once it knows which
+model answered. Set by `open_model_request_span` for the span's lifetime, so a refresh redacts the
+instruction content of the model it picked the way the span was opened, rather than guessing from
+what is already recorded. Read it through `span_include_content`, never directly. `None` means no
+instrumented request is open.
+
+A context variable because `ModelRequestContext` is public and holds only the inputs to
+`Model.request[_stream]`, and `FallbackModel` reaches the span through `get_current_span()` anyway,
+so it is already relying on the ambient context.
+"""
+
+
+def span_include_content(span: Span) -> bool:
+    """Whether `span` was opened with content capture, defaulting to `False` when nothing says so.
+
+    Fails closed on every answer but "this span's own request wanted content": no request open, or a
+    policy belonging to a different span, both mean nothing vouches for exporting content here.
+    """
+    policy = include_content_ctx.get()
+    return (
+        policy is not None
+        and policy.span.get_span_context().span_id == span.get_span_context().span_id
+        and policy.include_content
+    )
+
+
+def open_request_policy() -> ContentPolicy | None:
+    """The policy of the instrumented request the caller runs inside, for a span opened beneath that request.
+
+    `span_include_content` answers for the one span a policy was set for. A span opened inside the
+    request -- a decision model's `decide` -- is not that span, and need not be its child either:
+    a durable engine's step, task or activity span can sit in between. So this asks whether the
+    request is still open around the caller, and still fails closed on a stale policy: the span the
+    policy was set for must not have ended, which a finished request's span has, and the current
+    span must be in its trace. `None` means no instrumented request is open here, and nothing
+    should be emitted.
+    """
+    policy = include_content_ctx.get()
+    if policy is None or not policy.span.is_recording():
+        return None
+    if get_current_span().get_span_context().trace_id != policy.span.get_span_context().trace_id:
+        return None
+    return policy
+
+
+def current_model_request_span() -> Span | None:
+    """The request-policy span, only while it's the caller's current span, for a model to record attributes on."""
+    policy = include_content_ctx.get()
+    if (
+        policy is None
+        or not policy.span.is_recording()
+        or get_current_span().get_span_context() != policy.span.get_span_context()
+    ):
+        return None
+    return policy.span
+
+
+@contextmanager
+def request_policy_scope(policy: ContentPolicy | None) -> Generator[None]:
+    """Install `policy` for the scope, for a durable unit that runs outside the context that opened the request."""
+    previous = include_content_ctx.get()
+    include_content_ctx.set(policy)
+    try:
+        yield
+    finally:
+        # A plain `set`, like `open_model_request_span`'s restore, so it can't fail across `Context`s.
+        include_content_ctx.set(previous)
+
+
+def capture_model_request_span_context(request_context: ModelRequestContext) -> None:
+    """Capture the finalized request at the model-call boundary when instrumentation is active."""
+    for owner, capture in _model_request_span_captures.get():
+        if owner is request_context:
+            capture(replace(request_context, messages=list(request_context.messages)))
+
+
+def capture_model_response_span_context(
+    request_context: ModelRequestContext,
+    response: ModelResponse | None,
+    time_to_first_chunk: float | None = None,
+) -> None:
+    """Capture a response before an after hook can reject it when instrumentation is active.
+
+    `None` releases the captured response once a hook has moved the request on to another attempt
+    with `RetryModelRequest`: that response is recorded as a failed attempt with its own span.
+    """
+    for owner, capture in _model_response_span_captures.get():
+        if owner is request_context:
+            capture(response, time_to_first_chunk)
+
+
+@contextmanager
+def model_response_span_capture(
+    request_context: ModelRequestContext, capture: Callable[[ModelResponse | None, float | None], None]
+) -> Generator[None]:
+    """Scope response capture to the active instrumentation wrapper."""
+    token = _model_response_span_captures.set((*_model_response_span_captures.get(), (request_context, capture)))
+    try:
+        yield
+    finally:
+        _model_response_span_captures.reset(token)
+
+
+@dataclass(slots=True)
+class CachedMessageJson:
+    """A `MessageJsonCache` entry: one input message's serialized OTel JSON fragment."""
+
+    message: ModelMessage
+    """The cached message itself. Never read — held so the message stays alive while the entry
+    exists, which pins its `id`: a cache hit is therefore guaranteed to be for this very object,
+    never for a new message that recycled a garbage-collected message's address (e.g. a
+    `dataclasses.replace`d sibling sharing the same `parts` list)."""
+    parts: object
+    """The message's `parts` list at serialization time, compared by identity: a message whose
+    `parts` list is reassigned (e.g. dynamic system prompt re-evaluation) is re-serialized rather
+    than served stale."""
+    fragment: bytes
+    """The serialized fragment (see `message_json_fragment`)."""
+    mcp_url_ids: frozenset[str] = frozenset()
+    """MCP names withheld from the serialized historical message fragment."""
+    request_scoped: bool = False
+    """Whether the message holds a request-scoped system prompt, whose fragment changes once its request
+    has been answered."""
+    answered: bool = False
+    """Whether the fragment marks the message's request-scoped system prompts as no longer visible (see
+    `message_json_fragment`)."""
+
+
+MessageJsonCache: TypeAlias = dict[int, CachedMessageJson]
+"""Per-run cache of input messages' serialized OTel JSON fragments, keyed by `id(message)`.
+
+Created fresh per agent run and discarded when the run ends, so it never outlives the run whose
+messages it caches. Entries for messages no longer in the input history are evicted on each
+request, so the cache (and the messages it keeps alive) stays bounded by the current history even
+when a history processor prunes or rebuilds messages.
+
+This caching is what makes the per-request `gen_ai.input.messages` attribute O(new messages)
+instead of O(history). It relies on an invariant that framework code must uphold: never mutate a
+history message's fields in place after it may have been serialized for a span — build new
+message/part objects or reassign `.parts` instead. User code mutating history in place mid-run is
+unsupported (see `MessageHistoryMutatedWarning`).
+"""
+
+
+def get_agent_run_baggage_attributes() -> dict[str, Any]:
+    """Read agent name, run ID, and conversation ID from OTel baggage and return as span attributes."""
+    attrs: dict[str, Any] = {}
+    agent_name = get_baggage(AGENT_NAME_BAGGAGE_KEY)
+    if agent_name is not None:
+        attrs[AGENT_NAME_BAGGAGE_KEY] = agent_name
+    run_id = get_baggage(RUN_ID_BAGGAGE_KEY)
+    if run_id is not None:
+        attrs[RUN_ID_BAGGAGE_KEY] = run_id
+    conversation_id = get_baggage(CONVERSATION_ID_BAGGAGE_KEY)
+    if conversation_id is not None:
+        attrs[CONVERSATION_ID_BAGGAGE_KEY] = conversation_id
+    return attrs
+
+
+CIRCULAR_REFERENCE_PLACEHOLDER = '<circular reference>'
+
+
+def redact_binary_content(value: Any, settings: InstrumentationSettings) -> object:
+    """Strip binary data out of a value that's about to be serialized into a span attribute.
+
+    The attributes that carry whatever a tool or output function produced serialize arbitrary
+    values, so they can't honor `include_binary_content` the way `_convert_binary_to_otel_part`
+    does for message content: `BinaryContent`'s own serialization is a public contract shared with
+    message history, and making it depend on instrumentation would change how it dumps everywhere.
+    The value is redacted up front instead, keeping the media type and the rest of the file
+    metadata, and dropping only the data. That retained set is `BinaryContent`'s own and is wider
+    than the `mime_type` `_convert_binary_to_otel_part` keeps, because this replaces a value the
+    type itself serialized rather than building a spec-shaped message part.
+
+    Containers and `ToolReturn` are walked, matching the depth at which binary content is honored
+    elsewhere (the sequence in a `UserPromptPart`'s content). A `BinaryContent` nested inside a
+    user's own model is left alone: rebuilding that model to redact one field would change how
+    everything else in the attribute is serialized.
+    """
+    if settings.include_binary_content:
+        return value
+    try:
+        return _redact_binary_content(value, set())
+    except Exception as e:
+        # Instrumentation must not fail an otherwise-successful run, and the value can't be handed
+        # back to make that happen: the callers fall back to `str(value)`, whose `BinaryContent`
+        # repr prints the very data the flag excludes. Only the exception's type is reported for
+        # the same reason -- its message is user-controlled and can itself embed a `BinaryContent`.
+        return f'Unable to redact binary content: {type(e).__name__}'
+
+
+def _redact_binary_content(value: Any, active: set[int]) -> object:
+    from pydantic_ai._deferred import DeferredToolRequests
+    from pydantic_ai._mcp_apps import redact_mcp_app_binary
+    from pydantic_ai.messages import BinaryContent, ToolReturn
+
+    identity = id(value)
+    if not isinstance(value, (BinaryContent, ToolReturn, DeferredToolRequests, Mapping, list, tuple)):
+        return value
+    if identity in active:
+        return CIRCULAR_REFERENCE_PLACEHOLDER
+
+    # Tracks the objects on the path currently being walked, not every object seen, so that the
+    # same `BinaryContent` appearing twice side by side is redacted twice rather than the second
+    # occurrence being mistaken for a cycle.
+    active.add(identity)
+    try:
+        if isinstance(value, BinaryContent):
+            return {
+                'media_type': value.media_type,
+                # Typed `dict[str, Any]`, so it can hold binary content of its own.
+                'vendor_metadata': _redact_binary_content(value.vendor_metadata, active),
+                'kind': value.kind,
+                'identifier': value.identifier,
+            }
+        if isinstance(value, ToolReturn):
+            return {
+                'return_value': _redact_binary_content(value.return_value, active),
+                'content': _redact_binary_content(value.content, active),
+                'metadata': _redact_binary_content(redact_mcp_app_binary(value.metadata), active),
+                # Tool names, so never binary.
+                'tools': value.tools,
+                'kind': value.kind,
+            }
+        if isinstance(value, DeferredToolRequests):
+            # Carries the metadata a deferring tool attached, so the run's own output has to drop
+            # the same binary the tool's span already did.
+            return {
+                'calls': _redact_binary_content(value.calls, active),
+                'approvals': _redact_binary_content(value.approvals, active),
+                'metadata': _redact_binary_content(value.metadata, active),
+                # Kind names, so never binary; serialized only when there are questions, as the type does.
+                **({'_kinds': value._kinds} if value._kinds else {}),  # pyright: ignore[reportPrivateUsage]
+            }
+        if isinstance(value, Mapping):
+            return {  # pyright: ignore[reportUnknownVariableType]
+                key: _redact_binary_content(item, active)
+                for key, item in value.items()  # pyright: ignore[reportUnknownVariableType]
+            }
+        return [_redact_binary_content(item, active) for item in value]  # pyright: ignore[reportUnknownVariableType]
+    finally:
+        active.discard(identity)
+
+
+def serialize_any(value: Any) -> str:
+    try:
+        try:
+            return ANY_ADAPTER.dump_python(value, mode='json')
+        except UnicodeDecodeError:
+            return _BASE64_ANY_ADAPTER.dump_python(value, mode='json')
+    except Exception:
+        try:
+            return str(value)
+        except Exception as e:
+            return f'Unable to serialize: {e}'
+
+
+def safe_to_json(value: object) -> bytes:
+    """Serialize `value` to compact JSON bytes, tolerating lone surrogates.
+
+    `to_json` raises on unpaired surrogates (e.g. text decoded with `errors='surrogateescape'`),
+    which would crash an otherwise-successful run from within instrumentation. The stdlib fallback
+    escapes them, matching the lenient behavior callers had before adopting `to_json`.
+    """
+    try:
+        return to_json(value)
+    except PydanticSerializationError:
+        return json.dumps(value, separators=(',', ':')).encode()
+
+
+def message_json_fragment(
+    settings: InstrumentationSettings,
+    message: ModelMessage,
+    mcp_url_ids: frozenset[str] = frozenset(),
+    *,
+    answered: bool = False,
+) -> bytes:
+    """Serialize one message to its OTel JSON fragment: comma-joined objects without enclosing brackets.
+
+    A single `ModelMessage` can map to multiple OTel `ChatMessage`s (a `ModelRequest` splits into
+    system/user messages) or to none (an empty request), so the fragment is the whole serialized
+    array with the outer `[` and `]` stripped — fragments then concatenate into a single array.
+    With `answered`, the message is from a request before the current one, so its request-scoped
+    system prompts are marked as no longer visible.
+    """
+    return safe_to_json(
+        settings._span_input_messages(  # pyright: ignore[reportPrivateUsage]
+            [message], mcp_url_ids=mcp_url_ids, current_request_start=1 if answered else 0
+        )
+    )[1:-1]
+
+
+def has_stale_message_json(
+    settings: InstrumentationSettings, messages: Sequence[ModelMessage], cache: MessageJsonCache
+) -> bool:
+    """Detect whether in-place mutation made any cached message fragment stale.
+
+    Re-serializes each message that still has a valid cache entry (same `parts` list) and compares
+    bytes — an O(history) pass meant to run once per run, at the end. Entries whose `parts` token no
+    longer matches are skipped: reassigning `.parts` is the supported mutation style and the next
+    serialization would have refreshed them, so they can't have produced a stale span.
+
+    Detection is deliberately best-effort, covering messages still present at the end of the run: a
+    message that was mutated in place and *then* dropped or rebuilt by a history processor may have
+    produced a stale span without a warning. Closing that gap would require either re-checking
+    cached fragments on every request (the O(history-squared) cost this cache exists to remove) or
+    re-serializing entries as they're evicted (which doubles the serialization cost for processors
+    that rebuild history each request — the workload the cache can't help to begin with).
+    """
+    for message in messages:
+        entry = cache.get(id(message))
+        if (
+            entry is not None
+            and entry.parts is message.parts
+            and entry.fragment != message_json_fragment(settings, message, entry.mcp_url_ids, answered=entry.answered)
+        ):
+            return True
+    return False
+
+
+def server_attributes(base_url: str | None) -> dict[str, AttributeValue]:
+    """Map a model's `base_url` to the OTel `server.*` attributes, omitting what it doesn't carry.
+
+    `base_url` is an overridable property returning an arbitrary string, and `urlparse` defers
+    authority validation to `hostname`/`port`, so a non-numeric port parses fine and only raises
+    when the port is read. Attributes are best-effort telemetry, so an uninterpretable authority
+    yields no attributes rather than failing the request.
+    """
+    attributes: dict[str, AttributeValue] = {}
+    if base_url:
+        try:
+            parsed = urlparse(base_url)
+            hostname, port = parsed.hostname, parsed.port
+        except ValueError:
+            pass
+        else:
+            if hostname:
+                attributes['server.address'] = hostname
+            if port:
+                attributes['server.port'] = port
+
+    return attributes
+
+
+def provider_attributes(system: str, base_url: str | None = None) -> dict[str, AttributeValue]:
+    """Build the provider and server attributes shared by classic and realtime `chat` spans."""
+    return {
+        GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,  # New OTel standard attribute
+        GEN_AI_SYSTEM_ATTRIBUTE: system,  # Preserved for backward compatibility (deprecated)
+        **server_attributes(base_url),
+    }
+
+
+def model_attributes(model: AbstractModel) -> dict[str, AttributeValue]:
+    return {
+        **provider_attributes(model.system, model.base_url),
+        GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
+    }
+
+
+def model_metric_attributes(
+    provider_name: str | None,
+    request_model: AttributeValue | None,
+    response_model: AttributeValue | None,
+) -> dict[str, AttributeValue]:
+    """Build the dimensions shared by classic and realtime per-response metrics."""
+    attributes: dict[str, AttributeValue] = {'gen_ai.operation.name': 'chat'}
+    if provider_name is not None:
+        attributes[GEN_AI_PROVIDER_NAME_ATTRIBUTE] = provider_name
+        attributes[GEN_AI_SYSTEM_ATTRIBUTE] = provider_name
+    if request_model is not None:
+        attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE] = request_model
+    if response_model is not None:
+        attributes['gen_ai.response.model'] = response_model
+    return attributes
+
+
+def model_request_parameters_attributes(
+    model_request_parameters: ModelRequestParameters, *, include_content: bool = True
+) -> dict[str, AttributeValue]:
+    serialized = _serialize_model_request_parameters(model_request_parameters)
+    if not include_content:
+        serialized = _redact_model_request_parameters(serialized)
+        if serialized is None:
+            return {}
+    return {'model_request_parameters': safe_to_json(serialized).decode()}
+
+
+def mcp_telemetry_url_ids(
+    capabilities: Iterable[AbstractCapability[AgentDepsT]], toolset: AbstractToolset[AgentDepsT] | None = None
+) -> set[str]:
+    """Collect only MCP identities derived from URLs, including wrapped capabilities and toolsets."""
+    from pydantic_ai.capabilities.combined import CombinedCapability
+    from pydantic_ai.capabilities.mcp import MCP
+    from pydantic_ai.capabilities.wrapper import WrapperCapability
+
+    identities: set[str] = set()
+    pending = list(capabilities)
+    seen: set[int] = set()
+    while pending:
+        capability = pending.pop()
+        if id(capability) in seen:
+            continue
+        seen.add(id(capability))
+        if isinstance(capability, MCP) and capability._telemetry_url_derived_id:  # pyright: ignore[reportPrivateUsage]
+            identities.add(capability._telemetry_url_derived_id)  # pyright: ignore[reportPrivateUsage]
+        elif isinstance(capability, WrapperCapability):
+            pending.append(capability.wrapped)
+        elif isinstance(capability, CombinedCapability):
+            pending.extend(capability.capabilities)
+
+    if toolset is not None:
+        identities.update(mcp_telemetry_url_toolset_ids(toolset))
+    return identities
+
+
+def mcp_telemetry_url_toolset_ids(toolset: AbstractToolset[AgentDepsT]) -> set[str]:
+    """Collect URL-derived identities owned by local MCP toolsets."""
+    identities: set[str] = set()
+    if 'pydantic_ai.mcp' in sys.modules:
+        # Import only when the optional MCP module has already been loaded by a real toolset.
+        from pydantic_ai.mcp import MCPToolset
+
+        if isinstance(MCPToolset, type):
+
+            def collect_mcp_toolset(child: AbstractToolset[Any]) -> None:
+                if isinstance(child, MCPToolset) and (identity := getattr(child, '_telemetry_url_derived_id', None)):
+                    identities.add(identity)
+
+            toolset.apply(collect_mcp_toolset)
+    return identities
+
+
+def mcp_telemetry_url_tool_names(tools: Mapping[str, ToolsetTool[AgentDepsT]] | None) -> set[str]:
+    """Identify resolved tools owned by a URL-derived local MCP toolset."""
+    names: set[str] = set()
+    if tools is None or 'pydantic_ai.mcp' not in sys.modules:
+        return names
+    from pydantic_ai.mcp import MCPToolset
+    from pydantic_ai.toolsets.combined import _CombinedToolsetTool  # pyright: ignore[reportPrivateUsage]
+
+    if not isinstance(MCPToolset, type):
+        return names
+    for name, tool in tools.items():
+        while isinstance(tool, _CombinedToolsetTool):
+            tool = tool.source_tool
+
+        def collect_mcp_toolset(child: AbstractToolset[AgentDepsT]) -> None:
+            if isinstance(child, MCPToolset) and getattr(child, '_telemetry_url_derived_id', None):
+                names.add(name)
+
+        tool.toolset.apply(collect_mcp_toolset)
+    return names
+
+
+def model_request_telemetry_url_ids(
+    parameters: ModelRequestParameters, *, known_ids: set[str] | None = None
+) -> set[str]:
+    """Resolve URL-derived MCP IDs, retaining known provenance across rebuilt parameters."""
+    from pydantic_ai.native_tools import MCPServerTool
+
+    marked_ids = {
+        tool.id
+        for tool in parameters.native_tools
+        if isinstance(tool, MCPServerTool) and tool._telemetry_url_derived_id == tool.id  # pyright: ignore[reportPrivateUsage]
+    }
+    if parameters._telemetry_mcp_url_ids is not None:  # pyright: ignore[reportPrivateUsage]
+        return parameters._telemetry_mcp_url_ids | marked_ids  # pyright: ignore[reportPrivateUsage]
+    return (known_ids or set()) | marked_ids
+
+
+def mcp_telemetry_history_ids(messages: Iterable[ModelMessage], known_ids: frozenset[str]) -> frozenset[str]:
+    """Withhold MCP names in trace history when their original ID provenance is unavailable."""
+    from pydantic_ai.messages import ModelResponse, NativeToolCallPart, NativeToolReturnPart
+
+    ids = set(known_ids)
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            for part in message.parts:
+                if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name.startswith(
+                    'mcp_server:'
+                ):
+                    # A resumed response carries the name but not the request that classified its ID.
+                    # Trace-only masking is conservative; provider history is left intact.
+                    ids.add(part.tool_name.removeprefix('mcp_server:'))
+    return frozenset(ids)
+
+
+def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:
+    """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
+
+    Three fields here are that text: the instructions, whose dynamic parts can be built from deps, the
+    prompted-output template, and the descriptions in the deferred capability catalog, which the catalog
+    in the instructions repeats. Instruction parts keep their origin and ids, and catalog entries their
+    ids and whether they're active, so what the parts are and how they cache stays visible. Tool and
+    output *schemas* stay too -- they are the request's structure rather than message content, and
+    `include_model_request_parameters=False` drops the whole attribute for anyone who wants them gone
+    as well.
+
+    `_serialize_model_request_parameters` falls back to inferring a shape, which for a value it cannot
+    walk -- a tool whose `metadata` holds an arbitrary object, say -- is the request's string
+    representation, instructions and all. There is nothing to redact in a string, so that is reported
+    as unredactable rather than exported.
+    """
+    if not isinstance(serialized_parameters, dict):
+        return None
+    parameters = cast('dict[str, Any]', serialized_parameters)
+    parts = parameters.get('instruction_parts')
+    if isinstance(parts, list):
+        # Each part is `InstructionPart` dumped through its own schema, so a mapping with `content`.
+        for part in cast('list[dict[str, Any]]', parts):
+            part.pop('content', None)
+    if parameters.get('prompted_output_template') is not None:
+        parameters['prompted_output_template'] = None
+    for entry in cast('list[dict[str, Any]]', parameters.get('deferred_capabilities', [])):
+        # The deferred capability catalog's descriptions, the same text as the catalog instruction part.
+        entry.pop('description', None)
+    return parameters
+
+
+def _serialize_model_request_parameters(model_request_parameters: ModelRequestParameters) -> Any:
+    """Serialize the parameters through their own schema, falling back to inference.
+
+    `serialize_any` infers a shape from the value, which reads a dataclass as its fields and so
+    loses whatever its class meant. `InstructionPart.id` is exactly that case: its source is a
+    class rather than a tagged field, so inference renders a toolset and a capability sharing an
+    `id` identically and drops the agent's source to `{}`. The declared schema renders the id as
+    the same flat key it serializes to everywhere else.
+    """
+    from pydantic_ai.native_tools import NATIVE_TOOL_TYPES, MCPServerTool
+
+    native_tool_types = tuple(NATIVE_TOOL_TYPES.values())
+    url_ids = model_request_telemetry_url_ids(model_request_parameters)
+    toolset_ids = model_request_parameters._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
+    tool_names = model_request_parameters._telemetry_mcp_url_tool_names  # pyright: ignore[reportPrivateUsage]
+    if not (url_ids or toolset_ids) and not any(
+        isinstance(tool, MCPServerTool) for tool in model_request_parameters.native_tools
+    ):
+        # Keep the established serializer, including its fallback, byte-for-byte for requests
+        # outside the affected MCP paths.
+        try:
+            return _model_request_parameters_adapter(native_tool_types).dump_python(
+                model_request_parameters, mode='json'
+            )
+        except Exception:
+            return serialize_any(model_request_parameters)
+
+    native_tools: list[AbstractNativeTool] = [
+        _redact_mcp_server_tool(tool, url_ids) if isinstance(tool, MCPServerTool) else tool
+        for tool in model_request_parameters.native_tools
+    ]
+    native_names = {f'mcp_server:{identity}' for identity in url_ids}
+    safe_parameters = replace(
+        model_request_parameters,
+        function_tools=[
+            _redact_mcp_tool_definition(tool, url_ids, toolset_ids, tool_names, native_names)
+            for tool in model_request_parameters.function_tools
+        ],
+        output_tools=[
+            _redact_mcp_tool_definition(tool, url_ids, toolset_ids, tool_names, native_names)
+            for tool in model_request_parameters.output_tools
+        ],
+        native_tools=native_tools,
+        instruction_parts=_redact_mcp_instruction_parts(
+            model_request_parameters.instruction_parts, url_ids, toolset_ids
+        ),
+        deferred_capability_ids={
+            '[REDACTED]' if identity in url_ids else identity
+            for identity in model_request_parameters.deferred_capability_ids
+        },
+        _telemetry_mcp_url_ids=set(),
+        _telemetry_mcp_url_toolset_ids=set(),
+        _telemetry_mcp_url_tool_names=set(),
+    )
+    try:
+        return _model_request_parameters_adapter(native_tool_types).dump_python(safe_parameters, mode='json')
+    except Exception:
+        # A tool definition carrying something unserializable must not take the span down with it.
+        return serialize_any(safe_parameters)
+
+
+def _redact_mcp_server_tool(tool: MCPServerTool, url_ids: set[str]) -> MCPServerTool:
+    return replace(
+        tool,
+        id='[REDACTED]' if tool.id in url_ids else tool.id,
+        url='[REDACTED]',
+        authorization_token='[REDACTED]' if tool.authorization_token is not None else None,
+        headers={key: '[REDACTED]' for key in tool.headers} if tool.headers is not None else None,
+    )
+
+
+def _redact_mcp_tool_definition(
+    tool: ToolDefinition,
+    url_ids: set[str],
+    toolset_ids: set[str],
+    tool_names: set[str] | None,
+    native_names: set[str],
+) -> ToolDefinition:
+    # A separate toolset may have a caller-chosen id equal to an MCP URL-derived id.
+    # Its tool definitions are not MCP-owned merely because the strings collide.
+    mcp_toolset_owned = tool.toolset_id in toolset_ids and (tool_names is None or tool.name in tool_names)
+    if not (
+        tool.capability_id in url_ids
+        or tool.unless_native in native_names
+        or tool.with_native in native_names
+        or mcp_toolset_owned
+    ):
+        return tool
+    return replace(
+        tool,
+        toolset_id='[REDACTED]' if mcp_toolset_owned else tool.toolset_id,
+        capability_id='[REDACTED]' if tool.capability_id in url_ids else tool.capability_id,
+        unless_native='mcp_server:[REDACTED]' if tool.unless_native in native_names else tool.unless_native,
+        with_native='mcp_server:[REDACTED]' if tool.with_native in native_names else tool.with_native,
+    )
+
+
+def _redact_mcp_instruction_parts(
+    instruction_parts: list[InstructionPart] | None, url_ids: set[str], toolset_ids: set[str]
+) -> list[InstructionPart] | None:
+    from pydantic_ai.messages import CapabilityInstructionSource, ToolsetInstructionSource
+
+    if instruction_parts is None or not (url_ids or toolset_ids):
+        return instruction_parts
+    redacted_parts: list[InstructionPart] = []
+    for part in instruction_parts:
+        instruction_id = part.id
+        if instruction_id is not None and (
+            (isinstance(source := instruction_id.source, ToolsetInstructionSource) and source.id in toolset_ids)
+            or (isinstance(source, CapabilityInstructionSource) and source.id in url_ids)
+        ):
+            redacted_parts.append(replace(part, id=replace(instruction_id, source=replace(source, id='[REDACTED]'))))
+        else:
+            redacted_parts.append(part)
+    return redacted_parts
+
+
+@lru_cache(maxsize=1)
+def _model_request_parameters_adapter(
+    native_tool_types: tuple[type[AbstractNativeTool], ...],
+) -> TypeAdapter[ModelRequestParameters]:
+    """Build the adapter from `NATIVE_TOOL_TYPES`, whose current contents `native_tool_types` passes as the cache key.
+
+    The parameters' native tools serialize through a union of the registered types. A type registers when its class
+    is defined, which can be after the first request, and an adapter built before then can't serialize its instances
+    through their own schema. The cache keeps only the adapter for the registry's current contents.
+
+    A registered type pydantic can't build a schema for fails the whole build. The parameters then serialize by
+    inference, as the `serialize_any` fallback does, without retrying the build on every request.
+    """
+    from pydantic_ai.models import ModelRequestParameters
+
+    try:
+        return TypeAdapter(ModelRequestParameters)
+    except PydanticUserError:
+        return ANY_ADAPTER
+
+
+def model_settings_attributes(model_settings: ModelSettings | None) -> dict[str, AttributeValue]:
+    """Map the OTel-spec model settings (`max_tokens`, `temperature`, ...) to `gen_ai.request.*` attributes."""
+    attributes: dict[str, AttributeValue] = {}
+    if model_settings:
+        for key in MODEL_SETTING_ATTRIBUTES:
+            if isinstance(value := model_settings.get(key), float | int):
+                attributes[f'gen_ai.request.{key}'] = value
+    return attributes
+
+
+def annotate_tool_call_otel_metadata(response: ModelResponse, parameters: ModelRequestParameters) -> None:
+    """Copy OTel-relevant metadata from tool definitions onto matching tool call parts.
+
+    This allows tool definition metadata (e.g. code language hints set by the code-mode toolset)
+    to flow through to OTel events on both the model request span and the agent run span.
+    """
+    from pydantic_ai import _otel_messages
+    from pydantic_ai.messages import BaseToolCallPart
+
+    tool_defs = parameters.tool_defs
+    if not tool_defs:
+        return
+    for part in response.parts:
+        if not isinstance(part, BaseToolCallPart):
+            continue
+        tool_def = tool_defs.get(part.tool_name)
+        if not tool_def or not tool_def.metadata:
+            continue
+        otel_metadata: _otel_messages.ToolCallPartOtelMetadata = {}
+        if code_arg_name := tool_def.metadata.get('code_arg_name'):
+            otel_metadata['code_arg_name'] = code_arg_name
+        if code_arg_language := tool_def.metadata.get('code_arg_language'):
+            otel_metadata['code_arg_language'] = code_arg_language
+        if otel_metadata:
+            part.otel_metadata = otel_metadata
+
+
+def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> list[dict[str, Any]]:
+    """Build OTel-compliant tool definitions from model request parameters.
+
+    Extracts tool metadata from function_tools and output_tools into a list of
+    tool definition dicts following the OTel GenAI semantic conventions format.
+    """
+    all_tools = itertools.chain(
+        model_request_parameters.function_tools or [],
+        model_request_parameters.output_tools or [],
+    )
+
+    tool_definitions: list[dict[str, Any]] = []
+    for tool in all_tools:
+        if model_request_parameters.visibility_of(tool.name) == 'withheld':
+            # Withheld tools are not represented anywhere in the request — recording their
+            # schema and description would put a tool the model cannot see (and whose hidden
+            # description may be sensitive) into telemetry. `via_history` and `deferred` tools
+            # do reach the model, so they stay.
+            continue
+        tool_def: dict[str, Any] = {'type': 'function', 'name': tool.name}
+        if tool.description:
+            tool_def['description'] = tool.description
+        if tool.parameters_json_schema:
+            tool_def['parameters'] = tool.parameters_json_schema
+        tool_definitions.append(tool_def)
+
+    return tool_definitions
+
+
+def response_attributes(
+    response: ModelResponse,
+    response_model: AttributeValue | None,
+    price_calculation: PriceCalculation | None = None,
+) -> dict[str, AttributeValue]:
+    """Build the `gen_ai.response.*`, usage, and cost span attributes for a completed response.
+
+    Shared between the classic model-request span (`open_model_request_span`) and the realtime
+    session's per-turn `chat` span so the two paths report the same shape and can't drift.
+    `response_model` is set only when known (always the case for a classic request; a realtime
+    session may not know its model name).
+    """
+    attributes: dict[str, AttributeValue] = {**response.usage.opentelemetry_attributes()}
+    if response_model is not None:
+        attributes['gen_ai.response.model'] = response_model
+    if (cost := response_cost(response, price_calculation)) is not None:
+        attributes['operation.cost'] = float(cost)
+    if response.provider_response_id is not None:
+        attributes['gen_ai.response.id'] = response.provider_response_id
+    if response.finish_reason is not None:
+        attributes['gen_ai.response.finish_reasons'] = [response.finish_reason]
+    return attributes
+
+
+def response_price_calculation(response: ModelResponse) -> PriceCalculation | None:
+    """Price a response, degrading any pricing-data failure to `None` (see `best_effort_price`).
+
+    `None` too when the response already carries a cost, which `response_cost` then reports instead: whatever set it knew more than `model_name` does. OpenAI GPT-Live's
+    responses carry the tokens of the backend model it delegated to, priced at that model's rates,
+    while `model_name` names the Live model, so re-pricing from it would charge the wrong model.
+    """
+    if response.usage.cost is not None:
+        return None
+    return best_effort_price(
+        response.usage,
+        model_name=response.model_name,
+        provider_api_url=response.provider_url,
+        provider_name=response.provider_name,
+        genai_request_timestamp=response.timestamp,
+        price_context=response.provider_details,
+    )
+
+
+def response_cost(response: ModelResponse, price_calculation: PriceCalculation | None) -> Decimal | None:
+    """The cost to report for a response: its calculated price, or the cost it already carries."""
+    return price_calculation.total_price if price_calculation is not None else response.usage.cost
+
+
+class _FinishModelRequestSpan(Protocol):
+    """The `finish` callback yielded by `open_model_request_span`.
+
+    `time_to_first_chunk` is the streaming-only TTFT in seconds; non-streaming
+    callers omit it.
+    """
+
+    def __call__(
+        self,
+        response: ModelResponse,
+        time_to_first_chunk: float | None = None,
+        *,
+        usage_response: ModelResponse | None = None,
+    ) -> ModelRequestContext: ...
+
+
+def _prepare_model_request_span_context(
+    settings: InstrumentationSettings, request_context: ModelRequestContext
+) -> tuple[ModelRequestContext, dict[str, AttributeValue]]:
+    # The model warns about ignored settings when it prepares the request to send it.
+    with suppress_unsupported_setting_warnings():
+        prepared_settings, prepared_parameters = request_context.model.prepare_request(
+            request_context.model_settings, request_context.model_request_parameters
+        )
+    prepared = replace(request_context, model_settings=prepared_settings, model_request_parameters=prepared_parameters)
+    attributes: dict[str, AttributeValue] = model_attributes(prepared.model)
+    json_schema_properties: dict[str, dict[str, str]] = {}
+    if settings.include_model_request_parameters:
+        attributes.update(
+            model_request_parameters_attributes(prepared_parameters, include_content=settings.include_content)
+        )
+        json_schema_properties['model_request_parameters'] = {'type': 'object'}
+    attributes['logfire.json_schema'] = to_json({'type': 'object', 'properties': json_schema_properties}).decode()
+    if tool_definitions := build_tool_definitions(prepared_parameters):
+        attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
+    attributes.update(model_settings_attributes(prepared_settings))
+    return prepared, attributes
+
+
+def record_exception(
+    span: Span,
+    error: BaseException,
+    *,
+    include_content: bool,
+    escaped: bool = True,
+    attributes: Mapping[str, AttributeValue] | None = None,
+) -> None:
+    """Record `error` on `span` as an `exception` event, with any `attributes` beside the exception's own.
+
+    With content capture enabled this is the OTel SDK's own `Span.record_exception`. Without it,
+    only the exception type is kept: the message and stack trace of an exception raised around
+    a tool, a model request or an agent run can quote content the setting is meant to withhold --
+    a tool retry or failure carries the text the model sees, an exception chained from one repeats
+    that text in its stack trace, a provider's error response can echo the request, and validation
+    errors and user exceptions may echo the rejected arguments. The type and `escaped` formatting
+    match what `Span.record_exception` would have produced.
+    """
+    # `use_span` records nothing on a span that isn't recording, and neither does this: the SDK
+    # formats the traceback before `add_event` drops it, so an exception whose `__str__` raises
+    # would surface that failure in place of the original error.
+    if not span.is_recording():
+        return
+    if include_content:
+        span.record_exception(error, attributes=attributes, escaped=escaped)
+        return
+    error_type = type(error)
+    type_name = (
+        f'{error_type.__module__}.{error_type.__qualname__}'
+        if error_type.__module__ != 'builtins'
+        else error_type.__qualname__
+    )
+    # The SDK stringifies `escaped`, so match its shape rather than mixing attribute types.
+    span.add_event(
+        'exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped), **(attributes or {})}
+    )
+
+
+def set_error_status(span: Span, error: BaseException, *, include_content: bool) -> None:
+    """Set `span`'s status to ERROR, describing it the way `use_span` would have.
+
+    The SDK's description is `f'{type(exc).__name__}: {exc}'`, which repeats the message the
+    exception event carries, so it is withheld alongside it when content capture is off.
+    """
+    if not span.is_recording():
+        return
+    span.set_status(
+        Status(StatusCode.ERROR, description=f'{type(error).__name__}: {error}' if include_content else None)
+    )
+
+
+@contextmanager
+def record_uncaught_errors(
+    span: Span,
+    *,
+    include_content: bool,
+    event_attributes: Callable[[Exception], Mapping[str, AttributeValue]] | None = None,
+) -> Generator[None]:
+    """Record exceptions leaving `span`'s scope the way `use_span` would have.
+
+    For spans opened with `record_exception=False` and `set_status_on_exception=False`, which hands
+    both jobs to the caller. `use_span` recorded the exception unescaped and described the ERROR
+    status with it; both repeat the message, so both follow `include_content`. Enter this around
+    the span's whole scope -- the scope `use_span` covered -- not just the call that may fail, so
+    that failures while finalizing the span still mark it. `event_attributes` adds attributes to the
+    exception event for an error, for what the event needs to say even when content is withheld.
+    """
+    try:
+        yield
+    except Exception as error:
+        attributes = event_attributes(error) if event_attributes else None
+        record_exception(span, error, include_content=include_content, escaped=False, attributes=attributes)
+        set_error_status(span, error, include_content=include_content)
+        raise
+
+
+@contextmanager
+def open_model_request_span(
+    settings: InstrumentationSettings,
+    request_context: ModelRequestContext,
+    *,
+    message_json_cache: MessageJsonCache | None = None,
+    defer_request_attributes: bool = False,
+) -> Generator[tuple[_FinishModelRequestSpan, ModelRequestContext]]:
+    """Open a `chat <model>` CLIENT span; yield `(finish, prepared_request_context)`.
+
+    Shared between `Instrumentation.wrap_model_request` (agent flow) and
+    `InstrumentedModel.request`/`request_stream` (standalone / `direct.model_request*`).
+    Calls `model.prepare_request(...)` internally and yields a request context with the prepared
+    settings/parameters so callers don't have to re-prepare. `finish(response)` annotates the
+    response with OTel tool-call metadata and records outcome attributes. Token/cost metrics are
+    recorded *after* the span closes so backends that aggregate from span attributes don't
+    double-count.
+
+    `message_json_cache` is a per-run cache reused across requests so the growing input history
+    isn't re-serialized in full each time; the agent flow passes one, one-off requests pass `None`.
+    With `defer_request_attributes=True`, the span opens immediately and the agent graph populates
+    request attributes at the model-call boundary after request hooks have finished.
+    """
+    # TODO Missing attributes:
+    #  - error.type: unclear if we should do something here or just always rely on span exceptions
+    #  - gen_ai.request.stop_sequences/top_k: model_settings doesn't include these
+    operation = 'chat'
+    span_name = f'{operation} {request_context.model.model_name}'
+    attributes: dict[str, AttributeValue] = {
+        'gen_ai.operation.name': operation,
+        **get_agent_run_baggage_attributes(),
+    }
+    prepared_request_context: ModelRequestContext | None = None
+
+    record_metrics: Callable[[], None] | None = None
+    replay_snapshot: ReplaySnapshot | None = None
+    previous_include_content = include_content_ctx.get()
+    try:
+        with (
+            start_as_current_span(
+                settings.tracer,
+                span_name,
+                attributes=attributes,
+                kind=SpanKind.CLIENT,
+                record_exception=False,
+                set_status_on_exception=False,
+            ) as span,
+            record_uncaught_errors(span, include_content=settings.include_content),
+        ):
+            # Set inside the `with`, because the policy names the span it speaks for.
+            include_content_ctx.set(ContentPolicy(span, settings.include_content, settings.tracer))
+            # Inside the span, so only the durable units this request ran under count.
+            replay_snapshot = replay_snapshot_now()
+
+            def set_request_attributes(context: ModelRequestContext) -> ModelRequestContext:
+                nonlocal prepared_request_context
+                prepared, request_attributes = _prepare_model_request_span_context(settings, context)
+
+                # Keep attributes set on the span since it opened, but describe the model this request
+                # is now made to: a hook can move it on to another model for a later attempt (#7018).
+                attributes.update(getattr(span, 'attributes', {}))
+                attributes.update(request_attributes)
+                span.set_attributes(request_attributes)
+                span.update_name(f'{operation} {attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]}')
+                prepared_request_context = prepared
+                return prepared
+
+            # `finish` is a closure rather than inline so we can (a) set result attributes
+            # inside the `with span:` block — they attach to the span — and (b) call the
+            # captured `record_metrics` in the outer `finally` AFTER the span closes,
+            # so observability backends that aggregate metrics from span attributes
+            # don't double-count.
+            def finish(
+                response: ModelResponse,
+                time_to_first_chunk: float | None = None,
+                *,
+                usage_response: ModelResponse | None = None,
+            ) -> ModelRequestContext:
+                nonlocal prepared_request_context, record_metrics
+
+                if prepared_request_context is None:
+                    return request_context
+                prepared_parameters = prepared_request_context.model_request_parameters
+
+                annotate_tool_call_otel_metadata(response, prepared_parameters)
+
+                # FallbackModel updates these span attributes via get_current_span().
+                attributes.update(getattr(span, 'attributes', {}))
+                request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
+                system = cast(str, attributes[GEN_AI_SYSTEM_ATTRIBUTE])
+
+                accounted_response = usage_response or response
+                response_model = accounted_response.model_name or response.model_name or request_model
+                price_calculation: PriceCalculation | None = None
+
+                def _record_metrics() -> None:
+                    metric_attributes = model_metric_attributes(system, request_model, response_model)
+                    settings.record_metrics(
+                        accounted_response, price_calculation, metric_attributes, time_to_first_chunk
+                    )
+
+                record_metrics = _record_metrics
+
+                # Compute cost before the `is_recording()` gate so `_record_metrics`
+                # always emits cost data, even when the span is dropped by sampling.
+                price_calculation = response_price_calculation(accounted_response)
+
+                if not span.is_recording():
+                    return prepared_request_context
+
+                settings.handle_messages(
+                    list(prepared_request_context.messages),
+                    response,
+                    span,
+                    prepared_parameters,
+                    message_json_cache=message_json_cache,
+                )
+
+                attributes_to_set = response_attributes(accounted_response, response_model, price_calculation)
+                if time_to_first_chunk is not None:
+                    attributes_to_set['gen_ai.client.operation.time_to_first_chunk'] = time_to_first_chunk
+                span.set_attributes(attributes_to_set)
+                span.update_name(f'{operation} {request_model}')
+                return prepared_request_context
+
+            # Populating attributes inside the try keeps the capture token scoped even when
+            # `Model.prepare_request` raises (e.g. unsupported native output).
+            if defer_request_attributes:
+                capture_token = _model_request_span_captures.set(
+                    (*_model_request_span_captures.get(), (request_context, set_request_attributes))
+                )
+                try:
+                    yield finish, request_context
+                finally:
+                    _model_request_span_captures.reset(capture_token)
+            else:
+                prepared_request_context = set_request_attributes(request_context)
+                yield finish, prepared_request_context
+    finally:
+        include_content_ctx.set(previous_include_content)
+        # A request a durable engine served from its journal was already recorded when it ran.
+        if record_metrics and not (replay_snapshot is not None and replay_snapshot.replayed()):
+            record_metrics()
+
+
+def capture_current_context() -> Callable[[], AbstractContextManager[None]]:
+    """Snapshot the current OTel context so it can be re-attached in another task.
+
+    The streaming continuation composite opens each segment's `request_stream` lazily,
+    in the *consumer* task that iterates the stream, whereas the `chat` span is opened
+    by `wrap_model_request` in a separate task. Those tasks don't share an OTel context,
+    so without re-attaching, span updates driven by `get_current_span()` (e.g.
+    `FallbackModel` recording the resolved inner model) would land on the wrong span.
+
+    Returns a factory that yields a context manager re-attaching the captured context;
+    the composite enters it around each segment without depending on OpenTelemetry itself.
+    """
+    captured = otel_context.get_current()
+    # The span's redaction policy has to travel with it: a streaming segment reads
+    # `include_content_ctx` in the consumer task, which never saw the `set` in
+    # `open_model_request_span`, so without this a `FallbackModel` refresh there would fall back to
+    # the default and re-export instruction content the span was opened without.
+    captured_include_content = include_content_ctx.get()
+
+    @contextmanager
+    def attach_captured_context() -> Generator[None]:
+        # Restore the previous context by re-`attach`ing it rather than `detach`ing the token: this CM is
+        # held across the `yield` in `_ContinuationStreamedResponse._get_event_iterator`, so when a streamed
+        # run is interrupted mid-segment the async generator is finalized (`GeneratorExit`) in a different
+        # contextvars `Context`, where `otel_context.detach(token)` -> `ContextVar.reset` raises
+        # `ValueError: ... created in a different Context`. OTel swallows it but logs a noisy
+        # 'Failed to detach context' (surfaced verbatim in the Pyodide output panel). `attach()` is a plain
+        # `set`, which never fails cross-context, so it restores `previous` silently. See #6569.
+        previous = otel_context.get_current()
+        previous_include_content = include_content_ctx.get()
+        otel_context.attach(captured)
+        # Restored with `set` rather than `reset` for the same reason as `previous` above: this CM is
+        # held across the `yield`, so an interrupted streamed run finalizes it in a different
+        # `Context`, where `ContextVar.reset` raises `ValueError: ... created in a different Context`.
+        include_content_ctx.set(captured_include_content)
+        try:
+            yield
+        finally:
+            otel_context.attach(previous)
+            include_content_ctx.set(previous_include_content)
+
+    return attach_captured_context
+
+
+def get_instructions(
+    messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
+) -> str | None:
+    """Get the joined instructions string for the current request.
+
+    When `model_request_parameters` is provided (normal model request flow), returns
+    the joined content of `instruction_parts` which already includes prompted output
+    instructions and is properly sorted. Empty `instruction_parts` mean no instructions;
+    message history is only read when they are unset, as for a direct `model.request()` call.
+
+    Falls back to reading `ModelRequest.instructions` from message history when
+    `model_request_parameters` is not available (e.g. OTel span attributes).
+    """
+    from pydantic_ai.messages import InstructionPart
+    from pydantic_ai.models import _instruction_parts_of  # pyright: ignore[reportPrivateUsage]
+
+    if model_request_parameters:
+        parts = _instruction_parts_of(messages, model_request_parameters)
+        return InstructionPart.join(parts) if parts else None
+
+    # Fallback: read from message history (used by OTel when model_request_parameters is unavailable)
+    source = get_instructions_source(messages)
+    return source.instructions if source is not None else None
+
+
+def get_instructions_source(messages: Sequence[ModelMessage]) -> ModelRequest | None:
+    """The request in `messages` whose `instructions` are the ones in force for the current request.
+
+    Split out from `get_instructions` because the resume path needs the request itself, not just its
+    text: a `before_model_request` hook's rewrite has to land on the message that records the
+    instructions being echoed back, and stamping the wrong one would put instructions on a request
+    that was sent without any.
+    """
+    from pydantic_ai.messages import (
+        ModelRequest,
+        RetryFeedbackPart,
+        RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
+        ToolReturnPart,
+    )
+
+    # The first ModelRequest found when iterating messages in reverse.
+    # In the case that a "mock" request was generated to include a tool-return part for a result tool,
+    # we want to use the instructions from the second-to-most-recent request (which should correspond to the
+    # original request that generated the response that resulted in the tool-return part).
+    last_two_requests: list[ModelRequest] = []
+    for message in reversed(messages):
+        if isinstance(message, ModelRequest):
+            last_two_requests.append(message)
+            if len(last_two_requests) == 2:
+                break
+            if message.instructions is not None:
+                return message
+
+    # If we don't have two requests, and we didn't already return one, there are definitely no instructions:
+    if len(last_two_requests) == 2:
+        most_recent_request = last_two_requests[0]
+        second_most_recent_request = last_two_requests[1]
+
+        # If we've gotten this far and the most recent request consists of only tool-return, retry-prompt or
+        # retry-feedback parts, we use the instructions from the second-to-most-recent request. This is necessary
+        # because when handling result tools, we generate a "mock" ModelRequest with a tool-return part for it, and
+        # that ModelRequest will not have the relevant instructions from the agent.
+
+        # While it's possible that you could have a message history where the most recent request has only tool
+        # returns, I believe there is no way to achieve that would _change_ the instructions without manually
+        # crafting the most recent message. That might make sense in principle for some usage pattern, but it's
+        # enough of an edge case that I think it's not worth worrying about, since you can work around this by
+        # inserting another ModelRequest with no parts at all immediately before the request that has the tool
+        # calls (that works because we only look at the two most recent ModelRequests here).
+
+        # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
+
+        if all(
+            # TODO(v3): remove `RetryPromptPart`
+            isinstance(p, ToolReturnPart | RetryFeedbackPart | RetryPromptPart)  # pyright: ignore[reportDeprecated]
+            for p in most_recent_request.parts
+        ):
+            return second_most_recent_request
+
+    return None
+
+
+def current_otel_traceparent() -> str | None:
+    """Return the W3C traceparent of the active OTel span, or None if no valid span is set.
+
+    Used as a fallback when the graph run was created without a span. In that case,
+    the agent run span is typically set by the Instrumentation capability via
+    `start_as_current_span` while the capability chain is executing, which is
+    exactly when consumers like `OnlineEvaluation` read the traceparent.
+    """
+    span = get_current_span()
+    if span is INVALID_SPAN:
+        return None
+    return get_traceparent(span) or None
 
 
 @dataclass(frozen=True)
@@ -26,17 +1304,34 @@ class InstrumentationNames:
     # Output Tool execution span configuration
     output_tool_span_name: str
 
+    # Deferral span attributes
+    tool_deferral_name_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.name'
+    tool_deferral_metadata_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.metadata'
+
+    # Set on tool spans for calls that failed before execution; absent on execution failures
+    tool_failure_stage_attr: ClassVar[str] = 'pydantic_ai.tool.failure_stage'
+
+    # Set on a tool span whose call has to be made again, from the retried return's `retry`
+    tool_retry_cause_attr: ClassVar[str] = 'pydantic_ai.tool.retry.cause'
+    tool_retry_attempt_attr: ClassVar[str] = 'pydantic_ai.tool.retry.attempt'
+    tool_retry_max_retries_attr: ClassVar[str] = 'pydantic_ai.tool.retry.max_retries'
+
+    # Set on an output function span whose output has to be produced again, from the feedback's `retry`
+    output_retry_cause_attr: ClassVar[str] = 'pydantic_ai.output.retry.cause'
+    output_retry_attempt_attr: ClassVar[str] = 'pydantic_ai.output.retry.attempt'
+    output_retry_max_retries_attr: ClassVar[str] = 'pydantic_ai.output.retry.max_retries'
+
     @classmethod
     def for_version(cls, version: int) -> Self:
         """Create instrumentation configuration for a specific version.
 
         Args:
-            version: The instrumentation version (1, 2, or 3+)
+            version: The instrumentation version (2 or 3+)
 
         Returns:
             InstrumentationConfig instance with version-appropriate settings
         """
-        if version <= 2:
+        if version == 2:
             return cls(
                 agent_run_span_name='agent run',
                 agent_name_attr='agent_name',

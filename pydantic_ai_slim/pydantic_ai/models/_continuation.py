@@ -1,0 +1,958 @@
+"""Model-continuation primitives shared by the agent graph.
+
+A *continuation* happens when a model returns a `ModelResponse` with
+`state == 'suspended'` (Anthropic `pause_turn`, OpenAI background mode, …): the
+graph re-issues the request with the suspended response echoed back, and the
+provider resumes the same logical turn. This module owns the provider-agnostic
+glue for stitching those segments back into a single response/stream:
+
+- [`merge_responses`][pydantic_ai.models._continuation.merge_responses] folds a
+  continuation response into the one it continues.
+- [`merge_mode`][pydantic_ai.models._continuation.merge_mode] reports whether a
+  continuation *replaces* or *accumulates*, so the streamed composite can reindex
+  parts consistently with the merge.
+- [`resumed_response`][pydantic_ai.models._continuation.resumed_response] and
+  [`billed_beyond`][pydantic_ai.models._continuation.billed_beyond] tell what a request that resumes a
+  suspended response from history billed, as opposed to what the run that suspended it already counted.
+- [`_ContinuationStreamedResponse`][pydantic_ai.models._continuation._ContinuationStreamedResponse]
+  drives the streamed loop, presenting every segment as one continuous stream.
+
+This module is deliberately decoupled from `_agent_graph`: it imports only from
+`models`, `messages`, `usage`, `exceptions`, `_utils`, the stdlib, and `anyio` (for
+a shielded cancel scope during stream teardown). Pluggable timing is injected as
+`sleep_func` so the loop stays free of `now_utc()`/RNG and replays deterministically
+under durable executors (e.g. Temporal).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
+from contextlib import (
+    AbstractContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    contextmanager,
+    nullcontext,
+    suppress,
+)
+from contextvars import ContextVar
+from copy import copy
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
+from typing import Any, Literal
+
+import anyio
+
+from .. import _utils
+from .._fallback import request_stream_until_first_event
+from .._run_context import RunContext
+from ..exceptions import ModelAPIError, UnexpectedModelBehavior
+from ..messages import (
+    FinalResultEvent,
+    ModelMessage,
+    ModelResponse,
+    ModelResponseState,
+    ModelResponseStreamEvent,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+)
+from ..settings import ModelSettings
+from ..usage import RequestUsage, _add_usage_tokens  # pyright: ignore[reportPrivateUsage]
+from . import Model, ModelRequestContext, StreamedResponse
+from ._request_timeout import enforce_request_deadline, without_carried_deadline
+
+__all__ = [
+    'MAX_BACKGROUND_POLLS',
+    'MAX_GENERATION_CONTINUATIONS',
+    'MergeMode',
+    'billed_beyond',
+    'cancel_suspended_job',
+    'merge_mode',
+    'merge_responses',
+    'observe_continuation_segments',
+    'report_continuation_segment',
+    'resumed_response',
+    'usage_beyond',
+    '_ContinuationStreamedResponse',
+]
+
+# Framework-protocol markers a model may stamp on a continuation response's `metadata`, namespaced
+# under `__pydantic_ai__` so they never collide with a provider's own metadata. `FallbackModel` sets
+# `replace_previous_response` on the fresh response it produces after a rewind-and-restart to signal
+# "this response supersedes the suspended turn, do not accumulate onto it" — categorically different
+# from a same-`provider_response_id` background poll. The `FallbackModel` side must use these exact
+# keys. The marker is transient: `merge_responses` honors it as a replace, then pops it so it can't
+# persist into history and wrongly force a later legitimate `pause_turn` continuation to replace.
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
+_REPLACE_PREVIOUS_RESPONSE_KEY = 'replace_previous_response'
+
+MAX_GENERATION_CONTINUATIONS = 10
+"""Maximum number of *fresh-generation* continuation segments for a single model turn.
+
+Applies to every re-suspension that produces genuinely new generation: an *accumulate* (Anthropic
+`pause_turn`, appending new parts under a new `provider_response_id`), a model change, or a
+`FallbackModel` `replace_previous_response` directive. This is the guard against a model that never
+leaves the `'suspended'` state, endlessly emitting new segments; exceeding it raises
+[`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
+
+Only a *same-id* re-suspension — re-polling a single long-running job under the same
+`provider_response_id` (OpenAI background mode) — is bounded by the far more generous
+[`MAX_BACKGROUND_POLLS`][pydantic_ai.models._continuation.MAX_BACKGROUND_POLLS] instead,
+so a healthy background job that legitimately runs for minutes isn't killed after ~10 continuations.
+"""
+
+MAX_BACKGROUND_POLLS = 1000
+"""Backstop for *same-id* continuation polling of a single background job.
+
+A same-id re-suspension re-fetches one long-running job under the same `provider_response_id`
+(OpenAI background mode), so — unlike a fresh-generation re-suspension (see
+[`MAX_GENERATION_CONTINUATIONS`][pydantic_ai.models._continuation.MAX_GENERATION_CONTINUATIONS]) — it carries no risk of an
+unbounded model spawning endless new segments: it's the *same* job, and legitimate background jobs run
+for minutes (hundreds of polls at a ~2s interval). The real bounds here are the run's usage limits and
+explicit cancellation, which already work; this large ceiling is only a last-resort safety net against a
+provider stuck returning `'suspended'` for the same id forever (which usage limits wouldn't catch, since
+a pending poll adds no tokens). Exceeding it raises
+[`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
+"""
+
+MergeMode = Literal['replace-same-id', 'replace-new', 'accumulate']
+"""How a continuation response folds into the one it continues.
+
+- `'replace-same-id'`: both responses share a `provider_response_id` — a passive re-poll of one
+  long-running job (OpenAI background `retrieve`, which returns the full response so far). Replaces
+  wholesale, and — being the *same* job rather than fresh generation — is bounded by the generous
+  [`MAX_BACKGROUND_POLLS`][pydantic_ai.models._continuation.MAX_BACKGROUND_POLLS] ceiling.
+- `'replace-new'`: the response supersedes the suspended turn with *fresh* generation — the model
+  changed (accumulating parts from different models is always wrong) or a `FallbackModel` stamped the
+  `replace_previous_response` marker after a rewind-and-restart. Replaces wholesale, but counts against
+  the strict [`MAX_GENERATION_CONTINUATIONS`][pydantic_ai.models._continuation.MAX_GENERATION_CONTINUATIONS] ceiling, since a
+  chain of fresh suspensions is the exact runaway that cap guards against.
+- `'accumulate'`: appends new parts onto the prior response (Anthropic `pause_turn`). Strict ceiling.
+"""
+
+# Deterministic fallback for `timestamp` before any segment has streamed. This is
+# never reached in practice (a segment is always in flight or finalized by the time
+# `timestamp` is read), but keeps the loop free of `now_utc()` for durable replay.
+_FALLBACK_TIMESTAMP = datetime.fromtimestamp(0, tz=UTC)
+
+
+def _has_replace_marker(response: ModelResponse) -> bool:
+    """Whether `response` carries the `FallbackModel` `replace_previous_response` directive."""
+    metadata = response.metadata
+    if not _utils.is_str_dict(metadata):
+        return False
+    namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
+    return bool(_utils.is_str_dict(namespace) and namespace.get(_REPLACE_PREVIOUS_RESPONSE_KEY))
+
+
+def _strip_replace_marker(metadata: Any) -> dict[str, Any] | None:
+    """Return `metadata` without the transient `replace_previous_response` marker (other keys intact).
+
+    Copies before mutating so the caller's dicts (including the shared `__pydantic_ai__` namespace,
+    which also holds the `FallbackModel` continuation pin) aren't touched.
+    """
+    if not _utils.is_str_dict(metadata):
+        return metadata
+    namespace = metadata.get(_PYDANTIC_AI_METADATA_KEY)
+    if not (_utils.is_str_dict(namespace) and _REPLACE_PREVIOUS_RESPONSE_KEY in namespace):
+        return metadata
+    namespace = {k: v for k, v in namespace.items() if k != _REPLACE_PREVIOUS_RESPONSE_KEY}
+    metadata = {**metadata}
+    if namespace:
+        metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
+    else:
+        del metadata[_PYDANTIC_AI_METADATA_KEY]
+    return metadata
+
+
+def merge_mode(existing: ModelResponse, new: ModelResponse) -> MergeMode:
+    """Classify how `new` folds into `existing` — see [`MergeMode`][pydantic_ai.models._continuation.MergeMode].
+
+    The single decision path shared by [`merge_responses`][pydantic_ai.models._continuation.merge_responses],
+    the continuation-count ceilings, and the streamed composite's part-index reindexing.
+    """
+    # A `FallbackModel` rewind-and-restart marks its fresh response as superseding the suspended turn;
+    # honor that first, since such a response may otherwise look like an accumulate.
+    if _has_replace_marker(new):
+        return 'replace-new'
+    if existing.provider_response_id and existing.provider_response_id == new.provider_response_id:
+        return 'replace-same-id'
+    if existing.model_name and new.model_name and existing.model_name != new.model_name:
+        return 'replace-new'
+    return 'accumulate'
+
+
+def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelResponse:
+    """Merge a continuation response into the one it continues.
+
+    On any `'replace-*'` mode (same `provider_response_id`, a model change, or a `FallbackModel`
+    `replace_previous_response` directive), replace the content with the new response. Fresh-generation
+    replacements retain the prior response's billed usage; same-job polling replaces its cumulative usage
+    snapshot. Otherwise accumulate parts and usage, and use other fields from the new response.
+
+    Either way, `provider_details` and `metadata` accumulate across the turn's segments (latest-wins)
+    so turn-scoped data a later segment omits isn't lost — see below — and `failed_attempts` are
+    concatenated.
+    """
+    mode = merge_mode(existing, new)
+    if mode == 'replace-same-id':
+        merged = new
+    elif mode == 'replace-new':
+        merged = replace(new, usage=existing.usage + new.usage)
+    else:
+        # Same model, different response → accumulate parts and sum usage.
+        # Preserve existing provider response IDs when continuation responses omit them
+        # (e.g. resumed OpenAI streams that start after a sequence number).
+        merged = replace(
+            new,
+            parts=[*existing.parts, *new.parts],
+            usage=existing.usage + new.usage,
+            provider_response_id=new.provider_response_id or existing.provider_response_id,
+        )
+
+    # A turn's provider metadata accumulates across its segments. Turn-scoped identifiers — OpenAI
+    # `background`/`conversation_id`, Anthropic `container_id` in `provider_details`, and the
+    # `FallbackModel` continuation pin in `metadata` — are only stamped on segments whose payload
+    # carries them, so a resumed or interrupted segment (e.g. a mid-flight cancel snapshot, whose
+    # in-flight segment hasn't stamped the pin yet) can omit one an earlier segment set. Merge
+    # latest-wins (`new` overrides) so they survive into the merged response; e.g.
+    # `cancel_suspended_response` relies on OpenAI's `background` marker and the `FallbackModel` pin
+    # to reach the server-side job.
+    if existing.provider_details:
+        merged = replace(merged, provider_details={**existing.provider_details, **(merged.provider_details or {})})
+    if existing.metadata:
+        merged = replace(merged, metadata={**existing.metadata, **(merged.metadata or {})})
+    # A segment that digested the whole response, like a retrieved background response, carries the turn's digest.
+    # Otherwise the first segment's is kept: it covers fewer parts than the turn has, so the next request resends
+    # the history rather than continuing from a response it can't vouch for.
+    merged = replace(merged, history_digest=new.history_digest or existing.history_digest)
+    # Attempts that failed before an earlier segment (e.g. the models a `FallbackModel` moved on from
+    # before the one that suspended) belong to the turn as a whole, so they are kept in order.
+    if existing.failed_attempts:
+        merged = replace(merged, failed_attempts=[*existing.failed_attempts, *(merged.failed_attempts or [])])
+
+    # Pop the transient `replace_previous_response` marker now that it's been honored above, so it
+    # doesn't persist into history where it would wrongly force a later legitimate `pause_turn`
+    # continuation to replace rather than accumulate. Other `__pydantic_ai__` keys (the continuation
+    # pin) survive.
+    stripped = _strip_replace_marker(merged.metadata)
+    if stripped is not merged.metadata:
+        merged = replace(merged, metadata=stripped)
+    # The `request_timeout` deadline a `FallbackModel` carries only matters to the segments that continue the turn.
+    if merged.state != 'suspended':
+        merged = without_carried_deadline(merged)
+    return merged
+
+
+def resumed_response(messages: Sequence[ModelMessage]) -> ModelResponse | None:
+    """The suspended response `messages` end in, which a request made with them resumes, if any.
+
+    A history ending in a `ModelResponse` with `state == 'suspended'` is the wire-truthful encoding of a
+    paused turn to resume; a normal request ends in a `ModelRequest`.
+    """
+    if messages and isinstance(last := messages[-1], ModelResponse) and last.state == 'suspended':
+        return last
+    return None
+
+
+def billed_beyond(response: ModelResponse, resumed: ModelResponse | None) -> ModelResponse:
+    """`response` with only the usage and failed attempts billed beyond the suspended response it `resumed`.
+
+    A run that resumes a suspended response from history merges it into the response it commits, so that
+    response's usage covers the whole turn. The run that produced the suspended response already counted
+    its usage and failed attempts, so the resuming run counts only what was billed beyond them: the
+    segments it requested itself. That is their summed usage for an accumulated turn (Anthropic
+    `pause_turn`), and the growth of the job's cumulative usage for a replaced one (OpenAI background mode).
+    """
+    if resumed is None:
+        return response
+    already_counted = len(resumed.failed_attempts or ())
+    return replace(
+        response,
+        usage=usage_beyond(response.usage, resumed.usage),
+        failed_attempts=(response.failed_attempts or [])[already_counted:] or None,
+    )
+
+
+def usage_beyond(usage: RequestUsage, baseline: RequestUsage) -> RequestUsage:
+    """`usage` less `baseline`, field by field, the inverse of `RequestUsage.incr`.
+
+    A cost is subtracted only when both are known: an unknown baseline cost leaves `usage`'s, which errs
+    towards counting too much rather than too little.
+    """
+    beyond = copy(usage)
+    _add_usage_tokens(beyond, baseline, -1)
+    if usage.cost is not None and baseline.cost is not None:
+        beyond.cost = usage.cost - baseline.cost
+    return beyond
+
+
+_SUSPENDED_JOB_CANCELLED = '_pydantic_ai_suspended_job_cancelled'
+
+
+def mark_suspended_job_cancelled(error: BaseException) -> None:
+    """Mark `error` as raised after the job of the suspended response being continued was already cancelled.
+
+    A model that gives up on a suspended response it was asked to continue, as `FallbackModel` does when the pinned
+    continuation fails before it moves on to its other models, cancels the job itself. If it then raises anyway, the
+    continuation loop the error reaches leaves that job alone instead of cancelling it a second time.
+    """
+    setattr(error, _SUSPENDED_JOB_CANCELLED, True)
+
+
+async def cancel_abandoned_job(model: Model, response: ModelResponse, error: BaseException) -> None:
+    """Cancel the job of the suspended response `error` made a continuation loop give up on, unless already done.
+
+    The marker only reaches the loop when the model raises it there directly. So the job may still be cancelled
+    twice when the model that cancelled it ran in a durable unit, whose error the workflow rebuilds without the
+    marker, or when what it cancelled was a rejected response that was still suspended, rather than the response
+    being continued, though that is usually the same job.
+    """
+    if getattr(error, _SUSPENDED_JOB_CANCELLED, False) is not True:
+        await cancel_suspended_job(model, response)
+
+
+async def cancel_suspended_job(model: Model, response: ModelResponse) -> None:
+    """Best-effort teardown of a server-side suspended/background job that survives cancellation.
+
+    When the trigger is a workflow/task cancellation (e.g. Temporal), awaiting the (activity-wrapped)
+    cancel from inside an already-cancelled scope would raise `CancelledError` before the cancel runs,
+    silently leaking the job. So the cancel runs as a task of its own, which is waited for until it
+    completes before the cancellation propagates. An `anyio` scope's cancellation is re-delivered at
+    every await unless shielded, so the wait is shielded; a native cancellation still interrupts a
+    shielded wait, so the cancel is waited for again, until a second native cancellation gives up on it.
+
+    Any error from the cancel itself is swallowed: a failing teardown must not replace the error (or
+    cancellation) that aborted the run.
+    """
+    job = asyncio.ensure_future(model.cancel_suspended_response(response))
+    cancelled: asyncio.CancelledError | None = None
+    with anyio.CancelScope(shield=True):
+        while not job.done():
+            try:
+                # Unlike `await job`, doesn't forward our cancellation into the cancel.
+                await asyncio.wait((job,))
+            except asyncio.CancelledError as error:
+                if cancelled is not None:
+                    # A repeated cancellation gives up on the provider cancel, so a hanging one can't block the run.
+                    job.cancel()
+                cancelled = error
+    # `exception()` returns the cancel's error rather than raising it, which swallows it without asyncio logging it
+    # as never retrieved; only a cancel that was given up on raises, as `CancelledError`.
+    with suppress(asyncio.CancelledError):
+        job.exception()
+    if cancelled is not None:
+        raise cancelled
+
+
+_SegmentObserver = tuple[ModelRequestContext, Callable[[ModelResponse], None]]
+_segment_observers: ContextVar[tuple[_SegmentObserver, ...]] = ContextVar('continuation_segment_observers', default=())
+
+
+@contextmanager
+def observe_continuation_segments(
+    request_context: ModelRequestContext, observer: Callable[[ModelResponse], None]
+) -> Generator[None]:
+    """Call `observer` with every segment response of the model request made for `request_context`.
+
+    A continuation chain is merged into one response whose usage sums every segment's, as each segment
+    is a separately billed request. Some consumers need a single request's usage instead: prompt-cache
+    health judges the cache read of the final segment, whose prompt carries the whole prefix. The
+    observer is tied to its request, so a nested agent's requests made in the same context don't reach it.
+
+    Private for now: read by the `Instrumentation` capability and, together with `merge_responses`, by the
+    Pydantic AI Harness's `SpendLimits`, which pins this package's exact version.
+    """
+    token = _segment_observers.set((*_segment_observers.get(), (request_context, observer)))
+    try:
+        yield
+    finally:
+        _segment_observers.reset(token)
+
+
+def report_continuation_segment(
+    request_context: ModelRequestContext,
+    segment: ModelResponse,
+    observers: tuple[_SegmentObserver, ...] | None = None,
+) -> None:
+    """Pass one segment response of `request_context`'s request to the observers registered for it.
+
+    `observers` defaults to those of the current context; the streamed composite passes the ones it
+    captured when it was opened, as its segments are streamed from the consumer's task.
+    """
+    for owner, observer in _segment_observers.get() if observers is None else observers:
+        if owner is request_context:
+            observer(segment)
+
+
+@dataclass
+class _ContinuationStreamedResponse(StreamedResponse):
+    """A [`StreamedResponse`][pydantic_ai.models.StreamedResponse] that stitches continuation segments into one stream.
+
+    Each segment is an ordinary `model.request_stream(...)` sub-stream. Their events
+    are re-emitted as a single continuous stream, with part indices offset so parts
+    from accumulated segments (Anthropic `pause_turn`) don't collide, while replaced
+    segments (OpenAI background `retrieve`) keep reusing the same index space.
+
+    `get()` returns the live merged snapshot at any point; `usage` sums/replaces in
+    lockstep with the merge so the graph accounts for it exactly once.
+    """
+
+    model: Model
+    model_settings: ModelSettings | None
+    base_messages: list[ModelMessage]
+    run_context: RunContext[Any] | None
+    max_generation_continuations: int
+    sleep_func: Callable[[float], Awaitable[None]]
+    check_usage: Callable[[RequestUsage], None]
+    finalize_response: Callable[[ModelResponse], None]
+    initial_suspended_response: ModelResponse | None = None
+    # Ceiling for *replace*-style (single-job background poll) re-suspensions, kept separate from
+    # `max_generation_continuations` (which bounds fresh-generation re-suspensions). See `MAX_BACKGROUND_POLLS`.
+    max_background_polls: int = MAX_BACKGROUND_POLLS
+    # Entered around each segment's `model.request_stream(...)`. The agent graph passes a factory
+    # that re-attaches the ambient context (e.g. the OTel `chat` span opened by `wrap_model_request`
+    # in a separate task) so span updates driven by `get_current_span()` land on the right span even
+    # though segments are opened lazily in the consumer task. Opaque to this module (no OTel coupling).
+    segment_context: Callable[[], AbstractContextManager[Any]] = nullcontext
+    # The request whose segment observers (see `observe_continuation_segments`) see each segment response.
+    request_context: ModelRequestContext | None = None
+    # End the stream on a suspended response the provider is still working on, instead of waiting for it, once a
+    # segment has been requested. Set when the run's output type includes `PendingModelResponse`.
+    return_pending: bool = False
+
+    _merged_response: ModelResponse | None = field(default=None, init=False)
+    _current_sub: StreamedResponse | None = field(default=None, init=False)
+    # Captured where the stream is opened, inside `wrap_model_request`, because segments are streamed
+    # from the consumer's task, which doesn't see that context. See `observe_continuation_segments`.
+    _observers: tuple[_SegmentObserver, ...] = field(default_factory=_segment_observers.get, init=False)
+    _stopped: bool = field(default=False, init=False)
+    # Set by `aclose()`: the consumer stopped iterating and the stream was torn down *without* a
+    # `cancel()`/`close_stream()` (which would flip `_stopped`/`_cancelled` and cancel the server-side
+    # job). Lets `get()` distinguish a deliberate detach — where a still-pending suspended job survives
+    # server-side and the run should be recorded as resumable `'suspended'` — from a live, still-streaming
+    # snapshot (`'incomplete'`). See `get()`.
+    _detached: bool = field(default=False, init=False)
+    # Whether the stream ended on a pending response because of `return_pending`, so `get()` reports it as suspended.
+    _ended_pending: bool = field(default=False, init=False)
+    # Set once a failed continuation has cancelled the suspended server-side job, so `get()` no longer
+    # reports it as a resumable detach and the graph doesn't cancel it a second time.
+    _job_cancelled: bool = field(default=False, init=False)
+    # The inner segment stream owns each segment's `async with request_stream(...)`; keep it
+    # separately because the outer cancel-guard's `async for` does not forward `aclose()`.
+    _segment_stream: _utils.PeekableAsyncStream[ModelResponseStreamEvent] | None = field(default=None, init=False)
+    # The first segment's sub-stream and the exit stack that closes it, when `prime()` opened it ahead
+    # of iteration. Taken over by the first `_open_segment`, or closed by `aclose()` if iteration never starts.
+    _primed_segment: tuple[AsyncExitStack, StreamedResponse] | None = field(default=None, init=False)
+    # Whether `prime()` went on to the stitched stream's first event, as it does past a first segment without output.
+    _primed_stitched: bool = field(default=False, init=False)
+    # Two independent ceilings, distinguished by the generic `merge_mode` signal (the same one that
+    # drives reindexing): every *fresh-generation* re-suspension (accumulate `pause_turn`, a model
+    # change, or a `FallbackModel` replace directive) risks an unbounded model spawning new segments,
+    # so it keeps the small `max_generation_continuations` cap; only a *same-id* re-suspension (OpenAI background
+    # poll) re-fetches one long-running job under the same `provider_response_id`, so a healthy job
+    # that legitimately runs for minutes must not be killed by the small cap — it gets the far more
+    # generous `max_background_polls` backstop. Mirrors the non-streaming continuation loop in
+    # `_agent_graph`. See `MAX_BACKGROUND_POLLS`.
+    _accumulate_count: int = field(default=0, init=False)
+    _replace_count: int = field(default=0, init=False)
+    # Mode of the merge that produced the current suspended response, used to pick its ceiling. A
+    # continuation chain is homogeneous in practice (a poll chain is all same-id, a `pause_turn` chain
+    # all-accumulate), so the previous merge's mode reliably classifies the next re-issue.
+    _last_mode: MergeMode | None = field(default=None, init=False)
+    # Whether a segment has been requested yet, after which `return_pending` ends the stream on a pending response.
+    _requested: bool = field(default=False, init=False)
+    # Index at which the most recent segment's parts began in the stitched stream. A replaced
+    # segment reuses this (same parts under the same id); an accumulated segment appends after
+    # all prior parts. See `_segment_offset`.
+    _last_segment_start: int = field(default=0, init=False)
+    # Index at which the current segment's parts begin. Resolved lazily on the first reindexable event, once
+    # `sub.provider_response_id` is populated, so replace-vs-accumulate matches the eventual `merge_mode`.
+    _segment_start: int | None = field(default=None, init=False)
+
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        """Stream every segment as one continuous event stream.
+
+        This intentionally bypasses the base `StreamedResponse.__aiter__`'s `iterator_with_final_event`
+        / `iterator_with_part_end` wrappers: each sub-stream is already wrapped by them, so it emits
+        fully-formed `PartStart`/`PartDelta`/`PartEnd` and `FinalResultEvent`s. The composite only
+        applies reindexing + final-result capture (inside `_get_event_iterator`) and the cancel-guard
+        (reproducing the base `_finished`/`_cancelled` transitions) on top.
+
+        One minor semantic gap: `PartEndEvent.next_part_kind` is `None` at each sub-stream boundary
+        (a segment can't see the next segment's first part), whereas a single-segment stream would
+        populate it. This is acceptable because parts never merge across segment boundaries.
+        """
+        if self._event_iterator is None:
+            self._segment_stream = _utils.PeekableAsyncStream(self._get_event_iterator())
+            events: AsyncIterator[ModelResponseStreamEvent] = self._segment_stream
+            # The `request_timeout` deadline covers opening each segment, the waits between segments, and reading
+            # each segment's events; the `first_event_timeout` one, all of that until the first event.
+            if self._request_deadline is not None:
+                events = self._request_deadline.iterate(events)
+            self._event_iterator = self._iterator_with_cancel_guard(events)
+        return self._event_iterator
+
+    async def prime(self) -> None:
+        """Open the first segment and wait for its first event before the stream is handed to a consumer.
+
+        A provider that fails to open a stream (a connection error or an HTTP error status), or that
+        accepts it and then reports a failure before any output (an OpenAI Responses `response.failed`,
+        a Bedrock throttling event), otherwise only surfaces that failure once the stream is iterated.
+        Priming moves that point to before the consumer has seen anything, so the failure can still be
+        handled by retrying or falling back to another model, as `FallbackModel` does for its candidates.
+        The first event is replayed to the consumer, so the stream it gets is unchanged.
+
+        When the stream resumes a suspended response, the first segment is its continuation: the
+        provider's requested delay is waited out first, and a failure to open it cancels the
+        server-side job, as it would once iteration had started. A first segment that's suspended without any
+        output hasn't produced anything for the consumer either, so priming carries on to the stitched stream's
+        first event, through the continuations it takes.
+
+        Must be awaited once, before iteration, in the task that consumes the stream: the segment's
+        `model.request_stream(...)` context is exited by the task that iterates it.
+        """
+        messages = self.base_messages
+        if (seed := self.initial_suspended_response) is not None:
+            try:
+                # A run that returns pending responses checks on a resumed one straight away, as the segment loop does.
+                if (delay := self.model.continuation_delay(seed)) and not self.return_pending:
+                    # The deadlines cover this wait, as they do the waits between later segments.
+                    with enforce_request_deadline(self._request_deadline):
+                        await self.sleep_func(delay)
+            except BaseException:
+                # Nothing will continue the job now, so cancel it, as a failure to open the segment does.
+                await cancel_suspended_job(self.model, seed)
+                self._job_cancelled = True
+                raise
+            messages = [*self.base_messages, seed]
+        stack = AsyncExitStack()
+        try:
+            with self.segment_context():
+                sub = await stack.enter_async_context(
+                    request_stream_until_first_event(
+                        # The deadlines cover opening the segment and waiting for its first event.
+                        self.model,
+                        self._request_deadline,
+                        messages,
+                        self.model_settings,
+                        self.model_request_parameters,
+                        self.run_context,
+                    )
+                )
+        except BaseException as error:
+            if seed is not None:
+                await cancel_abandoned_job(self.model, seed, error)
+                self._job_cancelled = True
+            raise
+        self._primed_segment = (stack, sub)
+        # The segment is in flight from here, so a `cancel()` before iteration starts reaches its server-side
+        # job, and `get()` sees what it has produced, on top of the response it continues, as the segment loop
+        # has it.
+        self._merged_response = seed
+        self._current_sub = sub
+        first_events = sub._event_iterator
+        if (
+            isinstance(first_events, _utils.PeekableAsyncStream)
+            and isinstance(await first_events.peek(), _utils.Unset)
+            and sub.get().state == 'suspended'
+        ):
+            # The segment was suspended without producing any output, like a job the provider hasn't started on:
+            # nothing has reached the consumer, so keep going until the stitched stream's first event, and a
+            # continuation that fails before then can still be retried or fallen back from.
+            aiter(self)
+            assert self._segment_stream is not None
+            self._primed_stitched = True
+            with enforce_request_deadline(self._request_deadline):
+                await self._segment_stream.peek()
+
+    async def release_primed_segment(self) -> None:
+        """Close the segment `prime()` opened if iteration never took it over.
+
+        Called by the task that primed the stream, so the segment's context is exited by the task
+        that entered it.
+        """
+        if (primed := self._primed_segment) is not None:
+            self._primed_segment = None
+            # Keep what the segment produced, as the segment loop does when a segment ends: the provider billed it,
+            # and the response the run commits for the stream is built from it.
+            self._merged_response = self._snapshot()
+            self._current_sub = None
+            # Shielded like the stitched close below: teardown can run inside a cancelled graph scope, where the
+            # segment's `request_stream(...)` exit would otherwise be cancelled before it closes the connection.
+            with anyio.CancelScope(shield=True), self.segment_context():
+                await primed[0].aclose()
+        if self._primed_stitched and self._first_chunk_monotonic is None and self._segment_stream is not None:
+            # `prime()` carried on into the stitched stream, whose open segment is closed here for the same reason.
+            self._primed_stitched = False
+            with anyio.CancelScope(shield=True):
+                await self._segment_stream.aclose()
+
+    @asynccontextmanager
+    async def _open_segment(self, messages: list[ModelMessage]) -> AsyncGenerator[StreamedResponse]:
+        """Open a segment's sub-stream, or take over the one `prime()` already opened."""
+        if (primed := self._primed_segment) is not None:
+            self._primed_segment = None
+            stack, sub = primed
+            with self.segment_context():
+                async with stack:
+                    yield sub
+            return
+        with self.segment_context():
+            async with self.model.request_stream(
+                messages, self.model_settings, self.model_request_parameters, self.run_context
+            ) as sub:
+                yield sub
+
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        """Cancel-teardown errors to suppress, extended with the in-flight sub-stream's own.
+
+        The cancel-guard tears the current segment down via its `close_stream()`, so the transport
+        error it raises is whatever that sub's transport produces — httpx for most providers, but
+        botocore (Bedrock) or grpc (xAI) for others, which each report their own types via an
+        override. Consult the in-flight sub (`_current_sub` is still set at exception time) on top of
+        the httpx default, so a non-httpx teardown error is suppressed into a clean `'interrupted'`
+        stop rather than escaping to the consumer.
+        """
+        errors = super().get_stream_cancel_errors()
+        if self._current_sub is not None:
+            errors = (*errors, *self._current_sub.get_stream_cancel_errors())
+        return errors
+
+    async def _iterator_with_cancel_guard(
+        self, iterator: AsyncIterator[ModelResponseStreamEvent]
+    ) -> AsyncIterator[ModelResponseStreamEvent]:
+        # Mirror `StreamedResponse.__aiter__`'s cancel-guard: suppress transport
+        # errors caused by `cancel()` tearing down an in-flight sub-stream, and only
+        # flip `_finished` on a natural `StopAsyncIteration` of a stream that wasn't
+        # cancelled, so an early `break`/`aclose()`/in-flight error — or a `cancel()`
+        # that still drains to completion — leaves `get()` reporting `'incomplete'`/
+        # `'interrupted'` rather than `'complete'`.
+        try:
+            async for event in iterator:
+                if self._first_chunk_monotonic is None:
+                    # First event surfaced to the consumer: stamp the monotonic clock so
+                    # `time_to_first_chunk` works, mirroring the base cancel-guard this replaces.
+                    self._first_chunk_monotonic = time.perf_counter()
+                yield event
+        except self.get_stream_cancel_errors():
+            if not self.cancelled:
+                raise
+        except ModelAPIError as e:
+            # Adapters map transport errors to `ModelAPIError`, so one caused by `cancel()` arrives wrapped.
+            if not (self.cancelled and isinstance(e.__cause__, self.get_stream_cancel_errors())):
+                raise
+        else:
+            if not (self._cancelled or self._detached):
+                self._finished = True
+
+    def _count_continuation(
+        self, response: ModelResponse, last_mode: MergeMode | None, accumulate_count: int, replace_count: int
+    ) -> tuple[int, int]:
+        """Count a suspended re-issue against its ceiling (same-id poll vs everything else), raising if exceeded.
+
+        Only a `'replace-same-id'` re-suspension — a passive re-poll of one long-running background job —
+        gets the generous `max_background_polls` ceiling. A model-change or `FallbackModel`-directed
+        replace is *fresh* generation, not the same job, so it counts against the strict `max_generation_continuations`
+        cap alongside accumulate re-suspensions — otherwise a chain of fresh suspensions is the exact
+        runaway the strict cap guards against. The first re-issue has no prior merge to classify
+        (`last_mode is None`) so it counts as strict, harmless since both ceilings allow at least one.
+        See `MAX_BACKGROUND_POLLS`. Returns the updated `(accumulate_count, replace_count)`.
+        """
+        job_id = response.provider_response_id
+        # A batch request waiting for its batch is waiting on a job rather than continuing a generation, even when it
+        # was submitted again under a new ID, as in the non-streaming loop.
+        if last_mode == 'replace-same-id' or (
+            last_mode is not None and not self.model._limits_polls(response)  # pyright: ignore[reportPrivateUsage]
+        ):
+            replace_count += 1
+            if replace_count > self.max_background_polls and self.model._limits_polls(response):  # pyright: ignore[reportPrivateUsage]
+                raise UnexpectedModelBehavior(
+                    f'Model response for job {job_id!r} remained suspended after polling the maximum of '
+                    f'{self.max_background_polls} times'
+                )
+        else:
+            accumulate_count += 1
+            if accumulate_count > self.max_generation_continuations:
+                raise UnexpectedModelBehavior(
+                    f'Model response {job_id!r} was suspended more than the maximum of '
+                    f'{self.max_generation_continuations} times'
+                )
+        return accumulate_count, replace_count
+
+    async def _get_event_iterator(self) -> AsyncGenerator[ModelResponseStreamEvent, None]:
+        response = self.initial_suspended_response
+        try:
+            while (messages := await self._next_segment_messages(response)) is not None:
+                # While this sub is in flight, `_merged_response` holds the accumulator of
+                # all prior segments (excluding the current sub) so `get()` can fold in the
+                # live `sub.get()` snapshot without double-counting.
+                self._merged_response = response
+                self._segment_start = None
+                async with self._open_segment(messages) as sub:
+                    self._requested = True
+                    self._current_sub = sub
+                    async for event in sub:
+                        yield self._stitch_event(event, response, sub)
+
+                self._last_segment_start = self._segment_start or 0
+
+                # Read `sub.get()` AFTER the `async with` exits so late-stamped metadata
+                # (e.g. a `FallbackModel` continuation pin) is captured.
+                # Advance before checking usage so a limit trip cancels the newest suspended job, not the previous one.
+                response = self._merge_segment(response, sub.get())
+                self.check_usage(self.usage)
+
+            self._merged_response = response
+        except GeneratorExit:
+            # Deliberate `aclose()` detach: tear the connection down without cancelling the
+            # server-side job (that stays on the `cancel()`/`close_stream()` path). Re-raise as-is.
+            raise
+        except BaseException as error:
+            # A later segment failed (transport error, `check_usage` raising, or the max-continuations
+            # raise) with a suspended job in hand. The non-streaming continuation loop cancels the
+            # server-side job on exactly this class of failure; mirror it so streaming doesn't leak the
+            # job (which history would otherwise record as unresumable and uncancellable). Skip when a
+            # deliberate `cancel()`/`close_stream()` is already tearing things down — it cancels itself.
+            # Detaching closes the active pull with cancellation too, but leaves the server-side job resumable.
+            if (
+                response is not None
+                and response.state == 'suspended'
+                and not (self._cancelled or self._stopped or self._detached)
+            ):
+                await cancel_abandoned_job(self.model, response, error)
+                self._job_cancelled = True
+            raise
+        finally:
+            # Finalize an interrupted segment only after its generator has unwound, as teardown can stamp
+            # additional usage. This also handles `aclose()` racing a debounced consumer's prefetch task.
+            if self._current_sub is not None:
+                self.finalize_response(self._current_sub.get())
+
+    async def _next_segment_messages(self, response: ModelResponse | None) -> list[ModelMessage] | None:
+        """The messages that request the next segment after `response`, or `None` once the stream ends.
+
+        Counts a re-issue of a suspended `response` against its ceiling, and waits out its continuation delay.
+        """
+        if self._cancelled or self._stopped:
+            return None
+        if response is None:
+            return self.base_messages
+        if response.state != 'suspended':
+            return None
+        if self.return_pending and self._requested and self.model.continuation_delay(response) is not None:
+            self._ended_pending = True
+            return None
+        self._accumulate_count, self._replace_count = self._count_continuation(
+            response, self._last_mode, self._accumulate_count, self._replace_count
+        )
+        # A primed first segment already waited out the delay before it was opened. Mirroring the
+        # non-streaming loop, a resumed pending response is checked on straight away.
+        if (
+            self._primed_segment is None
+            and (delay := self.model.continuation_delay(response))
+            and (self._requested or not self.return_pending)
+        ):
+            await self.sleep_func(delay)
+            # A `cancel()`/`close_stream()` from another task during the inter-poll sleep
+            # already tore down the server-side job; don't open the next sub-stream, which
+            # for Anthropic `pause_turn` would actively resume generation and burn tokens.
+            if self._cancelled or self._stopped:
+                return None
+        return [*self.base_messages, response]
+
+    def _stitch_event(
+        self, event: ModelResponseStreamEvent, response: ModelResponse | None, sub: StreamedResponse
+    ) -> ModelResponseStreamEvent:
+        """Re-emit a segment's event in the stitched stream, capturing its final result or offsetting its part index."""
+        if isinstance(event, FinalResultEvent):
+            self.final_result_event = event
+            return event
+        if self._segment_start is None:
+            self._segment_start = self._segment_offset(response, sub, self._last_segment_start)
+        return self._reindex(event, self._segment_start)
+
+    def _merge_segment(self, response: ModelResponse | None, sub_response: ModelResponse) -> ModelResponse:
+        """Merge a finished segment's response into the response of the segments before it."""
+        if self.request_context is not None:
+            report_continuation_segment(self.request_context, sub_response, self._observers)
+        if response is None:
+            if sub_response.state == 'suspended':
+                self.finalize_response(sub_response)
+            merged = sub_response
+        else:
+            # Continuation segments are separately billed requests. Finalize their usage before
+            # merging so additive costs preserve per-request pricing, including pricing tiers.
+            self.finalize_response(response)
+            self.finalize_response(sub_response)
+            # Classify this transition (replace vs accumulate) so the next re-issue is counted
+            # against the right ceiling.
+            self._last_mode = merge_mode(response, sub_response)
+            merged = merge_responses(response, sub_response)
+
+        self._merged_response = merged
+        self._current_sub = None
+        self._usage = merged.usage
+        return merged
+
+    @staticmethod
+    def _segment_offset(response: ModelResponse | None, sub: StreamedResponse, last_segment_offset: int) -> int:
+        """Index at which the current segment's parts begin in the stitched stream.
+
+        Shares [`merge_mode`][pydantic_ai.models._continuation.merge_mode]'s decision so reindexing
+        matches the eventual merge:
+
+        - `'accumulate'` appends after all prior parts (offset = number of prior parts).
+        - `'replace-same-id'` (a background job re-polled under the same `provider_response_id`) re-emits
+          the *same* parts in the *same* index space, so it reuses the replaced segment's offset.
+        - `'replace-new'` (a model change, or a `FallbackModel` `replace_previous_response` directive)
+          supersedes the whole prior response — `merge_responses` keeps only the new parts, indexed from
+          0 — so its events must start at offset 0 too, or the live event indices would drift past the
+          final response's (e.g. after one or more accumulated segments).
+        """
+        if response is None:
+            return 0
+        mode = merge_mode(response, sub.get())
+        if mode == 'accumulate':
+            return len(response.parts)
+        if mode == 'replace-new':
+            return 0
+        return last_segment_offset
+
+    def _reindex(self, event: ModelResponseStreamEvent, offset: int) -> ModelResponseStreamEvent:
+        if offset and isinstance(event, (PartStartEvent, PartDeltaEvent, PartEndEvent)):
+            return replace(event, index=event.index + offset)
+        return event
+
+    def _snapshot(self) -> ModelResponse | None:
+        """The merged response so far, folding in any in-flight sub-stream."""
+        merged = self._merged_response
+        if (sub := self._current_sub) is not None:
+            sub_response = sub.get()
+            return sub_response if merged is None else merge_responses(merged, sub_response)
+        return merged
+
+    @property
+    def usage(self) -> RequestUsage:
+        """Live usage across all segments so far, including the in-flight sub-stream.
+
+        The composite's `_usage` is only refreshed when a segment completes, so — unlike a
+        plain segment, whose model updates `_usage` live during iteration — reading it mid
+        segment would omit the in-flight sub's usage. Fold in the current sub's live snapshot
+        so consumers (e.g. `AgentStream.usage`) see the running total at any point.
+
+        When the stream resumes a suspended response from history, that response's usage was counted
+        by the run that produced it, so this is only what was billed beyond it: see `billed_beyond`.
+        """
+        snapshot = self._snapshot()
+        if snapshot is None:
+            return self._usage
+        if (resumed := self.initial_suspended_response) is not None:
+            return usage_beyond(snapshot.usage, resumed.usage)
+        return snapshot.usage
+
+    def get(self) -> ModelResponse:
+        """Build the live merged [`ModelResponse`][pydantic_ai.messages.ModelResponse] across all segments so far.
+
+        The composite normally resolves the whole `suspended → … → complete` chain, so mid-run it's
+        `'complete'` once the loop exits, `'interrupted'` if cancelled, and `'incomplete'` while a
+        segment is still in flight. The one case it *does* surface `'suspended'` is a **detach**: the
+        consumer stopped iterating and the stream was torn down via `aclose()` — not `cancel()` — while
+        the current/last segment is itself a still-pending suspended job. The server-side job survives
+        (detach doesn't cancel it), so recording `'suspended'` makes the run resumable later, matching
+        the non-streaming path where a persisted suspended response can be resumed. A real `cancel()`
+        (`_cancelled`) also cancels the server-side job, so it stays `'interrupted'` and non-resumable.
+        """
+        snapshot = self._snapshot()
+
+        state: ModelResponseState
+        if self._finished:
+            state = 'suspended' if self._ended_pending else 'complete'
+        elif self._cancelled:
+            # A real `cancel()` tore down the server-side job too, so this is not resumable.
+            state = 'interrupted'
+        elif self._detached and not self._job_cancelled and snapshot is not None and snapshot.state == 'suspended':
+            # Detached with a still-pending suspended job in hand (and not cancelled): resumable.
+            state = 'suspended'
+        else:
+            state = 'incomplete'
+
+        if snapshot is None:
+            return ModelResponse(
+                parts=[], model_name=self.model_name, state=state, failed_attempts=self.failed_attempts
+            )
+        # Attempts that failed before this stream was opened, such as models a `ModelFallback` capability moved on from.
+        if self.failed_attempts:
+            snapshot = replace(snapshot, failed_attempts=[*self.failed_attempts, *(snapshot.failed_attempts or [])])
+        return replace(snapshot, state=state)
+
+    async def close_stream(self) -> None:
+        """Stop the continuation loop and cancel any server-side suspended/background job."""
+        self._stopped = True
+        try:
+            if self._current_sub is not None:
+                await self._current_sub.close_stream()
+        finally:
+            # Cancel the server-side job even if tearing down the sub-stream connection raised,
+            # so a failed connection teardown can't leave the background job running. Shielded so the
+            # cancel completes even when the run is being torn down by a workflow/task cancellation.
+            await cancel_suspended_job(self.model, self.get())
+
+    async def aclose(self) -> None:
+        """Tear down the in-flight sub-stream (its HTTP connection) without cancelling any job.
+
+        Each segment's `model.request_stream(...)` context manager lives inside the stitching
+        async generator, so — unlike an ordinary `StreamedResponse` whose connection the agent
+        graph closed via `async with request_stream(...)` — an early break from a consumer
+        doesn't reliably propagate `aclose()` to it. Closing the generator here runs that
+        context manager's teardown (mirroring the pre-stitching behavior), and is safe to call
+        once the consumer has stopped iterating (including after a normal, fully-drained stream,
+        where it's a no-op). Cancellation of a server-side job stays on the `close_stream()`
+        path, driven by `AgentStream.cancel()`.
+
+        Closes the inner segment generator through a pull wrapper that cancels and drains any active
+        `anext()` before closing it. The outer cancel-guard's `async for … in iterator` does not forward
+        `aclose()` to the segment generator, so it must be closed directly to release each segment's
+        `request_stream(...)` context manager and connection.
+        """
+        # Record that the consumer stopped and the stream was torn down without cancelling. `get()`
+        # reads this to report a still-pending suspended job as resumable `'suspended'` rather than a
+        # live `'incomplete'` snapshot; `_finished`/`_cancelled` take precedence, so this is a no-op
+        # after a fully-drained (`'complete'`) or cancelled (`'interrupted'`) stream.
+        self._detached = True
+        await self.release_primed_segment()
+        if self._segment_stream is not None:
+            # Stream teardown can run inside a cancelled graph scope. The wrapper must finish cancelling and
+            # draining its active pull before closing the segment generator, even when cancellation triggered
+            # this cleanup.
+            with anyio.CancelScope(shield=True):
+                await self._segment_stream.aclose()
+
+    @property
+    def model_name(self) -> str:
+        if self._current_sub is not None:
+            return self._current_sub.model_name
+        if self._merged_response is not None and self._merged_response.model_name:
+            return self._merged_response.model_name
+        return ''
+
+    @property
+    def provider_name(self) -> str | None:
+        if self._current_sub is not None:
+            return self._current_sub.provider_name
+        return self._merged_response.provider_name if self._merged_response is not None else None
+
+    @property
+    def provider_url(self) -> str | None:
+        if self._current_sub is not None:
+            return self._current_sub.provider_url
+        return self._merged_response.provider_url if self._merged_response is not None else None
+
+    @property
+    def timestamp(self) -> datetime:
+        if self._current_sub is not None:
+            return self._current_sub.timestamp
+        return self._merged_response.timestamp if self._merged_response is not None else _FALLBACK_TIMESTAMP

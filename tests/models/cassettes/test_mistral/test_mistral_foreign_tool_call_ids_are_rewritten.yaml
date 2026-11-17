@@ -1,0 +1,282 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.mistral.ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1536"
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    body:
+      type: json
+      content:
+        model: voxtral-small-latest
+        messages:
+        - content: What is the weather in Paris, London and Berlin?
+          role: user
+        - role: assistant
+          content: []
+          tool_calls:
+          - function:
+              name: get_weather
+              arguments: "{\"city\":\"Paris\"}"
+            id: 2pESUE4jw
+            type: function
+            index: 0
+          - function:
+              name: get_weather
+              arguments: "{\"city\":\"Londres\"}"
+            id: l4LUGq9qS
+            type: function
+            index: 0
+          - function:
+              name: get_weather
+              arguments: "{\"city\":\"Berlin\"}"
+            id: 9qOPVjwIC
+            type: function
+            index: 0
+          prefix: false
+        - content: Sunny, 21C
+          role: tool
+          tool_call_id: 2pESUE4jw
+        - content: |-
+            Use the English city name.
+
+            Fix the errors and try again.
+          role: tool
+          tool_call_id: l4LUGq9qS
+        - content: Cloudy, 15C
+          role: tool
+          tool_call_id: 9qOPVjwIC
+        - role: assistant
+          content: []
+          tool_calls:
+          - function:
+              name: get_weather
+              arguments: "{\"city\":\"London\"}"
+            id: aB3dE5gH9
+            type: function
+            index: 0
+          prefix: false
+        - content: Rainy, 12C
+          role: tool
+          tool_call_id: aB3dE5gH9
+        - role: assistant
+          content:
+          - text: OK
+            type: text
+          prefix: false
+        - content: >-
+            Summarize the weather in those three cities in one sentence, without calling
+            tools.
+          role: user
+        top_p: 1.0
+        stream: false
+        stop: null
+        tools:
+        - function:
+            name: get_weather
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            description: ""
+          type: function
+        tool_choice: auto
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 01a146c5-9ff4-79b3-8b87-5bf9d43e7740
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: 94f1cd377ff94cc7b65d33599af684d0
+        created: 1792188719
+        model: voxtral-small-latest
+        usage:
+          prompt_tokens: 300
+          total_tokens: 337
+          completion_tokens: 37
+          prompt_tokens_details:
+            cached_tokens: 0
+          service_tier: standard
+        object: chat.completion
+        choices:
+        - index: 0
+          finish_reason: stop
+          message:
+            role: assistant
+            tool_calls: null
+            content: >-
+              The weather in Paris is sunny and 21C, in London it is rainy and 12C, and in
+              Berlin it is cloudy and 15C.
+  recorded_at: 2026-10-16T22:11:59.598183+00:00
+- request:
+    method: POST
+    uri: https://api.mistral.ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1536"
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    body:
+      type: json
+      content:
+        model: voxtral-small-latest
+        messages:
+        - content: What is the weather in Paris, London and Berlin?
+          role: user
+        - role: assistant
+          content: []
+          tool_calls:
+          - function:
+              name: get_weather
+              arguments: "{\"city\":\"Paris\"}"
+            id: 2pESUE4jw
+            type: function
+            index: 0
+          - function:
+              name: get_weather
+              arguments: "{\"city\":\"Londres\"}"
+            id: l4LUGq9qS
+            type: function
+            index: 0
+          - function:
+              name: get_weather
+              arguments: "{\"city\":\"Berlin\"}"
+            id: 9qOPVjwIC
+            type: function
+            index: 0
+          prefix: false
+        - content: Sunny, 21C
+          role: tool
+          tool_call_id: 2pESUE4jw
+        - content: |-
+            Use the English city name.
+
+            Fix the errors and try again.
+          role: tool
+          tool_call_id: l4LUGq9qS
+        - content: Cloudy, 15C
+          role: tool
+          tool_call_id: 9qOPVjwIC
+        - role: assistant
+          content: []
+          tool_calls:
+          - function:
+              name: get_weather
+              arguments: "{\"city\":\"London\"}"
+            id: aB3dE5gH9
+            type: function
+            index: 0
+          prefix: false
+        - content: Rainy, 12C
+          role: tool
+          tool_call_id: aB3dE5gH9
+        - role: assistant
+          content:
+          - text: OK
+            type: text
+          prefix: false
+        - content: >-
+            Summarize the weather in those three cities in one sentence, without calling
+            tools.
+          role: user
+        top_p: 1.0
+        stream: false
+        stop: null
+        tools:
+        - function:
+            name: get_weather
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            description: ""
+          type: function
+        tool_choice: auto
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 01a146c5-a258-7961-b7e1-ad199df351a4
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: 775efbcd327d4243afc6578d90a986e9
+        created: 1792188719
+        model: voxtral-small-latest
+        usage:
+          prompt_tokens: 300
+          total_tokens: 337
+          completion_tokens: 37
+          prompt_tokens_details:
+            cached_tokens: 0
+          service_tier: standard
+        object: chat.completion
+        choices:
+        - index: 0
+          finish_reason: stop
+          message:
+            role: assistant
+            tool_calls: null
+            content: >-
+              The weather in Paris is sunny and 21C, in London it is rainy and 12C, and in
+              Berlin it is cloudy and 15C.
+  recorded_at: 2026-10-16T22:12:00.259959+00:00

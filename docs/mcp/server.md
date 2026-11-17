@@ -1,3 +1,7 @@
+---
+description: "Use Pydantic AI agents inside the tools of your own MCP server, and route their LLM calls back through the connected client with MCP sampling."
+---
+
 # Server
 
 Pydantic AI models can also be used within MCP Servers.
@@ -13,7 +17,7 @@ from pydantic_ai import Agent
 
 server = FastMCP('Pydantic AI Server')
 server_agent = Agent(
-    'anthropic:claude-haiku-4-5', system_prompt='always reply in rhyme'
+    '{{ anthropic:small }}', instructions='always reply in rhyme'
 )
 
 
@@ -38,17 +42,20 @@ import os
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.types import TextContent
 
 
 async def client():
     server_params = StdioServerParameters(
-        command='python', args=['mcp_server.py'], env=os.environ
+        command='python', args=['mcp_server.py'], env=dict(os.environ)
     )
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.call_tool('poet', {'theme': 'socks'})
-            print(result.content[0].text)
+            content = result.content[0]
+            assert isinstance(content, TextContent)
+            print(content.text)
             """
             Oh, socks, those garments soft and sweet,
             That nestle softly 'round our feet,
@@ -68,6 +75,11 @@ if __name__ == '__main__':
 
 When Pydantic AI agents are used within MCP servers, they can use sampling via [`MCPSamplingModel`][pydantic_ai.models.mcp_sampling.MCPSamplingModel].
 
+You can continue a conversation from another model by passing its `message_history` to the sampling agent.
+Function tool calls, results, and retry feedback in that history are preserved using MCP's native tool content blocks,
+which require a client supporting the 2025-11-25 sampling format or later.
+Multimodal tool results are not yet supported. Replaying tool history does not enable the sampling agent to call new tools.
+
 We can extend the above example to use sampling so instead of connecting directly to the LLM, the agent calls back through the MCP client to make LLM calls.
 
 ```py {title="mcp_server_sampling.py"}
@@ -77,7 +89,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
 server = FastMCP('Pydantic AI Server with sampling')
-server_agent = Agent(system_prompt='always reply in rhyme')
+server_agent = Agent(instructions='always reply in rhyme')
 
 
 @server.tool()
@@ -127,6 +139,7 @@ async def sampling_callback(
                 annotations=None,
                 meta=None,
             ),
+            meta=None,
         )
     ]
     """
@@ -147,7 +160,9 @@ async def client():
         async with ClientSession(read, write, sampling_callback=sampling_callback) as session:
             await session.initialize()
             result = await session.call_tool('poet', {'theme': 'socks'})
-            print(result.content[0].text)
+            content = result.content[0]
+            assert isinstance(content, TextContent)
+            print(content.text)
             #> Socks for a fox.
 
 

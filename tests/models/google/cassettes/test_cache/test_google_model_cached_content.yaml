@@ -1,0 +1,364 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '15711'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: 'Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel
+            Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France.
+            The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital
+            of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is
+            the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the
+            capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris.
+            Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower
+            is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of France. The
+            Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. Paris is the capital of
+            France. The Eiffel Tower is in Paris. Paris is the capital of France. The Eiffel Tower is in Paris. '
+        role: user
+      model: models/gemini-2.5-flash
+      systemInstruction:
+        parts:
+        - text: You are a geography expert. Be concise.
+        role: user
+      ttl: 120s
+    uri: https://generativelanguage.googleapis.com/v1beta/cachedContents
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '304'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=682
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      createTime: '2026-05-28T14:45:17.041985Z'
+      displayName: ''
+      expireTime: '2026-05-28T14:47:16.701652823Z'
+      model: models/gemini-2.5-flash
+      name: cachedContents/7lf5him5ev4iemi1yjv2gwli5bhpz3yidzejwllo
+      updateTime: '2026-05-28T14:45:17.041985Z'
+      usageMetadata:
+        totalTokenCount: 3512
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '217'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      cachedContent: cachedContents/7lf5him5ev4iemi1yjv2gwli5bhpz3yidzejwllo
+      contents:
+      - parts:
+        - text: What is the capital of France?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '508'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1588
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: Paris.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: _VQYaqvRGbW6qtsPg4TDoAg
+      usageMetadata:
+        cacheTokensDetails:
+        - modality: TEXT
+          tokenCount: 3512
+        cachedContentTokenCount: 3512
+        candidatesTokenCount: 2
+        promptTokenCount: 3520
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 3520
+        serviceTier: standard
+        thoughtsTokenCount: 42
+        totalTokenCount: 3564
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '217'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      cachedContent: cachedContents/7lf5him5ev4iemi1yjv2gwli5bhpz3yidzejwllo
+      contents:
+      - parts:
+        - text: Say the capital one more time.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '508'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1760
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: Paris.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: _1QYavqiB-6wqtsPxaKcuQw
+      usageMetadata:
+        cacheTokensDetails:
+        - modality: TEXT
+          tokenCount: 3512
+        cachedContentTokenCount: 3512
+        candidatesTokenCount: 2
+        promptTokenCount: 3520
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 3520
+        serviceTier: standard
+        thoughtsTokenCount: 51
+        totalTokenCount: 3573
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: DELETE
+    uri: https://generativelanguage.googleapis.com/v1beta/cachedContents/7lf5him5ev4iemi1yjv2gwli5bhpz3yidzejwllo
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=336
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body: {}
+    status:
+      code: 200
+      message: OK
+version: 1

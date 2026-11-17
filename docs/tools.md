@@ -1,3 +1,7 @@
+---
+description: "Give a Pydantic AI agent function tools for LLM tool calling with @agent.tool, validating arguments from type hints and using docstrings as descriptions."
+---
+
 # Function Tools
 
 Function tools provide a mechanism for models to perform actions and retrieve extra information to help them generate a response.
@@ -8,16 +12,16 @@ If you want a model to be able to call a function as its final action, without t
 
 There are a number of ways to register tools with an agent:
 
-- via the [`@agent.tool`][pydantic_ai.Agent.tool] decorator — for tools that need access to the agent [context][pydantic_ai.tools.RunContext]
-- via the [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] decorator — for tools that do not need access to the agent [context][pydantic_ai.tools.RunContext]
-- via the [`tools`][pydantic_ai.Agent.__init__] keyword argument to `Agent` which can take either plain functions, or instances of [`Tool`][pydantic_ai.tools.Tool]
+- via the [`@agent.tool`][pydantic_ai.agent.Agent.tool] decorator — for tools that need access to the agent [context][pydantic_ai.tools.RunContext]
+- via the [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorator — for tools that do not need access to the agent [context][pydantic_ai.tools.RunContext]
+- via the [`tools`][pydantic_ai.agent.Agent.__init__] keyword argument to `Agent` which can take either plain functions, or instances of [`Tool`][pydantic_ai.tools.Tool]
 
-For more advanced use cases, the [toolsets](toolsets.md) feature lets you manage collections of tools (built by you or provided by an [MCP server](mcp/client.md) or other [third party](third-party-tools.md#third-party-tools)) and register them with an agent in one go via the [`toolsets`][pydantic_ai.Agent.__init__] keyword argument to `Agent`. Internally, all `tools` and `toolsets` are gathered into a single [combined toolset](toolsets.md#combining-toolsets) that's made available to the model.
+For more advanced use cases, the [toolsets](toolsets.md) feature lets you manage collections of tools (built by you or provided by an [MCP server](mcp/client.md) or other [third party](third-party-tools.md#third-party-tools)) and register them with an agent in one go via the [`toolsets`][pydantic_ai.agent.Agent.__init__] keyword argument to `Agent`. Internally, all `tools` and `toolsets` are gathered into a single [combined toolset](toolsets.md#combining-toolsets) that's made available to the model.
 
 !!! info "Function tools vs. RAG"
     Function tools are basically the "R" of RAG (Retrieval-Augmented Generation) — they augment what the model can do by letting it request extra information.
 
-    The main semantic difference between Pydantic AI Tools and RAG is RAG is synonymous with vector search, while Pydantic AI tools are more general-purpose. (Note: we may add support for vector search functionality in the future, particularly an API for generating embeddings. See [#58](https://github.com/pydantic/pydantic-ai/issues/58))
+    The main semantic difference between Pydantic AI Tools and RAG is RAG is synonymous with vector search, while Pydantic AI tools are more general-purpose. For vector search, you can use our [embeddings](embeddings.md) support to generate embeddings across multiple providers.
 
 !!! info "Function Tools vs. Structured Outputs"
     As the name suggests, function tools use the model's "tools" or "functions" API to let the model know what is available to call. Tools or functions are also used to define the schema(s) for [structured output](output.md) when using the default [tool output mode](output.md#tool-output), thus a model might have access to many tools, some of which call function tools while others end the run and produce a final output.
@@ -34,9 +38,9 @@ import random
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'google-gla:gemini-2.5-flash',  # (1)!
+    '{{ google:medium }}',  # (1)!
     deps_type=str,  # (2)!
-    system_prompt=(
+    instructions=(
         "You're a dice game, you should roll the die and see if the number "
         "you get back matches the user's guess. If so, tell them they're a winner. "
         "Use the player's name in the response."
@@ -62,7 +66,7 @@ print(dice_result.output)
 ```
 
 1. This is a pretty simple task, so we can use the fast and cheap Gemini flash model.
-2. We pass the user's name as the dependency, to keep things simple we use just the name as a string as the dependency.
+2. We pass the user's name as a string dependency to keep the example simple.
 3. This tool doesn't need any context, it just returns a random number. You could probably use dynamic instructions in this case.
 4. This tool needs the player's name, so it uses `RunContext` to access dependencies which are just the player's name in this case.
 5. Run the agent, passing the player's name as the dependency.
@@ -79,16 +83,15 @@ print(dice_result.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPromptPart(
-                content="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
-                timestamp=datetime.datetime(...),
-            ),
             UserPromptPart(
                 content='My guess is 4',
                 timestamp=datetime.datetime(...),
-            ),
+            )
         ],
+        timestamp=datetime.datetime(...),
+        instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -96,10 +99,12 @@ print(dice_result.all_messages())
                 tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(input_tokens=90, output_tokens=2),
-        model_name='gemini-2.5-flash',
+        usage=RequestUsage(cost=Decimal('0.0000480'), input_tokens=54, output_tokens=2),
+        model_name='{{ google:medium.name }}',
+        model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
     ModelRequest(
         parts=[
@@ -110,7 +115,10 @@ print(dice_result.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
+        timestamp=datetime.datetime(...),
+        instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -118,10 +126,14 @@ print(dice_result.all_messages())
                 tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(input_tokens=91, output_tokens=4),
-        model_name='gemini-2.5-flash',
+        usage=RequestUsage(
+            cost=Decimal('0.00005625'), input_tokens=55, output_tokens=4
+        ),
+        model_name='{{ google:medium.name }}',
+        model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
     ModelRequest(
         parts=[
@@ -132,7 +144,10 @@ print(dice_result.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
+        timestamp=datetime.datetime(...),
+        instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -140,10 +155,12 @@ print(dice_result.all_messages())
                 content="Congratulations Anne, you guessed correctly! You're a winner!"
             )
         ],
-        usage=RequestUsage(input_tokens=92, output_tokens=12),
-        model_name='gemini-2.5-flash',
+        usage=RequestUsage(cost=Decimal('0.000087'), input_tokens=56, output_tokens=12),
+        model_name='{{ google:medium.name }}',
+        model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
 ]
 """
@@ -187,14 +204,14 @@ sequenceDiagram
 
 ## Registering via Agent Argument {#registering-function-tools-via-agent-argument}
 
-As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to reuse tools, and can also give more fine-grained control over the tools.
+As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.agent.Agent.__init__]. This is useful when you want to reuse tools, and can also give more fine-grained control over the tools.
 
 ```python {title="dice_game_tool_kwarg.py"}
 import random
 
 from pydantic_ai import Agent, RunContext, Tool
 
-system_prompt = """\
+instructions = """\
 You're a dice game, you should roll the die and see if the number
 you get back matches the user's guess. If so, tell them they're a winner.
 Use the player's name in the response.
@@ -212,19 +229,19 @@ def get_player_name(ctx: RunContext[str]) -> str:
 
 
 agent_a = Agent(
-    'google-gla:gemini-2.5-flash',
+    '{{ google:medium }}',
     deps_type=str,
     tools=[roll_dice, get_player_name],  # (1)!
-    system_prompt=system_prompt,
+    instructions=instructions,
 )
 agent_b = Agent(
-    'google-gla:gemini-2.5-flash',
+    '{{ google:medium }}',
     deps_type=str,
     tools=[  # (2)!
         Tool(roll_dice, takes_ctx=False),
         Tool(get_player_name, takes_ctx=True),
     ],
-    system_prompt=system_prompt,
+    instructions=instructions,
 )
 
 dice_result = {}
@@ -252,6 +269,11 @@ Function parameters are extracted from the function signature, and all parameter
 Even better, Pydantic AI extracts the docstring from functions and (thanks to [griffe](https://mkdocstrings.github.io/griffe/)) extracts parameter descriptions from the docstring and adds them to the schema.
 
 [Griffe supports](https://mkdocstrings.github.io/griffe/reference/docstrings/#docstrings) extracting parameter descriptions from `google`, `numpy`, and `sphinx` style docstrings. Pydantic AI will infer the format to use based on the docstring, but you can explicitly set it using [`docstring_format`][pydantic_ai.tools.DocstringFormat]. You can also enforce parameter requirements by setting `require_parameter_descriptions=True`. This will raise a [`UserError`][pydantic_ai.exceptions.UserError] if a parameter description is missing.
+
+Three parts of the docstring reach the model: the leading description, the parameter descriptions (including
+those under `Keyword Args` or `Other Parameters`), and the first entry of the returns section. Other sections
+Griffe can parse, such as `Raises`, `Examples`, `Notes`, `Warnings` and `Yields`, are dropped, so anything the
+model needs to act on belongs in the leading description, a parameter description, or the first returns entry.
 
 To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 
@@ -333,6 +355,7 @@ test_model = TestModel()
 result = agent.run_sync('hello', model=test_model)
 print(result.output)
 #> {"foobar":"x=0 y='a' z=3.14"}
+assert test_model.last_model_request_parameters is not None
 print(test_model.last_model_request_parameters.function_tools)
 """
 [
@@ -349,6 +372,7 @@ print(test_model.last_model_request_parameters.function_tools)
             'type': 'object',
         },
         description='This is a Foobar',
+        toolset_id='<agent>',
     )
 ]
 """
@@ -356,6 +380,143 @@ print(test_model.last_model_request_parameters.function_tools)
 
 _(This example is complete, it can be run "as is")_
 
+A model whose [profile](models/overview.md#models-and-providers) inlines `$defs`, for example with [`InlineDefsJsonSchemaTransformer`][pydantic_ai.profiles.InlineDefsJsonSchemaTransformer], receives a copy of each referenced definition wherever it is referenced. Pydantic AI allows up to 250,000 JSON values in those copies per tool or output schema, counting each object, array, string, number, boolean and null once. Past that, it raises a [`UserError`][pydantic_ai.exceptions.UserError] before sending the request, with a message such as `The JSON schema of tool 'search' is too large` that names the limit. To fix this, refer to large definitions from fewer places, leave the tool out of requests with [`prepare_tools`](tools-advanced.md#prepare-tools) or a [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset], or use a model that keeps `$ref`s.
+
+### Docstrings {#docstrings}
+
+A docstring written under a parameter, a field, or an enum member is the natural place to say what it means,
+but not every one of them reaches the model:
+
+| Written under | Describes | Sent to the model |
+| --- | --- | --- |
+| a tool or [output function](output.md#output-functions) | that tool | always |
+| an `Args:` entry in its docstring | that parameter | always |
+| a class used as a parameter or [output type](output.md) | that object | always |
+| a field of a `dataclass` or `TypedDict` | that field | as a function's parameter |
+| a field of a Pydantic model or `pydantic.dataclasses.dataclass` | that field | with `use_attribute_docstrings` on the class |
+| an `Enum` member | that option | with [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] |
+
+The schema Pydantic AI builds from a function signature — a tool or an output function — turns on Pydantic's
+[`use_attribute_docstrings`](https://docs.pydantic.dev/latest/api/config/#pydantic.config.ConfigDict.use_attribute_docstrings),
+and that reaches every type below it that doesn't bring a config of its own, at any depth. A Pydantic model and
+a `pydantic.dataclasses.dataclass` do bring one, which wins, so they ignore it — for their own fields and for
+anything nested inside them. Set it on the class itself to opt in wherever it's used, including as an
+[output type](output.md), which is built from the type rather than from a signature and so never inherits it:
+
+```python {title="attribute_docstrings.py"}
+from pydantic import BaseModel
+
+
+class Ticket(BaseModel, use_attribute_docstrings=True):
+    """A support ticket."""
+
+    subject: str
+    """One line summarising the problem."""
+```
+
+A description written as `Field(description=...)` needs no config and takes precedence over the docstring.
+
+#### Enum options {#enum-options}
+
+An `Enum` parameter reaches the model as the list of its values, which says what the options are but not what
+they mean. Mix [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] into the enum to send the
+docstring written under each member as that option's description. Such an enum renders as `anyOf` of `const`
+values instead of a plain `enum` list:
+
+```python {title="enum_options.py"}
+from enum import StrEnum
+
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    UseEnumMemberDocstrings,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+class Urgency(UseEnumMemberDocstrings, StrEnum):
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+agent = Agent()
+
+
+@agent.tool_plain
+def set_urgency(urgency: Urgency) -> str:
+    """Set the urgency of the ticket."""
+    return f'Urgency set to {urgency.value}.'
+
+
+def print_schema(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    print(info.function_tools[0].parameters_json_schema)
+    """
+    {
+        '$defs': {
+            'Urgency': {
+                'anyOf': [
+                    {'const': 'low', 'description': 'Can wait a week.'},
+                    {'const': 'high', 'description': 'Needs attention today.'},
+                ],
+                'description': 'How urgent the ticket is.',
+                'title': 'Urgency',
+                'type': 'string',
+            }
+        },
+        'additionalProperties': False,
+        'properties': {'urgency': {'$ref': '#/$defs/Urgency'}},
+        'required': ['urgency'],
+        'type': 'object',
+    }
+    """
+    return ModelResponse(parts=[TextPart('done')])
+
+
+agent.run_sync('hello', model=FunctionModel(print_schema))
+```
+
+_(This example is complete, it can be run "as is")_
+
+`Enum` is the one case that needs a mix-in rather than a config flag: it has no `model_config` to carry one, and
+cannot carry a plain class attribute either — annotated or not, any assigned value becomes a member — so a base
+class is the only marker left. Without it the docstrings are ignored and the schema is exactly the one Pydantic
+generates on its own, so opting an enum in is the only thing that changes what a model sees.
+
+Members without a docstring keep a bare `const`, and a docstring under an alias (`urgent = 'high'` beside
+`high = 'high'`) describes the option it was written for. A `Literal` has nowhere to write a docstring, so it is
+unaffected.
+
+Wherever Pydantic AI describes an opted-in enum to a model — a tool parameter, an [output type](output.md), or a
+field of a model of your own — the descriptions come along.
+
+The docstrings are read from the enum's source, so an enum built at run time has none. When the options
+themselves are only known once the run is under way, use [`Choices()`](output.md#choices), which describes a
+mapping built where you build it and emits exactly this `anyOf`-of-`const`s schema.
+
+
+!!! tip "Debugging Tool Calls"
+    Understanding tool behavior is crucial for agent development. By instrumenting your agent with [Logfire](logfire.md), you can see:
+
+    - What arguments were passed to each tool
+    - What each tool returned
+    - How long each tool took to execute
+    - Any errors that occurred
+
+    This visibility helps you understand why an agent made specific decisions and identify issues in tool implementations.
+
+## Injecting Follow-up Messages from a Tool
+
+A tool can push extra messages into the conversation via
+[`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] — useful when a tool wants
+to add follow-up context, redirect the agent's plan, or surface an event the model
+should react to. See [Injecting messages mid-run](message-history.md#injecting-messages-mid-run)
+for the full pattern.
 
 ## See Also
 
@@ -363,7 +524,7 @@ For more tool features and integrations, see:
 
 - [Advanced Tool Features](tools-advanced.md) - Custom schemas, dynamic tools, tool execution and retries
 - [Toolsets](toolsets.md) - Managing collections of tools
-- [Builtin Tools](builtin-tools.md) - Native tools provided by LLM providers
+- [Native Tools](native-tools.md) - Native tools provided by LLM providers
 - [Common Tools](common-tools.md) - Ready-to-use tool implementations
-- [Third-Party Tools](third-party-tools.md) - Integrations with MCP, LangChain, ACI.dev and other tool libraries
+- [Third-Party Tools](third-party-tools.md) - Integrations with MCP, LangChain, and other tool libraries
 - [Deferred Tools](deferred-tools.md) - Tools requiring approval or external execution

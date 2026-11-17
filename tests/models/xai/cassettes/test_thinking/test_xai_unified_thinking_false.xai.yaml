@@ -1,0 +1,39 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What is 2+2?
+        role: ROLE_USER
+      model: grok-3-mini
+      reasoning_effort: EFFORT_NONE
+    raw: !!binary |
+      ChIKDgoMV2hhdCBpcyAyKzI/EAESC2dyb2stMy1taW5pmAEE
+  response_sample:
+    json:
+      id: 94fccc1a-73ae-96fc-be12-99d023615c28
+      outputs:
+      - finish_reason: REASON_STOP
+        message:
+          content: 2 + 2 = 4.
+          role: ROLE_ASSISTANT
+      created: '2026-10-22T16:49:05.578867379Z'
+      model: grok-4.3
+      system_fingerprint: fp_eb3c003fc66c14ed
+      usage:
+        completion_tokens: 8
+        prompt_tokens: 191
+        total_tokens: 199
+        prompt_text_tokens: 191
+        cached_prompt_text_tokens: 128
+        cost_in_usd_ticks: '1243500'
+      settings:
+        parallel_tool_calls: true
+        reasoning_effort: EFFORT_NONE
+        temperature: 0.7
+        top_p: 0.95
+    raw: !!binary |
+      CiQ5NGZjY2MxYS03M2FlLTk2ZmMtYmUxMi05OWQwMjM2MTVjMjgSFAgDGhAKCjIgKyAyID0gNC4Q
+      AjgBKgwIgf3o1gYQs6GDlAIyCGdyb2stNC4zOhNmcF9lYjNjMDAzZmM2NmMxNGVkShkICBC/ARjH
+      ASC/ATiAAVjs8kuQAb8BmAEMWhIQASAELTMzMz9NMzNzP3oCCAQ=

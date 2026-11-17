@@ -1,0 +1,968 @@
+---
+title: Embeddings
+description: "Generate text embeddings with Pydantic AI using OpenAI, Google, Cohere, VoyageAI, Bedrock or local Sentence Transformers, for semantic search and RAG."
+---
+
+# Embeddings
+
+Embeddings are vector representations of text that capture semantic meaning. They're essential for building:
+
+- **Semantic search** — Find documents based on meaning, not just keyword matching
+- **RAG (Retrieval-Augmented Generation)** — Retrieve relevant context for your AI agents
+- **Similarity detection** — Find similar documents, detect duplicates, or cluster content
+- **Classification** — Use embeddings as features for downstream ML models
+
+Pydantic AI provides a unified interface for generating embeddings across multiple providers.
+
+## Quick Start
+
+The [`Embedder`][pydantic_ai.embeddings.Embedder] class is the high-level interface for generating embeddings:
+
+```python {title="embeddings_quickstart.py"}
+from pydantic_ai import Embedder
+
+embedder = Embedder('{{ openai:embedding }}')
+
+
+async def main():
+    # Embed a search query
+    result = await embedder.embed_query('What is machine learning?')
+    print(f'Embedding dimensions: {len(result.embeddings[0])}')
+    #> Embedding dimensions: 1536
+
+    # Embed multiple documents at once
+    docs = [
+        'Machine learning is a subset of AI.',
+        'Deep learning uses neural networks.',
+        'Python is a programming language.',
+    ]
+    result = await embedder.embed_documents(docs)
+    print(f'Embedded {len(result.embeddings)} documents')
+    #> Embedded 3 documents
+```
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+!!! tip "Queries vs Documents"
+    Some embedding models optimize differently for queries and documents. Use
+    [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query] for search queries and
+    [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents] for content you're indexing.
+
+## Embedding Result
+
+All embed methods return an [`EmbeddingResult`][pydantic_ai.embeddings.EmbeddingResult] containing the embeddings along with useful metadata.
+
+For convenience, you can access embeddings either by index (`result[0]`) or by the original input text (`result['Hello world']`).
+
+```python {title="embedding_result.py"}
+from pydantic_ai import Embedder
+
+embedder = Embedder('{{ openai:embedding }}')
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+
+    # Access embeddings - each is a sequence of floats
+    embedding = result.embeddings[0]  # By index via .embeddings
+    embedding = result[0]  # Or directly via __getitem__
+    embedding = result['Hello world']  # Or by original input text
+    print(f'Dimensions: {len(embedding)}')
+    #> Dimensions: 1536
+
+    # Check usage
+    print(f'Tokens used: {result.usage.input_tokens}')
+    #> Tokens used: 2
+
+    # Calculate cost (requires `genai-prices` to have pricing data for the model)
+    cost = result.cost()
+    print(f'Cost: ${cost.total_price:.6f}')
+    #> Cost: $0.000000
+```
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+## Choosing a model
+
+The best embedding model depends on your language, domain, latency, deployment, and evaluation constraints. Use this table as a starting point, then check the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard), the model card on the [Hugging Face Hub](https://huggingface.co/models?library=sentence-transformers), and your own retrieval evaluation before committing to a model for a large index.
+
+| If you want…                         | For example                                                                                                                                                                                                                                      |
+|--------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| A managed API                        | `{{ openai:embedding }}`, `google:gemini-embedding-2`, `voyageai:voyage-4`, or `cohere:embed-v4.0`                                                                                                                                            |
+| No API key, private, free            | `sentence-transformers:google/embeddinggemma-300m`, `sentence-transformers:lightonai/DenseOn`, `sentence-transformers:Qwen/Qwen3-Embedding-0.6B`, or any other [Hugging Face model](https://huggingface.co/models?library=sentence-transformers) |
+| Multilingual                         | `cohere:embed-multilingual-v3.0`, `sentence-transformers:jinaai/jina-embeddings-v5-text-small-retrieval`, or `sentence-transformers:Snowflake/snowflake-arctic-embed-l-v2.0`                                                                     |
+| Specialized domain                   | `voyageai:voyage-code-3`, `voyageai:voyage-law-2`, `voyageai:voyage-finance-2`, `sentence-transformers:nomic-ai/CodeRankEmbed`, or `sentence-transformers:TechWolf/JobBERT-v3`                                                                   |
+| To run on AWS infra you already have | `bedrock:amazon.titan-embed-text-v2:0` or `bedrock:cohere.embed-v4:0`                                                                                                                                                                            |
+| To reduce index size                 | Any model with dimension control (see [Settings](#settings))                                                                                                                                                                                     |
+
+!!! tip "Switching models later"
+    Switching models changes the embedding space and may change the output dimension, so you'll need to re-embed your documents and update the index. Pick a model you're happy to stick with, or one that supports [dimension control](#settings) so you can tune the index size without changing models.
+
+## Using embeddings for RAG
+
+For Retrieval-Augmented Generation (RAG), embeddings are one part of a larger retrieval pipeline. Pydantic AI provides [`Embedder`][pydantic_ai.embeddings.Embedder] for query and document embeddings, and [tools](tools.md) for giving retrieved context to an agent. The [RAG example](examples/rag.md) demonstrates vector storage, retrieval, and passing retrieved context to an agent using pre-split data.
+
+If you want a provider-managed pipeline instead, first upload or import files into a provider-managed store, then pass its ID to [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]. The provider handles chunking, embeddings, storage, and retrieval; see the [File Search Tool docs](native-tools.md#file-search-tool) for supported providers. The rest of this section covers building your own pipeline, where these choices stay application-specific.
+
+A typical custom RAG pipeline looks like this:
+
+1. Split source documents into chunks when needed.
+2. Embed the chunks with [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents].
+3. Store each vector with metadata such as source URL, title, heading, page number, and permissions.
+4. Embed the user's search text with [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query].
+5. Search a vector index for similar chunks.
+6. Optionally [rerank](#two-stage-retrieval-with-rerankers) the shortlist.
+7. Pass the retrieved text to the agent through a tool.
+
+### Chunking
+
+Chunks are the units of source text that a retrieval index stores and returns. You do not need to split every document. Chunking is useful when:
+
+- you want to retrieve a relevant subsection instead of the full document;
+- a document is longer than the embedding model's maximum input length; or
+- a document contains enough independent facts or topics that one embedding may not represent them precisely.
+
+If none of these applies, embedding the whole document can be reasonable. There is no universally best chunking strategy or chunk size: the right choice depends on the embedding model, source format, domain, and the questions users ask.
+
+| Strategy | Useful starting point | Trade-off |
+|----------|-----------------------|-----------|
+| Document structure, such as headings, paragraphs, sentences, pages, or records | Clean, consistently structured sources | Cheap and preserves natural boundaries, but produces uneven chunk sizes. |
+| Fixed-size token windows | Unstructured text or strict model input limits | Simple and predictable, but can split related text. Overlap preserves boundary context at the cost of a larger index and duplicate results. |
+| Semantic splitting | Sources where topic boundaries matter more than layout | Can keep related ideas together, but adds ingestion work and depends on the model and threshold. |
+| LLM-assisted splitting | Irregular or domain-specific sources that require interpretation | Flexible, but adds the most latency and cost and requires validation of the chosen boundaries and source coverage. |
+
+For a first implementation, use natural document boundaries with a token limit, keep source metadata and a link or identifier for the full document with every chunk, and evaluate before adding a more expensive strategy. Chunks should be large enough to answer a focused question but small enough to avoid unrelated context.
+
+See Chroma's [chunking strategy evaluation](https://www.trychroma.com/research/evaluating-chunking) for a comparison of common strategies and reproducible evaluation code, and Hugging Face's [RAG evaluation cookbook](https://huggingface.co/learn/cookbook/rag_evaluation) for an end-to-end RAG evaluation workflow.
+
+### Vector storage
+
+Pydantic AI does not prescribe a vector database. Choose based on the index size, query and ingestion volume, metadata filtering and permission requirements, hybrid keyword search needs, availability requirements, and infrastructure you already operate:
+
+- A local index or embedded database, such as FAISS, LanceDB, or SQLite with a vector extension, can suit prototypes and small indexes.
+- PostgreSQL with `pgvector` can suit applications that already use PostgreSQL.
+- A managed vector or search service can suit applications that need hosted scaling and operational support.
+
+The index's vector dimension must match the embedding output dimension. Use a compatible model configuration when indexing and querying; matching dimensions alone do not make vectors compatible. If you change the embedding configuration, re-embed the documents and update or rebuild the index as required by your storage layer.
+
+Hugging Face's [advanced RAG cookbook](https://huggingface.co/learn/cookbook/advanced_rag) introduces vector indexes, similarity choices, reranking, and other retrieval trade-offs.
+
+### Evaluation
+
+Chunking, the embedding model, similarity metric, number of retrieved chunks, and reranking all interact. Public benchmarks can narrow the candidates, but they cannot prove which complete pipeline works best for your application. Compare changes using queries and documents representative of production, checking both that relevant text is retrieved and that irrelevant text is kept out of the agent's context.
+
+Use [Pydantic Evals](evals.md) to track retrieval quality across a dataset of representative queries. Hugging Face's [RAG evaluation cookbook](https://huggingface.co/learn/cookbook/rag_evaluation) demonstrates how to build a synthetic evaluation set and evaluate generated answers.
+
+## Providers
+
+### OpenAI
+
+[`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] works with OpenAI's embeddings API and any [OpenAI-compatible provider](models/overview.md#openai-compatible-providers).
+
+#### Install
+
+To use OpenAI embedding models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[openai]"
+```
+
+#### Configuration
+
+To use `OpenAIEmbeddingModel` with the OpenAI API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key. Once you have the API key, you can set it as an environment variable:
+
+```bash
+export OPENAI_API_KEY='your-api-key'
+```
+
+You can then use the model:
+
+```python {title="openai_embeddings.py"}
+from pydantic_ai import Embedder
+
+embedder = Embedder('{{ openai:embedding }}')
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 1536
+```
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+See [OpenAI's embedding models](https://platform.openai.com/docs/guides/embeddings) for available models.
+
+#### Dimension Control
+
+OpenAI's `text-embedding-3-*` models support dimension reduction via the `dimensions` setting:
+
+```python {title="openai_dimensions.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings import EmbeddingSettings
+
+embedder = Embedder(
+    '{{ openai:embedding }}',
+    settings=EmbeddingSettings(dimensions=256),
+)
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 256
+```
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+#### OpenAI-Compatible Providers {#openai-compatible}
+
+Since [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] uses the same provider system as [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], you can use it with any [OpenAI-compatible provider](models/overview.md#openai-compatible-providers):
+
+```python {title="openai_compatible_embeddings.py"}
+# Using Azure OpenAI
+from openai import AsyncAzureOpenAI
+
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+azure_client = AsyncAzureOpenAI(
+    azure_endpoint='https://your-resource.openai.azure.com',
+    api_version='2024-02-01',
+    api_key='your-azure-key',
+)
+model = OpenAIEmbeddingModel(
+    '{{ openai:embedding.name }}',
+    provider=OpenAIProvider(openai_client=azure_client),
+)
+embedder = Embedder(model)
+
+
+# Using any OpenAI-compatible API
+model = OpenAIEmbeddingModel(
+    'your-model-name',
+    provider=OpenAIProvider(
+        base_url='https://your-provider.com/v1',
+        api_key='your-api-key',
+    ),
+)
+embedder = Embedder(model)
+```
+
+For providers with dedicated provider classes (like [`OllamaProvider`][pydantic_ai.providers.ollama.OllamaProvider] or [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider]), you can use the shorthand syntax:
+
+```python
+from pydantic_ai import Embedder
+
+embedder = Embedder('azure:text-embedding-3-small')
+embedder = Embedder('ollama:nomic-embed-text')
+embedder = Embedder('vllm:intfloat/e5-mistral-7b-instruct')
+```
+
+The `vllm:` shorthand uses `VLLM_BASE_URL` and, for authenticated servers, `VLLM_API_KEY`. The server must be running an [embedding model supported by vLLM](https://docs.vllm.ai/en/stable/serving/online_serving/openai_compatible_server/#embeddings-api).
+
+See the [provider directory](models/overview.md#provider-directory) for setup guides, and check that your provider serves the embedding model you want to use.
+
+### Google
+
+[`GoogleEmbeddingModel`][pydantic_ai.embeddings.google.GoogleEmbeddingModel] works with Google's embedding models via the Gemini API (Google AI Studio) or Google Cloud (formerly known as Vertex AI).
+
+#### Install
+
+To use Google embedding models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `google` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[google]"
+```
+
+#### Configuration
+
+To use `GoogleEmbeddingModel` with the Gemini API, go to [aistudio.google.com](https://aistudio.google.com/) and generate an API key. Once you have the API key, you can set it as an environment variable:
+
+```bash
+export GOOGLE_API_KEY='your-api-key'
+```
+
+You can then use the model:
+
+```python {title="google_embeddings.py"}
+from pydantic_ai import Embedder
+
+embedder = Embedder('google:gemini-embedding-001')
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 3072
+```
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings) for available models.
+
+When the Gemini API omits token usage, [`result.usage.unmeasured_requests`][pydantic_ai.usage.UsageBase.unmeasured_requests] is `1`, so instrumentation omits an automatic `operation.cost` estimate. Explicit [`result.cost()`][pydantic_ai.embeddings.EmbeddingResult.cost] uses the zero token counts and can return a zero estimate when pricing data is available.
+
+##### Google Cloud
+
+To use Google's embedding models via Google Cloud (formerly known as Vertex AI) instead of the Gemini API, use the `google-cloud:` provider prefix:
+
+```python {title="google_cloud_embeddings.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.google import GoogleEmbeddingModel
+from pydantic_ai.providers.google_cloud import GoogleCloudProvider
+
+# Using provider prefix
+embedder = Embedder('google-cloud:gemini-embedding-001')
+
+# Or with explicit provider configuration
+model = GoogleEmbeddingModel(
+    'gemini-embedding-001',
+    provider=GoogleCloudProvider(project='my-project', location='us-central1'),
+)
+embedder = Embedder(model)
+```
+
+See the [Google Cloud documentation](models/google-cloud.md#authentication) for more details on Google Cloud authentication options, including application default credentials, service accounts, and API keys.
+
+#### Dimension Control
+
+Google's embedding models support dimension reduction via the `dimensions` setting:
+
+```python {title="google_dimensions.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings import EmbeddingSettings
+
+embedder = Embedder(
+    'google:gemini-embedding-001',
+    settings=EmbeddingSettings(dimensions=768),
+)
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 768
+```
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+#### Task Conditioning
+
+`gemini-embedding-2` is conditioned on the task you're embedding for by prepending a short task instruction to the input text, rather than through the [`google_task_type`][pydantic_ai.embeddings.google.GoogleEmbeddingSettings.google_task_type] field used by the other Google models. Pydantic AI builds this prefix for you via the `google_task` setting:
+
+```python {title="google_task.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.google import GoogleEmbeddingSettings
+
+embedder = Embedder(
+    'google:gemini-embedding-2',
+    settings=GoogleEmbeddingSettings(google_task='question answering'),
+)
+```
+
+`google_task` accepts the task names from Google's API: `'search result'`, `'question answering'`, `'fact checking'`, `'code retrieval'`, `'classification'`, `'clustering'`, and `'sentence similarity'`. For the retrieval-style (asymmetric) tasks, queries and documents are prefixed differently, so the same task applies to both sides of a pair; the remaining (symmetric) tasks prefix both inputs the same way.
+
+When you don't set `google_task`, `gemini-embedding-2` is conditioned as `'search result'`. Conditioning is on by default because Google recommends it for this model and it yields better retrieval performance than embedding raw text. To opt out and embed the text verbatim, pass `google_task='raw'`.
+
+`google_task` only applies to `gemini-embedding-2`; on any other model it is ignored with a warning (those models condition via `google_task_type` instead). Conversely, `google_task_type` is ignored on `gemini-embedding-2`, since that model conditions through the text prefix.
+
+#### Google-Specific Settings
+
+Google models support additional settings via [`GoogleEmbeddingSettings`][pydantic_ai.embeddings.google.GoogleEmbeddingSettings]:
+
+```python {title="google_settings.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.google import GoogleEmbeddingSettings
+
+embedder = Embedder(
+    'google:gemini-embedding-001',
+    settings=GoogleEmbeddingSettings(
+        dimensions=768,
+        google_task_type='SEMANTIC_SIMILARITY',  # Optimize for similarity comparison
+    ),
+)
+```
+
+See [Google's task type documentation](https://ai.google.dev/gemini-api/docs/embeddings#task-types) for available task types. By default, `embed_query()` uses `RETRIEVAL_QUERY` and `embed_documents()` uses `RETRIEVAL_DOCUMENT`.
+
+### Cohere
+
+[`CohereEmbeddingModel`][pydantic_ai.embeddings.cohere.CohereEmbeddingModel] provides access to Cohere's embedding models, which offer multilingual support and various model sizes.
+
+#### Install
+
+To use Cohere embedding models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `cohere` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[cohere]"
+```
+
+#### Configuration
+
+To use `CohereEmbeddingModel`, go to [dashboard.cohere.com/api-keys](https://dashboard.cohere.com/api-keys) and follow your nose until you find the place to generate an API key. Once you have the API key, you can set it as an environment variable:
+
+```bash
+export CO_API_KEY='your-api-key'
+```
+
+You can then use the model:
+
+```python {title="cohere_embeddings.py"}
+from pydantic_ai import Embedder
+
+embedder = Embedder('cohere:embed-v4.0')
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 1024
+```
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+See the [Cohere Embed documentation](https://docs.cohere.com/docs/cohere-embed) for available models.
+
+#### Cohere-Specific Settings
+
+Cohere models support additional settings via [`CohereEmbeddingSettings`][pydantic_ai.embeddings.cohere.CohereEmbeddingSettings]:
+
+```python {title="cohere_settings.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.cohere import CohereEmbeddingSettings
+
+embedder = Embedder(
+    'cohere:embed-v4.0',
+    settings=CohereEmbeddingSettings(
+        dimensions=512,
+        cohere_truncate='END',  # Truncate long inputs instead of erroring
+        cohere_max_tokens=256,  # Limit tokens per input
+    ),
+)
+```
+
+### VoyageAI
+
+[`VoyageAIEmbeddingModel`][pydantic_ai.embeddings.voyageai.VoyageAIEmbeddingModel] provides access to VoyageAI's embedding models, which are optimized for retrieval with specialized models for code, finance, and legal domains.
+
+#### Install
+
+To use VoyageAI embedding models, you need to install `pydantic-ai-slim` with the `voyageai` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[voyageai]"
+```
+
+#### Configuration
+
+To use `VoyageAIEmbeddingModel`, go to [dash.voyageai.com](https://dash.voyageai.com/) to generate an API key. Once you have the API key, you can set it as an environment variable:
+
+```bash
+export VOYAGE_API_KEY='your-api-key'
+```
+
+You can then use the model:
+
+```python {title="voyageai_embeddings.py" max_py="3.13"}
+from pydantic_ai import Embedder
+
+embedder = Embedder('voyageai:voyage-3.5')
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 1024
+```
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+See the [VoyageAI Embeddings documentation](https://docs.voyageai.com/docs/embeddings) for available models.
+
+#### VoyageAI-Specific Settings
+
+VoyageAI models support additional settings via [`VoyageAIEmbeddingSettings`][pydantic_ai.embeddings.voyageai.VoyageAIEmbeddingSettings]:
+
+```python {title="voyageai_settings.py" max_py="3.13"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingSettings
+
+embedder = Embedder(
+    'voyageai:voyage-3.5',
+    settings=VoyageAIEmbeddingSettings(
+        dimensions=512,  # Reduce output dimensions
+        voyageai_input_type='document',  # Override input type for all requests
+    ),
+)
+```
+
+### Bedrock
+
+[`BedrockEmbeddingModel`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingModel] provides access to embedding models through AWS Bedrock, including Amazon Titan, Cohere, and Amazon Nova models.
+
+#### Install
+
+To use Bedrock embedding models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `bedrock` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[bedrock]"
+```
+
+#### Configuration
+
+Authentication with AWS Bedrock uses standard AWS credentials. See the [Bedrock provider documentation](models/bedrock.md#environment-variables) for details on configuring credentials via environment variables, AWS credentials file, or IAM roles.
+
+Ensure your AWS account has access to the Bedrock embedding models you want to use. See [AWS Bedrock model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) for details.
+
+#### Basic Usage
+
+```python {title="bedrock_embeddings.py" test="skip"}
+from pydantic_ai import Embedder
+
+# Using Amazon Titan
+embedder = Embedder('bedrock:amazon.titan-embed-text-v2:0')
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 1024
+```
+
+_(This example requires AWS credentials configured)_
+
+#### Supported Models
+
+Bedrock supports three families of embedding models. See the [AWS Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the full list of available models.
+
+**Amazon Titan:**
+
+- `amazon.titan-embed-text-v1` — 1536 dimensions (fixed), 8K tokens
+- `amazon.titan-embed-text-v2:0` — 256/384/1024 dimensions (configurable, default: 1024), 8K tokens
+
+**Cohere Embed:**
+
+- `cohere.embed-english-v3` — English-only, 1024 dimensions (fixed), 512 tokens
+- `cohere.embed-multilingual-v3` — Multilingual, 1024 dimensions (fixed), 512 tokens
+- `cohere.embed-v4:0` — 256/512/1024/1536 dimensions (configurable, default: 1536), 128K tokens
+
+**Amazon Nova:**
+
+- `amazon.nova-2-multimodal-embeddings-v1:0` — 256/384/1024/3072 dimensions (configurable, default: 3072), 8K tokens
+
+#### Titan-Specific Settings
+
+Titan v2 supports vector normalization for direct similarity calculations via `bedrock_titan_normalize` (default: `True`). Titan v1 does not support this setting.
+
+```python {title="bedrock_titan.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+embedder = Embedder(
+    'bedrock:amazon.titan-embed-text-v2:0',
+    settings=BedrockEmbeddingSettings(
+        dimensions=512,
+        bedrock_titan_normalize=True,
+    ),
+)
+```
+
+!!! note
+    Titan models do not support the `truncate` setting. The `dimensions` setting is only supported by Titan v2.
+
+#### Cohere-Specific Settings
+
+Cohere models on Bedrock support additional settings via [`BedrockEmbeddingSettings`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingSettings]:
+
+- `bedrock_cohere_input_type` — By default, `embed_query()` uses `'search_query'` and `embed_documents()` uses `'search_document'`. Also accepts `'classification'` or `'clustering'`.
+- `bedrock_cohere_truncate` — Fine-grained truncation control: `'NONE'` (default, error on overflow), `'START'`, or `'END'`. Overrides the base `truncate` setting.
+- `bedrock_cohere_max_tokens` — Limits tokens per input (default: 128000). Only supported by Cohere v4.
+
+```python {title="bedrock_cohere.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+embedder = Embedder(
+    'bedrock:cohere.embed-v4:0',
+    settings=BedrockEmbeddingSettings(
+        dimensions=512,
+        bedrock_cohere_max_tokens=1000,
+        bedrock_cohere_truncate='END',
+    ),
+)
+```
+
+!!! note
+    The `dimensions` and `bedrock_cohere_max_tokens` settings are only supported by Cohere v4. Cohere v3 models have fixed 1024 dimensions.
+
+#### Nova-Specific Settings
+
+Nova models on Bedrock support additional settings via [`BedrockEmbeddingSettings`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingSettings]:
+
+- `bedrock_nova_truncate` — Fine-grained truncation control: `'NONE'` (default, error on overflow), `'START'`, or `'END'`. Overrides the base `truncate` setting.
+- `bedrock_nova_embedding_purpose` — By default, `embed_query()` uses `'GENERIC_RETRIEVAL'` and `embed_documents()` uses `'GENERIC_INDEX'`. Also accepts `'TEXT_RETRIEVAL'`, `'CLASSIFICATION'`, or `'CLUSTERING'`.
+
+```python {title="bedrock_nova.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+embedder = Embedder(
+    'bedrock:amazon.nova-2-multimodal-embeddings-v1:0',
+    settings=BedrockEmbeddingSettings(
+        dimensions=1024,
+        bedrock_nova_embedding_purpose='TEXT_RETRIEVAL',
+        truncate=True,
+    ),
+)
+```
+
+#### Concurrency Settings
+
+Models that don't support batch embedding (Titan and Nova) make individual API requests for each input text. By default, these requests run concurrently with a maximum of 5 parallel requests.
+
+You can adjust this with the `bedrock_max_concurrency` setting:
+
+```python {title="bedrock_concurrency.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingSettings
+
+# Increase concurrency for faster throughput
+embedder = Embedder(
+    'bedrock:amazon.titan-embed-text-v2:0',
+    settings=BedrockEmbeddingSettings(bedrock_max_concurrency=10),
+)
+
+# Or reduce concurrency to avoid rate limits
+embedder = Embedder(
+    'bedrock:amazon.nova-2-multimodal-embeddings-v1:0',
+    settings=BedrockEmbeddingSettings(bedrock_max_concurrency=2),
+)
+```
+
+#### Regional Prefixes (Cross-Region Inference)
+
+Bedrock supports cross-region inference using geographic prefixes like `us.`, `eu.`, or `apac.`:
+
+```python {title="bedrock_regional.py"}
+from pydantic_ai import Embedder
+
+embedder = Embedder('bedrock:us.amazon.titan-embed-text-v2:0')
+```
+
+#### Using AWS Application Inference Profiles
+
+Set [`bedrock_inference_profile`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingSettings.bedrock_inference_profile] to route requests through an inference profile while keeping the base model name for detecting model capabilities:
+
+```python {title="bedrock_inference_profile.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import (
+    BedrockEmbeddingModel,
+    BedrockEmbeddingSettings,
+)
+from pydantic_ai.providers.bedrock import BedrockProvider
+
+provider = BedrockProvider(region_name='us-east-1')
+
+model = BedrockEmbeddingModel(
+    'amazon.titan-embed-text-v2:0',
+    provider=provider,
+    settings=BedrockEmbeddingSettings(
+        bedrock_inference_profile='arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-embed-profile',
+    ),
+)
+embedder = Embedder(model)
+```
+
+#### Using a Custom Provider
+
+For advanced configuration like explicit credentials or a custom boto3 client, you can create a [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] directly. See the [Bedrock provider documentation](models/bedrock.md#provider-argument) for more details.
+
+```python {title="bedrock_provider.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
+from pydantic_ai.providers.bedrock import BedrockProvider
+
+provider = BedrockProvider(
+    region_name='us-west-2',
+    aws_access_key_id='your-access-key',
+    aws_secret_access_key='your-secret-key',
+)
+
+model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=provider)
+embedder = Embedder(model)
+```
+
+!!! note "Token Counting"
+    Bedrock embedding models do not support the `count_tokens()` method because AWS Bedrock's token counting API only works with text generation models (Claude, Llama, etc.), not embedding models. Calling `count_tokens()` will raise `NotImplementedError`.
+
+### Sentence Transformers (Local)
+
+[`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel] runs embeddings locally using the [Sentence Transformers](https://www.sbert.net/) library, giving you access to the thousands of [embedding models on Hugging Face](https://huggingface.co/models?library=sentence-transformers) without any API calls. This is ideal for:
+
+- **Privacy** — Data never leaves your infrastructure
+- **Cost** — No API charges for high-volume workloads
+- **Offline use** — No internet connection required after model download
+- **Specialized domains or languages** - Pick models trained for code, multilingual, biomedical, legal, etc. from the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard)
+
+#### Install
+
+To use Sentence Transformers embedding models, you need to install `pydantic-ai-slim` with the `sentence-transformers` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[sentence-transformers]"
+```
+
+#### Usage
+
+```python {title="sentence_transformers_embeddings.py" max_py="3.13"}
+from pydantic_ai import Embedder
+
+# Model is downloaded from Hugging Face on first use
+embedder = Embedder('sentence-transformers:lightonai/DenseOn')
+
+
+async def main():
+    result = await embedder.embed_query('Hello world')
+    print(len(result.embeddings[0]))
+    #> 768
+```
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+[`lightonai/DenseOn`](https://huggingface.co/lightonai/DenseOn) is a strong recent 149M-parameter general-purpose model that encodes queries and documents asymmetrically: [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query] and [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents] automatically apply the model's `query:` / `document:` prompts. See the [Sentence Transformers pretrained models](https://www.sbert.net/docs/sentence_transformer/pretrained_models.html) documentation and the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) for more options; see also [Choosing a model](#choosing-a-model) above.
+
+#### Device Selection
+
+Control which device to use for inference:
+
+```python {title="sentence_transformers_device.py" max_py="3.13"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.sentence_transformers import (
+    SentenceTransformersEmbeddingSettings,
+)
+
+embedder = Embedder(
+    'sentence-transformers:sentence-transformers/all-MiniLM-L6-v2',
+    settings=SentenceTransformersEmbeddingSettings(
+        sentence_transformers_device='cuda',  # Use GPU
+        sentence_transformers_normalize_embeddings=True,  # L2 normalize
+    ),
+)
+```
+
+#### Using an Existing Model Instance
+
+If you need more control over model initialization:
+
+```python {title="sentence_transformers_instance.py" max_py="3.13"}
+from sentence_transformers import SentenceTransformer
+
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.sentence_transformers import (
+    SentenceTransformerEmbeddingModel,
+)
+
+# Create and configure the model yourself
+st_model = SentenceTransformer('microsoft/harrier-oss-v1-270m', device='cpu')
+
+# Wrap it for use with Pydantic AI
+model = SentenceTransformerEmbeddingModel(st_model)
+embedder = Embedder(model)
+```
+
+## Settings
+
+[`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings] provides common configuration options that work across providers:
+
+- `dimensions`: Reduce the output embedding dimensions (supported by OpenAI, Google, Cohere, Bedrock, VoyageAI)
+- `truncate`: When `True`, truncate input text that exceeds the model's context length instead of raising an error (supported by Cohere, Bedrock, VoyageAI)
+
+Settings can be specified on the model, at the embedder level (applied to all calls), or per call.
+They are merged in that order: later settings override earlier values for the same key, while values set only in earlier layers are preserved.
+The example below shows embedder defaults overridden for one call:
+
+```python {title="embedding_settings.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings import EmbeddingSettings
+
+# Default settings for all calls
+embedder = Embedder(
+    '{{ openai:embedding }}',
+    settings=EmbeddingSettings(dimensions=512),
+)
+
+
+async def main():
+    # Override for a specific call
+    result = await embedder.embed_query(
+        'Hello world',
+        settings=EmbeddingSettings(dimensions=256),
+    )
+    print(len(result.embeddings[0]))
+    #> 256
+```
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+## Token Counting
+
+You can check token counts before embedding to avoid exceeding model limits:
+
+```python {title="token_counting.py"}
+from pydantic_ai import Embedder
+
+embedder = Embedder('{{ openai:embedding }}')
+
+
+async def main():
+    text = 'Hello world, this is a test.'
+
+    # Count tokens in text
+    token_count = await embedder.count_tokens(text)
+    print(f'Tokens: {token_count}')
+    #> Tokens: 7
+
+    # Check model's maximum input tokens (returns None if unknown)
+    max_tokens = await embedder.max_input_tokens()
+    print(f'Max tokens: {max_tokens}')
+    #> Max tokens: 1024
+```
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+## Handling Errors
+
+When a request to an embedding provider fails, Pydantic AI raises the same errors as when a
+[model request fails](models/overview.md#handling-model-api-errors): a
+[`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] that is also an instance of an error category like
+[`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] or
+[`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] when the provider says what went wrong, so
+the same `except` clauses handle failures from agents and embedders alike.
+
+## Testing
+
+Use [`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] for testing without making API calls:
+
+```python {title="testing_embeddings.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings import TestEmbeddingModel
+
+
+async def test_my_rag_system():
+    embedder = Embedder('{{ openai:embedding }}')
+    test_model = TestEmbeddingModel()
+
+    with embedder.override(model=test_model):
+        result = await embedder.embed_query('test query')
+
+        # TestEmbeddingModel returns deterministic embeddings
+        assert result.embeddings[0] == [1.0] * 8
+
+        # Check what settings were used
+        assert test_model.last_settings is not None
+```
+
+Setting [`ALLOW_MODEL_REQUESTS`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] to `False` also blocks embedding requests, so an embedder you forgot to override raises instead of quietly calling the provider. [`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] and [`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel] are unaffected, as neither reaches a provider.
+
+This also covers [`count_tokens()`][pydantic_ai.embeddings.Embedder.count_tokens], but only when tokenization happens server-side: Google and Cohere count tokens through an API call and are blocked, while OpenAI tokenizes locally with `tiktoken`, so its token counting is not blocked.
+
+## Instrumentation
+
+Enable OpenTelemetry instrumentation for debugging and monitoring:
+
+```python {title="instrumented_embeddings.py"}
+import logfire
+
+from pydantic_ai import Embedder
+
+logfire.configure()
+
+# Instrument a specific embedder
+embedder = Embedder('{{ openai:embedding }}', instrument=True)
+
+# Or instrument all embedders globally
+Embedder.instrument_all()
+```
+
+See the [Debugging and Monitoring guide](logfire.md#using-logfire) for Logfire setup and more details on using it with Pydantic AI.
+
+## Two-stage retrieval with rerankers
+
+For high-quality retrieval, a common pattern is **two-stage**: first use an embedding model to pull a broad shortlist of candidates cheaply, then use a **cross-encoder reranker** to score each candidate against the query more precisely. The cross-encoder reads the query and document *together*, so it's slower than an embedding lookup but dramatically more accurate, making it ideal for narrowing a top-100 recall list down to the top-5 results you actually hand to the LLM.
+
+Pydantic AI does not ship a reranker provider class, so you bring your own. The most common local option is a `CrossEncoder` from `sentence-transformers`:
+
+```python {title="rerank.py" max_py="3.13"}
+import asyncio
+from functools import cache
+
+from sentence_transformers import CrossEncoder
+
+
+@cache
+def get_reranker() -> CrossEncoder:
+    # Loaded lazily on first call, then reused.
+    return CrossEncoder('cross-encoder/ms-marco-MiniLM-L6-v2')
+
+
+async def rerank(query: str, candidates: list[str], top_k: int = 3) -> list[str]:
+    """Rerank retrieval candidates by relevance to `query`."""
+    reranker = get_reranker()
+    # CrossEncoder.rank is blocking, so run it off the event loop.
+    ranked = await asyncio.to_thread(
+        reranker.rank, query, candidates, top_k=top_k, return_documents=True
+    )
+    return [str(item['text']) for item in ranked]
+```
+
+Call `rerank()` on the candidates returned by your vector search (for example, in the `retrieve` tool of the [RAG example](examples/rag.md)) before handing the results to the LLM.
+
+!!! tip "Managed reranker alternatives"
+    If you'd rather not run a reranker locally, several providers offer hosted rerankers, including [Cohere Rerank](https://docs.cohere.com/docs/rerank-overview), [VoyageAI Rerank](https://docs.voyageai.com/docs/reranker), and [Jina Rerank](https://jina.ai/reranker). Call their HTTP clients or SDKs from a helper function with the same signature as `rerank()` above.
+
+For more background on retrieve-and-rerank pipelines, see Hugging Face's [advanced RAG cookbook](https://huggingface.co/learn/cookbook/advanced_rag). To serve open-source embedding and reranker models yourself, see Hugging Face [Text Embeddings Inference](https://huggingface.co/docs/text-embeddings-inference) and its [supported rerankers](https://huggingface.co/docs/text-embeddings-inference/supported_models#supported-re-rankers-and-sequence-classification-models).
+
+## Building Custom Embedding Models
+
+To integrate a custom embedding provider, subclass [`EmbeddingModel`][pydantic_ai.embeddings.EmbeddingModel]:
+
+```python {title="custom_embedding_model.py"}
+from collections.abc import Sequence
+
+from pydantic_ai.embeddings import EmbeddingModel, EmbeddingResult, EmbeddingSettings
+from pydantic_ai.embeddings.result import EmbedInputType
+
+
+class MyCustomEmbeddingModel(EmbeddingModel):
+    @property
+    def model_name(self) -> str:
+        return 'my-custom-model'
+
+    @property
+    def system(self) -> str:
+        return 'my-provider'
+
+    async def embed(
+        self,
+        inputs: str | Sequence[str],
+        *,
+        input_type: EmbedInputType,
+        settings: EmbeddingSettings | None = None,
+    ) -> EmbeddingResult:
+        inputs, settings = self.prepare_embed(inputs, settings)
+
+        # Call your embedding API here
+        embeddings = [[0.1, 0.2, 0.3] for _ in inputs]  # Placeholder
+
+        return EmbeddingResult(
+            embeddings=embeddings,
+            inputs=inputs,
+            input_type=input_type,
+            model_name=self.model_name,
+            provider_name=self.system,
+        )
+```
+
+Use [`WrapperEmbeddingModel`][pydantic_ai.embeddings.WrapperEmbeddingModel] if you want to wrap an existing model to add custom behavior like caching or logging.

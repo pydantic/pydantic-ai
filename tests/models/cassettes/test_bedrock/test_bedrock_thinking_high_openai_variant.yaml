@@ -1,0 +1,40 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Reply with the single word: ok"}]}], "system": [], "inferenceConfig": {}, "additionalModelRequestFields": {"reasoning_effort": "high"}}'
+    headers:
+      Content-Length:
+      - '188'
+      Content-Type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+      User-Agent:
+      - !!binary |
+        Qm90bzMvMS40Mi42MyBtZC9Cb3RvY29yZSMxLjQyLjYzIHVhLzIuMSBvcy9tYWNvcyMyNS4wLjAg
+        bWQvYXJjaCNhcm02NCBsYW5nL3B5dGhvbiMzLjEyLjEyIG1kL3B5aW1wbCNDUHl0aG9uIG0vYiwz
+        LEQsWixOIGNmZy9yZXRyeS1tb2RlI2xlZ2FjeSBCb3RvY29yZS8xLjQyLjYz
+      amz-sdk-invocation-id:
+      - !!binary |
+        MzliYjg0ZTctZGU4Yi00ODA2LWI2MWMtZmFhYjY2ZmVhM2Rk
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/openai.gpt-oss-120b-1%3A0/converse
+  response:
+    body:
+      string: '{"metrics": {"latencyMs": 844}, "output": {"message": {"content": [{"reasoningContent": {"reasoningText": {"text": "The user says: \"Reply with the single word: ok\". That means they want a response that is exactly the word \"ok\". The instruction is to \"Reply with the single word: ok\". So respond with \"ok\". However there might be nuance: The instruction: \"Reply with the single word: ok\". Likely they expect exactly \"ok\". Should we add punctuation? Probably not, just \"ok\". ChatGPT must respond with that single word.\n\nThus final answer: ok."}}}, {"text": "ok"}], "role": "assistant"}}, "stopReason": "end_turn", "usage": {"inputTokens": 74, "outputTokens": 110, "serverToolUsage": {}, "totalTokens": 184}}'
+    headers:
+      Transfer-Encoding:
+      - chunked
+      content-type:
+      - application/json
+      date:
+      - Wed, 13 May 2026 22:52:32 GMT
+      via:
+      - 1.1 google
+      x-amzn-requestid:
+      - 3768e7a9-35c7-4831-84dd-e4641ffb978a
+    status:
+      code: 200
+      message: OK
+version: 1

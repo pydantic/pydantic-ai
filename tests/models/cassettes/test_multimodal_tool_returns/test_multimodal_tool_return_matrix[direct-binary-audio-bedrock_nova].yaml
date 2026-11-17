@@ -1,0 +1,49 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a audio file, then describe
+      what you received."}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file",
+      "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice": {"auto":
+      {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YWY2YzNkNzctY2FkOS00OGY1LTg2NjMtZWRhMjhmYWM2MmYy
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '365'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-2-lite-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '305'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 442
+      output:
+        message:
+          content:
+          - toolUse:
+              input: {}
+              name: get_file
+              toolUseId: tooluse_slWccgK4SRpy8kyQe8hsV2
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 901
+        outputTokens: 14
+        serverToolUsage: {}
+        totalTokens: 915
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,96 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: publishers/google/models/gemini-live-2.5-flash
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: Answer in one short sentence.
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.313
+  data:
+    setupComplete:
+      sessionId: e2dc9887-374a-4d81-bc74-76098bcf43b5
+- kind: message
+  direction: sent
+  at: 0.324
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: My name is Alice and my favorite color is teal.
+        role: user
+      - parts:
+        - text: Nice to meet you, Alice!
+        role: model
+      turnComplete: false
+- kind: message
+  direction: sent
+  at: 0.324
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is my name and favorite color?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 0.724
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: Your
+- kind: message
+  direction: received
+  at: 0.731
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: ' name is Alice and your'
+- kind: message
+  direction: received
+  at: 0.743
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: ' favorite color is teal.'
+- kind: message
+  direction: received
+  at: 0.743
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 0.756
+  data:
+    serverContent:
+      turnComplete: true
+      groundingMetadata: {}
+    usageMetadata:
+      promptTokenCount: 32
+      candidatesTokenCount: 11
+      totalTokenCount: 43
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 32
+      candidatesTokensDetails:
+      - modality: TEXT
+        tokenCount: 11

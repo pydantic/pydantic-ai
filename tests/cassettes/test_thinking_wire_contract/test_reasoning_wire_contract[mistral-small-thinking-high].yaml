@@ -1,0 +1,74 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '187'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2+2? Reply with just the number.
+        role: user
+      model: mistral-small-latest
+      n: 1
+      reasoning_effort: high
+      stream: false
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '606'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019f7ef0-7a86-7aba-8df2-a425cac21250
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content:
+          - closed: true
+            thinking:
+            - text: The user is asking for the result of 2+2. The instruction is to reply with just the number, so I should
+                respond with "4".
+              type: text
+            type: thinking
+          - text: '4'
+            type: text
+          role: assistant
+          tool_calls: null
+      created: 1784541117
+      id: 00117e68dc6546b5b4b5ff5e184521cb
+      model: mistral-small-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 35
+        prompt_tokens: 28
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 63
+    status:
+      code: 200
+      message: OK
+version: 1

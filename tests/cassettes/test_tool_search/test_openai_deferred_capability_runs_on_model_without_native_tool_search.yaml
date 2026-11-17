@@ -1,0 +1,679 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1640'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use foo with x=1.
+        role: user
+      instructions: |-
+        First load capability id 'foo', then call bar.
+
+        The following capabilities are deferred and can be loaded using the `load_capability` tool:
+        - foo: Use this capability when the user asks for foo.
+      model: gpt-5.2
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Load a capability to access its full instructions and tools.
+        name: load_capability
+        parameters:
+          additionalProperties: false
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        strict: true
+        type: function
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
+        name: search_tools
+        parameters:
+          additionalProperties: false
+          properties:
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
+          required:
+          - queries
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3019'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1213'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1782791167
+      created_at: 1782791166
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0f19077ea087b45d006a433bfe77f881a1949df593e5aa66b7
+      incomplete_details: null
+      instructions: |-
+        First load capability id 'foo', then call bar.
+
+        The following capabilities are deferred and can be loaded using the `load_capability` tool:
+        - foo: Use this capability when the user asks for foo.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.2-2025-12-11
+      moderation: null
+      object: response
+      output:
+      - arguments: '{"id":"foo"}'
+        call_id: call_oD98mk1GikNahiJd9ld4gNMk
+        id: fc_0f19077ea087b45d006a433bff503481a19d056b1d5d2deb5a
+        name: load_capability
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: current_turn
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Load a capability to access its full instructions and tools.
+        name: load_capability
+        parameters:
+          additionalProperties: false
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        strict: true
+        type: function
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
+        name: search_tools
+        parameters:
+          additionalProperties: false
+          properties:
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
+          required:
+          - queries
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 251
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 19
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 270
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2429'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use foo with x=1.
+        role: user
+      - arguments: '{"id":"foo"}'
+        call_id: call_oD98mk1GikNahiJd9ld4gNMk
+        id: fc_0f19077ea087b45d006a433bff503481a19d056b1d5d2deb5a
+        name: load_capability
+        type: function_call
+      - call_id: call_oD98mk1GikNahiJd9ld4gNMk
+        output: '{}'
+        type: function_call_output
+      - arguments: '{"queries":["foo"]}'
+        call_id: auto_load_d85fe7a9a0e51eb3
+        name: search_tools
+        type: function_call
+      - call_id: auto_load_d85fe7a9a0e51eb3
+        output: '{"discovered_tools":[{"name":"bar","description":"Return x."}]}'
+        type: function_call_output
+      instructions: |-
+        First load capability id 'foo', then call bar.
+
+        The following capabilities are deferred and can be loaded using the `load_capability` tool:
+        - foo: Use this capability when the user asks for foo.
+      model: gpt-5.2
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Load a capability to access its full instructions and tools.
+        name: load_capability
+        parameters:
+          additionalProperties: false
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        strict: true
+        type: function
+      - description: Return x.
+        name: bar
+        parameters:
+          additionalProperties: false
+          properties:
+            x:
+              type: integer
+          required:
+          - x
+          type: object
+        strict: true
+        type: function
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
+        name: search_tools
+        parameters:
+          additionalProperties: false
+          properties:
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
+          required:
+          - queries
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3207'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '672'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1782791168
+      created_at: 1782791168
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0f19077ea087b45d006a433c00216481a1bf2c90a8dbb786b1
+      incomplete_details: null
+      instructions: |-
+        First load capability id 'foo', then call bar.
+
+        The following capabilities are deferred and can be loaded using the `load_capability` tool:
+        - foo: Use this capability when the user asks for foo.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.2-2025-12-11
+      moderation: null
+      object: response
+      output:
+      - arguments: '{"x":1}'
+        call_id: call_BUmPMEwNfrp69Ou8ELM3TaAG
+        id: fc_0f19077ea087b45d006a433c00992c81a1a4f0d94323b767af
+        name: bar
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: current_turn
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Load a capability to access its full instructions and tools.
+        name: load_capability
+        parameters:
+          additionalProperties: false
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        strict: true
+        type: function
+      - description: Return x.
+        name: bar
+        parameters:
+          additionalProperties: false
+          properties:
+            x:
+              type: integer
+          required:
+          - x
+          type: object
+        strict: true
+        type: function
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
+        name: search_tools
+        parameters:
+          additionalProperties: false
+          properties:
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
+          required:
+          - queries
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 343
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 17
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 360
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2697'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use foo with x=1.
+        role: user
+      - arguments: '{"id":"foo"}'
+        call_id: call_oD98mk1GikNahiJd9ld4gNMk
+        id: fc_0f19077ea087b45d006a433bff503481a19d056b1d5d2deb5a
+        name: load_capability
+        type: function_call
+      - call_id: call_oD98mk1GikNahiJd9ld4gNMk
+        output: '{}'
+        type: function_call_output
+      - arguments: '{"queries":["foo"]}'
+        call_id: auto_load_d85fe7a9a0e51eb3
+        name: search_tools
+        type: function_call
+      - call_id: auto_load_d85fe7a9a0e51eb3
+        output: '{"discovered_tools":[{"name":"bar","description":"Return x."}]}'
+        type: function_call_output
+      - arguments: '{"x":1}'
+        call_id: call_BUmPMEwNfrp69Ou8ELM3TaAG
+        id: fc_0f19077ea087b45d006a433c00992c81a1a4f0d94323b767af
+        name: bar
+        type: function_call
+      - call_id: call_BUmPMEwNfrp69Ou8ELM3TaAG
+        output: '1'
+        type: function_call_output
+      instructions: |-
+        First load capability id 'foo', then call bar.
+
+        The following capabilities are deferred and can be loaded using the `load_capability` tool:
+        - foo: Use this capability when the user asks for foo.
+      model: gpt-5.2
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Load a capability to access its full instructions and tools.
+        name: load_capability
+        parameters:
+          additionalProperties: false
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        strict: true
+        type: function
+      - description: Return x.
+        name: bar
+        parameters:
+          additionalProperties: false
+          properties:
+            x:
+              type: integer
+          required:
+          - x
+          type: object
+        strict: true
+        type: function
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
+        name: search_tools
+        parameters:
+          additionalProperties: false
+          properties:
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
+          required:
+          - queries
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3223'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '846'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1782791169
+      created_at: 1782791169
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0f19077ea087b45d006a433c0142b881a1bf0d33fdd891acee
+      incomplete_details: null
+      instructions: |-
+        First load capability id 'foo', then call bar.
+
+        The following capabilities are deferred and can be loaded using the `load_capability` tool:
+        - foo: Use this capability when the user asks for foo.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.2-2025-12-11
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: '1'
+          type: output_text
+        id: msg_0f19077ea087b45d006a433c01e73081a18220ab277dbb89c5
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: current_turn
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Load a capability to access its full instructions and tools.
+        name: load_capability
+        parameters:
+          additionalProperties: false
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        strict: true
+        type: function
+      - description: Return x.
+        name: bar
+        parameters:
+          additionalProperties: false
+          properties:
+            x:
+              type: integer
+          required:
+          - x
+          type: object
+        strict: true
+        type: function
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
+        name: search_tools
+        parameters:
+          additionalProperties: false
+          properties:
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
+          required:
+          - queries
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 371
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 376
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

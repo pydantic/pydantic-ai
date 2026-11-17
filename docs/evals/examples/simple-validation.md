@@ -1,3 +1,7 @@
+---
+description: "A worked Pydantic Evals example: test a title-case function with deterministic evaluators, save the dataset to YAML, and run the evaluation from pytest in CI."
+---
+
 # Example: Simple Validation
 
 A proof of concept example of evaluating a simple text transformation function with deterministic checks.
@@ -99,39 +103,40 @@ if __name__ == '__main__':
 
     # Print results
     report.print(include_input=True, include_output=True)
-"""
-                            Evaluation Summary: to_title_case
-┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID          ┃ Inputs               ┃ Outputs              ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ basic_lowercase  │ hello world          │ Hello World          │ ✔✔✔✗       │     10ms │
-├──────────────────┼──────────────────────┼──────────────────────┼────────────┼──────────┤
-│ basic_uppercase  │ HELLO WORLD          │ Hello World          │ ✔✔✔✗       │     10ms │
-├──────────────────┼──────────────────────┼──────────────────────┼────────────┼──────────┤
-│ mixed_case       │ HeLLo WoRLd          │ Hello World          │ ✔✔✔✗       │     10ms │
-├──────────────────┼──────────────────────┼──────────────────────┼────────────┼──────────┤
-│ empty_string     │ -                    │ -                    │ ✔✔✗✗       │     10ms │
-├──────────────────┼──────────────────────┼──────────────────────┼────────────┼──────────┤
-│ single_word      │ hello                │ Hello                │ ✔✔✔✗       │     10ms │
-├──────────────────┼──────────────────────┼──────────────────────┼────────────┼──────────┤
-│ with_punctuation │ hello, world!        │ Hello, World!        │ ✔✔✔✗       │     10ms │
-├──────────────────┼──────────────────────┼──────────────────────┼────────────┼──────────┤
-│ with_numbers     │ hello 123 world      │ Hello 123 World      │ ✔✔✔✗       │     10ms │
-├──────────────────┼──────────────────────┼──────────────────────┼────────────┼──────────┤
-│ apostrophes      │ don't stop believin' │ Don'T Stop Believin' │ ✔✔✗✗       │     10ms │
-├──────────────────┼──────────────────────┼──────────────────────┼────────────┼──────────┤
-│ Averages         │                      │                      │ 68.8% ✔    │     10ms │
-└──────────────────┴──────────────────────┴──────────────────────┴────────────┴──────────┘
-"""
-# Check if all passed
-avg = report.averages()
-if avg and avg.assertions == 1.0:
-    print('\n✅ All tests passed!')
-else:
-    print(f'\n❌ Some tests failed (pass rate: {avg.assertions:.1%})')
     """
-    ❌ Some tests failed (pass rate: 68.8%)
+                                Evaluation Summary: to_title_case
+    ┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+    ┃ Case ID          ┃ Inputs               ┃ Outputs              ┃ Assertions ┃ Duration ┃
+    ┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+    │ basic_lowercase  │ hello world          │ Hello World          │ ✔✔✔✗       │     10ms │
+    ├──────────────────┼──────────────────────┼──────────────────────┼────────────┼──────────┤
+    │ basic_uppercase  │ HELLO WORLD          │ Hello World          │ ✔✔✔✗       │     10ms │
+    ├──────────────────┼──────────────────────┼──────────────────────┼────────────┼──────────┤
+    │ mixed_case       │ HeLLo WoRLd          │ Hello World          │ ✔✔✔✗       │     10ms │
+    ├──────────────────┼──────────────────────┼──────────────────────┼────────────┼──────────┤
+    │ empty_string     │ -                    │ -                    │ ✔✔✗✗       │     10ms │
+    ├──────────────────┼──────────────────────┼──────────────────────┼────────────┼──────────┤
+    │ single_word      │ hello                │ Hello                │ ✔✔✔✗       │     10ms │
+    ├──────────────────┼──────────────────────┼──────────────────────┼────────────┼──────────┤
+    │ with_punctuation │ hello, world!        │ Hello, World!        │ ✔✔✔✗       │     10ms │
+    ├──────────────────┼──────────────────────┼──────────────────────┼────────────┼──────────┤
+    │ with_numbers     │ hello 123 world      │ Hello 123 World      │ ✔✔✔✗       │     10ms │
+    ├──────────────────┼──────────────────────┼──────────────────────┼────────────┼──────────┤
+    │ apostrophes      │ don't stop believin' │ Don'T Stop Believin' │ ✔✔✗✗       │     10ms │
+    ├──────────────────┼──────────────────────┼──────────────────────┼────────────┼──────────┤
+    │ Averages         │                      │                      │ 68.8% ✔    │     10ms │
+    └──────────────────┴──────────────────────┴──────────────────────┴────────────┴──────────┘
     """
+    # Check if all passed
+    avg = report.averages()
+    assert avg is not None and avg.assertions is not None
+    if avg.assertions == 1.0:
+        print('\n✅ All tests passed!')
+    else:
+        print(f'\n❌ Some tests failed (pass rate: {avg.assertions:.1%})')
+        """
+        ❌ Some tests failed (pass rate: 68.8%)
+        """
 ```
 
 ## Expected Output
@@ -184,6 +189,7 @@ def to_title_case(text: str) -> str:
 
 # Create dataset
 dataset: Dataset[str, str, Any] = Dataset(
+    name='title_case_tests',
     cases=[Case(inputs='test', expected_output='Test')],
     evaluators=[EqualsExpected()],
 )
@@ -273,7 +279,7 @@ def test_title_case_performance(title_case_dataset):
 
 ## Next Steps
 
-- **[Built-in Evaluators](../evaluators/built-in.md)** - Explore all available evaluators
+- **[Native Evaluators](../evaluators/built-in.md)** - Explore all available evaluators
 - **[Custom Evaluators](../evaluators/custom.md)** - Write your own evaluation logic
 - **[Dataset Management](../how-to/dataset-management.md)** - Save, load, and manage datasets
 - **[Concurrency & Performance](../how-to/concurrency.md)** - Optimize evaluation performance

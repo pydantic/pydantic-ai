@@ -1,0 +1,456 @@
+from __future__ import annotations
+
+import functools
+from collections.abc import Awaitable, Callable, Sequence
+from contextvars import ContextVar
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
+
+from dbos import DBOS
+from typing_extensions import TypedDict
+
+from pydantic_ai import ToolsetTool, messages as _messages
+from pydantic_ai.durable_exec._capability_operation import CapabilityOperationParams
+from pydantic_ai.durable_exec._operation import (
+    CapabilityOperationId,
+    DurableOperation,
+    DurableOperationConfig,
+    DurableOperationId,
+    DynamicToolsetCallToolParams,
+    EventStreamHandlerId,
+    EventStreamHandlerParams,
+    ModelCancelSuspendedResponseId,
+    ModelCancelSuspendedResponseParams,
+    ModelCompactMessagesId,
+    ModelCompactMessagesParams,
+    ModelRequestId,
+    ModelRequestParams,
+    OperationConfigRole,
+    ToolsetCallToolId,
+    ToolsetCallToolParams,
+    ToolsetGetInstructionsId,
+    ToolsetGetToolsId,
+    ToolsetGetToolsParams,
+    ToolsetValidateToolArgumentsId,
+)
+from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
+from pydantic_ai.durable_exec._retry_after import model_error_retry_after
+from pydantic_ai.messages import ModelResponse
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import RunContext, ToolDefinition
+
+from ._operation_names import DBOSOperationNamer
+from ._utils import StepConfig, in_workflow_code
+
+if TYPE_CHECKING:
+    from dbos import StepOptions, StepReservation
+
+ParamsT = TypeVar('ParamsT')
+WireT = TypeVar('WireT')
+ResultT = TypeVar('ResultT')
+
+_MODEL_OPERATION_IDS = (ModelRequestId, ModelCompactMessagesId, ModelCancelSuspendedResponseId)
+
+_RETRY_AFTER_KEY = 'pydantic_ai_retry_after'
+"""Marks what a model step returns instead of failing when a model error asked to wait before its next attempt."""
+
+
+class _RetryAfterWait(TypedDict):
+    """What a model step returns instead of failing when its error asked for a wait: a plain dict once recorded."""
+
+    pydantic_ai_retry_after: float
+    attempts: int
+
+
+_MINIMUM_RETRY_AFTER_CAP = 60.0
+"""The shortest cap on a model error's `retry_after`, when the step's own backoff for the attempt is shorter."""
+
+# DBOS's defaults for the `StepConfig` fields left unset (`dbos._core.DEFAULT_STEP_OPTIONS`), and the cap on its
+# backoff (`dbos._core.invoke_step`), as of dbos 3.4.
+_DBOS_DEFAULT_INTERVAL_SECONDS = 1.0
+_DBOS_DEFAULT_BACKOFF_RATE = 2.0
+_DBOS_DEFAULT_MAX_ATTEMPTS = 3
+_DBOS_MAX_RETRY_INTERVAL_SECONDS = 3600.0
+
+_retry_after_attempts_before: ContextVar[int | None] = ContextVar('_dbos_retry_after_attempts_before', default=None)
+"""How many attempts the model step had before this run of it, when workflow code is calling it directly.
+
+`None` otherwise, including in the body of the step, so a model step called inline from inside another step fails
+as it always did instead of returning a wait no workflow code is there to wait.
+"""
+
+
+def _returning_retry_after(
+    step: Callable[..., Awaitable[object]], config: StepConfig
+) -> Callable[..., Awaitable[object]]:
+    """Make a model step return the wait a model error asked for, rather than fail into DBOS's in-step retry.
+
+    DBOS retries a step in the process that runs it, after an `asyncio.sleep` of its own backoff that recovery
+    doesn't remember. Returning the wait instead records the failed attempt, and lets workflow code wait it with a
+    durable `DBOS.sleep_async` before attempting the step again; see `DBOSBoundOperation._step_waiting_retry_after`.
+    The wait is capped at the step's own backoff for the attempt or a minute, whichever is longer. On the step's last
+    attempt, or for an error that asked for no wait, the step fails as before.
+    """
+    interval = config.get('interval_seconds', _DBOS_DEFAULT_INTERVAL_SECONDS)
+    backoff_rate = config.get('backoff_rate', _DBOS_DEFAULT_BACKOFF_RATE)
+
+    @functools.wraps(step)
+    async def model_step(*args: Any, **kwargs: Any) -> object:
+        attempts_before = _retry_after_attempts_before.get()
+        token = _retry_after_attempts_before.set(None)
+        try:
+            return await step(*args, **kwargs)
+        except Exception as error:
+            status = DBOS.step_status
+            if (
+                attempts_before is None
+                or status is None
+                or status.current_attempt is None
+                or status.max_attempts is None
+                or status.current_attempt + 1 >= status.max_attempts
+            ):
+                raise
+            attempt = attempts_before + status.current_attempt
+            backoff = min(interval * backoff_rate**attempt, _DBOS_MAX_RETRY_INTERVAL_SECONDS)
+            delay = model_error_retry_after(error, maximum=max(backoff, _MINIMUM_RETRY_AFTER_CAP))
+            if delay is None:
+                raise
+            return _RetryAfterWait(pydantic_ai_retry_after=delay, attempts=status.current_attempt + 1)
+        finally:
+            _retry_after_attempts_before.reset(token)
+
+    return model_step
+
+
+def _retry_after_wait(payload: object) -> tuple[float, int] | None:
+    """The wait and attempt count a model step returned instead of failing, if it did."""
+    if not isinstance(payload, dict) or _RETRY_AFTER_KEY not in payload:
+        return None
+    wait = cast(_RetryAfterWait, payload)
+    return wait['pydantic_ai_retry_after'], wait['attempts']
+
+
+class DBOSOperationConfig(DurableOperationConfig[StepConfig]):
+    def __init__(self, *, model: StepConfig, event: StepConfig, tool: StepConfig) -> None:
+        self._model = model
+        self._event = event
+        self._tool = tool
+
+    def base(self, role: OperationConfigRole, *, operation_id: DurableOperationId) -> StepConfig:
+        if role == 'model':
+            return self._model
+        if role == 'event':
+            return self._event
+        return self._tool
+
+    def for_tool(
+        self,
+        role: OperationConfigRole,
+        *,
+        operation_id: DurableOperationId,
+        tool: object | None,
+        tool_name: str,
+    ) -> StepConfig | Literal[False]:
+        return self._tool
+
+
+class DBOSBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[ParamsT, WireT, ResultT]):
+    def __init__(
+        self,
+        operation: DurableOperation[ParamsT, WireT, ResultT],
+        *,
+        step: Callable[..., Any],
+        step_options: StepOptions,
+        dispatch: Callable[[Callable[..., Any], ParamsT], Awaitable[ResultT]],
+        retry_after_max_attempts: int | None = None,
+    ) -> None:
+        self._operation = operation
+        self._step_function = step
+        self._step_options = step_options
+        self.step = DBOS.step(**step_options)(step)
+        self._dispatch = dispatch
+        self._retry_after_max_attempts = retry_after_max_attempts
+
+    @property
+    def operation(self) -> DurableOperation[ParamsT, WireT, ResultT]:
+        return self._operation
+
+    async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:
+        if self._retry_after_max_attempts is not None and in_workflow_code():
+            return await self._dispatch(self._step_waiting_retry_after, params)
+        return await self._dispatch(self.step, params)
+
+    async def _step_waiting_retry_after(self, *args: Any) -> object:
+        """Run a model step, and run it again after each durable wait a model error asked for, up to its `max_attempts`.
+
+        Each run of the step after a wait gets the attempts the earlier runs left, so the step is attempted no more
+        often than its `max_attempts`, and the backoff DBOS waits between attempts that failed without asking to wait
+        goes on growing from where the earlier runs left it.
+        """
+        assert self._retry_after_max_attempts is not None
+        interval = self._step_options.get('interval_seconds', _DBOS_DEFAULT_INTERVAL_SECONDS)
+        backoff_rate = self._step_options.get('backoff_rate', _DBOS_DEFAULT_BACKOFF_RATE)
+        step: Callable[..., Awaitable[object]] = self.step
+        attempts = 0
+        while True:
+            token = _retry_after_attempts_before.set(attempts)
+            try:
+                payload = await step(*args)
+            finally:
+                _retry_after_attempts_before.reset(token)
+            if (wait := _retry_after_wait(payload)) is None:
+                return payload
+            delay, step_attempts = wait
+            attempts += step_attempts
+            await DBOS.sleep_async(delay)
+            options: StepOptions = {
+                **self._step_options,
+                'max_attempts': self._retry_after_max_attempts - attempts,
+                'interval_seconds': interval * backoff_rate**attempts,
+            }
+            step = functools.partial(DBOS.run_step_async, options, self._step_function)
+
+    async def call_reserved(self, reservation: StepReservation, params: ParamsT) -> ResultT:
+        async def reserved_step(*args: object, **kwargs: object) -> object:
+            return await reservation.run_async(self._step_options, self._step_function, *args, **kwargs)
+
+        return await self._dispatch(reserved_step, params)
+
+
+class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
+    """Register typed durable-operation handlers as DBOS steps during agent binding."""
+
+    def __init__(self, *, agent_name: str, config: DBOSOperationConfig) -> None:
+        super().__init__(namer=DBOSOperationNamer(agent_name), config=config)
+
+    def register(
+        self,
+        operation: DurableOperation[ParamsT, WireT, ResultT],
+        *,
+        name: str,
+        config: StepConfig,
+    ) -> tuple[BoundDurableOperation[ParamsT, WireT, ResultT], Sequence[Callable[..., object]]]:
+        if isinstance(operation.operation_id, CapabilityOperationId):
+            step, dispatch = self._bind_capability(operation)
+        elif isinstance(
+            operation.operation_id,
+            (ModelRequestId, ModelCompactMessagesId, ModelCancelSuspendedResponseId, EventStreamHandlerId),
+        ):
+            step, dispatch = self._bind_model_or_event(operation)
+        elif isinstance(
+            operation.operation_id,
+            (ToolsetGetToolsId, ToolsetGetInstructionsId, ToolsetCallToolId, ToolsetValidateToolArgumentsId),
+        ):
+            step, dispatch = self._bind_toolset(operation)
+        else:
+            # The branches above are the frozen compatibility surface for operations whose recorded
+            # step signatures shipped. New operation ids use this generic shape and need no edits here.
+            step, dispatch = self._bind_generic(operation)
+
+        retry_after_max_attempts: int | None = None
+        if isinstance(operation.operation_id, _MODEL_OPERATION_IDS) and config.get('retries_allowed'):
+            step = _returning_retry_after(step, config)
+            retry_after_max_attempts = config.get('max_attempts', _DBOS_DEFAULT_MAX_ATTEMPTS)
+
+        step_options: StepOptions = {'name': name, **config}
+        bound_operation = DBOSBoundOperation(
+            operation,
+            step=step,
+            step_options=step_options,
+            dispatch=dispatch,
+            retry_after_max_attempts=retry_after_max_attempts,
+        )
+        return bound_operation, (bound_operation.step,)
+
+    def _bind_generic(
+        self, operation: DurableOperation[ParamsT, WireT, ResultT]
+    ) -> tuple[Callable[..., Any], Callable[[Callable[..., Any], ParamsT], Any]]:
+        async def operation_step(params: ParamsT) -> object:
+            return operation.result_codec.dump(await operation.handler(params))
+
+        async def dispatch(step: Callable[..., Any], params: ParamsT) -> ResultT:
+            return operation.result_codec.load(await step(params))
+
+        return operation_step, dispatch
+
+    def _bind_capability(
+        self, operation: DurableOperation[ParamsT, WireT, ResultT]
+    ) -> tuple[Callable[..., Any], Callable[[Callable[..., Any], ParamsT], Any]]:
+        async def capability_step(params: CapabilityOperationParams) -> object:
+            return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
+
+        async def dispatch(step: Callable[..., Any], params: ParamsT) -> ResultT:
+            return operation.result_codec.load(await step(params))
+
+        return capability_step, dispatch
+
+    def _bind_model_or_event(
+        self, operation: DurableOperation[ParamsT, WireT, ResultT]
+    ) -> tuple[Callable[..., Any], Callable[[Callable[..., Any], ParamsT], Any]]:
+
+        match operation.operation_id:
+            case ModelRequestId():
+
+                async def model_step(
+                    model_id: str | None,
+                    messages: list[_messages.ModelMessage],
+                    model_settings: ModelSettings | None,
+                    model_request_parameters: ModelRequestParameters,
+                    run_context: RunContext[Any],
+                ) -> object:
+                    params = ModelRequestParams(
+                        model_id,
+                        messages=messages,
+                        model_settings=model_settings,
+                        model_request_parameters=model_request_parameters,
+                        run_context=run_context,
+                    )
+                    return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
+
+                step = model_step
+
+                async def dispatch_model(step: Callable[..., Any], params: ParamsT) -> ResultT:
+                    model_params = cast(ModelRequestParams, params)
+                    payload = await step(
+                        model_params.model_id,
+                        model_params.messages,
+                        model_params.model_settings,
+                        model_params.model_request_parameters,
+                        model_params.run_context,
+                    )
+                    return operation.result_codec.load(payload)
+
+                dispatch: Callable[[Callable[..., Any], ParamsT], Any] = dispatch_model
+
+            case ModelCancelSuspendedResponseId():
+
+                async def cancel_step(
+                    model_id: str | None, response: ModelResponse, run_context: RunContext[Any]
+                ) -> object:
+                    params = ModelCancelSuspendedResponseParams(model_id, response=response, run_context=run_context)
+                    return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
+
+                step = cancel_step
+
+                async def dispatch_cancel(step: Callable[..., Any], params: ParamsT) -> ResultT:
+                    cancel_params = cast(ModelCancelSuspendedResponseParams, params)
+                    payload = await step(cancel_params.model_id, cancel_params.response, cancel_params.run_context)
+                    return operation.result_codec.load(payload)
+
+                dispatch = dispatch_cancel
+
+            case ModelCompactMessagesId():
+
+                async def compact_step(
+                    model_id: str | None,
+                    request_context: ModelRequestContext,
+                    instructions: str | None,
+                    run_context: RunContext[Any],
+                ) -> object:
+                    params = ModelCompactMessagesParams(
+                        model_id,
+                        request_context=request_context,
+                        instructions=instructions,
+                        run_context=run_context,
+                    )
+                    return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
+
+                step = compact_step
+
+                async def dispatch_compact(step: Callable[..., Any], params: ParamsT) -> ResultT:
+                    compact_params = cast(ModelCompactMessagesParams, params)
+                    payload = await step(
+                        compact_params.model_id,
+                        compact_params.request_context,
+                        compact_params.instructions,
+                        compact_params.run_context,
+                    )
+                    return operation.result_codec.load(payload)
+
+                dispatch = dispatch_compact
+
+            case EventStreamHandlerId():
+
+                async def event_step(event: _messages.AgentStreamEvent, run_context: RunContext[Any]) -> object:
+                    params = EventStreamHandlerParams(event, run_context=run_context)
+                    return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
+
+                step = event_step
+
+                async def dispatch_event(step: Callable[..., Any], params: ParamsT) -> ResultT:
+                    event_params = cast(EventStreamHandlerParams, params)
+                    payload = await step(event_params.event, event_params.run_context)
+                    return operation.result_codec.load(payload)
+
+                dispatch = dispatch_event
+
+            case _ as operation_id:
+                raise TypeError(f'DBOS operation {operation_id!r} is not a model or event operation')
+
+        return step, dispatch
+
+    def _bind_toolset(
+        self, operation: DurableOperation[ParamsT, WireT, ResultT]
+    ) -> tuple[Callable[..., Any], Callable[[Callable[..., Any], ParamsT], Any]]:
+        match operation.operation_id:
+            case ToolsetGetToolsId() | ToolsetGetInstructionsId():
+
+                async def discovery_step(run_context: RunContext[Any]) -> object:
+                    params = ToolsetGetToolsParams(run_context)
+                    return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
+
+                step = discovery_step
+
+                async def dispatch_discovery(step: Callable[..., Any], params: ParamsT) -> ResultT:
+                    discovery_params = cast(ToolsetGetToolsParams, params)
+                    payload = await step(discovery_params.ctx)
+                    return operation.result_codec.load(payload)
+
+                dispatch = dispatch_discovery
+
+            case ToolsetCallToolId(toolset_kind='mcp'):
+
+                async def mcp_call_step(
+                    tool_name: str,
+                    tool_args: dict[str, Any],
+                    run_context: RunContext[Any],
+                    tool: ToolsetTool[Any],
+                ) -> object:
+                    params = ToolsetCallToolParams(tool_name, tool_args=tool_args, ctx=run_context, tool=tool)
+                    return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
+
+                step = mcp_call_step
+
+                async def dispatch_mcp_call(step: Callable[..., Any], params: ParamsT) -> ResultT:
+                    call_params = cast(ToolsetCallToolParams, params)
+                    payload = await step(call_params.name, call_params.tool_args, call_params.ctx, call_params.tool)
+                    return operation.result_codec.load(payload)
+
+                dispatch = dispatch_mcp_call
+
+            case ToolsetCallToolId(toolset_kind='dynamic') | ToolsetValidateToolArgumentsId(toolset_kind='dynamic'):
+
+                async def dynamic_call_step(
+                    tool_name: str,
+                    tool_args: dict[str, Any],
+                    run_context: RunContext[Any],
+                    tool_def: ToolDefinition | None,
+                ) -> object:
+                    params = DynamicToolsetCallToolParams(
+                        tool_name, tool_args=tool_args, ctx=run_context, tool_def=tool_def
+                    )
+                    return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
+
+                step = dynamic_call_step
+
+                async def dispatch_dynamic_call(step: Callable[..., Any], params: ParamsT) -> ResultT:
+                    call_params = cast(DynamicToolsetCallToolParams, params)
+                    payload = await step(call_params.name, call_params.tool_args, call_params.ctx, call_params.tool_def)
+                    return operation.result_codec.load(payload)
+
+                dispatch = dispatch_dynamic_call
+
+            case _ as operation_id:
+                raise TypeError(f'DBOS operation {operation_id!r} is not registered by this backend yet')
+
+        return step, dispatch

@@ -1,0 +1,694 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '777'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: ''
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: Tell three jokes. Generate topics with the generate_topic tool.
+        role: user
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - generate_topic
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: generate_topic
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters_json_schema:
+            properties:
+              response:
+                items:
+                  type: string
+                type: array
+            required:
+            - response
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1580'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2596
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              name: generate_topic
+            thoughtSignature: Es8FCswFAXLI2nxFGW9oAYt0fTQoHlYcudYTgqNXlir9nzbXoqFXqLY9sWOIMaevBSmRIl/38GhJB+V+cQHNBmUzxq17UwAqJmMgQ99kWRCfLmU1uUtLpz260ep1CbMwDTJeIsjLz9JzjMd3vMx7gWYrvmOMg7aANsbpw1iHw/YtlA5mXdU0Mn6TOdO9UiGTnnDgzfqu/aoYPNT2DSs/ZlUVpOawy+Ds0hY+BakQLutn2fT++i4lLLwstQjuAsgONiLIWp47NyJ9S9mR8kMnlKuDn1xZMxAHl9YK6j47Rmu9qiWM0fK9fxJOzRiUxQ4eDhWqUKAjrdPPsH8MYaIJMANNbrS2rtHUWcsfKTPbKlBGUA/5BtuxIT11yIIL78MF+RId8W6s0j2VuRYNzzLqAz961XU9v3+sd7TS+aiSXzzffIoDVpvz0Ozs5Dq6jkzTEnPqbxBX7ctd+SHh/X+DYXYEk/f+0RKTn4ZWjVIVGeAqcg66zZCNtbzfCDKh9164rrhDUEddrrNVyQ+N04iUYxZCvU7xSSTLxbt8zJ2LhPNWmI6Y3zhISUP23o/TcvpRecQgR2iTY4k2UV3iTygB9qcYnC3Ka4+SiuXuAfRHs28FqtHvA6jrEDty6+DDaG5uudrN3wTYvawBYnxTLgK3uDTuTkg+OLYl5WEF+/9BOd3kcoxx+yDR140Xt21+rXGLC7fusqaJ/TZoClO3mf7V7lEEypYVRMpvbC9B8gI84x6o4yXc+G1EJrJIOmch/K6tyE9razLuPy5BzT3WDvieYDOpGNvePrKbWWtJKXt06undMLLzM7lwVFGPCB03sP7e3YCKRHQ9LE4eVD5CHa0UEISGhQ7vytpzfXKFNi2C35MujDS4DYE9/aG4YiJdCPxCinmggdYw5j872KKx8VNlZC8CZShSkt7Hnbc6pDIbCKpg2x4yTeBAT3783UHrkQCEaZs=
+          - functionCall:
+              args: {}
+              name: generate_topic
+          - functionCall:
+              args: {}
+              name: generate_topic
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: wOd8abGuO5rgz7IP5tLEGA
+      usageMetadata:
+        candidatesTokenCount: 30
+        promptTokenCount: 83
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 83
+        thoughtsTokenCount: 190
+        totalTokenCount: 303
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2560'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: ''
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_df5891897e434a16add992cc09f10172
+            name: generate_topic
+          thoughtSignature: Es8FCswFAXLI2nxFGW9oAYt0fTQoHlYcudYTgqNXlir9nzbXoqFXqLY9sWOIMaevBSmRIl_38GhJB-V-cQHNBmUzxq17UwAqJmMgQ99kWRCfLmU1uUtLpz260ep1CbMwDTJeIsjLz9JzjMd3vMx7gWYrvmOMg7aANsbpw1iHw_YtlA5mXdU0Mn6TOdO9UiGTnnDgzfqu_aoYPNT2DSs_ZlUVpOawy-Ds0hY-BakQLutn2fT--i4lLLwstQjuAsgONiLIWp47NyJ9S9mR8kMnlKuDn1xZMxAHl9YK6j47Rmu9qiWM0fK9fxJOzRiUxQ4eDhWqUKAjrdPPsH8MYaIJMANNbrS2rtHUWcsfKTPbKlBGUA_5BtuxIT11yIIL78MF-RId8W6s0j2VuRYNzzLqAz961XU9v3-sd7TS-aiSXzzffIoDVpvz0Ozs5Dq6jkzTEnPqbxBX7ctd-SHh_X-DYXYEk_f-0RKTn4ZWjVIVGeAqcg66zZCNtbzfCDKh9164rrhDUEddrrNVyQ-N04iUYxZCvU7xSSTLxbt8zJ2LhPNWmI6Y3zhISUP23o_TcvpRecQgR2iTY4k2UV3iTygB9qcYnC3Ka4-SiuXuAfRHs28FqtHvA6jrEDty6-DDaG5uudrN3wTYvawBYnxTLgK3uDTuTkg-OLYl5WEF-_9BOd3kcoxx-yDR140Xt21-rXGLC7fusqaJ_TZoClO3mf7V7lEEypYVRMpvbC9B8gI84x6o4yXc-G1EJrJIOmch_K6tyE9razLuPy5BzT3WDvieYDOpGNvePrKbWWtJKXt06undMLLzM7lwVFGPCB03sP7e3YCKRHQ9LE4eVD5CHa0UEISGhQ7vytpzfXKFNi2C35MujDS4DYE9_aG4YiJdCPxCinmggdYw5j872KKx8VNlZC8CZShSkt7Hnbc6pDIbCKpg2x4yTeBAT3783UHrkQCEaZs=
+        - functionCall:
+            args: {}
+            id: pyd_ai_102eb2f935364e77bac26307e3428e2b
+            name: generate_topic
+        - functionCall:
+            args: {}
+            id: pyd_ai_cc6e16722f9a428db81532521a689ea7
+            name: generate_topic
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_df5891897e434a16add992cc09f10172
+            name: generate_topic
+            response:
+              return_value: cars
+        - functionResponse:
+            id: pyd_ai_102eb2f935364e77bac26307e3428e2b
+            name: generate_topic
+            response:
+              return_value: penguins
+        - functionResponse:
+            id: pyd_ai_cc6e16722f9a428db81532521a689ea7
+            name: generate_topic
+            response:
+              return_value: cars
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: Tell three jokes. Generate topics with the generate_topic tool.
+        role: user
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - generate_topic
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: generate_topic
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters_json_schema:
+            properties:
+              response:
+                items:
+                  type: string
+                type: array
+            required:
+            - response
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '798'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1661
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              name: generate_topic
+            thoughtSignature: EtkBCtYBAXLI2nw30WDVpjR1pyPO7RX8irBHXj/Gr3vxDSk+rgwZCdVoqguEYPHH7cUse9KvaZ3EJYu8PrHkjjtzW9b9KJ8PGz/RgeYPQpq28UIvdfmTZ5Q8h89N39bPVdrfLbdhQ5xbbDu5E1fWCOvcs8r2G1MTlJhqSfnSCIFR3J7xaAmOqE0UEW3Xo5sWjV14pkl5Zvmd41eAl6ZUr6XHVgH+zQ//TBeRh6CF13VtGTNFteKz7sO6VHe+i5jSsyGFgdWXNW9HpnW7GPPjw1h63pnfeI9y8HpJCA==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: wud8aZm_Lf6tz7IP37eN4A8
+      usageMetadata:
+        candidatesTokenCount: 10
+        promptTokenCount: 348
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 348
+        thoughtsTokenCount: 40
+        totalTokenCount: 398
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3187'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: ''
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_df5891897e434a16add992cc09f10172
+            name: generate_topic
+          thoughtSignature: Es8FCswFAXLI2nxFGW9oAYt0fTQoHlYcudYTgqNXlir9nzbXoqFXqLY9sWOIMaevBSmRIl_38GhJB-V-cQHNBmUzxq17UwAqJmMgQ99kWRCfLmU1uUtLpz260ep1CbMwDTJeIsjLz9JzjMd3vMx7gWYrvmOMg7aANsbpw1iHw_YtlA5mXdU0Mn6TOdO9UiGTnnDgzfqu_aoYPNT2DSs_ZlUVpOawy-Ds0hY-BakQLutn2fT--i4lLLwstQjuAsgONiLIWp47NyJ9S9mR8kMnlKuDn1xZMxAHl9YK6j47Rmu9qiWM0fK9fxJOzRiUxQ4eDhWqUKAjrdPPsH8MYaIJMANNbrS2rtHUWcsfKTPbKlBGUA_5BtuxIT11yIIL78MF-RId8W6s0j2VuRYNzzLqAz961XU9v3-sd7TS-aiSXzzffIoDVpvz0Ozs5Dq6jkzTEnPqbxBX7ctd-SHh_X-DYXYEk_f-0RKTn4ZWjVIVGeAqcg66zZCNtbzfCDKh9164rrhDUEddrrNVyQ-N04iUYxZCvU7xSSTLxbt8zJ2LhPNWmI6Y3zhISUP23o_TcvpRecQgR2iTY4k2UV3iTygB9qcYnC3Ka4-SiuXuAfRHs28FqtHvA6jrEDty6-DDaG5uudrN3wTYvawBYnxTLgK3uDTuTkg-OLYl5WEF-_9BOd3kcoxx-yDR140Xt21-rXGLC7fusqaJ_TZoClO3mf7V7lEEypYVRMpvbC9B8gI84x6o4yXc-G1EJrJIOmch_K6tyE9razLuPy5BzT3WDvieYDOpGNvePrKbWWtJKXt06undMLLzM7lwVFGPCB03sP7e3YCKRHQ9LE4eVD5CHa0UEISGhQ7vytpzfXKFNi2C35MujDS4DYE9_aG4YiJdCPxCinmggdYw5j872KKx8VNlZC8CZShSkt7Hnbc6pDIbCKpg2x4yTeBAT3783UHrkQCEaZs=
+        - functionCall:
+            args: {}
+            id: pyd_ai_102eb2f935364e77bac26307e3428e2b
+            name: generate_topic
+        - functionCall:
+            args: {}
+            id: pyd_ai_cc6e16722f9a428db81532521a689ea7
+            name: generate_topic
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_df5891897e434a16add992cc09f10172
+            name: generate_topic
+            response:
+              return_value: cars
+        - functionResponse:
+            id: pyd_ai_102eb2f935364e77bac26307e3428e2b
+            name: generate_topic
+            response:
+              return_value: penguins
+        - functionResponse:
+            id: pyd_ai_cc6e16722f9a428db81532521a689ea7
+            name: generate_topic
+            response:
+              return_value: cars
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_e3c6d964a3004470a4faf43826b7a3cb
+            name: generate_topic
+          thoughtSignature: EtkBCtYBAXLI2nw30WDVpjR1pyPO7RX8irBHXj_Gr3vxDSk-rgwZCdVoqguEYPHH7cUse9KvaZ3EJYu8PrHkjjtzW9b9KJ8PGz_RgeYPQpq28UIvdfmTZ5Q8h89N39bPVdrfLbdhQ5xbbDu5E1fWCOvcs8r2G1MTlJhqSfnSCIFR3J7xaAmOqE0UEW3Xo5sWjV14pkl5Zvmd41eAl6ZUr6XHVgH-zQ__TBeRh6CF13VtGTNFteKz7sO6VHe-i5jSsyGFgdWXNW9HpnW7GPPjw1h63pnfeI9y8HpJCA==
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_e3c6d964a3004470a4faf43826b7a3cb
+            name: generate_topic
+            response:
+              return_value: penguins
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: Tell three jokes. Generate topics with the generate_topic tool.
+        role: user
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - generate_topic
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: generate_topic
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters_json_schema:
+            properties:
+              response:
+                items:
+                  type: string
+                type: array
+            required:
+            - response
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1119'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2076
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              name: generate_topic
+            thoughtSignature: EssDCsgDAXLI2nxz8kX3GkXEKN0KCAhr0Gg9JagHp1Fbs+BXhySvBeQARCEMrUl8qbvEaUXCfJF1ltXlV+uQ1xCrtGpUvW1eXcP90Mf+NVG3OfRDXBmo9seckCU0Exqdg46IxKG5GWL3+3WEnd1DdlTXEDE6yDUD4yD5lQFIMTqAeC3TmHTFDSqrqPamIYq2fHT6E/c1WGOf+xL6RnHwoJAOMnHyNlZILsZVxgbfN5RQ8MHRvEuCy5SftmthgibFMeVvrb7W/RpByDRwzA3xuVvradT+v7FlTNb2FQHHfz9VBoLrzPbWb6Rd3BSFtFK17hnlsfvuii3gQP9LKwM3WyM2I/tJuStl5LFvJ0xFnezfP1lVdZZQd2RpPKL4iDXyYzfyOUurNafmq7iixP9Dh7NNEoLk+ZlL4FQ5crsy/hutI/VdmsPC79PlgdTbDuXECMx+fMOi/22WYSEmbolRdT+IFclQQiAEYa64QBbxb2SNV8glomaOEN91UBzzPBvBNWSutzGBGBSlax+a1tBwRFkWaYkhrYxhdavs2C5hWuuGwm2acOH9SrbQfxyxz7zdUlOMVmcgb18qY0sNYAItz1Iv9oWkrA8DTW/WZxvH
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: xOd8af-EN9nRz7IPqJDR-AM
+      usageMetadata:
+        candidatesTokenCount: 10
+        promptTokenCount: 415
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 415
+        thoughtsTokenCount: 105
+        totalTokenCount: 530
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '4130'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: ''
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_df5891897e434a16add992cc09f10172
+            name: generate_topic
+          thoughtSignature: Es8FCswFAXLI2nxFGW9oAYt0fTQoHlYcudYTgqNXlir9nzbXoqFXqLY9sWOIMaevBSmRIl_38GhJB-V-cQHNBmUzxq17UwAqJmMgQ99kWRCfLmU1uUtLpz260ep1CbMwDTJeIsjLz9JzjMd3vMx7gWYrvmOMg7aANsbpw1iHw_YtlA5mXdU0Mn6TOdO9UiGTnnDgzfqu_aoYPNT2DSs_ZlUVpOawy-Ds0hY-BakQLutn2fT--i4lLLwstQjuAsgONiLIWp47NyJ9S9mR8kMnlKuDn1xZMxAHl9YK6j47Rmu9qiWM0fK9fxJOzRiUxQ4eDhWqUKAjrdPPsH8MYaIJMANNbrS2rtHUWcsfKTPbKlBGUA_5BtuxIT11yIIL78MF-RId8W6s0j2VuRYNzzLqAz961XU9v3-sd7TS-aiSXzzffIoDVpvz0Ozs5Dq6jkzTEnPqbxBX7ctd-SHh_X-DYXYEk_f-0RKTn4ZWjVIVGeAqcg66zZCNtbzfCDKh9164rrhDUEddrrNVyQ-N04iUYxZCvU7xSSTLxbt8zJ2LhPNWmI6Y3zhISUP23o_TcvpRecQgR2iTY4k2UV3iTygB9qcYnC3Ka4-SiuXuAfRHs28FqtHvA6jrEDty6-DDaG5uudrN3wTYvawBYnxTLgK3uDTuTkg-OLYl5WEF-_9BOd3kcoxx-yDR140Xt21-rXGLC7fusqaJ_TZoClO3mf7V7lEEypYVRMpvbC9B8gI84x6o4yXc-G1EJrJIOmch_K6tyE9razLuPy5BzT3WDvieYDOpGNvePrKbWWtJKXt06undMLLzM7lwVFGPCB03sP7e3YCKRHQ9LE4eVD5CHa0UEISGhQ7vytpzfXKFNi2C35MujDS4DYE9_aG4YiJdCPxCinmggdYw5j872KKx8VNlZC8CZShSkt7Hnbc6pDIbCKpg2x4yTeBAT3783UHrkQCEaZs=
+        - functionCall:
+            args: {}
+            id: pyd_ai_102eb2f935364e77bac26307e3428e2b
+            name: generate_topic
+        - functionCall:
+            args: {}
+            id: pyd_ai_cc6e16722f9a428db81532521a689ea7
+            name: generate_topic
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_df5891897e434a16add992cc09f10172
+            name: generate_topic
+            response:
+              return_value: cars
+        - functionResponse:
+            id: pyd_ai_102eb2f935364e77bac26307e3428e2b
+            name: generate_topic
+            response:
+              return_value: penguins
+        - functionResponse:
+            id: pyd_ai_cc6e16722f9a428db81532521a689ea7
+            name: generate_topic
+            response:
+              return_value: cars
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_e3c6d964a3004470a4faf43826b7a3cb
+            name: generate_topic
+          thoughtSignature: EtkBCtYBAXLI2nw30WDVpjR1pyPO7RX8irBHXj_Gr3vxDSk-rgwZCdVoqguEYPHH7cUse9KvaZ3EJYu8PrHkjjtzW9b9KJ8PGz_RgeYPQpq28UIvdfmTZ5Q8h89N39bPVdrfLbdhQ5xbbDu5E1fWCOvcs8r2G1MTlJhqSfnSCIFR3J7xaAmOqE0UEW3Xo5sWjV14pkl5Zvmd41eAl6ZUr6XHVgH-zQ__TBeRh6CF13VtGTNFteKz7sO6VHe-i5jSsyGFgdWXNW9HpnW7GPPjw1h63pnfeI9y8HpJCA==
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_e3c6d964a3004470a4faf43826b7a3cb
+            name: generate_topic
+            response:
+              return_value: penguins
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_9194fac7e8964153908c8cd32b37281f
+            name: generate_topic
+          thoughtSignature: EssDCsgDAXLI2nxz8kX3GkXEKN0KCAhr0Gg9JagHp1Fbs-BXhySvBeQARCEMrUl8qbvEaUXCfJF1ltXlV-uQ1xCrtGpUvW1eXcP90Mf-NVG3OfRDXBmo9seckCU0Exqdg46IxKG5GWL3-3WEnd1DdlTXEDE6yDUD4yD5lQFIMTqAeC3TmHTFDSqrqPamIYq2fHT6E_c1WGOf-xL6RnHwoJAOMnHyNlZILsZVxgbfN5RQ8MHRvEuCy5SftmthgibFMeVvrb7W_RpByDRwzA3xuVvradT-v7FlTNb2FQHHfz9VBoLrzPbWb6Rd3BSFtFK17hnlsfvuii3gQP9LKwM3WyM2I_tJuStl5LFvJ0xFnezfP1lVdZZQd2RpPKL4iDXyYzfyOUurNafmq7iixP9Dh7NNEoLk-ZlL4FQ5crsy_hutI_VdmsPC79PlgdTbDuXECMx-fMOi_22WYSEmbolRdT-IFclQQiAEYa64QBbxb2SNV8glomaOEN91UBzzPBvBNWSutzGBGBSlax-a1tBwRFkWaYkhrYxhdavs2C5hWuuGwm2acOH9SrbQfxyxz7zdUlOMVmcgb18qY0sNYAItz1Iv9oWkrA8DTW_WZxvH
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_9194fac7e8964153908c8cd32b37281f
+            name: generate_topic
+            response:
+              return_value: cars
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: Tell three jokes. Generate topics with the generate_topic tool.
+        role: user
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - generate_topic
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: generate_topic
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters_json_schema:
+            properties:
+              response:
+                items:
+                  type: string
+                type: array
+            required:
+            - response
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1107'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1937
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              name: generate_topic
+            thoughtSignature: EsEDCr4DAXLI2nzcGUYO9i/9tcJLbaqcgbvTXeCbUFQpqn/+hsdpUJFpm6GFTH3cUVAb/HrRqBFMkI8Q4uPfNxFUyzx8xo+wEJFiWsgM6onD3k5ewFXm5gOokQRDDmWTeE1qArgtV1UJ1+KB3is3RPX6FtGSy9Ln6e4Hly8HV8sJ6d9QtwGFmaM5kClhNJBNi3krbtY64OqwOZVLA21tCx82ldBnrksOARVC/fD0XANJjtV1qhhliF87lx9hEM3PGtkrxfZMDd7g5L6F6Fx8A2jSYDNT539sLY+gVisw6xumIDlNieBlwUHXt5LpVZL9dBEryl0ZltIg5CmmFDCtbbFX6AJzVFk9IUWO7yUfCSPvkw9P/nIsW35JU3D7RLX5Lp7wtQw6vX8agJcAVZpR6DfHzfhH3advDgwPazRvjsdch+wKDihkNtq9mZduzDde1lvEbJ2uRybr6hJYDiSweZa4siIluKyDpTEBzX4QC0D4fMjMiLYc5guJAOG1h50LS9oEvMjE2b01xhMQofUaSpEx2AEYWgSWRQovx5g5gwckxIVg41pbGVeCVO1zdMMjCT0Z9KRd6lin+BudzY/c69jCfzM=
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: xud8aaquOP6tz7IP67eN4A8
+      usageMetadata:
+        candidatesTokenCount: 10
+        promptTokenCount: 546
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 546
+        thoughtsTokenCount: 106
+        totalTokenCount: 662
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '5065'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: ''
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_df5891897e434a16add992cc09f10172
+            name: generate_topic
+          thoughtSignature: Es8FCswFAXLI2nxFGW9oAYt0fTQoHlYcudYTgqNXlir9nzbXoqFXqLY9sWOIMaevBSmRIl_38GhJB-V-cQHNBmUzxq17UwAqJmMgQ99kWRCfLmU1uUtLpz260ep1CbMwDTJeIsjLz9JzjMd3vMx7gWYrvmOMg7aANsbpw1iHw_YtlA5mXdU0Mn6TOdO9UiGTnnDgzfqu_aoYPNT2DSs_ZlUVpOawy-Ds0hY-BakQLutn2fT--i4lLLwstQjuAsgONiLIWp47NyJ9S9mR8kMnlKuDn1xZMxAHl9YK6j47Rmu9qiWM0fK9fxJOzRiUxQ4eDhWqUKAjrdPPsH8MYaIJMANNbrS2rtHUWcsfKTPbKlBGUA_5BtuxIT11yIIL78MF-RId8W6s0j2VuRYNzzLqAz961XU9v3-sd7TS-aiSXzzffIoDVpvz0Ozs5Dq6jkzTEnPqbxBX7ctd-SHh_X-DYXYEk_f-0RKTn4ZWjVIVGeAqcg66zZCNtbzfCDKh9164rrhDUEddrrNVyQ-N04iUYxZCvU7xSSTLxbt8zJ2LhPNWmI6Y3zhISUP23o_TcvpRecQgR2iTY4k2UV3iTygB9qcYnC3Ka4-SiuXuAfRHs28FqtHvA6jrEDty6-DDaG5uudrN3wTYvawBYnxTLgK3uDTuTkg-OLYl5WEF-_9BOd3kcoxx-yDR140Xt21-rXGLC7fusqaJ_TZoClO3mf7V7lEEypYVRMpvbC9B8gI84x6o4yXc-G1EJrJIOmch_K6tyE9razLuPy5BzT3WDvieYDOpGNvePrKbWWtJKXt06undMLLzM7lwVFGPCB03sP7e3YCKRHQ9LE4eVD5CHa0UEISGhQ7vytpzfXKFNi2C35MujDS4DYE9_aG4YiJdCPxCinmggdYw5j872KKx8VNlZC8CZShSkt7Hnbc6pDIbCKpg2x4yTeBAT3783UHrkQCEaZs=
+        - functionCall:
+            args: {}
+            id: pyd_ai_102eb2f935364e77bac26307e3428e2b
+            name: generate_topic
+        - functionCall:
+            args: {}
+            id: pyd_ai_cc6e16722f9a428db81532521a689ea7
+            name: generate_topic
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_df5891897e434a16add992cc09f10172
+            name: generate_topic
+            response:
+              return_value: cars
+        - functionResponse:
+            id: pyd_ai_102eb2f935364e77bac26307e3428e2b
+            name: generate_topic
+            response:
+              return_value: penguins
+        - functionResponse:
+            id: pyd_ai_cc6e16722f9a428db81532521a689ea7
+            name: generate_topic
+            response:
+              return_value: cars
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_e3c6d964a3004470a4faf43826b7a3cb
+            name: generate_topic
+          thoughtSignature: EtkBCtYBAXLI2nw30WDVpjR1pyPO7RX8irBHXj_Gr3vxDSk-rgwZCdVoqguEYPHH7cUse9KvaZ3EJYu8PrHkjjtzW9b9KJ8PGz_RgeYPQpq28UIvdfmTZ5Q8h89N39bPVdrfLbdhQ5xbbDu5E1fWCOvcs8r2G1MTlJhqSfnSCIFR3J7xaAmOqE0UEW3Xo5sWjV14pkl5Zvmd41eAl6ZUr6XHVgH-zQ__TBeRh6CF13VtGTNFteKz7sO6VHe-i5jSsyGFgdWXNW9HpnW7GPPjw1h63pnfeI9y8HpJCA==
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_e3c6d964a3004470a4faf43826b7a3cb
+            name: generate_topic
+            response:
+              return_value: penguins
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_9194fac7e8964153908c8cd32b37281f
+            name: generate_topic
+          thoughtSignature: EssDCsgDAXLI2nxz8kX3GkXEKN0KCAhr0Gg9JagHp1Fbs-BXhySvBeQARCEMrUl8qbvEaUXCfJF1ltXlV-uQ1xCrtGpUvW1eXcP90Mf-NVG3OfRDXBmo9seckCU0Exqdg46IxKG5GWL3-3WEnd1DdlTXEDE6yDUD4yD5lQFIMTqAeC3TmHTFDSqrqPamIYq2fHT6E_c1WGOf-xL6RnHwoJAOMnHyNlZILsZVxgbfN5RQ8MHRvEuCy5SftmthgibFMeVvrb7W_RpByDRwzA3xuVvradT-v7FlTNb2FQHHfz9VBoLrzPbWb6Rd3BSFtFK17hnlsfvuii3gQP9LKwM3WyM2I_tJuStl5LFvJ0xFnezfP1lVdZZQd2RpPKL4iDXyYzfyOUurNafmq7iixP9Dh7NNEoLk-ZlL4FQ5crsy_hutI_VdmsPC79PlgdTbDuXECMx-fMOi_22WYSEmbolRdT-IFclQQiAEYa64QBbxb2SNV8glomaOEN91UBzzPBvBNWSutzGBGBSlax-a1tBwRFkWaYkhrYxhdavs2C5hWuuGwm2acOH9SrbQfxyxz7zdUlOMVmcgb18qY0sNYAItz1Iv9oWkrA8DTW_WZxvH
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_9194fac7e8964153908c8cd32b37281f
+            name: generate_topic
+            response:
+              return_value: cars
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_9861f30d3db94e83b151746965e1e567
+            name: generate_topic
+          thoughtSignature: EsEDCr4DAXLI2nzcGUYO9i_9tcJLbaqcgbvTXeCbUFQpqn_-hsdpUJFpm6GFTH3cUVAb_HrRqBFMkI8Q4uPfNxFUyzx8xo-wEJFiWsgM6onD3k5ewFXm5gOokQRDDmWTeE1qArgtV1UJ1-KB3is3RPX6FtGSy9Ln6e4Hly8HV8sJ6d9QtwGFmaM5kClhNJBNi3krbtY64OqwOZVLA21tCx82ldBnrksOARVC_fD0XANJjtV1qhhliF87lx9hEM3PGtkrxfZMDd7g5L6F6Fx8A2jSYDNT539sLY-gVisw6xumIDlNieBlwUHXt5LpVZL9dBEryl0ZltIg5CmmFDCtbbFX6AJzVFk9IUWO7yUfCSPvkw9P_nIsW35JU3D7RLX5Lp7wtQw6vX8agJcAVZpR6DfHzfhH3advDgwPazRvjsdch-wKDihkNtq9mZduzDde1lvEbJ2uRybr6hJYDiSweZa4siIluKyDpTEBzX4QC0D4fMjMiLYc5guJAOG1h50LS9oEvMjE2b01xhMQofUaSpEx2AEYWgSWRQovx5g5gwckxIVg41pbGVeCVO1zdMMjCT0Z9KRd6lin-BudzY_c69jCfzM=
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_9861f30d3db94e83b151746965e1e567
+            name: generate_topic
+            response:
+              return_value: penguins
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: Tell three jokes. Generate topics with the generate_topic tool.
+        role: user
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - generate_topic
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: generate_topic
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters_json_schema:
+            properties:
+              response:
+                items:
+                  type: string
+                type: array
+            required:
+            - response
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1927'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=3200
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                response:
+                - What kind of car does a sheep drive? A Lamborghini!
+                - Why don't you see penguins in Great Britain? Because they're afraid of Wales!
+                - What happened when the wheel was invented? It caused a revolution!
+              name: final_result
+            thoughtSignature: EocHCoQHAXLI2nysnYvuVfRamQKEyEllsBW9tFCMSRIkTBkoku4x+L8ojWrCM+zGluB9rFAcl9nFUc6sjDi0S+OjudfSK0mBiyZltSbi6irjV8mWkfCGaIe89+jgdvkjb0zDi1KSfWshBC6ZkYAmo4pWxxhYBdliPMB1pQexFtSblDo5ptU+ASCRot08KS8YU7L+jOU5gFFkBp69LGGwKGbxPavVcUCVaQFF4+Smez9ZeMRCCud1fvbKkj17ji5uvPvyYRIwCcKrq0oZaC8DTd50w8qzNlRres5veiHsqvQTa/b/x/ZUWI4rjZqDumVPL4/k07nCCnjfozHcO+MVaQ7WxjZBdgMsBONimGGPv5EAqNlg/yezcObusiGNWPJK+uIbZCKrVROusMByvI5YzCXFMjeMfivUQ5ujL1n2QDxTBEGIW4uHbtC8BUMd0zpD29cwnDBW0m9fcv0nUmRZjiHrftDB7bZNMNpa4yktas6rCGXud/nyknaUfuVrgwylq+sZdctn6ohKi+4EX9nkTua8eZb6D7LFeX6UskUZtGSU57eOCDfEhpHXnsseHDKHK8RvfJQ8IALSIzM/uOmT8v4q7Ip/3uktrN9yMmt+p8EMJpSaSNWn4K5+YrUNs0arw1h/OWN6klZFc5/eDbvHAdIJbg0s1l0WVUNLN4yfEn9/vYCG23Me/LPQJkb3Zn26DJO95/gaIF8+oyQm4EpRsSVTKHvbPtZjyuPCT8OKbXIn/65aKh7VNNg31NSHPm4AUjCDAvkb6B6jQB9ymoOMx41cMWnKvtdaGDOIvndMiwm/VM1hBCDDwmrLptYphxD5NNeNjPmTLTP+5pVMEWAX0QKuC3DMtGHAVCJq4upRngE1P/XpnCy/+xyQutSgi7JqEQ72uCIydwFlUiqUrrLDCP21vIvcGi2CVTmfjKX8qT5Fo/Se1NGoshy4gkzTS2cZ5yktXUkN46D7PDiV7+vX0WEO16HkYP2RMpDGfHWt3DhyRS7eHUocoGogpDXl0qK9sDFbUc6rOS4Re7ol8YAk9pkHE4AlaMS/weHErJMHNhn93kp0WgPuLXImd36L3AhW3JFCPxqtWhc1pM1gA8hRXwF/dWmlXEkVbA463qmBYIi/mcJ+xjvLS6ejdJ37Ag+q5g8E3bhx6AEbSQfllAsYEdEkS1B1CETzWT3oL5FpmdvqcBk4Z58DJhSx
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: yud8adv2DI2Hz7IP766XuAM
+      usageMetadata:
+        candidatesTokenCount: 65
+        promptTokenCount: 679
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 679
+        thoughtsTokenCount: 235
+        totalTokenCount: 979
+    status:
+      code: 200
+      message: OK
+version: 1

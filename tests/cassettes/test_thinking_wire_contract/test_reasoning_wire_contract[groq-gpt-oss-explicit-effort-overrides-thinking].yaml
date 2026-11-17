@@ -1,0 +1,78 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '202'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2+2? Reply with just the number.
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      reasoning_effort: high
+      reasoning_format: parsed
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '871'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: '4'
+          reasoning: The user asks "What is 2+2? Reply with just the number." This is a simple request. The correct answer
+            is "4". The user wants just the number. So respond with "4". No extra text.
+          role: assistant
+      created: 1783016779
+      id: chatcmpl-6117e7a9-a165-4fcd-8a40-37ca6bc64a7f
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_acbbc9c4c3
+      usage:
+        completion_time: 0.121756959
+        completion_tokens: 58
+        completion_tokens_details:
+          reasoning_tokens: 48
+        prompt_time: 0.003636598
+        prompt_tokens: 84
+        queue_time: 0.105974741
+        total_time: 0.125393557
+        total_tokens: 142
+      usage_breakdown: null
+      x_groq:
+        id: req_01kwj19vkgfh39y9wkdvmnbkz5
+        seed: 1744856333
+    status:
+      code: 200
+      message: OK
+version: 1

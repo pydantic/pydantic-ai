@@ -1,0 +1,110 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "248"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What is 1+1? Reply in one word.
+            type: text
+        model: claude-sonnet-5-5
+        output_config:
+          effort: max
+        stream: true
+        thinking:
+          type: adaptive
+          display: summarized
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=101
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-8be5dc58167de48490bfbb2bfd8cd6c1-10494e9168c24a6c-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPJozUDvWv5qdameUfJ4","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":22,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}           }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"They just want the"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" simple sum, "}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"1+1 equals "} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"2, so I'll answer"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" \""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Two.\""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSjQUKEAgTGAI4AUIIdGhpbmtpbmcSDFsRpZO1JjVEtj5CRxoMaQR3mVxgUsJqY8zOIjBfZDfqXM4FPlBG93yQK332Upwqr3c7rWeTG+KEJNQ5jO47f0g/E+jHDgNuRVxsiIwqqgTV3LXa/tSKk6IlCGq2BygDohUUX+lYKlDSHAjzBlTjmdgd+oQi+idtQlrbA//Pk1KyFQa8JqmTdYNoesIaDyBw6HRwrNZbFWNh6f3P8C7MYiqbV8z5U3f+mszaWH46jhVMHKQL7nGLxDMqcP+1RUIXbM2OEly+hTfYrOx08Y2qMMI+7bdC56hqP4hVEJNouKeAwZjwXZsgCg1gzPvQNgw4MfETYU8LjNrXU/EAMzHecN3aTsNXayF7LEjAKRTYw0XwkPVGFf+PausH6Ug+hG+HSuyY5wSsMd6qUuLqmQsYNrFF2R2OtyNiporYq9RsH1yT/Fy5waHSPCethPvFO1erI5v/C3kcMsHxNDGMrl0ZFWe3fXMOd6LFblKstodjylbSBaxhuel4gFQORhnE5jzlucP2GSFWEBrHrlWAE5nguzE9T4pyXYSmj1kIcxQ/xGkt0eZ1rOVACUPSzeilLqB1CGGfUDksoPII2zp4EnKgpy+Zvm8ZrYtENPzdD3QbFjUEbe5G5o8nDe1z8z/kzOW36rxzjduq9WmpR5SS3IH1boDCEZ/tsqw6PuUNk4WncYXIZE82IrVl/2RYuQVPE9xu9L4zvULDxUTUQRgTOUyZGS6idtQ2TFaFq93tuO2yygyLaxbZpgeCHxep65SdynrMLbiBHqL2Pty3D2xVXv0B/Vyuu75vLhBK3oGTwSaYk0HZKjqRTpuCbuaNwlYruGmXC9cxSSNUTz7I2xgB"}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Two."}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1     }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":22,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":34,"output_tokens_details":{"thinking_tokens":29}}       }
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+  recorded_at: 2026-10-25T16:56:32.361513+00:00

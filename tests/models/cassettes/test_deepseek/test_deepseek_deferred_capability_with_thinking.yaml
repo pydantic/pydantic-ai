@@ -1,0 +1,377 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1042'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You're a dice game, you should roll the die and see if the number you get back matches the user's guess.
+          If so, tell them they're a winner. Use the player's name in the response.
+        role: system
+      - content: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+          - DICE_ROLL
+        role: system
+      - content: My guess is 4
+        role: user
+      model: deepseek-v4-flash
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+            instructions and any tools it provides available.
+          name: load_capability
+          parameters:
+            additionalProperties: false
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+          strict: true
+        type: function
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '912'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: ''
+          reasoning_content: The user is playing a dice game. They guessed 4. I need to roll the die and see if it matches.
+            The DICE_ROLL capability needs to be loaded. Let me load it.
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"id": "DICE_ROLL"}'
+              name: load_capability
+            id: call_00_MedTZNwWbc8ldvawDoIX1047
+            index: 0
+            type: function
+      created: 1786656306
+      id: 38bc4f46-4a4b-4033-aa6b-6c73c75260b4
+      model: deepseek-v4-flash
+      object: chat.completion
+      system_fingerprint: a26a7955944dc5c60445bff77fac9c8e
+      usage:
+        completion_tokens: 90
+        completion_tokens_details:
+          reasoning_tokens: 41
+        prompt_cache_hit_tokens: 384
+        prompt_cache_miss_tokens: 108
+        prompt_tokens: 492
+        prompt_tokens_details:
+          cached_tokens: 384
+        total_tokens: 582
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2020'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You're a dice game, you should roll the die and see if the number you get back matches the user's guess.
+          If so, tell them they're a winner. Use the player's name in the response.
+        role: system
+      - content: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+          - DICE_ROLL
+        role: system
+      - content: My guess is 4
+        role: user
+      - content: null
+        reasoning_content: The user is playing a dice game. They guessed 4. I need to roll the die and see if it matches.
+          The DICE_ROLL capability needs to be loaded. Let me load it.
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"id": "DICE_ROLL"}'
+            name: load_capability
+          id: call_00_MedTZNwWbc8ldvawDoIX1047
+          type: function
+      - content: '{}'
+        role: tool
+        tool_call_id: call_00_MedTZNwWbc8ldvawDoIX1047
+      - content: '<system>The following tool(s) are now available: `get_player_name`, `roll_dice`</system>'
+        role: user
+      model: deepseek-v4-flash
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+            instructions and any tools it provides available.
+          name: load_capability
+          parameters:
+            additionalProperties: false
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the player's name.
+          name: get_player_name
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Roll a six-sided die and return the result.
+          name: roll_dice
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '975'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: ''
+          reasoning_content: Now I need to get the player's name and roll the dice. These are independent, so I can call them
+            in parallel.
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_player_name
+            id: call_00_u4sXjzhguRs83zaau35n2160
+            index: 0
+            type: function
+          - function:
+              arguments: '{}'
+              name: roll_dice
+            id: call_01_AoiKtEKWRPiXZxaMBtsM1151
+            index: 1
+            type: function
+      created: 1786656307
+      id: 50b304cb-6e4b-4787-aa36-d804b15e7814
+      model: deepseek-v4-flash
+      object: chat.completion
+      system_fingerprint: a26a7955944dc5c60445bff77fac9c8e
+      usage:
+        completion_tokens: 70
+        completion_tokens_details:
+          reasoning_tokens: 26
+        prompt_cache_hit_tokens: 512
+        prompt_cache_miss_tokens: 186
+        prompt_tokens: 698
+        prompt_tokens_details:
+          cached_tokens: 512
+        total_tokens: 768
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2627'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You're a dice game, you should roll the die and see if the number you get back matches the user's guess.
+          If so, tell them they're a winner. Use the player's name in the response.
+        role: system
+      - content: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+          - DICE_ROLL
+        role: system
+      - content: My guess is 4
+        role: user
+      - content: null
+        reasoning_content: The user is playing a dice game. They guessed 4. I need to roll the die and see if it matches.
+          The DICE_ROLL capability needs to be loaded. Let me load it.
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"id": "DICE_ROLL"}'
+            name: load_capability
+          id: call_00_MedTZNwWbc8ldvawDoIX1047
+          type: function
+      - content: '{}'
+        role: tool
+        tool_call_id: call_00_MedTZNwWbc8ldvawDoIX1047
+      - content: '<system>The following tool(s) are now available: `get_player_name`, `roll_dice`</system>'
+        role: user
+      - content: null
+        reasoning_content: Now I need to get the player's name and roll the dice. These are independent, so I can call them
+          in parallel.
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_player_name
+          id: call_00_u4sXjzhguRs83zaau35n2160
+          type: function
+        - function:
+            arguments: '{}'
+            name: roll_dice
+          id: call_01_AoiKtEKWRPiXZxaMBtsM1151
+          type: function
+      - content: Anne
+        role: tool
+        tool_call_id: call_00_u4sXjzhguRs83zaau35n2160
+      - content: '4'
+        role: tool
+        tool_call_id: call_01_AoiKtEKWRPiXZxaMBtsM1151
+      model: deepseek-v4-flash
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+            instructions and any tools it provides available.
+          name: load_capability
+          parameters:
+            additionalProperties: false
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the player's name.
+          name: get_player_name
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Roll a six-sided die and return the result.
+          name: roll_dice
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '737'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: "Anne, the die rolled a 4 -- that matches your guess exactly! \U0001F389 You're a winner!"
+          reasoning_content: The die rolled a 4, and Anne guessed 4. They match! Anne is a winner.
+          role: assistant
+      created: 1786656308
+      id: 550b633d-7490-4352-9899-a696cbf58b2e
+      model: deepseek-v4-flash
+      object: chat.completion
+      system_fingerprint: a26a7955944dc5c60445bff77fac9c8e
+      usage:
+        completion_tokens: 45
+        completion_tokens_details:
+          reasoning_tokens: 21
+        prompt_cache_hit_tokens: 640
+        prompt_cache_miss_tokens: 150
+        prompt_tokens: 790
+        prompt_tokens_details:
+          cached_tokens: 640
+        total_tokens: 835
+    status:
+      code: 200
+      message: OK
+version: 1

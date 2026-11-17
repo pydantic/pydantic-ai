@@ -1,6 +1,10 @@
+---
+description: "Add ready-made tools to a Pydantic AI agent, such as DuckDuckGo and Tavily web search and web fetch, implemented in Pydantic AI and runnable with any model."
+---
+
 # Common Tools
 
-Pydantic AI ships with native tools that can be used to enhance your agent's capabilities.
+Pydantic AI ships with common tools that extend your agent's capabilities.
 
 ## DuckDuckGo Search Tool
 
@@ -25,9 +29,9 @@ from pydantic_ai import Agent
 from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
 
 agent = Agent(
-    'openai:o3-mini',
+    '{{ openai:medium }}',
     tools=[duckduckgo_search_tool()],
-    system_prompt='Search DuckDuckGo for the given query and return the results.',
+    instructions='Search DuckDuckGo for the given query and return the results.',
 )
 
 result = agent.run_sync(
@@ -81,6 +85,59 @@ Would you like help finding a current source or additional details on where to l
 """
 ```
 
+## Web Fetch Tool
+
+The web fetch tool allows your agent to fetch the content of web pages and convert them to markdown.
+It uses [SSRF protection](https://owasp.org/www-community/attacks/Server_Side_Request_Forgery) to prevent server-side request forgery attacks.
+
+### Installation
+
+To use [`web_fetch_tool`][pydantic_ai.common_tools.web_fetch.web_fetch_tool], you need to install
+[`pydantic-ai-slim`](install.md#slim-install) with the `web-fetch` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[web-fetch]"
+```
+
+### Usage
+
+Here's an example of how you can use the web fetch tool with an agent:
+
+```py {title="web_fetch.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.web_fetch import web_fetch_tool
+
+agent = Agent(
+    '{{ openai:medium }}',
+    tools=[web_fetch_tool()],
+    instructions='Fetch web pages and summarize their content.',
+)
+
+result = agent.run_sync('What is on https://ai.pydantic.dev?')
+print(result.output)
+```
+
+!!! tip "Automatic fallback via WebFetch capability"
+    You don't need to use [`web_fetch_tool`][pydantic_ai.common_tools.web_fetch.web_fetch_tool] directly — the
+    [`WebFetch`][pydantic_ai.capabilities.WebFetch] capability automatically uses it
+    as a local fallback when the model doesn't support native URL fetching.
+
+By default the tool caps returned text at 50,000 characters (`max_content_length`) and caps the
+downloaded response body at 50 MiB (`max_download_bytes`). Pass `None` for either to disable that limit.
+Unusually complex HTML may still exceed the tool's separate conversion limit; the tool then asks the model to try something else.
+HTML is converted to markdown in a worker thread, at most four pages at a time per event loop; further HTML responses wait for a free slot.
+JSON is indented in a worker thread, only as far as the returned text needs. With `max_content_length=None`, a JSON response whose indented form would pass 20 million characters is returned as fetched.
+
+!!! warning "Credentials in `headers`"
+    Headers configured via `web_fetch_tool(headers=...)` are sent to whatever URL the model requests,
+    since the model chooses the URL. If you configure a credential like `Authorization`, use
+    `allowed_domains` to restrict which hosts can receive it, and keep in mind that domain filters
+    match the hostname only: the model can still direct the credential to plain `http://` or to a
+    non-standard port on an allowed host. On redirects, configured sensitive headers
+    (`Authorization`, `Cookie`, `Proxy-Authorization`) are only forwarded when the redirect stays
+    on the same origin (scheme, host, and port) or upgrades from `http` to `https` on the same host
+    on the default ports; they are stripped on any other redirect.
+
 ## Tavily Search Tool
 
 !!! info
@@ -113,9 +170,9 @@ api_key = os.getenv('TAVILY_API_KEY')
 assert api_key is not None
 
 agent = Agent(
-    'openai:o3-mini',
+    '{{ openai:medium }}',
     tools=[tavily_search_tool(api_key)],
-    system_prompt='Search Tavily for the given query and return the results.',
+    instructions='Search Tavily for the given query and return the results.',
 )
 
 result = agent.run_sync('Tell me the top news in the GenAI world, give me links.')
@@ -138,3 +195,58 @@ Here are some of the top recent news articles related to GenAI:
 Feel free to click on the links to dive deeper into each story!
 """
 ```
+
+### Configuring Parameters
+
+The `tavily_search_tool` factory accepts optional parameters that control search behavior. `max_results` is always developer-controlled and never appears in the LLM tool schema. Other parameters, when provided, are fixed for all searches and hidden from the LLM's tool schema. Parameters left unset remain available for the LLM to set per-call.
+
+For example, you can lock in `max_results` and `include_domains` at tool creation time while still letting the LLM control `exclude_domains`:
+
+```py {title="tavily_domain_filtering.py"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.tavily import tavily_search_tool
+
+api_key = os.getenv('TAVILY_API_KEY')
+assert api_key is not None
+
+agent = Agent(
+    '{{ openai:medium }}',
+    tools=[tavily_search_tool(api_key, max_results=5, include_domains=['arxiv.org'])],
+    instructions='Search for information and return the results.',
+)
+
+result = agent.run_sync(
+    'Find recent papers about transformer architectures'
+)
+print(result.output)
+"""
+Here are some recent papers about transformer architectures from arxiv.org:
+
+1. "Attention Is All You Need" - The foundational paper on the Transformer model.
+2. "FlashAttention: Fast and Memory-Efficient Exact Attention" - Proposes an IO-aware attention algorithm.
+"""
+```
+
+## Exa Search Tool
+
+!!! warning "Deprecated"
+    The Exa common tools (`exa_search_tool`, `exa_find_similar_tool`, `exa_get_contents_tool`, `exa_answer_tool`, and `ExaToolset`) are deprecated and will be removed in v3.
+
+    Use the [`ExaSearch`](https://pydantic.dev/docs/ai/harness/exa-search/) capability from the Pydantic AI Harness instead, which bundles web search, full-page retrieval, deep search, and an `ExaAgent` capability for long-running research:
+
+    ```bash
+    pip/uv-add "pydantic-ai-harness[exa]"
+    ```
+
+    ```py {title="exa_search.py" test="skip"}
+    from pydantic_ai_harness.exa import ExaSearch
+
+    from pydantic_ai import Agent
+
+    agent = Agent('{{ openai:medium }}', capabilities=[ExaSearch()])
+
+    result = agent.run_sync('What are the latest developments in quantum computing?')
+    print(result.output)
+    ```

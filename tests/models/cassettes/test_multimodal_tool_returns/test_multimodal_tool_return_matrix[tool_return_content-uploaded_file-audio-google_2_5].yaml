@@ -1,0 +1,166 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '370'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a audio file, then describe what you received.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '3573'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2919
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              name: get_file
+            thoughtSignature: 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
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: QJmoacLoK7-mmtkP-56_2Q4
+      usageMetadata:
+        candidatesTokenCount: 10
+        promptTokenCount: 41
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 41
+        thoughtsTokenCount: 542
+        totalTokenCount: 593
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3931'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a audio file, then describe what you received.
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_33aaccd282de41b3a42095ea050e99e0
+            name: get_file
+          thoughtSignature: CoYSAb4-9vvKGuz0NUsxeqE1R53_LRkQdW924PGqOPFVflBek-etMDRTtJ1SOR135nTDXjyOJJes4gB82YxHVYdHyV5DrOQ4DN6EYWkQ1Gtcc58QI2kRvPz5O-aTLTRZ1Ajeh7ey2val9D13dSxUxZGO38gIu978yPrDc4uEwxRVw-BmYTuTXwBf-LdDV95Jq98Jl3Q_HsY8zMI49qQteXm048dnARvrCPMgDov8LAasCfY5ct10-T40mYY0OHpGJBZlv3U1SZJZLrHmflpz12FbZp91MHH2XBSn0AAXY2W_NYXUZAG8znpHesCbOkZYEdS66lnBfvMzfPkrZY8Mp4qGIFRVf6STh2D1vEkrnyMDdklYdX4l29wGe1wAuNs8Li-qEcYMR_CTipqTAocJrOugN-NVvy1uOxsh4ndx5CT0JRC11AOnY6E7WFykxAX33kKErCTe0uoldzIpY3FxYWmvGKbKjozf_FYOTVL8CjcZcXDIXP8CPpakvm0Q6e3KryB6ssHmRQ34xspuMPO2zm83GlzMwwf__2RZ7OPgBktSlBm5tmp3MW8eCBB3gSrddLmKvIi6o_9O_uIn_P1ymh9kIeE-wyNL1aE_BUagbzQ7egz9JivjXu-Xi7MPfIHCz7mgsorJrTQ_SZs1C5oPfONhvlt1vbHATGCY8Ht9cye7yZnGems_BMXRpb-KaoLXoxAZlqOCG0YrnpMcZc2_T2mvXHEZXPQDptTDU-PIlj38rLShdRpq_mty7PYcmL9URuJix4JMHWku4iJaG4YL-HXuFbQYe3U_ClP1vNXuV4jd2Fo7R2vAeZ4tiTgc_b6LDt-OLkvrOx3zwTLgc38bV7u-KxgFtAdQrmkI5yH9LtRtDOhAIuxMTCSo5Ybg8d3dGOiNDu004xH2fSgxG6m7VyyacT9uZMmu9Mg2q3pNG9zqIVmHtQJo-lBLL-EU2hX3T8qLQ3JZD_YUkD98rwAC6_043IezjBy5iZgSg4_rf5B9bo7V5Ss_dkWkQKgF7vwO_U377YGV-hgkzznPfNEg4FRHaBPMC9r8m4nh06_PpMB5uGBk5hwr0cK7s27mI5FfdYWDOTLoAcsO4--sNO96kkakt38SecVzn_0Cx74mfasw8KFQzu85pfR7Yjc5NsNaE2qQiDQNwcD2ZIegFOrNoaT2X1yaHcD5Cxv_6XtTq9sC4Wr6yXxkWS1zYgbWJHCwYLqBhy5yEyv-65Za5PRscIzFrmxGnvkci_YQtziFCzuwZsFpeYQdEDMd7n5s1aj-OSoXBAsunpDzA9JrWATE8WowZPwk8HgpqpvKXO_0Uh65LRxN_4Zhuop2eiSdy-QpqKg72N30CM_BWNzF4c3oRf1bjGGHefPcY3GbBcr_xDzBuRWwPkaHn8S5DTNCpX8bX75cBhV2mAtZbTwHJ0h01McP1g8AkbWXHKsHoLhdEj8HytqSk2sx9wnADSwz9-CuNsZvqMPQsUbXzoz59mp8v60F0YzgGTikkorxhJqkri__VblpK8-P_80o1gipZWc6Sp6_VnHT-bZufgbWC9ZdIyn6xVo4h4cfpGtd_2BXgDnbB_rCN3gJsR51Cxpfx8GuLo-sPHS6N1IxlIPCqhWlkYRlqbqn_8kUVmgBIWlooYTBjAkgzmaFQ5xbwGzN6hQFq8lkH4bdPbzcyxNyR3_9vobbeqU2---Jd76WuJ0cD7cYbCJZFUmoB6sCx9fvBbhcyQOWQKR7DGAURFXuY99-UHJBorEfnTAOnjz2U_cNKo3EcBiER-pAIQRtoD07UDuQg5c52X3XUmyV_4gGiWxIcVTKVCIMFfgHZoy-1B3ObSxummAeSZ0K6qx1vsEgu-kzqZ4WMilvZWePEDchK4SEClfzXzLqnrbBNuV9skVe3LpyoCBV4AStkt507n1_rzesMh93mqs6ThO_odQ5WhisXgAfc4XUJHIuUd34chS2r71gtG0_xla-M-1efTLOgL06Be74DSE3n-suCI8CIR-GwuX4iXEBD7rbjxQJBh0kSGZnIiEyWwGwyGTonOJIZ2hbO-qf4r7I8BeqVJE1MzKdQ6aOrGTVrhKsNWyJ-PDFA7p3Q90CmI_Fz6zWgRFNd7XxH8UzQVw-3MP5vK0Sy0qhC5FPzeIJEph0dersTcaQAFl8UfpUE3DIYF_SGe79Sd6GhmrMRg6dGE6TvT-zVbioyL_OV3fHcH1dHa2CQ3v9ww851gNLbIuylR-HJrAR4cFwO5ybagou7Y0xrNziKvgM7sxx1HU-CV1-C6g54r35fbIXWlIFzRfZfD4BieJFm-teQZAXH-QaNht288aaQ4klwz_6E7yg4QFEatAmyc3vHUbsM6rXrOnBP0UPv4dWJz7EoVIbAyEqTOIz30HDih1MQRgS62YOkgmL5gNGH6rxXjqUEnOeLmq3UOvqEOvRtDJ60ehqhyUX0ECsnbxYxWPnwgge_syJGBfcxpvPo_rS94ZdRzuGaSjZzU0sMTHlpYlhZuDeYyeTv6olo5SSRrdTdoMVXKX5sStEY5XZoIvQ6fSbcvEqbF-KvB9VwW6aBlEeuZcD2NczV5uDe4X3ShqTaokrytQenItl0h69UiLz035XCZw622TlilIehvzkiH0OIWCLm5EEjYpuKe_xHqcvCoqtq-JZJlhNDaHRv6P6cCWrfCbADLrHEjABk_6cZhUCrJO067ihC0ruPt9wOYkl5BiQxKR6EXxmv_zneSZj-7vRoVv5pNFAdIxvPGxcNiuMuUHUGQF_7aONpB5YO6G-X0kbGft23yPAOzt4zFfqhJppeDW02E-aCFja1HjsXiYQ9r5RLSPCwqhFETEg3NcFlMNYkpeZbC0qNgbH7FZXgcfqse07iWtdUcQtqI4qhF0XR4jYWoJCC7Ly1r1WYluMOZYbqQ5alregFY3UiVcwH5XJEYS4YjmSvf7ZaF23qx2sh8FmXNedcjTSsf3c35bnfh9_2DAnkHZy2Gg-5e0A2xSmDaWATNfi0U1kqfnRihSN0XXTEYB7WyqSMFbv7vAi7eFnPrGXBEAxca4MZoHThsjuxCIJCiWHBei13gUmSAEWeszTlz5duj0J
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_33aaccd282de41b3a42095ea050e99e0
+            name: get_file
+            response:
+              return_value: File attached
+        role: user
+      - parts:
+        - fileData:
+            fileUri: https://generativelanguage.googleapis.com/v1beta/files/8b2bhnsluaai
+            mimeType: audio/mpeg
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '966'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1802
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: The audio file contains a person speaking. They say, "Hello, my name is Marcelo."
+            thoughtSignature: CsgCAb4+9vut/j7+ajVeM/atsATasdCyvOrjmExJ3zFEX/dC8sbnJ+Y9a3RT625EWD8DzBRZ5QdMtSrhl+BDDbTFCWrfqmiuz0IJEgqwjqqxbudMgo+F4mk57IvATGf736LHiQFz3+fpWpMrLP+YBHnOv4sHpepBLQ3EB5BXr9QySwheHHOMgVbkoTzxJsqsQi9NilEO2efH54kjKR8piF6JEGoOXR+LK2F/GkJwAEB4pzqTzqIrTYY/oMIjE3WT76LOEHxLMw50WuwcU4nlaAD1nNuRbcgp12ST7RBqHNHmWhb4g/WwVKxkH8sAStMMZZ7CmRUzuKrFwKcLuWcONeLDW/DSTTgqJB2EWyXzqwBFwzi5Z+ZtPzL53Rgbwma8R0rCtlY710hlReL5T3qYpgjT/rwjgY+qrsbGKes1nXDZs4hro8dgakd4xQ==
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: Q5moabXnMsSfz7IPr739oAw
+      usageMetadata:
+        candidatesTokenCount: 19
+        promptTokenCount: 214
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 70
+        - modality: AUDIO
+          tokenCount: 144
+        thoughtsTokenCount: 58
+        totalTokenCount: 291
+    status:
+      code: 200
+      message: OK
+version: 1

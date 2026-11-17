@@ -1,0 +1,549 @@
+from __future__ import annotations as _annotations
+
+import warnings
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, cast
+from unittest.mock import patch
+
+import httpx
+import httpx2
+import pytest
+
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+
+from ..conftest import TestEnv, google_user_agents, try_import
+
+with try_import() as imports_successful:
+    from google.auth import crypt
+    from google.auth.credentials import AnonymousCredentials
+    from google.genai import Client
+    from google.genai.types import HttpOptions, HttpRetryOptions
+    from google.oauth2 import service_account
+
+    from pydantic_ai import Agent
+    from pydantic_ai.exceptions import UserError
+    from pydantic_ai.models import get_user_agent, infer_model
+    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+    from pydantic_ai.providers.google import BaseGoogleProvider, GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
+
+    class FakeSigner(crypt.Signer):
+        @property
+        def key_id(self) -> str | None:
+            raise NotImplementedError
+
+        def sign(self, message: str | bytes) -> bytes:
+            raise NotImplementedError
+
+    def service_account_credentials(*, scopes: Sequence[str] | None = None) -> service_account.Credentials:
+        return service_account.Credentials(
+            signer=FakeSigner(),
+            service_account_email='service-account@example.com',
+            token_uri='https://oauth2.googleapis.com/token',
+            scopes=scopes,
+        )
+
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
+
+if TYPE_CHECKING:
+    GoogleProviderFactory = Callable[[httpx.AsyncClient | httpx2.AsyncClient | None], BaseGoogleProvider]
+
+
+# `retry_options` only changes behavior on transient 429/5xx responses, which a recorded cassette
+# can't reliably reproduce, so these unit tests assert the resolved HTTP config directly via the
+# SDK's `get_read_only_http_options()` accessor rather than running an agent against a cassette.
+
+
+def test_google_provider_without_api_key_raises_error(env: TestEnv):
+    env.remove('GOOGLE_API_KEY')
+    env.remove('GEMINI_API_KEY')
+    with pytest.raises(
+        UserError,
+        match=(
+            r'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider\(api_key=\.\.\.\)`'
+            r" to use the Gemini API\. To try Pydantic AI without an API key, use the built-in test model: `Agent\('test'\)`\."
+        ),
+    ):
+        GoogleProvider()
+
+
+@pytest.mark.parametrize('api_key_env_var', ['GOOGLE_API_KEY', 'GEMINI_API_KEY'])
+def test_google_provider_api_key_from_env(env: TestEnv, api_key_env_var: str):
+    """The current and legacy environment API keys both authenticate the Gemini API.
+
+    This is a unit test because authentication happens before any request a cassette could record.
+    """
+    for name in {'GOOGLE_API_KEY', 'GEMINI_API_KEY'} - {api_key_env_var}:
+        env.remove(name)
+    env.set(api_key_env_var, 'your-api-key')
+
+    provider = GoogleProvider()
+    assert provider.client._api_client.api_key == 'your-api-key'  # pyright: ignore[reportPrivateUsage]
+
+
+def test_google_provider_retry_options(env: TestEnv):
+    env.set('GOOGLE_API_KEY', 'test-key')
+    retry = HttpRetryOptions(attempts=4, initial_delay=2.0, max_delay=30.0)
+    provider = GoogleProvider(api_key='test-key', retry_options=retry)
+    assert provider.name == 'google'
+    opts = provider.client._api_client.get_read_only_http_options()  # pyright: ignore[reportPrivateUsage]
+    assert opts['retry_options']['attempts'] == 4
+    assert opts['retry_options']['initial_delay'] == 2.0
+    assert opts['retry_options']['max_delay'] == 30.0
+
+
+def test_google_provider_no_retry_options(env: TestEnv):
+    env.set('GOOGLE_API_KEY', 'test-key')
+    provider = GoogleProvider(api_key='test-key')
+    opts = provider.client._api_client.get_read_only_http_options()  # pyright: ignore[reportPrivateUsage]
+    assert opts['retry_options'] is None
+
+
+def test_google_cloud_provider_retry_options():
+    retry = HttpRetryOptions(attempts=4, initial_delay=2.0, max_delay=30.0)
+    provider = GoogleCloudProvider(project='pydantic-ai', location='us-central1', retry_options=retry)
+    assert provider.name == 'google-cloud'
+    opts = provider.client._api_client.get_read_only_http_options()  # pyright: ignore[reportPrivateUsage]
+    assert opts['retry_options']['attempts'] == 4
+    assert opts['retry_options']['initial_delay'] == 2.0
+    assert opts['retry_options']['max_delay'] == 30.0
+
+
+def test_google_cloud_provider_no_retry_options():
+    provider = GoogleCloudProvider(project='pydantic-ai', location='us-central1')
+    opts = provider.client._api_client.get_read_only_http_options()  # pyright: ignore[reportPrivateUsage]
+    assert opts['retry_options'] is None
+
+
+def _google_provider(http_client: httpx.AsyncClient | httpx2.AsyncClient | None = None) -> BaseGoogleProvider:
+    return GoogleProvider(api_key='test-key', http_client=http_client)
+
+
+def _google_cloud_provider(http_client: httpx.AsyncClient | httpx2.AsyncClient | None = None) -> BaseGoogleProvider:
+    return GoogleCloudProvider(api_key='test-key', http_client=http_client)
+
+
+@pytest.fixture(params=[_google_provider, _google_cloud_provider], ids=['google', 'google-cloud'])
+def provider_factory(request: pytest.FixtureRequest) -> GoogleProviderFactory:
+    return request.param
+
+
+async def test_google_provider_owned_httpx2_client_lifecycle(provider_factory: GoogleProviderFactory) -> None:
+    provider = provider_factory(None)
+    first_client = provider.client._api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(first_client, httpx2.AsyncClient)
+
+    async with provider:
+        assert not first_client.is_closed
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider.client._api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(second_client, httpx2.AsyncClient)
+        assert second_client is not first_client
+        assert not second_client.is_closed
+    assert second_client.is_closed
+
+
+async def test_google_provider_preserves_caller_owned_httpx2_client(provider_factory: GoogleProviderFactory) -> None:
+    async with httpx2.AsyncClient() as http_client:
+        provider = provider_factory(http_client)
+        assert provider.client._api_client._async_httpx_client is http_client  # pyright: ignore[reportPrivateUsage]
+
+        async with provider:
+            pass
+        assert not http_client.is_closed
+
+
+async def test_google_provider_deprecates_caller_owned_httpx_client(provider_factory: GoogleProviderFactory) -> None:
+    async with httpx.AsyncClient() as http_client:
+        with pytest.warns(
+            PydanticAIDeprecationWarning,
+            match=r'`httpx\.AsyncClient`.*removed in v3.*`httpx2\.AsyncClient`',
+        ) as warnings:
+            provider = provider_factory(http_client)
+
+        assert warnings[0].filename == __file__
+        assert provider.client._api_client._async_httpx_client is http_client  # pyright: ignore[reportPrivateUsage]
+        async with provider:
+            pass
+        assert not http_client.is_closed
+
+
+_GEMINI_RESPONSE = {
+    'candidates': [{'content': {'role': 'model', 'parts': [{'text': 'Paris'}]}, 'finishReason': 'STOP'}],
+    'usageMetadata': {'promptTokenCount': 1, 'candidatesTokenCount': 1, 'totalTokenCount': 2},
+}
+
+
+@pytest.mark.parametrize(
+    ('read_timeout', 'server_timeout'),
+    [pytest.param(30, '1200', id='short'), pytest.param(3600, '3600', id='longer-than-long-decode')],
+)
+async def test_google_provider_server_timeout_header(
+    allow_model_requests: None, provider_factory: GoogleProviderFactory, read_timeout: int, server_timeout: str
+) -> None:
+    """The server deadline is at least Google's 20-minute long-decode figure, not the client's read timeout.
+
+    A read timeout bounds the wait between bytes, while `X-Server-Timeout` bounds the whole request, so a response
+    that streams for longer than the read timeout must not be cut off by the server. The local timeout stays pinned
+    to the read timeout, and a per-request `timeout` doesn't change the server deadline either.
+    """
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    async with httpx2.AsyncClient(timeout=read_timeout, transport=httpx2.MockTransport(handler)) as http_client:
+        provider = provider_factory(http_client)
+        http_options = provider.client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
+        assert http_options.timeout == read_timeout * 1000
+
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider))
+        await agent.run('What is the capital of France?')
+        await agent.run('What is the capital of France?', model_settings={'timeout': 10})
+
+    assert [request.headers['X-Server-Timeout'] for request in requests] == [server_timeout, server_timeout]
+
+
+async def test_google_server_timeout_header_respects_caller(allow_model_requests: None) -> None:
+    """An `X-Server-Timeout` in `extra_headers` wins, and a client without a timeout gets no server deadline."""
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        provider = GoogleProvider(api_key='test-key', http_client=http_client)
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider))
+        await agent.run('What is the capital of France?', model_settings={'extra_headers': {'x-server-timeout': '90'}})
+
+        client = Client(api_key='test-key', http_options=HttpOptions(httpx_async_client=http_client))
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=GoogleProvider(client=client)))
+        await agent.run('What is the capital of France?')
+
+    assert [request.headers.get_list('X-Server-Timeout') for request in requests] == [['90'], []]
+
+
+async def test_google_sends_one_user_agent(allow_model_requests: None, provider_factory: GoogleProviderFactory) -> None:
+    """google-genai adds its label to a lowercase `user-agent`; any other casing goes out as a second header."""
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider_factory(http_client)))
+        await agent.run('What is the capital of France?')
+
+    [user_agent] = requests[0].headers.get_list('user-agent')
+    assert user_agent.startswith('google-genai-sdk/')
+    assert user_agent.endswith(get_user_agent())
+
+
+@pytest.mark.parametrize(
+    'extra_headers,expected',
+    [
+        ({'User-Agent': 'support-bot'}, ['google-genai support-bot']),
+        ({'user-agent': 'support-bot'}, ['google-genai support-bot']),
+        ({'USER-AGENT': 'support-bot'}, ['google-genai support-bot']),
+        ({'User-Agent': ''}, ['google-genai']),
+        ({'User-Agent': 'a', 'user-agent': 'b'}, ['google-genai a b']),
+    ],
+)
+async def test_google_extra_headers_user_agent_replaces_ours(
+    allow_model_requests: None,
+    provider_factory: GoogleProviderFactory,
+    extra_headers: dict[str, str],
+    expected: list[str],
+) -> None:
+    """A user-agent in `extra_headers` replaces ours in any spelling, on the one line google-genai adds its label to.
+
+    google-genai would prefix its label to an empty value, leaving a trailing space that h11 rejects. Several
+    spellings join into one value.
+    """
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    settings: GoogleModelSettings = {'extra_headers': extra_headers}
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider_factory(http_client)))
+        await agent.run('What is the capital of France?', model_settings=settings)
+
+    assert google_user_agents(requests[0]) == expected
+
+
+@pytest.mark.parametrize(
+    'extra_headers',
+    [
+        {'User-Agent': 'per-request-app'},
+        {'user-agent': 'per-request-app'},
+        {'USER-AGENT': 'per-request-app'},
+        {'user-agent': ' per-request-app'},
+    ],
+)
+@pytest.mark.parametrize(
+    'client_header,expected',
+    [
+        ('user-agent', ['google-genai per-request-app']),
+        ('User-Agent', ['per-request-app', 'google-genai per-request-app']),
+    ],
+)
+async def test_google_extra_headers_user_agent_replaces_user_built_client_user_agent(
+    allow_model_requests: None, client_header: str, extra_headers: dict[str, str], expected: list[str]
+) -> None:
+    """A user-agent in `extra_headers` replaces the one the user set on their own client, in any spelling.
+
+    A client given `User-Agent` sends google-genai's lowercase `user-agent` beside it, which no per-request header
+    can remove, so the caller's value goes on both. Without google-genai's label in front, h11 rejects the
+    surrounding whitespace, so it's stripped.
+    """
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    settings: GoogleModelSettings = {'extra_headers': extra_headers}
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        http_options = HttpOptions(httpx_async_client=http_client, headers={client_header: 'client-app'})
+        client = Client(api_key='test-key', http_options=http_options)
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=GoogleProvider(client=client)))
+        await agent.run('What is the capital of France?', model_settings=settings)
+
+    assert google_user_agents(requests[0]) == expected
+
+
+@pytest.mark.parametrize('vertexai', [False, True], ids=['google', 'google-cloud'])
+async def test_google_keeps_user_built_client_user_agent(allow_model_requests: None, vertexai: bool) -> None:
+    """A user-agent the user sets on their own client goes out on the same line as ours."""
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        http_options = HttpOptions(httpx_async_client=http_client, headers={'user-agent': 'my-app'})
+        client = Client(vertexai=vertexai, api_key='test-key', http_options=http_options)
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=GoogleProvider(client=client)))
+        await agent.run('What is the capital of France?')
+
+    [user_agent] = requests[0].headers.get_list('user-agent')
+    assert user_agent.startswith('google-genai-sdk/')
+    assert user_agent.endswith(f' my-app {get_user_agent()}')
+
+
+def test_google_provider_client_headers_have_no_server_timeout(provider_factory: GoogleProviderFactory) -> None:
+    """The server deadline is set per model request, not on the client, whose headers the Live API handshake sends."""
+    http_options = provider_factory(None).client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
+    assert http_options.headers is not None
+    assert 'X-Server-Timeout' not in http_options.headers
+
+
+async def test_google_provider_warns_on_default_httpx_timeout(provider_factory: GoogleProviderFactory) -> None:
+    async with httpx2.AsyncClient() as http_client:
+        with pytest.warns(UserWarning, match="httpx's default 5-second timeout") as record:
+            provider_factory(http_client)
+    assert record[0].filename == __file__
+
+
+async def test_google_provider_does_not_warn_on_custom_timeout(provider_factory: GoogleProviderFactory) -> None:
+    async with httpx2.AsyncClient(timeout=httpx2.Timeout(5, read=600)) as http_client:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            provider_factory(http_client)
+
+
+def _google_provider_from_client(client: Client) -> BaseGoogleProvider:
+    return GoogleProvider(client=client)
+
+
+def _google_cloud_provider_from_client(client: Client) -> BaseGoogleProvider:
+    return GoogleCloudProvider(client=client)
+
+
+@pytest.mark.parametrize(
+    'provider_factory',
+    [_google_provider_from_client, _google_cloud_provider_from_client],
+    ids=['google', 'google-cloud'],
+)
+async def test_google_provider_preserves_caller_owned_sdk_client(
+    provider_factory: Callable[[Client], BaseGoogleProvider],
+) -> None:
+    async with httpx2.AsyncClient() as http_client:
+        client = Client(api_key='test-key', http_options=HttpOptions(httpx_async_client=http_client))
+        provider = provider_factory(client)
+
+        assert provider.client is client
+        async with provider:
+            pass
+        assert not http_client.is_closed
+
+
+def test_google_cloud_provider_scopes_credentials():
+    """Unscoped credentials gain the cloud-platform scope before reaching the client.
+
+    This is a unit test because credential transformation happens before any request a cassette could record.
+    """
+    credentials = service_account_credentials()
+    provider = GoogleCloudProvider(credentials=credentials, project='pydantic-ai', location='us-central1')
+
+    forwarded_credentials = cast(
+        'service_account.Credentials',
+        provider.client._api_client._credentials,  # pyright: ignore[reportPrivateUsage]
+    )
+    assert forwarded_credentials is not credentials
+    assert forwarded_credentials.scopes == ['https://www.googleapis.com/auth/cloud-platform']
+
+
+def test_google_cloud_provider_preserves_existing_scopes():
+    """Credentials that already have scopes are forwarded untouched.
+
+    This is a unit test because credential transformation happens before any request a cassette could record.
+    """
+    credentials = service_account_credentials(scopes=['https://www.googleapis.com/auth/devstorage.read_only'])
+    provider = GoogleCloudProvider(credentials=credentials, project='pydantic-ai', location='us-central1')
+
+    assert provider.client._api_client._credentials is credentials  # pyright: ignore[reportPrivateUsage]
+
+
+def test_google_cloud_provider_preserves_non_scoped_credentials():
+    """Credentials that cannot be scoped are forwarded untouched.
+
+    This is a unit test because credential transformation happens before any request a cassette could record.
+    """
+    credentials = AnonymousCredentials()
+    provider = GoogleCloudProvider(credentials=credentials, project='pydantic-ai', location='us-central1')
+
+    assert provider.client._api_client._credentials is credentials  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize('api_key_env_var', ['GOOGLE_API_KEY', 'GEMINI_API_KEY'])
+def test_google_cloud_provider_api_key_from_env(env: TestEnv, api_key_env_var: str):
+    """An environment API key still selects Vertex AI Express Mode.
+
+    This is a unit test because authentication routing happens before any request a cassette could record.
+    """
+    for name in {
+        'GOOGLE_APPLICATION_CREDENTIALS',
+        'GOOGLE_CLOUD_PROJECT',
+        'GOOGLE_CLOUD_LOCATION',
+        'GOOGLE_API_KEY',
+        'GEMINI_API_KEY',
+    } - {api_key_env_var}:
+        env.remove(name)
+    env.set(api_key_env_var, 'your-api-key')
+
+    provider = GoogleCloudProvider()
+    assert provider.client._api_client.api_key == 'your-api-key'  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize('api_key', [None, ''])
+def test_google_cloud_provider_adc_env_takes_precedence_over_api_key(env: TestEnv, api_key: str | None):
+    """Application credentials take precedence over an API key from the environment.
+
+    An empty `api_key` counts as unset, so it must not resurrect an environment API key either.
+    This is a unit test because it verifies SDK authentication routing before a request is sent.
+    """
+    env.set('GOOGLE_APPLICATION_CREDENTIALS', '/path/to/service-account.json')
+    env.set('GOOGLE_API_KEY', 'should-be-ignored')
+    env.set('GEMINI_API_KEY', 'also-ignored')
+    env.remove('GOOGLE_CLOUD_PROJECT')
+    env.remove('GOOGLE_CLOUD_LOCATION')
+    credentials = AnonymousCredentials()
+
+    with patch('google.auth.default', return_value=(credentials, 'pydantic-ai')):
+        provider = GoogleCloudProvider(api_key=api_key)
+
+    api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
+    assert api_client.api_key is None
+    assert api_client._credentials is credentials  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    ('env_name', 'env_value'),
+    [('GOOGLE_CLOUD_PROJECT', 'pydantic-ai'), ('GOOGLE_CLOUD_LOCATION', 'global')],
+)
+def test_google_cloud_provider_routing_env_does_not_override_api_key(env: TestEnv, env_name: str, env_value: str):
+    """Project and location environment defaults do not change API-key authentication."""
+    env.remove('GOOGLE_APPLICATION_CREDENTIALS')
+    env.set('GOOGLE_API_KEY', 'your-api-key')
+    env.set(env_name, env_value)
+
+    provider = GoogleCloudProvider()
+
+    assert provider.client._api_client.api_key == 'your-api-key'  # pyright: ignore[reportPrivateUsage]
+
+
+def test_google_cloud_provider_explicit_api_key_still_passed(env: TestEnv):
+    """An explicit API key selects Express Mode even when ADC environment variables are set.
+
+    This is a unit test because authentication routing happens before any request a cassette could record.
+    """
+    env.set('GOOGLE_APPLICATION_CREDENTIALS', '/path/to/service-account.json')
+    env.set('GOOGLE_CLOUD_PROJECT', 'adc-project')
+    env.set('GOOGLE_CLOUD_LOCATION', 'global')
+    provider = GoogleCloudProvider(api_key='your-api-key')
+    assert provider.client._api_client.api_key == 'your-api-key'  # pyright: ignore[reportPrivateUsage]
+
+
+def test_google_cloud_provider_adc_kwargs_take_precedence_over_explicit_api_key():
+    """Explicit `credentials` select credential-based authentication even when `api_key` is also passed.
+
+    This is a unit test because authentication routing happens before any request a cassette could record.
+    """
+    credentials = service_account_credentials()
+    provider = GoogleCloudProvider(
+        api_key='your-api-key', credentials=credentials, project='pydantic-ai', location='us-central1'
+    )
+    api_client = provider.client._api_client  # pyright: ignore[reportPrivateUsage]
+    assert api_client.api_key is None
+    forwarded_credentials = api_client._credentials  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(forwarded_credentials, service_account.Credentials)
+    assert forwarded_credentials.service_account_email == 'service-account@example.com'
+    # The credentials fed in are unscoped, so this proves the forwarded object went through scoping.
+    assert forwarded_credentials.scopes == ['https://www.googleapis.com/auth/cloud-platform']
+
+
+def test_google_cloud_provider_google_api_key_takes_precedence_over_gemini_api_key(env: TestEnv):
+    """`GOOGLE_API_KEY` wins when both environment API keys are set, matching the SDK.
+
+    This is a unit test because authentication routing happens before any request a cassette could record.
+    """
+    for name in ('GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION'):
+        env.remove(name)
+    env.set('GOOGLE_API_KEY', 'google-api-key')
+    env.set('GEMINI_API_KEY', 'gemini-api-key')
+
+    provider = GoogleCloudProvider()
+    assert provider.client._api_client.api_key == 'google-api-key'  # pyright: ignore[reportPrivateUsage]
+
+
+def test_google_cloud_model_string_uses_adc_from_env(env: TestEnv):
+    """The `google-cloud:` model string picks up `GOOGLE_APPLICATION_CREDENTIALS` despite environment API keys.
+
+    Regression test for issue #6499, which reported the failure through this shortcut.
+    This is a unit test because authentication routing happens before any request a cassette could record.
+    """
+    env.set('GOOGLE_APPLICATION_CREDENTIALS', '/path/to/service-account.json')
+    env.set('GOOGLE_API_KEY', 'should-be-ignored')
+    env.set('GEMINI_API_KEY', 'also-ignored')
+    env.remove('GOOGLE_CLOUD_PROJECT')
+    env.remove('GOOGLE_CLOUD_LOCATION')
+    credentials = AnonymousCredentials()
+
+    with patch('google.auth.default', return_value=(credentials, 'pydantic-ai')):
+        model = infer_model('google-cloud:gemini-3-flash-preview')
+
+    assert isinstance(model, GoogleModel)
+    api_client = model.client._api_client  # pyright: ignore[reportPrivateUsage]
+    assert api_client.api_key is None
+    assert api_client._credentials is credentials  # pyright: ignore[reportPrivateUsage]

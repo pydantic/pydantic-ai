@@ -1,3 +1,7 @@
+---
+description: "Save and load Pydantic Evals datasets as YAML or JSON files, load custom evaluators with custom_evaluator_types, and get IDE autocomplete from a JSON Schema."
+---
+
 # Dataset Serialization
 
 Learn how to save and load datasets in different formats, with support for custom evaluators and IDE integration.
@@ -194,7 +198,7 @@ from typing import Any
 
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset[str, str, Any](cases=[Case(inputs='test')])
+dataset = Dataset[str, str, Any](name='my_tests', cases=[Case(inputs='test')])
 
 # Creates both my_tests.yaml AND my_tests_schema.json
 dataset.to_file('my_tests.yaml')
@@ -208,7 +212,7 @@ from typing import Any
 
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset[str, str, Any](cases=[Case(inputs='test')])
+dataset = Dataset[str, str, Any](name='my_tests', cases=[Case(inputs='test')])
 
 # Create directories
 Path('data').mkdir(exist_ok=True)
@@ -232,7 +236,7 @@ from typing import Any
 
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset[str, str, Any](cases=[Case(inputs='test')])
+dataset = Dataset[str, str, Any](name='my_tests', cases=[Case(inputs='test')])
 
 # Creates: my_tests.yaml and my_tests.schema.json
 dataset.to_file(
@@ -255,7 +259,7 @@ from pydantic_evals import Dataset
 schema = Dataset[str, str, Any].model_json_schema_with_evaluators()
 
 # Save manually
-with open('custom_schema.json', 'w') as f:
+with open('custom_schema.json', 'w', encoding='utf-8') as f:
     json.dump(schema, f, indent=2)
 ```
 
@@ -270,6 +274,8 @@ Custom evaluators must:
 1. Be decorated with `@dataclass`
 2. Inherit from `Evaluator`
 3. Be passed to both `to_file()` and `from_file()`
+
+[Function evaluators](../evaluators/custom.md#saving-function-evaluators) are saved under the function's name and passed in the same `custom_evaluator_types` list as classes. Only a plain function defined with `def` can be saved: a lambda, bound method, `functools.partial` or other callable has no name that identifies it, so `to_file()` raises an error for a dataset that uses one.
 
 ### Complete Example
 
@@ -295,6 +301,7 @@ class CustomThreshold(Evaluator):
 
 # Create dataset with custom evaluator
 dataset = Dataset[str, str, Any](
+    name='custom_threshold_tests',
     cases=[
         Case(
             name='test_length',
@@ -352,6 +359,7 @@ class CustomThreshold(Evaluator):
 
 # First create and save the dataset
 dataset = Dataset[str, str, Any](
+    name='custom_threshold_tests',
     cases=[
         Case(
             name='test_length',
@@ -394,8 +402,34 @@ evaluators:
 evaluators:
 - IsInstance: str
 - Contains: "required text"
-- MaxDuration: 2.0
+- MaxDuration: 2.0  # seconds, or an ISO-8601 duration string like PT5S
 ```
+
+The short form passes its value as the first positional argument, so a keyword-only parameter uses the dict form even when it is the only one:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+
+
+@dataclass(kw_only=True)
+class MinimumLength(Evaluator):
+    minimum: int
+
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return len(ctx.output) >= self.minimum
+```
+
+In YAML:
+
+```yaml
+evaluators:
+- MinimumLength:
+    minimum: 4
+```
+
+The short form reads a mapping with string keys as keyword arguments, so a value that is such a mapping, like a `dict` or a Pydantic model, goes in the dict form under its parameter's name, as in `Equals: {value: {a: 1}}`.
 
 ### 3. Multiple Parameters (Dict Form)
 
@@ -406,7 +440,7 @@ evaluators:
     max_length: 20
 - LLMJudge:
     rubric: "Response is accurate"
-    model: "openai:gpt-5"
+    model: "{{ openai:medium }}"
     include_input: true
 ```
 
@@ -471,7 +505,7 @@ evaluators:
 
 ### Custom Evaluator Not Found
 
-**Problem**: `ValueError: Unknown evaluator name: 'CustomEvaluator'`
+**Problem**: loading fails with an `ExceptionGroup` (`1 error(s) loading evaluators from registry`) wrapping `ValueError: Evaluator 'CustomEvaluator' is not in the provided custom_evaluator_types. Valid choices: [...]`
 
 **Solution**: Pass `custom_evaluator_types` when loading:
 
@@ -491,6 +525,7 @@ class CustomEvaluator(Evaluator):
 
 # First create and save with custom evaluator
 dataset = Dataset[str, str, Any](
+    name='custom_eval_tests',
     cases=[Case(inputs='test', evaluators=[CustomEvaluator()])],
 )
 dataset.to_file('tests.yaml', custom_evaluator_types=[CustomEvaluator])
@@ -513,7 +548,7 @@ from typing import Any
 
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset[str, str, Any](cases=[Case(inputs='test')])
+dataset = Dataset[str, str, Any](name='my_tests', cases=[Case(inputs='test')])
 
 # Explicit format for unusual extensions
 dataset.to_file('data.txt', fmt='yaml')

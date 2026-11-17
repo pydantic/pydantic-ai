@@ -1,0 +1,374 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '52'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      displayName: test-file-search-grounding-stream
+    uri: https://generativelanguage.googleapis.com/v1beta/fileSearchStores
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '260'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=469
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      createTime: '2026-07-03T08:47:27.467666Z'
+      displayName: test-file-search-grounding-stream
+      embeddingModel: models/gemini-embedding-001
+      name: fileSearchStores/testfilesearchgroundingstre-p2hcv3cs2i69
+      updateTime: '2026-07-03T08:47:27.467666Z'
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '114'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      customMetadata:
+      - key: source_url
+        string_value: https://example.com/paris
+      mimeType: text/plain
+    uri: https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchgroundingstre-p2hcv3cs2i69:uploadToFileSearchStore
+  response:
+    body:
+      string: ''
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '0'
+      content-type:
+      - text/plain; charset=utf-8
+      x-goog-upload-status:
+      - active
+      x-goog-upload-url:
+      - https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchgroundingstre-p2hcv3cs2i69:uploadToFileSearchStore?upload_id=AJ5rDhH3IzYsSk05mdIOhDiyQSIwWYTjVbwAod8o9Iq5huA_C7NkfF1pP6_8WBWpxUmwspxwvUPcIzMTs60xnXkDJMTfmJIQraqQeBT_b5vsnaE&upload_protocol=resumable
+    status:
+      code: 200
+      message: OK
+- request:
+    body: Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '79'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    uri: https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchgroundingstre-p2hcv3cs2i69:uploadToFileSearchStore?upload_id=AJ5rDhH3IzYsSk05mdIOhDiyQSIwWYTjVbwAod8o9Iq5huA_C7NkfF1pP6_8WBWpxUmwspxwvUPcIzMTs60xnXkDJMTfmJIQraqQeBT_b5vsnaE&upload_protocol=resumable
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '456'
+      content-type:
+      - application/json; charset=UTF-8
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-goog-upload-status:
+      - final
+    parsed_body:
+      name: fileSearchStores/testfilesearchgroundingstre-p2hcv3cs2i69/upload/operations/x7c99s907hwy-1i6ppprsm9lb
+      response:
+        '@type': type.googleapis.com/google.ai.generativelanguage.v1main.UploadToFileSearchStoreResponse
+        documentName: fileSearchStores/testfilesearchgroundingstre-p2hcv3cs2i69/documents/x7c99s907hwy-1i6ppprsm9lb
+        mimeType: text/plain
+        parent: fileSearchStores/testfilesearchgroundingstre-p2hcv3cs2i69
+        sizeBytes: '79'
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '318'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of France?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        includeServerSideToolInvocations: true
+      tools:
+      - fileSearch:
+          file_search_store_names:
+          - fileSearchStores/testfilesearchgroundingstre-p2hcv3cs2i69
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"thoughtSignature\": \"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\",\"toolCall\":
+        {\"toolType\": \"FILE_SEARCH\",\"id\": \"tju3qkc9\"}}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        8,\"candidatesTokenCount\": 20,\"totalTokenCount\": 447,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        8}],\"thoughtsTokenCount\": 419,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\":
+        \"J3dHapyWENS3g8UPyrefuAE\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"thoughtSignature\": \"EtoGCtcGCAIS0gYBDDnWx2K2DVCm1ZWnP0675oPNCJS7xypyPbF6AMpZRd2H2X0IRw9yxSlW/q0ErGgZnhy5ci7LLl7V/NfQSHoGQJcxrY+sdcI73XzT1NW/GvRk1KxMu5gAw2o9LsbyMVJWWzF71sWkNnSPKyczq+xTbwLNGvoDpeVMNYyu4chJN8etBBssAsPjHE6pJZ4cRsUDSHt01oxqLl7Z6aII/av/ejy14MdjU6seRwxc7NEE1ygVPLGYNBCBhxzKYJdZEPx5eCYiIfiTJ4dQy9+DdYY3FAgjncnBGuCcxfmYfowaOna88s2MxxyjvL9+ZV7Ir7Qs5QuvjJmR4DKqP2UcHxW+AhltxchzW9G4Pc2JasygxvnfadMS5AbStFNVML62AYw96AFMpleDTm9OFzTgho9RY5nf9nIVeMgK90J0bYVHdf/AiEvacn1NHmqs24aCpQNs1l2s4oOH/vMpEDCLPWBK+MbmTqx8y+UQTD17t7DSMjHCohQvjmwhi0k8CMl8khCfjvHT8gKgiFrs4O+kVkwO3WgtlXS1/bfQt7hdM0SOdM8FABgn3mM2PuCkdNeC9BEKjokQmibYrAU95AGpESoBR1ui3zxaepRygrhEJrMYhHuvPdSOzkupx2awL8Rh4EmbxKgGPFP1jJy/uXs9Q6ct2qe/n4sEyUNasXQx8w3vXUznkifGdutRbheQTHafpts5pl05shrZO1wtoSkWhdBBeyhpMtgyrVLJ9kiyj0dAnbRd4YqAdDGZhk+xU+nwGCGBddHkF82VDprh2e8fcemANG67F7D3N/0l26MQT45989y9LLtX0QJxtS5Jy4aZYHYanzlm+6iUc/fWT1FRhsy2kpHHFsXqgQOxpzambx+xP3P3muH3VVttq4UR0Wd3ZDOqIb+fMs89IaGzkv1TeQhueonE1HCWA0+nFY2bkhtCZxCXA93nqR92/169mEIDjvEiTfvOV79hP0KV+xHKAoXcu/tplg3bTWzAbMyIvO5HLiyVsKoUelt/L7MwcISI6O8GbhY53PTpXlpCtTGDT7ZPERvOe/imDiZjEuwjqvopnJWQmm2tLjPMyA5y7o65Z9844l5+MXTrWwc/Udk3zLf/3GuojQNsJBSHfkcnmMH2JcY1\",\"toolResponse\":
+        {\"toolType\": \"FILE_SEARCH\",\"id\": \"tju3qkc9\"}}],\"role\": \"model\"}}],\"usageMetadata\": {\"promptTokenCount\":
+        8,\"totalTokenCount\": 8,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 8}],\"serviceTier\": \"standard\"},\"modelVersion\":
+        \"gemini-3-flash-preview\",\"responseId\": \"J3dHapyWENS3g8UPyrefuAE\"}\r\n\r\ndata: {\"candidates\": [{\"content\":
+        {\"parts\": [{\"text\": \"The capital of France is **Paris**.\\n\\nParis is not only the capital but\"}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 8,\"candidatesTokenCount\": 16,\"totalTokenCount\":
+        52,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 8}],\"thoughtsTokenCount\": 28,\"serviceTier\":
+        \"standard\"},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"J3dHapyWENS3g8UPyrefuAE\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" also the largest city in France. It is a major global center
+        for art, fashion, gastronomy, and culture. Often\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        8,\"candidatesTokenCount\": 40,\"totalTokenCount\": 76,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        8}],\"thoughtsTokenCount\": 28,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\":
+        \"J3dHapyWENS3g8UPyrefuAE\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" referred to as
+        the \\\"City of Light\\\" (*La Ville Lumière*), it is home to world-famous landmarks such as the **\"}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 8,\"candidatesTokenCount\": 68,\"totalTokenCount\":
+        104,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 8}],\"thoughtsTokenCount\": 28,\"serviceTier\":
+        \"standard\"},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"J3dHapyWENS3g8UPyrefuAE\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"Eiffel Tower**, the **Louvre Museum**, and the **Notre-Dame
+        Cathedral**. The city is situated on the\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        8,\"candidatesTokenCount\": 92,\"totalTokenCount\": 128,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        8}],\"thoughtsTokenCount\": 28,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\":
+        \"J3dHapyWENS3g8UPyrefuAE\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" Seine River in
+        the northern part of the country.\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        8,\"candidatesTokenCount\": 102,\"totalTokenCount\": 138,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        8}],\"thoughtsTokenCount\": 28,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\":
+        \"J3dHapyWENS3g8UPyrefuAE\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\",\"thoughtSignature\":
+        \"EsUBCsIBAQw51sdPkH+3cSEO15H8ynZHJdCu8bTuZBDDhVsxXscTeWA7yVbhGlA+PQrtcIYH33bq+wkWwwajFgdZF4JWg9/LAWzqnMNvueiVa4HwvxyU6+ktk8+Vousq4M8zTQuGshfiHm5Z0JDSlxIjvcT6NHooFrlvxw+MmIwyTuFIzKghpun+x/rYE8Q1toFyzzjTfhApLeeVWjRVR3fBjkN4mtz0U0aOwU8eDN4VT8q4IVWWMzZLQgRshfYfVrEGbnY+2l8=\"}],\"role\":
+        \"model\"},\"finishReason\": \"STOP\",\"index\": 0,\"groundingMetadata\": {\"groundingChunks\": [{\"retrievedContext\":
+        {\"text\": \"Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.\\n\",\"fileSearchStore\":
+        \"fileSearchStores/testfilesearchgroundingstre-p2hcv3cs2i69\",\"customMetadata\": [{\"key\": \"source_url\",\"stringValue\":
+        \"https://example.com/paris\"}]}}],\"groundingSupports\": [{\"segment\": {\"endIndex\": 35,\"text\": \"The capital
+        of France is **Paris**.\"},\"groundingChunkIndices\": [0]}]}}],\"usageMetadata\": {\"promptTokenCount\": 427,\"candidatesTokenCount\":
+        122,\"totalTokenCount\": 1767,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 427}],\"toolUsePromptTokenCount\":
+        771,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 771}],\"thoughtsTokenCount\": 447,\"serviceTier\":
+        \"standard\"},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"J3dHapyWENS3g8UPyrefuAE\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=5333
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '5917'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of France?
+        role: user
+      - parts:
+        - thoughtSignature: EpYSCpMSCAISjhIBDDnWx-meFE0lq4hrGQYuMZoLV_gi_Nj-DoiDjsCqvSsP2fXzn_h_ya43XIWuvWlsYEzJdGxyavjiV-wb6b96vPloCbWRE2e7PouynE14eZW1mvP1EOiqLU7Y2QTiNJkm_3HEiPvIqNWbn4bTsrnppATAm06JhjnDQuKcl2VYvWhnAwDTQKwy7vfaayIpt1muE-ZMikH3fzCrQ04ONwjW_z6Hi43J-3SCrW0YpkG8pTKIAlT1jP9Js2UohMLE5yt2ggyq996hZDcC8yiL1GDKnT9rqK1n221wk6zuGyltOlFDF4tOh2KFj0wOCgIrpv5vTSk0ZgvO5zItW2cb2cRQuINL_K6O4HFs0VbHxmp36wBm4aSVIuJ5PXUfcbuDVmR_W_qYmjstQFARwO1dWTReDOtIqeQ8cV8NDp-NB71tA7b5e3KjlKbkJDM8abCSAC2Ad77YmFsNDzi7fuO-Fl19bwLfMa_G_o6fQ-Uf3_C0Hm1ow_fIIgZ_OIVcyAEi5kj3QlClasmiZCzGpdGVEra1mIoO9BfHsWD-FVn1_60aGQnyX3JxJpji2f8Op_OtsS6ZcjZ1f-VKJ_EaWxmnS1OcaJknI7CnoTf72fezY_cgcww1GYsFekA3Zkep9jq1__5ghq3ldXFcRg9xwRFQZL3BiCdnIH7Vg0nLA2Zcd29DNliiqQXzCCIqYYHDD7wv8vskd9QnetdnxFVKs1CEP1RgL31Q57FA1B-afUcPDNu74d6TTXqRiIn_kwMdDARsxdi9WJV5gMSdClQ0aBCcilm0AHCMTl0eNSLpPtP32_I5N2gI2jHHubAn_tz2kDpP7niKsP0xrOB3W_FJkuSVUhoNCNTr6JqH4EnFsIrH76POtTSvVfLXHvrDuF0aA2313rzBcynWLtgLm3YhkzjwwOi3lNyTy2Uf3hly_mrptoadxtA8dyyLlOKeBrOenexxZ6-7WO8rBtLG1S2qKEYqVq3s2HSMOSycWkqgZrZoas4XTCH_5qF3CNbKnzUE5R0Qj1tiNKeO23Wcdvc40g5hhXjiFZEomvTpfCer_B18pQRLvegW_LGVDOqoaMmwOdxMPxGHipcwgHlpc6AYdcmXIMcOF2iA1H_no25p4R7JXIkCtVwlRwbwM4q4xbmIXXG1fXSSe4OqOeCXJICHNZlsW0GKFiTVojied3pimRKdT57RtEOYSWwB2h6Tj46tM5b7gVEwAyng923PLKDX0-EugtlE3Dk1Roj0Wy1RdS_V35KGzwjifqAGZlDUnaJ7o8Hv7S6pknFMTZ4D4HVwrQbd5yQIlkb1C8bid2ugUN3oQnZPM3clH5LsKfGH8DjYBdji_kdG7c-WQ5RBZEOLKHo0z3VqCAVLhh9CzjfOV694AyUA59g_8bNnRXF8auoq5En5OpGy62RAbfwwqw-sedaEv1MqHqnCgJtA6rQNfUdd0sQoDOjhVyfMF7e1J-sWzcgqJ3sVKt3XazX-QGjs2HYktUi-FodtMsB3rHmdCzm7ix_0riSCu5iE3UADSAl-Bx0I0cgSIwXf2Mzf_tJ4vL9lzNf0hMk7UAXN2OjYn2MyTn1lwe2Ra3vKljlAzhSldag6QxlqixZCJNln5JT3vO1_sY7G0M6y_uZsoAAUHOgjx1e4zFC_5sljIurfR9x8EXpNf08KQ2CVHcrBKTn06vbHE_JdG_wr3ra9GlRprhgk_xgIecvPAXt90UU1AUm4gTbgPC3VDYExlVVTfz4_kOKs1SQLLlFLVmddVTHWIPYbZ9InErfPyC0UZTnZio3yCVJkG8CNKusOr6m2qjgtGaqILF07mHB21Iw2uDjMuR8eL6HmpgX7fA2G7eZXhoalmFBvivVpNfMl5IAdZn7VmngV5bsjeGVKt6shlh_83jHsyK8Dxu901nbsgfAklSwZ7qDsBc7wA1tedfAQY0ftMJNrF7M_vhJ_FE4uxUjJlA28LEGpFRwYXxOHC897AZeQGpztVLsmGXCmlrfd-Xtgae5RalokCrajnM58WSRz26sNZgHQobokWkfDuQgscSLXEo1grKxuI8bcHI6T4TVqpdealzMH-awhMf0GHIwdEGOD0diYNK_Ow7tbrOTPFLdYkJYFmG9FgrEt1OE2T2q5H0AVUma08mwRe-LOTNSwaB6EiSoFuMAayFmKnB-0jhzyg521L5Mq_8KjtaZ3_uu4L0RITOo-ySoRD7k0U1s4GHYVz5EWZhglbtQ5B6MQC4nNlIRcD_bRp5WoefU2OJ0j_pg8Jfe6g6SauX6-zI52A257cf8Qxn-doJimwUhiLVR3wVb00Xr92qekDlaldUOlfdYC4xJAOyCK88kffrv3BmM9x94CyOXNnr64rF4YtpYJEC_SfqV7O62ARlY-9SP78nrHrjqBgYzC_zaEz6WR6DzMRY9Z7g_KffSYZ3rgZxBHjpW3c0FSwEo_5Z_sPMCpv6kNCWVkOJ8JxbapoJeulfMGhLd5xMMOwHz-X1FYCK3sgub-EeTM-i-j3VBMUR4fsV2hwJPHyof1pt7EAaHmuCHnQnDBbwstQoAv4SUCiQwTVtn5tsDcMEdt3jLlI3wC3FH_RQjACTTk0LSm5uJh92KrhwGSivSUKAwAdPgXHRJsSYhhtJb2xHJNPusLgEdyK_Cqn7aA-aJaUbRDn6IgFumJUBkvJHyINFpOrNiMxIJFQq-uB7pri0AZF-ASC9os89stgioc1mNxyek3apzP5o93Th6PWlxLNno5Pay8vh15Ted0dpH_61lRFtHl6Aih70lYLlcUNGnvUyj6_CfzNh0IhdhZmiRhwoqpqgN5Cj4eYcNWGCSbV8MBkdUngCqdUQgLtPUtEy7JRcKc2DAlrNOjbxA0NKSZYHgRr1ZzY_IRT0nir91dfLPcb1_vOkMuOU8-nkryi4mlIZQvbtdMNXrnHBsDenvMvNsjAihP1yrvEUStlFguMMSw0EXpDUKAipZv9OYCjP6I65oRgFOOAnAUo4S9WBTPrxJkuzrI2EvYyJ7RhQf-9z7X71giazn8NfcRB2g6Fb2dteNZMZlC-xD8gX1_0awBtuZHkKrUgqH54Sf2s99AoO4aC7H8hX0Ufe8utw==
+          toolCall:
+            args: {}
+            id: tju3qkc9
+            tool_type: FILE_SEARCH
+        - thoughtSignature: EtoGCtcGCAIS0gYBDDnWx2K2DVCm1ZWnP0675oPNCJS7xypyPbF6AMpZRd2H2X0IRw9yxSlW_q0ErGgZnhy5ci7LLl7V_NfQSHoGQJcxrY-sdcI73XzT1NW_GvRk1KxMu5gAw2o9LsbyMVJWWzF71sWkNnSPKyczq-xTbwLNGvoDpeVMNYyu4chJN8etBBssAsPjHE6pJZ4cRsUDSHt01oxqLl7Z6aII_av_ejy14MdjU6seRwxc7NEE1ygVPLGYNBCBhxzKYJdZEPx5eCYiIfiTJ4dQy9-DdYY3FAgjncnBGuCcxfmYfowaOna88s2MxxyjvL9-ZV7Ir7Qs5QuvjJmR4DKqP2UcHxW-AhltxchzW9G4Pc2JasygxvnfadMS5AbStFNVML62AYw96AFMpleDTm9OFzTgho9RY5nf9nIVeMgK90J0bYVHdf_AiEvacn1NHmqs24aCpQNs1l2s4oOH_vMpEDCLPWBK-MbmTqx8y-UQTD17t7DSMjHCohQvjmwhi0k8CMl8khCfjvHT8gKgiFrs4O-kVkwO3WgtlXS1_bfQt7hdM0SOdM8FABgn3mM2PuCkdNeC9BEKjokQmibYrAU95AGpESoBR1ui3zxaepRygrhEJrMYhHuvPdSOzkupx2awL8Rh4EmbxKgGPFP1jJy_uXs9Q6ct2qe_n4sEyUNasXQx8w3vXUznkifGdutRbheQTHafpts5pl05shrZO1wtoSkWhdBBeyhpMtgyrVLJ9kiyj0dAnbRd4YqAdDGZhk-xU-nwGCGBddHkF82VDprh2e8fcemANG67F7D3N_0l26MQT45989y9LLtX0QJxtS5Jy4aZYHYanzlm-6iUc_fWT1FRhsy2kpHHFsXqgQOxpzambx-xP3P3muH3VVttq4UR0Wd3ZDOqIb-fMs89IaGzkv1TeQhueonE1HCWA0-nFY2bkhtCZxCXA93nqR92_169mEIDjvEiTfvOV79hP0KV-xHKAoXcu_tplg3bTWzAbMyIvO5HLiyVsKoUelt_L7MwcISI6O8GbhY53PTpXlpCtTGDT7ZPERvOe_imDiZjEuwjqvopnJWQmm2tLjPMyA5y7o65Z9844l5-MXTrWwc_Udk3zLf_3GuojQNsJBSHfkcnmMH2JcY1
+          toolResponse:
+            id: tju3qkc9
+            response:
+              result:
+              - custom_metadata:
+                - key: source_url
+                  string_value: https://example.com/paris
+                file_search_store: fileSearchStores/testfilesearchgroundingstre-p2hcv3cs2i69
+                text: |
+                  Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.
+            tool_type: FILE_SEARCH
+        - text: |-
+            The capital of France is **Paris**.
+
+            Paris is not only the capital but also the largest city in France. It is a major global center for art, fashion, gastronomy, and culture. Often referred to as the "City of Light" (*La Ville Lumière*), it is home to world-famous landmarks such as the **Eiffel Tower**, the **Louvre Museum**, and the **Notre-Dame Cathedral**. The city is situated on the Seine River in the northern part of the country.
+          thoughtSignature: EsUBCsIBAQw51sdPkH-3cSEO15H8ynZHJdCu8bTuZBDDhVsxXscTeWA7yVbhGlA-PQrtcIYH33bq-wkWwwajFgdZF4JWg9_LAWzqnMNvueiVa4HwvxyU6-ktk8-Vousq4M8zTQuGshfiHm5Z0JDSlxIjvcT6NHooFrlvxw-MmIwyTuFIzKghpun-x_rYE8Q1toFyzzjTfhApLeeVWjRVR3fBjkN4mtz0U0aOwU8eDN4VT8q4IVWWMzZLQgRshfYfVrEGbnY-2l8=
+        role: model
+      - parts:
+        - text: What famous landmark is it known for?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        includeServerSideToolInvocations: true
+      tools:
+      - fileSearch:
+          file_search_store_names:
+          - fileSearchStores/testfilesearchgroundingstre-p2hcv3cs2i69
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '4523'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=8889
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - thoughtSignature: EsUECsIECAISvQQBDDnWx6h2ozIwj2tyW5MU98EZ/Y7AN2A9HESiU8uxJWxWx0KYSPsDZlFVoOphNQsO2VczFuvaDKyr2MZov3KqiKwgYiD/7AClWVk7VRuTkRMi2pJsGGAfCzu/L5x0yU7r9qmEYpcLnLusKvGOvJ68J/WfkUbUb0TrFCU0CcSWhryLoyignLHZlD/QrMUx0MR35/Cq98TxcPPWHS2Rm2fhBSDcIX0n0RJtsWFKZOI/bEk1U4DNUOqZhHvIp25Ju8T1bCa0tqptQLSx+ym4Bf3gb9jJhjBUKBwmZuGqPNXrf6CMRAC/ohThrfMelkLYut8n9JM1co0F/7OFQ6OPTwarnZaQxWu2ZgfsIPhlihsCT/p9PPaFa8prfVWFvkFfiVtmd02wGYGOSr8Hh7hXTP/Tdr6DwBrjHcVaJEySZOeZHriOcaLC0IHSU9fKL5v6ukPpwmUeW2xjoth+iCs2T5PedOoDleSrK6gcwdMnEwFBswqHgyTg6edHl65Se4ZKnMpNUaMVgeAWEn+8eLSr/YScBXQ8L+3RFrDgTmKPko9is8sFTV1uZWeoJ+3LXy4fVeB9TP4Yd9BqEkZGGpqd1sbzwE89IHquPi6HRarH3Fwa8llRzWtuJougmeMrSILbu5RzIi4Kly+jAqVJ2wBpWlcZLLn8sPwYKwnFGc95gDg+QOPaBvhytdwNCCN/K1CnblXrKeyijg/2A6DXXyQAim+etgPqIzGEZe6yG99kUa36Nm2Th5/qp4IKfOnXX/Q=
+            toolCall:
+              id: 1ml9ew09
+              toolType: FILE_SEARCH
+          - thoughtSignature: EtQGCtEGCAISzAYBDDnWx6WUtsYZ0DKSz/czXtnE6jcZQLKkBNoY26x6j02b9GA+afmxYKubd9A6budKjjVwIzO/z3cAEPKn+lRPFj6zehsfr/z0ZTxOUP7UwlcdITgWDF5joUCamESjgyjUKT/kxuRHFRQEHw2y37+21Db/lA4apQB0pdZ9/t6CylM9UAuc3n7fx7gM2ha/gfpd/CetkbxS8yyq0PJvqpaLjr/4PAiYd/PYAxsf2n/ieKmEhqrqCILmW809GAF7xjvbBBfwmTE9aKZNVFFzwqIL3Izz43j9gxIC3wx6Mh/FbpFyQeK37yKnIqjr1rkXrO/wVWdXQJHd8md8h/Qv4ar6PBuQ8P732RDhgLMTKxSlA7SLGmmv+5oOMwYnEt10X72MPqL23/1MOM9M3Ag5SvK9GpXgnZTjSFcdCU6gSp+BOIwehUOUYrk/FNg7tgxkX14Z6skVBqrjjoxS+d2VHPWbfTtHRvO1KeAQynELXAR1LPRIz2yHGtdOktE7KdRhLKAP0WzR0VOEpfYifU6tGbilN93Keff7CikgN/ojV4skqcCPurdKkNMJXPnh7Hr93/gkckFf4ZcIvypHBP8sXIbAVr7UE2xFdV85qgmK5PVzQIyFzoN7t5lSqSE6OltElszCo8gvaUmoSII1TmgX0knIg+zdBRiZf7J6I1V8NjF2kx2m3vV0ok2cWU2mSbRsVysC2Rf04TXCIq9PlLJcoHrHnhPc9RyL/CBls18y3r2icYiA7iH0shxKo7fluQA6EQO9MNhpWP6ObK+yD/oQ4AkXRa9HOvvYycdjLPqqjHRVK/5XbP4KPd9PfnmVkutYWJPEkmyEdHGKh75iYnm2fb9ljo/0xpAPZhrS+AigI5DHid8CLhrMKITe0Ay079AeAvRyRW3tk92YikESrgqeguhUrl0BPJDkcAiMAg+607fIP5tH++sunbdz81n3io1j8rPsHXwBhDx0KYissVBH8JXcm+3n3hs3OBNKbzDgGllhei+XToPUTZ4BpijmHuxawridm3c2+pAloo/llLLOlyLVzQXOvFpziGTDgDrF/rM6ARMhWXp4b7MsJ883mzRkJm6syMMjoNMsezt2mxZM05PmDGcq8iio3W+EZoE/
+            toolResponse:
+              id: 1ml9ew09
+              toolType: FILE_SEARCH
+          - text: |-
+              Paris is home to several world-famous landmarks, most notably:
+
+              *   **The Eiffel Tower:** Perhaps the most iconic symbol of both Paris and France, this iron lattice tower was built for the 1889 World's Fair.
+              *   **The Louvre Museum:** The world's largest art museum and a historic monument, famous for housing the *Mona Lisa*.
+              *   **Notre-Dame Cathedral:** A masterpiece of French Gothic architecture, known for its stunning stained glass and gargoyles.
+              *   **The Arc de Triomphe:** A massive triumphal arch standing at the western end of the Champs-Élysées, honoring those who fought and died for France.
+              *   **Sacré-Cœur Basilica:** A white-domed basilica located at the highest point of the city in Montmartre, offering panoramic views of Paris.
+              *   **The Palace of Versailles:** While located just outside the city center, this former royal residence is one of the most famous landmarks associated with Parisian history.
+            thoughtSignature: EsgDCsUDAQw51sdnEr+iFoJ7DrTYE/exAyDqHAhFj9d0Et1ekFYYBExy/9WIYIi9qPr5CTOvYFSmki6Opawcq1F/nSvkkuMBy++6sgfjBaJ9VP4whzPswbFF6LAcCPPU5qVY4GCqMTVaiNqenhWdDLVeSKMLWkIcrdUG6s90ewDBkJEkHaPbwtgTViE2YZ10ke/hLoeWCk22Ow/3JfjSw9G6yd+Jta5AHxzgvaohFYE8NVTAAXWLE9jiwfhP1F7e3C04lWGQT/UVWgGqKzAGAw9/cqTt4RA7dsQrz/CRBROo0PHoaL0BqSC3Zxdja1oVHMAOv1ndbmZjkMEJURTZvR7nAQ2xgnpJmVORq307keHQm0pvyqqK/gFVlErA7+/sSEKurwRdiE3uoIjpKDJqVJn2LIbhPtuVHhvAfQZvbc1nmVMyE2y1tlt7u4XwK5FhwMNIQ1KX3/8SisCP9Osx/Hz+LlNh17+A3CsdQoqR+s1hS53bPg2A1BZrgUhhOeIizg7MWH5nJLqDo8t7HkgV8UP/4YjnDnt2X/LMihhAqx/39T7k+vk8EFp2G5vYqy/nSgbZUWrbmMOqDn2KXJINM2liaOtIsK+JfDux
+          role: model
+        finishReason: STOP
+        groundingMetadata:
+          groundingChunks:
+          - retrievedContext:
+              customMetadata:
+              - key: source_url
+                stringValue: https://example.com/paris
+              fileSearchStore: fileSearchStores/testfilesearchgroundingstre-p2hcv3cs2i69
+              text: |
+                Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: MHdHar61HJ-8juMPut3eSQ
+      usageMetadata:
+        candidatesTokenCount: 230
+        promptTokenCount: 294
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 294
+        serviceTier: standard
+        thoughtsTokenCount: 158
+        toolUsePromptTokenCount: 605
+        toolUsePromptTokensDetails:
+        - modality: TEXT
+          tokenCount: 605
+        totalTokenCount: 1287
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: DELETE
+    uri: https://generativelanguage.googleapis.com/v1beta/fileSearchStores/testfilesearchgroundingstre-p2hcv3cs2i69?force=True
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=864
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body: {}
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,139 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1735"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4
+        stream: false
+        messages:
+        - role: user
+          content: show metrics
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: srvtoolu_1
+            type: function
+            function:
+              name: search_tools
+              arguments: "{\"queries\":[\"metrics\"]}"
+          - id: toolu_1
+            type: function
+            function:
+              name: send_status
+              arguments: "{\"message\":\"searching\"}"
+        - role: tool
+          tool_call_id: toolu_1
+          content: sent
+        - role: tool
+          tool_call_id: srvtoolu_1
+          content: The tool call was interrupted before a result was produced.
+        - role: assistant
+          content: Here are the metrics.
+        - role: user
+          content: Reply with just OK.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: send_status
+            description: Send a status update to the user.
+            parameters:
+              additionalProperties: false
+              properties:
+                message:
+                  type: string
+              required:
+              - message
+              type: object
+            strict: true
+        - type: function
+          function:
+            name: search_tools
+            description: >-
+              Search first for a standalone deferred tool when current tools and catalog
+              descriptions do not name the requested operation. A capability id used as an ordinary
+              domain word does not request that capability. This cannot find capability-owned
+              tools; load a listed capability by id instead. If no tools are found, do not
+              retry.
+            parameters:
+              additionalProperties: false
+              properties:
+                queries:
+                  description: >-
+                    List of search queries to match against tool names and descriptions. Use
+                    specific words likely to appear in tool names or descriptions to narrow down relevant
+                    tools. Each query is independently tokenized; matches across queries are unioned.
+                  items:
+                    type: string
+                  type: array
+              required:
+              - queries
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "504"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-EkDDRejhfXjLQbei5dLK7TDjrqJAJ
+        object: chat.completion
+        created: 1794682597
+        model: gpt-5.4-2026-03-05
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: OK
+            refusal: null
+            annotations: []
+          finish_reason: stop
+        usage:
+          prompt_tokens: 343
+          completion_tokens: 4
+          total_tokens: 347
+          prompt_tokens_details:
+            cached_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        service_tier: default
+        system_fingerprint: null
+  recorded_at: 2026-11-14T18:56:37.942194+00:00

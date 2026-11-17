@@ -1,0 +1,89 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '78'
+      content-type:
+      - application/json
+      host:
+      - api.tavily.com
+    method: POST
+    parsed_body:
+      query: What is Pydantic AI?
+      search_depth: basic
+      topic: general
+    uri: https://api.tavily.com/search
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '3705'
+      content-security-policy:
+      - default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self'; style-src 'self';base-uri 'self';form-action
+        'self'; require-trusted-types-for 'script'; upgrade-insecure-requests;
+      content-type:
+      - application/json
+    parsed_body:
+      answer: null
+      follow_up_questions: null
+      images: []
+      query: What is Pydantic AI?
+      request_id: 3b2f7385-b01d-479e-9825-1ce0f8c59b93
+      response_time: 0.89
+      results:
+      - content: '## AI Agent Insider. # Pydantic AI: Agent Framework. Introducing **Pydantic AI**-- a groundbreaking Python
+          framework specifically designed to simplify the creation of production-grade AI agents. **Pydantic AI** is a Python
+          framework that acts as a bridge between developers and LLMs, providing tools to create **agents** -- entities that
+          execute specific tasks based on system prompts, functions, and structured outputs. Here''s a basic example of using
+          Pydantic AI to create an agent that responds to user queries:. from pydantic_ai import Agentagent = Agent("openai:gpt-4",
+          system_prompt="Be a helpful assistant.")result = await agent.run("Hello, how are you?")print(result.data) # Outputs
+          the response. from pydantic_ai import ModelRetry@agent.tooldef validate_data(ctx): if not ctx.input_data: raise
+          ModelRetry("Data missing, retrying..."). Pydantic AI is transforming how developers build AI agents. Install Pydantic
+          AI today and build your first agent!**. ### Agent Framework / shim to use Pydantic with LLMs. Contribute to pydantic/pydantic-ai
+          development by creating an account.... ## GitHub - pydantic/pydantic-ai: Agent Framework / shim to use Pydantic
+          with LLMs. ## Published in AI Agent Insider.'
+        raw_content: null
+        score: 0.9999875
+        title: 'Pydantic AI: Agent Framework'
+        url: https://medium.com/ai-agent-insider/pydantic-ai-agent-framework-02b138e8db71
+      - content: Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production
+          grade applications and workflows with
+        raw_content: null
+        score: 0.99997807
+        title: Pydantic AI - Pydantic AI
+        url: https://ai.pydantic.dev/
+      - content: Pydantic AI lets you integrate large language models like GPT-5 **directly into your Python applications**.
+        raw_content: null
+        score: 0.9999398
+        title: Build Production-Ready AI Agents in Python with Pydantic AI
+        url: https://www.youtube.com/watch?v=-WB0T0XmDrY
+      - content: '*"Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build
+          production grade applications and workflows with Generative AI."*. So they built Pydantic AI with a single, simple
+          aim, to bring that FastAPI feeling to building applications and workflows with generative AI. A: Pydantic AI is
+          a Python agent framework from the creators of Pydantic Validation. Q: How is Pydantic AI different from other agent
+          frameworks like LangChain or LlamaIndex? Q: What LLM providers does Pydantic AI support? Q: Can I use my own custom
+          models with Pydantic AI? Q: Can I use Pydantic AI with existing FastAPI applications? A: Yes, Pydantic AI is designed
+          to integrate well with FastAPI and other Python web frameworks. A: Pydantic AI uses Pydantic models to define structured
+          output types, ensuring LLM responses are validated and type-safe. A: Yes, Pydantic AI is designed specifically for
+          production-grade applications with features like durable execution, observability integration, and type safety.'
+        raw_content: null
+        score: 0.9999125
+        title: What is Pydantic AI?. Build production-ready AI agents with...
+        url: https://medium.com/@tahirbalarabe2/what-is-pydantic-ai-15cc81dea3c3
+      - content: I've been using Pydantic AI to build some basic agents and multi agents and it seems quite straight forward
+          and I'm quite pleased with it.
+        raw_content: null
+        score: 0.9999001
+        title: 'Pydantic AI : r/LLMDevs'
+        url: https://www.reddit.com/r/LLMDevs/comments/1iih8az/pydantic_ai/
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -61,3 +61,16 @@ class MockAsyncStream(Generic[T]):
 
     async def __aexit__(self, *_args: Any) -> None:
         pass
+
+    async def close(self) -> None:
+        pass
+
+    async def aclose(self) -> None:
+        pass
+
+    def cancel(self) -> None:
+        pass
+
+    @property
+    def response(self) -> MockAsyncStream[T]:
+        return self

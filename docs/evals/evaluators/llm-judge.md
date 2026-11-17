@@ -1,3 +1,7 @@
+---
+description: "Use an LLM as a judge in Pydantic Evals: grade outputs against a rubric with LLMJudge, get pass/fail or scores, pick the judge model and write good rubrics."
+---
+
 # LLM Judge Deep Dive
 
 The [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] evaluator uses an LLM to assess subjective qualities of outputs based on a rubric.
@@ -30,6 +34,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='factual_accuracy',
     cases=[Case(inputs='test')],
     evaluators=[
         LLMJudge(rubric='Response is factually accurate'),
@@ -41,7 +46,7 @@ dataset = Dataset(
 
 ### Rubric
 
-The `rubric` is your evaluation criteria. Be specific and clear:
+The `rubric` defines the evaluation criteria. Be specific and clear:
 
 **Bad rubrics (vague):**
 ```python
@@ -90,6 +95,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='math_check',
     cases=[
         Case(
             inputs='What is 2+2?',
@@ -114,34 +120,38 @@ Choose the judge model based on cost/quality tradeoffs:
 ```python
 from pydantic_evals.evaluators import LLMJudge
 
-# Default: GPT-4o (good balance)
+# Uses the default judge model
 LLMJudge(rubric='...')
 
 # Anthropic Claude (alternative default)
 LLMJudge(
     rubric='...',
-    model='anthropic:claude-sonnet-4-5',
+    model='{{ anthropic:medium }}',
 )
 
-# Cheaper option for simple checks
+# Lightweight option for simple checks
 LLMJudge(
     rubric='Response contains profanity',
-    model='openai:gpt-5-mini',
+    model='{{ openai:small }}',
 )
 
-# Premium option for nuanced evaluation
+# Most capable option for nuanced evaluation
 LLMJudge(
     rubric='Response demonstrates deep understanding of quantum mechanics',
-    model='anthropic:claude-opus-4-20250514',
+    model='{{ openai:large }}',
 )
 ```
+
+When the judge model cannot generate text, like a [decision model](../../models/decision.md) such as [TypeSafe's Jev](../../models/typesafe.md), `LLMJudge` asks it only for the pass/fail verdict. The result has no reason rather than a fabricated one, and its score is `1.0` for pass or `0.0` for fail. A model reports this through [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output] on its profile.
+
+The verdict is one yes-or-no question naming only the sections the prompt carries, so a rubric judged without an expected output is not asked to weigh one.
 
 ### Model Settings
 
 Customize model behavior:
 
 ```python
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai import ModelSettings
 from pydantic_evals.evaluators import LLMJudge
 
 LLMJudge(
@@ -250,6 +260,7 @@ class RAGInput:
 
 
 dataset = Dataset(
+    name='rag_evaluation',
     cases=[
         Case(
             inputs=RAGInput(
@@ -300,9 +311,9 @@ class Recipe(BaseModel):
 
 
 recipe_agent = Agent(
-    'openai:gpt-5-mini',
+    '{{ openai:small }}',
     output_type=Recipe,
-    system_prompt=(
+    instructions=(
         'Generate a recipe to cook the dish that meets the dietary restrictions.'
     ),
 )
@@ -314,6 +325,7 @@ async def transform_recipe(customer_order: CustomerOrder) -> Recipe:
 
 
 recipe_dataset = Dataset[CustomerOrder, Recipe, Any](
+    name='recipe_evaluation',
     cases=[
         Case(
             name='vegetarian_recipe',
@@ -347,7 +359,7 @@ recipe_dataset = Dataset[CustomerOrder, Recipe, Any](
         LLMJudge(
             rubric='Recipe should have clear steps and relevant ingredients',
             include_input=True,
-            model='anthropic:claude-sonnet-4-5',
+            model='{{ anthropic:medium }}',
         ),
     ],
 )
@@ -382,6 +394,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='multi_aspect',
     cases=[Case(inputs='test')],
     evaluators=[
         # Accuracy
@@ -423,6 +436,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='comparative_eval',
     cases=[
         Case(
             name='translation',
@@ -441,6 +455,84 @@ dataset = Dataset(
     ],
 )
 ```
+
+## Validating a Judge Against Human Labels
+
+A judge can disagree with your own reading of the rubric. Before a judge gates anything, such as a release check or an [online evaluation](../online-evaluation.md) alert, measure how often it agrees with people:
+
+1. Collect a sample of outputs your application produced, with both good and bad examples.
+2. Have a person apply the rubric to each output, and record the verdict in the case metadata.
+3. Run the judge as a case evaluator over the stored outputs, using a task that returns each output unchanged, so the judge sees exactly what the person labeled.
+4. Compare the judge's verdicts with the human verdicts in a [report evaluator](report-evaluators.md).
+
+[`ConfusionMatrixEvaluator`][pydantic_evals.evaluators.ConfusionMatrixEvaluator] reads predictions from the output, metadata or labels, not from assertions, so a short custom report evaluator tabulates the judge's pass/fail assertion instead:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import LLMJudge, ReportEvaluator, ReportEvaluatorContext
+from pydantic_evals.reporting.analyses import ConfusionMatrix, ReportAnalysis, ScalarResult
+
+# Outputs your application produced, each with the verdict of a person applying the rubric
+labeled_outputs = [
+    ('Your refund for order 12345 has been issued.', 'pass'),
+    ('Refunds are handled by our billing team.', 'fail'),
+]
+
+
+def replay(output: str) -> str:
+    return output
+
+
+@dataclass
+class JudgeAgreement(ReportEvaluator):
+    assertion_name: str
+
+    def evaluate(self, ctx: ReportEvaluatorContext) -> list[ReportAnalysis]:
+        verdicts = ['fail', 'pass']
+        matrix = [[0, 0], [0, 0]]
+        for case in ctx.report.cases:
+            judged = case.assertions.get(self.assertion_name)
+            human_verdict = (case.metadata or {}).get('human_verdict')
+            if judged is None or human_verdict not in verdicts:  # the judge failed, or the case is unlabeled
+                continue
+            matrix[verdicts.index(human_verdict)][1 if judged.value else 0] += 1
+        judged_cases = sum(map(sum, matrix))
+        agreed = matrix[0][0] + matrix[1][1]
+        return [
+            ConfusionMatrix(
+                title='Human verdict (rows) vs. judge verdict (columns)',
+                class_labels=verdicts,
+                matrix=matrix,
+            ),
+            ScalarResult(
+                title='Judge agreement',
+                value=agreed / judged_cases * 100 if judged_cases else 0,
+                unit='%',
+            ),
+        ]
+
+
+dataset = Dataset(
+    name='refund_judge_validation',
+    cases=[
+        Case(inputs=output, metadata={'human_verdict': verdict})
+        for output, verdict in labeled_outputs
+    ],
+    evaluators=[
+        LLMJudge(
+            rubric='The response confirms that the refund was issued and quotes the order ID.',
+            model='{{ openai:small }}',
+            assertion={'evaluation_name': 'judge_pass', 'include_reason': True},
+        ),
+    ],
+    report_evaluators=[JudgeAgreement(assertion_name='judge_pass')],
+)
+report = dataset.evaluate_sync(replay)
+```
+
+The analyses are on `report.analyses`, and in [Logfire](report-evaluators.md#viewing-analyses-in-logfire) when it's configured. For a gate, watch the matrix's `fail` row, `pass` column: outputs a person failed that the judge let through. Read the judge's reasons on the cases it got wrong, refine the rubric or switch the judge model, and re-run until the agreement is acceptable. Keep the labeled dataset, and re-run it whenever you change the rubric or the judge model.
 
 ## Best Practices
 
@@ -511,7 +603,7 @@ evaluators = [
 ### 4. Use Temperature 0 for Consistency
 
 ```python
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai import ModelSettings
 from pydantic_evals.evaluators import LLMJudge
 
 LLMJudge(
@@ -539,7 +631,7 @@ LLM judges make API calls, which cost money and time.
 
 **Mitigation:**
 
-- Use cheaper models for simple checks (`gpt-5-mini`)
+- Use lightweight models for simple checks (`{{ openai:small.name }}`)
 - Run deterministic checks first to fail fast
 - Cache results when possible
 - Limit evaluation to changed cases
@@ -579,6 +671,7 @@ def my_task(inputs: str) -> str:
 
 
 dataset = Dataset(
+    name='debug_reasons',
     cases=[Case(inputs='test')],
     evaluators=[LLMJudge(rubric='Response is clear')],
 )
@@ -619,6 +712,7 @@ def my_task(inputs: str) -> str:
 
 
 dataset = Dataset(
+    name='programmatic_access',
     cases=[Case(inputs='test')],
     evaluators=[LLMJudge(rubric='Response is clear')],
 )
@@ -646,13 +740,13 @@ def my_task(inputs: str) -> str:
 
 
 judges = [
-    LLMJudge(rubric='Response is clear', model='openai:gpt-5'),
-    LLMJudge(rubric='Response is clear', model='anthropic:claude-sonnet-4-5'),
-    LLMJudge(rubric='Response is clear', model='openai:gpt-5-mini'),
+    LLMJudge(rubric='Response is clear', model='{{ openai:medium }}'),
+    LLMJudge(rubric='Response is clear', model='{{ anthropic:medium }}'),
+    LLMJudge(rubric='Response is clear', model='{{ openai:small }}'),
 ]
 
 for judge in judges:
-    dataset = Dataset(cases=[Case(inputs='test')], evaluators=[judge])
+    dataset = Dataset(name='judge_comparison', cases=[Case(inputs='test')], evaluators=[judge])
     report = dataset.evaluate_sync(my_task)
     # Compare results
 ```
@@ -666,7 +760,7 @@ from pydantic_evals.evaluators import LLMJudge
 from pydantic_evals.evaluators.llm_as_a_judge import set_default_judge_model
 
 # Set default to Claude
-set_default_judge_model('anthropic:claude-sonnet-4-5')
+set_default_judge_model('{{ anthropic:medium }}')
 
 # Now all LLMJudge instances use Claude by default
 LLMJudge(rubric='...')  # Uses Claude
@@ -675,4 +769,5 @@ LLMJudge(rubric='...')  # Uses Claude
 ## Next Steps
 
 - **[Custom Evaluators](custom.md)** - Write custom evaluation logic
-- **[Built-in Evaluators](built-in.md)** - Complete evaluator reference
+- **[Native Evaluators](built-in.md)** - Complete evaluator reference
+- **[LLM-as-a-Judge: A Practical Guide with Pydantic Evals](https://pydantic.dev/articles/llm-as-a-judge)** - Case-specific judges and writing good rubrics, on the Pydantic blog

@@ -1,0 +1,89 @@
+---
+description: "Use models hosted on Cerebras with Pydantic AI: install the cerebras optional group, set your API key, and configure the Cerebras provider for your agents."
+---
+
+# Cerebras
+
+## Install
+
+To use `CerebrasModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `cerebras` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[cerebras]"
+```
+
+## Configuration
+
+To use [Cerebras](https://cerebras.ai/) through their API, go to [cloud.cerebras.ai](https://cloud.cerebras.ai/?utm_source=3pi_pydantic-ai&utm_campaign=partner_doc) and generate an API key.
+
+For a list of available models, see the [Cerebras models documentation](https://inference-docs.cerebras.ai/models).
+
+## Environment variable
+
+Once you have the API key, you can set it as an environment variable:
+
+```bash
+export CEREBRAS_API_KEY='your-api-key'
+```
+
+You can then use `CerebrasModel` by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('cerebras:gpt-oss-120b')
+...
+```
+
+Or initialise the model directly with just the model name:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.cerebras import CerebrasModel
+
+model = CerebrasModel('gpt-oss-120b')
+agent = Agent(model)
+...
+```
+
+## `provider` argument
+
+You can provide a custom `Provider` via the `provider` argument:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.cerebras import CerebrasModel
+from pydantic_ai.providers.cerebras import CerebrasProvider
+
+model = CerebrasModel(
+    'gpt-oss-120b', provider=CerebrasProvider(api_key='your-api-key')
+)
+agent = Agent(model)
+...
+```
+
+You can also customize the `CerebrasProvider` with a custom `httpx2.AsyncClient`:
+
+```python
+from httpx2 import AsyncClient
+
+from pydantic_ai import Agent
+from pydantic_ai.models.cerebras import CerebrasModel
+from pydantic_ai.providers.cerebras import CerebrasProvider
+
+custom_http_client = AsyncClient(timeout=30)
+model = CerebrasModel(
+    'gpt-oss-120b',
+    provider=CerebrasProvider(api_key='your-api-key', http_client=custom_http_client),
+)
+agent = Agent(model)
+...
+```
+
+## Thinking
+
+The unified [`thinking`](../capabilities/thinking.md) setting follows what [Cerebras supports for each model](https://inference-docs.cerebras.ai/capabilities/reasoning):
+
+- `thinking=False` sends `reasoning_effort='none'` to models that can stop reasoning, such as Qwen 3.8 and GLM-4.7. gpt-oss, Kimi K3 and GLM-5.3 always reason, so it sends their lowest effort, `low`.
+- Kimi K3 and GLM-5.3 accept only the `low`, `high` and `max` efforts, so the other levels go to the nearest one: `minimal` to `low`, `medium` to `high` and `xhigh` to `max`.
+- On other models, levels other than `False` aren't sent, and the model reasons at its default effort.

@@ -1,0 +1,175 @@
+from __future__ import annotations as _annotations
+
+import asyncio
+import os
+from typing import TYPE_CHECKING, Any, overload
+
+from pydantic_ai import ModelProfile
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.profiles.grok import grok_model_profile, grok_realtime_model_profile
+from pydantic_ai.providers import Provider
+
+if TYPE_CHECKING:
+    from pydantic_ai.realtime import RealtimeModelProfile
+
+try:
+    from xai_sdk import AsyncClient
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install the `xai-sdk` package to use the xAI provider, '
+        'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'
+    ) from _import_error
+
+
+class _LazyAsyncClient:
+    """Wrapper that creates a fresh AsyncClient per event loop.
+
+    gRPC async channels bind to the event loop at creation time. If the client
+    is created outside an async context (e.g. at module level) and later used
+    inside asyncio.run(), the loop will differ, causing RuntimeError.
+    This wrapper defers client creation and recreates it when the loop changes.
+    See https://github.com/grpc/grpc/issues/32480.
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        self._kwargs = kwargs
+        self._client: AsyncClient | None = None
+        self._event_loop: asyncio.AbstractEventLoop | None = None
+
+    def get_client(self) -> AsyncClient:
+        running_loop: asyncio.AbstractEventLoop | None = None
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+
+        if self._client is None or (running_loop is not None and running_loop is not self._event_loop):
+            self._client = AsyncClient(**self._kwargs)
+            self._event_loop = running_loop
+
+        return self._client
+
+
+class XaiProvider(Provider[AsyncClient]):
+    """Provider for xAI API (native xAI SDK)."""
+
+    @property
+    def name(self) -> str:
+        return 'xai'
+
+    @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing encrypted reasoning and tool results.
+        return 'xai'
+
+    @property
+    def base_url(self) -> str:
+        # Canonical pricing/identity label, not the transport host: the xAI SDK is gRPC and the actual
+        # channel target is set via `api_host`. This URL is used for usage/price lookup and telemetry only.
+        return 'https://api.x.ai/v1'
+
+    @property
+    def client(self) -> AsyncClient:
+        if self._lazy_client is not None:
+            return self._lazy_client.get_client()
+        return self._client
+
+    @property
+    def api_key(self) -> str | None:
+        """The resolved API key, or `None` when the provider was built from a pre-configured `xai_client`.
+
+        The gRPC `AsyncClient` doesn't expose its key, so this returns the one resolved from the `api_key`
+        argument or `XAI_API_KEY`. Used by transports that authenticate outside the SDK, e.g.
+        [`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel]'s WebSocket `Authorization` header.
+        """
+        return self._api_key
+
+    @property
+    def api_host(self) -> str | None:
+        """The custom `api_host` this provider was configured with, or `None`.
+
+        Read by [`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] to reject a custom host
+        it can't yet honor: the realtime WebSocket derives its URL from `base_url`, not the gRPC channel
+        target that `api_host` sets.
+        """
+        return self._api_host
+
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
+        return grok_model_profile(model_name)
+
+    @staticmethod
+    def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+        return grok_realtime_model_profile(model_name)
+
+    @overload
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        api_host: str | None = None,
+        timeout: float | None = None,
+        metadata: tuple[tuple[str, str], ...] | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(self, *, xai_client: AsyncClient) -> None: ...
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        api_host: str | None = None,
+        timeout: float | None = None,
+        metadata: tuple[tuple[str, str], ...] | None = None,
+        xai_client: AsyncClient | None = None,
+    ) -> None:
+        """Create a new xAI provider.
+
+        Args:
+            api_key: The API key to use for authentication, if not provided, the `XAI_API_KEY` environment variable
+                will be used if available.
+            api_host: The API host to use for the xAI SDK client.
+            timeout: The client-level default timeout for the xAI SDK client, in seconds, applied to all requests
+                made through it. The xAI SDK does not support per-request timeouts, so `ModelSettings.timeout` is
+                not supported and has no effect.
+            metadata: gRPC metadata to attach to every request the xAI SDK client makes, forwarded to
+                [`xai_sdk.AsyncClient`][xai_sdk.AsyncClient]. This is client-scoped, not per-request, so it applies
+                to every request made through the provider. The canonical use is xAI prompt-cache sticky routing via
+                `metadata=(('x-grok-conv-id', '<conversation-id>'),)`; see the
+                [xAI prompt-caching docs](https://docs.x.ai/developers/advanced-api-usage/prompt-caching/maximizing-cache-hits).
+                Because it is client-scoped, a provider configured with conversation-specific metadata (e.g. a fixed
+                `x-grok-conv-id`) must not be shared between unrelated conversations. Ignored when `xai_client` is
+                passed.
+            xai_client: An existing `xai_sdk.AsyncClient` to use. This takes precedence over `api_key`, `api_host`,
+                `timeout`, and `metadata`.
+        """
+        self._lazy_client: _LazyAsyncClient | None = None
+        # Retained so transports authenticating outside the gRPC SDK (e.g. the realtime WebSocket) can
+        # read it back; `None` when a pre-configured `xai_client` was passed, since its key isn't exposed.
+        self._api_key: str | None = None
+        # Retained so the realtime WebSocket (which derives its host from `base_url`, not the gRPC
+        # channel target) can detect a custom `api_host` it can't yet honor and fail loudly. Like
+        # `_api_key`, left `None` when a pre-configured `xai_client` was passed: the client takes
+        # precedence and the ignored `api_host` argument must not make the realtime model fail.
+        self._api_host: str | None = None
+        if xai_client is not None:
+            self._client = xai_client
+        else:
+            api_key = api_key or os.getenv('XAI_API_KEY')
+            if not api_key:
+                raise UserError(
+                    'Set the `XAI_API_KEY` environment variable or pass it via `XaiProvider(api_key=...)`'
+                    ' to use the xAI provider.'
+                )
+            self._api_key = api_key
+            self._api_host = api_host
+            client_kwargs: dict[str, str | float | tuple[tuple[str, str], ...]] = {'api_key': api_key}
+            if api_host is not None:
+                client_kwargs['api_host'] = api_host
+            if timeout is not None:
+                client_kwargs['timeout'] = timeout
+            if metadata is not None:
+                client_kwargs['metadata'] = metadata
+            self._lazy_client = _LazyAsyncClient(**client_kwargs)
+            self._client = None  # type: ignore[assignment]

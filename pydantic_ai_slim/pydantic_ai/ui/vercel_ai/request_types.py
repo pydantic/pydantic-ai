@@ -1,15 +1,24 @@
 """Vercel AI request types (UI messages).
 
 Converted to Python from:
-https://github.com/vercel/ai/blob/ai%405.0.59/packages/ai/src/ui/ui-messages.ts
+https://github.com/vercel/ai/blob/ai%406.0.57/packages/ai/src/ui/ui-messages.ts
+
+Tool approval types (`ToolApprovalRequested`, `ToolApprovalResponded`) require AI SDK v6 or later.
 """
 
 from abc import ABC
 from typing import Annotated, Any, Literal
 
-from pydantic import Discriminator, Field
+from pydantic import (
+    Discriminator,
+    Field,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+    StrictBool,
+    model_serializer,
+)
 
-from ._utils import CamelBaseModel
+from ._models import CamelBaseModel
 
 # Technically this is recursive union of JSON types; for simplicity, we call it Any
 JSONValue = Any
@@ -19,6 +28,18 @@ ProviderMetadata = dict[str, dict[str, JSONValue]]
 
 class BaseUIPart(CamelBaseModel, ABC):
     """Abstract base class for all UI parts."""
+
+    # The AI SDK types optional part fields as `field?: T`, so `validateUIMessages` rejects `null` for them.
+    # `input`, `output` and `data` are typed `unknown`, so `null` is a real value there. `rawInput` is too,
+    # but Pydantic AI never sets it and AI SDK 7 deprecates it, warning on any value that is present.
+    # Only JSON output goes to the AI SDK, so Python-mode dumps keep their `None` fields.
+    # No return annotation: one would replace the part's serialization JSON schema with a bare `object`.
+    @model_serializer(mode='wrap')
+    def _omit_unset_optional_fields(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo):
+        data = handler(self)
+        if not info.mode_is_json():
+            return data
+        return {key: value for key, value in data.items() if value is not None or key in ('input', 'output', 'data')}
 
 
 class TextUIPart(BaseUIPart):
@@ -40,6 +61,9 @@ class ReasoningUIPart(BaseUIPart):
     """A reasoning part of a message."""
 
     type: Literal['reasoning'] = 'reasoning'
+
+    id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    """UI part ID from the AI SDK client; not mapped to `ThinkingPart.id`."""
 
     text: str
     """The reasoning text."""
@@ -110,15 +134,62 @@ class DataUIPart(BaseUIPart):
     data: Any
 
 
+class ToolApprovalRequested(CamelBaseModel):
+    """Tool approval in requested state (awaiting user response)."""
+
+    id: str
+    """The approval request ID."""
+
+
+class ToolApprovalResponded(CamelBaseModel):
+    """Tool approval in responded state (user has approved or denied)."""
+
+    id: str
+    """The approval request ID."""
+
+    approved: StrictBool
+    """Whether the user approved the tool call.
+
+    Deliberately strict: in Pydantic's default lax mode `{'approved': 1}` or `{'approved': 'true'}`
+    would coerce to an approval, and this field is the client-controlled gate on tools declared
+    `requires_approval=True`. A non-boolean value fails validation — and so rejects the whole
+    request — instead of silently executing the call
+    ([#6922](https://github.com/pydantic/pydantic-ai/issues/6922)).
+
+    `ToolApproval` is an undiscriminated union, so rejecting here only denies because
+    `CamelBaseModel`'s `extra='forbid'` stops the part re-matching `ToolApprovalRequested`
+    (which upstream declares `approved?: never`). Relaxing either would reopen the gate.
+    """
+
+    reason: str | None = None
+    """Optional reason for the approval or denial."""
+
+    # The AI SDK types `reason` as optional, so JSON output omits it rather than sending `null`.
+    # No return annotation: one would replace the serialization JSON schema with a bare `object`.
+    @model_serializer(mode='wrap')
+    def _omit_unset_reason(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo):
+        data = handler(self)
+        if info.mode_is_json() and self.reason is None:
+            data.pop('reason', None)
+        return data
+
+
+ToolApproval = ToolApprovalRequested | ToolApprovalResponded
+"""Union of tool approval states."""
+
+
 # Tool part states as separate models
 class ToolInputStreamingPart(BaseUIPart):
     """Tool part in input-streaming state."""
 
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
+    title: str | None = None
     state: Literal['input-streaming'] = 'input-streaming'
     input: Any | None = None
     provider_executed: bool | None = None
+    call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
 
 
 class ToolInputAvailablePart(BaseUIPart):
@@ -126,10 +197,12 @@ class ToolInputAvailablePart(BaseUIPart):
 
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
+    title: str | None = None
     state: Literal['input-available'] = 'input-available'
     input: Any | None = None
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
 
 
 class ToolOutputAvailablePart(BaseUIPart):
@@ -137,12 +210,14 @@ class ToolOutputAvailablePart(BaseUIPart):
 
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
+    title: str | None = None
     state: Literal['output-available'] = 'output-available'
     input: Any | None = None
     output: Any | None = None
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     preliminary: bool | None = None
+    approval: ToolApproval | None = None
 
 
 class ToolOutputErrorPart(BaseUIPart):
@@ -150,15 +225,64 @@ class ToolOutputErrorPart(BaseUIPart):
 
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
+    title: str | None = None
     state: Literal['output-error'] = 'output-error'
     input: Any | None = None
     raw_input: Any | None = None
     error_text: str
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
 
 
-ToolUIPart = ToolInputStreamingPart | ToolInputAvailablePart | ToolOutputAvailablePart | ToolOutputErrorPart
+class ToolApprovalRequestedPart(BaseUIPart):
+    """Tool part in approval-requested state (awaiting user decision)."""
+
+    type: Annotated[str, Field(pattern=r'^tool-')]
+    tool_call_id: str
+    title: str | None = None
+    state: Literal['approval-requested'] = 'approval-requested'
+    input: Any | None = None
+    provider_executed: bool | None = None
+    call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
+
+
+class ToolApprovalRespondedPart(BaseUIPart):
+    """Tool part in approval-responded state (user approved/denied, execution pending)."""
+
+    type: Annotated[str, Field(pattern=r'^tool-')]
+    tool_call_id: str
+    title: str | None = None
+    state: Literal['approval-responded'] = 'approval-responded'
+    input: Any | None = None
+    provider_executed: bool | None = None
+    call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
+
+
+class ToolOutputDeniedPart(BaseUIPart):
+    """Tool part in output-denied state (tool was denied, terminal state)."""
+
+    type: Annotated[str, Field(pattern=r'^tool-')]
+    tool_call_id: str
+    title: str | None = None
+    state: Literal['output-denied'] = 'output-denied'
+    input: Any | None = None
+    provider_executed: bool | None = None
+    call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
+
+
+ToolUIPart = (
+    ToolInputStreamingPart
+    | ToolInputAvailablePart
+    | ToolOutputAvailablePart
+    | ToolOutputErrorPart
+    | ToolApprovalRequestedPart
+    | ToolApprovalRespondedPart
+    | ToolOutputDeniedPart
+)
 """Union of all tool part types."""
 
 
@@ -169,8 +293,12 @@ class DynamicToolInputStreamingPart(BaseUIPart):
     type: Literal['dynamic-tool'] = 'dynamic-tool'
     tool_name: str
     tool_call_id: str
+    title: str | None = None
     state: Literal['input-streaming'] = 'input-streaming'
     input: Any | None = None
+    provider_executed: bool | None = None
+    call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
 
 
 class DynamicToolInputAvailablePart(BaseUIPart):
@@ -179,9 +307,12 @@ class DynamicToolInputAvailablePart(BaseUIPart):
     type: Literal['dynamic-tool'] = 'dynamic-tool'
     tool_name: str
     tool_call_id: str
+    title: str | None = None
     state: Literal['input-available'] = 'input-available'
     input: Any
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
 
 
 class DynamicToolOutputAvailablePart(BaseUIPart):
@@ -190,11 +321,14 @@ class DynamicToolOutputAvailablePart(BaseUIPart):
     type: Literal['dynamic-tool'] = 'dynamic-tool'
     tool_name: str
     tool_call_id: str
+    title: str | None = None
     state: Literal['output-available'] = 'output-available'
     input: Any
     output: Any
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     preliminary: bool | None = None
+    approval: ToolApproval | None = None
 
 
 class DynamicToolOutputErrorPart(BaseUIPart):
@@ -203,10 +337,55 @@ class DynamicToolOutputErrorPart(BaseUIPart):
     type: Literal['dynamic-tool'] = 'dynamic-tool'
     tool_name: str
     tool_call_id: str
+    title: str | None = None
     state: Literal['output-error'] = 'output-error'
     input: Any
     error_text: str
+    provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
+
+
+class DynamicToolApprovalRequestedPart(BaseUIPart):
+    """Dynamic tool part in approval-requested state (awaiting user decision)."""
+
+    type: Literal['dynamic-tool'] = 'dynamic-tool'
+    tool_name: str
+    tool_call_id: str
+    title: str | None = None
+    state: Literal['approval-requested'] = 'approval-requested'
+    input: Any
+    provider_executed: bool | None = None
+    call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
+
+
+class DynamicToolApprovalRespondedPart(BaseUIPart):
+    """Dynamic tool part in approval-responded state (user approved/denied, execution pending)."""
+
+    type: Literal['dynamic-tool'] = 'dynamic-tool'
+    tool_name: str
+    tool_call_id: str
+    title: str | None = None
+    state: Literal['approval-responded'] = 'approval-responded'
+    input: Any
+    provider_executed: bool | None = None
+    call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
+
+
+class DynamicToolOutputDeniedPart(BaseUIPart):
+    """Dynamic tool part in output-denied state (tool was denied, terminal state)."""
+
+    type: Literal['dynamic-tool'] = 'dynamic-tool'
+    tool_name: str
+    tool_call_id: str
+    title: str | None = None
+    state: Literal['output-denied'] = 'output-denied'
+    input: Any
+    provider_executed: bool | None = None
+    call_provider_metadata: ProviderMetadata | None = None
+    approval: ToolApproval | None = None
 
 
 DynamicToolUIPart = (
@@ -214,6 +393,9 @@ DynamicToolUIPart = (
     | DynamicToolInputAvailablePart
     | DynamicToolOutputAvailablePart
     | DynamicToolOutputErrorPart
+    | DynamicToolApprovalRequestedPart
+    | DynamicToolApprovalRespondedPart
+    | DynamicToolOutputDeniedPart
 )
 """Union of all dynamic tool part types."""
 
@@ -253,6 +435,16 @@ class UIMessage(CamelBaseModel):
     Assistant messages can have text, reasoning, tool invocation, and file parts.
     """
 
+    # The AI SDK types `metadata` as optional, so JSON output omits unset metadata rather than sending `null`.
+    # An explicit `null` is kept: an app's `metadataSchema` may be nullable rather than optional.
+    # No return annotation: one would replace the message's serialization JSON schema with a bare `object`.
+    @model_serializer(mode='wrap')
+    def _omit_unset_metadata(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo):
+        data = handler(self)
+        if info.mode_is_json() and self.metadata is None and 'metadata' not in self.model_fields_set:
+            data.pop('metadata', None)
+        return data
+
 
 class SubmitMessage(CamelBaseModel, extra='allow'):
     """Submit message request."""
@@ -268,7 +460,7 @@ class RegenerateMessage(CamelBaseModel, extra='allow'):
     trigger: Literal['regenerate-message']
     id: str
     messages: list[UIMessage]
-    message_id: str
+    message_id: str | None = None
 
 
 RequestData = Annotated[SubmitMessage | RegenerateMessage, Discriminator('trigger')]

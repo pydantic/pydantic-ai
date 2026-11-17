@@ -1,7 +1,18 @@
+from .agentic import (
+    ArgumentCorrectness,
+    ArgumentMatchMode,
+    ArgumentOccurrence,
+    MaxModelRequests,
+    MaxToolCalls,
+    ToolCorrectness,
+    TrajectoryMatch,
+    TrajectoryOrder,
+)
 from .common import (
     Contains,
     Equals,
     EqualsExpected,
+    GEval,
     HasMatchingSpan,
     IsInstance,
     LLMJudge,
@@ -9,7 +20,23 @@ from .common import (
     OutputConfig,
 )
 from .context import EvaluatorContext
-from .evaluator import EvaluationReason, EvaluationResult, Evaluator, EvaluatorFailure, EvaluatorOutput, EvaluatorSpec
+from .evaluator import (
+    EvaluationReason,
+    EvaluationResult,
+    Evaluator,
+    EvaluatorFailure,
+    EvaluatorFunc,
+    EvaluatorOutput,
+    EvaluatorSpec,
+    FunctionEvaluator,
+)
+from .report_common import (
+    ConfusionMatrixEvaluator,
+    KolmogorovSmirnovEvaluator,
+    PrecisionRecallEvaluator,
+    ROCAUCEvaluator,
+)
+from .report_evaluator import ReportEvaluator, ReportEvaluatorContext
 
 __all__ = (
     # common
@@ -19,18 +46,36 @@ __all__ = (
     'IsInstance',
     'MaxDuration',
     'LLMJudge',
+    'GEval',
     'HasMatchingSpan',
     'OutputConfig',
+    # agentic
+    'ToolCorrectness',
+    'TrajectoryMatch',
+    'TrajectoryOrder',
+    'ArgumentCorrectness',
+    'ArgumentMatchMode',
+    'ArgumentOccurrence',
+    'MaxToolCalls',
+    'MaxModelRequests',
     # context
     'EvaluatorContext',
     # evaluator
     'Evaluator',
     'EvaluationReason',
     'EvaluatorFailure',
+    'EvaluatorFunc',
     'EvaluatorOutput',
     'EvaluatorSpec',
-    'EvaluationReason',
     'EvaluationResult',
+    'FunctionEvaluator',
+    # report evaluators
+    'ReportEvaluator',
+    'ReportEvaluatorContext',
+    'ConfusionMatrixEvaluator',
+    'KolmogorovSmirnovEvaluator',
+    'PrecisionRecallEvaluator',
+    'ROCAUCEvaluator',
 )
 
 

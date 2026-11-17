@@ -1,0 +1,132 @@
+interactions:
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - huggingface.co
+    method: GET
+    uri: https://huggingface.co/api/models/meta-llama/Llama-3.1-8B-Instruct?expand=inferenceProviderMapping
+  response:
+    headers:
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '643'
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"25b-zPGp/njLCYsh3acpUcesdMwaiho"
+      ratelimit:
+      - '"api";r=999;t=295'
+      ratelimit-policy:
+      - '"fixed window";"api";q=1000;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    parsed_body:
+      _id: 6698d8a0653e4babe21e1e7d
+      id: meta-llama/Llama-3.1-8B-Instruct
+      inferenceProviderMapping:
+        deepinfra:
+          isModelAuthor: false
+          providerId: meta-llama/Meta-Llama-3.1-8B-Instruct
+          status: live
+          task: conversational
+        featherless-ai:
+          isModelAuthor: false
+          providerId: meta-llama/Llama-3.1-8B-Instruct
+          status: live
+          task: conversational
+        novita:
+          isModelAuthor: false
+          providerId: meta-llama/llama-3.1-8b-instruct
+          status: live
+          task: conversational
+        nscale:
+          isModelAuthor: false
+          providerId: meta-llama/Llama-3.1-8B-Instruct
+          status: live
+          task: conversational
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '166'
+      content-type:
+      - application/json
+      host:
+      - router.huggingface.co
+    method: POST
+    parsed_body:
+      messages:
+      - content: 'Reply with exactly: Paris'
+        role: user
+      model: meta-llama/llama-3.1-8b-instruct
+      stream: true
+      temperature: 0.0
+      tools: []
+    uri: https://router.huggingface.co/novita/v3/openai/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"ebafdc26c3296ed027c5cd6565fa1bce","object":"chat.completion.chunk","created":1786507380,"model":"meta-llama/llama-3.1-8b-instruct","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}],"system_fingerprint":"","sla_metrics":{"ttft_ms":274,"ts_us":1786507380308596}}
+
+        data: {"id":"ebafdc26c3296ed027c5cd6565fa1bce","object":"chat.completion.chunk","created":1786507380,"model":"meta-llama/llama-3.1-8b-instruct","choices":[{"index":0,"delta":{"content":"Paris"},"finish_reason":null}],"system_fingerprint":"","sla_metrics":{"ttft_ms":274,"ts_us":1786507380308637}}
+
+        data: {"id":"ebafdc26c3296ed027c5cd6565fa1bce","object":"chat.completion.chunk","created":1786507380,"model":"meta-llama/llama-3.1-8b-instruct","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"system_fingerprint":"","sla_metrics":{"ttft_ms":274,"ts_us":1786507380313692}}
+
+        data: {"id":"ebafdc26c3296ed027c5cd6565fa1bce","object":"chat.completion.chunk","created":1786507380,"model":"meta-llama/llama-3.1-8b-instruct","choices":[],"system_fingerprint":"","usage":{"prompt_tokens":40,"completion_tokens":2,"total_tokens":42,"prompt_tokens_details":null,"completion_tokens_details":null},"sla_metrics":{"ttft_ms":274,"ts_us":1786507380313763}}
+
+        data: [DONE]
+
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      cross-origin-opener-policy:
+      - same-origin
+      inference-id:
+      - 0-019ff423-4542-7611-8ec5-82d205889f7e
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    status:
+      code: 200
+      message: OK
+version: 1
+...

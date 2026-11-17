@@ -1,0 +1,589 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '546'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use hosted tool search to load get_exchange_rate. Do not call it yet. Reply only with "loaded".
+        role: user
+      model: gpt-5.4
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - defer_loading: true
+        description: Look up an exchange rate.
+        name: get_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            pair:
+              type: string
+          required:
+          - pair
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2647'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1490'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1784534985
+      created_at: 1784534984
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0e6a0bc81f6d8648006a5dd7c81aec819aac90d05ad9e9c63e
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-2026-03-05
+      moderation: null
+      object: response
+      output:
+      - arguments:
+          paths:
+          - get_exchange_rate
+        call_id: null
+        execution: server
+        id: tsc_0e6a0bc81f6d8648006a5dd7c8d3ec819a904686d7dca65cb4
+        status: completed
+        type: tool_search_call
+      - call_id: null
+        execution: server
+        id: tso_0e6a0bc81f6d8648006a5dd7c8eb74819a96ec6c4cfaef7135
+        status: completed
+        tools:
+        - defer_loading: true
+          description: Look up an exchange rate.
+          name: get_exchange_rate
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              pair:
+                type: string
+            required:
+            - pair
+            type: object
+          strict: true
+          type: function
+        type: tool_search_output
+      - content:
+        - annotations: []
+          logprobs: []
+          text: loaded
+          type: output_text
+        id: msg_0e6a0bc81f6d8648006a5dd7c942d8819aa78a5c7a2b0b9618
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: current_turn
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - defer_loading: true
+        description: Look up an exchange rate.
+        name: get_exchange_rate
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            pair:
+              type: string
+          required:
+          - pair
+          type: object
+        strict: true
+        type: function
+      - description: null
+        parameters: null
+        type: tool_search
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 570
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 26
+        output_tokens_details:
+          reasoning_tokens: 21
+        total_tokens: 596
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1515'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use hosted tool search to load get_exchange_rate. Do not call it yet. Reply only with "loaded".
+        role: user
+      - arguments:
+          queries:
+          - get_exchange_rate
+        call_id: null
+        execution: server
+        id: tsc_0e6a0bc81f6d8648006a5dd7c8d3ec819a904686d7dca65cb4
+        status: completed
+        type: tool_search_call
+      - call_id: null
+        execution: server
+        id: tso_0e6a0bc81f6d8648006a5dd7c8eb74819a96ec6c4cfaef7135
+        status: completed
+        tools:
+        - defer_loading: true
+          description: Look up an exchange rate.
+          name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              pair:
+                type: string
+            required:
+            - pair
+            type: object
+          strict: true
+          type: function
+        type: tool_search_output
+      - content:
+        - annotations: []
+          text: loaded
+          type: output_text
+        id: msg_0e6a0bc81f6d8648006a5dd7c942d8819aa78a5c7a2b0b9618
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Call get_exchange_rate with pair="USD/EUR". Do not search again.
+        role: user
+      model: gpt-5.4
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - defer_loading: true
+        description: Look up an exchange rate.
+        name: get_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            pair:
+              type: string
+          required:
+          - pair
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2082'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '3024'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1784534988
+      created_at: 1784534986
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0e6a0bc81f6d8648006a5dd7ca082c819aa0f46f329a2ffd5a
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-2026-03-05
+      moderation: null
+      object: response
+      output:
+      - arguments: '{"pair":"USD/EUR"}'
+        call_id: call_CyqoMGFYNESobWGrep6xELj2
+        id: fc_0e6a0bc81f6d8648006a5dd7cab830819aaf0ece9351ad0579
+        name: get_exchange_rate
+        namespace: get_exchange_rate
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: current_turn
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: null
+        parameters: null
+        type: tool_search
+      - description: Look up an exchange rate.
+        name: get_exchange_rate
+        tools:
+        - description: Look up an exchange rate.
+          name: get_exchange_rate
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              pair:
+                type: string
+            required:
+            - pair
+            type: object
+          strict: true
+          type: function
+        type: namespace
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 220
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 22
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 242
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1856'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use hosted tool search to load get_exchange_rate. Do not call it yet. Reply only with "loaded".
+        role: user
+      - arguments:
+          queries:
+          - get_exchange_rate
+        call_id: null
+        execution: server
+        id: tsc_0e6a0bc81f6d8648006a5dd7c8d3ec819a904686d7dca65cb4
+        status: completed
+        type: tool_search_call
+      - call_id: null
+        execution: server
+        id: tso_0e6a0bc81f6d8648006a5dd7c8eb74819a96ec6c4cfaef7135
+        status: completed
+        tools:
+        - defer_loading: true
+          description: Look up an exchange rate.
+          name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              pair:
+                type: string
+            required:
+            - pair
+            type: object
+          strict: true
+          type: function
+        type: tool_search_output
+      - content:
+        - annotations: []
+          text: loaded
+          type: output_text
+        id: msg_0e6a0bc81f6d8648006a5dd7c942d8819aa78a5c7a2b0b9618
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Call get_exchange_rate with pair="USD/EUR". Do not search again.
+        role: user
+      - arguments: '{"pair":"USD/EUR"}'
+        call_id: call_CyqoMGFYNESobWGrep6xELj2
+        id: fc_0e6a0bc81f6d8648006a5dd7cab830819aaf0ece9351ad0579
+        name: get_exchange_rate
+        namespace: get_exchange_rate
+        type: function_call
+      - call_id: call_CyqoMGFYNESobWGrep6xELj2
+        output: 'USD/EUR: 0.92'
+        type: function_call_output
+      model: gpt-5.4
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - defer_loading: true
+        description: Look up an exchange rate.
+        name: get_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            pair:
+              type: string
+          required:
+          - pair
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2075'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1336'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1784534990
+      created_at: 1784534989
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0e6a0bc81f6d8648006a5dd7cd8838819a8457a786decb28c7
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-2026-03-05
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: 'USD/EUR: 0.92'
+          type: output_text
+        id: msg_0e6a0bc81f6d8648006a5dd7ce45f4819ab50bb11510b25898
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: current_turn
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: null
+        parameters: null
+        type: tool_search
+      - description: Look up an exchange rate.
+        name: get_exchange_rate
+        tools:
+        - description: Look up an exchange rate.
+          name: get_exchange_rate
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              pair:
+                type: string
+            required:
+            - pair
+            type: object
+          strict: true
+          type: function
+        type: namespace
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 264
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 12
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 276
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

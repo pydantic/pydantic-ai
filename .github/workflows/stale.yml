@@ -1,25 +1,29 @@
+# description: Marks and later closes inactive issues labeled question or more info, and pull requests labeled awaiting author revision.
 name: 'Close stale issues and PRs'
 on:
   schedule:
     - cron: '0 14 * * *'
 
-permissions:
-  issues: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   stale:
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
     steps:
-      - uses: actions/stale@v9
+      - uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
         with:
-          days-before-stale: 7
-          days-before-close: 3
 
           any-of-issue-labels: 'question,more info'
+          days-before-issue-stale: 7
+          days-before-issue-close: 3
           stale-issue-message: 'This issue is stale, and will be closed in 3 days if no reply is received.'
           close-issue-message: 'Closing this issue as it has been inactive for 10 days.'
 
           any-of-pr-labels: 'awaiting author revision'
-          stale-pr-message: 'This PR is stale, and will be closed in 3 days if no reply is received.'
-          close-pr-message: 'Closing this PR as it has been inactive for 10 days.'
+          days-before-pr-stale: 14
+          days-before-pr-close: 7
+          stale-pr-message: 'This PR is stale, and will be closed in 7 days if no reply is received.'
+          close-pr-message: 'Closing this PR as it has been inactive for 21 days.'

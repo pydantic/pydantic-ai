@@ -6,10 +6,15 @@ from textwrap import dedent
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
 
 from ag_ui.core import EventType, StateDeltaEvent, StateSnapshotEvent
 from pydantic_ai import Agent
-from pydantic_ai.ui.ag_ui.app import AGUIApp
+from pydantic_ai.capabilities import Caching
+from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 StepStatus = Literal['pending', 'completed']
 
@@ -27,7 +32,9 @@ class Step(BaseModel):
 class Plan(BaseModel):
     """Represents a plan with multiple steps."""
 
-    steps: list[Step] = Field(default_factory=list, description='The steps in the plan')
+    steps: list[Step] = Field(
+        default_factory=list[Step], description='The steps in the plan'
+    )
 
 
 class JSONPatchOp(BaseModel):
@@ -64,6 +71,7 @@ agent = Agent(
         again until all the steps in current plan are completed.
         """
     ),
+    capabilities=[Caching()],
 )
 
 
@@ -111,10 +119,20 @@ async def update_plan_step(
         changes.append(
             JSONPatchOp(op='replace', path=f'/steps/{index}/status', value=status)
         )
-    return StateDeltaEvent(
-        type=EventType.STATE_DELTA,
-        delta=changes,
+    # Validated from plain dicts: ag-ui-protocol 1.0 types `delta` as its own operation models.
+    return StateDeltaEvent.model_validate(
+        {
+            'type': EventType.STATE_DELTA,
+            'delta': [
+                change.model_dump(by_alias=True, exclude_unset=True)
+                for change in changes
+            ],
+        }
     )
 
 
-app = AGUIApp(agent)
+async def run_agent(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(request, agent=agent)
+
+
+app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])

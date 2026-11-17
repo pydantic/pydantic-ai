@@ -1,0 +1,408 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1552'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: I might want to look up exchange rates later.
+        role: user
+      - arguments:
+          queries:
+          - exchange rate
+        call_id: loc_search_1
+        execution: client
+        status: completed
+        type: tool_search_call
+      - call_id: loc_search_1
+        execution: client
+        status: completed
+        tools:
+        - description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          strict: false
+          type: function
+        type: tool_search_output
+      - content: What is the USD to EUR exchange rate?
+        role: user
+      model: gpt-5.4-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2184'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '975'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1778075875
+      created_at: 1778075874
+      error: null
+      frequency_penalty: 0.0
+      id: resp_00ee66acffde38fa0069fb48e2787c8194b79a3397e2dc1995
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-mini-2026-03-17
+      moderation: null
+      object: response
+      output:
+      - arguments: '{"from_currency":"USD","to_currency":"EUR"}'
+        call_id: call_nN1XFFb0TxlqsBV5uiiaW27b
+        id: fc_00ee66acffde38fa0069fb48e316348194b093c9e07542eb0e
+        name: get_exchange_rate
+        namespace: get_exchange_rate
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        effort: none
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+      - description: null
+        parameters: null
+        type: tool_search
+      - description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        tools:
+        - description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          strict: true
+          type: function
+        type: namespace
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 583
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 26
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 609
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1925'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: I might want to look up exchange rates later.
+        role: user
+      - arguments:
+          queries:
+          - exchange rate
+        call_id: loc_search_1
+        execution: client
+        status: completed
+        type: tool_search_call
+      - call_id: loc_search_1
+        execution: client
+        status: completed
+        tools:
+        - description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          strict: false
+          type: function
+        type: tool_search_output
+      - content: What is the USD to EUR exchange rate?
+        role: user
+      - arguments: '{"from_currency":"USD","to_currency":"EUR"}'
+        call_id: call_nN1XFFb0TxlqsBV5uiiaW27b
+        id: fc_00ee66acffde38fa0069fb48e316348194b093c9e07542eb0e
+        name: get_exchange_rate
+        namespace: get_exchange_rate
+        type: function_call
+      - call_id: call_nN1XFFb0TxlqsBV5uiiaW27b
+        output: 1 USD = 0.92 EUR
+        type: function_call_output
+      model: gpt-5.4-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2151'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '2313'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1778075877
+      created_at: 1778075876
+      error: null
+      frequency_penalty: 0.0
+      id: resp_00ee66acffde38fa0069fb48e3d1588194bbb424179e4ebaf7
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-mini-2026-03-17
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: 1 USD = 0.92 EUR
+          type: output_text
+        id: msg_00ee66acffde38fa0069fb48e4f0108194b48a9a4ae44a8170
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        effort: none
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+      - description: null
+        parameters: null
+        type: tool_search
+      - description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        tools:
+        - description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          strict: true
+          type: function
+        type: namespace
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 631
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 12
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 643
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

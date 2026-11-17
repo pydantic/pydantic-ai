@@ -1,0 +1,1706 @@
+"""Cross-provider matrix tests for multimodal tool return functionality.
+
+This module tests multimodal tool returns across all providers using a cartesian
+product of test dimensions:
+- provider: see `ProviderName`
+- file_type: image, document, audio, video
+- content_source: binary, url, url_force_download
+- return_style: direct (return file), tool_return_content (via ToolReturn.content)
+
+The SUPPORT_MATRIX determines expected behavior for each (provider, file_type) pair:
+'in_tool_result', 'as_user_content', or an ExpectError with error type and match pattern.
+A file returned directly that the model's profile says it can't read is sent as a note instead; see
+NOTED_IN_TOOL_RESULTS.
+"""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict, dataclass
+from itertools import count
+from pathlib import Path
+from typing import Any, Literal, assert_never, cast
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from pydantic_ai import Agent, BinaryContent, BinaryImage
+from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.messages import (
+    AudioUrl,
+    DocumentUrl,
+    ImageUrl,
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+    UploadedFile,
+    UploadedFileProviderName,
+    UserPromptPart,
+    VideoUrl,
+)
+from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import UsageLimits
+from tests.cassette_utils import CassetteContext
+
+from .._inline_snapshot import snapshot
+from ..conftest import iter_message_parts, try_import
+
+with try_import() as openai_available:
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+with try_import() as anthropic_available:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+with try_import() as google_available:
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleCloudLocation, GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
+
+with try_import() as bedrock_available:
+    from pydantic_ai.models.bedrock import BedrockConverseModel
+
+with try_import() as groq_available:
+    from pydantic_ai.models.groq import GroqModel
+    from pydantic_ai.providers.groq import GroqProvider
+
+with try_import() as mistral_available:
+    from mistralai.client.models import AssistantMessage, TextChunk, ToolMessage, UserMessage
+
+    from pydantic_ai.models.mistral import MistralModel
+    from pydantic_ai.providers.mistral import MistralProvider
+
+with try_import() as xai_available:
+    from google.protobuf.json_format import MessageToDict
+
+    from pydantic_ai.models.xai import XaiModel
+    from pydantic_ai.providers.xai import XaiProvider
+
+with try_import() as huggingface_available:
+    from pydantic_ai.models.huggingface import HuggingFaceModel
+    from pydantic_ai.providers.huggingface import HuggingFaceProvider
+
+pytestmark = [
+    pytest.mark.vcr,
+]
+
+ProviderName = Literal[
+    'anthropic',
+    'bedrock_nova',
+    'bedrock_claude',
+    'google_2_5',
+    'google_gemini3',
+    'google_vertex',
+    'openai_chat',
+    'openai_responses',
+    'groq',
+    'mistral',
+    'xai',
+]
+PROVIDERS = [pytest.param(name, id=name) for name in ProviderName.__args__]
+
+FileType = Literal['image', 'document', 'audio', 'video']
+FILE_TYPES = [pytest.param(t, id=t) for t in FileType.__args__]
+
+ContentSource = Literal['binary', 'url', 'url_force_download', 'uploaded_file']
+CONTENT_SOURCES = [pytest.param(s, id=s) for s in ContentSource.__args__]
+
+ReturnStyle = Literal['direct', 'tool_return_content']
+"""Return style: 'direct' = returns file directly, 'tool_return_content' = via ToolReturn.content."""
+RETURN_STYLES = [pytest.param(s, id=s) for s in ReturnStyle.__args__]
+
+Expectation = Literal['in_tool_result', 'as_user_content']
+
+
+@dataclass
+class ExpectError:
+    """Expected error for a provider/file_type combination."""
+
+    error_type: type[Exception] = NotImplementedError
+    match: str | None = None
+
+
+SUPPORT_MATRIX: dict[tuple[ProviderName, FileType], Expectation | ExpectError] = {
+    # Anthropic: images and documents in_tool_result, audio/video unsupported
+    ('anthropic', 'image'): 'in_tool_result',
+    ('anthropic', 'document'): 'in_tool_result',
+    ('anthropic', 'audio'): ExpectError(NotImplementedError, r'(?i)audio.*anthropic|anthropic.*audio'),
+    ('anthropic', 'video'): ExpectError(NotImplementedError, r'(?i)video.*anthropic|anthropic.*video'),
+    # Bedrock Nova: images, documents, video in_tool_result; audio unsupported
+    ('bedrock_nova', 'image'): 'in_tool_result',
+    ('bedrock_nova', 'document'): 'in_tool_result',
+    ('bedrock_nova', 'audio'): ExpectError(
+        NotImplementedError, r'(?i)audio.*(?:bedrock|not supported)|bedrock.*audio|Unsupported.*Bedrock'
+    ),
+    ('bedrock_nova', 'video'): 'in_tool_result',
+    # Bedrock Claude: images and documents in_tool_result; audio/video unsupported
+    ('bedrock_claude', 'image'): 'in_tool_result',
+    ('bedrock_claude', 'document'): 'in_tool_result',
+    ('bedrock_claude', 'audio'): ExpectError(
+        NotImplementedError, r'(?i)audio.*(?:bedrock|not supported)|bedrock.*audio|Unsupported.*Bedrock'
+    ),
+    ('bedrock_claude', 'video'): ExpectError(ModelHTTPError, r"doesn't support the video content block"),
+    # Google GLA (gemini-2.5): all types as_user_content (no inline tool return support)
+    ('google_2_5', 'image'): 'as_user_content',
+    ('google_2_5', 'document'): 'as_user_content',
+    ('google_2_5', 'audio'): 'as_user_content',
+    ('google_2_5', 'video'): 'as_user_content',
+    # Google Gemini 3: all types in_tool_result
+    ('google_gemini3', 'image'): 'in_tool_result',
+    ('google_gemini3', 'document'): 'in_tool_result',
+    ('google_gemini3', 'audio'): 'in_tool_result',
+    ('google_gemini3', 'video'): 'in_tool_result',
+    # Google Vertex: all types in_tool_result
+    ('google_vertex', 'image'): 'in_tool_result',
+    ('google_vertex', 'document'): 'in_tool_result',
+    ('google_vertex', 'audio'): 'in_tool_result',
+    ('google_vertex', 'video'): 'in_tool_result',
+    # OpenAI Chat: images and documents as_user_content, audio/video unsupported
+    ('openai_chat', 'image'): 'as_user_content',
+    ('openai_chat', 'document'): 'as_user_content',
+    ('openai_chat', 'audio'): ExpectError(ModelHTTPError, r'expected to be either text or image_url'),
+    ('openai_chat', 'video'): ExpectError(
+        NotImplementedError, r'VideoUrl is not supported in OpenAI Chat Completions user prompts'
+    ),
+    # OpenAI Responses: images and documents in_tool_result, audio/video unsupported
+    ('openai_responses', 'image'): 'in_tool_result',
+    ('openai_responses', 'document'): 'in_tool_result',
+    ('openai_responses', 'audio'): ExpectError(ModelHTTPError, r'unsupported'),
+    ('openai_responses', 'video'): ExpectError(NotImplementedError, r'(?i)video.*not supported in OpenAI Responses'),
+    # xAI: images and documents as_user_content, audio/video unsupported
+    ('xai', 'image'): 'as_user_content',
+    ('xai', 'document'): 'as_user_content',
+    ('xai', 'audio'): ExpectError(NotImplementedError, r'(?i)not supported in xAI'),
+    ('xai', 'video'): ExpectError(NotImplementedError, r'(?i)not supported in xAI'),
+    # Groq: images as_user_content, everything else unsupported
+    ('groq', 'image'): 'as_user_content',
+    ('groq', 'document'): ExpectError(match=r'(?:DocumentUrl|images are supported).*Groq user prompts'),
+    ('groq', 'audio'): ExpectError(match=r'(?:AudioUrl|images are supported).*Groq user prompts'),
+    ('groq', 'video'): ExpectError(match=r'(?:VideoUrl|images are supported).*Groq user prompts'),
+    # Mistral: images and documents as_user_content, audio/video unsupported
+    ('mistral', 'image'): 'as_user_content',
+    ('mistral', 'document'): 'as_user_content',
+    ('mistral', 'audio'): ExpectError(
+        match=r'(?:AudioUrl|BinaryContent other than text-like, image, or PDF) is not supported in Mistral user prompts'
+    ),
+    ('mistral', 'video'): ExpectError(
+        match=r'(?:VideoUrl|BinaryContent other than text-like, image, or PDF) is not supported in Mistral user prompts'
+    ),
+}
+
+NOTED_IN_TOOL_RESULTS: frozenset[tuple[ProviderName, FileType]] = frozenset(
+    {
+        ('anthropic', 'audio'),
+        ('anthropic', 'video'),
+        ('bedrock_nova', 'audio'),
+        ('bedrock_claude', 'audio'),
+        ('bedrock_claude', 'video'),
+        ('openai_chat', 'audio'),
+        ('openai_chat', 'video'),
+        ('openai_responses', 'audio'),
+        ('openai_responses', 'video'),
+        ('xai', 'audio'),
+        ('xai', 'video'),
+        ('groq', 'document'),
+        ('groq', 'audio'),
+        ('groq', 'video'),
+        ('mistral', 'audio'),
+        ('mistral', 'video'),
+    }
+)
+"""Pairs whose file, returned directly by a tool, is replaced by a note: the model's profile says it can't read it.
+
+The SUPPORT_MATRIX error still applies to the same file sent through `ToolReturn.content`, which goes on
+the user channel as the developer wrote it, and to an `UploadedFile`, which only its provider can read.
+"""
+
+# Overrides for specific (provider, file_type, content_source, return_style) combos where
+# the behavior differs from the general SUPPORT_MATRIX entry. Keys use None to match all
+# values of that dimension.
+ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, ReturnStyle | None], ExpectError] = {
+    ('openai_responses', 'audio', 'binary', None): ExpectError(
+        NotImplementedError, r'(?i)audio.*openai responses|unsupported binary'
+    ),
+    # Vertex AI can't crawl certain URLs blocked by robots.txt (gstatic.com, test-videos.co.uk).
+    # force_download variants work since the client downloads locally before sending to Vertex.
+    ('google_vertex', 'image', 'url', None): ExpectError(ModelHTTPError, r'URL_ROBOTED|ROBOTED_DENIED'),
+    # Chat Completions can't reference an uploaded image by file_id (no image equivalent of the
+    # `file` content part), so OpenAIChatModel raises before the request. Responses maps it to
+    # `input_image` and succeeds (see the matrix success path + test_uploaded_image_maps_to_input_image_responses).
+    ('openai_chat', 'image', 'uploaded_file', None): ExpectError(
+        UserError, r'Referencing an uploaded image by `file_id` is not supported by OpenAIChatModel'
+    ),
+    # Bedrock UploadedFile audio raises UserError (not NotImplementedError like binary/url)
+    ('bedrock_nova', 'audio', 'uploaded_file', None): ExpectError(
+        UserError, r'Audio files are not supported for Bedrock UploadedFile'
+    ),
+    ('bedrock_claude', 'audio', 'uploaded_file', None): ExpectError(
+        UserError, r'Audio files are not supported for Bedrock UploadedFile'
+    ),
+    # Claude on Bedrock doesn't support s3Uri for images
+    ('bedrock_claude', 'image', 'uploaded_file', None): ExpectError(ModelHTTPError, r"doesn't support the s3Uri field"),
+    # Claude on Bedrock doesn't support s3Uri for documents, in tool results or in user content (tool_return_content
+    # fallback). Converse accepted them in tool results until at least March 2026.
+    ('bedrock_claude', 'document', 'uploaded_file', None): ExpectError(
+        ModelHTTPError, r'document\.source\.type: Field required'
+    ),
+    # Nova doesn't support documents/videos with S3 sources inside tool results
+    ('bedrock_nova', 'document', 'uploaded_file', 'direct'): ExpectError(
+        ModelHTTPError, r'extraneous key \[toolResult\]'
+    ),
+    ('bedrock_nova', 'video', 'uploaded_file', 'direct'): ExpectError(ModelHTTPError, r'extraneous key \[toolResult\]'),
+}
+
+
+NOTE_ENDINGS: dict[FileType, str] = {
+    'document': 'documents.',
+    'audio': 'audio files.',
+    'video': 'video.',
+}
+
+_OverrideKey = tuple[ProviderName, FileType, ContentSource | None, ReturnStyle | None]
+
+
+def get_error_info(
+    provider: ProviderName, file_type: FileType, content_source: ContentSource, return_style: ReturnStyle
+) -> ExpectError | None:
+    """Look up error info: first check overrides (most specific match), then the matrix."""
+    keys: list[_OverrideKey] = [
+        (provider, file_type, content_source, return_style),
+        (provider, file_type, content_source, None),
+        (provider, file_type, None, return_style),
+        (provider, file_type, None, None),
+    ]
+    for key in keys:
+        if key in ERROR_OVERRIDES:
+            return ERROR_OVERRIDES[key]
+    entry = SUPPORT_MATRIX.get((provider, file_type))
+    if isinstance(entry, ExpectError):
+        return entry
+    return None
+
+
+MODEL_CONFIGS: dict[ProviderName, tuple[str, Any]] = {
+    'anthropic': ('claude-sonnet-5-5', anthropic_available),
+    'bedrock_nova': ('us.amazon.nova-2-lite-v1:0', bedrock_available),
+    'bedrock_claude': ('us.anthropic.claude-sonnet-4-5-20250929-v1:0', bedrock_available),
+    'google_2_5': ('gemini-2.5-flash', google_available),
+    'google_gemini3': ('gemini-3-flash-preview', google_available),
+    'google_vertex': ('gemini-3-flash-preview', google_available),
+    'openai_chat': ('gpt-5-mini', openai_available),
+    'openai_responses': ('gpt-5-mini', openai_available),
+    'groq': ('meta-llama/llama-4-maverick-17b-128e-instruct', groq_available),
+    'mistral': ('mistral-medium-latest', mistral_available),
+    'xai': ('grok-4-1-fast-non-reasoning', xai_available),
+}
+
+
+def create_model(
+    provider: ProviderName,
+    api_keys: dict[str, str],
+    bedrock_provider: Any = None,
+    xai_provider: Any = None,
+    vertex_provider: Any = None,
+) -> Model:
+    model_name = MODEL_CONFIGS[provider][0]
+    if provider == 'anthropic':
+        return AnthropicModel(model_name, provider=AnthropicProvider(api_key=api_keys['anthropic']))
+    elif provider in ('bedrock_nova', 'bedrock_claude'):
+        assert bedrock_provider is not None
+        return BedrockConverseModel(model_name, provider=bedrock_provider)
+    elif provider in ('google_2_5', 'google_gemini3'):
+        return GoogleModel(model_name, provider=GoogleProvider(api_key=api_keys['google']))
+    elif provider == 'google_vertex':  # pragma: no cover
+        assert vertex_provider is not None
+        return GoogleModel(model_name, provider=vertex_provider)
+    elif provider == 'openai_chat':
+        return OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=api_keys['openai']))
+    elif provider == 'openai_responses':
+        return OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=api_keys['openai']))
+    elif provider == 'groq':
+        return GroqModel(model_name, provider=GroqProvider(api_key=api_keys['groq']))
+    elif provider == 'mistral':
+        return MistralModel(model_name, provider=MistralProvider(api_key=api_keys['mistral']))
+    elif provider == 'xai':
+        assert xai_provider is not None
+        return XaiModel(model_name, provider=xai_provider)
+    else:
+        assert_never(provider)
+
+
+class AnswerOnceToolReturned(WrapperModel):
+    """Sends requests as usual until one carries a tool result, then answers that one itself.
+
+    Lets a test assert what would have gone out after a tool ran without recording a model's reply to it.
+    """
+
+    def __init__(self, wrapped: Model):
+        super().__init__(wrapped)
+        self.follow_up: list[ModelMessage] | None = None
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        if any(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            self.follow_up = messages
+            return ModelResponse(parts=[TextPart('Received it.')])
+        return await super().request(messages, model_settings, model_request_parameters)
+
+
+def is_provider_available(provider: ProviderName) -> bool:
+    _, available = MODEL_CONFIGS[provider]
+    return bool(available() if callable(available) else available)
+
+
+IMAGE_URL = 'https://www.gstatic.com/webp/gallery3/1.png'
+# Anthropic fetches image URLs server-side and honors robots.txt, which disallows `IMAGE_URL`'s host.
+ANTHROPIC_IMAGE_URL = 'https://iili.io/3Hs4FMg.png'
+DOCUMENT_URL = 'https://pdfobject.com/pdf/sample.pdf'
+AUDIO_URL = 'https://download.samplelib.com/mp3/sample-3s.mp3'
+VIDEO_URL = 'https://www.w3schools.com/html/mov_bbb.mp4'
+
+
+PROVIDER_TO_UPLOADED_FILE_NAME: dict[ProviderName, UploadedFileProviderName] = {
+    'anthropic': 'anthropic',
+    'bedrock_nova': 'bedrock',
+    'bedrock_claude': 'bedrock',
+    'google_2_5': 'google-gla',
+    'google_gemini3': 'google-gla',
+    'google_vertex': 'google-vertex',
+    'openai_chat': 'openai',
+    'openai_responses': 'openai',
+    'xai': 'xai',
+}
+
+UPLOADED_FILE_IDS: dict[tuple[UploadedFileProviderName, FileType], str] = {
+    ('openai', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
+    ('openai', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
+    ('anthropic', 'image'): 'file_011CYiV4nBS5Jak8e78n4mYu',
+    ('anthropic', 'document'): 'file_011CYiV4psfMwLCihcy8Ba6m',
+    ('xai', 'image'): 'file_20ac2a79-38a3-40ae-83d0-0a604d8fd316',
+    ('xai', 'document'): 'file_dafc7e7e-f3ea-42d2-bb50-83f735a0bd9d',
+    ('google-gla', 'image'): 'https://generativelanguage.googleapis.com/v1beta/files/3qswqtk02p7x',
+    ('google-gla', 'document'): 'https://generativelanguage.googleapis.com/v1beta/files/k8plo4aq1e1w',
+    ('google-gla', 'audio'): 'https://generativelanguage.googleapis.com/v1beta/files/8b2bhnsluaai',
+    ('google-gla', 'video'): 'https://generativelanguage.googleapis.com/v1beta/files/nvp2l539zsmd',
+    ('google-vertex', 'image'): 'gs://pydantic-ai-test-files-vertex/test-files/kiwi.jpg',
+    ('google-vertex', 'document'): 'gs://pydantic-ai-test-files-vertex/test-files/dummy.pdf',
+    ('google-vertex', 'audio'): 'gs://pydantic-ai-test-files-vertex/test-files/marcelo.mp3',
+    ('google-vertex', 'video'): 'gs://pydantic-ai-test-files-vertex/test-files/small_video.mp4',
+    ('bedrock', 'image'): 's3://pydantic-ai-test-files/test-files/kiwi.jpg',
+    ('bedrock', 'document'): 's3://pydantic-ai-test-files/test-files/dummy.pdf',
+    ('bedrock', 'audio'): 's3://pydantic-ai-test-files/test-files/marcelo.mp3',
+    ('bedrock', 'video'): 's3://pydantic-ai-test-files/test-files/small_video.mp4',
+}
+
+FILE_TYPE_MEDIA_TYPES: dict[FileType, str] = {
+    'image': 'image/jpeg',
+    'document': 'application/pdf',
+    'audio': 'audio/mpeg',
+    'video': 'video/mp4',
+}
+
+URL_FACTORIES: dict[tuple[FileType, ContentSource], Any] = {
+    ('image', 'url'): lambda: ImageUrl(url=IMAGE_URL),
+    ('image', 'url_force_download'): lambda: ImageUrl(url=IMAGE_URL, force_download=True),
+    ('document', 'url'): lambda: DocumentUrl(url=DOCUMENT_URL),
+    ('document', 'url_force_download'): lambda: DocumentUrl(url=DOCUMENT_URL, force_download=True),
+    ('audio', 'url'): lambda: AudioUrl(url=AUDIO_URL),
+    ('audio', 'url_force_download'): lambda: AudioUrl(url=AUDIO_URL, force_download=True),
+    ('video', 'url'): lambda: VideoUrl(url=VIDEO_URL),
+    ('video', 'url_force_download'): lambda: VideoUrl(url=VIDEO_URL, force_download=True),
+}
+
+# Patterns to verify in cassette request/response bodies. A tuple means any one
+# of the strings matching is sufficient to confirm the content is present.
+# base64 variants: standard (/9j/) vs URL-safe (_9j_) encoding of the same bytes,
+# used because providers differ in which encoding they accept/return.
+CASSETTE_PATTERNS: dict[tuple[FileType, ContentSource], str | tuple[str, ...]] = {
+    ('image', 'binary'): ('/9j/', '_9j_'),
+    ('image', 'url'): (IMAGE_URL, '/9j/', '_9j_', 'UklGR', 'iVBOR'),
+    ('image', 'url_force_download'): ('/9j/', '_9j_', 'UklGR'),
+    ('document', 'binary'): ('%PDF', 'JVBER'),
+    ('document', 'url'): (DOCUMENT_URL, '%PDF', 'JVBER'),
+    ('document', 'url_force_download'): ('%PDF', 'JVBER'),
+    ('audio', 'binary'): ('//t', '__t'),
+    ('audio', 'url'): (AUDIO_URL, '//t', '__t'),
+    ('audio', 'url_force_download'): ('//t', '__t'),
+    ('video', 'binary'): ('ftyp', 'ZnR5cA', 'Z0eXB'),
+    ('video', 'url'): (VIDEO_URL, 'ftyp', 'ZnR5cA', 'Z0eXB'),
+    ('video', 'url_force_download'): ('ftyp', 'ZnR5cA', 'Z0eXB'),
+}
+
+# xAI uses a different cassette format (proto) with different content patterns
+XAI_CASSETTE_PATTERNS: dict[tuple[FileType, ContentSource], str | tuple[str, ...]] = {
+    ('image', 'binary'): ('/9j/', '_9j_'),
+    ('image', 'url'): IMAGE_URL,
+    ('image', 'url_force_download'): ('/9j/', '_9j_', 'UklGR'),
+    ('document', 'binary'): 'file_id',
+    ('document', 'url'): 'file_id',
+    ('document', 'url_force_download'): 'file_id',
+}
+
+UPLOADED_FILE_CASSETTE_PATTERNS: dict[tuple[ProviderName, FileType], str | tuple[str, ...]] = {
+    ('anthropic', 'image'): 'file_011CYiV4nBS5Jak8e78n4mYu',
+    ('anthropic', 'document'): 'file_011CYiV4psfMwLCihcy8Ba6m',
+    ('bedrock_nova', 'image'): 's3://pydantic-ai-test-files/test-files/kiwi.jpg',
+    ('bedrock_nova', 'document'): 's3://pydantic-ai-test-files/test-files/dummy.pdf',
+    ('bedrock_nova', 'video'): 's3://pydantic-ai-test-files/test-files/small_video.mp4',
+    ('bedrock_claude', 'image'): 's3://pydantic-ai-test-files/test-files/kiwi.jpg',
+    ('bedrock_claude', 'document'): 's3://pydantic-ai-test-files/test-files/dummy.pdf',
+    ('google_2_5', 'image'): 'files/3qswqtk02p7x',
+    ('google_2_5', 'document'): 'files/k8plo4aq1e1w',
+    ('google_2_5', 'audio'): 'files/8b2bhnsluaai',
+    ('google_2_5', 'video'): 'files/nvp2l539zsmd',
+    ('google_gemini3', 'image'): 'files/3qswqtk02p7x',
+    ('google_gemini3', 'document'): 'files/k8plo4aq1e1w',
+    ('google_gemini3', 'audio'): 'files/8b2bhnsluaai',
+    ('google_gemini3', 'video'): 'files/nvp2l539zsmd',
+    ('google_vertex', 'image'): 'gs://pydantic-ai-test-files-vertex/test-files/kiwi.jpg',
+    ('google_vertex', 'document'): 'gs://pydantic-ai-test-files-vertex/test-files/dummy.pdf',
+    ('google_vertex', 'audio'): 'gs://pydantic-ai-test-files-vertex/test-files/marcelo.mp3',
+    ('google_vertex', 'video'): 'gs://pydantic-ai-test-files-vertex/test-files/small_video.mp4',
+    ('openai_chat', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
+    ('openai_chat', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
+    # input_image (not input_file) confirms image UploadedFiles are mapped to the vision input type.
+    ('openai_responses', 'image'): 'input_image',
+    ('openai_responses', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
+    ('xai', 'image'): 'file_20ac2a79-38a3-40ae-83d0-0a604d8fd316',
+    ('xai', 'document'): 'file_dafc7e7e-f3ea-42d2-bb50-83f735a0bd9d',
+}
+
+
+def create_url_content(provider: ProviderName, file_type: FileType, content_source: ContentSource) -> Any:
+    if (provider, file_type, content_source) == ('anthropic', 'image', 'url'):
+        return ImageUrl(url=ANTHROPIC_IMAGE_URL)
+    return URL_FACTORIES[(file_type, content_source)]()
+
+
+def get_cassette_pattern(
+    provider: ProviderName, file_type: FileType, content_source: ContentSource
+) -> str | tuple[str, ...] | None:
+    """Get the cassette pattern for a provider/file_type/content_source combination."""
+    if content_source == 'uploaded_file':
+        return UPLOADED_FILE_CASSETTE_PATTERNS.get((provider, file_type))
+    if provider == 'xai':
+        return XAI_CASSETTE_PATTERNS.get((file_type, content_source))
+    if (provider, file_type, content_source) == ('anthropic', 'image', 'url'):
+        return ANTHROPIC_IMAGE_URL
+    return CASSETTE_PATTERNS.get((file_type, content_source))
+
+
+FILE_TYPE_CLASSES: dict[FileType, tuple[type, ...]] = {
+    'image': (BinaryImage, ImageUrl, UploadedFile),
+    'document': (DocumentUrl, BinaryContent, UploadedFile),
+    'audio': (AudioUrl, BinaryContent, UploadedFile),
+    'video': (VideoUrl, BinaryContent, UploadedFile),
+}
+
+
+def _is_file_type(item: Any, file_type: FileType) -> bool:
+    """Check if item matches the expected file type."""
+    if isinstance(item, UploadedFile):
+        return item.media_type.startswith(file_type if file_type != 'document' else 'application/')
+    expected_classes = FILE_TYPE_CLASSES[file_type]
+    if not isinstance(item, expected_classes):
+        return False  # pragma: no cover
+    if isinstance(item, BinaryImage):
+        return file_type == 'image'
+    if isinstance(item, ImageUrl):
+        return file_type == 'image'
+    if isinstance(item, BinaryContent):
+        media = item.media_type
+        if file_type == 'document':
+            return media.startswith('application/')
+        elif file_type == 'audio':
+            return media.startswith('audio/')
+        elif file_type == 'video':
+            return media.startswith('video/')
+        elif file_type == 'image':  # pragma: no cover
+            return media.startswith('image/')
+        else:
+            assert_never(file_type)
+    if isinstance(item, DocumentUrl):
+        return file_type == 'document'
+    if isinstance(item, AudioUrl):
+        return file_type == 'audio'
+    if isinstance(item, VideoUrl):
+        return file_type == 'video'
+    return False  # pragma: no cover
+
+
+def assert_file_in_tool_return(messages: list[ModelMessage], file_type: FileType) -> None:
+    """Assert that file content of the expected type is present in a ToolReturnPart."""
+    for trp in iter_message_parts(messages, ModelRequest, ToolReturnPart):
+        for f in trp.files:  # pragma: no branch
+            if _is_file_type(f, file_type):  # pragma: no branch
+                return
+    raise AssertionError(f'No {file_type} found in any ToolReturnPart')  # pragma: no cover
+
+
+def assert_file_in_user_prompt(messages: list[ModelMessage], file_type: FileType) -> None:
+    """Assert that file content of the expected type is present in a UserPromptPart.
+
+    For tool_return_content style, files are moved to a separate UserPromptPart
+    by design of ToolReturn.content. This verifies files ended up in user messages.
+    """
+    for upp in iter_message_parts(messages, ModelRequest, UserPromptPart):
+        if isinstance(upp.content, list):
+            for item in upp.content:  # pragma: no branch
+                if _is_file_type(item, file_type):  # pragma: no branch
+                    return
+    raise AssertionError(f'No {file_type} found in any UserPromptPart')  # pragma: no cover
+
+
+def assert_multimodal_result(
+    messages: list[ModelMessage],
+    file_type: FileType,
+    return_style: ReturnStyle = 'direct',
+) -> None:
+    """Assert that multimodal content was handled correctly.
+
+    For 'tool_return_content' style, files go to a separate UserPromptPart.
+    For 'direct' style, files should be in ToolReturnPart.
+    """
+    if return_style == 'tool_return_content':
+        assert_file_in_user_prompt(messages, file_type)
+    else:
+        assert_file_in_tool_return(messages, file_type)
+
+
+@pytest.fixture
+def vertex_provider(request: pytest.FixtureRequest, vertex_provider_auth: None) -> Any:
+    """Override conftest's vertex_provider to return None for non-vertex tests instead of skipping."""
+    if 'google_vertex' not in request.node.name:  # pyright: ignore[reportUnknownMemberType]
+        return None
+
+    if not google_available():  # pragma: no cover
+        pytest.skip('google is not installed')
+
+    project = os.getenv('GOOGLE_CLOUD_PROJECT', os.getenv('GOOGLE_PROJECT'))
+    if not project:
+        pytest.skip('GOOGLE_CLOUD_PROJECT not set')
+    location = os.getenv('GOOGLE_LOCATION', 'global')  # pragma: no cover
+    return GoogleCloudProvider(project=project, location=cast(GoogleCloudLocation, location))  # pragma: no cover
+
+
+@pytest.fixture
+def api_keys(
+    openai_api_key: str,
+    anthropic_api_key: str,
+    gemini_api_key: str,
+    groq_api_key: str,
+    mistral_api_key: str,
+    xai_api_key: str,
+) -> dict[str, str]:
+    return {
+        'openai': openai_api_key,
+        'anthropic': anthropic_api_key,
+        'google': gemini_api_key,
+        'groq': groq_api_key,
+        'mistral': mistral_api_key,
+        'xai': xai_api_key,
+    }
+
+
+@pytest.fixture
+def binary_contents(
+    image_content: BinaryImage,
+    document_content: BinaryContent,
+    audio_content: BinaryContent,
+    video_content: BinaryContent,
+) -> dict[FileType, BinaryImage | BinaryContent]:
+    return {
+        'image': image_content,
+        'document': document_content,
+        'audio': audio_content,
+        'video': video_content,
+    }
+
+
+@pytest.mark.parametrize('provider', PROVIDERS)
+@pytest.mark.parametrize('file_type', FILE_TYPES)
+@pytest.mark.parametrize('content_source', CONTENT_SOURCES)
+@pytest.mark.parametrize('return_style', RETURN_STYLES)
+async def test_multimodal_tool_return_matrix(
+    provider: ProviderName,
+    file_type: FileType,
+    content_source: ContentSource,
+    return_style: ReturnStyle,
+    api_keys: dict[str, str],
+    bedrock_provider: Any,
+    xai_provider: Any,
+    vertex_provider: Any,
+    binary_contents: dict[FileType, BinaryImage | BinaryContent],
+    allow_model_requests: None,
+    cassette_ctx: CassetteContext,
+    disable_ssrf_protection_for_vcr: None,
+):
+    if not is_provider_available(provider):  # pragma: no cover
+        pytest.skip(f'{provider} dependencies not installed')
+
+    uf_provider: UploadedFileProviderName | None = None
+    file_id: str | None = None
+    if content_source == 'uploaded_file':
+        if provider not in PROVIDER_TO_UPLOADED_FILE_NAME:
+            pytest.skip(f'{provider} does not support UploadedFile')
+        uf_provider = PROVIDER_TO_UPLOADED_FILE_NAME[provider]
+        file_id = UPLOADED_FILE_IDS.get((uf_provider, file_type))
+        if file_id is None:
+            pytest.skip(f'No uploaded file ID for ({uf_provider}, {file_type})')
+
+    error_info = get_error_info(provider, file_type, content_source, return_style)
+    model = create_model(provider, api_keys, bedrock_provider, xai_provider, vertex_provider)
+    noted = (
+        return_style == 'direct'
+        and content_source != 'uploaded_file'
+        and (provider, file_type) in NOTED_IN_TOOL_RESULTS
+    )
+    if noted:
+        # The model's reply to the note is not recorded: what this pins is that the file is replaced
+        # by a note in the request instead of failing the run, which `follow_up` shows.
+        model = AnswerOnceToolReturned(model)
+    if content_source == 'uploaded_file':
+        assert uf_provider is not None and file_id is not None
+        content: Any = UploadedFile(
+            file_id=file_id,
+            provider_name=uf_provider,
+            media_type=FILE_TYPE_MEDIA_TYPES[file_type],
+        )
+    elif content_source == 'binary':
+        content = binary_contents[file_type]
+    else:
+        content = create_url_content(provider, file_type, content_source)
+
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_file() -> Any:
+        if return_style == 'direct':
+            return content
+        else:
+            return ToolReturn(return_value='File attached', content=[content])
+
+    prompt = f'Use the get_file tool now to retrieve a {file_type} file, then describe what you received.'
+
+    if isinstance(model, AnswerOnceToolReturned):
+        result = await agent.run(prompt, usage_limits=UsageLimits(output_tokens_limit=100000))
+        assert model.follow_up is not None
+        [sent] = iter_message_parts(model.follow_up, ModelRequest, ToolReturnPart)
+        assert isinstance(sent.content, str)
+        assert sent.content.endswith('was not sent: this model cannot read ' + NOTE_ENDINGS[file_type])
+        # The history keeps the file, for a model that can read it.
+        assert_file_in_tool_return(result.all_messages(), file_type)
+    elif error_info:
+        with pytest.raises(error_info.error_type, match=error_info.match):
+            await agent.run(prompt, usage_limits=UsageLimits(output_tokens_limit=100000))
+    else:
+        result = await agent.run(prompt, usage_limits=UsageLimits(output_tokens_limit=100000))
+        assert result.output, 'Expected non-empty response from model'
+        assert_multimodal_result(result.all_messages(), file_type, return_style)
+        if pattern := get_cassette_pattern(provider, file_type, content_source):  # pragma: no branch
+            cassette_ctx.verify_contains(pattern)
+        if SUPPORT_MATRIX[(provider, file_type)] == 'as_user_content' and return_style == 'direct':
+            cassette_ctx.verify_contains('See file')
+
+
+@pytest.mark.parametrize('provider', PROVIDERS)
+async def test_mixed_content_ordering(
+    provider: ProviderName,
+    api_keys: dict[str, str],
+    bedrock_provider: Any,
+    xai_provider: Any,
+    vertex_provider: Any,
+    image_content: BinaryImage,
+    allow_model_requests: None,
+    cassette_ctx: CassetteContext,
+):
+    """Test that [text, image, dict] are sent to the API in the correct order.
+
+    Returns mixed content types and verifies the cassette preserves ordering,
+    catching bugs where content might be reordered or silently dropped.
+
+    For in_tool_result providers, strict ordering is verified within the tool_result.
+    For as_user_content providers, the image is separated into a user message, so we
+    only verify all content is present (ordering across messages may differ).
+    """
+    if not is_provider_available(provider):  # pragma: no cover
+        pytest.skip(f'{provider} dependencies not installed')
+
+    image_support = SUPPORT_MATRIX[(provider, 'image')]
+    model = create_model(provider, api_keys, bedrock_provider, xai_provider, vertex_provider)
+
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_mixed_content() -> list[Any]:
+        return ['Here is the image:', image_content, {'pydantic_ai_marker': 'test_42'}]
+
+    result = await agent.run(
+        'Call the get_mixed_content tool and describe what you received.',
+        usage_limits=UsageLimits(output_tokens_limit=100000),
+    )
+    assert result.output, 'Expected non-empty response from model'
+    if image_support == 'in_tool_result':
+        if provider in ('google_2_5', 'google_gemini3', 'google_vertex'):
+            # Google Gemini 3 serializes function_response.parts (in_tool_result image) before
+            # function_response.response (text/dict), so image data appears first.
+            cassette_ctx.verify_ordering(('/9j/', '_9j_'), 'Here is the image:', 'pydantic_ai_marker')
+        else:
+            cassette_ctx.verify_ordering('Here is the image:', ('/9j/', '_9j_'), 'pydantic_ai_marker')
+    else:
+        cassette_ctx.verify_ordering('Here is the image:', 'pydantic_ai_marker')
+        cassette_ctx.verify_contains(('/9j/', '_9j_'))
+        cassette_ctx.verify_contains('See file')
+
+
+@pytest.mark.parametrize('provider', PROVIDERS)
+async def test_model_sees_multiple_images(
+    provider: ProviderName,
+    api_keys: dict[str, str],
+    bedrock_provider: Any,
+    xai_provider: Any,
+    vertex_provider: Any,
+    image_content: BinaryImage,
+    allow_model_requests: None,
+    cassette_ctx: CassetteContext,
+    disable_ssrf_protection_for_vcr: None,
+):
+    """Verify the model processes multiple images by identifying both.
+
+    Returns a kiwi image (binary) and a second image (URL), then verifies:
+    1. Both images are sent to the API (cassette verification)
+    2. The model identifies the kiwi fruit (semantic verification)
+    """
+    if not is_provider_available(provider):  # pragma: no cover
+        pytest.skip(f'{provider} dependencies not installed')
+
+    if isinstance(SUPPORT_MATRIX[(provider, 'image')], ExpectError):  # pragma: no cover
+        pytest.skip(f'{provider} does not support images in tool returns')
+
+    if provider == 'google_vertex':  # pragma: no cover
+        pytest.skip('Vertex AI cannot crawl the test image URL (robots.txt)')
+
+    model = create_model(provider, api_keys, bedrock_provider, xai_provider, vertex_provider)
+    kiwi_image = image_content
+    url_image = create_url_content(provider, 'image', 'url')
+
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_images() -> list[Any]:
+        return [kiwi_image, url_image]
+
+    result = await agent.run(
+        'Call the get_images tool. One image shows a fruit - what fruit is it? Just name the fruit.',
+        usage_limits=UsageLimits(output_tokens_limit=100000),
+    )
+    assert 'kiwi' in result.output.lower(), f'Model should identify kiwi fruit, got: {result.output}'
+    image_support = SUPPORT_MATRIX[(provider, 'image')]
+    cassette_ctx.verify_contains(('/9j/', '_9j_'))
+    cassette_ctx.verify_contains(('UklGR', 'iVBOR', url_image.url))
+    if image_support == 'as_user_content':
+        cassette_ctx.verify_contains('See file')
+
+
+@pytest.mark.skipif(not openai_available(), reason='openai dependencies not installed')
+async def test_vendor_metadata_detail(
+    openai_api_key: str,
+    assets_path: Path,
+    allow_model_requests: None,
+    cassette_ctx: CassetteContext,
+):
+    """`vendor_metadata['detail']` reaches the OpenAI Responses wire for image inputs.
+
+    Covers `BinaryImage`, `ImageUrl`, and an image `UploadedFile` — the last referenced by `file_id`
+    and mapped to an `input_image` part that must carry its `detail`.
+    """
+    model = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    image_binary = BinaryImage(
+        data=assets_path.joinpath('kiwi.jpg').read_bytes(),
+        media_type='image/jpeg',
+        vendor_metadata={'detail': 'high'},
+    )
+    image_url = ImageUrl(
+        url=IMAGE_URL,
+        vendor_metadata={'detail': 'low'},
+    )
+    uploaded_image = UploadedFile(
+        file_id='file-BVTjj4CLd1Z7cgppk5sL45',
+        provider_name='openai',
+        media_type='image/jpeg',
+        vendor_metadata={'detail': 'high'},
+    )
+
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_images_with_metadata() -> list[Any]:
+        return [image_binary, image_url, uploaded_image]
+
+    result = await agent.run(
+        'Call the get_images_with_metadata tool and describe what you see.',
+        usage_limits=UsageLimits(output_tokens_limit=100000),
+    )
+    assert result.output, 'Expected non-empty response from model'
+    cassette_ctx.verify_contains('"detail": "high"', '"detail": "low"')
+    # The uploaded image is sent as an `input_image` referenced by `file_id`, carrying its `detail`.
+    cassette_ctx.verify_contains('"detail": "high", "file_id": "file-BVTjj4CLd1Z7cgppk5sL45", "type": "input_image"')
+
+
+async def test_text_plain_document_anthropic(
+    anthropic_api_key: str,
+    assets_path: Path,
+    allow_model_requests: None,
+    cassette_ctx: CassetteContext,
+):
+    """Test that text/plain documents are handled correctly by Anthropic."""
+    if not anthropic_available():
+        pytest.skip('anthropic dependencies not installed')
+
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    text_content = assets_path.joinpath('dummy.txt').read_bytes()
+    document = BinaryContent(data=text_content, media_type='text/plain')
+
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_text_document() -> BinaryContent:
+        return document
+
+    result = await agent.run(
+        'Call the get_text_document tool and describe the document content.',
+        usage_limits=UsageLimits(output_tokens_limit=100000),
+    )
+    assert result.output, 'Expected non-empty response from model'
+    cassette_ctx.verify_contains('Dummy TXT file')
+
+
+@pytest.mark.skipif(not mistral_available(), reason='mistral dependencies not installed')
+async def test_non_pdf_document_url_mistral() -> None:
+    """Test that Mistral inlines text/plain DocumentUrl from tool returns as text.
+
+    Unit test, not VCR: the cassette matcher keys only on method/path, so this pins the internal
+    tool-return `_map_messages` mapping (the placeholder tool result plus the inlined text chunks), which no cassette would catch.
+    """
+    m = MistralModel('mistral-medium-latest', provider=MistralProvider(api_key='test-key'))
+    doc_url = DocumentUrl(url='https://example.com/file.txt', media_type='text/plain')
+    file_text = 'Dummy TXT file'
+
+    messages = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_file',
+                    content=doc_url,
+                    tool_call_id='call1',
+                ),
+            ],
+        ),
+    ]
+
+    with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {'data': file_text, 'data_type': 'text/plain'}
+        mapped = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    mock_download.assert_called_once()
+    assert mock_download.call_args[1]['data_format'] == 'text'
+
+    assert mapped == snapshot(
+        [
+            ToolMessage(content='See file fb8964.', tool_call_id='call1'),
+            AssistantMessage(content=[TextChunk(text='OK')]),
+            UserMessage(
+                content=[
+                    TextChunk(text='<pyai:tool_result tool_name="get_file" tool_call_id="call1" file_id="fb8964">'),
+                    TextChunk(
+                        text="""\
+-----BEGIN FILE id="fb8964" type="text/plain"-----
+Dummy TXT file
+-----END FILE id="fb8964"-----\
+"""
+                    ),
+                    TextChunk(text='</pyai:tool_result>'),
+                ]
+            ),
+        ]
+    )
+
+
+@pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')
+async def test_s3_document_url_bedrock():
+    """Test that S3 URLs are correctly parsed for Bedrock documents."""
+    document = DocumentUrl(
+        url='s3://my-bucket/path/to/document.pdf?bucketOwner=123456789012', media_type='application/pdf'
+    )
+    result = await BedrockConverseModel._map_file_to_content_block(document, count(1))  # pyright: ignore[reportPrivateUsage]
+
+    assert result is not None
+    assert 'document' in result
+    assert result['document']['source']['s3Location']['uri'] == 's3://my-bucket/path/to/document.pdf'  # pyright: ignore[reportTypedDictNotRequiredAccess]
+    assert result['document']['source']['s3Location']['bucketOwner'] == '123456789012'  # pyright: ignore[reportTypedDictNotRequiredAccess]
+
+
+@pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')
+async def test_s3_image_url_bedrock():
+    """Test that S3 URLs are correctly parsed for Bedrock images."""
+    image = ImageUrl(url='s3://my-bucket/images/photo.png', media_type='image/png')
+    result = await BedrockConverseModel._map_file_to_content_block(image, count(1))  # pyright: ignore[reportPrivateUsage]
+
+    assert result is not None
+    assert 'image' in result
+    assert result['image']['format'] == 'png'
+    assert result['image']['source']['s3Location']['uri'] == 's3://my-bucket/images/photo.png'  # pyright: ignore[reportTypedDictNotRequiredAccess]
+
+
+@pytest.mark.skipif(not bedrock_available(), reason='bedrock dependencies not installed')
+async def test_s3_video_url_bedrock():
+    """Test that S3 URLs are correctly parsed for Bedrock videos."""
+    video = VideoUrl(url='s3://my-bucket/videos/clip.mp4', media_type='video/mp4')
+    result = await BedrockConverseModel._map_file_to_content_block(video, count(1))  # pyright: ignore[reportPrivateUsage]
+
+    assert result is not None
+    assert 'video' in result
+    assert result['video']['format'] == 'mp4'
+    assert result['video']['source']['s3Location']['uri'] == 's3://my-bucket/videos/clip.mp4'  # pyright: ignore[reportTypedDictNotRequiredAccess]
+
+
+# --- UploadedFile validation error tests (tool return path) ---
+# These test that UploadedFile validation errors in tool returns are raised correctly.
+# The user-prompt path is covered in provider-specific test files; these cover the
+# tool-return code path which maps UploadedFile inside ToolReturnPart.
+
+
+@dataclass
+class UploadedFileErrorCase:
+    """A test case for UploadedFile validation errors in tool returns."""
+
+    id: str
+    provider: ProviderName
+    uploaded_file: UploadedFile
+    match: str
+
+
+UPLOADED_FILE_ERROR_CASES: list[UploadedFileErrorCase] = [
+    UploadedFileErrorCase(
+        id='anthropic_wrong_provider',
+        provider='anthropic',
+        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='openai'),
+        match="provider_name='openai'.*cannot be used with AnthropicModel",
+    ),
+    UploadedFileErrorCase(
+        id='anthropic_unsupported_media_type',
+        provider='anthropic',
+        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='audio/mpeg'),
+        match='Unsupported media type.*audio/mpeg',
+    ),
+    UploadedFileErrorCase(
+        id='bedrock_wrong_provider',
+        provider='bedrock_nova',
+        uploaded_file=UploadedFile(file_id='s3://bucket/file.pdf', provider_name='openai'),
+        match="provider_name='openai'.*cannot be used with BedrockConverseModel",
+    ),
+    UploadedFileErrorCase(
+        id='bedrock_non_s3_url',
+        provider='bedrock_nova',
+        uploaded_file=UploadedFile(
+            file_id='https://example.com/file.pdf', provider_name='bedrock', media_type='application/pdf'
+        ),
+        match='UploadedFile for Bedrock must use an S3 URL',
+    ),
+    UploadedFileErrorCase(
+        id='bedrock_unsupported_format',
+        provider='bedrock_nova',
+        uploaded_file=UploadedFile(
+            file_id='s3://bucket/file.bin', provider_name='bedrock', media_type='application/octet-stream'
+        ),
+        match='Unsupported media type for Bedrock UploadedFile',
+    ),
+    UploadedFileErrorCase(
+        id='google_vertex_non_gcs_uri',
+        provider='google_vertex',
+        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google-cloud'),
+        match=r'UploadedFile for GoogleModel \(Google Cloud\) must use a GCS URI',
+    ),
+    UploadedFileErrorCase(
+        id='openai_responses_wrong_provider',
+        provider='openai_responses',
+        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google'),
+        match="provider_name='google'.*cannot be used with OpenAIResponsesModel",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    'case',
+    [pytest.param(c, id=c.id) for c in UPLOADED_FILE_ERROR_CASES],
+)
+async def test_uploaded_file_validation_error_in_tool_return(
+    case: UploadedFileErrorCase,
+    bedrock_provider: Any,
+    vertex_client_google_provider: GoogleProvider,
+) -> None:
+    """Test that invalid UploadedFile in a tool return raises UserError before the API call."""
+    provider = case.provider
+
+    if not is_provider_available(provider):  # pragma: no cover
+        pytest.skip(f'{provider} dependencies not installed')
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=case.uploaded_file, tool_call_id='1')]),
+    ]
+    params = ModelRequestParameters()
+
+    if provider == 'anthropic':
+        m_anthropic = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test-key'))
+        with pytest.raises(UserError, match=case.match):
+            await m_anthropic._map_message(messages, params, {})  # pyright: ignore[reportPrivateUsage]
+    elif provider in ('bedrock_nova', 'bedrock_claude'):
+        assert bedrock_provider is not None
+        model_name = MODEL_CONFIGS[provider][0]
+        m_bedrock = BedrockConverseModel(model_name, provider=bedrock_provider)
+        with pytest.raises(UserError, match=case.match):
+            await m_bedrock._map_messages(messages, params, None)  # pyright: ignore[reportPrivateUsage]
+    elif provider == 'google_vertex':
+        m_google = GoogleModel('gemini-3-flash-preview', provider=vertex_client_google_provider)
+        with pytest.raises(UserError, match=case.match):
+            await m_google._map_messages(messages, params)  # pyright: ignore[reportPrivateUsage]
+    elif provider == 'openai_responses':
+        m_openai = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key='test-key'))
+        with pytest.raises(UserError, match=case.match):
+            await m_openai._map_messages(messages, {}, params)  # pyright: ignore[reportPrivateUsage]
+    else:
+        assert_never(provider)  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.skipif(not google_available(), reason='google dependencies not installed')
+async def test_uploaded_file_vertex_valid_gcs_uri(vertex_client_google_provider: GoogleProvider) -> None:
+    """Test that a valid Vertex UploadedFile with gs:// URI maps correctly.
+
+    The model is Vertex-backed via the client transport (not the provider name), matching #6792.
+    """
+    model = GoogleModel('gemini-3-flash-preview', provider=vertex_client_google_provider)
+    file = UploadedFile(file_id='gs://bucket/path/file.pdf', provider_name='google-cloud', media_type='application/pdf')
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=file, tool_call_id='1')]),
+    ]
+    _, contents = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    assert len(contents) == 1
+
+
+# --- Tool-origin framing on the user channel ---
+# A model API whose tool result channel takes text only can only deliver a tool's file on the user
+# channel, so Pydantic AI frames it with the call it came from. These map messages directly rather
+# than through VCR: the cassette matcher keys on method and path, so a regression in this framing
+# would still match a recording and pass green.
+
+_PHOTO = BinaryContent(data=b'png-bytes', media_type='image/png', identifier='photo')
+
+
+def _two_photo_calls() -> list[ModelMessage]:
+    """Two calls to the same tool, each returning the same image.
+
+    Same tool name and same file identifier, so the `tool_call_id` in the framing is the only thing
+    that tells the two attachments apart.
+    """
+    return [
+        ModelRequest(parts=[UserPromptPart(content='show me both photos')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='get_photo', args={}, tool_call_id='photo1'),
+                ToolCallPart(tool_name='get_photo', args={}, tool_call_id='photo2'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_photo', content=['Here it is:', _PHOTO], tool_call_id='photo1'),
+                ToolReturnPart(tool_name='get_photo', content=['Here it is:', _PHOTO], tool_call_id='photo2'),
+            ]
+        ),
+    ]
+
+
+async def _wire_openai_chat(messages: list[ModelMessage]) -> object:
+    model = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(api_key='test-key'))
+    return await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+
+async def _wire_openai_responses(messages: list[ModelMessage]) -> object:
+    model = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key='test-key'))
+    _, items = await model._map_messages(messages, {}, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    return items
+
+
+async def _wire_groq(messages: list[ModelMessage]) -> object:
+    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='test-key'))
+    return await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+
+async def _wire_mistral(messages: list[ModelMessage]) -> object:
+    model = MistralModel('mistral-medium-latest', provider=MistralProvider(api_key='test-key'))
+    mapped = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    return [message.model_dump() for message in mapped]
+
+
+async def _wire_huggingface(messages: list[ModelMessage]) -> object:
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(api_key='test-key'))
+    mapped = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    return [{key: value for key, value in asdict(message).items() if value is not None} for message in mapped]
+
+
+async def _wire_xai(messages: list[ModelMessage]) -> object:
+    model = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key='test-key'))
+    mapped = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    return [MessageToDict(message, preserving_proto_field_name=True) for message in mapped]
+
+
+async def _wire_google_2_5(messages: list[ModelMessage]) -> object:
+    model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    _, contents = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    return contents
+
+
+async def _wire_google_gemini3(messages: list[ModelMessage]) -> object:
+    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    _, contents = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    return contents
+
+
+@dataclass(frozen=True)
+class ToolMediaWireCase:
+    """How one provider renders two same-tool calls whose results carry the same image."""
+
+    id: str
+    mapper: Callable[[list[ModelMessage]], Awaitable[object]]
+    framed: bool
+    """Whether this provider has to put the image on the user channel, and so frames it."""
+    expected: object
+    marks: tuple[pytest.MarkDecorator, ...] = ()
+
+
+TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
+    ToolMediaWireCase(
+        id='openai_chat',
+        mapper=_wire_openai_chat,
+        framed=True,
+        expected=snapshot(
+            [
+                {'role': 'user', 'content': 'show me both photos'},
+                {
+                    'role': 'assistant',
+                    'content': None,
+                    'tool_calls': [
+                        {'id': 'photo1', 'type': 'function', 'function': {'name': 'get_photo', 'arguments': '{}'}},
+                        {'id': 'photo2', 'type': 'function', 'function': {'name': 'get_photo', 'arguments': '{}'}},
+                    ],
+                },
+                {'role': 'tool', 'tool_call_id': 'photo1', 'content': '["Here it is:","See file photo."]'},
+                {'role': 'tool', 'tool_call_id': 'photo2', 'content': '["Here it is:","See file photo."]'},
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
+                            'type': 'text',
+                        },
+                        {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
+                        {
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
+                            'type': 'text',
+                        },
+                        {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
+                    ],
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not openai_available(), reason='openai not installed'),),
+    ),
+    ToolMediaWireCase(
+        id='groq',
+        mapper=_wire_groq,
+        framed=True,
+        expected=snapshot(
+            [
+                {'role': 'user', 'content': 'show me both photos'},
+                {
+                    'role': 'assistant',
+                    'tool_calls': [
+                        {'id': 'photo1', 'type': 'function', 'function': {'name': 'get_photo', 'arguments': '{}'}},
+                        {'id': 'photo2', 'type': 'function', 'function': {'name': 'get_photo', 'arguments': '{}'}},
+                    ],
+                },
+                {'role': 'tool', 'tool_call_id': 'photo1', 'content': '["Here it is:","See file photo."]'},
+                {'role': 'tool', 'tool_call_id': 'photo2', 'content': '["Here it is:","See file photo."]'},
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
+                            'type': 'text',
+                        },
+                        {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
+                        {
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
+                            'type': 'text',
+                        },
+                        {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
+                    ],
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not groq_available(), reason='groq not installed'),),
+    ),
+    ToolMediaWireCase(
+        id='mistral',
+        mapper=_wire_mistral,
+        framed=True,
+        expected=snapshot(
+            [
+                {'content': 'show me both photos', 'role': 'user'},
+                {
+                    'role': 'assistant',
+                    'content': [],
+                    'tool_calls': [
+                        {
+                            'function': {'name': 'get_photo', 'arguments': '{}'},
+                            'id': 'photo1',
+                            'type': 'function',
+                            'index': 0,
+                        },
+                        {
+                            'function': {'name': 'get_photo', 'arguments': '{}'},
+                            'id': 'photo2',
+                            'type': 'function',
+                            'index': 0,
+                        },
+                    ],
+                    'prefix': False,
+                },
+                {'content': '["Here it is:","See file photo."]', 'role': 'tool', 'tool_call_id': 'photo1'},
+                {'content': '["Here it is:","See file photo."]', 'role': 'tool', 'tool_call_id': 'photo2'},
+                {'role': 'assistant', 'content': [{'text': 'OK', 'type': 'text'}], 'prefix': False},
+                {
+                    'content': [
+                        {
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
+                            'type': 'text',
+                        },
+                        {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
+                        {
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
+                            'type': 'text',
+                        },
+                        {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
+                    ],
+                    'role': 'user',
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not mistral_available(), reason='mistral not installed'),),
+    ),
+    ToolMediaWireCase(
+        id='huggingface',
+        mapper=_wire_huggingface,
+        framed=True,
+        expected=snapshot(
+            [
+                {'role': 'user', 'content': 'show me both photos'},
+                {
+                    'role': 'assistant',
+                    'tool_calls': [
+                        {
+                            'function': {'arguments': '{}', 'name': 'get_photo', 'description': None},
+                            'id': 'photo1',
+                            'type': 'function',
+                        },
+                        {
+                            'function': {'arguments': '{}', 'name': 'get_photo', 'description': None},
+                            'id': 'photo2',
+                            'type': 'function',
+                        },
+                    ],
+                },
+                {'role': 'tool', 'content': '["Here it is:","See file photo."]', 'tool_call_id': 'photo1'},
+                {'role': 'tool', 'content': '["Here it is:","See file photo."]', 'tool_call_id': 'photo2'},
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'text',
+                            'image_url': None,
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
+                        },
+                        {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'text': None},
+                        {'type': 'text', 'image_url': None, 'text': '</pyai:tool_result>'},
+                        {
+                            'type': 'text',
+                            'image_url': None,
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
+                        },
+                        {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'text': None},
+                        {'type': 'text', 'image_url': None, 'text': '</pyai:tool_result>'},
+                    ],
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not huggingface_available(), reason='huggingface not installed'),),
+    ),
+    ToolMediaWireCase(
+        id='xai',
+        mapper=_wire_xai,
+        framed=True,
+        expected=snapshot(
+            [
+                {'content': [{'text': 'show me both photos'}], 'role': 'ROLE_USER'},
+                {
+                    'content': [{'text': ''}],
+                    'role': 'ROLE_ASSISTANT',
+                    'tool_calls': [
+                        {
+                            'id': 'photo1',
+                            'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                            'status': 'TOOL_CALL_STATUS_COMPLETED',
+                            'function': {'name': 'get_photo', 'arguments': '{}'},
+                        },
+                        {
+                            'id': 'photo2',
+                            'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                            'status': 'TOOL_CALL_STATUS_COMPLETED',
+                            'function': {'name': 'get_photo', 'arguments': '{}'},
+                        },
+                    ],
+                },
+                {
+                    'content': [{'text': '["Here it is:","See file photo."]'}],
+                    'role': 'ROLE_TOOL',
+                    'tool_call_id': 'photo1',
+                },
+                {
+                    'content': [{'text': '["Here it is:","See file photo."]'}],
+                    'role': 'ROLE_TOOL',
+                    'tool_call_id': 'photo2',
+                },
+                {
+                    'content': [
+                        {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">'},
+                        {'image_url': {'image_url': 'data:image/png;base64,cG5nLWJ5dGVz', 'detail': 'DETAIL_AUTO'}},
+                        {'text': '</pyai:tool_result>'},
+                        {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">'},
+                        {'image_url': {'image_url': 'data:image/png;base64,cG5nLWJ5dGVz', 'detail': 'DETAIL_AUTO'}},
+                        {'text': '</pyai:tool_result>'},
+                    ],
+                    'role': 'ROLE_USER',
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not xai_available(), reason='xai not installed'),),
+    ),
+    ToolMediaWireCase(
+        id='google_2_5',
+        mapper=_wire_google_2_5,
+        framed=True,
+        expected=snapshot(
+            [
+                {'role': 'user', 'parts': [{'text': 'show me both photos'}]},
+                {
+                    'role': 'model',
+                    'parts': [
+                        {
+                            'function_call': {'name': 'get_photo', 'args': {}, 'id': 'photo1'},
+                            'thought_signature': b'skip_thought_signature_validator',
+                        },
+                        {'function_call': {'name': 'get_photo', 'args': {}, 'id': 'photo2'}},
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {
+                            'function_response': {
+                                'name': 'get_photo',
+                                'response': {'output': [{'return_value': 'Here it is:'}, 'See file photo.']},
+                                'id': 'photo1',
+                            }
+                        },
+                        {
+                            'function_response': {
+                                'name': 'get_photo',
+                                'response': {'output': [{'return_value': 'Here it is:'}, 'See file photo.']},
+                                'id': 'photo2',
+                            }
+                        },
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">'},
+                        {'inline_data': {'data': b'png-bytes', 'mime_type': 'image/png'}},
+                        {'text': '</pyai:tool_result>'},
+                        {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">'},
+                        {'inline_data': {'data': b'png-bytes', 'mime_type': 'image/png'}},
+                        {'text': '</pyai:tool_result>'},
+                    ],
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not google_available(), reason='google not installed'),),
+    ),
+    # Contrast: these two carry the image inside the tool result itself, so nothing is framed.
+    ToolMediaWireCase(
+        id='openai_responses',
+        mapper=_wire_openai_responses,
+        framed=False,
+        expected=snapshot(
+            [
+                {'role': 'user', 'content': 'show me both photos'},
+                {'name': 'get_photo', 'arguments': '{}', 'call_id': 'photo1', 'type': 'function_call'},
+                {'name': 'get_photo', 'arguments': '{}', 'call_id': 'photo2', 'type': 'function_call'},
+                {
+                    'type': 'function_call_output',
+                    'call_id': 'photo1',
+                    'output': [
+                        {'type': 'input_text', 'text': 'Here it is:'},
+                        {'image_url': 'data:image/png;base64,cG5nLWJ5dGVz', 'type': 'input_image', 'detail': 'auto'},
+                    ],
+                },
+                {
+                    'type': 'function_call_output',
+                    'call_id': 'photo2',
+                    'output': [
+                        {'type': 'input_text', 'text': 'Here it is:'},
+                        {'image_url': 'data:image/png;base64,cG5nLWJ5dGVz', 'type': 'input_image', 'detail': 'auto'},
+                    ],
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not openai_available(), reason='openai not installed'),),
+    ),
+    ToolMediaWireCase(
+        id='google_gemini3',
+        mapper=_wire_google_gemini3,
+        framed=False,
+        expected=snapshot(
+            [
+                {'role': 'user', 'parts': [{'text': 'show me both photos'}]},
+                {
+                    'role': 'model',
+                    'parts': [
+                        {
+                            'function_call': {'name': 'get_photo', 'args': {}, 'id': 'photo1'},
+                            'thought_signature': b'skip_thought_signature_validator',
+                        },
+                        {'function_call': {'name': 'get_photo', 'args': {}, 'id': 'photo2'}},
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {
+                            'function_response': {
+                                'name': 'get_photo',
+                                'response': {'return_value': 'Here it is:'},
+                                'id': 'photo1',
+                                'parts': [{'inline_data': {'data': b'png-bytes', 'mime_type': 'image/png'}}],
+                            }
+                        },
+                        {
+                            'function_response': {
+                                'name': 'get_photo',
+                                'response': {'return_value': 'Here it is:'},
+                                'id': 'photo2',
+                                'parts': [{'inline_data': {'data': b'png-bytes', 'mime_type': 'image/png'}}],
+                            }
+                        },
+                    ],
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not google_available(), reason='google not installed'),),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id, marks=case.marks) for case in TOOL_MEDIA_WIRE_CASES])
+async def test_tool_media_is_framed_with_its_originating_call(case: ToolMediaWireCase) -> None:
+    """Tool-returned media reaches the model attributed to the call that produced it, or not at all.
+
+    Where the tool result channel is text-only the image travels on the user channel framed by its
+    `tool_name`, `tool_call_id` and `file_id`; where the channel takes files it goes inside the tool
+    result and nothing is framed. Two calls to one tool return the same image under the same
+    identifier, so the framing's `tool_call_id` is what keeps the two attachments distinct.
+
+    The framing is built with the request and never stored, so the history is unchanged afterwards
+    and the same history renders either way depending only on which model it is sent to.
+    """
+    messages = _two_photo_calls()
+    before = ModelMessagesTypeAdapter.dump_json(messages)
+
+    wire = await case.mapper(messages)
+
+    assert wire == case.expected
+    assert ModelMessagesTypeAdapter.dump_json(messages) == before
+
+    # Redundant against the snapshot above while that snapshot is correct — kept because
+    # `--inline-snapshot=fix` will happily bless a regression into `expected`, and this loop states
+    # the property in a form it cannot rewrite.
+    rendered = str(wire)
+    for tool_call_id in ('photo1', 'photo2'):
+        open_tag = (
+            f'<pyai:tool_result tool_name="get_photo" tool_call_id="{tool_call_id}" file_id="{_PHOTO.identifier}">'
+        )
+        assert (open_tag in rendered) is case.framed
+    assert ('</pyai:tool_result>' in rendered) is case.framed
+
+
+TEXT_TOOL_RESULT_CASE_IDS = ('openai_chat', 'groq', 'mistral', 'huggingface', 'xai')
+"""The `TOOL_MEDIA_WIRE_CASES` whose tool result text comes from `model_response_str_and_user_content`."""
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param(case, id=case.id, marks=case.marks)
+        for case in TOOL_MEDIA_WIRE_CASES
+        if case.id in TEXT_TOOL_RESULT_CASE_IDS
+    ],
+)
+async def test_structured_tool_return_beside_media_is_json_in_the_tool_result_text(case: ToolMediaWireCase) -> None:
+    """A dict returned beside an image reaches a text-only tool result as a JSON object, as it does without the image.
+
+    Rendered rather than recorded: the cassette matchers ignore the request body, so a recording would not pin it.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='what is the weather?')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='weather', args={}, tool_call_id='weather1')]),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='weather', content=[{'temp': 20}, _PHOTO], tool_call_id='weather1')]
+        ),
+    ]
+
+    assert '[{"temp":20},"See file photo."]' in str(await case.mapper(messages))
+
+
+@pytest.mark.skipif(not google_available(), reason='google not installed')
+async def test_google_framed_media_precedes_tool_return_content() -> None:
+    """A tool's own file reaches Gemini before the `ToolReturn.content` the developer sent with it.
+
+    Gemini reads any `Content` holding a `function_response` as model-authored (#4210), so framed
+    media is held back past the request's `function_response`s rather than emitted beside its call.
+    Held back to the very end it would land after the `ToolReturn.content` user part that trails the
+    tool returns, putting the developer's message between a call and the file it produced.
+    """
+    audio = BinaryContent(data=b'aud', media_type='audio/mpeg', identifier='clip')
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_clip', args={}, tool_call_id='c1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_clip', content=audio, tool_call_id='c1'),
+                UserPromptPart(content='and here is my note'),
+            ]
+        ),
+    ]
+
+    assert await _wire_google_2_5(messages) == snapshot(
+        [
+            {'role': 'user', 'parts': [{'text': 'go'}]},
+            {
+                'role': 'model',
+                'parts': [
+                    {
+                        'function_call': {'name': 'get_clip', 'args': {}, 'id': 'c1'},
+                        'thought_signature': b'skip_thought_signature_validator',
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'get_clip',
+                            'response': {'output': [{}, 'See file clip.']},
+                            'id': 'c1',
+                        }
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'text': '<pyai:tool_result tool_name="get_clip" tool_call_id="c1" file_id="clip">'},
+                    {'inline_data': {'data': b'aud', 'mime_type': 'audio/mpeg'}},
+                    {'text': '</pyai:tool_result>'},
+                    {'text': 'and here is my note'},
+                ],
+            },
+        ]
+    )
+
+
+SPILLING_PROVIDERS = [pytest.param(name, id=name) for name in ('openai_chat', 'mistral', 'xai', 'google_2_5')]
+"""Providers in `SUPPORT_MATRIX` whose tool result channel is text-only, so images are framed.
+
+Bedrock also frames, but only on the model families that reject media in a `toolResult`; those are
+covered by the mapper tests in `tests/models/test_bedrock.py`. Groq is absent because its recorded
+cassettes can no longer be regenerated — `MODEL_CONFIGS['groq']` now returns `model_not_found` and no
+model the test credentials reach takes image input (#7829) — and Hugging Face is absent from
+`ProviderName` entirely (#7651); both are pinned by
+`test_tool_media_is_framed_with_its_originating_call` instead.
+"""
+
+
+@pytest.mark.parametrize('provider', SPILLING_PROVIDERS)
+async def test_tool_media_framing_reaches_the_provider(
+    provider: ProviderName,
+    api_keys: dict[str, str],
+    xai_provider: Any,
+    image_content: BinaryImage,
+    allow_model_requests: None,
+    cassette_ctx: CassetteContext,
+):
+    """Each provider was sent the framing for real and answered, rather than rejecting the request.
+
+    `verify_contains` reads the recording, not the request this run just built, so this is evidence
+    from record time and not a regression guard — reverting the framing would still replay green.
+    `test_tool_media_is_framed_with_its_originating_call` is what pins the framing itself.
+    """
+    # No `pragma: no cover`: unlike the matrix test this one takes no `bedrock_provider`, so on a
+    # shard without the provider extras it reaches this skip instead of being skipped at setup.
+    if not is_provider_available(provider):
+        pytest.skip(f'{provider} dependencies not installed')
+
+    model = create_model(provider, api_keys, xai_provider=xai_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_photo() -> BinaryImage:
+        return image_content
+
+    result = await agent.run(
+        'Call the get_photo tool. One image shows a fruit - what fruit is it? Just name the fruit.',
+        usage_limits=UsageLimits(output_tokens_limit=100000),
+    )
+    assert 'kiwi' in result.output.lower(), f'Model should identify kiwi fruit, got: {result.output}'
+    # Cassette bodies are JSON, so the framing's own quotes are backslash-escaped on the wire. A frame carries no
+    # marker attribute, so the check starts at its first one.
+    cassette_ctx.verify_contains(r'tool_name=\"get_photo\" tool_call_id=\"', '</pyai:tool_result>')

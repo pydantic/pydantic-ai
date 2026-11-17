@@ -1,0 +1,187 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '432'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '759'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: 48f5r72yf
+            type: function
+      created: 1769718252
+      id: chatcmpl-1c4c9457-f822-4c0f-8ab2-11731f132736
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_f08cd12a81
+      usage:
+        completion_time: 0.066902777
+        completion_tokens: 29
+        prompt_time: 0.021367561
+        prompt_tokens: 717
+        queue_time: 0.074632146
+        total_time: 0.088270338
+        total_tokens: 746
+      usage_breakdown: null
+      x_groq:
+        id: req_01kg5pv0kwfw490qzzv1h4y0ef
+        seed: 948025449
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '667'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=bDYSI.RbeBpyX5_43dbbE1mTne3evP41FKyKuGma6j4-1769718252.1090095-1.0.1.1-d7ZKF36jCxy0I.yci4t81rHrrzWe96H3g3DpWPt9NLyf4ONCM4UCvHHSq4HDO82urt4QzKw3aJBPJwuX7Ki1TLtRZsK5503I.QoArcoLWFCqlIVVpJi6.LOxSTmljtHl
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: 48f5r72yf
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: 48f5r72yf
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '694'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: The weather in Paris is sunny with a temperature of 22C.
+          role: assistant
+      created: 1769718252
+      id: chatcmpl-60493778-8a14-4397-988c-a3524d749b00
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_f08cd12a81
+      usage:
+        completion_time: 0.035370461
+        completion_tokens: 15
+        prompt_time: 0.021165673
+        prompt_tokens: 774
+        queue_time: 0.073833899
+        total_time: 0.056536134
+        total_tokens: 789
+      usage_breakdown: null
+      x_groq:
+        id: req_01kg5pv0xcfw4byzvxc9f7zacc
+        seed: 1291848637
+    status:
+      code: 200
+      message: OK
+version: 1

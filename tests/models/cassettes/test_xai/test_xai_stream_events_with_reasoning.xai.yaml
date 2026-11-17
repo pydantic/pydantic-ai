@@ -1,0 +1,851 @@
+version: 1
+interactions:
+- request_stream:
+    json:
+      messages:
+      - content:
+        - text: What is the 10th prime number?
+        role: ROLE_USER
+      model: grok-4-fast-reasoning
+      max_tokens: 100
+      use_encrypted_content: true
+    raw: !!binary |
+      CiQKIAoeV2hhdCBpcyB0aGUgMTB0aCBwcmltZSBudW1iZXI/EAESFWdyb2stNC1mYXN0LXJlYXNv
+      bmluZzhkwAEB
+  response_stream:
+    chunks_json:
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: '29'
+            role: ROLE_ASSISTANT
+            encrypted_content: ZrGxn8fbAQq4ABdfl6t3DtOpZ0YsunRfNRjVRO8LYu/EzWIwfD++2C1NxXoUmFWygqFlTilWAKKRQBREujvzWFqBkDCB36NYvakggnUMijNgk75JGCU9CYnR4fyR0yW7Hvl0aEi2AUC76Q78RIGVPbw0Qibvsm21ipp8wd67oBESnLbGSEo9P03Jj5N0ptVoUTke60iIQYSXmmE4uoqwM8RWy1Ip8Zd+shxz8tHOVpxZA5gwU8mrP/A7gQkJ/xET5J/WJimXcN/po1NXp88T4Mj4Yd3RqpHXYwb9E4lQjQbAhwK+RFhvr9J1wDQt9hy3AjJtRf1Am+efDchGAcbdlL0Vvuc9wmmAcoMFvtFdGlWnCFaiURMMj/TjO5jGLIC7tcZw5Dfs0rL64LKehK9zu1rVcLYvcyu8eh+HtCwultnjRNxfZ1jFIlEtCIDvfx0EoYXbSB+sjrcBojL1bv8RHOuHakr2HmyCm9Vp4NF3mvPHW4LVx2Nv1F3Vaqro6nbD+G50JdNPb27ZyBUxCcbaF28VkIJQX/yI6ezGlBh+f08oSODPGa+N90o7yrjSm2+IuKEuvyCBXJhc4YF93e8S3Dyq9sSEdkUu
+        created: '2026-01-16T17:05:29.213381359Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 1
+          prompt_tokens: 165
+          total_tokens: 287
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: '
+
+
+              '
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.238481623Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 2
+          prompt_tokens: 165
+          total_tokens: 288
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: The
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.262062543Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 3
+          prompt_tokens: 165
+          total_tokens: 289
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ' first'
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.262087199Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 4
+          prompt_tokens: 165
+          total_tokens: 290
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ' '
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.286431589Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 5
+          prompt_tokens: 165
+          total_tokens: 291
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: '10'
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.286476148Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 6
+          prompt_tokens: 165
+          total_tokens: 292
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ' prime'
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.286491799Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 7
+          prompt_tokens: 165
+          total_tokens: 293
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ' numbers'
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.286507649Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 8
+          prompt_tokens: 165
+          total_tokens: 294
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ' are'
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.286523377Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 9
+          prompt_tokens: 165
+          total_tokens: 295
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ':'
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.286541180Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 10
+          prompt_tokens: 165
+          total_tokens: 296
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ' '
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.308766183Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 11
+          prompt_tokens: 165
+          total_tokens: 297
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: '2'
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.309325046Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 12
+          prompt_tokens: 165
+          total_tokens: 298
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ','
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.309358375Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 13
+          prompt_tokens: 165
+          total_tokens: 299
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ' '
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.309372836Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 14
+          prompt_tokens: 165
+          total_tokens: 300
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: '3'
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.309385405Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 15
+          prompt_tokens: 165
+          total_tokens: 301
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ','
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.309398048Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 16
+          prompt_tokens: 165
+          total_tokens: 302
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ' '
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.332594505Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 17
+          prompt_tokens: 165
+          total_tokens: 303
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: '5'
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.332620724Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 18
+          prompt_tokens: 165
+          total_tokens: 304
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ','
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.332631904Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 19
+          prompt_tokens: 165
+          total_tokens: 305
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ' '
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.332642995Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 20
+          prompt_tokens: 165
+          total_tokens: 306
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: '7'
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.332652139Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 21
+          prompt_tokens: 165
+          total_tokens: 307
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ','
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.332667855Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 22
+          prompt_tokens: 165
+          total_tokens: 308
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ' '
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.356365372Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 23
+          prompt_tokens: 165
+          total_tokens: 309
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: '11'
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.356398359Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 24
+          prompt_tokens: 165
+          total_tokens: 310
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ','
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.356414040Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 25
+          prompt_tokens: 165
+          total_tokens: 311
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ' '
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.356426069Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 26
+          prompt_tokens: 165
+          total_tokens: 312
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: '13'
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.356439200Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 27
+          prompt_tokens: 165
+          total_tokens: 313
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ','
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.356453095Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 28
+          prompt_tokens: 165
+          total_tokens: 314
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ' '
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.378691199Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 29
+          prompt_tokens: 165
+          total_tokens: 315
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: '17'
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.378719652Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 30
+          prompt_tokens: 165
+          total_tokens: 316
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ','
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.378730910Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 31
+          prompt_tokens: 165
+          total_tokens: 317
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ' '
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.378750153Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 32
+          prompt_tokens: 165
+          total_tokens: 318
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: '19'
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.378760785Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 33
+          prompt_tokens: 165
+          total_tokens: 319
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ','
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.378771292Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 34
+          prompt_tokens: 165
+          total_tokens: 320
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ' '
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.402314208Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 35
+          prompt_tokens: 165
+          total_tokens: 321
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: '23'
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.402347704Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 36
+          prompt_tokens: 165
+          total_tokens: 322
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ','
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.402362871Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 37
+          prompt_tokens: 165
+          total_tokens: 323
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: ' '
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.402378437Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 38
+          prompt_tokens: 165
+          total_tokens: 324
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: '29'
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.402403348Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 39
+          prompt_tokens: 165
+          total_tokens: 325
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            content: .
+            role: ROLE_ASSISTANT
+        created: '2026-01-16T17:05:29.402428011Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 40
+          prompt_tokens: 165
+          total_tokens: 326
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    - chunk:
+        id: cf4548c5-058a-a809-9803-4653f7c80fe3
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+          finish_reason: REASON_STOP
+        created: '2026-01-16T17:05:29.426326050Z'
+        model: grok-4-fast-reasoning
+        system_fingerprint: fp_cfcc85ff86
+        usage:
+          completion_tokens: 40
+          prompt_tokens: 165
+          total_tokens: 326
+          prompt_text_tokens: 165
+          reasoning_tokens: 121
+          cached_prompt_text_tokens: 151
+    chunks_raw:
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMS7AQK6QQKAjI5EAIq4ARackd4
+      bjhmYkFRcTRBQmRmbDZ0M0R0T3BaMFlzdW5SZk5SalZSTzhMWXUvRXpXSXdmRCsrMkMxTnhYb1Vt
+      Rld5Z3FGbFRpbFdBS0tSUUJSRXVqdnpXRnFCa0RDQjM2Tll2YWtnZ25VTWlqTmdrNzVKR0NVOUNZ
+      blI0ZnlSMHlXN0h2bDBhRWkyQVVDNzZRNzhSSUdWUGJ3MFFpYnZzbTIxaXBwOHdkNjdvQkVTbkxi
+      R1NFbzlQMDNKajVOMHB0Vm9VVGtlNjBpSVFZU1htbUU0dW9xd004Uld5MUlwOFpkK3NoeHo4dEhP
+      VnB4WkE1Z3dVOG1yUC9BN2dRa0oveEVUNUovV0ppbVhjTi9wbzFOWHA4OFQ0TWo0WWQzUnFwSFhZ
+      d2I5RTRsUWpRYkFod0srUkZodnI5SjF3RFF0OWh5M0FqSnRSZjFBbStlZkRjaEdBY2JkbEwwVnZ1
+      Yzl3bW1BY29NRnZ0RmRHbFduQ0ZhaVVSTU1qL1RqTzVqR0xJQzd0Y1p3NURmczByTDY0TEtlaEs5
+      enUxclZjTFl2Y3l1OGVoK0h0Q3d1bHRualJOeGZaMWpGSWxFdENJRHZmeDBFb1lYYlNCK3NqcmNC
+      b2pMMWJ2OFJIT3VIYWtyMkhteUNtOVZwNE5GM212UEhXNExWeDJOdjFGM1ZhcXJvNm5iRCtHNTBK
+      ZE5QYjI3WnlCVXhDY2JhRjI4VmtJSlFYL3lJNmV6R2xCaCtmMDhvU09EUEdhK045MG83eXJqU20y
+      K0l1S0V1dnlDQlhKaGM0WUY5M2U4UzNEeXE5c1NFZGtVdRoLCNnfqcsGEO/h32UiFWdyb2stNC1m
+      YXN0LXJlYXNvbmluZyoNZnBfY2ZjYzg1ZmY4NjIUCAEQpQEYnwIgpQEweTiXAVicxis=
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSCAoGCgIKChACGgsI2d+pywYQ
+      1+HbcSIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIAhClARigAiClATB5
+      OJcBWKTtKw==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSCQoHCgNUaGUQAhoLCNnfqcsG
+      EM+D+3wiFWdyb2stNC1mYXN0LXJlYXNvbmluZyoNZnBfY2ZjYzg1ZmY4NjIUCAMQpQEYoQIgpQEw
+      eTiXAVislCw=
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSDAoKCgYgZmlyc3QQAhoLCNnf
+      qcsGEJ/E/HwiFWdyb2stNC1mYXN0LXJlYXNvbmluZyoNZnBfY2ZjYzg1ZmY4NjIUCAQQpQEYogIg
+      pQEweTiXAVi0uyw=
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEgEAIaDAjZ36nLBhDl
+      ssqIASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIBRClARijAiClATB5
+      OJcBWLziLA==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSCAoGCgIxMBACGgwI2d+pywYQ
+      9I7NiAEiFWdyb2stNC1mYXN0LXJlYXNvbmluZyoNZnBfY2ZjYzg1ZmY4NjIUCAYQpQEYpAIgpQEw
+      eTiXAVjEiS0=
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSDAoKCgYgcHJpbWUQAhoMCNnf
+      qcsGEJeJzogBIhVncm9rLTQtZmFzdC1yZWFzb25pbmcqDWZwX2NmY2M4NWZmODYyFAgHEKUBGKUC
+      IKUBMHk4lwFYzLAt
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSDgoMCgggbnVtYmVycxACGgwI
+      2d+pywYQgYXPiAEiFWdyb2stNC1mYXN0LXJlYXNvbmluZyoNZnBfY2ZjYzg1ZmY4NjIUCAgQpQEY
+      pgIgpQEweTiXAVjU1y0=
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSCgoICgQgYXJlEAIaDAjZ36nL
+      BhDx/8+IASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQICRClARinAiCl
+      ATB5OJcBWNz+LQ==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgE6EAIaDAjZ36nLBhD8
+      itGIASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIChClARioAiClATB5
+      OJcBWOSlLg==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEgEAIaDAjZ36nLBhDn
+      y52TASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQICxClARipAiClATB5
+      OJcBWOzMLg==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEyEAIaDAjZ36nLBhD2
+      2b+TASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIDBClARiqAiClATB5
+      OJcBWPTzLg==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEsEAIaDAjZ36nLBhCn
+      3sGTASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIDRClARirAiClATB5
+      OJcBWPyaLw==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEgEAIaDAjZ36nLBhCk
+      z8KTASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIDhClARisAiClATB5
+      OJcBWITCLw==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEzEAIaDAjZ36nLBhC9
+      scOTASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIDxClARitAiClATB5
+      OJcBWIzpLw==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEsEAIaDAjZ36nLBhCg
+      lMSTASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIEBClARiuAiClATB5
+      OJcBWJSQMA==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEgEAIaDAjZ36nLBhDJ
+      +sueASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIERClARivAiClATB5
+      OJcBWJy3MA==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgE1EAIaDAjZ36nLBhC0
+      x82eASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIEhClARiwAiClATB5
+      OJcBWKTeMA==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEsEAIaDAjZ36nLBhDg
+      ns6eASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIExClARixAiClATB5
+      OJcBWKyFMQ==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEgEAIaDAjZ36nLBhCz
+      9c6eASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIFBClARiyAiClATB5
+      OJcBWLSsMQ==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgE3EAIaDAjZ36nLBhDr
+      vM+eASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIFRClARizAiClATB5
+      OJcBWLzTMQ==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEsEAIaDAjZ36nLBhDP
+      t9CeASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIFhClARi0AiClATB5
+      OJcBWMT6MQ==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEgEAIaDAjZ36nLBhC8
+      6PapASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIFxClARi1AiClATB5
+      OJcBWMyhMg==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSCAoGCgIxMRACGgwI2d+pywYQ
+      l+r4qQEiFWdyb2stNC1mYXN0LXJlYXNvbmluZyoNZnBfY2ZjYzg1ZmY4NjIUCBgQpQEYtgIgpQEw
+      eTiXAVjUyDI=
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEsEAIaDAjZ36nLBhDY
+      5PmpASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIGRClARi3AiClATB5
+      OJcBWNzvMg==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEgEAIaDAjZ36nLBhDV
+      wvqpASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIGhClARi4AiClATB5
+      OJcBWOSWMw==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSCAoGCgIxMxACGgwI2d+pywYQ
+      oKn7qQEiFWdyb2stNC1mYXN0LXJlYXNvbmluZyoNZnBfY2ZjYzg1ZmY4NjIUCBsQpQEYuQIgpQEw
+      eTiXAVjsvTM=
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEsEAIaDAjZ36nLBhDn
+      lfypASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIHBClARi6AiClATB5
+      OJcBWPTkMw==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEgEAIaDAjZ36nLBhD/
+      vMm0ASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIHRClARi7AiClATB5
+      OJcBWPyLNA==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSCAoGCgIxNxACGgwI2d+pywYQ
+      pJvLtAEiFWdyb2stNC1mYXN0LXJlYXNvbmluZyoNZnBfY2ZjYzg1ZmY4NjIUCB4QpQEYvAIgpQEw
+      eTiXAViEszQ=
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEsEAIaDAjZ36nLBhCe
+      88u0ASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIHxClARi9AiClATB5
+      OJcBWIzaNA==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEgEAIaDAjZ36nLBhDJ
+      ic20ASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIIBClARi+AiClATB5
+      OJcBWJSBNQ==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSCAoGCgIxORACGgwI2d+pywYQ
+      0dzNtAEiFWdyb2stNC1mYXN0LXJlYXNvbmluZyoNZnBfY2ZjYzg1ZmY4NjIUCCEQpQEYvwIgpQEw
+      eTiXAVicqDU=
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEsEAIaDAjZ36nLBhDc
+      rs60ASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIIhClARjAAiClATB5
+      OJcBWKTPNQ==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEgEAIaDAjZ36nLBhDg
+      p+u/ASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIIxClARjBAiClATB5
+      OJcBWKz2NQ==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSCAoGCgIyMxACGgwI2d+pywYQ
+      uK3tvwEiFWdyb2stNC1mYXN0LXJlYXNvbmluZyoNZnBfY2ZjYzg1ZmY4NjIUCCQQpQEYwgIgpQEw
+      eTiXAVi0nTY=
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEsEAIaDAjZ36nLBhD3
+      o+6/ASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIJRClARjDAiClATB5
+      OJcBWLzENg==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEgEAIaDAjZ36nLBhDF
+      ne+/ASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIJhClARjEAiClATB5
+      OJcBWMTrNg==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSCAoGCgIyORACGgwI2d+pywYQ
+      lODwvwEiFWdyb2stNC1mYXN0LXJlYXNvbmluZyoNZnBfY2ZjYzg1ZmY4NjIUCCcQpQEYxQIgpQEw
+      eTiXAVjMkjc=
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBwoFCgEuEAIaDAjZ36nLBhDr
+      oPK/ASIVZ3Jvay00LWZhc3QtcmVhc29uaW5nKg1mcF9jZmNjODVmZjg2MhQIKBClARjGAiClATB5
+      OJcBWNS5Nw==
+    - !!binary |
+      CiRjZjQ1NDhjNS0wNThhLWE4MDktOTgwMy00NjUzZjdjODBmZTMSBgoCEAIYAxoMCNnfqcsGEKLw
+      pMsBIhVncm9rLTQtZmFzdC1yZWFzb25pbmcqDWZwX2NmY2M4NWZmODYyFAgoEKUBGMYCIKUBMHk4
+      lwFY1Lk3

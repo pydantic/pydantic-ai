@@ -1,0 +1,2120 @@
+"""Tests for function signature generation and deduplication."""
+
+from __future__ import annotations
+
+import ast
+import typing
+from enum import Enum
+from typing import Any, Optional, Union
+
+import pytest
+import typing_extensions
+from pydantic import BaseModel, RootModel, create_model
+
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.function_signature import (
+    FunctionParam,
+    FunctionSignature,
+    GenericTypeExpr,
+    SimpleTypeExpr,
+    TypeFieldSignature,
+    TypeSignature,
+    UnionTypeExpr,
+)
+from pydantic_ai.tools import Tool, ToolDefinition
+
+from ._inline_snapshot import snapshot
+
+
+# Module-level types for tests that need get_type_hints() resolution
+class _Color(str, Enum):  # noqa: UP042
+    RED = 'red'
+    GREEN = 'green'
+
+
+class _ConfigWithEnum(BaseModel):
+    name: str
+    color: _Color
+
+
+class _SearchParams(typing_extensions.TypedDict):
+    query: str
+    limit: int
+
+
+def test_render_function_signature_with_no_params():
+    sig = FunctionSignature(name='ping', params={}, return_type=SimpleTypeExpr('None'))
+    assert sig.render('...', name='ping') == 'def ping() -> None:\n    ...'
+    # render() can override is_async
+    assert sig.render('...', name='ping', is_async=True) == 'async def ping() -> None:\n    ...'
+
+
+def test_get_conflicting_type_names_substring_names():
+    """Marking 'User' for prefix must not affect 'UserMeta' in the same signature."""
+    user1 = TypeSignature(
+        name='User',
+        fields={
+            'name': TypeFieldSignature(name='name', type=SimpleTypeExpr('str'), required=True, description=None),
+        },
+    )
+    user2 = TypeSignature(
+        name='User',
+        fields={
+            'id': TypeFieldSignature(name='id', type=SimpleTypeExpr('int'), required=True, description=None),
+        },
+    )
+    user_meta = TypeSignature(
+        name='UserMeta',
+        fields={
+            'role': TypeFieldSignature(name='role', type=SimpleTypeExpr('str'), required=True, description=None),
+        },
+    )
+
+    sig1 = FunctionSignature(
+        name='tool_a',
+        params={'user': FunctionParam(name='user', type=user1, default=None)},
+        return_type=SimpleTypeExpr('Any'),
+        referenced_types=[user1],
+    )
+    sig2 = FunctionSignature(
+        name='tool_b',
+        params={
+            'user': FunctionParam(name='user', type=user2, default=None),
+            'meta': FunctionParam(name='meta', type=user_meta, default=None),
+        },
+        return_type=user_meta,
+        referenced_types=[user2, user_meta],
+    )
+    prefixed = FunctionSignature.get_conflicting_type_names([sig1, sig2])
+
+    # 'User' needs a prefix, 'UserMeta' does not
+    assert prefixed == frozenset({'User'})
+    assert user_meta.name == 'UserMeta'
+    # render() sets the context — prefixed types resolve correctly
+    rendered = sig2.render('...', name='tool_b', conflicting_type_names=prefixed)
+    assert 'user: tool_b_User' in rendered
+    assert 'meta: UserMeta' in rendered
+
+
+def test_render_definition_with_conflicting_types():
+    """render_definition applies tool-name prefix for conflicting types."""
+    user = TypeSignature(
+        name='User',
+        fields={
+            'name': TypeFieldSignature(name='name', type=SimpleTypeExpr('str'), required=True, description=None),
+        },
+    )
+    # Without conflict info, renders as plain name
+    plain = user.render_definition()
+    assert plain.startswith('class User(TypedDict):')
+
+    # With conflict info, renders with prefix
+    prefixed = user.render_definition(owner_name='tool_a', conflicting_type_names=frozenset({'User'}))
+    assert prefixed.startswith('class tool_a_User(TypedDict):')
+
+
+def test_render_type_definitions_with_conflicts():
+    """render_type_definitions renders unique types with prefixes for conflicts."""
+    user1 = TypeSignature(
+        name='User',
+        fields={'name': TypeFieldSignature(name='name', type=SimpleTypeExpr('str'), required=True)},
+    )
+    user2 = TypeSignature(
+        name='User',
+        fields={'id': TypeFieldSignature(name='id', type=SimpleTypeExpr('int'), required=True)},
+    )
+    address = TypeSignature(
+        name='Address',
+        fields={'city': TypeFieldSignature(name='city', type=SimpleTypeExpr('str'), required=True)},
+    )
+
+    sig1 = FunctionSignature(
+        name='get_user',
+        params={'user': FunctionParam(name='user', type=user1)},
+        return_type=SimpleTypeExpr('Any'),
+        referenced_types=[user1, address],
+    )
+    sig2 = FunctionSignature(
+        name='find_user',
+        params={'user': FunctionParam(name='user', type=user2)},
+        return_type=SimpleTypeExpr('Any'),
+        referenced_types=[user2],
+    )
+    conflicting = FunctionSignature.get_conflicting_type_names([sig1, sig2])
+    assert conflicting == frozenset({'User'})
+
+    rendered = FunctionSignature.render_type_definitions([sig1, sig2], conflicting)
+    # Should have 3 definitions: prefixed User for each sig, plus Address
+    assert len(rendered) == 3
+    assert any('class get_user_User(TypedDict):' in r for r in rendered)
+    assert any('class find_user_User(TypedDict):' in r for r in rendered)
+    assert any('class Address(TypedDict):' in r for r in rendered)
+
+
+def test_render_type_definitions_empty():
+    """render_type_definitions returns empty list when no referenced types."""
+    sig = FunctionSignature(
+        name='simple',
+        params={'x': FunctionParam(name='x', type=SimpleTypeExpr('int'))},
+        return_type=SimpleTypeExpr('str'),
+    )
+    assert FunctionSignature.render_type_definitions([sig], frozenset()) == []
+
+
+def test_dedup_identical_types_unified():
+    """Identical TypeSignatures are unified to the same object instance."""
+    user1 = TypeSignature(
+        name='User',
+        fields={
+            'name': TypeFieldSignature(name='name', type=SimpleTypeExpr('str'), required=True, description=None),
+        },
+    )
+    user2 = TypeSignature(
+        name='User',
+        fields={
+            'name': TypeFieldSignature(name='name', type=SimpleTypeExpr('str'), required=True, description=None),
+        },
+    )
+
+    sig1 = FunctionSignature(
+        name='tool_a',
+        params={'user': FunctionParam(name='user', type=user1, default=None)},
+        return_type=SimpleTypeExpr('Any'),
+        referenced_types=[user1],
+    )
+    sig2 = FunctionSignature(
+        name='tool_b',
+        params={'user': FunctionParam(name='user', type=user2, default=None)},
+        return_type=SimpleTypeExpr('Any'),
+        referenced_types=[user2],
+    )
+    FunctionSignature.get_conflicting_type_names([sig1, sig2])
+
+    # Both sigs keep the type, but unified to the same canonical instance
+    assert len(sig2.referenced_types) == 1
+    assert sig2.referenced_types[0] is user1
+    # sig2's param should now point to the canonical (sig1's) TypeSignature
+    assert sig2.params['user'].type is user1
+
+    # collect_unique_referenced_types emits the definition only once
+    defs = FunctionSignature.collect_unique_referenced_types([sig1, sig2])
+    assert len(defs) == 1
+
+
+def test_dedup_replaces_nested_generic_and_union_refs_with_canonical():
+    user1 = TypeSignature(
+        name='User',
+        fields={
+            'name': TypeFieldSignature(name='name', type=SimpleTypeExpr('str'), required=True, description=None),
+        },
+    )
+    user2 = TypeSignature(
+        name='User',
+        fields={
+            'name': TypeFieldSignature(name='name', type=SimpleTypeExpr('str'), required=True, description=None),
+        },
+    )
+    wrapper = TypeSignature(
+        name='Wrapper',
+        fields={
+            'users': TypeFieldSignature(
+                name='users',
+                type=GenericTypeExpr(base='list', args=[user2]),
+                required=True,
+                description=None,
+            ),
+            'maybe_user': TypeFieldSignature(
+                name='maybe_user',
+                type=UnionTypeExpr(members=[user2, SimpleTypeExpr('None')]),
+                required=False,
+                description=None,
+            ),
+        },
+    )
+
+    sig1 = FunctionSignature(
+        name='tool_a',
+        params={'user': FunctionParam(name='user', type=user1, default=None)},
+        return_type=SimpleTypeExpr('Any'),
+        referenced_types=[user1],
+    )
+    sig2 = FunctionSignature(
+        name='tool_b',
+        params={
+            'wrapper': FunctionParam(name='wrapper', type=wrapper, default=None),
+            'tags': FunctionParam(
+                name='tags', type=GenericTypeExpr(base='list', args=[SimpleTypeExpr('str')]), default=None
+            ),
+            'label': FunctionParam(
+                name='label', type=UnionTypeExpr(members=[SimpleTypeExpr('str'), SimpleTypeExpr('None')]), default=None
+            ),
+        },
+        return_type=GenericTypeExpr(base='list', args=[user2]),
+        referenced_types=[user2, wrapper],
+    )
+
+    FunctionSignature.get_conflicting_type_names([sig1, sig2])
+
+    users_expr = wrapper.fields['users'].type
+    maybe_user_expr = wrapper.fields['maybe_user'].type
+    return_expr = sig2.return_type
+
+    assert isinstance(users_expr, GenericTypeExpr)
+    assert isinstance(maybe_user_expr, UnionTypeExpr)
+    assert isinstance(return_expr, GenericTypeExpr)
+    assert users_expr.args[0] is user1
+    assert maybe_user_expr.members[0] is user1
+    assert return_expr.args[0] is user1
+
+
+def test_dedup_mixed_identical_and_conflicting_from_schemas():
+    """Two identical User $defs are unified; a third different User is renamed.
+
+    Tests the full pipeline: JSON schema → schema_to_signature → dedup → render.
+    """
+    # tool_a and tool_b both have a User $def with {name: str}
+    user_v1_def = {
+        'type': 'object',
+        'properties': {'name': {'type': 'string'}},
+        'required': ['name'],
+    }
+    # tool_c has a User $def with {id: int} — same name, different structure
+    user_v2_def = {
+        'type': 'object',
+        'properties': {'id': {'type': 'integer'}},
+        'required': ['id'],
+    }
+
+    sig1 = FunctionSignature.from_schema(
+        name='tool_a',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'user': {'$ref': '#/$defs/User'}},
+            'required': ['user'],
+            '$defs': {'User': user_v1_def},
+        },
+    )
+    sig2 = FunctionSignature.from_schema(
+        name='tool_b',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'user': {'$ref': '#/$defs/User'}},
+            'required': ['user'],
+            '$defs': {'User': user_v1_def},
+        },
+    )
+    sig3 = FunctionSignature.from_schema(
+        name='tool_c',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'user': {'$ref': '#/$defs/User'}},
+            'required': ['user'],
+            '$defs': {'User': user_v2_def},
+        },
+    )
+
+    prefixed = FunctionSignature.get_conflicting_type_names([sig1, sig2, sig3])
+
+    # sig1 and sig2 share the same canonical User instance
+    assert len(sig1.referenced_types) == 1
+    assert len(sig2.referenced_types) == 1
+    assert sig2.referenced_types[0] is sig1.referenced_types[0]
+    assert sig2.params['user'].type is sig1.referenced_types[0]
+
+    # 'User' needs a prefix
+    assert prefixed == frozenset({'User'})
+    # render() sets the context — prefixed types resolve correctly
+    rendered = sig3.render('...', name='tool_c', conflicting_type_names=prefixed)
+    assert 'user: tool_c_User' in rendered
+
+    # collect_unique_referenced_types returns exactly 2 unique types
+    unique_types = FunctionSignature.collect_unique_referenced_types([sig1, sig2, sig3])
+    assert len(unique_types) == 2
+    # First type (User) doesn't need prefix
+    assert unique_types[0].render_definition() == snapshot("""\
+class User(TypedDict):
+    name: str""")
+    # Second type needs prefix — render_definition() uses context from render()
+    assert 'tool_c_User' in sig3.render('...', name='tool_c', conflicting_type_names=prefixed)
+
+
+def test_dedup_composite_type_expr_rename_propagates():
+    """Renaming propagates through GenericTypeExpr references like list[User]."""
+    user1 = TypeSignature(
+        name='User',
+        fields={
+            'name': TypeFieldSignature(name='name', type=SimpleTypeExpr('str'), required=True, description=None),
+        },
+    )
+    user2 = TypeSignature(
+        name='User',
+        fields={
+            'id': TypeFieldSignature(name='id', type=SimpleTypeExpr('int'), required=True, description=None),
+        },
+    )
+
+    sig1 = FunctionSignature(
+        name='tool_a',
+        params={'user': FunctionParam(name='user', type=user1, default=None)},
+        return_type=SimpleTypeExpr('Any'),
+        referenced_types=[user1],
+    )
+    # sig2 references user2 via list[User]
+    sig2 = FunctionSignature(
+        name='tool_b',
+        params={'users': FunctionParam(name='users', type=GenericTypeExpr(base='list', args=[user2]), default=None)},
+        return_type=SimpleTypeExpr('Any'),
+        referenced_types=[user2],
+    )
+    prefixed = FunctionSignature.get_conflicting_type_names([sig1, sig2])
+
+    # 'User' needs a prefix
+    assert prefixed == frozenset({'User'})
+    # render() sets the context — prefixed types resolve correctly
+    rendered = sig2.render('...', name='tool_b', conflicting_type_names=prefixed)
+    assert 'users: list[tool_b_User]' in rendered
+
+
+def test_render_type_signature():
+    """TypeSignature renders a valid TypedDict class definition."""
+    ts = TypeSignature(
+        name='User',
+        fields={
+            'name': TypeFieldSignature(name='name', type=SimpleTypeExpr('str'), required=True, description=None),
+            'age': TypeFieldSignature(name='age', type=SimpleTypeExpr('int'), required=False, description='The age'),
+        },
+    )
+    assert str(ts) == snapshot('User')
+
+
+def test_render_type_signature_empty():
+    """Empty TypeSignature renders with pass."""
+    ts = TypeSignature(name='Empty')
+    assert str(ts) == 'Empty'
+    assert ts.render_definition() == 'class Empty(TypedDict):\n    pass'
+
+
+def test_render_generic_type_expr():
+    """GenericTypeExpr renders correctly."""
+    user = TypeSignature(name='User')
+    expr = GenericTypeExpr(base='list', args=[user])
+    assert str(expr) == 'list[User]'
+
+    dict_expr = GenericTypeExpr(base='dict', args=[SimpleTypeExpr('str'), GenericTypeExpr(base='list', args=[user])])
+    assert str(dict_expr) == 'dict[str, list[User]]'
+
+
+def test_render_union_type_expr():
+    """UnionTypeExpr renders correctly."""
+    user = TypeSignature(name='User')
+    expr = UnionTypeExpr(members=[user, SimpleTypeExpr('None')])
+    assert str(expr) == 'User | None'
+
+
+def test_render_function_param():
+    """FunctionParam renders correct parameter strings."""
+    p1 = FunctionParam(name='x', type=SimpleTypeExpr('int'), default=None)
+    assert str(p1) == 'x: int'
+
+    p2 = FunctionParam(name='y', type=SimpleTypeExpr('str'), default="'hello'")
+    assert str(p2) == "y: str = 'hello'"
+
+    user = TypeSignature(name='User')
+    p3 = FunctionParam(name='user', type=user, default=None)
+    assert str(p3) == 'user: User'
+
+
+def test_structurally_equal():
+    """TypeSignature.structurally_equal compares fields structurally."""
+    ts1 = TypeSignature(
+        name='A',
+        fields={
+            'x': TypeFieldSignature(name='x', type=SimpleTypeExpr('int'), required=True, description='desc1'),
+        },
+    )
+    ts2 = TypeSignature(
+        name='B',
+        fields={
+            'x': TypeFieldSignature(name='x', type=SimpleTypeExpr('int'), required=True, description='different desc'),
+        },
+    )
+    # Same fields, different names and descriptions — structurally equal
+    assert ts1.structurally_equal(ts2)
+
+    ts3 = TypeSignature(
+        name='C',
+        fields={
+            'x': TypeFieldSignature(name='x', type=SimpleTypeExpr('str'), required=True, description=None),
+        },
+    )
+    # Different field type — not equal
+    assert not ts1.structurally_equal(ts3)
+
+    ts4 = TypeSignature(
+        name='D',
+        fields={'y': TypeFieldSignature(name='y', type=SimpleTypeExpr('int'), required=True)},
+    )
+    # Different field name — not equal
+    assert not ts1.structurally_equal(ts4)
+
+
+def test_schema_nested_object_name_with_digit_prefix():
+    """Tool names starting with digits get valid PascalCase TypedDict names with leading underscore."""
+    sig = FunctionSignature.from_schema(
+        name='123_tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'config': {
+                    'type': 'object',
+                    'properties': {'key': {'type': 'string'}},
+                    'required': ['key'],
+                },
+            },
+            'required': ['config'],
+        },
+    )
+    # The nested object should get a name like _123Tool + Config
+    assert any('_123Tool' in rt.name for rt in sig.referenced_types)
+
+
+def test_schema_hyphenated_tool_name():
+    """Hyphenated tool names (e.g. from MCP) produce valid PascalCase TypedDict names."""
+    sig = FunctionSignature.from_schema(
+        name='my-tool-name',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'data': {
+                    'type': 'object',
+                    'properties': {'value': {'type': 'integer'}},
+                    'required': ['value'],
+                },
+            },
+            'required': ['data'],
+        },
+    )
+    assert any('MyToolName' in rt.name for rt in sig.referenced_types)
+
+
+def test_tool_def_function_signature_from_schema():
+    """Tool.tool_def.function_signature is generated from the JSON schema."""
+
+    def my_tool(x: int, y: str = 'hello') -> bool:
+        """A test tool."""
+        return True  # pragma: no cover
+
+    tool = Tool(my_tool)
+    tool_def = tool.tool_def
+
+    sig = tool_def.function_signature
+    assert sig is not None
+    assert 'x' in sig.params
+    assert 'y' in sig.params
+
+
+def test_tool_def_has_schema_based_signature():
+    """Tool.tool_def.function_signature is computed from schema + return_schema."""
+
+    def my_tool(x: int, y: str = 'hello') -> bool:
+        """A test tool."""
+        return True  # pragma: no cover
+
+    tool = Tool(my_tool)
+    sig = tool.tool_def.function_signature
+    assert sig is not None
+    assert 'x' in sig.params
+    assert 'y' in sig.params
+    assert str(sig.params['x'].type) == 'int'
+    assert str(sig.params['y'].type) == 'str'
+
+
+def test_tool_definition_function_signature_computed_from_schema():
+    """ToolDefinition without explicit function_signature computes it from JSON schema."""
+
+    td = ToolDefinition(
+        name='test_tool',
+        parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+        description='A test tool',
+    )
+    sig = td.function_signature
+    assert sig is not None
+    assert 'x' in sig.params
+
+
+def test_tool_definition_schema_based_function_signature():
+    """ToolDefinition.function_signature generates a schema-based signature."""
+
+    td = ToolDefinition(
+        name='schema_tool',
+        parameters_json_schema={'type': 'object', 'properties': {'q': {'type': 'string'}}, 'required': ['q']},
+        description='A schema-based tool',
+    )
+    sig = td.function_signature
+    assert sig is not None
+    assert 'q' in sig.params
+    assert str(sig.params['q'].type) == 'str'
+
+
+def test_tool_from_schema_function_signature_uses_schema():
+    async def handler(**kwargs: typing.Any) -> typing.Any:  # pragma: no cover
+        return kwargs
+
+    tool = Tool.from_schema(
+        handler,
+        name='search',
+        description='Search documents',
+        json_schema={
+            'type': 'object',
+            'properties': {
+                'query': {'type': 'string'},
+                'limit': {'type': 'integer'},
+            },
+            'required': ['query'],
+        },
+    )
+    assert tool.tool_def.render_signature('...') == snapshot('''\
+def search(*, query: str, limit: int | None = None) -> Any:
+    """Search documents"""
+    ...\
+''')
+
+
+def test_tool_signature_renders_parameter_descriptions():
+    def multiply(left: float, right: float) -> float:
+        """Multiply two numbers.
+
+        Args:
+            left: The left operand.
+            right: The right operand.
+
+        Returns:
+            The product of `left` and `right`.
+        """
+        return left * right  # pragma: no cover
+
+    rendered = Tool(multiply).tool_def.render_signature('...', is_async=True)
+    assert rendered == snapshot('''\
+async def multiply(*, left: float, right: float) -> float:
+    """
+    <summary>Multiply two numbers.</summary>
+    <returns>
+    <description>The product of `left` and `right`.</description>
+    </returns>
+
+    Args:
+        left: The left operand.
+        right: The right operand.
+    """
+    ...\
+''')
+    compile(rendered, '<rendered>', 'exec')
+    function = ast.parse(rendered).body[0]
+    assert isinstance(function, ast.AsyncFunctionDef)
+    assert 'left: The left operand.' in (ast.get_docstring(function) or '')
+
+
+def test_tool_signature_escapes_parameter_descriptions():
+    tool_definition = ToolDefinition(
+        name='search',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'query': {
+                    'type': 'string',
+                    'description': 'Use `"""exact"""` text or C:\\queries.\0',
+                }
+            },
+            'required': ['query'],
+        },
+    )
+
+    rendered = tool_definition.render_signature('...')
+    compile(rendered, '<rendered>', 'exec')
+    function = ast.parse(rendered).body[0]
+    assert isinstance(function, ast.FunctionDef)
+    assert ast.get_docstring(function) == 'Args:\n    query: Use `"""exact"""` text or C:\\queries.\0'
+
+
+# =============================================================================
+# Function signature edge cases
+# =============================================================================
+
+
+def test_function_signature_special_params():
+    """RunContext skipped, unannotated params become Any via schema path."""
+
+    def with_ctx(ctx: RunContext, x: int) -> int:
+        return x  # pragma: no cover
+
+    td = Tool(with_ctx, takes_ctx=True).tool_def
+    assert td.render_signature('...') == snapshot("""\
+def with_ctx(*, x: int) -> int:
+    ...\
+""")
+
+    def no_annot(x):  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
+        return x  # pragma: no cover  # pyright: ignore[reportUnknownVariableType]
+
+    td = Tool(no_annot).tool_def  # pyright: ignore[reportUnknownArgumentType]
+    assert td.render_signature('...') == snapshot("""\
+def no_annot(*, x: Any) -> Any:
+    ...\
+""")
+
+
+def test_from_function_kwargs_and_varargs():
+    """Schema path skips **kwargs and wraps *args as list[T]."""
+
+    def with_kwargs(x: int, **kwargs: str) -> str:
+        return ''  # pragma: no cover
+
+    sig = Tool(with_kwargs).tool_def.function_signature
+    assert sig is not None
+    assert 'kwargs' not in sig.params
+    assert 'x' in sig.params
+
+    def with_args(*args: int) -> str:
+        return ''  # pragma: no cover
+
+    sig = Tool(with_args).tool_def.function_signature
+    assert sig is not None
+    assert 'args' in sig.params
+    assert str(sig.params['args'].type) == 'list[int]'
+
+
+class _UserInfo(BaseModel):
+    name: str
+
+
+class _IntList(RootModel[list[int]]):
+    pass
+
+
+class _TreeNode(BaseModel):
+    value: int
+    children: list[_TreeNode] = []
+
+
+def test_function_signature_union_and_model_types():
+    """Unions, optionals, and model types render correct signatures via schema path."""
+
+    def complex_func(
+        a: Union[int, str],  # noqa: UP007 — testing Union[] code path
+        b: int | str,
+        c: Optional[int] = None,  # noqa: UP045 — testing Optional[] code path
+        d: _UserInfo | None = None,
+    ) -> _UserInfo: ...  # pragma: no cover
+
+    td = Tool(complex_func).tool_def
+    assert td.render_signature('...') == snapshot("""\
+def complex_func(*, a: int | str, b: int | str, c: int | None = None, d: _UserInfo | None = None) -> _UserInfo:
+    ...\
+""")
+    assert td.function_signature is not None
+    assert [t.render_definition() for t in td.function_signature.referenced_types] == snapshot(
+        [
+            """\
+class _UserInfo(TypedDict):
+    name: str\
+"""
+        ]
+    )
+
+
+def test_type_signature_docstring_and_structural_equality():
+    """Docstring rendering and structural equality with different required."""
+    ts = TypeSignature(name='Documented', description='A documented empty type')
+    assert str(ts) == snapshot('Documented')
+
+    ts_a = TypeSignature(
+        name='A',
+        fields={'x': TypeFieldSignature(name='x', type=SimpleTypeExpr('int'), required=True, description=None)},
+    )
+    ts_b = TypeSignature(
+        name='B',
+        fields={'x': TypeFieldSignature(name='x', type=SimpleTypeExpr('int'), required=False, description=None)},
+    )
+    assert not ts_a.structurally_equal(ts_b)
+
+
+# =============================================================================
+# Schema signature edge cases
+# =============================================================================
+
+
+def test_schema_signature_const_enum():
+    """const and enum paths in schema_to_type_expr produce Literal types."""
+    # const value
+    sig_const = FunctionSignature.from_schema(
+        name='tool_const',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'mode': {'const': 'fast'}},
+            'required': ['mode'],
+        },
+    )
+    assert sig_const.render('...', name='tool_const') == snapshot("""\
+def tool_const(*, mode: Literal['fast']) -> Any:
+    ...\
+""")
+
+    # enum values
+    sig_enum = FunctionSignature.from_schema(
+        name='tool_enum',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'color': {'enum': ['red', 'green', 'blue']}},
+            'required': ['color'],
+        },
+    )
+    assert sig_enum.render('...', name='tool_enum') == snapshot("""\
+def tool_enum(*, color: Literal['red', 'green', 'blue']) -> Any:
+    ...\
+""")
+
+
+def test_collect_unique_referenced_types_empty():
+    """Empty input returns empty list."""
+    assert FunctionSignature.collect_unique_referenced_types([]) == []
+
+    sig = FunctionSignature(name='test', params={}, return_type=SimpleTypeExpr('Any'), referenced_types=[])
+    assert FunctionSignature.collect_unique_referenced_types([sig]) == []
+
+
+def test_schema_signature_union_ref_allof():
+    """oneOf, allOf, $ref variants produce correct signatures."""
+    sig_oneof = FunctionSignature.from_schema(
+        name='my_tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'value': {'oneOf': [{'type': 'string'}, {'type': 'integer'}]}},
+            'required': ['value'],
+        },
+    )
+    assert sig_oneof.render('...', name='my_tool') == snapshot("""\
+def my_tool(*, value: str | int) -> Any:
+    ...\
+""")
+
+    sig_allof_single = FunctionSignature.from_schema(
+        name='tool2',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'allOf': [{'type': 'string'}]}},
+            'required': ['x'],
+        },
+    )
+    assert sig_allof_single.render('...', name='tool2') == snapshot("""\
+def tool2(*, x: str) -> Any:
+    ...\
+""")
+
+    sig_allof_multi = FunctionSignature.from_schema(
+        name='tool3',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'allOf': [{'type': 'string'}, {'type': 'integer'}]}},
+            'required': ['x'],
+        },
+    )
+    assert sig_allof_multi.render('...', name='tool3') == snapshot("""\
+def tool3(*, x: Any) -> Any:
+    ...\
+""")
+
+    sig_ref = FunctionSignature.from_schema(
+        name='tool4',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'user': {'$ref': '#/$defs/User'}},
+            'required': ['user'],
+            '$defs': {'User': {'type': 'object', 'properties': {'name': {'type': 'string'}}, 'required': ['name']}},
+        },
+    )
+    assert sig_ref.render('...', name='tool4') == snapshot("""\
+def tool4(*, user: User) -> Any:
+    ...\
+""")
+    assert [t.render_definition() for t in sig_ref.referenced_types] == snapshot(
+        [
+            """\
+class User(TypedDict):
+    name: str\
+"""
+        ]
+    )
+
+    sig_ref_nonobj = FunctionSignature.from_schema(
+        name='tool5',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'$ref': '#/$defs/StringAlias'}},
+            'required': ['x'],
+            '$defs': {'StringAlias': {'type': 'string'}},
+        },
+    )
+    assert sig_ref_nonobj.render('...', name='tool5') == snapshot("""\
+def tool5(*, x: str) -> Any:
+    ...\
+""")
+
+
+def test_non_object_type_refs_render_inline():
+    """Non-object `$defs` resolve inline; a bare alias name would never be defined.
+
+    Covers every shape pydantic emits for a PEP 695 alias — constrained scalar, enum, list,
+    mapping, union and formatted scalar — plus the nested-item and object-field paths.
+    """
+    sig = FunctionSignature.from_schema(
+        name='list_tasks',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'limit': {'$ref': '#/$defs/PageLimit'},
+                'status': {'$ref': '#/$defs/Status'},
+                'tags': {'$ref': '#/$defs/Tags'},
+                'meta': {'$ref': '#/$defs/Meta'},
+                'maybe': {'$ref': '#/$defs/MaybeInt'},
+                'stamp': {'$ref': '#/$defs/Stamp'},
+                'nested': {'type': 'array', 'items': {'$ref': '#/$defs/PageLimit'}},
+                'inner': {'$ref': '#/$defs/Inner'},
+            },
+            'required': ['limit', 'status', 'tags', 'meta', 'maybe', 'stamp', 'nested', 'inner'],
+            '$defs': {
+                'PageLimit': {'type': 'integer', 'minimum': 1, 'maximum': 100},
+                'Status': {'type': 'string', 'enum': ['open', 'done']},
+                'Tags': {'type': 'array', 'items': {'type': 'string'}, 'minItems': 1},
+                'Meta': {'type': 'object', 'additionalProperties': {'type': 'integer'}},
+                'MaybeInt': {'anyOf': [{'type': 'integer'}, {'type': 'null'}]},
+                'Stamp': {'type': 'string', 'format': 'date-time'},
+                'Inner': {
+                    'type': 'object',
+                    'title': 'Inner',
+                    'properties': {'limit': {'$ref': '#/$defs/PageLimit'}},
+                    'required': ['limit'],
+                },
+            },
+        },
+    )
+
+    rendered = sig.render('...', name='list_tasks')
+    assert rendered == snapshot("""\
+def list_tasks(*, limit: int, status: Literal['open', 'done'], tags: list[str], meta: dict[str, int], maybe: int | None, stamp: str, nested: list[int], inner: Inner) -> Any:
+    ...\
+""")
+    definitions = FunctionSignature.render_type_definitions([sig], frozenset())
+    assert definitions == snapshot(
+        [
+            """\
+class Inner(TypedDict):
+    limit: int\
+"""
+        ]
+    )
+
+    # Only object defs become TypedDicts, so no other alias name may survive anywhere.
+    emitted = '\n'.join([rendered, *definitions])
+    assert [name for name in ('PageLimit', 'Status', 'Tags', 'Meta', 'MaybeInt', 'Stamp') if name in emitted] == []
+    compile(rendered, '<test>', 'exec')
+
+
+def test_recursive_non_object_type_ref_renders_any():
+    """A self-referential non-object def has no TypedDict to name, so the cycle renders as `Any`."""
+    sig = FunctionSignature.from_schema(
+        name='dump',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'blob': {'$ref': '#/$defs/Json'}},
+            'required': ['blob'],
+            '$defs': {
+                'Json': {
+                    'anyOf': [
+                        {'type': 'string'},
+                        {'type': 'integer'},
+                        {'type': 'array', 'items': {'$ref': '#/$defs/Json'}},
+                    ]
+                }
+            },
+        },
+    )
+    assert sig.render('...', name='dump') == snapshot("""\
+def dump(*, blob: str | int | list[Any]) -> Any:
+    ...\
+""")
+
+
+def test_ref_to_ref_def_keeps_alias_name():
+    """A def that is itself a `$ref` is left unresolved.
+
+    Pydantic flattens an alias of an alias into a full copy, so this shape only reaches us
+    from hand-written schemas; following the indirection is out of scope here.
+    """
+    sig = FunctionSignature.from_schema(
+        name='t',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'$ref': '#/$defs/Indirect'}},
+            'required': ['x'],
+            '$defs': {'Indirect': {'$ref': '#/$defs/PageLimit'}, 'PageLimit': {'type': 'integer'}},
+        },
+    )
+    assert sig.render('...', name='t') == snapshot("""\
+def t(*, x: Indirect) -> Any:
+    ...\
+""")
+
+
+def test_schema_signature_array_object_typelist():
+    """Arrays, objects, additionalProperties, and type lists."""
+    # Tuple array
+    sig = FunctionSignature.from_schema(
+        name='t1',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'coords': {'type': 'array', 'items': [{'type': 'number'}, {'type': 'number'}]}},
+            'required': ['coords'],
+        },
+    )
+    assert sig.render('...', name='t1') == snapshot("""\
+def t1(*, coords: tuple[float, float]) -> Any:
+    ...\
+""")
+
+    # Empty array
+    sig = FunctionSignature.from_schema(
+        name='t2',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'data': {'type': 'array'}},
+            'required': ['data'],
+        },
+    )
+    assert sig.render('...', name='t2') == snapshot("""\
+def t2(*, data: list[Any]) -> Any:
+    ...\
+""")
+
+    # additionalProperties: true
+    sig = FunctionSignature.from_schema(
+        name='t3',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'meta': {'type': 'object', 'additionalProperties': True}},
+            'required': ['meta'],
+        },
+    )
+    assert sig.render('...', name='t3') == snapshot("""\
+def t3(*, meta: dict[str, Any]) -> Any:
+    ...\
+""")
+
+    # Typed additionalProperties
+    sig = FunctionSignature.from_schema(
+        name='t4',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'tags': {'type': 'object', 'additionalProperties': {'type': 'string'}}},
+            'required': ['tags'],
+        },
+    )
+    assert sig.render('...', name='t4') == snapshot("""\
+def t4(*, tags: dict[str, str]) -> Any:
+    ...\
+""")
+
+    # Type list ['string', 'null']
+    sig = FunctionSignature.from_schema(
+        name='t5',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'name': {'type': ['string', 'null']}},
+            'required': ['name'],
+        },
+    )
+    assert sig.render('...', name='t5') == snapshot("""\
+def t5(*, name: str | None) -> Any:
+    ...\
+""")
+
+    # Type list multi
+    sig = FunctionSignature.from_schema(
+        name='t6',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'value': {'type': ['string', 'integer', 'boolean']}},
+            'required': ['value'],
+        },
+    )
+    assert sig.render('...', name='t6') == snapshot("""\
+def t6(*, value: str | int | bool) -> Any:
+    ...\
+""")
+
+    # Object type list with null
+    sig = FunctionSignature.from_schema(
+        name='t7',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'config': {
+                    'type': ['object', 'null'],
+                    'properties': {'enabled': {'type': 'boolean'}},
+                    'required': ['enabled'],
+                },
+            },
+            'required': ['config'],
+        },
+    )
+    assert sig.render('...', name='t7') == snapshot("""\
+def t7(*, config: T7Config | None) -> Any:
+    ...\
+""")
+    assert [t.render_definition() for t in sig.referenced_types] == snapshot(
+        [
+            """\
+class T7Config(TypedDict):
+    enabled: bool\
+"""
+        ]
+    )
+
+
+def test_schema_signature_optional_params_and_return():
+    """Optional params, return schema edge cases, anyOf dedup."""
+    # Optional already nullable
+    sig = FunctionSignature.from_schema(
+        name='t1',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'type': ['string', 'null']}},
+        },
+    )
+    assert sig.render('...', name='t1') == snapshot("""\
+def t1(*, x: str | None = None) -> Any:
+    ...\
+""")
+
+    # Optional not nullable → adds | None
+    sig = FunctionSignature.from_schema(
+        name='t2',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'type': 'string'}},
+        },
+    )
+    assert sig.render('...', name='t2') == snapshot("""\
+def t2(*, x: str | None = None) -> Any:
+    ...\
+""")
+
+    # Optional with explicit default preserves default value
+    sig = FunctionSignature.from_schema(
+        name='t_default',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'type': 'integer', 'default': 7}},
+        },
+    )
+    assert sig.render('...', name='t_default') == snapshot("""\
+def t_default(*, x: int = 7) -> Any:
+    ...\
+""")
+
+    # Unresolvable return_schema keeps return type as Any
+    sig3 = FunctionSignature.from_schema(
+        name='t3',
+        parameters_schema={'type': 'object', 'properties': {'x': {'type': 'string'}}, 'required': ['x']},
+        return_schema={},
+    )
+    assert sig3.render('...', name='t3', description='A tool') == snapshot('''\
+def t3(*, x: str) -> Any:
+    """A tool"""
+    ...\
+''')
+
+    # Return schema with $defs
+    sig4 = FunctionSignature.from_schema(
+        name='t4',
+        parameters_schema={'type': 'object', 'properties': {'x': {'type': 'string'}}, 'required': ['x']},
+        return_schema={
+            '$ref': '#/$defs/Result',
+            '$defs': {'Result': {'type': 'object', 'properties': {'v': {'type': 'integer'}}, 'required': ['v']}},
+        },
+    )
+    assert sig4.render('...', name='t4') == snapshot("""\
+def t4(*, x: str) -> Result:
+    ...\
+""")
+    assert [t.render_definition() for t in sig4.referenced_types] == snapshot(
+        [
+            """\
+class Result(TypedDict):
+    v: int\
+"""
+        ]
+    )
+
+    # anyOf with duplicates → deduplicated
+    sig5 = FunctionSignature.from_schema(
+        name='t5',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'anyOf': [{'type': 'string'}, {'type': 'string'}, {'type': 'null'}]}},
+            'required': ['x'],
+        },
+    )
+    assert sig5.render('...', name='t5') == snapshot("""\
+def t5(*, x: str | None) -> Any:
+    ...\
+""")
+
+
+# =============================================================================
+# Additional coverage tests
+# =============================================================================
+
+
+def test_tool_definition_eq_non_tool():
+    """ToolDefinition does not equal non-ToolDefinition objects."""
+    td = ToolDefinition(name='t')
+    assert td != 'not a tool'
+
+
+def test_function_signature_literal_annotation():
+    """Literal type annotations render via schema path."""
+    ns: dict[str, object] = {'typing': typing}
+    exec("def func(x: typing.Literal['a', 'b']) -> None: ...", ns)
+    td = Tool(ns['func']).tool_def  # pyright: ignore[reportArgumentType]
+    assert td.render_signature('...') == snapshot("""\
+def func(*, x: Literal['a', 'b']) -> None:
+    ...\
+""")
+
+
+def test_function_with_bare_generic_annotation():
+    """Bare generic (e.g. `typing.List` without type args) renders as list[Any] via schema path."""
+    # Create a function with bare generic annotation (typing.List, not list)
+    # via a helper module that doesn't use `from __future__ import annotations`
+    import types as t
+
+    mod = t.ModuleType('_test_bare_generic')
+    mod.__dict__['List'] = getattr(typing, 'List')  # typing.List (has origin but no args)
+    exec(
+        compile('def func(items: List) -> None: ...', '<test>', 'exec'),
+        mod.__dict__,
+    )
+    td = Tool(mod.func).tool_def
+    assert 'items: list[Any]' in td.render_signature('...')
+
+
+def test_function_signature_nameerror_for_unresolvable_forward_ref():
+    """Functions with unresolvable forward refs raise NameError via the schema path."""
+    ns: dict[str, object] = {}
+    exec(
+        "def func_with_fwd_ref(x: 'NonexistentType') -> None: ...",
+        ns,
+    )
+    func = ns['func_with_fwd_ref']
+    with pytest.raises(NameError, match='NonexistentType'):
+        Tool(func)  # pyright: ignore[reportArgumentType]
+
+
+def test_schema_bare_object():
+    """Bare object type (no properties, no additionalProperties) renders as dict."""
+    sig = FunctionSignature.from_schema(
+        name='t_bare',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'data': {'type': 'object'}},
+            'required': ['data'],
+        },
+    )
+    assert 'dict[str, Any]' in sig.render('...', name='t_bare')
+
+
+def test_schema_object_type_list_no_null():
+    """Object in type list without null renders without union."""
+    sig = FunctionSignature.from_schema(
+        name='t_obj_list',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'config': {
+                    'type': ['object'],
+                    'properties': {'x': {'type': 'string'}},
+                    'required': ['x'],
+                },
+            },
+            'required': ['config'],
+        },
+    )
+    rendered = sig.render('...', name='t_obj_list')
+    assert 'None' not in rendered
+    assert 'TObjListConfig' in rendered
+
+
+def test_schema_single_type_after_filtering():
+    """Single-element type list renders as plain type."""
+    sig = FunctionSignature.from_schema(
+        name='t_single',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'type': ['string']}},
+            'required': ['x'],
+        },
+    )
+    rendered = sig.render('...', name='t_single')
+    assert 'str' in rendered
+    # Should not be a union
+    assert '|' not in rendered
+
+
+def test_schema_single_anyof_member():
+    """Single-member anyOf returns the type directly, not a union."""
+    sig = FunctionSignature.from_schema(
+        name='t_anyof_single',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'anyOf': [{'type': 'string'}]}},
+            'required': ['x'],
+        },
+    )
+    rendered = sig.render('...', name='t_anyof_single')
+    assert 'str' in rendered
+    assert '|' not in rendered
+
+
+def test_schema_defs_already_processed():
+    """Second call with same $defs name finds it already processed."""
+    sig = FunctionSignature.from_schema(
+        name='tool_shared',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'a': {'$ref': '#/$defs/Shared'},
+                'b': {'$ref': '#/$defs/Shared'},
+            },
+            'required': ['a', 'b'],
+            '$defs': {
+                'Shared': {
+                    'type': 'object',
+                    'properties': {'v': {'type': 'integer'}},
+                    'required': ['v'],
+                }
+            },
+        },
+    )
+    # Both params reference the same TypeSignature
+    assert str(sig.params['a'].type) == 'Shared'
+    assert str(sig.params['b'].type) == 'Shared'
+    # Only one referenced type
+    assert len(sig.referenced_types) == 1
+
+
+def test_schema_return_type_dedup():
+    """Param and return schemas sharing a $defs type produce one definition."""
+    shared_def = {
+        'type': 'object',
+        'properties': {'id': {'type': 'integer'}},
+        'required': ['id'],
+    }
+    sig = FunctionSignature.from_schema(
+        name='tool_dedup',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'item': {'$ref': '#/$defs/Item'}},
+            'required': ['item'],
+            '$defs': {'Item': shared_def},
+        },
+        return_schema={
+            '$ref': '#/$defs/Item',
+            '$defs': {'Item': shared_def},
+        },
+    )
+    # Both param and return reference Item
+    assert str(sig.params['item'].type) == 'Item'
+    assert str(sig.return_type) == 'Item'
+
+
+def test_schema_object_type_name_collision():
+    """Two properties generating the same path-based type name — second is reused."""
+    sig = FunctionSignature.from_schema(
+        name='tool_collision',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'data': {
+                    'type': 'object',
+                    'properties': {'x': {'type': 'string'}},
+                    'required': ['x'],
+                },
+            },
+            'required': ['data'],
+        },
+    )
+    # Should have a TypedDict for the nested object
+    assert len(sig.referenced_types) == 1
+    assert sig.referenced_types[0].name == 'ToolCollisionData'
+
+
+def test_function_signature_root_model():
+    """RootModel parameter renders as list type via schema path."""
+
+    def func_with_root_model(x: _IntList, y: int) -> None: ...  # pragma: no cover
+
+    td = Tool(func_with_root_model).tool_def
+    assert td.render_signature('...') == snapshot("""\
+def func_with_root_model(*, x: list[int], y: int) -> None:
+    ...\
+""")
+    assert td.function_signature is not None
+    assert td.function_signature.referenced_types == []
+
+
+def test_function_signature_recursive_model():
+    """Recursive BaseModel with $ref in schema produces correct TypedDict via schema path."""
+
+    def func_with_tree(x: _TreeNode, label: str = '') -> None: ...  # pragma: no cover
+
+    td = Tool(func_with_tree).tool_def
+    assert td.render_signature('...') == snapshot("""\
+def func_with_tree(*, x: _TreeNode, label: str = '') -> None:
+    ...\
+""")
+    sig = td.function_signature
+    assert sig is not None
+    assert len(sig.referenced_types) == 1
+    assert sig.referenced_types[0].name == '_TreeNode'
+    assert 'value' in sig.referenced_types[0].fields
+    assert 'children' in sig.referenced_types[0].fields
+
+
+def test_schema_cross_referencing_defs():
+    """$ref in a def property lazily resolves another def not yet processed."""
+    sig = FunctionSignature.from_schema(
+        name='tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'item': {'$ref': '#/$defs/Container'}},
+            'required': ['item'],
+            '$defs': {
+                'Container': {
+                    'type': 'object',
+                    'properties': {'inner': {'$ref': '#/$defs/Inner'}},
+                    'required': ['inner'],
+                },
+                'Inner': {
+                    'type': 'object',
+                    'properties': {'value': {'type': 'string'}},
+                    'required': ['value'],
+                },
+            },
+        },
+    )
+    assert sig.render('...', name='tool') == snapshot("""\
+def tool(*, item: Container) -> Any:
+    ...\
+""")
+    # Both Container and Inner should be resolved as TypeSignatures
+    type_names = {t.name for t in sig.referenced_types}
+    assert type_names == {'Container', 'Inner'}
+    # Container's 'inner' field references the Inner TypeSignature
+    container = next(t for t in sig.referenced_types if t.name == 'Container')
+    assert str(container.fields['inner'].type) == 'Inner'
+
+
+def test_schema_inline_object_reuses_existing_typename():
+    """Inline object property reuses a $defs type when path-based names collide."""
+    sig = FunctionSignature.from_schema(
+        name='tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'data': {
+                    'type': 'object',
+                    'properties': {'x': {'type': 'string'}},
+                    'required': ['x'],
+                },
+            },
+            'required': ['data'],
+            '$defs': {
+                # This $def's name matches the path-based typename for property 'data'
+                # _path_to_typename('tool', 'data') == 'ToolData'
+                'ToolData': {
+                    'type': 'object',
+                    'properties': {'y': {'type': 'integer'}},
+                    'required': ['y'],
+                },
+            },
+        },
+    )
+    # The $defs ToolData was registered first; the inline 'data' property reuses it
+    assert str(sig.params['data'].type) == 'ToolData'
+
+
+def test_schema_additional_properties_false():
+    """additionalProperties: false falls through to dict[str, Any]."""
+    sig = FunctionSignature.from_schema(
+        name='t_ap_false',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'meta': {'type': 'object', 'additionalProperties': False},
+            },
+            'required': ['meta'],
+        },
+    )
+    assert 'dict[str, Any]' in sig.render('...', name='t_ap_false')
+
+
+def test_schema_empty_type_list():
+    """Empty type list produces Any."""
+    sig = FunctionSignature.from_schema(
+        name='t_empty',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'type': []}},
+            'required': ['x'],
+        },
+    )
+    assert 'Any' in sig.render('...', name='t_empty')
+
+
+def test_function_with_typed_dict_param():
+    """TypedDict parameters render correctly via schema path."""
+
+    def search(params: _SearchParams, verbose: bool = False) -> str: ...  # pragma: no cover
+
+    td = Tool(search).tool_def
+    assert 'params: _SearchParams' in td.render_signature('...')
+    assert td.function_signature is not None
+    assert any(rt.name == '_SearchParams' for rt in td.function_signature.referenced_types)
+
+
+def test_schema_optional_with_anyof_null():
+    """Optional schema params with anyOf containing null are correctly handled."""
+    sig = FunctionSignature.from_schema(
+        name='tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string'},
+                'tag': {'anyOf': [{'type': 'string'}, {'type': 'null'}]},
+            },
+            'required': ['name'],
+        },
+    )
+    rendered = sig.render('...', name='tool')
+    assert 'tag: str | None' in rendered
+
+
+def test_schema_optional_with_oneof_null():
+    """Optional schema params with oneOf containing null are correctly handled."""
+    sig = FunctionSignature.from_schema(
+        name='tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string'},
+                'tag': {'oneOf': [{'type': 'string'}, {'type': 'null'}]},
+            },
+            'required': ['name'],
+        },
+    )
+    rendered = sig.render('...', name='tool')
+    assert 'tag: str | None' in rendered
+
+
+def test_function_with_enum_field_in_model():
+    """Model with an enum field skips non-object $defs (enums) via schema path."""
+
+    def configure(cfg: _ConfigWithEnum, dry_run: bool = False) -> str:
+        return cfg.name  # pragma: no cover
+
+    td = Tool(configure).tool_def
+    assert 'cfg: _ConfigWithEnum' in td.render_signature('...')
+    # _ConfigWithEnum should be a TypedDict, but _Color (enum) should not
+    assert td.function_signature is not None
+    type_names = {rt.name for rt in td.function_signature.referenced_types}
+    assert '_ConfigWithEnum' in type_names
+    assert '_Color' not in type_names
+
+
+def test_function_with_enum_ref_parameter():
+    """Referenced enum values are visible in the rendered tool signature."""
+
+    def set_color(color: _Color) -> None:
+        pass  # pragma: no cover
+
+    td = Tool(set_color).tool_def
+    assert td.render_signature('...') == snapshot("""\
+def set_color(*, color: Literal['red', 'green']) -> None:
+    ...\
+""")
+
+
+def test_schema_with_described_optional_fields():
+    """Schema with descriptions and optional fields renders NotRequired and field descriptions."""
+    sig = FunctionSignature.from_schema(
+        name='create_user',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string', 'description': 'The user name'},
+                'bio': {'type': 'string', 'description': 'A short bio.\nCan be multiple lines.'},
+            },
+            'required': ['name'],
+            '$defs': {
+                'Address': {
+                    'type': 'object',
+                    'description': 'A mailing address',
+                    'properties': {
+                        'street': {'type': 'string'},
+                        'city': {'type': 'string'},
+                    },
+                    'required': ['street'],
+                },
+            },
+        },
+    )
+    # Check that optional field 'bio' is rendered with description
+    rendered = sig.render('...', name='create_user')
+    assert 'bio: str' in rendered
+
+    # Check that Address type has description in its definition
+    addr = next(t for t in sig.referenced_types if t.name == 'Address')
+    defn = addr.render_definition()
+    assert 'A mailing address' in defn
+    # city is not required → should render as NotRequired
+    assert 'NotRequired' in defn
+
+
+def test_render_type_field_with_multiline_description():
+    """TypeFieldSignature renders multi-line descriptions correctly."""
+    field = TypeFieldSignature(
+        name='notes',
+        type=SimpleTypeExpr('str'),
+        required=True,
+        description='First line.\nSecond line.',
+    )
+    rendered = str(field)
+    assert '"""' in rendered
+    assert 'First line.' in rendered
+    assert 'Second line.' in rendered
+
+
+def test_render_empty_type_signature():
+    """Empty TypeSignature without description renders with pass."""
+    ts = TypeSignature(name='Empty')
+    assert ts.render_definition() == 'class Empty(TypedDict):\n    pass'
+
+    # Empty with description renders docstring but no pass
+    ts_with_desc = TypeSignature(name='Marker', description='A marker type')
+    assert ts_with_desc.render_definition() == 'class Marker(TypedDict):\n    """A marker type"""'
+
+
+# Boolean JSON Schema nodes (`True`/`False` are valid schemas per spec, and surface from
+# e.g. MCP tool schemas). Each test below exercises a distinct walker entry point that would
+# otherwise index into a bool. See `_normalize_schema_node`.
+
+
+def test_boolean_property_schema_renders_as_any():
+    """A property whose schema is the bare boolean `True` renders as `Any` instead of crashing."""
+    sig = FunctionSignature.from_schema(
+        name='passthrough',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'anything': True},
+            'required': ['anything'],
+        },
+    )
+    assert str(sig.params['anything'].type) == 'Any'
+
+
+def test_boolean_array_items_render_as_list_any():
+    """`items: True` (any element allowed) recurses with a bool and renders as `list[Any]`."""
+    sig = FunctionSignature.from_schema(
+        name='collect',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'arr': {'type': 'array', 'items': True}},
+            'required': ['arr'],
+        },
+    )
+    assert str(sig.params['arr'].type) == 'list[Any]'
+
+
+def test_boolean_allof_member_renders_as_any():
+    """A single-member `allOf: [True]` recurses into `_schema_to_type_expr` with a bool."""
+    sig = FunctionSignature.from_schema(
+        name='allof_tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'value': {'allOf': [True]}},
+            'required': ['value'],
+        },
+    )
+    assert str(sig.params['value'].type) == 'Any'
+
+
+def test_boolean_anyof_member_renders():
+    """A bool member inside `anyOf` is inspected (`.get('type')`) before recursion and must not crash."""
+    sig = FunctionSignature.from_schema(
+        name='anyof_tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'value': {'anyOf': [True, {'type': 'null'}]}},
+            'required': ['value'],
+        },
+    )
+    assert str(sig.params['value'].type) == 'Any | None'
+
+
+def test_boolean_nested_object_property_renders_as_any():
+    """A bare-boolean property inside a NESTED object hits the `_build_type_signature` walker."""
+    sig = FunctionSignature.from_schema(
+        name='outer',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'nested': {'type': 'object', 'properties': {'x': True}}},
+            'required': ['nested'],
+        },
+    )
+    nested = next(t for t in sig.referenced_types if 'x' in t.fields)
+    assert str(nested.fields['x'].type) == 'Any'
+
+
+def test_boolean_def_schema_does_not_crash():
+    """A bare-boolean `$defs` entry (referenced via `$ref`) must not crash `_process_schema_defs`."""
+    sig = FunctionSignature.from_schema(
+        name='defs_tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'value': {'$ref': '#/$defs/Anything'}},
+            'required': ['value'],
+            '$defs': {'Anything': True},
+        },
+    )
+    assert 'value' in sig.params
+
+
+def test_boolean_additional_properties_render_as_dict_any():
+    """`additionalProperties: True`/`False` on an object render as `dict[str, Any]`.
+
+    Unlike the cases above these never crashed (the object branch reads the value directly),
+    but the assertion documents the rendered shape and guards against regressions.
+    """
+    for value in (True, False):
+        sig = FunctionSignature.from_schema(
+            name='cfg',
+            parameters_schema={
+                'type': 'object',
+                'properties': {'meta': {'type': 'object', 'additionalProperties': value}},
+                'required': ['meta'],
+            },
+        )
+        assert str(sig.params['meta'].type) == 'dict[str, Any]'
+
+
+# =============================================================================
+# Type names: every type in a rendered tool catalog has one name and one definition
+# =============================================================================
+
+# These are unit tests because the names decide the text a model reads and the stubs Monty type checks, with no model
+# request involved. `tests/harness/code_mode/test_code_mode.py` holds Monty itself to the three reported bugs.
+
+
+def _model(name: str, /, **fields: Any) -> type[BaseModel]:
+    """A Pydantic model, with every field required."""
+    definitions: dict[str, Any] = {field: (annotation, ...) for field, annotation in fields.items()}
+    return create_model(name, **definitions)
+
+
+def _signature(name: str, returns: type[BaseModel] | None = None, **params: Any) -> FunctionSignature:
+    """A tool's signature, with the schemas Pydantic builds from typed arguments."""
+    return FunctionSignature.from_schema(
+        name=name,
+        parameters_schema=_model('Args', **params).model_json_schema(),
+        return_schema=returns.model_json_schema() if returns else None,
+    )
+
+
+def _catalog(*signatures: FunctionSignature) -> str:
+    """The text code mode builds: every definition once, then every function."""
+    conflicting = FunctionSignature.get_conflicting_type_names(list(signatures))
+    definitions = FunctionSignature.render_type_definitions(list(signatures), conflicting)
+    functions = [signature.render('...', conflicting_type_names=conflicting) for signature in signatures]
+    return '\n\n'.join([*definitions, *functions])
+
+
+USER_WITH_NAME = _model('User', name=str)
+USER_WITH_ID = _model('User', id=int)
+
+
+def test_param_and_return_types_with_one_name_get_two_names():
+    """Bug 1 of #8816: both types rendered as `sync_user_User`, and `RetWrap.user` as a plain `User`."""
+    ret_wrap = _model('RetWrap', user=USER_WITH_ID)
+    assert _catalog(_signature('sync_user', returns=ret_wrap, user=USER_WITH_NAME)) == snapshot("""\
+class sync_user_User(TypedDict):
+    name: str
+
+class sync_user_User_2(TypedDict):
+    id: int
+
+class RetWrap(TypedDict):
+    user: sync_user_User_2
+
+def sync_user(*, user: sync_user_User) -> RetWrap:
+    ...\
+""")
+
+
+def test_type_keeping_its_name_refers_to_a_renamed_type():
+    """Bug 2 of #8816: `Wrapper.user` rendered as a plain `User`, which nothing defined."""
+    wrapper = _model('Wrapper', user=USER_WITH_NAME)
+    assert _catalog(_signature('tool_a', wrap=wrapper), _signature('tool_b', user=USER_WITH_ID)) == snapshot("""\
+class tool_a_User(TypedDict):
+    name: str
+
+class Wrapper(TypedDict):
+    user: tool_a_User
+
+class tool_b_User(TypedDict):
+    id: int
+
+def tool_a(*, wrap: Wrapper) -> Any:
+    ...
+
+def tool_b(*, user: tool_b_User) -> Any:
+    ...\
+""")
+
+
+def test_type_shared_by_two_tools_has_one_name():
+    """Bug 3 of #8816: `tool_b` was annotated `tool_b_User`, but the shared class was only defined as `tool_a_User`."""
+    signatures = [
+        _signature('tool_a', user=USER_WITH_NAME),
+        _signature('tool_b', user=USER_WITH_NAME),
+        _signature('tool_c', user=USER_WITH_ID),
+    ]
+    assert _catalog(*signatures) == snapshot("""\
+class tool_a_User(TypedDict):
+    name: str
+
+class tool_c_User(TypedDict):
+    id: int
+
+def tool_a(*, user: tool_a_User) -> Any:
+    ...
+
+def tool_b(*, user: tool_a_User) -> Any:
+    ...
+
+def tool_c(*, user: tool_c_User) -> Any:
+    ...\
+""")
+    # Dynamic workflows render part of a catalog, reusing the names of the whole.
+    conflicting = FunctionSignature.get_conflicting_type_names(signatures)
+    assert FunctionSignature.render_type_definitions(signatures[1:2], conflicting) == [
+        'class tool_a_User(TypedDict):\n    name: str'
+    ]
+
+
+@pytest.mark.parametrize(
+    'user_a,user_b,field_a,field_b',
+    [
+        pytest.param(USER_WITH_NAME, USER_WITH_ID, 'a_User', 'b_User', id='direct'),
+        pytest.param(list[USER_WITH_NAME], list[USER_WITH_ID], 'list[a_User]', 'list[b_User]', id='list'),
+        pytest.param(USER_WITH_NAME | None, USER_WITH_ID | None, 'a_User | None', 'b_User | None', id='optional'),
+    ],
+)
+def test_types_differing_only_in_a_nested_type_stay_two_types(user_a: Any, user_b: Any, field_a: str, field_b: str):
+    """The two `Box`es have the same field text, so comparing that text merged them. The nesting takes three passes."""
+    box_a = _model('Box', order=_model('Order', user=user_a))
+    box_b = _model('Box', order=_model('Order', user=user_b))
+    assert _catalog(_signature('a', box=box_a), _signature('b', box=box_b)) == (
+        'class a_Box(TypedDict):\n    order: a_Order\n\n'
+        f'class a_Order(TypedDict):\n    user: {field_a}\n\n'
+        'class a_User(TypedDict):\n    name: str\n\n'
+        'class b_Box(TypedDict):\n    order: b_Order\n\n'
+        f'class b_Order(TypedDict):\n    user: {field_b}\n\n'
+        'class b_User(TypedDict):\n    id: int\n\n'
+        'def a(*, box: a_Box) -> Any:\n    ...\n\n'
+        'def b(*, box: b_Box) -> Any:\n    ...'
+    )
+
+
+def test_types_differing_only_in_a_required_flag_stay_two_types():
+    optional_name: dict[str, Any] = {'name': (str, 'x')}
+    optional_user = create_model('User', **optional_name)
+    assert _catalog(_signature('a', user=USER_WITH_NAME), _signature('b', user=optional_user)) == snapshot("""\
+class a_User(TypedDict):
+    name: str
+
+class b_User(TypedDict):
+    name: NotRequired[str]
+
+def a(*, user: a_User) -> Any:
+    ...
+
+def b(*, user: b_User) -> Any:
+    ...\
+""")
+
+
+def test_param_and_return_types_differing_only_in_a_nested_type_stay_two_types():
+    """Merging the two `Wrap`s would leave the return type's `User` defined but unused."""
+    wrap_a, wrap_b = _model('Wrap', user=USER_WITH_NAME), _model('Wrap', user=USER_WITH_ID)
+    assert _catalog(_signature('t', returns=wrap_b, wrap=wrap_a)) == snapshot("""\
+class t_User(TypedDict):
+    name: str
+
+class t_Wrap(TypedDict):
+    user: t_User
+
+class t_User_2(TypedDict):
+    id: int
+
+class t_Wrap_2(TypedDict):
+    user: t_User_2
+
+def t(*, wrap: t_Wrap) -> t_Wrap_2:
+    ...\
+""")
+    assert _catalog(_signature('t', returns=wrap_a, wrap=wrap_a)) == snapshot("""\
+class User(TypedDict):
+    name: str
+
+class Wrap(TypedDict):
+    user: User
+
+def t(*, wrap: Wrap) -> Wrap:
+    ...\
+""")
+
+
+def test_recursive_types_compare_by_what_is_in_the_cycle():
+    def node(value: Any) -> type[BaseModel]:
+        fields: dict[str, Any] = {'value': (value, ...), 'next': ('Node | None', None)}
+        recursive = create_model('Node', **fields)
+        recursive.model_rebuild(_types_namespace={'Node': recursive})
+        return recursive
+
+    same = _catalog(_signature('a', node=node(str), other=Any), _signature('b', node=node(str), other=Any))
+    assert same == snapshot("""\
+class Node(TypedDict):
+    value: str
+    next: NotRequired[Node | None]
+
+def a(*, node: Node, other: Any) -> Any:
+    ...
+
+def b(*, node: Node, other: Any) -> Any:
+    ...\
+""")
+    different = _catalog(_signature('a', node=node(str)), _signature('b', node=node(int)))
+    assert different == snapshot("""\
+class a_Node(TypedDict):
+    value: str
+    next: NotRequired[a_Node | None]
+
+class b_Node(TypedDict):
+    value: int
+    next: NotRequired[b_Node | None]
+
+def a(*, node: a_Node) -> Any:
+    ...
+
+def b(*, node: b_Node) -> Any:
+    ...\
+""")
+
+
+def test_generated_name_skips_a_real_type_name():
+    """`a_User` is a real type, so the `User` of tool `a` becomes `a_User_2`."""
+    signatures = (
+        _signature('a', user=USER_WITH_NAME, real=_model('a_User', z=str)),
+        _signature('b', user=USER_WITH_ID),
+    )
+    assert _catalog(*signatures) == snapshot("""\
+class a_User_2(TypedDict):
+    name: str
+
+class a_User(TypedDict):
+    z: str
+
+class b_User(TypedDict):
+    id: int
+
+def a(*, user: a_User_2, real: a_User) -> Any:
+    ...
+
+def b(*, user: b_User) -> Any:
+    ...\
+""")
+
+
+def test_resolving_again_replaces_the_names_of_the_last_set():
+    """A catalog gets rebuilt when its tools change, reusing their signatures."""
+    item_a, item_c = _model('Item', a=str), _model('Item', c=str)
+    a = _signature('a', user=USER_WITH_NAME, item=item_a)
+    b, c = _signature('b', user=USER_WITH_ID), _signature('c', item=item_c)
+    _catalog(a, b)
+    assert _catalog(a, c) == snapshot("""\
+class a_Item(TypedDict):
+    a: str
+
+class User(TypedDict):
+    name: str
+
+class c_Item(TypedDict):
+    c: str
+
+def a(*, user: User, item: a_Item) -> Any:
+    ...
+
+def c(*, item: c_Item) -> Any:
+    ...\
+""")
+
+
+def test_resolved_name_is_not_part_of_the_type():
+    """Comparing or printing a type gives the same result before and after it is named."""
+    signatures = [_signature('a', user=USER_WITH_NAME), _signature('b', user=USER_WITH_ID)]
+    resolved = signatures[0].referenced_types[0]
+    plain = _signature('a', user=USER_WITH_NAME).referenced_types[0]
+    FunctionSignature.get_conflicting_type_names(signatures)
+    assert resolved == plain
+    assert repr(resolved) == repr(plain)
+
+
+def test_ref_that_does_not_resolve_keeps_rendering():
+    """Such a `$ref` leaves a type no signature lists, which unifying must still handle."""
+    schema = {'type': 'object', 'properties': {'x': {'$ref': '#/definitions/U'}}, 'required': ['x']}
+    signature = FunctionSignature.from_schema(name='a', parameters_schema=schema)
+    assert _catalog(signature) == 'def a(*, x: U) -> Any:\n    ...'
+
+
+def _render_module(td: ToolDefinition) -> str:
+    """Render a tool's type definitions and signature as one module, the way code mode presents them."""
+    sig = td.function_signature
+    conflicting = FunctionSignature.get_conflicting_type_names([sig])
+    return '\n\n'.join(
+        [
+            *FunctionSignature.render_type_definitions([sig], conflicting),
+            td.render_signature('...', conflicting_type_names=conflicting),
+        ]
+    )
+
+
+def test_property_names_that_are_not_python_identifiers_render_as_valid_python():
+    """Keyword and non-identifier property names, common in MCP and OpenAPI tools, still render as valid Python.
+
+    A parameter takes a sanitized name, since code passes it as a keyword argument. An object field keeps its
+    schema name, since code builds the object as a `dict`, so its type uses the functional `TypedDict` syntax.
+    """
+    td = ToolDefinition(
+        name='search',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'from': {'type': 'string', 'description': 'The sender.'},
+                'user-id': {'type': 'string'},
+                'filter': {
+                    'type': 'object',
+                    'title': 'Filter',
+                    'description': 'Narrows the search.\n\nAll fields combine.',
+                    'properties': {
+                        '@type': {'type': 'string', 'description': 'The kind of record.'},
+                        'from': {'type': 'integer'},
+                    },
+                    'required': ['@type'],
+                },
+                'page[size]': {'type': 'integer', 'default': 10},
+            },
+            'required': ['from', 'user-id', 'filter'],
+        },
+    )
+    rendered = _render_module(td)
+    assert rendered == snapshot('''\
+# Narrows the search.
+#
+# All fields combine.
+Filter = TypedDict('Filter', {
+    # The kind of record.
+    '@type': str,
+    'from': NotRequired[int],
+})
+
+def search(*, from_: str, user_id: str, filter: Filter, page_size_: int = 10) -> Any:
+    """
+    Args:
+        from_: The sender.
+        filter: Narrows the search.
+
+            All fields combine.
+    """
+    ...\
+''')
+    ast.parse(rendered)
+    assert {name: param.name for name, param in td.function_signature.params.items()} == snapshot(
+        {'from': 'from_', 'user-id': 'user_id', 'filter': 'filter', 'page[size]': 'page_size_'}
+    )
+
+
+def test_sanitized_parameter_names_do_not_collide():
+    """A sanitized name another parameter already has gets a number; names that are already valid never change."""
+    sig = FunctionSignature.from_schema(
+        name='lookup',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'user-id': {'type': 'string'},
+                'user_id': {'type': 'string'},
+                'user.id': {'type': 'string'},
+                'user_id_2': {'type': 'string'},
+                '2fa': {'type': 'string'},
+                'class': {'type': 'string'},
+                '': {'type': 'string'},
+            },
+            'required': ['user-id', 'user_id', 'user.id', 'user_id_2', '2fa', 'class', ''],
+        },
+    )
+    assert {name: param.name for name, param in sig.params.items()} == snapshot(
+        {
+            'user-id': 'user_id_3',
+            'user_id': 'user_id',
+            'user.id': 'user_id_4',
+            'user_id_2': 'user_id_2',
+            '2fa': '_2fa',
+            'class': 'class_',
+            '': '_',
+        }
+    )
+    rendered = sig.render('...')
+    assert rendered == snapshot(
+        'def lookup(*, user_id_3: str, user_id: str, user_id_4: str, user_id_2: str, _2fa: str, class_: str, _: str) -> Any:\n    ...'
+    )
+    ast.parse(rendered)
+
+
+def test_functional_typed_dict_comment_stays_a_comment():
+    """A description rendered as a comment can't end the comment early or carry a null byte into the source."""
+    ts = TypeSignature(
+        name='Event',
+        fields={
+            'event-type': TypeFieldSignature(
+                name='event-type', type=SimpleTypeExpr('str'), required=True, description='Line one.\nLine two\0.'
+            ),
+        },
+    )
+    rendered = ts.render_definition()
+    assert rendered == snapshot("""\
+Event = TypedDict('Event', {
+    # Line one.
+    # Line two\\x00.
+    'event-type': str,
+})\
+""")
+    ast.parse(rendered)

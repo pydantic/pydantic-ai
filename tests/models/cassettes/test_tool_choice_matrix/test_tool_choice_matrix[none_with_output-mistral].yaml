@@ -1,0 +1,110 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.mistral.ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "759"
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    body:
+      type: json
+      content:
+        model: mistral-large-latest
+        messages:
+        - content: Tell me about Paris
+          role: user
+        top_p: 1.0
+        stream: false
+        stop: null
+        tools:
+        - function:
+            name: get_weather
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            description: Get the current weather for a city.
+          type: function
+        - function:
+            name: final_result
+            parameters:
+              properties:
+                city:
+                  type: string
+                summary:
+                  type: string
+              required:
+              - city
+              - summary
+              title: CityInfo
+              type: object
+            description: The final response which ends this conversation
+          type: function
+        tool_choice:
+          function:
+            name: final_result
+          type: function
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 01a141fa-b238-74b1-a6f8-026ab529de0c
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: 8035d6916d454217a24826193fbb98af
+        created: 1792108311
+        model: mistral-large-latest
+        usage:
+          prompt_tokens: 90
+          total_tokens: 882
+          completion_tokens: 792
+          prompt_tokens_details:
+            cached_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+          service_tier: standard
+        object: chat.completion
+        choices:
+        - index: 0
+          finish_reason: tool_calls
+          message:
+            role: assistant
+            tool_calls:
+            - id: fbPpwzUAR
+              type: function
+              function:
+                name: final_result
+                arguments: "{\"city\": \"Paris\", \"summary\": \"Paris, the capital of France, is one of the most iconic and visited cities in the world. Known as the \\\"City of Light\\\" (La Ville Lumière), Paris is celebrated for its rich history, art, culture, architecture, and romance. Here are some key highlights:\\n\\n1. **Landmarks and Monuments**: \\n   - **Eiffel Tower**: The symbol of Paris, built in 1889, offers breathtaking views of the city.\\n   - **Louvre Museum**: The world's largest art museum, home to the Mona Lisa, Venus de Milo, and thousands of other masterpieces.\\n   - **Notre-Dame Cathedral**: A masterpiece of Gothic architecture, currently under restoration after the 2019 fire.\\n   - **Arc de Triomphe**: A historic monument honoring those who fought for France, with a panoramic view from the top.\\n   - **Sacré-Cœur Basilica**: Located in Montmartre, it offers stunning views and a serene atmosphere.\\n\\n2. **Culture and Arts**: \\n   - Paris has been a center of art and culture for centuries, inspiring artists like Monet, Picasso, and Van Gogh.\\n   - The city is home to over 1,000 art galleries and numerous theaters, including the famous Opéra Garnier.\\n   - The **Moulin Rouge** and **Cabaret** shows are iconic symbols of Parisian entertainment.\\n\\n3. **Neighborhoods**: \\n   - **Montmartre**: A historic and artistic district known for its bohemian vibe.\\n   - **Le Marais**: A trendy area with medieval streets, boutique shops, and vibrant nightlife.\\n   - **Champs-Élysées**: A famous avenue lined with shops, cafés, and theaters.\\n   - **Latin Quarter**: A lively student area with historic universities and bustling cafés.\\n\\n4. **Cuisine**: \\n   - Paris is a paradise for food lovers, offering everything from Michelin-starred restaurants to charming bistros.\\n   - Must-try dishes include croissants, baguettes, escargot, coq au vin, and crème brûlée.\\n   - The city is also famous for its patisseries, cheese shops, and wine bars.\\n\\n5. **Parks and Gardens**: \\n   - **Luxembourg Gardens**: A beautiful park with fountains, statues, and lush greenery.\\n   - **Tuileries Garden**: Located between the Louvre and Place de la Concorde, perfect for a leisurely stroll.\\n   - **Bois de Boulogne**: A large public park with lakes, gardens, and walking paths.\\n\\n6. **History**: \\n   - Paris has a rich history dating back over 2,000 years, from its founding by the Parisii tribe to its role in the French Revolution and World War II.\\n   - The city has been a center of political, intellectual, and artistic movements throughout the centuries.\\n\\n7. **Fashion**: \\n   - Paris is one of the world's fashion capitals, hosting prestigious events like Paris Fashion Week.\\n   - The city is home to legendary fashion houses like Chanel, Dior, and Louis Vuitton.\\n\\n8. **Transportation**: \\n   - Paris has an extensive public transportation system, including the Métro, buses, and RER trains.\\n   - The city is also bike-friendly, with numerous bike lanes and rental options.\\n\\nParis is a city that captivates visitors with its charm, elegance, and endless opportunities for exploration.\"}"
+              index: 0
+            content: ""
+  recorded_at: 2026-10-15T23:52:00.640210+00:00

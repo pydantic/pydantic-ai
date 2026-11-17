@@ -1,6 +1,11 @@
+---
+title: Pydantic Evals
+description: "Pydantic Evals is a code-first Python framework for evaluating LLM apps and agents: score outputs and tool-call trajectories on datasets or live traffic."
+---
+
 # Pydantic Evals
 
-**Pydantic Evals** is a powerful evaluation framework for systematically testing and evaluating AI systems, from simple LLM calls to complex multi-agent applications.
+**Pydantic Evals** is a powerful evaluation framework for systematically testing and evaluating AI systems, from simple LLM calls to complex multi-agent applications. It grades an agent's final outputs and its [trajectory](evals/evaluators/agentic.md) (the sequence and arguments of its tool calls), against datasets in code or, with [online evaluation](evals/online-evaluation.md), against a sample of live production traffic.
 
 ## Design Philosophy
 
@@ -26,6 +31,11 @@
 - [LLM as a Judge](evals/evaluators/llm-judge.md) - Use LLMs to evaluate subjective qualities, complex criteria, and natural language outputs
 - [Custom Evaluators](evals/evaluators/custom.md) - Implement domain-specific scoring logic and custom evaluation metrics
 - [Span-Based Evaluation](evals/evaluators/span-based.md) - Evaluate internal agent behavior (tool calls, execution flow) using OpenTelemetry traces. Essential for complex agents where correctness depends on _how_ the answer was reached, not just the final output. Also ensures eval assertions align with production telemetry.
+- [Agentic Evaluators](evals/evaluators/agentic.md) - Grade an agent's *trajectory*, the sequence and arguments of its tool calls, not just the final output
+
+**Online Evaluation:**
+
+- [Online Evaluation](evals/online-evaluation.md) - Attach evaluators to production or staging traffic so every call, or a sampled subset, is graded in the background
 
 **How-To Guides:**
 
@@ -34,6 +44,7 @@
 - [Concurrency & Performance](evals/how-to/concurrency.md) - Control parallel execution
 - [Retry Strategies](evals/how-to/retry-strategies.md) - Handle transient failures
 - [Metrics & Attributes](evals/how-to/metrics-attributes.md) - Track custom data
+- [Case Lifecycle Hooks](evals/how-to/lifecycle.md) - Per-case setup, teardown, and context enrichment
 
 **Examples:**
 
@@ -47,9 +58,9 @@
 
 Pydantic Evals follows a **code-first approach** where you define all evaluation components (datasets, experiments, tasks, cases and evaluators) in Python code, or as serialized data loaded by Python code. This differs from platforms with fully web-based configuration.
 
-When you run an _Experiment_ you'll see a progress indicator and can print the results wherever you run your python code (IDE, terminal, etc). You also get a report object back that you can serialize and store or send to a notebook or other application for further visualization and analysis.
+When you run an _Experiment_, you'll see a progress indicator and can print the results wherever you run your Python code (IDE, terminal, etc.). You also get a report object back that you can serialize and store or send to a notebook or other application for further visualization and analysis.
 
-If you are using [Pydantic Logfire](https://logfire.pydantic.dev/docs/guides/web-ui/evals/), your experiment results automatically appear in the Logfire web interface for visualization, comparison, and collaborative analysis. Logfire serves as a observability layer - you write and run evals in code, then view and analyze results in the web UI.
+If you are using [Pydantic Logfire](https://logfire.pydantic.dev/docs/guides/web-ui/evals/), your experiment results automatically appear in the Logfire web interface for visualization, comparison, and collaborative analysis. Logfire serves as an observability layer: you write and run evals in code, then view and analyze the results in the web UI.
 
 ## Installation
 
@@ -127,10 +138,10 @@ For a deeper understanding, see [Core Concepts](evals/core-concepts.md).
 
 ## Datasets and Cases
 
-In Pydantic Evals, everything begins with [`Dataset`][pydantic_evals.Dataset]s and [`Case`][pydantic_evals.Case]s:
+In Pydantic Evals, everything begins with [`Dataset`][pydantic_evals.dataset.Dataset]s and [`Case`][pydantic_evals.dataset.Case]s:
 
-- **[`Dataset`][pydantic_evals.Dataset]**: A collection of test Cases designed for the evaluation of a specific task or function
-- **[`Case`][pydantic_evals.Case]**: A single test scenario corresponding to Task inputs, with optional expected outputs, metadata, and case-specific evaluators
+- **[`Dataset`][pydantic_evals.dataset.Dataset]**: A collection of test Cases designed for the evaluation of a specific task or function
+- **[`Case`][pydantic_evals.dataset.Case]**: A single test scenario corresponding to Task inputs, with optional expected outputs, metadata, and case-specific evaluators
 
 ```python {title="simple_eval_dataset.py"}
 from pydantic_evals import Case, Dataset
@@ -142,7 +153,7 @@ case1 = Case(
     metadata={'difficulty': 'easy'},
 )
 
-dataset = Dataset(cases=[case1])
+dataset = Dataset(name='capital_quiz', cases=[case1])
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -176,7 +187,7 @@ class MyEvaluator(Evaluator):
         if ctx.output == ctx.expected_output:
             return 1.0
         elif (
-            isinstance(ctx.output, str)
+            ctx.expected_output is not None
             and ctx.expected_output.lower() in ctx.output.lower()
         ):
             return 0.8
@@ -187,7 +198,7 @@ class MyEvaluator(Evaluator):
 dataset.add_evaluator(MyEvaluator())
 ```
 
-1. You can add built-in evaluators to a dataset using the [`add_evaluator`][pydantic_evals.Dataset.add_evaluator] method.
+1. You can add built-in evaluators to a dataset using the [`add_evaluator`][pydantic_evals.dataset.Dataset.add_evaluator] method.
 2. This custom evaluator returns a simple score based on whether the output matches the expected output.
 
 _(This example is complete, it can be run "as is")_
@@ -199,12 +210,13 @@ Learn more:
 - [LLM Judge](evals/evaluators/llm-judge.md) - Using LLMs as evaluators
 - [Custom Evaluators](evals/evaluators/custom.md) - Write your own logic
 - [Span-Based Evaluation](evals/evaluators/span-based.md) - Analyze execution traces
+- [Agentic Evaluators](evals/evaluators/agentic.md) - Grade an agent's trajectory
 
 ## Running Experiments
 
 Performing evaluations involves running a task against all cases in a dataset, also known as running an "experiment".
 
-Putting the above two examples together and using the more declarative `evaluators` kwarg to [`Dataset`][pydantic_evals.Dataset]:
+Putting the above two examples together and using the more declarative `evaluators` kwarg to [`Dataset`][pydantic_evals.dataset.Dataset]:
 
 ```python {title="simple_eval_complete.py"}
 from pydantic_evals import Case, Dataset
@@ -223,7 +235,7 @@ class MyEvaluator(Evaluator[str, str]):
         if ctx.output == ctx.expected_output:
             return 1.0
         elif (
-            isinstance(ctx.output, str)
+            ctx.expected_output is not None
             and ctx.expected_output.lower() in ctx.output.lower()
         ):
             return 0.8
@@ -232,6 +244,7 @@ class MyEvaluator(Evaluator[str, str]):
 
 
 dataset = Dataset(
+    name='capital_quiz',
     cases=[case1],
     evaluators=[IsInstance(type_name='str'), MyEvaluator()],  # (2)!
 )
@@ -255,19 +268,21 @@ report.print(include_input=True, include_output=True, include_durations=False)  
 """
 ```
 
-1. Create a [test case][pydantic_evals.Case] as above
-2. Create a [`Dataset`][pydantic_evals.Dataset] with test cases and [`evaluators`][pydantic_evals.Dataset.evaluators]
+1. Create a [test case][pydantic_evals.dataset.Case] as above
+2. Create a [`Dataset`][pydantic_evals.dataset.Dataset] with test cases and [`evaluators`][pydantic_evals.dataset.Dataset.evaluators]
 3. Our function to evaluate.
-4. Run the evaluation with [`evaluate_sync`][pydantic_evals.Dataset.evaluate_sync], which runs the function against all test cases in the dataset, and returns an [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] object.
+4. Run the evaluation with [`evaluate_sync`][pydantic_evals.dataset.Dataset.evaluate_sync], which runs the function against all test cases in the dataset, and returns an [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] object.
 5. Print the report with [`print`][pydantic_evals.reporting.EvaluationReport.print], which shows the results of the evaluation. We have omitted duration here just to keep the printed output from changing from run to run.
 
 _(This example is complete, it can be run "as is")_
 
 See [Quick Start](evals/quick-start.md) for more examples and [Concurrency & Performance](evals/how-to/concurrency.md) to learn about controlling parallel execution.
 
+To evaluate an agent at batch prices, add [`BatchModelRequests`](batch.md) to it: cases run concurrently, so their model requests share batches, and the evaluation takes as long as its batches do.
+
 ## API Reference
 
-For comprehensive coverage of all classes, methods, and configuration options, see the detailed [API Reference documentation](https://ai.pydantic.dev/api/pydantic_evals/dataset/).
+For comprehensive coverage of all classes, methods, and configuration options, see the detailed [API Reference documentation](api/pydantic_evals/dataset.md).
 
 ## Next Steps
 

@@ -1,0 +1,235 @@
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Literal
+
+from typing_extensions import deprecated
+
+from pydantic_ai._utils import replace_no_init
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.native_tools import XSearchTool
+from pydantic_ai.tools import AgentDepsT, RunContext, Tool
+from pydantic_ai.toolsets import AbstractToolset
+
+from ._deprecated_fallback_model import check_deprecated_fallback_model
+from .native_or_local import NativeOrLocalTool
+
+if TYPE_CHECKING:
+    from pydantic_ai.common_tools.x_search import XSearchFallbackModel, XSearchNativeTool
+
+
+@dataclass(init=False)
+class XSearch(NativeOrLocalTool[AgentDepsT]):
+    """X (Twitter) search capability.
+
+    On xAI models, uses the native X search directly with no extra configuration.
+
+    On non-xAI models, you must explicitly set `fallback_subagent_model` to an xAI model
+    (e.g. `'xai:grok-4.3'`) to enable a subagent-based fallback.
+    There is no default subagent model — attempting to use `XSearch` on a non-xAI
+    model without `fallback_subagent_model` will error.
+    """
+
+    fallback_subagent_model: XSearchFallbackModel
+    """Model for a subagent to run when the agent's model doesn't support X search natively.
+
+    Required for non-xAI models; leave as `None` (the default) when running on an xAI
+    model. Must be a model that supports X search via the
+    [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] native tool (i.e. an xAI model),
+    for example `'xai:grok-4.3'`.
+
+    Can be a model name string, `Model` instance, or a callable taking `RunContext`
+    that returns a `Model` instance or model name string.
+
+    The model is kept as declared; the `x_search` tool is derived from it and the
+    capability's settings each time the toolset is requested.
+    """
+
+    allowed_x_handles: list[str] | None
+    """If provided, only posts from these X handles will be included (max 20).
+
+    Honored by the native X search tool, whether used directly on an xAI model or via the
+    `fallback_subagent_model` subagent.
+    """
+
+    excluded_x_handles: list[str] | None
+    """If provided, posts from these X handles will be excluded (max 20).
+
+    Honored by the native X search tool, whether used directly on an xAI model or via the
+    `fallback_subagent_model` subagent.
+    """
+
+    from_date: datetime | None
+    """If provided, only posts created on or after this datetime will be included."""
+
+    to_date: datetime | None
+    """If provided, only posts created on or before this datetime will be included."""
+
+    enable_image_understanding: bool | None
+    """Enable image analysis from X posts. When unset, inherits the native tool's default (`False`)."""
+
+    enable_video_understanding: bool | None
+    """Enable video analysis from X content. When unset, inherits the native tool's default (`False`)."""
+
+    include_output: bool | None
+    """Include raw X search results in the response as
+    [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart].
+
+    When unset, inherits the native tool's default (`False`).
+    """
+
+    id: str | None = 'x_search'
+    """One-off: an agent searches, fetches or generates one way, so the id is fixed.
+
+    Declared here rather than only as an `__init__` default so the class states it where
+    `_declares_default_id` -- and a reader -- can see it.
+    """
+
+    def __init__(
+        self,
+        *,
+        native: XSearchTool
+        | Callable[[RunContext[AgentDepsT]], Awaitable[XSearchTool | None] | XSearchTool | None]
+        | bool = True,
+        local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
+        fallback_subagent_model: Model
+        | KnownModelName
+        | str
+        | Callable[[RunContext[AgentDepsT]], Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str]
+        | None = None,
+        allowed_x_handles: list[str] | None = None,
+        excluded_x_handles: list[str] | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        enable_image_understanding: bool | None = None,
+        enable_video_understanding: bool | None = None,
+        include_output: bool | None = None,
+        id: str | None = 'x_search',
+        description: str | None = None,
+        defer_loading: bool = False,
+        # TODO(v3): remove `fallback_model`, the deprecated spelling of `fallback_subagent_model`.
+        fallback_model: Model
+        | KnownModelName
+        | str
+        | Callable[[RunContext[AgentDepsT]], Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str]
+        | None = None,
+    ) -> None:
+        self.id = id
+        self.description = description
+        self.defer_loading = defer_loading
+        self.native = native
+        self.local = local
+        check_deprecated_fallback_model(
+            type(self).__name__,
+            fallback_subagent_model_passed=fallback_subagent_model is not None,
+            fallback_model_passed=fallback_model is not None,
+        )
+        self.fallback_subagent_model = fallback_model if fallback_model is not None else fallback_subagent_model
+        self.allowed_x_handles = allowed_x_handles
+        self.excluded_x_handles = excluded_x_handles
+        self.from_date = from_date
+        self.to_date = to_date
+        self.enable_image_understanding = enable_image_understanding
+        self.enable_video_understanding = enable_video_understanding
+        self.include_output = include_output
+        self.__post_init__()
+
+    def __post_init__(self) -> None:
+        # Checked here rather than in `__init__` so a merge is held to it too: `combine` can pair
+        # one instance's `fallback_subagent_model` with another's `local`, which no constructor
+        # accepts, and the local tool would then take effect with `fallback_subagent_model` silently
+        # ignored. Runs before the base resolves `local`, so it reads what was declared rather than
+        # what was materialized.
+        if self.fallback_subagent_model is not None and self.local is not None:
+            raise UserError(
+                'XSearch: cannot specify both `fallback_subagent_model` and `local` — '
+                'use `fallback_subagent_model` for the default subagent fallback, or `local` for a custom tool'
+            )
+        super().__post_init__()
+        # Built here only so a `native` of the wrong type fails at construction; `get_toolset` builds
+        # the tool it uses.
+        self._fallback_subagent_tool()
+
+    # TODO(v3): remove the `fallback_model` property, the deprecated spelling of `fallback_subagent_model`.
+    # The message is spelled out rather than shared with the helper that warns at construction:
+    # a type checker only reports a deprecation whose message is a string literal.
+    @property
+    @deprecated(
+        '`fallback_model` is deprecated; use `fallback_subagent_model` instead.', category=PydanticAIDeprecationWarning
+    )
+    def fallback_model(self) -> XSearchFallbackModel:
+        """Deprecated alias for [`fallback_subagent_model`][pydantic_ai.capabilities.XSearch.fallback_subagent_model]."""
+        return self.fallback_subagent_model
+
+    @fallback_model.setter
+    @deprecated(
+        '`fallback_model` is deprecated; use `fallback_subagent_model` instead.', category=PydanticAIDeprecationWarning
+    )
+    def fallback_model(self, value: XSearchFallbackModel) -> None:
+        self.fallback_subagent_model = value
+
+    def _xsearch_kwargs(self) -> dict[str, Any]:
+        """Collect non-None XSearchTool config fields."""
+        kwargs: dict[str, Any] = {}
+        if self.allowed_x_handles is not None:
+            kwargs['allowed_x_handles'] = self.allowed_x_handles
+        if self.excluded_x_handles is not None:
+            kwargs['excluded_x_handles'] = self.excluded_x_handles
+        if self.from_date is not None:
+            kwargs['from_date'] = self.from_date
+        if self.to_date is not None:
+            kwargs['to_date'] = self.to_date
+        if self.enable_image_understanding is not None:
+            kwargs['enable_image_understanding'] = self.enable_image_understanding
+        if self.enable_video_understanding is not None:
+            kwargs['enable_video_understanding'] = self.enable_video_understanding
+        if self.include_output is not None:
+            kwargs['include_output'] = self.include_output
+        return kwargs
+
+    def _default_native(self) -> XSearchTool:
+        return XSearchTool(**self._xsearch_kwargs())
+
+    def _native_unique_id(self) -> str:
+        return XSearchTool.kind
+
+    def _has_local_fallback(self) -> bool:
+        # `fallback_subagent_model` stands for a local tool the base cannot see, since `get_toolset`
+        # is where it gets built. Without this, `native=False` beside it would read as a no-op.
+        return super()._has_local_fallback() or self.fallback_subagent_model is not None
+
+    def _fallback_subagent_tool(self) -> Tool[AgentDepsT] | None:
+        """Build the `x_search` tool that runs `fallback_subagent_model`, from the current settings.
+
+        Derived when the toolset is requested rather than stored on `local`: `dataclasses.replace`
+        feeds every field back through `__init__`, where a derived tool on `local` would read as a
+        second fallback beside `fallback_subagent_model`.
+        """
+        if self.fallback_subagent_model is None:
+            return None
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        return x_search_tool(model=self.fallback_subagent_model, native_tool=self._resolved_native())
+
+    def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
+        capability = self
+        if (subagent_tool := self._fallback_subagent_tool()) is not None:
+            # The base builds its toolset from `local`, so the subagent tool goes there on a copy.
+            capability = replace_no_init(self, local=subagent_tool)
+        return super(XSearch, capability).get_toolset()
+
+    def _requires_native(self) -> bool:
+        # Handle constraints can only be enforced by the native XSearchTool.
+        # When a `fallback_subagent_model` is set, the subagent runs the native tool too,
+        # so the local fallback can satisfy the constraints — don't require native.
+        if self.fallback_subagent_model is not None:
+            return False
+        return self.allowed_x_handles is not None or self.excluded_x_handles is not None
+
+    def _resolved_native(self) -> XSearchNativeTool[AgentDepsT]:
+        """Get the XSearchTool for the fallback, with capability-level overrides applied."""
+        return self._resolve_native_with_overrides(XSearchTool, self._xsearch_kwargs())

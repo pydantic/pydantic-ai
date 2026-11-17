@@ -1,0 +1,105 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '764'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: The blender arrived smashed. Please send me a replacement unit.
+        role: user
+      model: o3-mini
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              response:
+                anyOf:
+                - const: refund
+                  description: The customer wants their money back.
+                - const: replace
+                  description: The customer wants a working unit instead.
+                - const: escalate
+                  description: Nobody on this tier can resolve it.
+                description: What the customer is asking for.
+                type: string
+            required:
+            - response
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '788'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1746'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"response": "escalate"}'
+              name: final_result
+            id: call_W7yKsTmgG7eHcm4JWzrx62O9
+            type: function
+      created: 1789781451
+      id: chatcmpl-EPeChKyd22JlFMOohMqiLO0OXNmKl
+      model: o3-mini-2025-01-31
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_2015106200
+      usage:
+        completion_tokens: 352
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 320
+          rejected_prediction_tokens: 0
+        prompt_tokens: 65
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 417
+    status:
+      code: 200
+      message: OK
+version: 1

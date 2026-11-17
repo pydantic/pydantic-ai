@@ -1,37 +1,50 @@
 from __future__ import annotations as _annotations
 
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from inline_snapshot import snapshot
+from pydantic import BaseModel
 from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
 
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    import logfire
-    from logfire.testing import CaptureLogfire
-
     from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
     from pydantic_evals.evaluators.common import (
+        DEFAULT_EVALUATORS,
         Contains,
         Equals,
         EqualsExpected,
+        GEval,
         HasMatchingSpan,
         IsInstance,
         LLMJudge,
         MaxDuration,
         OutputConfig,
     )
-    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
+    from pydantic_evals.evaluators.llm_as_a_judge import (
+        _GEvalResult,  # pyright: ignore[reportPrivateUsage]
+        _GradingResult,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_evals.otel._errors import SpanTreeRecordingError
     from pydantic_evals.otel.span_tree import SpanQuery
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+with try_import() as logfire_import_successful:
+    import logfire
+    from logfire.testing import CaptureLogfire
+
+    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
+
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
+
+needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
 
 if TYPE_CHECKING or imports_successful():
@@ -101,20 +114,77 @@ async def test_contains_dict():
 
     # Test dictionary key missing
     assert evaluator.evaluate(MockContext(output={'different': 'value'})) == snapshot(
-        EvaluationReason(value=False, reason="Output dictionary does not contain expected key 'key'")
+        EvaluationReason(value=False, reason="Output does not contain expected key 'key'")
     )
 
     # Test dictionary value mismatch
     assert evaluator.evaluate(MockContext(output={'key': 'different'})) == snapshot(
         EvaluationReason(
             value=False,
-            reason="Output dictionary has different value for key 'key': 'different' != 'value'",
+            reason="Output has different value for key 'key': 'different' != 'value'",
         )
     )
 
     # Test non-dict value in dict
     evaluator_single = Contains(value='key')
     assert evaluator_single.evaluate(MockContext(output={'key': 'value'})) == snapshot(EvaluationReason(value=True))
+
+
+async def test_contains_basemodel():
+    """Test Contains evaluator with Pydantic BaseModel."""
+
+    class MockModel(BaseModel):
+        key: str | None = None
+        extra: str | None = None
+
+    evaluator = Contains(value={'key': 'value'})
+
+    # Test model containment
+    assert evaluator.evaluate(MockContext(output=MockModel(key='value', extra='data'))) == snapshot(
+        EvaluationReason(value=True)
+    )
+
+    # Test model key missing
+    assert evaluator.evaluate(MockContext(output=MockModel(extra='data'))) == snapshot(
+        EvaluationReason(value=False, reason="Output has different value for key 'key': None != 'value'")
+    )
+
+    # Test model value mismatch
+    assert evaluator.evaluate(MockContext(output=MockModel(key='different'))) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output has different value for key 'key': 'different' != 'value'",
+        )
+    )
+
+
+async def test_contains_dataclass():
+    """Test Contains evaluator with dataclasses."""
+
+    @dataclass
+    class MockDataClass:
+        key: str | None = None
+        extra: str | None = None
+
+    evaluator = Contains(value={'key': 'value'})
+
+    # Test dataclass containment
+    assert evaluator.evaluate(MockContext(output=MockDataClass(key='value', extra='data'))) == snapshot(
+        EvaluationReason(value=True)
+    )
+
+    # Test dataclass key missing
+    assert evaluator.evaluate(MockContext(output=MockDataClass(extra='data'))) == snapshot(
+        EvaluationReason(value=False, reason="Output has different value for key 'key': None != 'value'")
+    )
+
+    # Test dataclass value mismatch
+    assert evaluator.evaluate(MockContext(output=MockDataClass(key='different'))) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output has different value for key 'key': 'different' != 'value'",
+        )
+    )
 
 
 async def test_contains_list():
@@ -147,11 +217,11 @@ async def test_contains_invalid_type():
 
     # Test with unhashable type
     class Unhashable:
-        __hash__ = None  # type: ignore
+        __hash__ = None  # pyright: ignore[reportAssignmentType]
 
     result = evaluator.evaluate(MockContext(output=Unhashable()))
     assert result.value is False
-    assert result.reason == "Containment check failed: argument of type 'Unhashable' is not iterable"
+    assert result.reason and result.reason.startswith("Containment check failed: argument of type 'Unhashable'")
 
 
 async def test_is_instance():
@@ -189,7 +259,6 @@ async def test_max_duration():
     assert evaluator.evaluate(MockContext(duration=1.5)) is False
 
 
-@pytest.mark.anyio
 async def test_llm_judge_evaluator(mocker: MockerFixture):
     """Test LLMJudge evaluator."""
     # Create a mock GradingOutput
@@ -199,21 +268,21 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     mock_grading_output.reason = 'Test passed'
 
     # Mock the judge_output function
-    mock_judge_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_output')
+    mock_judge_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge._judge_output')
     mock_judge_output.return_value = mock_grading_output
 
     # Mock the judge_input_output function
-    mock_judge_input_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_input_output')
+    mock_judge_input_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge._judge_input_output')
     mock_judge_input_output.return_value = mock_grading_output
 
     # Mock the judge_input_output_expected function
     mock_judge_input_output_expected = mocker.patch(
-        'pydantic_evals.evaluators.llm_as_a_judge.judge_input_output_expected'
+        'pydantic_evals.evaluators.llm_as_a_judge._judge_input_output_expected'
     )
     mock_judge_input_output_expected.return_value = mock_grading_output
 
     # Mock the judge_output_expected function
-    mock_judge_output_expected = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_output_expected')
+    mock_judge_output_expected = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge._judge_output_expected')
     mock_judge_output_expected.return_value = mock_grading_output
 
     ctx = EvaluatorContext(
@@ -234,7 +303,9 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
         {'LLMJudge': {'value': True, 'reason': 'Test passed'}}
     )
 
-    mock_judge_output.assert_called_once_with('Hello world', 'Content contains a greeting', None, None)
+    mock_judge_output.assert_called_once_with(
+        'Hello world', 'Content contains a greeting', None, None, allow_reasonless=True
+    )
 
     # Test with input
     evaluator = LLMJudge(rubric='Output contains input', include_input=True, model='openai:gpt-4o')
@@ -243,7 +314,12 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     )
 
     mock_judge_input_output.assert_called_once_with(
-        {'prompt': 'Hello'}, 'Hello world', 'Output contains input', 'openai:gpt-4o', None
+        {'prompt': 'Hello'},
+        'Hello world',
+        'Output contains input',
+        'openai:gpt-4o',
+        None,
+        allow_reasonless=True,
     )
 
     # Test with input and expected output
@@ -255,7 +331,13 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     )
 
     mock_judge_input_output_expected.assert_called_once_with(
-        {'prompt': 'Hello'}, 'Hello world', 'Hello', 'Output contains input', 'openai:gpt-4o', None
+        {'prompt': 'Hello'},
+        'Hello world',
+        'Hello',
+        'Output contains input',
+        'openai:gpt-4o',
+        None,
+        allow_reasonless=True,
     )
 
     # Test with output and expected output
@@ -267,7 +349,12 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     )
 
     mock_judge_output_expected.assert_called_once_with(
-        'Hello world', 'Hello', 'Output contains input', 'openai:gpt-4o', None
+        'Hello world',
+        'Hello',
+        'Output contains input',
+        'openai:gpt-4o',
+        None,
+        allow_reasonless=True,
     )
     # Test with failing result
     mock_grading_output.score = 0.0
@@ -291,25 +378,34 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     )
 
 
-@pytest.mark.anyio
+async def test_llm_judge_omits_an_unavailable_reason(mocker: MockerFixture):
+    mocker.patch(
+        'pydantic_evals.evaluators.llm_as_a_judge._judge_output',
+        return_value=_GradingResult(reason=None, pass_=True, score=1.0),
+    )
+    evaluator = LLMJudge(rubric='Content contains a greeting')
+
+    assert to_jsonable_python(await evaluator.evaluate(MockContext(output='Hello'))) == snapshot({'LLMJudge': True})
+
+
 async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
     """Test LLMJudge evaluator with specific model_settings."""
     mock_grading_output = mocker.MagicMock()
     mock_grading_output.pass_ = True
     mock_grading_output.reason = 'Test passed with settings'
 
-    mock_judge_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_output')
+    mock_judge_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge._judge_output')
     mock_judge_output.return_value = mock_grading_output
 
-    mock_judge_input_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_input_output')
+    mock_judge_input_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge._judge_input_output')
     mock_judge_input_output.return_value = mock_grading_output
 
     mock_judge_input_output_expected = mocker.patch(
-        'pydantic_evals.evaluators.llm_as_a_judge.judge_input_output_expected'
+        'pydantic_evals.evaluators.llm_as_a_judge._judge_input_output_expected'
     )
     mock_judge_input_output_expected.return_value = mock_grading_output
 
-    mock_judge_output_expected = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_output_expected')
+    mock_judge_output_expected = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge._judge_output_expected')
     mock_judge_output_expected.return_value = mock_grading_output
 
     custom_model_settings = ModelSettings(temperature=0.77)
@@ -332,7 +428,11 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
         {'LLMJudge': {'value': True, 'reason': 'Test passed with settings'}}
     )
     mock_judge_output.assert_called_once_with(
-        'Hello world custom settings', 'Greeting with custom settings', None, custom_model_settings
+        'Hello world custom settings',
+        'Greeting with custom settings',
+        None,
+        custom_model_settings,
+        allow_reasonless=True,
     )
 
     # Test with input, with custom model_settings
@@ -351,6 +451,7 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
         'Output contains input with custom settings',
         'openai:gpt-3.5-turbo',
         custom_model_settings,
+        allow_reasonless=True,
     )
 
     # Test with input and expected output, with custom model_settings
@@ -371,6 +472,7 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
         'Output contains input with custom settings',
         'openai:gpt-3.5-turbo',
         custom_model_settings,
+        allow_reasonless=True,
     )
 
     # Test with output and expected output
@@ -390,9 +492,11 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
         'Output contains input with custom settings',
         'openai:gpt-3.5-turbo',
         custom_model_settings,
+        allow_reasonless=True,
     )
 
 
+@needs_logfire
 async def test_span_query_evaluator(capfire: CaptureLogfire):
     """Test HasMatchingSpan evaluator."""
     # Create a span tree with a known structure
@@ -406,10 +510,10 @@ async def test_span_query_evaluator(capfire: CaptureLogfire):
 
     ctx = EvaluatorContext(
         name='test',
-        inputs={},
+        inputs=dict[str, Any](),
         metadata=None,
         expected_output=None,
-        output={},
+        output=dict[str, Any](),
         duration=0.0,
         _span_tree=tree,
         attributes={},
@@ -439,3 +543,88 @@ async def test_span_query_evaluator(capfire: CaptureLogfire):
     # Test non-matching attributes
     evaluator = HasMatchingSpan(query=SpanQuery(name_equals='child1', has_attributes={'wrong': 'value'}))
     assert evaluator.evaluate(ctx) is False
+
+
+async def test_g_eval_evaluator(mocker: MockerFixture):
+    """Test GEval evaluator."""
+    mock_judge_g_eval = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge._judge_g_eval')
+    mock_judge_g_eval.return_value = _GEvalResult(reason='Clear and well structured', score=4)
+
+    ctx = EvaluatorContext(
+        name='test',
+        inputs='Explain gravity.',
+        metadata=None,
+        expected_output=None,
+        output='Gravity pulls masses together.',
+        duration=0.0,
+        _span_tree=SpanTreeRecordingError('spans were not recorded'),
+        attributes={},
+        metrics={},
+    )
+
+    evaluator = GEval(
+        criteria='coherence',
+        evaluation_steps=['Read the output carefully.', 'Assign a score from 1 to 5.'],
+        include_input=True,
+    )
+    assert await evaluator.evaluate(ctx) == snapshot(EvaluationReason(value=4, reason='Clear and well structured'))
+    mock_judge_g_eval.assert_called_once_with(
+        'Gravity pulls masses together.',
+        'coherence',
+        ['Read the output carefully.', 'Assign a score from 1 to 5.'],
+        (1, 5),
+        inputs='Explain gravity.',
+        model=None,
+        model_settings=None,
+        allow_reasonless=True,
+    )
+
+    # By default the inputs are not shown to the judge
+    mock_judge_g_eval.reset_mock()
+    evaluator = GEval(criteria='fluency', evaluation_steps=['Check grammar.'])
+    await evaluator.evaluate(ctx)
+    assert mock_judge_g_eval.call_args.kwargs['inputs'] is None
+
+
+async def test_g_eval_preserves_an_unavailable_reason(mocker: MockerFixture):
+    mocker.patch(
+        'pydantic_evals.evaluators.llm_as_a_judge._judge_g_eval',
+        return_value=_GEvalResult(reason=None, score=4),
+    )
+    evaluator = GEval(criteria='clarity', evaluation_steps=['Read it.'])
+
+    assert to_jsonable_python(await evaluator.evaluate(MockContext(output='Clear.'))) == snapshot(
+        {'value': 4, 'reason': None}
+    )
+
+
+def test_g_eval_validates_arguments_at_construction():
+    """Invalid `score_range`/`evaluation_steps` fail at construction (and thus at dataset load), not at evaluation time."""
+    with pytest.raises(ValueError, match='`score_range` must satisfy min < max'):
+        GEval(criteria='c', evaluation_steps=['s'], score_range=(5, 1))
+
+    # An empty steps list would produce a prompt with no chain-of-thought section, defeating the method.
+    with pytest.raises(ValueError, match='`evaluation_steps` must contain at least one step'):
+        GEval(criteria='c', evaluation_steps=[])
+
+
+def test_g_eval_evaluation_name():
+    assert GEval(criteria='c', evaluation_steps=['s']).get_default_evaluation_name() == 'GEval'
+    evaluator = GEval(criteria='c', evaluation_steps=['s'], evaluation_name='coherence')
+    assert evaluator.get_default_evaluation_name() == 'coherence'
+
+
+def test_g_eval_registered_in_defaults():
+    """`GEval` deserializes from YAML/JSON dataset configs via `DEFAULT_EVALUATORS`."""
+    assert GEval in DEFAULT_EVALUATORS
+
+
+def test_g_eval_model_instance_serialized_as_string():
+    """`GEval` serializes a `Model` instance as its `model_id`, matching `LLMJudge`."""
+    model = TestModel()
+    evaluator = GEval(criteria='coherence', evaluation_steps=['step'], model=model)
+    assert evaluator.build_serialization_arguments()['model'] == model.model_id
+
+    # A string model name is already serializable and passes through unchanged.
+    evaluator = GEval(criteria='coherence', evaluation_steps=['step'], model='openai:gpt-5.2')
+    assert evaluator.build_serialization_arguments()['model'] == 'openai:gpt-5.2'

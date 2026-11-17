@@ -1,0 +1,280 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '409'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3172'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1877'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1781030184
+      created_at: 1781030183
+      error: null
+      frequency_penalty: 0.0
+      id: resp_07fb6c700c679e0b006a285d272e90819ebfa4747eb4c35af4
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      moderation: null
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqKF0pjha6OxJ5iwy_dW6fdklzLPkXhSzgPh-D6Qtxj9naohj5nJlgdBCbkmyGvReiQ2X1YWH9pr8jy8PwcnlHsj_FQsdBD6BISYN6tewf74Sembec0ewXr-4me4HkJb5YxvUyJGT7x-vDdHj6UkSTfY8prwRwTNOljowVbLkKfWq9FAtRGGfFeL8rfSvhn0GdUbKIayJqebRL5bk9sdWBW6gQ2JDnkRR9HP5vc7Fh2BbrgwuUl1KejAXFTehI9LWy6JMwyaF1QiVZUodklq-qPaBxqc2_VpCVCorumd31R8ZWQkmOag6hgZtDQQFhOrervJcCijM7BREYuFadADyQlRpJAVRDi4uwTLuI7CimYiFbucS42IyS9e1l4jDOxru1VeuTCzseGyhInqXCfUL3tQ2iK0fMQjmMsSKHtcUk2C5Q85smshwcJyerry2qEIVSblQeQh7HlRVZVFANOUzOJeC1YsEzNgjE0tt5_jQKycyfQl2Y3WtjvAGqkEUOkA_FVKQAhuNVUmYaJG1D0HCLIqtAAcDr-zWuVuVdGXuq5RhmFJAq_nIuR9a6X_iCGkwycXZjuWYsyQaGFrlV7jzpvRa4kTuF62EDT5T8K7f3qavCWCyASFutWF_NT148mVnjOxcS8BmpYKzfZBxAz8J8ppoqH6-u5pAVm744ZbOdEEMdLjCK7NmNcUvNIRWd7W5I0XTPYMA1NbFMurhol3czTRLGg-blSSLmuV8MZwQh2uc7jsrepn-CkcUAv83AVDx41XGvjPzdTVbBblzmfFfQxfLWhiFs8TwAtHSz5AiCfOGZAr80-R2H_LvoBFp1dQy2G4pY0C7QxbWesoPgE4az008ZqZXH6V2kpcDM4gc_8gmCH-fMU-OUC92AmANxrXs3w3JWucXJTXtEZHWBszcdze5BbRfGxqXxBtb3spfZOTNoG04Asx4cdB57oD3KEJpumMqsPdwulc2_zcJRmR8lILFFhKiN77zuWt7LDY8hNMp6kWbm4C7y2fKvtld-9cmbQNrTOv_vsfENXRkvXN7-8xY1j-fTlHd0Mu326rccxf0y81WXpX_rEfX4KSvTQQQqclHdf2xuyLikpnsyNvcqYFu4lmwnIKL5DdDK1ZNRyO39WqXE20ri1w5oq9-97f6oFQbfPtm0CYsJBrmaOXRGqV1eIMMuJEhGNguG4_ZpNG-sn85K8bCGFu6RDiW5iUKWoEEDpBpUQA0iW3cglSGUCWemhDGgqtBhNVvzcSZIui-t5PJOpVmjBTPyN-TMjmycXoKB5YK9qymmN-2Xofg-S7H56SAqP_46h41qPe45gn4dZyI17Rw9AzR_eVA6Nw0_cH4aRiMwqvF6OW4cyfREYtCH7g2VYzXO_DOyhpmP3oCP-Fb1UPuGDTLsDWp6sQu3ZfJKXNjceM8fAUAWGQwQW1RNMSwlnHbENi3CK1jCAVsgZ0K7r07y-7oXYpQh9PezCPgUNM8bq8KhCIVqvRaVsy5T1Zk78j1f_CO8J9Oi3V_c1VW2bHfETFeegd7xO1M_fjrEpz7D2plqASUoReZxyGyqAg==
+        id: rs_07fb6c700c679e0b006a285d27d7c4819ebb375614ce1d2b6a
+        summary: []
+        type: reasoning
+      - arguments: '{}'
+        call_id: call_LnP8E5XLOOXYQzUbJHIBKlE2
+        id: fc_07fb6c700c679e0b006a285d28dae0819ea0739ed14b3b3ed5
+        name: get_file
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: current_turn
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 47
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 109
+        output_tokens_details:
+          reasoning_tokens: 64
+        total_tokens: 156
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2455'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      - encrypted_content: gAAAAABqKF0pjha6OxJ5iwy_dW6fdklzLPkXhSzgPh-D6Qtxj9naohj5nJlgdBCbkmyGvReiQ2X1YWH9pr8jy8PwcnlHsj_FQsdBD6BISYN6tewf74Sembec0ewXr-4me4HkJb5YxvUyJGT7x-vDdHj6UkSTfY8prwRwTNOljowVbLkKfWq9FAtRGGfFeL8rfSvhn0GdUbKIayJqebRL5bk9sdWBW6gQ2JDnkRR9HP5vc7Fh2BbrgwuUl1KejAXFTehI9LWy6JMwyaF1QiVZUodklq-qPaBxqc2_VpCVCorumd31R8ZWQkmOag6hgZtDQQFhOrervJcCijM7BREYuFadADyQlRpJAVRDi4uwTLuI7CimYiFbucS42IyS9e1l4jDOxru1VeuTCzseGyhInqXCfUL3tQ2iK0fMQjmMsSKHtcUk2C5Q85smshwcJyerry2qEIVSblQeQh7HlRVZVFANOUzOJeC1YsEzNgjE0tt5_jQKycyfQl2Y3WtjvAGqkEUOkA_FVKQAhuNVUmYaJG1D0HCLIqtAAcDr-zWuVuVdGXuq5RhmFJAq_nIuR9a6X_iCGkwycXZjuWYsyQaGFrlV7jzpvRa4kTuF62EDT5T8K7f3qavCWCyASFutWF_NT148mVnjOxcS8BmpYKzfZBxAz8J8ppoqH6-u5pAVm744ZbOdEEMdLjCK7NmNcUvNIRWd7W5I0XTPYMA1NbFMurhol3czTRLGg-blSSLmuV8MZwQh2uc7jsrepn-CkcUAv83AVDx41XGvjPzdTVbBblzmfFfQxfLWhiFs8TwAtHSz5AiCfOGZAr80-R2H_LvoBFp1dQy2G4pY0C7QxbWesoPgE4az008ZqZXH6V2kpcDM4gc_8gmCH-fMU-OUC92AmANxrXs3w3JWucXJTXtEZHWBszcdze5BbRfGxqXxBtb3spfZOTNoG04Asx4cdB57oD3KEJpumMqsPdwulc2_zcJRmR8lILFFhKiN77zuWt7LDY8hNMp6kWbm4C7y2fKvtld-9cmbQNrTOv_vsfENXRkvXN7-8xY1j-fTlHd0Mu326rccxf0y81WXpX_rEfX4KSvTQQQqclHdf2xuyLikpnsyNvcqYFu4lmwnIKL5DdDK1ZNRyO39WqXE20ri1w5oq9-97f6oFQbfPtm0CYsJBrmaOXRGqV1eIMMuJEhGNguG4_ZpNG-sn85K8bCGFu6RDiW5iUKWoEEDpBpUQA0iW3cglSGUCWemhDGgqtBhNVvzcSZIui-t5PJOpVmjBTPyN-TMjmycXoKB5YK9qymmN-2Xofg-S7H56SAqP_46h41qPe45gn4dZyI17Rw9AzR_eVA6Nw0_cH4aRiMwqvF6OW4cyfREYtCH7g2VYzXO_DOyhpmP3oCP-Fb1UPuGDTLsDWp6sQu3ZfJKXNjceM8fAUAWGQwQW1RNMSwlnHbENi3CK1jCAVsgZ0K7r07y-7oXYpQh9PezCPgUNM8bq8KhCIVqvRaVsy5T1Zk78j1f_CO8J9Oi3V_c1VW2bHfETFeegd7xO1M_fjrEpz7D2plqASUoReZxyGyqAg==
+        id: rs_07fb6c700c679e0b006a285d27d7c4819ebb375614ce1d2b6a
+        summary: []
+        type: reasoning
+      - arguments: '{}'
+        call_id: call_LnP8E5XLOOXYQzUbJHIBKlE2
+        id: fc_07fb6c700c679e0b006a285d28dae0819ea0739ed14b3b3ed5
+        name: get_file
+        type: function_call
+      - call_id: call_LnP8E5XLOOXYQzUbJHIBKlE2
+        output:
+        - detail: auto
+          file_id: file-BVTjj4CLd1Z7cgppk5sL45
+          type: input_image
+        type: function_call_output
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4277'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '5770'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1781030191
+      created_at: 1781030186
+      error: null
+      frequency_penalty: 0.0
+      id: resp_07fb6c700c679e0b006a285d29a6f8819e889f3c59ad4eddc3
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      moderation: null
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqKF0vnoXzsiVN_0WSsSKQ7Q8FZqW5ehl5NCq9Q0Ie5c4V0SPHuPI_IFU-WroiyHdbeEIdVPhxpvXGFj71XktMppjWx5XuOS79wIlda4qx4AklmSfkOZ5QxSPRWvhbcpI1FsnguFLUU-lsaqWrDIRkSvivwSOAwIVLWqiUQqXpdcs29OIJTcSe72HWRLf_yMitCVp2yuwGVtVC9MLVbCklkFMJQ1r1EhIRNDcldqirXWJEUDtvVtIlmENrudEdMKebVQWXHwf2ytrWahk9bX3kvg4fueEIbkhSSe2f4O7NXiYioK74jcOeGgVtf60aejTgCpxcxRzl9OnffWFEc1mocxLO23L5iHRar7QbTMOJvkHxiy88JitYYAgwARk3MVohtlTbXoFu4pHjGADFKfqRpsab6FNsoXmdhn1rfGqBUFS_cVshjQ1QSPf3ZocZa3qmvnqg_TZ5kOEyb7QWjogZLczRsT8wI_MhT1sdY2-t_vdOAJcwxSnL5eSzwKQUq6IfRGxzn-yoRBwQBj1UHINYXoWNoSvf2o3HqXYkUP1I50ZdMBfZDnFHrvb83h0rStf6KHkdvOOMvt-Mo5omU3Q9CRQq2fQsbpkFBWyk2zX59I1ShMZN840Mbgdkh9zxvYDhImx4Gpskvr99_lnUKg8C6fh77Fe1GexA9mBA6e_yT2dXwXc1oHYEBdLGaIapvrBaDLDFNqnWFGU9okXGDoCSLjBCQR4AraOYVxuHOpcgzrtIv9s_neMbbRW0ZXFEdF8M_dDYCdkzOj54Bn9vtkVu473hSm-SGB09xHmv4XINstf2eWVM2FHNv121mVgJnyTWY6wE0nib_Qux918jNyE_uhv9nlzqF6L8UKsvXY0TIoE6vE05ZsjBTPLRB9UamQmKdepZ6oPvIzaLVKKothVSfXgAMzZCGcPqN3IOKTmofOweECSaEKnBtNEnZDtwu-Q8jkAtXQb5WRAQJBz1lGZP4xw2bw3O8Q2bp9hfcHV8KonjOU6mn0EOjofzHk9_8tsBS-roxZb076xewApiAQht80p2WleqOpxj79a00av8yy9YvSYxrbYsfRTLGwu42PDvoNHtvSslB-lE65E8MTEbVLQClb_odpBtojmW_u5IpQucKLRprIKsEVW166_FPI1qB5iK2tdghK6nhUohSeU1JKA7k6VK2yRUburRgpDRtZwn7q9jsfsr5fbKbw_r3mMcGRDkFCF0eV0YXQZdGFSrBH_HJPtaPvDuAV2znT_cywaql5XLdSVwPAIz_HH2dZ0YI0Ulx6D-FsIbrQs7AB3SpkxQNLBU4Bffq2v0i1xxsPbSlAtOX44I3IUZchYkfGYjYwMQ11hbscCCFECBJw_wJXmm1wvnHNxSBZ_RoB1lTlyFQqQ7P9mw58UcKWGz-5JgJhYUkjAPhZBV0ZmmGwt-qdTdUJ1WLS-MNBCwHxGLosNwmrwWSpwodf_-qe6e_LNZ82edPq7MjqN0_80JG6_5hmul2A6-nBVG8HliQAbnQhZpt5o3QAmWjpoMpCG3b4mZY11Nh9aIO4EMlW_yPV_hBg47efrUI2FEYk6xg7ywAqnNOZywgN6GWll0dF1lm2g7n7UKL3fR7q0SYq9BPZ8NSHwzFE53RY2ilS_2u6nanoVG8mOYylRplWNI7YS0BlcDriZj39ZIEk2XUbidGCtBD1v9d8zX0Qe6_Lqfz3BkeE2JSzYkVBWVvNkwtIUP8VPK3yvCfk9eRVWfkQoqHMxj5NBxI0ikXpLO7KFZZA01TjZaH5nu74SMkOIY4_zCDZl9B9idGF6SJhtTrfIh8tDNmPo6gqKneKK8U_BB7cTMkIYoBQA50YaR7aLsXmx5SC3h7jwKX_npREvvJtQA4Smha4VDrG19QOWEg7rjFkQjDBQql9MGEjs7N0JOE4R9P_pCIDd9
+        id: rs_07fb6c700c679e0b006a285d2b6088819e863af90952a2cf67
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            I retrieved a close-up photo of a halved kiwi fruit (cross-section). Description:
+
+            - Subject: a single kiwi cut in half, shown face-on.
+            - Colors: bright green flesh with a pale, almost white central core and a ring of small black seeds. The thin brown, slightly fuzzy skin is visible around the outer edge.
+            - Details/texture: radiating fibrous lines from the core toward the skin; glossy, moist appearance of the flesh; tightly packed black seeds forming a near-circular pattern.
+            - Background/lighting: plain white background with even lighting; the kiwi is centered and fills most of the frame.
+
+            Would you like a higher-level analysis (e.g., estimated calorie/nutrition, use in recipes, or image editing suggestions)?
+          type: output_text
+        id: msg_07fb6c700c679e0b006a285d2d0744819e88c13914ef6631ce
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: current_turn
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 582
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 306
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 888
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

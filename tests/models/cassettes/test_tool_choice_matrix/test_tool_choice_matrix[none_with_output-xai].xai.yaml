@@ -1,0 +1,100 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Tell me about Paris
+        role: ROLE_USER
+      model: grok-3-fast
+      tools:
+      - function:
+          name: get_weather
+          description: Get the current weather for a city.
+          parameters: '{"additionalProperties": false, "properties": {"city": {"type":
+            "string"}}, "required": ["city"], "type": "object"}'
+      - function:
+          name: final_result
+          description: The final response which ends this conversation
+          parameters: '{"properties": {"city": {"type": "string"}, "summary": {"type":
+            "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type":
+            "object"}'
+      tool_choice:
+        function_name: final_result
+    raw: !!binary |
+      ChkKFQoTVGVsbCBtZSBhYm91dCBQYXJpcxABEgtncm9rLTMtZmFzdIoBqgEKpwEKC2dldF93ZWF0
+      aGVyEiNHZXQgdGhlIGN1cnJlbnQgd2VhdGhlciBmb3IgYSBjaXR5LiJzeyJhZGRpdGlvbmFsUHJv
+      cGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHsiY2l0eSI6IHsidHlwZSI6ICJzdHJpbmci
+      fX0sICJyZXF1aXJlZCI6IFsiY2l0eSJdLCAidHlwZSI6ICJvYmplY3QifYoB2AEK1QEKDGZpbmFs
+      X3Jlc3VsdBIvVGhlIGZpbmFsIHJlc3BvbnNlIHdoaWNoIGVuZHMgdGhpcyBjb252ZXJzYXRpb24i
+      kwF7InByb3BlcnRpZXMiOiB7ImNpdHkiOiB7InR5cGUiOiAic3RyaW5nIn0sICJzdW1tYXJ5Ijog
+      eyJ0eXBlIjogInN0cmluZyJ9fSwgInJlcXVpcmVkIjogWyJjaXR5IiwgInN1bW1hcnkiXSwgInRp
+      dGxlIjogIkNpdHlJbmZvIiwgInR5cGUiOiAib2JqZWN0In2SAQ4SDGZpbmFsX3Jlc3VsdA==
+  response_sample:
+    json:
+      id: 62f3dc9b-e8e6-a1db-be85-ad46cb4021d7
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_74643858
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: final_result
+              arguments: '{"city":"Paris","summary":"Paris, the capital of France,
+                is renowned for its history, culture, and landmarks such as the Eiffel
+                Tower, Notre-Dame Cathedral, and the Louvre Museum. Often called the
+                ''City of Light,'' it is a global center for art, fashion, gastronomy,
+                and romance. The city is situated on the Seine River and is known
+                for its charming cafes, beautiful architecture, and vibrant street
+                life. Paris also hosts numerous international events and is a major
+                hub for business and diplomacy."}'
+      created: '2026-01-29T21:33:23.514098579Z'
+      model: grok-3
+      system_fingerprint: fp_a50f881eb7
+      usage:
+        completion_tokens: 126
+        prompt_tokens: 148
+        total_tokens: 274
+        prompt_text_tokens: 148
+        cached_prompt_text_tokens: 147
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          function_name: final_result
+        tools:
+        - function:
+            name: get_weather
+            description: Get the current weather for a city.
+            parameters: '{"additionalProperties": false, "properties": {"city": {"type":
+              "string"}}, "required": ["city"], "type": "object"}'
+        - function:
+            name: final_result
+            description: The final response which ends this conversation
+            parameters: '{"properties": {"city": {"type": "string"}, "summary": {"type":
+              "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type":
+              "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiQ2MmYzZGM5Yi1lOGU2LWExZGItYmU4NS1hZDQ2Y2I0MDIxZDcSpQQIBBqgBBACGpsECg1jYWxs
+      Xzc0NjQzODU4EAEYAVKFBAoMZmluYWxfcmVzdWx0EvQDeyJjaXR5IjoiUGFyaXMiLCJzdW1tYXJ5
+      IjoiUGFyaXMsIHRoZSBjYXBpdGFsIG9mIEZyYW5jZSwgaXMgcmVub3duZWQgZm9yIGl0cyBoaXN0
+      b3J5LCBjdWx0dXJlLCBhbmQgbGFuZG1hcmtzIHN1Y2ggYXMgdGhlIEVpZmZlbCBUb3dlciwgTm90
+      cmUtRGFtZSBDYXRoZWRyYWwsIGFuZCB0aGUgTG91dnJlIE11c2V1bS4gT2Z0ZW4gY2FsbGVkIHRo
+      ZSAnQ2l0eSBvZiBMaWdodCwnIGl0IGlzIGEgZ2xvYmFsIGNlbnRlciBmb3IgYXJ0LCBmYXNoaW9u
+      LCBnYXN0cm9ub215LCBhbmQgcm9tYW5jZS4gVGhlIGNpdHkgaXMgc2l0dWF0ZWQgb24gdGhlIFNl
+      aW5lIFJpdmVyIGFuZCBpcyBrbm93biBmb3IgaXRzIGNoYXJtaW5nIGNhZmVzLCBiZWF1dGlmdWwg
+      YXJjaGl0ZWN0dXJlLCBhbmQgdmlicmFudCBzdHJlZXQgbGlmZS4gUGFyaXMgYWxzbyBob3N0cyBu
+      dW1lcm91cyBpbnRlcm5hdGlvbmFsIGV2ZW50cyBhbmQgaXMgYSBtYWpvciBodWIgZm9yIGJ1c2lu
+      ZXNzIGFuZCBkaXBsb21hY3kuIn0qDAijpO/LBhCTi5L1ATIGZ3Jvay0zOg1mcF9hNTBmODgxZWI3
+      ShMIfhCUARiSAiCUATiTAVj018YJWqQDEAEtMzMzPzoOEgxmaW5hbF9yZXN1bHRCqgEKpwEKC2dl
+      dF93ZWF0aGVyEiNHZXQgdGhlIGN1cnJlbnQgd2VhdGhlciBmb3IgYSBjaXR5LiJzeyJhZGRpdGlv
+      bmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHsiY2l0eSI6IHsidHlwZSI6ICJz
+      dHJpbmcifX0sICJyZXF1aXJlZCI6IFsiY2l0eSJdLCAidHlwZSI6ICJvYmplY3QifULYAQrVAQoM
+      ZmluYWxfcmVzdWx0Ei9UaGUgZmluYWwgcmVzcG9uc2Ugd2hpY2ggZW5kcyB0aGlzIGNvbnZlcnNh
+      dGlvbiKTAXsicHJvcGVydGllcyI6IHsiY2l0eSI6IHsidHlwZSI6ICJzdHJpbmcifSwgInN1bW1h
+      cnkiOiB7InR5cGUiOiAic3RyaW5nIn19LCAicmVxdWlyZWQiOiBbImNpdHkiLCAic3VtbWFyeSJd
+      LCAidGl0bGUiOiAiQ2l0eUluZm8iLCAidHlwZSI6ICJvYmplY3QifU0zM3M/

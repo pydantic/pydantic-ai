@@ -1,0 +1,65 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '600'
+      content-type:
+      - application/json
+      host:
+      - ollama.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: |2
+
+          Always respond with a JSON object that's compatible with this schema:
+
+          {"properties": {"name": {"type": "string"}, "animal": {"type": "string"}, "age": {"type": "integer"}}, "required": ["name", "animal", "age"], "type": "object", "additionalProperties": false, "title": "Pet"}
+
+          Don't include any text or Markdown fencing before or after.
+        role: system
+      - content: 'Generate a pet: a 3 year old black cat named Loki'
+        role: user
+      model: gpt-oss:20b
+      response_format:
+        type: json_object
+      stream: false
+    uri: https://ollama.com/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '590'
+      content-type:
+      - application/json
+      traceparent:
+      - 00-3496f10d17471220aae9191e3c318f0f-e649a19fa4785e94-00
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: '{"name":"Loki","animal":"cat","age":3}'
+          reasoning: 'We need to output JSON with name, animal, age. It''s a 3 year old black cat named Loki. So name: "Loki".
+            animal: "cat" or "black cat"? Schema: animal is string. Use "cat". age: 3. Output JSON. No markdown.'
+          role: assistant
+      created: 1776298282
+      id: chatcmpl-887
+      model: gpt-oss:20b
+      object: chat.completion
+      system_fingerprint: fp_ollama
+      usage:
+        completion_tokens: 88
+        prompt_tokens: 172
+        total_tokens: 260
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,6 +1,6 @@
 name: 🚀 Pydantic AI Feature Request
 description: "Suggest a new feature for Pydantic AI"
-labels: ["feature request"]
+labels: ["feature"]
 
 body:
   - type: markdown

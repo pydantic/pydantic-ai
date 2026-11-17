@@ -12,7 +12,7 @@ To copy all examples to a new directory, run:
 
     uv run -m pydantic_ai_examples --copy-to <destination_path>
 
-See https://ai.pydantic.dev/examples/ for more information.
+See https://pydantic.dev/docs/ai/examples/setup/ for more information.
 """
 
 import argparse

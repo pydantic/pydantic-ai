@@ -1,0 +1,765 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '93'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is 2+2?
+        role: user
+      model: gpt-4.1
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1264'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '748'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1776203680
+      created_at: 1776203679
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0d4b654a05c1a7a70069deb79f81b88197a19f61e394151ecc
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: 2 + 2 = **4**
+          type: output_text
+        id: msg_0d4b654a05c1a7a70069deb7a0037c8197a50d469f153a4a5c
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 14
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 9
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 23
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '172'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=QP2Rt5pJte7UBOT3BuwAj3KAYkOh_FwrgppGK2Of5s8-1776203679.0400488-1.0.1.1-u3CDZO1I416xr6oQSuzvttUf3aazsWkgKEdL59M9JEtS0neXp1p1OpLwnap1NdfiDrcZGYasHwthU58_qUSRlXiWoqWk9LZXxODKoHwld1B.Jt0jNTAIhjqnfXM23Eb9
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: And 3+3?
+        role: user
+      model: gpt-4.1
+      previous_response_id: resp_0d4b654a05c1a7a70069deb79f81b88197a19f61e394151ecc
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1317'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1287'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1776203681
+      created_at: 1776203680
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0d4b654a05c1a7a70069deb7a08194819784d6491244b331d6
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: 3 + 3 = **6**
+          type: output_text
+        id: msg_0d4b654a05c1a7a70069deb7a1610c81978d03f03f1593780f
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_0d4b654a05c1a7a70069deb79f81b88197a19f61e394151ecc
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 36
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 9
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 45
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '116'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=QP2Rt5pJte7UBOT3BuwAj3KAYkOh_FwrgppGK2Of5s8-1776203679.0400488-1.0.1.1-u3CDZO1I416xr6oQSuzvttUf3aazsWkgKEdL59M9JEtS0neXp1p1OpLwnap1NdfiDrcZGYasHwthU58_qUSRlXiWoqWk9LZXxODKoHwld1B.Jt0jNTAIhjqnfXM23Eb9
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: []
+      model: gpt-4.1
+      previous_response_id: resp_0d4b654a05c1a7a70069deb7a08194819784d6491244b331d6
+    uri: https://api.openai.com/v1/responses/compact
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3550'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '2786'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1776203684
+      id: resp_0d4b654a05c1a7a70169deb7a1e2a08197be148700090864cf
+      object: response.compaction
+      output:
+      - content:
+        - text: What is 2+2?
+          type: input_text
+        id: msg_0d4b654a05c1a7a70069deb79f8b248197b331f758568630c8
+        role: user
+        status: completed
+        type: message
+      - content:
+        - text: And 3+3?
+          type: input_text
+        id: msg_0d4b654a05c1a7a70069deb7a08bf48197b0611d8beb821321
+        role: user
+        status: completed
+        type: message
+      - encrypted_content: gAAAAABp3rekFfHiVaTzFeBw-Kq2tsolP50kWqqQmBDOSrom2Vz6xjHxwan-p3k_Ivh1BBrUIi_8DiDrwJXicQB-VG9U997A7fdLghH3cGgcGh8geuq3RfUTpkY1J7kaLaGyIutqmaFRt5L0SuUliw85nPdb0m7g_Pw0HVZcdu0nvG5OggnE90Dog-V0xnLlJqxAESEbMjMv3RYYvWP_mJ7rLK6Ge6I0MbafOLf6BY-vswNJ_UDgHvPY8Nwu-q81evkc7nPUrMBZHYI0NlxaBvY0BeVj8b8hKdifI-TsWFSSRy8lFFoGHBFFktcF8_-o_pQRs04qbAEDXqOlYIOh4A4tfhXqjpsG2sqHGsiDLP_yAdi-PwietIPSv0HfUdc-U6dJcuocIziiFq5ZLRoaoRuHkISpLdcG7rKtyIvvoeF12PHsH2crtKywhjYiSTNPnvGVngtAXLPZirC6IUAB5djs2RdovS4DcQ4uacbwVqh0JBRH1Krkjm7NK5uUltJ-jxwsKpOXHte3OJpa_AujfrLfWIg1hv1Bs7TXWJYb-74IDqUy1vTzZV3xdNXXVgebhuoXlzhtMGMfCHHjCyXuvwuNHg4GotNqV5HIwDWwdHs5WU0c6mUPCKiqhu3nNLLpvjeHftphGRhRN9Kqu0sjPZBgHdq69hLXSpQQVx2M67LLiRV0Zw9VAqObrS27qSkX5smUDHphHFrrJUhSGjqwzy51zNprGo1zcfDhXSzoaAV9iDhqYv-x200szTa3Z7zlfTmJzusQSpC1KKgsKg7HkdFx2lse8v29NjsC4DqcE0JEVC7YZeSB17SeCEQ5Y62fhNGGKk8fcfkWLF-dXsabFsh460vf1LwZtaOS-3Y-72giBpDIUh8DAkSZceKraAXzKJ_iQxUGec1WY97lcyU3znXRdF2FAbTTQb0gaw4G8NtiIoJ8cajxVCRKrV5mMlfPD2F-rsUsppiYEMnVDUSzR51X0b4bXr-33FuBSTvDEE7qRpcB34JGzRAU3vXPk6WLXRYCKJmSMVaTkY8yJkMCB3AxclIUd10Cxv564d8wMP4FiAdlIHSLTE5-rdCjv_96fCH4tzIk0_psDnBGqXrwJzcOqa27ZLvugAi8Y-TQmFnvr-Khyt2ctaKANzdHAit3YcrgIyV3PfMVCOSnFFWxISSyBj3fz8MTVZ81u2R0zsboQaW5G-p1DwhwRAeid5ZHTqBSpP_3og46h7gsbw0wQ_x1dhd6o6YpURc5emjShB7MwgdbGlFXQG97kBR07My2WBCzRfhf4Ug543LV-nntfmJMW2TF61cVj9pEGO0vADko7ZnUzNUFKVZ9d17eerYH5gwl-TzNzdL76bZnAzkoWv2KIbl6jeJGAhmbdRGpbxDYFBzIRYi5evNhre88_XmxbUms5vGJfOmTQYUt1J7sebma8kUurCHXTeBl2p6Ph8b2_9WA_zxQ6x1oP4aB6Vd57EmkWmy8-lYt8QUGYwmBv6ZA_HVdW4daOZFe6_Ht4CPIwWmXuDk-HgLeR2s0YOykzOCoY6ATHK4Yhb9bcwXIYysbPOzo82P7przneqd6vWiqGOukJvFzCfn0gRw1aTF6V0CRq-LfdtlhSQinAMwBnp201MNyvwkTxwGXonNh0SnRTQUOLMaFumeTH9A7EF8VRYzDzo0YUxN2DwU5ccQOFFIYaenIJFsD8DyqPQCOac_-bYCCDsV_PVC2ObdBMCFFhxka0L_Ra_FipC9BT8v-8RSvf3DAhaBTlm0yJN-sMKaILrFsBzOnFCXYKqq4H4UM-WIIQNzlQmLoO-uM6JIQmHp67WX8LBqa7zDDBupS8_2iEr15sFQxrzFS9EM7b2YvOkFder2AeEiYwEpCXBBd5pMokHHV6zqI9Jt_tkc_AMTnXepzdclsAYhJMxv-gpTourJuVj6LOd-YYZMcV47htcBZWffr9FxlPpwxl8N1Hedzf4mA60jmrP1xZNpAxADyzEyOL2NtMbKkK5ZeEdqGSPlOH2NnW8uanbpR8XnjGaVmoCQZIW6HZqp3t-LD0CxHVzzPzD6ZG7jmUOP3HD8Kudntx13TkCi89DN7Wl7--9S0akOa_b8hMkARzpxFqx8S7x6XZUQSZtX9j9Gz8RwR-PohaJxDyoimfh2YmDlPEtRFOX2O2bcPzX627ZWXxC7NW_PuCY2FtRvZVX-dC_mTRy3CZE8aKWRJ-2jPCtUdw9mHOYAMPDPjkEYVvG6eKpzSQ0VjODsNXCwnaTKBdERlm5L7fGfqi5KxpCgImis2Ba2s46mLaK4SynvMgIXbJUmZ26L4sbHPp1BN5BsyGBriG8qr8zdtdPKbnuOtVSW2ZzR4jXeB-KRMQPsz2DfRcYd0tGyteU7uHe1TSfxhVMkKRSgT81fbCcM5uaE0nmGG6e-YqHgaBn2czuywpwMPAw8bUEI15m1JlrssupP17n_yO94Mk9lgxs7X5LsynYfRr-OSJJ-ZyNjogHAhhtvh2XfzJSo3fiQbq23YLCmq_qOY4cb7Qut9QdUNxyI_sK_thqK9WytXGiYEMGp2IOOT1bTS9yvg2veYeoSGQbZl_cI0NJ1bqekhPSUDyD42cupCZFMKI7gLkClKkZBSisn8xPSp7T8qZ2GGsVpGk0-lWXequ3xuYTtgaYzamJ5f5hUKGV2qEHW2AWMxECsWm4JnGB2aJVw-L3iOfSHn4aWkFCQ2_PVkK_u7rCiDxPG0J1t_Ixbl3h-Bjl3My7Uk4W3BcO2cmMkPbnIHjxKo
+        id: cmp_0d4b654a05c1a7a70169deb7a23d008197b9c84fd37d3ebffc
+        type: compaction
+      usage:
+        input_tokens: 141
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 183
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 324
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2966'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=QP2Rt5pJte7UBOT3BuwAj3KAYkOh_FwrgppGK2Of5s8-1776203679.0400488-1.0.1.1-u3CDZO1I416xr6oQSuzvttUf3aazsWkgKEdL59M9JEtS0neXp1p1OpLwnap1NdfiDrcZGYasHwthU58_qUSRlXiWoqWk9LZXxODKoHwld1B.Jt0jNTAIhjqnfXM23Eb9
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - encrypted_content: gAAAAABp3rekFfHiVaTzFeBw-Kq2tsolP50kWqqQmBDOSrom2Vz6xjHxwan-p3k_Ivh1BBrUIi_8DiDrwJXicQB-VG9U997A7fdLghH3cGgcGh8geuq3RfUTpkY1J7kaLaGyIutqmaFRt5L0SuUliw85nPdb0m7g_Pw0HVZcdu0nvG5OggnE90Dog-V0xnLlJqxAESEbMjMv3RYYvWP_mJ7rLK6Ge6I0MbafOLf6BY-vswNJ_UDgHvPY8Nwu-q81evkc7nPUrMBZHYI0NlxaBvY0BeVj8b8hKdifI-TsWFSSRy8lFFoGHBFFktcF8_-o_pQRs04qbAEDXqOlYIOh4A4tfhXqjpsG2sqHGsiDLP_yAdi-PwietIPSv0HfUdc-U6dJcuocIziiFq5ZLRoaoRuHkISpLdcG7rKtyIvvoeF12PHsH2crtKywhjYiSTNPnvGVngtAXLPZirC6IUAB5djs2RdovS4DcQ4uacbwVqh0JBRH1Krkjm7NK5uUltJ-jxwsKpOXHte3OJpa_AujfrLfWIg1hv1Bs7TXWJYb-74IDqUy1vTzZV3xdNXXVgebhuoXlzhtMGMfCHHjCyXuvwuNHg4GotNqV5HIwDWwdHs5WU0c6mUPCKiqhu3nNLLpvjeHftphGRhRN9Kqu0sjPZBgHdq69hLXSpQQVx2M67LLiRV0Zw9VAqObrS27qSkX5smUDHphHFrrJUhSGjqwzy51zNprGo1zcfDhXSzoaAV9iDhqYv-x200szTa3Z7zlfTmJzusQSpC1KKgsKg7HkdFx2lse8v29NjsC4DqcE0JEVC7YZeSB17SeCEQ5Y62fhNGGKk8fcfkWLF-dXsabFsh460vf1LwZtaOS-3Y-72giBpDIUh8DAkSZceKraAXzKJ_iQxUGec1WY97lcyU3znXRdF2FAbTTQb0gaw4G8NtiIoJ8cajxVCRKrV5mMlfPD2F-rsUsppiYEMnVDUSzR51X0b4bXr-33FuBSTvDEE7qRpcB34JGzRAU3vXPk6WLXRYCKJmSMVaTkY8yJkMCB3AxclIUd10Cxv564d8wMP4FiAdlIHSLTE5-rdCjv_96fCH4tzIk0_psDnBGqXrwJzcOqa27ZLvugAi8Y-TQmFnvr-Khyt2ctaKANzdHAit3YcrgIyV3PfMVCOSnFFWxISSyBj3fz8MTVZ81u2R0zsboQaW5G-p1DwhwRAeid5ZHTqBSpP_3og46h7gsbw0wQ_x1dhd6o6YpURc5emjShB7MwgdbGlFXQG97kBR07My2WBCzRfhf4Ug543LV-nntfmJMW2TF61cVj9pEGO0vADko7ZnUzNUFKVZ9d17eerYH5gwl-TzNzdL76bZnAzkoWv2KIbl6jeJGAhmbdRGpbxDYFBzIRYi5evNhre88_XmxbUms5vGJfOmTQYUt1J7sebma8kUurCHXTeBl2p6Ph8b2_9WA_zxQ6x1oP4aB6Vd57EmkWmy8-lYt8QUGYwmBv6ZA_HVdW4daOZFe6_Ht4CPIwWmXuDk-HgLeR2s0YOykzOCoY6ATHK4Yhb9bcwXIYysbPOzo82P7przneqd6vWiqGOukJvFzCfn0gRw1aTF6V0CRq-LfdtlhSQinAMwBnp201MNyvwkTxwGXonNh0SnRTQUOLMaFumeTH9A7EF8VRYzDzo0YUxN2DwU5ccQOFFIYaenIJFsD8DyqPQCOac_-bYCCDsV_PVC2ObdBMCFFhxka0L_Ra_FipC9BT8v-8RSvf3DAhaBTlm0yJN-sMKaILrFsBzOnFCXYKqq4H4UM-WIIQNzlQmLoO-uM6JIQmHp67WX8LBqa7zDDBupS8_2iEr15sFQxrzFS9EM7b2YvOkFder2AeEiYwEpCXBBd5pMokHHV6zqI9Jt_tkc_AMTnXepzdclsAYhJMxv-gpTourJuVj6LOd-YYZMcV47htcBZWffr9FxlPpwxl8N1Hedzf4mA60jmrP1xZNpAxADyzEyOL2NtMbKkK5ZeEdqGSPlOH2NnW8uanbpR8XnjGaVmoCQZIW6HZqp3t-LD0CxHVzzPzD6ZG7jmUOP3HD8Kudntx13TkCi89DN7Wl7--9S0akOa_b8hMkARzpxFqx8S7x6XZUQSZtX9j9Gz8RwR-PohaJxDyoimfh2YmDlPEtRFOX2O2bcPzX627ZWXxC7NW_PuCY2FtRvZVX-dC_mTRy3CZE8aKWRJ-2jPCtUdw9mHOYAMPDPjkEYVvG6eKpzSQ0VjODsNXCwnaTKBdERlm5L7fGfqi5KxpCgImis2Ba2s46mLaK4SynvMgIXbJUmZ26L4sbHPp1BN5BsyGBriG8qr8zdtdPKbnuOtVSW2ZzR4jXeB-KRMQPsz2DfRcYd0tGyteU7uHe1TSfxhVMkKRSgT81fbCcM5uaE0nmGG6e-YqHgaBn2czuywpwMPAw8bUEI15m1JlrssupP17n_yO94Mk9lgxs7X5LsynYfRr-OSJJ-ZyNjogHAhhtvh2XfzJSo3fiQbq23YLCmq_qOY4cb7Qut9QdUNxyI_sK_thqK9WytXGiYEMGp2IOOT1bTS9yvg2veYeoSGQbZl_cI0NJ1bqekhPSUDyD42cupCZFMKI7gLkClKkZBSisn8xPSp7T8qZ2GGsVpGk0-lWXequ3xuYTtgaYzamJ5f5hUKGV2qEHW2AWMxECsWm4JnGB2aJVw-L3iOfSHn4aWkFCQ2_PVkK_u7rCiDxPG0J1t_Ixbl3h-Bjl3My7Uk4W3BcO2cmMkPbnIHjxKo
+        id: cmp_0d4b654a05c1a7a70169deb7a23d008197b9c84fd37d3ebffc
+        type: compaction
+      - content: And 4+4?
+        role: user
+      model: gpt-4.1
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1262'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '562'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1776203685
+      created_at: 1776203684
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0d4b654a05c1a7a70069deb7a4bee48197afc250d9028520cd
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: 4 + 4 = 8
+          type: output_text
+        id: msg_0d4b654a05c1a7a70069deb7a517d88197aa72b8abc5cd5d24
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 276
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 8
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 284
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '116'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=QP2Rt5pJte7UBOT3BuwAj3KAYkOh_FwrgppGK2Of5s8-1776203679.0400488-1.0.1.1-u3CDZO1I416xr6oQSuzvttUf3aazsWkgKEdL59M9JEtS0neXp1p1OpLwnap1NdfiDrcZGYasHwthU58_qUSRlXiWoqWk9LZXxODKoHwld1B.Jt0jNTAIhjqnfXM23Eb9
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: []
+      model: gpt-4.1
+      previous_response_id: resp_0d4b654a05c1a7a70069deb7a4bee48197afc250d9028520cd
+    uri: https://api.openai.com/v1/responses/compact
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3389'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '2917'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1776203688
+      id: resp_0d4b654a05c1a7a70169deb7a56ee88197b04efb1730b42b1d
+      object: response.compaction
+      output:
+      - content:
+        - text: And 4+4?
+          type: input_text
+        id: msg_0d4b654a05c1a7a70069deb7a4c7748197963a63e119a294f8
+        role: user
+        status: completed
+        type: message
+      - encrypted_content: gAAAAABp3reoItZ8PF3mari5SIVQG23065vHvUQHSfYvmuC3aW_R6m2EeasdDnwgFv5vsquQdItVIzldUeR0Z-0Reommzvr2GsSjrL32hghJreu9p9e3imOTJEEwiw3fLrIdV5YCI38xPBpeT7GweQCAPON84YaviB32Ztuhc6MLoZfhdKr-Ic-CEV-G-fllLytgcv3MYCjOVStu1o0yr6RNvbtARv08Y8xyHAbawrNCiyh-RRuy6R7jFs2UVMl_E4jVQu9-MGZnE9e1k99DpyEJvU211M82Jo3v0F9JGH5131cxY3gnpDnOM--mKbK-XqI2jrTmjDt0PTqGpRymrBiNLdkDAWymyp1X4PhQyY4ktKbRbeZFLE5-YXJfxHxbVfSwsiY0LF4NcpuGnf6NCXU2pu7_m7IqCGXNs95au79xh9eGJX1HbRRfxjdbnnrRx1BbrIasf4tAO42xB7GtciX6q3AvRAHdgpIYwlvougccOzR8QnF-Ph_HF5ksagjpdgAgEBMqVX1QO9E4vDNhJVO0Q60fwYS9d4g_bAsTSYZBI2Cgv5EAjWA1ywi762F3ahFNczVwmTEGVqRhPfKTRPu9XkA9oprdOJkBk-YCYsTmNkSFDt6g5947FV7GruyTEcYw1HG8KkwfFIWLXFtgXrPrBN4x5DpkONcT6RnMc4-VOcSI-wN2gTrMkFYccqiU0-06d92i4ZsSczZ9dSaKoln-dX3lh-mLSsEzihf9-S81Rq8Fi9hclPhbmmaaZ5Zr4Mm5E6JcONCgSqE7QSHBQQFImY0cWCYzYxXTJCDgXQnF6VYRD29hBbWIJUlRf5Kxt4bCHmvDxvEsL4JWtRcdTV7cl-rIDMQips49vTrjOzl_lYnFv_CSAlQF_G-mco6CmVhzm18TNcB7CImecvLb9cBf4NXVpGnDEyunMcsy3Blke-tRSrUiyKxj1tTUKFI2n_qhFomSyloRMat9CqVpfYffOcjDOaVUg9bTrB3jhMvCnRUzq0CYIuRi-Wakujvhk7oFQNKwPQokt2OyxbA6y_uEp93uQ9Brls-99M7-u9dweCcFO_LxtVzO4ZeW7wHrRXYZa3IeM-p4gE6bbGvqwKJfmyGEIlOQGyddccxlkVAWgVnBkQPpyLFpk61G-56A22A0hZfs8ZrdJftJRLeIMY_Ems6eyvA8ekWp_ul-Bo8V5NbLQQWmSQnpQ8CiK40KqloSVgiq8a5n3AGsYOSaHLn1b-wqIS9bTI2zpfQq1IOZIe71dm2OG4fLskmjxzq31aUAxLqVXMhvPswFgQ47ve1jXaArXaYV_zzyd8YXlLbu8bzNQlxdK-E1nn1cWr_f2FfR5pOvLiy403xdMMl9L4X899aE8qZqMZwaNpAL9wAmCCXtqjZeTFGCqYJZvKDMMrV8IoTi_uiCHfjM608hgqLMV5gQ7YgyNknENItaBhLK65Udwb-dIsdO_-XCGzZFQi-G37m6GOCvjSZ-dNnE-hVmuZcBAuDCRM6gX_tAeCS6T5OTHWSrmW5s_RjVp_WWFe_Dhs2m_f2ogBb42HvCnzYIso57dU29qs6reBhLIdamC8Vwtg51p-LIlgINNxYrEvv1HVbhYV5zxlgTvVWAelwMnjAvJWJfbZda5jZtbt5koX7fvNY8vWpJYno_I1gNHQoO9s83O7tdPa-Atagi5ThFfbZNhAS88_4SzVRggkCfIypX2j5KH6MQ0Isf6pf4A3T60yyYM6AXzzzbGAI4pdm6C3ll4jwRTqZkuA51pNclmzhQogqJng60-2xB7CUNu4RcDxxH1ROGULYqFZTSa3lTE05S8xBVdNOxvkIZxv801abJGQfQ2iUR8ecNZAdJkeV3RuIwKnHjqxprchCQvtj9F-aA8tklaiA2GACFJg9qlcd9DDIDZSVEAJrFhekJaOCcU3SFmmb4UjwzljfgpnTAq2oHI_VyUT99VKdLEHpC-qx4s7A0Rl_fdw0-ZggDftqy0A7-sQhAJxBbsVU1IoC5LGRKIRKjU3efjvNCxGQ8u0_dIfn5KXqTmFcAac7bG855spx1ZDuASxOs9o__7GWacL8q01iBqFF4YuSEuJSXJtca-yrvJLxlegLgE80nWmH74AcUVBt9I1dzVDNKVct0c0w0EVuVpFpadjZf5IKNRGjJ_wRpPUzz4ten_vvNNNvFLZsIe5v9A-zVZHbSH3NlvE8VxAh55gvGy0aauH4aII8YckrezHZYmcredF-uKYsgkGFir3eKlIft4qRFY_Jnh8kE5oU7zJu5JXSc9WEyvgJ3Jft6F_UGf5H1SM5HY1psC46Kb8-Zk12zac24aNeqpy246POjDBQSE_2JJbW_gA4nHKjE2dP5ISE-mDpYb2YIn_mEhsYoDHjV_4J6_wOvMfmx-5rsFhbVKn5kZRX_sP5KOatHmQjJmBA_z_91W3qeT75BqenwNRtap_kYIatayj1-NR9bu-u9L0Zw75L9NoY5OUZ2WKzkHaa54pe_UvK-Pt6zrOIiNyD3ERD7ucAo2Mx51CzLKyDUqAR81P3NbR0Qma__ibQLHy_SFp36suok81VUNSAIIyCAA4srqleJheCSIXOajQJqPOUuQX6uuch1q-nkZpKX37P2Yo1WJCID_gbGljw24Gczi0bQ49LsthBgahu4wHNrxmwtiAHS9A9Ja3hdzX2fHwHR3WKnFTkEe8XFyFfPz0HQkl13ZrXCv9WotXDe021AaI2KbGX6dCuhS3zSVj3J801jjI2lKkEd3XxQPa4_Uxv665HDnuFnKG-n02hd-A==
+        id: cmp_0d4b654a05c1a7a70169deb7a5ec60819785e43dde23964ba9
+        type: compaction
+      usage:
+        input_tokens: 117
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 193
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 310
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2990'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=QP2Rt5pJte7UBOT3BuwAj3KAYkOh_FwrgppGK2Of5s8-1776203679.0400488-1.0.1.1-u3CDZO1I416xr6oQSuzvttUf3aazsWkgKEdL59M9JEtS0neXp1p1OpLwnap1NdfiDrcZGYasHwthU58_qUSRlXiWoqWk9LZXxODKoHwld1B.Jt0jNTAIhjqnfXM23Eb9
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - encrypted_content: gAAAAABp3reoItZ8PF3mari5SIVQG23065vHvUQHSfYvmuC3aW_R6m2EeasdDnwgFv5vsquQdItVIzldUeR0Z-0Reommzvr2GsSjrL32hghJreu9p9e3imOTJEEwiw3fLrIdV5YCI38xPBpeT7GweQCAPON84YaviB32Ztuhc6MLoZfhdKr-Ic-CEV-G-fllLytgcv3MYCjOVStu1o0yr6RNvbtARv08Y8xyHAbawrNCiyh-RRuy6R7jFs2UVMl_E4jVQu9-MGZnE9e1k99DpyEJvU211M82Jo3v0F9JGH5131cxY3gnpDnOM--mKbK-XqI2jrTmjDt0PTqGpRymrBiNLdkDAWymyp1X4PhQyY4ktKbRbeZFLE5-YXJfxHxbVfSwsiY0LF4NcpuGnf6NCXU2pu7_m7IqCGXNs95au79xh9eGJX1HbRRfxjdbnnrRx1BbrIasf4tAO42xB7GtciX6q3AvRAHdgpIYwlvougccOzR8QnF-Ph_HF5ksagjpdgAgEBMqVX1QO9E4vDNhJVO0Q60fwYS9d4g_bAsTSYZBI2Cgv5EAjWA1ywi762F3ahFNczVwmTEGVqRhPfKTRPu9XkA9oprdOJkBk-YCYsTmNkSFDt6g5947FV7GruyTEcYw1HG8KkwfFIWLXFtgXrPrBN4x5DpkONcT6RnMc4-VOcSI-wN2gTrMkFYccqiU0-06d92i4ZsSczZ9dSaKoln-dX3lh-mLSsEzihf9-S81Rq8Fi9hclPhbmmaaZ5Zr4Mm5E6JcONCgSqE7QSHBQQFImY0cWCYzYxXTJCDgXQnF6VYRD29hBbWIJUlRf5Kxt4bCHmvDxvEsL4JWtRcdTV7cl-rIDMQips49vTrjOzl_lYnFv_CSAlQF_G-mco6CmVhzm18TNcB7CImecvLb9cBf4NXVpGnDEyunMcsy3Blke-tRSrUiyKxj1tTUKFI2n_qhFomSyloRMat9CqVpfYffOcjDOaVUg9bTrB3jhMvCnRUzq0CYIuRi-Wakujvhk7oFQNKwPQokt2OyxbA6y_uEp93uQ9Brls-99M7-u9dweCcFO_LxtVzO4ZeW7wHrRXYZa3IeM-p4gE6bbGvqwKJfmyGEIlOQGyddccxlkVAWgVnBkQPpyLFpk61G-56A22A0hZfs8ZrdJftJRLeIMY_Ems6eyvA8ekWp_ul-Bo8V5NbLQQWmSQnpQ8CiK40KqloSVgiq8a5n3AGsYOSaHLn1b-wqIS9bTI2zpfQq1IOZIe71dm2OG4fLskmjxzq31aUAxLqVXMhvPswFgQ47ve1jXaArXaYV_zzyd8YXlLbu8bzNQlxdK-E1nn1cWr_f2FfR5pOvLiy403xdMMl9L4X899aE8qZqMZwaNpAL9wAmCCXtqjZeTFGCqYJZvKDMMrV8IoTi_uiCHfjM608hgqLMV5gQ7YgyNknENItaBhLK65Udwb-dIsdO_-XCGzZFQi-G37m6GOCvjSZ-dNnE-hVmuZcBAuDCRM6gX_tAeCS6T5OTHWSrmW5s_RjVp_WWFe_Dhs2m_f2ogBb42HvCnzYIso57dU29qs6reBhLIdamC8Vwtg51p-LIlgINNxYrEvv1HVbhYV5zxlgTvVWAelwMnjAvJWJfbZda5jZtbt5koX7fvNY8vWpJYno_I1gNHQoO9s83O7tdPa-Atagi5ThFfbZNhAS88_4SzVRggkCfIypX2j5KH6MQ0Isf6pf4A3T60yyYM6AXzzzbGAI4pdm6C3ll4jwRTqZkuA51pNclmzhQogqJng60-2xB7CUNu4RcDxxH1ROGULYqFZTSa3lTE05S8xBVdNOxvkIZxv801abJGQfQ2iUR8ecNZAdJkeV3RuIwKnHjqxprchCQvtj9F-aA8tklaiA2GACFJg9qlcd9DDIDZSVEAJrFhekJaOCcU3SFmmb4UjwzljfgpnTAq2oHI_VyUT99VKdLEHpC-qx4s7A0Rl_fdw0-ZggDftqy0A7-sQhAJxBbsVU1IoC5LGRKIRKjU3efjvNCxGQ8u0_dIfn5KXqTmFcAac7bG855spx1ZDuASxOs9o__7GWacL8q01iBqFF4YuSEuJSXJtca-yrvJLxlegLgE80nWmH74AcUVBt9I1dzVDNKVct0c0w0EVuVpFpadjZf5IKNRGjJ_wRpPUzz4ten_vvNNNvFLZsIe5v9A-zVZHbSH3NlvE8VxAh55gvGy0aauH4aII8YckrezHZYmcredF-uKYsgkGFir3eKlIft4qRFY_Jnh8kE5oU7zJu5JXSc9WEyvgJ3Jft6F_UGf5H1SM5HY1psC46Kb8-Zk12zac24aNeqpy246POjDBQSE_2JJbW_gA4nHKjE2dP5ISE-mDpYb2YIn_mEhsYoDHjV_4J6_wOvMfmx-5rsFhbVKn5kZRX_sP5KOatHmQjJmBA_z_91W3qeT75BqenwNRtap_kYIatayj1-NR9bu-u9L0Zw75L9NoY5OUZ2WKzkHaa54pe_UvK-Pt6zrOIiNyD3ERD7ucAo2Mx51CzLKyDUqAR81P3NbR0Qma__ibQLHy_SFp36suok81VUNSAIIyCAA4srqleJheCSIXOajQJqPOUuQX6uuch1q-nkZpKX37P2Yo1WJCID_gbGljw24Gczi0bQ49LsthBgahu4wHNrxmwtiAHS9A9Ja3hdzX2fHwHR3WKnFTkEe8XFyFfPz0HQkl13ZrXCv9WotXDe021AaI2KbGX6dCuhS3zSVj3J801jjI2lKkEd3XxQPa4_Uxv665HDnuFnKG-n02hd-A==
+        id: cmp_0d4b654a05c1a7a70169deb7a5ec60819785e43dde23964ba9
+        type: compaction
+      - content: 91 - 16?
+        role: user
+      model: gpt-4.1
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1269'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '718'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1776203688
+      created_at: 1776203688
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0d4b654a05c1a7a70069deb7a8700c8197a7a18cce696a8d8c
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: 91 - 16 = **75**
+          type: output_text
+        id: msg_0d4b654a05c1a7a70069deb7a8e56481979233c9a632afb079
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 285
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 9
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 294
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '116'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=QP2Rt5pJte7UBOT3BuwAj3KAYkOh_FwrgppGK2Of5s8-1776203679.0400488-1.0.1.1-u3CDZO1I416xr6oQSuzvttUf3aazsWkgKEdL59M9JEtS0neXp1p1OpLwnap1NdfiDrcZGYasHwthU58_qUSRlXiWoqWk9LZXxODKoHwld1B.Jt0jNTAIhjqnfXM23Eb9
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: []
+      model: gpt-4.1
+      previous_response_id: resp_0d4b654a05c1a7a70069deb7a8700c8197a7a18cce696a8d8c
+    uri: https://api.openai.com/v1/responses/compact
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3429'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '3227'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1776203692
+      id: resp_0d4b654a05c1a7a70169deb7a940148197baa19b5b461c3f79
+      object: response.compaction
+      output:
+      - content:
+        - text: 91 - 16?
+          type: input_text
+        id: msg_0d4b654a05c1a7a70069deb7a8832c81978841ca7e1b2f533f
+        role: user
+        status: completed
+        type: message
+      - encrypted_content: gAAAAABp3restTvTMYJ9tVcLis6a_m97O4YPOx_KRBiAM4gNhBwTzcbJc7xOMh0zREaNSLmb5B5tFDBxoJWTdkPc8iUH9CY-FqXhxYIhDddAY1w6e9WgLKnXUNsVR2btdp-21DyqarhdsYlY-d7sB8NERu62qsgBHD1JJo1236WghQH4HEVRD1n5R9Ve30liWfJCHbF4ZURGQBdWxAu9LAgPJopOABCNjOMkyghajaopcn_K_ouARqZ4ZKEWiM9vAHAGdmhdtSHBqoqXLlGDN97B7XpV1TNHNFIUIHKsReJTBsHrVGxThME4QSo9bBDSI-cJfV4DsvIXhbcZ5yDchJ3Dbi6_ouU_VQBeY6GzBZnYV_5y81fiFWtfka4vMlYwoGCv4SiNQCBd-mS02eFXqlfxvnT_je0P4vzTnQQA6pntS27AdV8C9Q1Y6_3BW4fkbAIujXJD5o4n9m90PPTKDvbccCsXQXRcmSTem7RQHs21dGncbEAGeoRq-DAI8xWYlT4aFQX-_FV7iiTtiFSDjuVIWiXlsmcqS4WbN7z9IMTHqHVFSOe21_kbYsDzQv3d78EmX9jIj832SPzmKw0aDfTFuI2oaFUqYMSeH_YN-a0FXAdBYJmVxAxN-NVciQxdHlR3gvfOGpLaf1QE3Aaqckkp_DlVhUU76BLvYuncKjW_smQV9RjzidkqUvcHoDLy8f4rQyI8H2RSjjRLJjL2RN-FvAgiNwGXtMGgGdiB3k0g57Plx3CeJ2REJHcWERPw350f1ln3TJ-UFZ-KUe31pl7bo3AST09iNmrh9_3EcYFiy0KGKVxvBCxiQHVamHGvIk9GH9Nz_GP3tpedxdgkA4ln4XBtc4dr-5Z4znQA0sBfDbmgWC-2jTlzWp6J1jl6S7b4WW8L6QELC_OFfdGQ9Ek8chm6yDZ24ptcFzOPw_qqeg-MJsQybW7MQFjXFSvCmvmtOUyN7YkkcHqirCT7FGhB9Nljw9KEkqYsIBs64R6g3u4r0a0gbHq1eVKCnGbq3utLHETEweMI4eUffgGG3DyNqfPRGHypZFfyTzkde7pRapJdUdwnWsB-04sP7FdMlIgCi3flruvHxyKunrdGsPUl23yFKvxqi25vS_K4MWo1c7K3usYDlS6eY3kGxKaESE9sS5t88sX_1CFFHJgprkxvbx6M5bvEpzg3jDSJjR7Ew-eqdbeXXTeIRkiDuFILI4xcWYUcd_e2udztJgMEIUaUOA53KJ_VkxLiy4haO6RA7e8MIOUmfG2EOTtM137p7kt9775AcNUnEq1xKWOBKT5CwVp-rihKVGerI31TPhH3lebulCndl9NCh5urhX3Ca6Bgr6r6EQb-wQpp77cw-XrmQLKQi--l6VG2GA5zzfrjgtqcrIvfi1wuN4cESNNYBNrEK-Wbkuxn54BkvktlFWiS6TsmGMgJkXR3NrK_3vKHimWwDC9wqc5ATkignfbu3QxlJPQQXO5dGmTJBKoLrVcvCoLvneAZPH-w7JSQf3BFRtDmB001ayV-yl-2EdQzoXilySuPfwJcxBfM3xna2YHA0FGjbTBWsdZCyFEs3bdmdQuWUtH_2YYvxurdU2weoXFUh8Mp3zohVGLZdhR8GyRnb4dn6DD-nuBmTiNqLoxK_zOhGjrXqCOANJTWSkHGMwdP3LelGXiolHJE_tRprYEMpQdCAt6WDUPOi90BEHTmU8QGtxF4cqk5rhR1s4ePqRU-gB8uRcglegNxuHKx2BofRIhdt99S1QZjv4XswaPYXqv7Z6SH4BxyXLWwgrnI0SloKOUVbr8TlF5JgzkgFbZ3aD8p3ZJO03olP5sc78A49XvSJXuG_cGRwS3lW60P8GNjQUg0SgPUQ6Y_mPTz_N0bxG49muVrDBZRCe_LQ3KtNxyaXG4xgWpZ6-YhLqv9iZKRfTvSY9igHNJPiE0yLPtIJBAG6Rhz5H7Bb9arNxzJoGqaYabVuN6thotoPUXJJ0FG95XARD2FeuZgYwv8Al2bEtTU4CWfTROJlpGFyBL5b5vpSksUNa9uyVF4okQ6-FVACW4i0GVsgvchQ4kja32hVNexEMLqNy29ia7VJB-dJwlgYnWcCkZZHk0__XlIpRc_TQqCqtcRKFBxhoSfrPyBoWI8gQvwzYuJUB0wgnXoCgDD53_XAV9sEozA7mGyxOnw_AuyDvNHUIRjVR5FmeJk8kyVrWd_ji8GPqxgtZWk0qHcRfYbLeZbKAW_mU04GRmhzn-hpQsoJibIA3STLBLvEdZ1ziWcLgYcgmbQlVPvX0nEk79-HT9xWI8Vb3oLRdsL9FBzZuYGP2WiaxLD6Qvy5yTtZJJnQRZa3cSEGHlaRXjI25jknBAV2g5vZODbC27Rezte6DMCNmYcAgrFWrJS7Kmpjt3UJHghQ--C7yP02HTsD23WCajK58ol2nVX96PSlQPHouw_uQCJ348SCS9fNPU9h7F8d7ZW6QyIeRRjw_G7neHbr-ktvKlZkfDfKvEUFw3t2tGbmYduxo7J84khzxYKaZyugNvWjKwrGUgsNnkY9MaVGTJfRupNGTa11Nw0Jl_jd6sM2Jmo5mYbjRrZv2fM9QL1F2BSC6KFniHP81024mCoCiMOh2UCw4TgwQH9jr0yEU8SKhtFHNptnPbL_dBoRBBy32o2hIfibc6JHWl4V-5PUAGPpJPhgYzt3GHKdbtehh1fopf_geG1pBywVlwCip9z_u_2-HcRjNpBZoGQxTloHgm0lB3hfoDXZf1pEqYLY2pEiOJYBZhq5IdMkz6iQ67_8rBerM8n-4gMdrZkFBAm9rXbicGBQECzf7GMbUWFZm5G
+        id: cmp_0d4b654a05c1a7a70169deb7a98ae881979e42003e4fd8d243
+        type: compaction
+      usage:
+        input_tokens: 117
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 186
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 303
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '3050'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=QP2Rt5pJte7UBOT3BuwAj3KAYkOh_FwrgppGK2Of5s8-1776203679.0400488-1.0.1.1-u3CDZO1I416xr6oQSuzvttUf3aazsWkgKEdL59M9JEtS0neXp1p1OpLwnap1NdfiDrcZGYasHwthU58_qUSRlXiWoqWk9LZXxODKoHwld1B.Jt0jNTAIhjqnfXM23Eb9
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - encrypted_content: gAAAAABp3restTvTMYJ9tVcLis6a_m97O4YPOx_KRBiAM4gNhBwTzcbJc7xOMh0zREaNSLmb5B5tFDBxoJWTdkPc8iUH9CY-FqXhxYIhDddAY1w6e9WgLKnXUNsVR2btdp-21DyqarhdsYlY-d7sB8NERu62qsgBHD1JJo1236WghQH4HEVRD1n5R9Ve30liWfJCHbF4ZURGQBdWxAu9LAgPJopOABCNjOMkyghajaopcn_K_ouARqZ4ZKEWiM9vAHAGdmhdtSHBqoqXLlGDN97B7XpV1TNHNFIUIHKsReJTBsHrVGxThME4QSo9bBDSI-cJfV4DsvIXhbcZ5yDchJ3Dbi6_ouU_VQBeY6GzBZnYV_5y81fiFWtfka4vMlYwoGCv4SiNQCBd-mS02eFXqlfxvnT_je0P4vzTnQQA6pntS27AdV8C9Q1Y6_3BW4fkbAIujXJD5o4n9m90PPTKDvbccCsXQXRcmSTem7RQHs21dGncbEAGeoRq-DAI8xWYlT4aFQX-_FV7iiTtiFSDjuVIWiXlsmcqS4WbN7z9IMTHqHVFSOe21_kbYsDzQv3d78EmX9jIj832SPzmKw0aDfTFuI2oaFUqYMSeH_YN-a0FXAdBYJmVxAxN-NVciQxdHlR3gvfOGpLaf1QE3Aaqckkp_DlVhUU76BLvYuncKjW_smQV9RjzidkqUvcHoDLy8f4rQyI8H2RSjjRLJjL2RN-FvAgiNwGXtMGgGdiB3k0g57Plx3CeJ2REJHcWERPw350f1ln3TJ-UFZ-KUe31pl7bo3AST09iNmrh9_3EcYFiy0KGKVxvBCxiQHVamHGvIk9GH9Nz_GP3tpedxdgkA4ln4XBtc4dr-5Z4znQA0sBfDbmgWC-2jTlzWp6J1jl6S7b4WW8L6QELC_OFfdGQ9Ek8chm6yDZ24ptcFzOPw_qqeg-MJsQybW7MQFjXFSvCmvmtOUyN7YkkcHqirCT7FGhB9Nljw9KEkqYsIBs64R6g3u4r0a0gbHq1eVKCnGbq3utLHETEweMI4eUffgGG3DyNqfPRGHypZFfyTzkde7pRapJdUdwnWsB-04sP7FdMlIgCi3flruvHxyKunrdGsPUl23yFKvxqi25vS_K4MWo1c7K3usYDlS6eY3kGxKaESE9sS5t88sX_1CFFHJgprkxvbx6M5bvEpzg3jDSJjR7Ew-eqdbeXXTeIRkiDuFILI4xcWYUcd_e2udztJgMEIUaUOA53KJ_VkxLiy4haO6RA7e8MIOUmfG2EOTtM137p7kt9775AcNUnEq1xKWOBKT5CwVp-rihKVGerI31TPhH3lebulCndl9NCh5urhX3Ca6Bgr6r6EQb-wQpp77cw-XrmQLKQi--l6VG2GA5zzfrjgtqcrIvfi1wuN4cESNNYBNrEK-Wbkuxn54BkvktlFWiS6TsmGMgJkXR3NrK_3vKHimWwDC9wqc5ATkignfbu3QxlJPQQXO5dGmTJBKoLrVcvCoLvneAZPH-w7JSQf3BFRtDmB001ayV-yl-2EdQzoXilySuPfwJcxBfM3xna2YHA0FGjbTBWsdZCyFEs3bdmdQuWUtH_2YYvxurdU2weoXFUh8Mp3zohVGLZdhR8GyRnb4dn6DD-nuBmTiNqLoxK_zOhGjrXqCOANJTWSkHGMwdP3LelGXiolHJE_tRprYEMpQdCAt6WDUPOi90BEHTmU8QGtxF4cqk5rhR1s4ePqRU-gB8uRcglegNxuHKx2BofRIhdt99S1QZjv4XswaPYXqv7Z6SH4BxyXLWwgrnI0SloKOUVbr8TlF5JgzkgFbZ3aD8p3ZJO03olP5sc78A49XvSJXuG_cGRwS3lW60P8GNjQUg0SgPUQ6Y_mPTz_N0bxG49muVrDBZRCe_LQ3KtNxyaXG4xgWpZ6-YhLqv9iZKRfTvSY9igHNJPiE0yLPtIJBAG6Rhz5H7Bb9arNxzJoGqaYabVuN6thotoPUXJJ0FG95XARD2FeuZgYwv8Al2bEtTU4CWfTROJlpGFyBL5b5vpSksUNa9uyVF4okQ6-FVACW4i0GVsgvchQ4kja32hVNexEMLqNy29ia7VJB-dJwlgYnWcCkZZHk0__XlIpRc_TQqCqtcRKFBxhoSfrPyBoWI8gQvwzYuJUB0wgnXoCgDD53_XAV9sEozA7mGyxOnw_AuyDvNHUIRjVR5FmeJk8kyVrWd_ji8GPqxgtZWk0qHcRfYbLeZbKAW_mU04GRmhzn-hpQsoJibIA3STLBLvEdZ1ziWcLgYcgmbQlVPvX0nEk79-HT9xWI8Vb3oLRdsL9FBzZuYGP2WiaxLD6Qvy5yTtZJJnQRZa3cSEGHlaRXjI25jknBAV2g5vZODbC27Rezte6DMCNmYcAgrFWrJS7Kmpjt3UJHghQ--C7yP02HTsD23WCajK58ol2nVX96PSlQPHouw_uQCJ348SCS9fNPU9h7F8d7ZW6QyIeRRjw_G7neHbr-ktvKlZkfDfKvEUFw3t2tGbmYduxo7J84khzxYKaZyugNvWjKwrGUgsNnkY9MaVGTJfRupNGTa11Nw0Jl_jd6sM2Jmo5mYbjRrZv2fM9QL1F2BSC6KFniHP81024mCoCiMOh2UCw4TgwQH9jr0yEU8SKhtFHNptnPbL_dBoRBBy32o2hIfibc6JHWl4V-5PUAGPpJPhgYzt3GHKdbtehh1fopf_geG1pBywVlwCip9z_u_2-HcRjNpBZoGQxTloHgm0lB3hfoDXZf1pEqYLY2pEiOJYBZhq5IdMkz6iQ67_8rBerM8n-4gMdrZkFBAm9rXbicGBQECzf7GMbUWFZm5G
+        id: cmp_0d4b654a05c1a7a70169deb7a98ae881979e42003e4fd8d243
+        type: compaction
+      - content: What's your favorite number?
+        role: user
+      model: gpt-4.1
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1956'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '2639'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1776203695
+      created_at: 1776203693
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0d4b654a05c1a7a70069deb7ad06f48197bcc97a3c8135ac4d
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            I don't have personal preferences or feelings, but I can share that some numbers are considered "favorites" in math, science, or culture! For example:
+
+            - **π (pi, 3.14159...)** -- Fascinates many because of its role in circles and its irrational nature.
+            - **e (2.71828...)** -- The base of natural logarithms, crucial in growth models and calculus.
+            - **7** -- Often cited as a "lucky number" in numerous cultures.
+            - **42** -- Famously called the "Answer to the Ultimate Question of Life, the Universe, and Everything" in Douglas Adams' *The Hitchhiker's Guide to the Galaxy*.
+
+            Do you have a favorite number, or would you like to explore interesting properties of any specific number?
+          type: output_text
+        id: msg_0d4b654a05c1a7a70069deb7ad94e881979a6377450172af90
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 278
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 165
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 443
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

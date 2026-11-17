@@ -4,12 +4,16 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Literal, cast
 
+from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai import models
+from pydantic_ai._utils import is_model_like
 from pydantic_ai.settings import ModelSettings
 
+from .._utils import decode_duration
 from ..otel.span_tree import SpanQuery
+from .agentic import ArgumentCorrectness, MaxModelRequests, MaxToolCalls, ToolCorrectness, TrajectoryMatch
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationScalar, Evaluator, EvaluatorOutput
 
@@ -20,6 +24,7 @@ __all__ = (
     'IsInstance',
     'MaxDuration',
     'LLMJudge',
+    'GEval',
     'HasMatchingSpan',
     'OutputConfig',
 )
@@ -35,6 +40,9 @@ class Equals(Evaluator[object, object, object]):
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> bool:
         return ctx.output == self.value
 
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
+
 
 @dataclass(repr=False)
 class EqualsExpected(Evaluator[object, object, object]):
@@ -46,6 +54,9 @@ class EqualsExpected(Evaluator[object, object, object]):
         if ctx.expected_output is None:
             return {}  # Only compare if expected output is provided
         return ctx.output == ctx.expected_output
+
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
 
 
 # _MAX_REASON_LENGTH = 500
@@ -66,6 +77,7 @@ class Contains(Evaluator[object, object, object]):
     For strings, checks if expected_output is a substring of output.
     For lists/tuples, checks if expected_output is in output.
     For dicts, checks if all key-value pairs in expected_output are in output.
+    For model-like types (BaseModel, dataclasses), converts to a dict and checks key-value pairs.
 
     Note: case_sensitive only applies when both the value and output are strings.
     """
@@ -99,26 +111,16 @@ class Contains(Evaluator[object, object, object]):
 
         try:
             # Handle different collection types
-            if isinstance(ctx.output, dict):
-                if isinstance(self.value, dict):
+            output_type = type(ctx.output)
+            output_is_model_like = is_model_like(output_type)
+            if isinstance(ctx.output, dict) or output_is_model_like:
+                if output_is_model_like:
+                    adapter: TypeAdapter[Any] = TypeAdapter(output_type)
+                    output_dict = adapter.dump_python(ctx.output)  # pyright: ignore[reportUnknownMemberType]
+                else:
                     # Cast to Any to avoid type checking issues
                     output_dict = cast(dict[Any, Any], ctx.output)  # pyright: ignore[reportUnknownMemberType]
-                    expected_dict = cast(dict[Any, Any], self.value)  # pyright: ignore[reportUnknownMemberType]
-                    for k in expected_dict:
-                        if k not in output_dict:
-                            k_trunc = _truncated_repr(k, max_length=30)
-                            failure_reason = f'Output dictionary does not contain expected key {k_trunc}'
-                            break
-                        elif output_dict[k] != expected_dict[k]:
-                            k_trunc = _truncated_repr(k, max_length=30)
-                            output_v_trunc = _truncated_repr(output_dict[k], max_length=100)
-                            expected_v_trunc = _truncated_repr(expected_dict[k], max_length=100)
-                            failure_reason = f'Output dictionary has different value for key {k_trunc}: {output_v_trunc} != {expected_v_trunc}'
-                            break
-                else:
-                    if self.value not in ctx.output:  # pyright: ignore[reportUnknownMemberType]
-                        output_trunc = _truncated_repr(ctx.output, max_length=200)  # pyright: ignore[reportUnknownMemberType]
-                        failure_reason = f'Output {output_trunc} does not contain provided value as a key'
+                failure_reason = self._dict_failure_reason(output_dict)
             elif self.value not in ctx.output:  # pyright: ignore[reportOperatorIssue]  # will be handled by except block
                 output_trunc = _truncated_repr(ctx.output, max_length=200)
                 failure_reason = f'Output {output_trunc} does not contain provided value'
@@ -126,6 +128,27 @@ class Contains(Evaluator[object, object, object]):
             failure_reason = f'Containment check failed: {e}'
 
         return EvaluationReason(value=failure_reason is None, reason=failure_reason)
+
+    def _dict_failure_reason(self, output_dict: dict[Any, Any]) -> str | None:
+        if isinstance(self.value, dict):
+            # Cast to Any to avoid type checking issues
+            expected_dict = cast(dict[Any, Any], self.value)  # pyright: ignore[reportUnknownMemberType]
+            for k in expected_dict:
+                if k not in output_dict:
+                    k_trunc = _truncated_repr(k, max_length=30)
+                    return f'Output does not contain expected key {k_trunc}'
+                elif output_dict[k] != expected_dict[k]:
+                    k_trunc = _truncated_repr(k, max_length=30)
+                    output_v_trunc = _truncated_repr(output_dict[k], max_length=100)
+                    expected_v_trunc = _truncated_repr(expected_dict[k], max_length=100)
+                    return f'Output has different value for key {k_trunc}: {output_v_trunc} != {expected_v_trunc}'
+        elif self.value not in output_dict:
+            output_trunc = _truncated_repr(output_dict, max_length=200)
+            return f'Output {output_trunc} does not contain provided value as a key'
+        return None
+
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
 
 
 @dataclass(repr=False)
@@ -146,6 +169,9 @@ class IsInstance(Evaluator[object, object, object]):
             reason += f' (qualname: {type(output).__qualname__})'
         return EvaluationReason(value=False, reason=reason)
 
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
+
 
 @dataclass(repr=False)
 class MaxDuration(Evaluator[object, object, object]):
@@ -154,11 +180,7 @@ class MaxDuration(Evaluator[object, object, object]):
     seconds: float | timedelta
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> bool:
-        duration = timedelta(seconds=ctx.duration)
-        seconds = self.seconds
-        if not isinstance(seconds, timedelta):
-            seconds = timedelta(seconds=seconds)
-        return duration <= seconds
+        return timedelta(seconds=ctx.duration) <= decode_duration(self.seconds)
 
 
 class OutputConfig(TypedDict, total=False):
@@ -182,16 +204,31 @@ def _update_combined_output(
         combined_output[name] = value
 
 
+def _serialize_model_as_string(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Replace a `model` argument's `Model` instance with its `model_id` string, so specs round-trip cleanly."""
+    # always serialize the model as a string when present; use its name if it's a KnownModelName
+    if (model := arguments.get('model')) and isinstance(model, models.Model):
+        arguments['model'] = model.model_id
+
+    # Note: this may lead to confusion if you try to serialize-then-deserialize with a custom model.
+    # I expect that is rare enough to be worth not solving yet, but common enough that we probably will want to
+    # solve it eventually. I'm imagining some kind of model registry, but don't want to work out the details yet.
+    return arguments
+
+
 @dataclass(repr=False)
 class LLMJudge(Evaluator[object, object, object]):
     """Judge whether the output of a language model meets the criteria of a provided rubric.
 
-    If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-4o', but can be
+    If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-5.2', but can be
     overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
+
+    A judge whose profile has `supports_text_output=False` returns only the typed pass/fail verdict. Its reason is
+    unavailable, and its score is `1.0` for pass or `0.0` for fail.
     """
 
     rubric: str
-    model: models.Model | models.KnownModelName | None = None
+    model: models.Model | models.KnownModelName | str | None = None
     include_input: bool = False
     include_expected_output: bool = False
     model_settings: ModelSettings | None = None
@@ -204,28 +241,46 @@ class LLMJudge(Evaluator[object, object, object]):
     ) -> EvaluatorOutput:
         if self.include_input:
             if self.include_expected_output:
-                from .llm_as_a_judge import judge_input_output_expected
+                from .llm_as_a_judge import _judge_input_output_expected  # pyright: ignore[reportPrivateUsage]
 
-                grading_output = await judge_input_output_expected(
-                    ctx.inputs, ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
+                grading_output = await _judge_input_output_expected(
+                    ctx.inputs,
+                    ctx.output,
+                    ctx.expected_output,
+                    self.rubric,
+                    self.model,
+                    self.model_settings,
+                    allow_reasonless=True,
                 )
             else:
-                from .llm_as_a_judge import judge_input_output
+                from .llm_as_a_judge import _judge_input_output  # pyright: ignore[reportPrivateUsage]
 
-                grading_output = await judge_input_output(
-                    ctx.inputs, ctx.output, self.rubric, self.model, self.model_settings
+                grading_output = await _judge_input_output(
+                    ctx.inputs,
+                    ctx.output,
+                    self.rubric,
+                    self.model,
+                    self.model_settings,
+                    allow_reasonless=True,
                 )
         else:
             if self.include_expected_output:
-                from .llm_as_a_judge import judge_output_expected
+                from .llm_as_a_judge import _judge_output_expected  # pyright: ignore[reportPrivateUsage]
 
-                grading_output = await judge_output_expected(
-                    ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
+                grading_output = await _judge_output_expected(
+                    ctx.output,
+                    ctx.expected_output,
+                    self.rubric,
+                    self.model,
+                    self.model_settings,
+                    allow_reasonless=True,
                 )
             else:
-                from .llm_as_a_judge import judge_output
+                from .llm_as_a_judge import _judge_output  # pyright: ignore[reportPrivateUsage]
 
-                grading_output = await judge_output(ctx.output, self.rubric, self.model, self.model_settings)
+                grading_output = await _judge_output(
+                    ctx.output, self.rubric, self.model, self.model_settings, allow_reasonless=True
+                )
 
         output: dict[str, EvaluationScalar | EvaluationReason] = {}
         include_both = self.score is not False and self.assertion is not False
@@ -242,15 +297,65 @@ class LLMJudge(Evaluator[object, object, object]):
         return output
 
     def build_serialization_arguments(self):
-        result = super().build_serialization_arguments()
-        # always serialize the model as a string when present; use its name if it's a KnownModelName
-        if (model := result.get('model')) and isinstance(model, models.Model):  # pragma: no branch
-            result['model'] = f'{model.system}:{model.model_name}'
+        return _serialize_model_as_string(super().build_serialization_arguments())
 
-        # Note: this may lead to confusion if you try to serialize-then-deserialize with a custom model.
-        # I expect that is rare enough to be worth not solving yet, but common enough that we probably will want to
-        # solve it eventually. I'm imagining some kind of model registry, but don't want to work out the details yet.
-        return result
+
+@dataclass(repr=False)
+class GEval(Evaluator[object, object, object]):
+    """G-Eval-style chain-of-thought evaluator (Liu et al., 2023).
+
+    The judge is shown the evaluation `criteria` and a list of explicit `evaluation_steps`,
+    produces a short reasoning trace, and emits an integer score within `score_range` (inclusive),
+    returned as an [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason]. Because the
+    criteria and steps are user-supplied, `GEval` puts no structural requirements on `ctx.inputs`
+    or `ctx.output`.
+
+    If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-5.2', but can be
+    overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
+
+    A judge whose profile has `supports_text_output=False` returns the same integer score scale without a reason;
+    its `score_range` may contain at most 20 levels.
+
+    !!! note "Simplified G-Eval"
+        The paper computes a probability-weighted expectation over score tokens using log-probs.
+        We ask the model for a direct integer score instead, trading some correlation with human
+        judgment for provider-agnostic simplicity.
+    """
+
+    criteria: str
+    evaluation_steps: list[str]
+    score_range: tuple[int, int] = (1, 5)
+    include_input: bool = False
+    model: models.Model | models.KnownModelName | str | None = None
+    model_settings: ModelSettings | None = None
+    evaluation_name: str | None = field(default=None)
+
+    def __post_init__(self):
+        if self.score_range[0] >= self.score_range[1]:
+            raise ValueError(f'`score_range` must satisfy min < max, got {self.score_range!r}')
+        if not self.evaluation_steps:
+            raise ValueError('`evaluation_steps` must contain at least one step')
+
+    async def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
+        from .llm_as_a_judge import _judge_g_eval  # pyright: ignore[reportPrivateUsage]
+
+        g_eval_output = await _judge_g_eval(
+            ctx.output,
+            self.criteria,
+            self.evaluation_steps,
+            self.score_range,
+            inputs=ctx.inputs if self.include_input else None,
+            model=self.model,
+            model_settings=self.model_settings,
+            allow_reasonless=True,
+        )
+        return EvaluationReason(value=g_eval_output.score, reason=g_eval_output.reason)
+
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
+
+    def build_serialization_arguments(self):
+        return _serialize_model_as_string(super().build_serialization_arguments())
 
 
 @dataclass(repr=False)
@@ -266,6 +371,9 @@ class HasMatchingSpan(Evaluator[object, object, object]):
     ) -> bool:
         return ctx.span_tree.any(self.query)
 
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
+
 
 DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     Equals,
@@ -275,6 +383,12 @@ DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     MaxDuration,
     LLMJudge,
     HasMatchingSpan,
+    ToolCorrectness,
+    TrajectoryMatch,
+    ArgumentCorrectness,
+    MaxToolCalls,
+    MaxModelRequests,
+    GEval,
 )
 
 

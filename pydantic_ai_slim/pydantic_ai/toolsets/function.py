@@ -4,15 +4,34 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, overload
 
+import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
+from .. import _utils
+from .._instructions import (
+    AgentInstructions,
+    InstructionFunc,
+    SourcedInstruction,
+    normalize_instructions,
+    resolve_instruction_function,
+    validate_instruction_name,
+)
 from .._run_context import AgentDepsT, RunContext
-from ..exceptions import UserError
+from ..exceptions import ModelRetry, UserError
+from ..messages import InstructionChangePolicy, InstructionPart, ToolKind, ToolKindLike, ToolPartKind
 from ..tools import (
+    ArgsValidatorFunc,
     DocstringFormat,
     GenerateToolJsonSchema,
+    KindArgsT,
+    KindContentT,
+    KindedToolDecorator,
+    KindedToolPlainDecorator,
     Tool,
+    ToolDefinition,
+    ToolFuncContext,
     ToolFuncEither,
+    ToolFuncPlain,
     ToolParams,
     ToolPrepareFunc,
 )
@@ -25,6 +44,16 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
 
     call_func: Callable[[dict[str, Any], RunContext[AgentDepsT]], Awaitable[Any]]
     is_async: bool
+    timeout: float | None = None
+    """Timeout in seconds the tool was built with.
+
+    The timeout that's enforced comes from `tool_def.timeout`, which a `prepare` function may have changed since.
+    """
+    original_name: str | None = None
+    """The name the toolset holds this tool under, which a `prepare` function may have renamed in `tool_def.name`.
+
+    `None` if it's unknown, in which case `tool_def.name` is the toolset's name for the tool as well.
+    """
 
 
 class FunctionToolset(AbstractToolset[AgentDepsT]):
@@ -34,17 +63,21 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     """
 
     tools: dict[str, Tool[Any]]
-    max_retries: int
+    max_retries: int | None
+    timeout: float | None
     _id: str | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     schema_generator: type[GenerateJsonSchema]
+    _defer_loading: bool
+    include_return_schema: bool | None
 
     def __init__(
         self,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
         *,
-        max_retries: int = 1,
+        max_retries: int | None = None,
+        timeout: float | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -52,14 +85,21 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        defer_loading: bool = False,
+        include_return_schema: bool | None = None,
         id: str | None = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
     ):
         """Build a new function toolset.
 
         Args:
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
+                If `None`, inherits the agent's default retry count at runtime.
                 Applies to all tools, unless overridden when adding a tool.
+            timeout: Timeout in seconds for tool execution. If a tool takes longer than this,
+                a retry prompt is returned to the model. Individual tools can override this with their own timeout.
+                Defaults to None (no timeout).
             docstring_format: Format of tool docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
                 Applies to all tools, unless overridden when adding a tool.
@@ -67,19 +107,37 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
                 Applies to all tools, unless overridden when adding a tool.
-            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+            strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances that leave it unset, unless overridden when adding a tool or function.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances, unless overridden when adding a function.
+                A `Tool` instance built with `sequential=False` still gets `True`.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances, unless overridden when adding a function.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
+            defer_loading: Whether to hide tools from the model until they're revealed by tool search,
+                `load_capability`, or another tool's `ToolReturn.tools`.
+                See [Tool Search](../tools-advanced.md#tool-search) for more info.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances, unless overridden when adding a function.
+                A `Tool` instance built with `defer_loading=False` still gets `True`.
+            include_return_schema: Whether to include return schemas in tool definitions sent to the model.
+                If `None`, defaults to `False` unless the
+                [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances that leave it unset, unless overridden when adding a tool or function.
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal,
                 in which case the ID will be used to identify the toolset's activities within the workflow.
+            instructions: Instructions for this toolset that are automatically included in the model request.
+                Can be a string, an [`InstructionPart`][pydantic_ai.messages.InstructionPart] declaring the
+                part's [`name`][pydantic_ai.messages.InstructionPart.name] and whether it is
+                [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic], a function (sync or async, with
+                or without `RunContext`), or a sequence of these.
         """
         self.max_retries = max_retries
+        self.timeout = timeout
         self._id = id
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
@@ -88,11 +146,23 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
+        self._defer_loading = defer_loading
+        self.include_return_schema = include_return_schema
+
+        # A part is kept whole rather than reduced to its text, because it carries the author's
+        # declared `name` and its `dynamic` flag -- the flag that decides whether the part falls inside
+        # the cacheable prefix, so toolset collection preserves the part rather than reducing it to text.
+        self._instructions: list[str | InstructionPart | SourcedInstruction[AgentDepsT]] = [
+            instruction
+            if isinstance(instruction, (str, InstructionPart))
+            else SourcedInstruction(instruction, dynamic=True)
+            for instruction in normalize_instructions(instructions)
+        ]
 
         self.tools = {}
         for tool in tools:
             if isinstance(tool, Tool):
-                self.add_tool(tool)
+                self.add_tool(tool)  # pyright: ignore[reportUnknownArgumentType]
             else:
                 self.add_function(tool)
 
@@ -101,7 +171,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         return self._id
 
     @overload
-    def tool(self, func: ToolFuncEither[AgentDepsT, ToolParams], /) -> ToolFuncEither[AgentDepsT, ToolParams]: ...
+    def tool(self, func: ToolFuncContext[AgentDepsT, ToolParams], /) -> ToolFuncContext[AgentDepsT, ToolParams]: ...
 
     @overload
     def tool(
@@ -112,6 +182,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ...] | None = None,
         docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
@@ -119,17 +190,22 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
+        tool_kind: ToolKind[KindArgsT, KindContentT],
+        timeout: float | None = None,
+        defer_loading: bool | None = None,
+        include_return_schema: bool | None = None,
+    ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
 
+    @overload
     def tool(
         self,
-        func: ToolFuncEither[AgentDepsT, ToolParams] | None = None,
         /,
         *,
         name: str | None = None,
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
@@ -137,6 +213,33 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolPartKind | None = None,
+        timeout: float | None = None,
+        defer_loading: bool | None = None,
+        include_return_schema: bool | None = None,
+    ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
+
+    def tool(
+        self,
+        func: ToolFuncContext[AgentDepsT, ToolParams] | None = None,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
+        docstring_format: DocstringFormat | None = None,
+        require_parameter_descriptions: bool | None = None,
+        schema_generator: type[GenerateJsonSchema] | None = None,
+        strict: bool | None = None,
+        sequential: bool | None = None,
+        requires_approval: bool | None = None,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
+        timeout: float | None = None,
+        defer_loading: bool | None = None,
+        include_return_schema: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -152,14 +255,14 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         ```python
         from pydantic_ai import Agent, FunctionToolset, RunContext
 
-        toolset = FunctionToolset()
+        toolset = FunctionToolset[int]()
 
         @toolset.tool
         def foobar(ctx: RunContext[int], x: int) -> int:
             return ctx.deps + x
 
         @toolset.tool(retries=2)
-        async def spam(ctx: RunContext[str], y: float) -> float:
+        async def spam(ctx: RunContext[int], y: float) -> float:
             return ctx.deps + y
 
         agent = Agent('test', toolsets=[toolset], deps_type=int)
@@ -177,35 +280,54 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
+            args_validator: custom method to validate tool arguments after schema validation has passed,
+                before execution. The validator receives the already-validated and type-converted parameters,
+                with `RunContext` as the first argument.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the
+                arguments and try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a
+                terminal failure the model should adapt to instead of retrying. Return `None` on success.
+                See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 If `None`, the default value is determined by the toolset.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing.
                 If `None`, the default value is determined by the toolset.
             schema_generator: The JSON schema generator class to use for this tool.
                 If `None`, the default value is determined by the toolset.
-            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+            strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
                 If `None`, the default value is determined by the toolset.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
                 If `None`, the default value is determined by the toolset.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            tool_kind: What the tool is, independent of its name: a [`ToolKind`][pydantic_ai.messages.ToolKind], or the id of one.
+                Its call and return parts are then promoted to the typed parts registered for the kind.
+                See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
+            timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
+                Defaults to None (no timeout).
+            defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
+                or another tool's `ToolReturn.tools`.
+                See [Tool Search](../tools-advanced.md#tool-search) for more info.
+                If `None`, the default value is determined by the toolset.
+            include_return_schema: Whether to include the return schema in the tool definition sent to the model.
+                If `None`, the default value is determined by the toolset.
         """
 
         def tool_decorator(
-            func_: ToolFuncEither[AgentDepsT, ToolParams],
-        ) -> ToolFuncEither[AgentDepsT, ToolParams]:
-            # noinspection PyTypeChecker
+            func_: ToolFuncContext[AgentDepsT, ToolParams],
+        ) -> ToolFuncContext[AgentDepsT, ToolParams]:
             self.add_function(
                 func=func_,
-                takes_ctx=None,
+                takes_ctx=True,
                 name=name,
                 description=description,
                 retries=retries,
                 prepare=prepare,
+                args_validator=args_validator,
                 docstring_format=docstring_format,
                 require_parameter_descriptions=require_parameter_descriptions,
                 schema_generator=schema_generator,
@@ -213,10 +335,284 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                tool_kind=tool_kind,
+                timeout=timeout,
+                defer_loading=defer_loading,
+                include_return_schema=include_return_schema,
             )
             return func_
 
         return tool_decorator if func is None else tool_decorator(func)
+
+    @overload
+    def tool_plain(self, func: ToolFuncPlain[ToolParams], /) -> ToolFuncPlain[ToolParams]: ...
+
+    @overload
+    def tool_plain(
+        self,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ...] | None = None,
+        docstring_format: DocstringFormat | None = None,
+        require_parameter_descriptions: bool | None = None,
+        schema_generator: type[GenerateJsonSchema] | None = None,
+        strict: bool | None = None,
+        sequential: bool | None = None,
+        requires_approval: bool | None = None,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKind[KindArgsT, KindContentT],
+        timeout: float | None = None,
+        defer_loading: bool | None = None,
+        include_return_schema: bool | None = None,
+    ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
+
+    @overload
+    def tool_plain(
+        self,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
+        docstring_format: DocstringFormat | None = None,
+        require_parameter_descriptions: bool | None = None,
+        schema_generator: type[GenerateJsonSchema] | None = None,
+        strict: bool | None = None,
+        sequential: bool | None = None,
+        requires_approval: bool | None = None,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: ToolPartKind | None = None,
+        timeout: float | None = None,
+        defer_loading: bool | None = None,
+        include_return_schema: bool | None = None,
+    ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
+
+    def tool_plain(
+        self,
+        func: ToolFuncPlain[ToolParams] | None = None,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
+        docstring_format: DocstringFormat | None = None,
+        require_parameter_descriptions: bool | None = None,
+        schema_generator: type[GenerateJsonSchema] | None = None,
+        strict: bool | None = None,
+        sequential: bool | None = None,
+        requires_approval: bool | None = None,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
+        timeout: float | None = None,
+        defer_loading: bool | None = None,
+        include_return_schema: bool | None = None,
+    ) -> Any:
+        """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
+
+        Can decorate a sync or async functions.
+
+        The docstring is inspected to extract both the tool description and description of each parameter,
+        [learn more](../tools.md#function-tools-and-schema).
+
+        We can't add overloads for every possible signature of tool, since the return type is a recursive union
+        so the signature of functions decorated with `@toolset.tool_plain` is obscured.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent, FunctionToolset
+
+        toolset = FunctionToolset()
+
+        @toolset.tool_plain
+        def foobar(x: int) -> int:
+            return x + 1
+
+        @toolset.tool_plain(retries=2)
+        async def spam(y: float) -> float:
+            return y * 2.0
+
+        agent = Agent('test', toolsets=[toolset])
+        result = agent.run_sync('foobar')
+        print(result.output)
+        #> {"foobar":1,"spam":0.0}
+        ```
+
+        Args:
+            func: The tool function to register.
+            name: The name of the tool, defaults to the function name.
+            description: The description of the tool, defaults to the function docstring.
+            retries: The number of retries to allow for this tool, defaults to the toolset's default retries,
+                which defaults to the agent's default.
+            prepare: custom method to prepare the tool definition for each step, return `None` to omit this
+                tool from a given step. This is useful if you want to customise a tool at call time,
+                or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
+            args_validator: custom method to validate tool arguments after schema validation has passed,
+                before execution. The validator receives the already-validated and type-converted parameters,
+                with [`RunContext`][pydantic_ai.tools.RunContext] as the first argument — even though the
+                tool function itself does not take `RunContext` when using `tool_plain`.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the
+                arguments and try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a
+                terminal failure the model should adapt to instead of retrying. Return `None` on success.
+                See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
+            docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
+                If `None`, the default value is determined by the toolset.
+            require_parameter_descriptions: If True, raise an error if a parameter description is missing.
+                If `None`, the default value is determined by the toolset.
+            schema_generator: The JSON schema generator class to use for this tool.
+                If `None`, the default value is determined by the toolset.
+            strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+                If `None`, the default value is determined by the toolset.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
+                If `None`, the default value is determined by the toolset.
+            requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
+                See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+                If `None`, the default value is determined by the toolset.
+            metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+                If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            tool_kind: What the tool is, independent of its name: a [`ToolKind`][pydantic_ai.messages.ToolKind], or the id of one.
+                Its call and return parts are then promoted to the typed parts registered for the kind.
+                See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
+            timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
+                Defaults to None (no timeout).
+            defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
+                or another tool's `ToolReturn.tools`.
+                See [Tool Search](../tools-advanced.md#tool-search) for more info.
+                If `None`, the default value is determined by the toolset.
+            include_return_schema: Whether to include the return schema in the tool definition sent to the model.
+                If `None`, the default value is determined by the toolset.
+        """
+
+        def tool_decorator(
+            func_: ToolFuncPlain[ToolParams],
+        ) -> ToolFuncPlain[ToolParams]:
+            # noinspection PyTypeChecker
+            self.add_function(
+                func=func_,
+                takes_ctx=False,
+                name=name,
+                description=description,
+                retries=retries,
+                prepare=prepare,
+                args_validator=args_validator,
+                docstring_format=docstring_format,
+                require_parameter_descriptions=require_parameter_descriptions,
+                schema_generator=schema_generator,
+                strict=strict,
+                sequential=sequential,
+                requires_approval=requires_approval,
+                metadata=metadata,
+                tool_kind=tool_kind,
+                timeout=timeout,
+                defer_loading=defer_loading,
+                include_return_schema=include_return_schema,
+            )
+            return func_
+
+        return tool_decorator if func is None else tool_decorator(func)
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], str | None], /
+    ) -> Callable[[RunContext[AgentDepsT]], str | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str | None]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str | None]]: ...
+
+    @overload
+    def instructions(self, func: Callable[[], str | None], /) -> Callable[[], str | None]: ...
+
+    @overload
+    def instructions(self, func: Callable[[], Awaitable[str | None]], /) -> Callable[[], Awaitable[str | None]]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], str | InstructionPart | None], /
+    ) -> Callable[[RunContext[AgentDepsT]], str | InstructionPart | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str | InstructionPart | None]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str | InstructionPart | None]]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[], str | InstructionPart | None], /
+    ) -> Callable[[], str | InstructionPart | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[], Awaitable[str | InstructionPart | None]], /
+    ) -> Callable[[], Awaitable[str | InstructionPart | None]]: ...
+
+    @overload
+    def instructions(
+        self, /, *, name: str | None = None, on_change: InstructionChangePolicy = 'rewrite'
+    ) -> Callable[[InstructionFunc[AgentDepsT]], InstructionFunc[AgentDepsT]]: ...
+
+    def instructions(
+        self,
+        func: InstructionFunc[AgentDepsT] | None = None,
+        /,
+        *,
+        name: str | None = None,
+        on_change: InstructionChangePolicy = 'rewrite',
+    ) -> Callable[[InstructionFunc[AgentDepsT]], InstructionFunc[AgentDepsT]] | InstructionFunc[AgentDepsT]:
+        """Decorator to register an instructions function for this toolset.
+
+        The function can be sync or async, and can optionally take a
+        [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
+
+        Example:
+        ```python
+        from pydantic_ai import FunctionToolset, RunContext
+
+        toolset = FunctionToolset[int]()
+
+        @toolset.instructions
+        def my_instructions(ctx: RunContext[int]) -> str:
+            return 'Always use the search tool when looking for information.'
+
+        @toolset.tool
+        def search(ctx: RunContext[int], query: str) -> str:
+            return f'Results for: {query}'
+        ```
+
+        Args:
+            func: The instructions function to register.
+            name: An optional name for the instruction part this function produces, keyed as
+                `'toolset:<toolset id>:<name>'` on
+                [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an application can
+                address this part specifically, where the toolset's own key addresses everything it
+                contributes. Requires the toolset to have an
+                [`id`][pydantic_ai.toolsets.AbstractToolset.id] — without one there is no source key to
+                qualify the name against, so the part stays unaddressable. See
+                [instruction parts](../agent.md#instruction-parts).
+            on_change: Whether to rewrite the instruction prefix (the default) or append full
+                replacements when this block changes. Appending requires an addressable instruction
+                identity; otherwise it warns and rewrites. The function still runs on every request.
+                Use `'append'` for instructions that change mid-conversation, to keep the cached
+                prefix; see [appending instruction changes](../agent.md#appending-instruction-changes).
+        """
+        if name is not None:
+            validate_instruction_name(name)
+
+        def decorator(func_: InstructionFunc[AgentDepsT]) -> InstructionFunc[AgentDepsT]:
+            self._instructions.append(SourcedInstruction(func_, name=name, dynamic=True, on_change=on_change))
+            return func_
+
+        return decorator if func is None else decorator(func)
 
     def add_function(
         self,
@@ -226,14 +622,19 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
+        defer_loading: bool | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> None:
+        tool_kind: ToolKindLike | None = None,
+        timeout: float | None = None,
+        include_return_schema: bool | None = None,
+    ) -> Tool[AgentDepsT]:
         """Add a function as a tool to the toolset.
 
         Can take a sync or async function.
@@ -251,22 +652,41 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
+            args_validator: custom method to validate tool arguments after schema validation has passed,
+                before execution. The validator receives the already-validated and type-converted parameters,
+                with `RunContext` as the first argument.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to correct the
+                arguments and try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a
+                terminal failure the model should adapt to instead of retrying. Return `None` on success.
+                See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 If `None`, the default value is determined by the toolset.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing.
                 If `None`, the default value is determined by the toolset.
             schema_generator: The JSON schema generator class to use for this tool.
                 If `None`, the default value is determined by the toolset.
-            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+            strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
                 If `None`, the default value is determined by the toolset.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
                 If `None`, the default value is determined by the toolset.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
+            defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
+                or another tool's `ToolReturn.tools`.
+                See [Tool Search](../tools-advanced.md#tool-search) for more info.
+                If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            tool_kind: What the tool is, independent of its name: a [`ToolKind`][pydantic_ai.messages.ToolKind], or the id of one.
+                Its call and return parts are then promoted to the typed parts registered for the kind.
+                See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
+            timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
+                Defaults to None (no timeout).
+            include_return_schema: Whether to include the return schema in the tool definition sent to the model.
+                If `None`, the default value is determined by the toolset.
         """
         if docstring_format is None:
             docstring_format = self.docstring_format
@@ -280,6 +700,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential = self.sequential
         if requires_approval is None:
             requires_approval = self.requires_approval
+        if defer_loading is None:
+            defer_loading = self._defer_loading
+        if include_return_schema is None:
+            include_return_schema = self.include_return_schema
 
         tool = Tool[AgentDepsT](
             func,
@@ -288,6 +712,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             description=description,
             max_retries=retries,
             prepare=prepare,
+            args_validator=args_validator,
             docstring_format=docstring_format,
             require_parameter_descriptions=require_parameter_descriptions,
             schema_generator=schema_generator,
@@ -295,32 +720,95 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential=sequential,
             requires_approval=requires_approval,
             metadata=metadata,
+            tool_kind=tool_kind,
+            timeout=timeout,
+            defer_loading=defer_loading,
+            include_return_schema=include_return_schema,
         )
         self.add_tool(tool)
+        # `add_tool` applies the toolset's `sequential`, `requires_approval`, and `defer_loading` when they're
+        # `True`; a `Tool`'s plain booleans can't distinguish an explicit `False`, so restore the overrides
+        # passed here.
+        tool.sequential = sequential
+        tool.requires_approval = requires_approval
+        tool.defer_loading = defer_loading
+        tool._sequential_from_toolset = False  # pyright: ignore[reportPrivateUsage]
+        tool._defer_loading_from_toolset = False  # pyright: ignore[reportPrivateUsage]
+        return tool
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Add a tool to the toolset.
+
+        The toolset's `strict` and `include_return_schema` apply to the tool when the tool leaves them unset,
+        its `sequential`, `requires_approval`, and `defer_loading` apply when they're set to `True`, its
+        `metadata` is merged into the tool's, and its `max_retries` applies when the tool sets none.
 
         Args:
             tool: The tool to add.
         """
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
-        if tool.max_retries is None:
+        if tool.max_retries is None and self.max_retries is not None:
             tool.max_retries = self.max_retries
+        if tool.strict is None and self.strict is not None:
+            tool.strict = self.strict
+        if tool.include_return_schema is None and self.include_return_schema is not None:
+            tool.include_return_schema = self.include_return_schema
+        if self.sequential and not tool.sequential:
+            tool.sequential = True
+            tool._sequential_from_toolset = True  # pyright: ignore[reportPrivateUsage]
+        if self.requires_approval:
+            tool.requires_approval = True
+        if self._defer_loading and not tool.defer_loading:
+            tool.defer_loading = True
+            tool._defer_loading_from_toolset = True  # pyright: ignore[reportPrivateUsage]
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool
+
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[InstructionPart] | None:
+        if not self._instructions:
+            return None
+        parts: list[InstructionPart] = []
+        for instruction in self._instructions:
+            if isinstance(instruction, InstructionPart):
+                # No blank check: `normalize_toolset_instructions` drops whitespace-only parts on
+                # every path out of a toolset, so repeating it here would be a branch nothing can
+                # tell apart.
+                parts.append(instruction)
+            elif isinstance(instruction, str):
+                if instruction.strip():
+                    parts.append(InstructionPart(content=instruction, dynamic=False))
+            else:
+                assert not isinstance(instruction.instruction, (str, InstructionPart))
+                if (part := await resolve_instruction_function(instruction, instruction.instruction, ctx)) is not None:
+                    # Keyed beneath this toolset when collected, like any part it returns.
+                    parts.append(part)
+        return parts or None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for original_name, tool in self.tools.items():
             max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
+            if max_retries is None:
+                max_retries = ctx.max_retries
+            # `retries` is keyed by the name the model calls the tool by, computed here by applying
+            # the layers `PrefixedToolset` and `RenamedToolset` pushed, innermost first, the way they
+            # name the tools they list. That name is wrong when the tool's own `prepare` renames it,
+            # or when a wrapper other than `PrefixedToolset` and `RenamedToolset` renames tools,
+            # nested inside or around them, whether or not it calls `super().get_tools()`. If it
+            # then names an unrelated tool, `prepare` reads that tool's count.
+            exposed = original_name
+            for layer in reversed(ctx._tool_name_path):  # pyright: ignore[reportPrivateUsage]
+                exposed = f'{layer}_{exposed}' if isinstance(layer, str) else layer.get(exposed) or exposed
             run_context = replace(
                 ctx,
                 tool_name=original_name,
-                retry=ctx.retries.get(original_name, 0),
+                retry=ctx.retries.get(exposed, 0),
                 max_retries=max_retries,
+                _tool_name_path=(),
+                # A listing nested in a tool call must not inherit that call's tool manager name.
+                _dispatched_tool_name=None,
             )
             tool_def = await tool.prepare_tool_def(run_context)
             if not tool_def:
@@ -333,18 +821,66 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 else:
                     raise UserError(f'Tool name conflicts with previously renamed tool: {new_name!r}.')
 
-            tools[new_name] = FunctionToolsetTool(
-                toolset=self,
-                tool_def=tool_def,
-                max_retries=max_retries,
-                args_validator=tool.function_schema.validator,
-                call_func=tool.function_schema.call,
-                is_async=tool.function_schema.is_async,
-            )
+            tools[new_name] = self._tool_for(tool, tool_def, max_retries, original_name)
         return tools
+
+    def tool_for_tool_def(
+        self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT], original_name: str | None = None
+    ) -> FunctionToolsetTool[AgentDepsT]:
+        """Build the tool to call for a tool definition that was already prepared elsewhere.
+
+        Used by [durable execution](../durable_execution/overview.md) to rebuild the tool inside the
+        durable unit (e.g. a Temporal activity) from the tool definition that
+        [`get_tools()`][pydantic_ai.toolsets.AbstractToolset.get_tools] produced outside it, instead
+        of running the tool's `prepare` function a second time against a different run context.
+
+        Args:
+            tool_def: The prepared tool definition to build the tool from.
+            ctx: The run context used to resolve the tool's retry budget.
+            original_name: The name this toolset holds the tool under, from the built tool's
+                `original_name`. Defaults to `tool_def.name`, which is only the same when no
+                `prepare` function renamed the tool. This is specific to `FunctionToolset` because
+                per-tool preparation runs inside its own `get_tools()` and can change the exposed name
+                without changing the key in `tools`.
+
+        Raises:
+            KeyError: If the toolset holds no tool under that name.
+        """
+        original_name = original_name if original_name is not None else tool_def.name
+        tool = self.tools[original_name]
+        max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
+        return self._tool_for(
+            tool, tool_def, max_retries if max_retries is not None else ctx.max_retries, original_name
+        )
+
+    def _tool_for(
+        self, tool: Tool[AgentDepsT], tool_def: ToolDefinition, max_retries: int, original_name: str
+    ) -> FunctionToolsetTool[AgentDepsT]:
+        return FunctionToolsetTool(
+            toolset=self,
+            tool_def=tool_def,
+            max_retries=max_retries,
+            args_validator=tool.function_schema.validator,
+            args_validator_func=tool.args_validator,
+            call_func=tool.function_schema.call,
+            is_async=tool.function_schema.is_async,
+            timeout=tool_def.timeout,
+            original_name=original_name,
+        )
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         assert isinstance(tool, FunctionToolsetTool)
-        return await tool.call_func(tool_args, ctx)
+
+        # Per-tool timeout takes precedence over toolset timeout. Read it off the tool definition, which a
+        # `prepare` function may have changed since `_tool_for` built the tool.
+        timeout = tool.tool_def.timeout if tool.tool_def.timeout is not None else self.timeout
+        if timeout is not None:
+            try:
+                with anyio.fail_after(timeout), _utils.abandon_threads_on_cancel():
+                    return await tool.call_func(tool_args, ctx)
+            except TimeoutError:
+                raise ModelRetry(f'Timed out after {timeout} seconds.') from None
+        else:
+            return await tool.call_func(tool_args, ctx)

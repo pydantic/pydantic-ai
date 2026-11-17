@@ -4,15 +4,19 @@
     options:
         members:
         - AbstractToolset
+        - ToolsetTool
         - CombinedToolset
         - ExternalToolset
         - ApprovalRequiredToolset
         - FilteredToolset
         - FunctionToolset
+        - IncludeReturnSchemasToolset
+        - DeferredLoadingToolset
+        - DynamicToolset
         - PrefixedToolset
         - RenamedToolset
+        - SetMetadataToolset
         - PreparedToolset
         - WrapperToolset
         - ToolsetFunc
-
-::: pydantic_ai.toolsets.fastmcp
+        - AgentToolset

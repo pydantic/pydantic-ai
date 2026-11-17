@@ -1,0 +1,204 @@
+#!/usr/bin/env python
+"""Check that all cassette files have corresponding tests.
+
+This script verifies that every VCR cassette file in the test suite has a
+corresponding test function. Orphaned cassettes (cassettes without tests)
+indicate dead code that should be removed.
+
+The script doesn't handle custom cassette names passed as args
+e.g. `@pytest.mark.vcr('custom_cassette.yaml')`
+Instead, all cassettes _should_ follow the file path set up in conftest.py
+
+Usage:
+    python scripts/check_cassettes.py [--verbose]
+"""
+
+from __future__ import annotations
+
+import ast
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+_FORBIDDEN_CHARS = r"""<>?%*:|"'/\\"""
+
+
+def _sanitize_cassette_name(name: str) -> str:
+    """Replicate the cassette name sanitization of cassetter's pytest plugin."""
+    for ch in _FORBIDDEN_CHARS:
+        name = name.replace(ch, '-')
+    return name
+
+
+def _has_vcr_marker(decorator_list: list[ast.expr]) -> bool:
+    """Check if a decorator list contains pytest.mark.vcr (with or without parens)."""
+    for dec in decorator_list:
+        # @pytest.mark.vcr or @pytest.mark.vcr()
+        if isinstance(dec, ast.Attribute) and dec.attr == 'vcr':
+            return True
+        if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == 'vcr':
+            return True
+    return False
+
+
+def _has_module_vcr_marker(tree: ast.Module) -> bool:
+    """Check if the module has pytestmark = [..., pytest.mark.vcr, ...]."""
+    for node in ast.iter_child_nodes(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if not (isinstance(target, ast.Name) and target.id == 'pytestmark'):
+                continue
+            return 'vcr' in ast.dump(node.value)
+    return False
+
+
+def _collect_vcr_tests_from_file(path: Path) -> set[str]:
+    """Parse a Python test file and return cassette names for VCR-marked tests."""
+    try:
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+    except SyntaxError:
+        return set()
+
+    module_has_vcr = _has_module_vcr_marker(tree)
+    cassette_names: set[str] = set()
+
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            if not node.name.startswith('test_'):
+                continue
+            if module_has_vcr or _has_vcr_marker(node.decorator_list):
+                # Parametrized tests get []  suffixes but cassettes use the base name
+                cassette_names.add(_sanitize_cassette_name(node.name))
+
+        elif isinstance(node, ast.ClassDef):
+            class_has_vcr = _has_vcr_marker(node.decorator_list)
+            for method in ast.iter_child_nodes(node):
+                if not isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef):
+                    continue
+                if not method.name.startswith('test_'):
+                    continue
+                if module_has_vcr or class_has_vcr or _has_vcr_marker(method.decorator_list):
+                    cassette_names.add(_sanitize_cassette_name(f'{node.name}.{method.name}'))
+
+    return cassette_names
+
+
+# Cassette subdirectories backed by the realtime WebSocket engine (`tests/realtime/ws_cassettes.py`)
+# rather than `pytest.mark.vcr` (one `test_<provider>_ws.py` file per provider). They follow the same
+# `cassettes/<module>/<test_name>.yaml` convention, but their tests carry no vcr marker, so every test
+# function in the module counts. Keyed off the `_ws` naming convention so a new provider fits in.
+_WS_CASSETTE_SUFFIX = '_ws'
+
+# A realtime test that also makes HTTP requests records its WebSocket cassette under a dedicated
+# `<module>_sideband` (a WebRTC sideband, whose offer relay is the HTTP part) or `<module>_and_http`
+# subdirectory, so it doesn't collide with the module-named subdirectory holding its HTTP VCR cassette.
+# Both belong to the same test in `<module>.py`, so attribute the subdirectory back to that module.
+_SECOND_CASSETTE_SUFFIXES = ('_sideband', '_and_http')
+
+
+def _collect_all_tests_from_file(path: Path) -> set[str]:
+    """Parse a Python test file and return cassette names for every test function (no marker needed)."""
+    try:
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+    except SyntaxError:
+        return set()
+
+    cassette_names: set[str] = set()
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith('test_'):
+            cassette_names.add(_sanitize_cassette_name(node.name))
+        elif isinstance(node, ast.ClassDef):
+            for method in ast.iter_child_nodes(node):
+                if isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef) and method.name.startswith('test_'):
+                    cassette_names.add(_sanitize_cassette_name(f'{node.name}.{method.name}'))
+    return cassette_names
+
+
+def get_all_cassettes() -> dict[str, set[str]]:
+    """Return {test_file_stem: set of cassette names (without .yaml)}."""
+    cassettes: dict[str, set[str]] = {}
+
+    for cassette_dir in Path('tests').rglob('cassettes'):
+        if not cassette_dir.is_dir():
+            continue
+        for subdir in cassette_dir.iterdir():
+            if subdir.is_dir():
+                test_stem = subdir.name
+                for suffix in _SECOND_CASSETTE_SUFFIXES:
+                    test_stem = test_stem.removesuffix(suffix)
+                # Handle double extensions like .xai.yaml (xAI uses gRPC/protobuf, not HTTP)
+                cassette_names = {f.stem[:-4] if f.stem.endswith('.xai') else f.stem for f in subdir.glob('*.yaml')}
+                cassettes.setdefault(test_stem, set()).update(cassette_names)
+
+    return cassettes
+
+
+def get_all_tests() -> dict[str, set[str]]:
+    """Use AST parsing to find all cassette-backed tests and their cassette names."""
+    tests: dict[str, set[str]] = defaultdict(set)
+
+    for test_file in Path('tests').rglob('test_*.py'):
+        if test_file.stem.endswith(_WS_CASSETTE_SUFFIX):
+            cassette_names = _collect_all_tests_from_file(test_file)
+        else:
+            cassette_names = _collect_vcr_tests_from_file(test_file)
+        if cassette_names:
+            tests[test_file.stem].update(cassette_names)
+
+    return dict(tests)
+
+
+def main() -> int:
+    """Match every cassette file to a test and report orphans; returns a non-zero exit code if any."""
+    verbose = '--verbose' in sys.argv or '-v' in sys.argv
+
+    print('Collecting cassettes...')
+    cassettes = get_all_cassettes()
+    total_cassettes = sum(len(c) for c in cassettes.values())
+    print(f'Found {total_cassettes} cassettes in {len(cassettes)} test modules')
+
+    print('Collecting VCR-marked tests...')
+    tests = get_all_tests()
+    total_tests = sum(len(t) for t in tests.values())
+    print(f'Found {total_tests} tests in {len(tests)} test modules')
+
+    orphans: list[str] = []
+    matched = 0
+
+    for test_file, cassette_names in sorted(cassettes.items()):
+        expected_cassettes = tests.get(test_file, set())
+
+        if not expected_cassettes and verbose:
+            print(f'Warning: No tests found for module {test_file}')
+
+        for cassette in sorted(cassette_names):
+            # Parametrized tests produce cassettes like test_foo[param].yaml
+            # Strip the [param] suffix to match the base test name
+            base_name = cassette.split('[')[0]
+            if cassette in expected_cassettes or base_name in expected_cassettes:
+                matched += 1
+                if verbose:
+                    print(f'  OK: {test_file}/{cassette}.yaml')
+            else:
+                orphans.append(f'{test_file}/{cassette}.yaml')
+
+    print()
+    print(f'Orphaned cassettes check: {matched} matched, {len(orphans)} orphaned')
+
+    if orphans:
+        print()
+        print('Orphaned cassettes (no matching test):')
+        for orphan in sorted(orphans):
+            print(f'  - {orphan}')
+        print()
+        print('These cassettes have no corresponding test and may be dead code.')
+        print('Either add a test or remove the cassette.')
+        return 1
+
+    print('All cassettes have matching tests!')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -1,10 +1,14 @@
+---
+description: "Choose the right Pydantic Evals evaluators for your task, from fast deterministic checks to LLM judges and span-based evaluation, and combine them in a dataset."
+---
+
 # Evaluators Overview
 
 Evaluators are the core of Pydantic Evals. They analyze task outputs and provide scores, labels, or pass/fail assertions.
 
 ## When to Use Different Evaluators
 
-### Deterministic Checks (Fast & Reliable)
+### Deterministic Checks (Fast & Reliable) {#deterministic-checks-fast-reliable}
 
 Use deterministic evaluators when you can define exact rules:
 
@@ -16,6 +20,11 @@ Use deterministic evaluators when you can define exact rules:
 | [`IsInstance`][pydantic_evals.evaluators.IsInstance] | Type validation | Format validation |
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | SLA compliance |
 | [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan] | Behavior verification | Tool calls, code paths |
+| [`ToolCorrectness`][pydantic_evals.evaluators.ToolCorrectness] | Required tool coverage | Multiset of tool names invoked |
+| [`TrajectoryMatch`][pydantic_evals.evaluators.TrajectoryMatch] | Tool-call sequence quality | F1 against expected trajectory |
+| [`ArgumentCorrectness`][pydantic_evals.evaluators.ArgumentCorrectness] | Tool argument checks | Refund `order_id`, search query |
+| [`MaxToolCalls`][pydantic_evals.evaluators.MaxToolCalls] | Budget discipline | Tool-call budget |
+| [`MaxModelRequests`][pydantic_evals.evaluators.MaxModelRequests] | Budget discipline | Model-request budget |
 
 **Advantages:**
 
@@ -31,7 +40,7 @@ Use deterministic evaluators when you can define exact rules:
 - Performance requirements (latency, token counts)
 - Behavioral checks (which tools were called, which code paths executed)
 
-### LLM-as-a-Judge (Flexible & Nuanced)
+### LLM-as-a-Judge (Flexible & Nuanced) {#llm-as-a-judge-flexible-nuanced}
 
 Use [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] when evaluation requires understanding or judgment:
 
@@ -40,6 +49,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='llm_judge_example',
     cases=[Case(inputs='What is 2+2?', expected_output='4')],
     evaluators=[
         LLMJudge(
@@ -49,6 +59,13 @@ dataset = Dataset(
     ],
 )
 ```
+
+For metrics aligned with widely-used evaluation methods (G-Eval, the Ragas RAG metrics, GEMBA),
+see [Standard Quality Metrics](standard-quality-metrics.md): the
+[`GEval`][pydantic_evals.evaluators.GEval] evaluator plus ready-made
+[`LLMJudge`][pydantic_evals.evaluators.LLMJudge] rubrics you can copy and adapt. To plug in the
+*exact* upstream implementations of external frameworks, see
+[Third-Party Integrations](framework-integrations.md).
 
 **Advantages:**
 
@@ -94,6 +111,8 @@ class ValidSQL(Evaluator):
         except Exception:
             return False
 ```
+
+A plain function that takes an `EvaluatorContext` also works as an evaluator, see [Function Evaluators](custom.md#function-evaluators).
 
 **When to use:**
 
@@ -213,6 +232,7 @@ from pydantic_evals.evaluators import (
 )
 
 dataset = Dataset(
+    name='layered_evaluation',
     cases=[Case(inputs='test', expected_output='result')],
     evaluators=[
         # Fast deterministic checks first
@@ -230,13 +250,14 @@ dataset = Dataset(
 
 ## Case-specific evaluators
 
-Case-specific evaluators are one of the most powerful features for building comprehensive evaluation suites. You can attach evaluators to individual [`Case`][pydantic_evals.Case] objects that only run for those specific cases:
+Case-specific evaluators are one of the most powerful features for building comprehensive evaluation suites. You can attach evaluators to individual [`Case`][pydantic_evals.dataset.Case] objects that only run for those specific cases:
 
 ```python
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import IsInstance, LLMJudge
 
 dataset = Dataset(
+    name='case_specific_evaluators',
     cases=[
         Case(
             name='greeting_response',
@@ -287,6 +308,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='golden_dataset',
     cases=[
         Case(
             name='handle_refund_request',
@@ -391,7 +413,7 @@ All evaluators receive an [`EvaluatorContext`][pydantic_evals.evaluators.Evaluat
 - `ctx.expected_output` - Expected output (if provided)
 - `ctx.metadata` - Case metadata (if provided)
 - `ctx.duration` - Task execution time (seconds)
-- `ctx.span_tree` - OpenTelemetry spans (if logfire configured)
+- `ctx.span_tree` - OpenTelemetry spans (if Logfire is configured)
 - `ctx.metrics` - Custom metrics dict
 - `ctx.attributes` - Custom attributes dict
 
@@ -430,9 +452,46 @@ Failures appear in `report.cases[i].evaluator_failures` with:
 
 Use retry configuration to handle transient failures (see [Retry Strategies](../how-to/retry-strategies.md)).
 
+## Report Evaluators (Experiment-Wide)
+
+All the evaluators above run once per case. **Report evaluators** are different: they run once per
+experiment after all cases have been evaluated, and analyze the full set of results together.
+
+Use report evaluators for experiment-wide statistics like:
+
+- **Confusion matrices** — visualize classification accuracy across classes
+- **Precision-recall curves** — assess ranking quality with AUC scores
+- **Scalar metrics** — overall accuracy, F1, BLEU, or any single number
+- **Summary tables** — per-class breakdowns, error category summaries
+
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import ConfusionMatrixEvaluator
+
+dataset = Dataset(
+    name='report_evaluator_example',
+    cases=[
+        Case(inputs='meow', expected_output='cat'),
+        Case(inputs='woof', expected_output='dog'),
+    ],
+    report_evaluators=[
+        ConfusionMatrixEvaluator(
+            predicted_from='output',
+            expected_from='expected_output',
+        ),
+    ],
+)
+```
+
+**See:** [Report Evaluators](report-evaluators.md) for the full guide, including built-in report evaluators and how to write custom ones.
+
 ## Next Steps
 
-- **[Built-in Evaluators](built-in.md)** - Complete reference of all provided evaluators
+- **[Native Evaluators](built-in.md)** - Complete reference of all provided evaluators
 - **[LLM Judge](llm-judge.md)** - Deep dive on LLM-as-a-Judge evaluation
+- **[Standard Quality Metrics](standard-quality-metrics.md)** - G-Eval, plus LLM judge rubrics for common RAG and translation metrics
+- **[Third-Party Integrations](framework-integrations.md)** - Wrap Ragas, DeepEval, and other metrics libraries
 - **[Custom Evaluators](custom.md)** - Write your own evaluation logic
+- **[Report Evaluators](report-evaluators.md)** - Experiment-wide analyses
 - **[Span-Based Evaluation](span-based.md)** - Evaluate using OpenTelemetry spans
+- **[Agentic Evaluators](agentic.md)** - Trajectory, tool-correctness, argument, and step-budget checks for agents

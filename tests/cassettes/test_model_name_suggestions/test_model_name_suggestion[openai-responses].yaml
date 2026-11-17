@@ -1,0 +1,60 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "161"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6-sool
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: hello
+        reasoning:
+          context: all_turns
+  response:
+    status: 404
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "93"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        error:
+          message: The model `gpt-5.6-sool` does not exist or you do not have access to it.
+          type: invalid_request_error
+          param: null
+          code: model_not_found
+  recorded_at: 2026-11-07T19:13:53.049486+00:00

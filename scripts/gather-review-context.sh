@@ -1,0 +1,428 @@
+#!/usr/bin/env bash
+# Gather PR context for douwebot into .github/.review-context/
+# Usage: scripts/gather-review-context.sh <pr-number> [repo]
+#
+# Examples:
+#   scripts/gather-review-context.sh 4269
+#   scripts/gather-review-context.sh 4269 pydantic/pydantic-ai
+
+set -euo pipefail
+
+PR_NUMBER="${1:?Usage: $0 <pr-number> [repo]}"
+REPO="${2:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
+CTX=".github/.review-context"
+mkdir -p "$CTX"
+
+# Where the PR head is checked out. Defaults to the current directory, which is
+# the case when a human runs this inside the PR's own worktree. `bots.yml` sets it
+# to a subdirectory instead: that job reviews untrusted fork code, so it keeps the
+# base ref at the workspace root and confines the head, and only the diff below
+# may read from the untrusted tree.
+PR_HEAD_DIR="${PR_HEAD_DIR:-.}"
+
+echo "Gathering context for PR #${PR_NUMBER} in ${REPO}..."
+
+# PR details (title, body, author, labels)
+echo "  - PR details"
+gh pr view "$PR_NUMBER" --repo "$REPO" --json title,body,author,headRefName,baseRefName,additions,deletions,changedFiles,labels,isDraft,reviewDecision,state,createdAt,updatedAt,url > "$CTX/pr-details.json"
+
+# PR comments
+echo "  - PR comments"
+gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate --jq '.[] | "### \(.user.login) (\(.author_association)) at \(.created_at)\n\(.body)\n"' > "$CTX/pr-comments.txt"
+[ -s "$CTX/pr-comments.txt" ] || echo "(No PR comments)" > "$CTX/pr-comments.txt"
+
+# Inline review comments (with diff hunks and resolved state via GraphQL)
+# Fetch all review threads first, then determine last douwebot-review timestamp, then format
+echo "  - Review comments"
+OWNER="${REPO%%/*}"
+REPO_NAME="${REPO##*/}"
+CURSOR=""
+THREADS_JSON=$(mktemp)
+echo '[]' > "$THREADS_JSON"
+while true; do
+  CURSOR_ARG=""
+  if [ -n "$CURSOR" ]; then
+    CURSOR_ARG=", after: \"$CURSOR\""
+  fi
+  RESULT=$(gh api graphql -f query="
+    query {
+      repository(owner: \"$OWNER\", name: \"$REPO_NAME\") {
+        pullRequest(number: $PR_NUMBER) {
+          reviewThreads(first: 100$CURSOR_ARG) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              id
+              isResolved
+              isOutdated
+              comments(first: 50) {
+                nodes {
+                  id
+                  databaseId
+                  author { login }
+                  authorAssociation
+                  body
+                  diffHunk
+                  path
+                  line
+                  createdAt
+                  replyTo { id }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ")
+  # Accumulate thread nodes into temp file
+  jq -s '.[0] + [.[1].data.repository.pullRequest.reviewThreads.nodes[]]' "$THREADS_JSON" <(echo "$RESULT") > "${THREADS_JSON}.tmp"
+  mv "${THREADS_JSON}.tmp" "$THREADS_JSON"
+  CURSOR=$(echo "$RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo | select(.hasNextPage) | .endCursor')
+  if [ -z "$CURSOR" ]; then
+    break
+  fi
+done
+
+# Find timestamp of last douwebot review from both issue comments and inline review comments
+echo "  - Checking for previous douwebot review"
+LAST_ISSUE_COMMENT_TS=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
+  | jq -s '[.[][] | select(.user.login == "github-actions" or .user.login == "github-actions[bot]") | .created_at] | sort | last // empty' -r)
+LAST_REVIEW_COMMENT_TS=$(jq -r '
+  [.[] | .comments.nodes[] |
+    select(.author.login == "github-actions" or .author.login == "github-actions[bot]") |
+    .createdAt
+  ] | sort | last // empty
+' "$THREADS_JSON")
+
+# Take the later of the two timestamps
+if [ -n "$LAST_ISSUE_COMMENT_TS" ] && [ -n "$LAST_REVIEW_COMMENT_TS" ]; then
+  if [[ "$LAST_ISSUE_COMMENT_TS" > "$LAST_REVIEW_COMMENT_TS" ]]; then
+    LAST_REVIEW_TS="$LAST_ISSUE_COMMENT_TS"
+  else
+    LAST_REVIEW_TS="$LAST_REVIEW_COMMENT_TS"
+  fi
+else
+  LAST_REVIEW_TS="${LAST_ISSUE_COMMENT_TS:-$LAST_REVIEW_COMMENT_TS}"
+fi
+
+if [ -n "$LAST_REVIEW_TS" ]; then
+  echo "    Last douwebot review: $LAST_REVIEW_TS"
+else
+  echo "    No previous douwebot review found"
+fi
+
+# Format review threads with compaction
+> "$CTX/review-comments.txt"
+jq -r --arg last_review "$LAST_REVIEW_TS" '
+  def truncate: gsub("[\\r\\n]+"; "  ") | if length > 200 then .[:200] + "..." else . end;
+
+  [ .[] |
+    {
+      resolved: .isResolved,
+      outdated: .isOutdated,
+      state: (
+        (if .isResolved then "RESOLVED" else "UNRESOLVED" end) +
+        (if .isOutdated then ", OUTDATED" else "" end)
+      ),
+      first: .comments.nodes[0],
+      lastCommentAt: (.comments.nodes | last | .createdAt),
+      replies: [ .comments.nodes[1:][] | { author: .author.login, databaseId: .databaseId, body: .body, createdAt: .createdAt } ]
+    }
+  ] as $arr |
+  range($arr | length) as $i |
+  $arr[$i] as $t |
+  $t.first as $first |
+
+  # Compact if: (resolved AND outdated) OR (all comments predate last douwebot review)
+  (
+    ($t.resolved and $t.outdated) or
+    ($last_review != "" and $t.lastCommentAt < $last_review)
+  ) as $compact |
+
+  if $compact then
+    "- [\($t.state)] \($first.author.login) at \($first.createdAt) on \($first.path)\(if $first.line then ":\($first.line)" else "" end) (comment \($first.databaseId)) — \($first.body | truncate)" +
+    ([ $t.replies[] | "\n  > \(.author) at \(.createdAt) (comment \(.databaseId)): \(.body | truncate)" ] | join(""))
+  else
+    (
+      ($first.path + ":" + ($first.diffHunk | split("\n")[0])) as $hunkKey |
+      (if $i > 0 then ($arr[$i - 1].first.path + ":" + ($arr[$i - 1].first.diffHunk | split("\n")[0])) else "" end) as $prevKey |
+      (if $hunkKey != $prevKey then true else false end) as $showHunk |
+      "### [\($t.state)] \($first.author.login) (\($first.authorAssociation)) at \($first.createdAt) on \($first.path)\(if $first.line then ":\($first.line)" else "" end) (comment \($first.databaseId))" +
+      (if $showHunk then "\n```diff\n\($first.diffHunk)\n```" else "" end) +
+      "\n\($first.body)\n" +
+      ([ $t.replies[] | "  > **\(.author)** at \(.createdAt) (comment \(.databaseId)): \(.body)\n" ] | join(""))
+    )
+  end
+' "$THREADS_JSON" >> "$CTX/review-comments.txt"
+rm -f "$THREADS_JSON"
+[ -s "$CTX/review-comments.txt" ] || echo "(No review comments)" > "$CTX/review-comments.txt"
+
+# Related issues: extract issue numbers from PR body
+echo "  - Related issues"
+PR_BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq '.body')
+{
+  echo "$PR_BODY" | grep -oiP '(?:closes|fixes|resolves|close|fix|resolve)\s*#\K\d+' || true
+  echo "$PR_BODY" | grep -oiP '(?:closes|fixes|resolves|close|fix|resolve)\s+https://github\.com/[^/]+/[^/]+/issues/\K\d+' || true
+} | sort -u | while read -r ISSUE_NUM; do
+  echo "=== Issue #${ISSUE_NUM} ==="
+  gh issue view "$ISSUE_NUM" --repo "$REPO" --json title,body,author,comments --jq '"## \(.title)\nBy: \(.author.login)\n\(.body)\n\n### Comments:\n\(.comments | map("#### \(.author.login) (\(.authorAssociation))\n\(.body)\n") | join("\n"))"'
+done > "$CTX/related-issues.txt"
+[ -s "$CTX/related-issues.txt" ] || echo "(No issues referenced in PR description)" > "$CTX/related-issues.txt"
+
+# Fetch base branch for function-context diffs
+# Always fetch from the target repo URL, not origin — for fork PRs, origin points to
+# the fork (which may have an outdated base branch), causing incorrect merge bases
+# and diffs that include unrelated changes from the base repo.
+echo "  - Fetching base branch for function-context diffs"
+BASE_REF=$(jq -r '.baseRefName' "$CTX/pr-details.json")
+MERGE_BASE=""
+if [ -n "$BASE_REF" ]; then
+  if git -C "$PR_HEAD_DIR" fetch "https://github.com/${REPO}.git" "$BASE_REF" --quiet 2>/dev/null; then
+    MERGE_BASE=$(git -C "$PR_HEAD_DIR" merge-base HEAD FETCH_HEAD 2>/dev/null || echo "")
+  fi
+fi
+if [ -n "$MERGE_BASE" ]; then
+  echo "    Merge base: ${MERGE_BASE:0:12} (using function-context diffs)"
+else
+  echo "    Could not determine merge base (falling back to API diff)"
+fi
+
+# Per-file diffs with function context (excluding generated files)
+echo "  - Per-file diffs (excluding generated files)"
+mkdir -p "$CTX/diff"
+# Without the `python` driver, -W extends a Python hunk to its whole top-level
+# class. A PR's `.gitattributes` takes precedence over `core.attributesFile`, so
+# in CI the checkout's `info/attributes`, which outranks it, also resets `diff`
+# for every path: a PR cannot mark files `-diff` to hide their changes, and git
+# still detects real binaries by content. Local runs leave the developer's
+# repository untouched. --no-ext-diff and --no-textconv keep a `.gitattributes`
+# from selecting a command.
+PY_ATTRIBUTES=$(mktemp)
+echo '*.py diff=python' > "$PY_ATTRIBUTES"
+if [ "${GITHUB_ACTIONS:-}" = true ]; then
+  INFO_ATTRIBUTES=$(git -C "$PR_HEAD_DIR" rev-parse --path-format=absolute --git-path info/attributes)
+  mkdir -p "$(dirname "$INFO_ATTRIBUTES")"
+  { echo '* !diff'; cat "$PY_ATTRIBUTES"; } > "$INFO_ATTRIBUTES"
+fi
+if [ -n "$MERGE_BASE" ]; then
+  # -W (--function-context) shows the full function body around each change,
+  # so the reviewer can see the function signature and surrounding logic without
+  # needing to read the full source file separately. core.quotePath=false keeps a non-ASCII path
+  # unquoted, so its header names it.
+  git -C "$PR_HEAD_DIR" -c core.attributesFile="$PY_ATTRIBUTES" -c core.quotePath=false diff -W --no-color --no-ext-diff --no-textconv "$MERGE_BASE" HEAD
+else
+  gh pr diff "$PR_NUMBER" --repo "$REPO"
+fi | LC_ALL=C awk -v dir="$CTX/diff" '
+  # Reads the C-style quoted path git writes for a path holding a quote, a
+  # backslash or a control character. The API diff also quotes a non-ASCII
+  # path. s starts at the opening quote; qend is set to the closing quote, or 0
+  # when there is none. Under LC_ALL=C, %c turns each octal escape into its byte.
+  function unquote(s,    out, i, c, k) {
+    out = ""
+    for (i = 2; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      if (c == "\"") { qend = i; return out }
+      if (c == "\\") {
+        c = substr(s, ++i, 1)
+        k = index("abtnvfr", c)
+        if (k) c = sprintf("%c", k + 6)
+        else if (c ~ /[0-7]/) {
+          k = c * 64 + substr(s, i + 1, 1) * 8 + substr(s, i + 2, 1)
+          c = sprintf("%c", k)
+          i += 2
+        }
+      }
+      out = out c
+    }
+    qend = 0
+    return ""
+  }
+
+  # Names the held file from its new (b/) path, so renamed files match the
+  # GitHub API .filename field, then writes its held lines. "diff --git" alone
+  # is ambiguous: a crafted "z b/src.py" reads as "src.py". A rename or copy
+  # names its new path in the extended header; any other header repeats one
+  # path P as "a/P b/P", or quoted as "\"a/P\" \"b/P\"", so P is its first half.
+  function open_held(    rest, n, i) {
+    if (fname == "") {
+      rest = substr(held[1], 12)
+      n = (length(rest) - 5) / 2
+      if (substr(rest, 1, 3) == "\"a/") {
+        fname = unquote(rest)
+        fname = (qend && substr(rest, qend + 1) == (" \"b/" substr(rest, 4, qend - 3))) ? substr(fname, 3) : ""
+      } else if (n == int(n) && n > 0 && substr(rest, 1, 2) == "a/" && substr(rest, n + 3, 3) == " b/" \
+          && substr(rest, 3, n) == substr(rest, n + 6))
+        fname = substr(rest, 3, n)
+    }
+    # Generated files are each `uv.lock` and the `.yaml` cassettes under a
+    # `cassettes/` directory below the root. The pattern ends the path, so a
+    # real file cannot hide from review by naming either.
+    skip = (fname == "" || fname ~ /(^|\/)uv\.lock$|\/cassettes\/.*\.yaml$/)
+    if (!skip) {
+      # Percent-encode `%`, `/` and a leading `.`: each path gets one readable,
+      # non-hidden name that no other path shares. Encoding a backslash, tab,
+      # newline and carriage return too leaves nothing for the index to escape.
+      safe = fname
+      gsub(/%/, "%25", safe)
+      gsub(/\\/, "%5C", safe)
+      gsub(/\t/, "%09", safe)
+      gsub(/\n/, "%0A", safe)
+      gsub(/\r/, "%0D", safe)
+      gsub(/\//, "%2F", safe)
+      sub(/^\./, "%2E", safe)
+      outfile = dir "/" safe ".diff"
+      # A typechange diffs its path twice, as a deletion and then an addition.
+      # Truncating each name only on its first open keeps both.
+      if (!(outfile in opened)) { printf "" > outfile; close(outfile); opened[outfile] = 1 }
+      for (i = 1; i <= nheld; i++) print held[i] >> outfile
+    }
+    nheld = 0
+  }
+
+  /^diff --git / {
+    if (nheld) open_held()
+    # Close previous file to avoid running out of file descriptors
+    if (outfile) close(outfile)
+    outfile = ""
+    fname = ""
+    nheld = 1
+    held[1] = $0
+    next
+  }
+  nheld && /^(rename|copy) to / {
+    fname = $0
+    sub(/^(rename|copy) to /, "", fname)
+    if (substr(fname, 1, 1) == "\"") fname = unquote(fname)
+  }
+  nheld && /^(old mode|new mode|deleted file mode|new file mode|copy from|copy to|rename from|rename to|similarity index|dissimilarity index|index) / {
+    held[++nheld] = $0
+    next
+  }
+  nheld { open_held() }
+  !skip && outfile { print >> outfile }
+  END { if (nheld) open_held() }
+'
+rm -f "$PY_ATTRIBUTES"
+
+# Annotate commentable diff lines with source line numbers (NL:/OL: prefixes)
+# so the review bot can target inline comments without computing line numbers.
+echo "  - Annotating diffs with source line numbers"
+for diff_file in "$CTX/diff/"*.diff; do
+  [ -f "$diff_file" ] || continue
+  awk '
+    BEGIN { NEAR = 3 }
+
+    # Diff metadata: flush any buffered hunk, pass through
+    /^diff --git/ || /^index / || /^---/ || /^\+\+\+/ ||
+    /^new file/ || /^deleted file/ || /^old mode/ || /^new mode/ ||
+    /^rename / || /^similarity / || /^dissimilarity / || /^Binary / {
+        flush_hunk()
+        print
+        next
+    }
+
+    # Hunk header: flush previous hunk, parse line numbers
+    /^@@ / {
+        flush_hunk()
+        split($2, _o, ","); old_num = substr(_o[1], 2) + 0
+        split($3, _n, ","); new_num = substr(_n[1], 2) + 0
+        hunk_hdr = $0
+        n = 0
+        next
+    }
+
+    # "\ No newline at end of file"
+    /^\\/ {
+        n++; lines[n] = $0; types[n] = "\\"; is_chg[n] = 0
+        next
+    }
+
+    # Hunk body lines
+    {
+        n++; lines[n] = $0
+        c = substr($0, 1, 1)
+        if (c == "+") {
+            types[n] = "+"; lnums[n] = new_num++; is_chg[n] = 1
+        } else if (c == "-") {
+            types[n] = "-"; lnums[n] = old_num++; is_chg[n] = 1
+        } else {
+            types[n] = " "; lnums[n] = new_num++; old_num++; is_chg[n] = 0
+        }
+    }
+
+    function flush_hunk(    i, dist, min_d) {
+        if (n == 0) return
+
+        # Forward pass: context-line distance from nearest preceding change
+        dist = NEAR + 1
+        for (i = 1; i <= n; i++) {
+            if (is_chg[i]) dist = 0
+            else if (types[i] != "\\") { dist++; fwd[i] = dist }
+        }
+        # Backward pass: context-line distance from nearest following change
+        dist = NEAR + 1
+        for (i = n; i >= 1; i--) {
+            if (is_chg[i]) dist = 0
+            else if (types[i] != "\\") { dist++; bwd[i] = dist }
+        }
+
+        print hunk_hdr
+        for (i = 1; i <= n; i++) {
+            if (types[i] == "\\") { print lines[i] }
+            else if (is_chg[i]) {
+                if (types[i] == "+") printf "NL:%d %s\n", lnums[i], lines[i]
+                else                printf "OL:%d %s\n", lnums[i], lines[i]
+            } else {
+                min_d = fwd[i]; if (bwd[i] < min_d) min_d = bwd[i]
+                if (min_d <= NEAR) printf "NL:%d %s\n", lnums[i], lines[i]
+                else print lines[i]
+            }
+        }
+
+        delete lines; delete types; delete lnums
+        delete is_chg; delete fwd; delete bwd
+        n = 0
+    }
+
+    END { flush_hunk() }
+  ' "$diff_file" > "${diff_file}.tmp" && mv "${diff_file}.tmp" "$diff_file"
+done
+
+# List of ALL changed files with change counts + diff file paths. @tsv escapes a
+# tab or newline in a path, which would otherwise start a forged row.
+echo "  - Changed files"
+gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
+  --jq '.[] | [.filename, "+\(.additions) -\(.deletions)", (.filename | gsub("%"; "%25") | gsub("\\\\"; "%5C") | gsub("\t"; "%09") | gsub("\n"; "%0A") | gsub("\r"; "%0D") | gsub("/"; "%2F") | sub("^\\."; "%2E")) + ".diff"] | @tsv' \
+  | while IFS=$'\t' read -r fname counts diffname; do
+    if echo "$fname" | grep -qE '(^|/)uv\.lock$|/cassettes/.*\.yaml$'; then
+      printf '%s\t%s\n' "$fname" "$counts"
+    else
+      printf '%s\t%s\tdiff/%s\n' "$fname" "$counts" "$diffname"
+    fi
+  done > "$CTX/changed-files.txt"
+
+# Gather directory-specific AGENTS.md files for changed directories.
+# These are read as guidance the reviewer must enforce, so they must come from
+# the tree this script runs in -- never from $PR_HEAD_DIR, whose copies the PR
+# author controls. When that is a subdirectory, prune it.
+echo "  - Directory AGENTS.md files"
+> "$CTX/agents-md.txt"
+find_args=(. -name AGENTS.md -not -path './.venv/*' -not -path ./AGENTS.md)
+if [ "$PR_HEAD_DIR" != "." ]; then
+  find_args+=(-not -path "./${PR_HEAD_DIR#./}/*")
+fi
+for agents_file in $(find "${find_args[@]}" | sed 's|^\./||' | sort); do
+  dir=$(dirname "$agents_file")
+  if grep -q "^${dir}/" "$CTX/changed-files.txt" 2>/dev/null && [ -f "$agents_file" ]; then
+    echo "=== ${agents_file} ==="
+    cat "$agents_file"
+    echo ""
+  fi
+done >> "$CTX/agents-md.txt"
+[ -s "$CTX/agents-md.txt" ] || echo "(No directory-specific AGENTS.md files for changed directories)" > "$CTX/agents-md.txt"
+
+echo ""
+echo "Context gathered in ${CTX}/:"
+ls -lh "$CTX/"
+DIFF_COUNT=$(find "$CTX/diff" -name '*.diff' 2>/dev/null | wc -l)
+echo "  Per-file diffs: ${DIFF_COUNT} files in ${CTX}/diff/"

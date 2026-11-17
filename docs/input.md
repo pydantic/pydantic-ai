@@ -1,18 +1,25 @@
-# Image, Audio, Video & Document Input
+---
+description: "Send images, audio, video, PDFs and other documents to a Pydantic AI agent by URL, as binary content, or as files uploaded to a provider's Files API."
+---
 
-Some LLMs are now capable of understanding audio, video, image and document content.
+# Multimodal Input
+
+Alongside text, agents can accept image, audio, video, and document input.
+
+!!! tip "Files the model can't read"
+    You aren't limited to the file types a model reads natively. With the [File Understanding](capabilities/file-understanding.md) capability, a file the agent's model can't take, such as audio on a model without audio input or an image on a text-only model, is described in text by another model first, and the agent's model gets the description in the file's place. Files the model does read are sent as they are.
 
 ## Image Input
 
 !!! info
-    Some models do not support image input. Please check the model's documentation to confirm whether it supports image input.
+    Some models do not support image input. Please check the model's documentation to confirm whether it supports image input. If it doesn't, [File Understanding](capabilities/file-understanding.md) can describe the image with a model that can.
 
 If you have a direct URL for the image, you can use [`ImageUrl`][pydantic_ai.ImageUrl]:
 
 ```py {title="image_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, ImageUrl
 
-agent = Agent(model='openai:gpt-5')
+agent = Agent(model='{{ openai:medium }}')
 result = agent.run_sync(
     [
         'What company is this logo from?',
@@ -32,7 +39,7 @@ from pydantic_ai import Agent, BinaryContent
 
 image_response = httpx.get('https://iili.io/3Hs4FMg.png')  # Pydantic logo
 
-agent = Agent(model='openai:gpt-5')
+agent = Agent(model='{{ openai:medium }}')
 result = agent.run_sync(
     [
         'What company is this logo from?',
@@ -48,30 +55,30 @@ print(result.output)
 ## Audio Input
 
 !!! info
-    Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input.
+    Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input. See [OpenAI](models/openai.md#audio-input) for which OpenAI models take audio. If a model doesn't, [File Understanding](capabilities/file-understanding.md) can describe the audio with a model that can.
 
-You can provide audio input using either [`AudioUrl`][pydantic_ai.AudioUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is analogous to the examples above.
+For audio, use [`AudioUrl`][pydantic_ai.AudioUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
 ## Video Input
 
 !!! info
-    Some models do not support video input. Please check the model's documentation to confirm whether it supports video input.
+    Some models do not support video input. Please check the model's documentation to confirm whether it supports video input. See [Bedrock](models/bedrock.md#video-input) for which Bedrock models take video. If a model doesn't, [File Understanding](capabilities/file-understanding.md) can describe the video with a model that can.
 
-You can provide video input using either [`VideoUrl`][pydantic_ai.VideoUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is analogous to the examples above.
+For video, use [`VideoUrl`][pydantic_ai.VideoUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
 ## Document Input
 
 !!! info
-    Some models do not support document input. Please check the model's documentation to confirm whether it supports document input.
+    Some models do not support document input. Please check the model's documentation to confirm whether it supports document input. If it doesn't, [File Understanding](capabilities/file-understanding.md) can describe the document with a model that can.
 
-You can provide document input using either [`DocumentUrl`][pydantic_ai.DocumentUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is similar to the examples above.
+For documents, use [`DocumentUrl`][pydantic_ai.DocumentUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
 If you have a direct URL for the document, you can use [`DocumentUrl`][pydantic_ai.DocumentUrl]:
 
 ```py {title="document_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, DocumentUrl
 
-agent = Agent(model='anthropic:claude-sonnet-4-5')
+agent = Agent(model='{{ anthropic:medium }}')
 result = agent.run_sync(
     [
         'What is the main content of this document?',
@@ -82,7 +89,7 @@ print(result.output)
 #> This document is the technical report introducing Gemini 1.5, Google's latest large language model...
 ```
 
-The supported document formats vary by model.
+Which document formats are supported varies by model. Pydantic AI sends a document of any media type that Python's `mimetypes` knows a file extension for, carrying the media type and, where the API wants one, the extension (such as `pdf` or `pptx`), and a model that can't read a format rejects it. Text-like content such as JSON or XML is inlined as text instead where the API has no file part.
 
 You can also use [`BinaryContent`][pydantic_ai.BinaryContent] to pass document data directly:
 
@@ -91,7 +98,7 @@ from pathlib import Path
 from pydantic_ai import Agent, BinaryContent
 
 pdf_path = Path('document.pdf')
-agent = Agent(model='anthropic:claude-sonnet-4-5')
+agent = Agent(model='{{ anthropic:medium }}')
 result = agent.run_sync(
     [
         'What is the main content of this document?',
@@ -102,22 +109,369 @@ print(result.output)
 #> The document discusses...
 ```
 
+!!! tip
+    If neither `DocumentUrl` nor `BinaryContent` is suitable for your use case (e.g., the model doesn't support
+    `DocumentUrl`, or you want to provide a document in a non-binary format), you can still provide document content as
+    text input by extracting the text yourself and passing it as a string or [`TextContent`][pydantic_ai.TextContent].
+
+
+## Text Input
+
+You can use [`TextContent`][pydantic_ai.TextContent] to provide text input with additional metadata:
+
+```py {title="text_content_input.py" test="skip" lint="skip"}
+from pydantic_ai import Agent, TextContent
+
+agent = Agent(model='{{ openai:medium }}')
+result = agent.run_sync([
+    'Summarize the key points from this text.',
+    TextContent(
+        content=(
+            'Pydantic AI is a Python agent framework. '
+            'It supports text, image, audio, video, and document input.'
+        ),
+        metadata={'source': 'pydantic_ai_inputs.txt'},
+    ),
+])
+```
+
+This is equivalent to passing the text as a `str`, but allows you to include additional `metadata` that can be accessed
+programmatically in your agent logic.
+
+!!! note
+    The `content` field is treated as input to the model, but the `metadata` is **not sent to the model**.
+    It is preserved in messages for programmatic access.
+
+## Structured Input {#structured-input}
+
+Use [`StructuredContent`][pydantic_ai.StructuredContent] to pass a structured value as part of the user prompt, such as the state of the app the user is looking at, or the data a [decision model](models/decision.md#structured-input) should judge. The value stays structured in the message history, so a [history processor](message-history.md#processing-message-history) or an evaluator can read it back, while the model is sent it as text:
+
+```py {title="structured_content_input.py" test="skip"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, StructuredContent
+
+
+class UIState(BaseModel):
+    url: str
+    cart_total: float
+
+
+agent = Agent('{{ openai:medium }}')
+ui_state = UIState(url='/products/42', cart_total=949.0)
+result = agent.run_sync([StructuredContent(ui_state, tag='ui_state'), 'Why did the total jump?'])
+```
+
+The model is sent `<ui_state>{"url":"/products/42","cart_total":949.0}</ui_state>`, followed by the question. By default the value is rendered as compact JSON, wrapped in `tag` when one is given, with `<`, `>` and `&` escaped so that a value from an untrusted client, rendered on your server, can't close the tag. Pass `format='xml'` to render it with [`format_as_xml`][pydantic_ai.format_prompt.format_as_xml] instead, or a function that takes the value and returns the text. A `description` is written on the line before the value. A `tag` is lowercase with `_` between words, and can't be one of the tags the framework frames its own text in, such as `system` or `tool_result`, so the value can't read as the framework speaking.
+
+The text is rendered once, when the item is created, and stored in [`content`][pydantic_ai.messages.StructuredContent.content] beside the value. A message history that is stored and loaded again is therefore sent exactly as before, which keeps the prompt cache prefix intact, even when the text came from a function that isn't stored. The text isn't rendered again when the value changes, so to change the value, create a new item, or use `dataclasses.replace(item, value=..., content='')`, passing `format` again if the item was created with one. After loading, [`value`][pydantic_ai.messages.StructuredContent.value] is the JSON-compatible form of the value, such as a dict in place of a Pydantic model.
+
+To render a kind of value the same way wherever it is used, subclass `StructuredContent` and override [`render`][pydantic_ai.messages.StructuredContent.render]:
+
+```py {title="structured_content_subclass.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import StructuredContent, format_as_xml
+
+
+class UIState(BaseModel):
+    url: str
+    cart_total: float
+
+
+class UIStateContent(StructuredContent):
+    value: UIState
+
+    def render(self) -> str:
+        return format_as_xml(self.value, root_tag='ui_state')
+
+
+print(UIStateContent(UIState(url='/products/42', cart_total=949.0)).content)
+"""
+<ui_state>
+  <url>/products/42</url>
+  <cart_total>949.0</cart_total>
+</ui_state>
+"""
+```
+
+`StructuredContent` is a [`TextContent`][pydantic_ai.TextContent], so code that reads the text of a prompt handles it like any other text. A [decision model](models/decision.md#structured-input) is the exception: it is sent the value itself when the prompt is a single `StructuredContent`. Code that rewrites the text of a prompt, such as a redaction step, should therefore replace the item with a plain `TextContent` holding the new text, as the harness's [guardrails](harness/guardrails.md) and [compaction](harness/compaction.md) do.
+
+The [Vercel AI](ui/vercel-ai.md#structured-content) and [AG-UI](ui/ag-ui.md#structured-content) adapters dump the item as ordinary text in the user message, which a frontend shows like any other user text, and carry its value in the metadata of that text part (Vercel AI) or message (AG-UI, from `ag-ui-protocol` 0.1.11), so it loads back whole. The same goes for an item [enqueued mid-run](message-history.md#injecting-messages-mid-run) with `ctx.enqueue`, which accepts it like any other user content. Like `TextContent.metadata`, its `metadata` doesn't make the round-trip.
+
+
 ## User-side download vs. direct file URL
 
-As a general rule, when you provide a URL using any of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, Pydantic AI downloads the file content and then sends it as part of the API request.
+When using one of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, Pydantic AI will default to sending the URL to the model provider, so the file is downloaded on their side.
 
-The situation is different for certain models:
+Support for file URLs varies depending on type and provider:
 
-- [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]: if you provide a PDF document via `DocumentUrl`, the URL is sent directly in the API request, so no download happens on the user side.
+| Model | Send URL directly | Download and send bytes | Unsupported |
+|-------|-------------------|-------------------------|-------------|
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl` (audio models only), `DocumentUrl` | `VideoUrl`. `DocumentUrl` [not supported with `AzureProvider`](models/azure.md#using-azure-with-the-responses-api) or [`AlibabaProvider`](models/compatible-apis.md#alibaba-cloud-model-studio-dashscope) |
+| [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | — | `VideoUrl` |
+| [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl` |
+| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Google Cloud) | All URL types | — | — |
+| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Gemini API) | [YouTube](models/google.md#document-image-audio-and-video-input), [Files API](models/google.md#document-image-audio-and-video-input) | All other URLs | — |
+| [`XaiModel`][pydantic_ai.models.xai.XaiModel] | `ImageUrl` | `DocumentUrl` | `AudioUrl`, `VideoUrl` |
+| [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl`, `DocumentUrl` (non-PDF, non-text) |
+| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | S3 URLs (`s3://`) | `ImageUrl`, `DocumentUrl`, `VideoUrl` (Nova only) | `AudioUrl`, and `VideoUrl` outside Nova |
+| [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` | — |
 
-- [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI: any URL provided using `ImageUrl`, `AudioUrl`, `VideoUrl`, or `DocumentUrl` is sent as-is in the API request and no data is downloaded beforehand.
+When Pydantic AI downloads files itself, it downloads at most 50 MiB per file and 500 MiB in total for the files of one model request, and raises a `ValueError` past either limit. To send larger files, pass them as [`BinaryContent`][pydantic_ai.BinaryContent], or send the URL to a provider that fetches it itself.
 
-  See the [Gemini API docs for Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#filedata) to learn more about supported URLs, formats and limitations:
+A model that does not accept a kind of file at all can still be given one through the [File Understanding](capabilities/file-understanding.md) capability, which has another model describe it in text first. Without it, a file in a user prompt that the model can't take fails the request, while one a tool returned is [replaced by a note naming it](tools-advanced.md#tool-return-file-provenance), so the run goes on.
 
-  - Cloud Storage bucket URIs (with protocol `gs://`)
-  - Public HTTP(S) URLs
-  - Public YouTube video URL (maximum one URL per request)
+A model API may be unable to download a file (e.g., because of crawling or access restrictions) even if it supports file URLs. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Google Cloud limits YouTube video URLs to one URL per request.
 
-  However, because of crawling restrictions, it may happen that Gemini can't access certain URLs. In that case, you can instruct Pydantic AI to download the file content and send that instead of the URL by setting the boolean flag `force_download` to `True`. This attribute is available on all objects that inherit from [`FileUrl`][pydantic_ai.messages.FileUrl].
+In such cases, you can instruct Pydantic AI to download the file content locally and send that instead of the URL by setting `force_download` on the URL object:
 
-- [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on GLA: YouTube video URLs are sent directly in the request to the model.
+```py {title="force_download.py" test="skip" lint="skip"}
+from pydantic_ai import ImageUrl, AudioUrl, VideoUrl, DocumentUrl
+
+ImageUrl(url='https://example.com/image.png', force_download=True)
+AudioUrl(url='https://example.com/audio.mp3', force_download=True)
+VideoUrl(url='https://example.com/video.mp4', force_download=True)
+DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
+```
+
+When Pydantic AI downloads a file, it sends the `media_type` you passed if it differs from the one the URL's extension implies. Otherwise it uses the server's `Content-Type`, falling back to the URL's extension when the header is missing or generic (`application/octet-stream` or `binary/octet-stream`). Pass `media_type` explicitly for URLs without an extension, or for servers that report the wrong type:
+
+```py {title="explicit_media_type.py" test="skip" lint="skip"}
+from pydantic_ai import ImageUrl
+
+ImageUrl(url='https://example.com/receipt-123', media_type='image/png', force_download=True)
+```
+
+!!! warning "Trust model for file URLs"
+    When URLs are forwarded to the provider, the provider fetches them under its own credentials. For cloud-storage schemes like `s3://` (Bedrock) and `gs://` (Google Cloud), those credentials are your server's IAM role or service account, so whoever controls the URL effectively controls what the provider can read on your behalf.
+
+    Don't construct [`ImageUrl`][pydantic_ai.messages.ImageUrl], [`AudioUrl`][pydantic_ai.messages.AudioUrl], [`VideoUrl`][pydantic_ai.messages.VideoUrl], or [`DocumentUrl`][pydantic_ai.messages.DocumentUrl] from untrusted user input without validating the scheme and scope. For frontend-initiated uploads to cloud storage, convert references like `s3://bucket/key` into pre-signed `https://` URLs server-side before constructing the file URL part. `force_download=True` only works for `http(s)://` URLs (it routes through the library's HTTP client and applies SSRF protection); cloud-storage schemes like `s3://` and `gs://` aren't supported by the local download path and are forwarded to the provider as-is. Only use `force_download='allow-local'` for server-authored URLs, since it allows local network access.
+
+    The [UI adapters](ui/overview.md) apply this sanitization automatically to client-submitted messages via [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes] and [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download]. If you accept serialized `message_history` through a custom client API, use [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] before passing that history to the agent.
+
+## Uploaded Files
+
+Some model providers have their own file storage APIs where you can upload files and reference them by ID or URL.
+
+Use [`UploadedFile`][pydantic_ai.messages.UploadedFile] to reference files that have been uploaded to a provider's file storage API.
+
+!!! tip
+    For providers that return a file URL (like Google Files API or S3 URLs for Bedrock), you can also use [`DocumentUrl`][pydantic_ai.messages.DocumentUrl], [`ImageUrl`][pydantic_ai.messages.ImageUrl], or [`VideoUrl`][pydantic_ai.messages.VideoUrl] directly. However, we recommend using `UploadedFile` for a unified API across providers and consistent provider name validation.
+
+### Supported Models
+
+| Model | Support |
+|-------|---------|
+| [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | ✅ via [Anthropic Files API](https://docs.anthropic.com/en/docs/build-with-claude/files) |
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | ✅ via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
+| [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | ✅ via [OpenAI Files API](https://platform.openai.com/docs/api-reference/files) |
+| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] | ✅ via [Google Files API](https://ai.google.dev/gemini-api/docs/files) |
+| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | ✅ via S3 URLs (`s3://bucket/key`) |
+| [`XaiModel`][pydantic_ai.models.xai.XaiModel] | ✅ via [xAI Files API](https://docs.x.ai/docs/guides/files) |
+| Other models | ❌ Not supported |
+
+### Provider Name Requirement
+
+When using [`UploadedFile`][pydantic_ai.messages.UploadedFile] you must set the `provider_name`. Uploaded files are specific to the system they are uploaded to and are not transferable across providers. Trying to use a message that contains an `UploadedFile` with a different provider will result in an error. Within one provider name, Pydantic AI doesn't track which endpoint or account a file was uploaded to: send it to a model whose client can read it.
+
+!!! tip "Getting the provider name"
+    Use [`model.system`][pydantic_ai.models.Model.system] to get the correct provider name dynamically. This ensures your code works correctly even if the provider name changes. All examples below demonstrate this pattern.
+
+If you want to introduce portability into your agent logic to allow the same prompt history to work with different provider backends, you can use a [history processor](message-history.md#processing-message-history) to remove or rewrite `UploadedFile` parts from messages before sending them to a provider that does not support them. Be aware that stripping out `UploadedFile` instances might confuse the model, especially if references to those files remain in the text.
+
+### Media Type Inference
+
+The `media_type` parameter is optional for [`UploadedFile`][pydantic_ai.messages.UploadedFile]. If not specified, Pydantic AI will attempt to infer it from the `file_id`:
+
+1. If `file_id` is a URL or path with a recognizable file extension (e.g., `.pdf`, `.png`), the media type is inferred automatically
+2. For opaque file IDs (e.g., `'file-abc123'`), the media type defaults to `'application/octet-stream'`
+
+!!! tip
+    While `media_type` is optional, we recommend explicitly setting it when known to ensure correct handling by the model provider.
+
+### Anthropic
+
+Follow the [Anthropic Files API docs](https://docs.anthropic.com/en/docs/build-with-claude/files) to upload files. You can access the underlying Anthropic client via `provider.client`.
+
+!!! note "Beta Feature"
+    The Anthropic Files API is currently in beta. `AnthropicModel` automatically adds the required `anthropic-beta: files-api-2025-04-14` header when a request contains an Anthropic [`UploadedFile`][pydantic_ai.messages.UploadedFile], so you don't need to set it yourself.
+
+```py {title="uploaded_file_anthropic.py" test="skip" typecheck="skip - Model.system is typed as str rather than UploadedFileProviderName"}
+import asyncio
+
+from pydantic_ai import Agent, UploadedFile
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+
+
+async def main():
+    provider = AnthropicProvider()
+    model = AnthropicModel('{{ anthropic:medium.name }}', provider=provider)
+
+    # Upload a file using the provider's client (Anthropic client)
+    with open('document.pdf', 'rb') as f:
+        uploaded_file = await provider.client.beta.files.upload(file=f)
+
+    # Reference the uploaded file; the beta header is added automatically
+    agent = Agent(model)
+    result = await agent.run(
+        [
+            'Summarize this document',
+            UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
+        ]
+    )
+    print(result.output)
+    #> The document discusses the main topics and key findings...
+
+
+asyncio.run(main())
+```
+
+### OpenAI
+
+Follow the [OpenAI Files API docs](https://platform.openai.com/docs/api-reference/files/create) to upload files. You can access the underlying OpenAI client via `provider.client`.
+
+```py {title="uploaded_file_openai.py" test="skip" typecheck="skip - Model.system is typed as str rather than UploadedFileProviderName"}
+import asyncio
+
+from pydantic_ai import Agent, UploadedFile
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+
+async def main():
+    provider = OpenAIProvider()
+    model = OpenAIChatModel('{{ openai:medium.name }}', provider=provider)
+
+    # Upload a file using the provider's client (OpenAI client)
+    with open('document.pdf', 'rb') as f:
+        uploaded_file = await provider.client.files.create(file=f, purpose='user_data')
+
+    # Reference the uploaded file
+    agent = Agent(model)
+    result = await agent.run(
+        [
+            'Summarize this document',
+            UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
+        ]
+    )
+    print(result.output)
+    #> The document discusses the main topics and key findings...
+
+
+asyncio.run(main())
+```
+
+!!! note "Referencing uploaded images"
+    [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] can only reference uploaded *documents* by `file_id`. Referencing an uploaded image (an `image/*` media type) raises a [`UserError`][pydantic_ai.exceptions.UserError], because the Chat Completions API doesn't accept a `file_id` for image parts. Use [`ImageUrl`][pydantic_ai.messages.ImageUrl] or [`BinaryContent`][pydantic_ai.messages.BinaryContent] for images, or use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], which does support uploaded images.
+
+    With `OpenAIResponsesModel`, control the image [detail level](https://platform.openai.com/docs/guides/images-vision) by passing `vendor_metadata={'detail': 'high'}` (or `'low'`) to the `UploadedFile`; it defaults to `'auto'`.
+    With `OpenAIChatModel`, `GroqModel`, `MistralModel`, and `XaiModel`, control the image detail level by passing `vendor_metadata={'detail': 'high'}` (or `'low'`) to the [`ImageUrl`][pydantic_ai.messages.ImageUrl] or [`BinaryContent`][pydantic_ai.messages.BinaryContent]; it defaults to `'auto'`.
+
+### Google
+
+Follow the [Google Files API docs](https://ai.google.dev/gemini-api/docs/files) to upload files. You can access the underlying Google GenAI client via `provider.client`.
+
+```py {title="uploaded_file_google.py" test="skip" typecheck="skip - Model.system is typed as str rather than UploadedFileProviderName"}
+import asyncio
+
+from pydantic_ai import Agent, UploadedFile
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.providers.google import GoogleProvider
+
+
+async def main():
+    provider = GoogleProvider()
+    model = GoogleModel('{{ google:medium.name }}', provider=provider)
+
+    # Upload a file using the provider's client (Google GenAI client)
+    with open('document.pdf', 'rb') as f:
+        file = await provider.client.aio.files.upload(file=f)
+        assert file.uri is not None
+
+    # Reference the uploaded file by URI (media_type is optional for Google)
+    agent = Agent(model)
+    result = await agent.run(
+        [
+            'Summarize this document',
+            UploadedFile(file_id=file.uri, media_type=file.mime_type, provider_name=model.system),
+        ]
+    )
+    print(result.output)
+    #> The document discusses the main topics and key findings...
+
+
+asyncio.run(main())
+```
+
+### Bedrock (S3)
+
+For Bedrock, files must be uploaded to S3 separately (e.g., using [boto3](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3/client/put_object.html)). The assumed role must have `s3:GetObject` permission on the bucket.
+
+!!! note "`media_type` may be required"
+    Bedrock requires `media_type` when the file extension is ambiguous or missing. For S3 URLs with clear extensions like `.pdf`, `.png`, etc., it can be inferred automatically.
+
+```py {title="uploaded_file_bedrock.py" test="skip" typecheck="skip - Model.system is typed as str rather than UploadedFileProviderName"}
+import asyncio
+
+from pydantic_ai import Agent, UploadedFile
+from pydantic_ai.models.bedrock import BedrockConverseModel
+
+
+async def main():
+    model = BedrockConverseModel('{{ bedrock:medium.name }}')
+
+    agent = Agent(model)
+    result = await agent.run([
+        'Summarize this document',
+        UploadedFile(
+            file_id='s3://my-bucket/document.pdf',
+            provider_name=model.system,  # 'bedrock'
+            media_type='application/pdf',  # Optional for .pdf, but recommended
+        ),
+    ])
+    print(result.output)
+    #> The document discusses the main topics and key findings...
+
+
+asyncio.run(main())
+```
+
+!!! note
+    You can optionally specify a `bucketOwner` query parameter if the bucket is not owned by the account making the request: `s3://my-bucket/document.pdf?bucketOwner=123456789012`
+
+### xAI
+
+Follow the [xAI Files API docs](https://docs.x.ai/docs/guides/files) to upload files. You can access the underlying xAI client via `provider.client`.
+
+```py {title="uploaded_file_xai.py" test="skip" typecheck="skip - Model.system is typed as str rather than UploadedFileProviderName"}
+import asyncio
+
+from pydantic_ai import Agent, UploadedFile
+from pydantic_ai.models.xai import XaiModel
+from pydantic_ai.providers.xai import XaiProvider
+
+
+async def main():
+    provider = XaiProvider()
+    model = XaiModel('{{ xai:medium.name }}', provider=provider)
+
+    # Upload a file using the provider's client (xAI client)
+    with open('document.pdf', 'rb') as f:
+        uploaded_file = await provider.client.files.upload(f, filename='document.pdf')
+
+    # Reference the uploaded file
+    agent = Agent(model)
+    result = await agent.run(
+        [
+            'Summarize this document',
+            UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
+        ]
+    )
+    print(result.output)
+    #> The document discusses the main topics and key findings...
+
+
+asyncio.run(main())
+```

@@ -1,3 +1,7 @@
+---
+description: "Build and deploy a Pydantic AI agent on Modal that researches new Slack community members, qualifies them as leads, and posts daily summaries to Slack."
+---
+
 # Slack Lead Qualifier with Modal
 
 In this example, we're going to build an agentic app that:
@@ -30,7 +34,7 @@ If you just want to see the code without actually going through the effort of se
 
 You need to have a Slack workspace and the necessary permissions to create apps.
 
-2. Create a new Slack app using the instructions at <https://docs.slack.dev/quickstart>.
+1. Create a new Slack app using the instructions at <https://docs.slack.dev/quickstart>.
     1. In step 2, "Requesting scopes", request the following scopes:
         - [`users.read`](https://docs.slack.dev/reference/scopes/users.read)
         - [`users.read.email`](https://docs.slack.dev/reference/scopes/users.read.email)
@@ -41,7 +45,7 @@ You need to have a Slack workspace and the necessary permissions to create apps.
     - `#new-slack-leads`
     - `#daily-slack-leads-summary`
 
-    These names are hard-coded in the example. If you want to use different channels, you can clone the repo and change them in `examples/pydantic_examples/slack_lead_qualifier/functions.py`.
+    These names are hard-coded in the example. If you want to use different channels, you can clone the repo and change them in `examples/pydantic_ai_examples/slack_lead_qualifier/functions.py`.
 
 ### Logfire Write Token
 
@@ -57,7 +61,7 @@ You need to have a Slack workspace and the necessary permissions to create apps.
 ### Modal account
 
 1. If you don't have a Modal account yet, create one on <https://modal.com/signup>.
-2. Create 3 Secrets of type "Custom" on <https://modal.com/secrets>:
+2. Following the [Modal Secrets guide](https://modal.com/docs/guide/secrets), create 3 Secrets of type "Custom":
     - Name: `slack`, key: `SLACK_API_KEY`, value: the Slack Access Token you generated earlier
     - Name: `logfire`, key: `LOGFIRE_TOKEN`, value: the Logfire Write Token you generated earlier
     - Name: `openai`, key: `OPENAI_API_KEY`, value: the OpenAI API Key you generated earlier
@@ -147,7 +151,7 @@ We also define a `Analysis.as_slack_blocks()` helper method that turns the analy
 
 Now it's time to get into Pydantic AI and define the agent that will do the actual analysis!
 
-We specify the model we'll use (`openai:gpt-5`), provide [instructions](../agents.md#instructions), give the agent access to the [DuckDuckGo search tool](../common-tools.md#duckduckgo-search-tool), and tell it to output either an `Analysis` or `None` using the [Native Output](../output.md#native-output) structured output mode.
+We specify the model we'll use (`openai:gpt-5`), provide [instructions](../agent.md#instructions), give the agent access to the [DuckDuckGo search tool](../common-tools.md#duckduckgo-search-tool), and tell it to output either an `Analysis` or `None` using the [Native Output](../output.md#native-output) structured output mode.
 
 The real meat of the app is in the instructions that tell the agent how to evaluate each new Slack member. If you plan to use this app yourself, you'll of course want to modify them to your own situation.
 
@@ -226,7 +230,7 @@ The first thing we do is define the Modal app, by specifying the base image to u
 
 #### Set up Logfire
 
-Next, we define a function to set up Logfire instrumentation for Pydantic AI and HTTPX.
+Next, we define a function to set up Logfire instrumentation for Pydantic AI and HTTPX. Run `uvx logfire-cli wizard --task pydantic-ai` once from your project first; see [Using Logfire](../logfire.md#using-logfire) for details.
 
 We cannot do this at the top level of the file, as the requested packages (like `logfire`) will only be available within functions running on Modal (like the ones we'll define next). This file, `modal.py`, runs on your local machine and only has access to the `modal` package.
 

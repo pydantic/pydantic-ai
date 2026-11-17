@@ -1,6 +1,5 @@
 import re
 
-import httpx
 import pytest
 from pytest_mock import MockerFixture
 
@@ -12,7 +11,10 @@ from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    _GptOssJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
 from ..conftest import TestEnv, try_import
@@ -26,7 +28,6 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
-    pytest.mark.anyio,
 ]
 
 
@@ -56,12 +57,6 @@ def test_nebius_pass_openai_client() -> None:
     assert provider.client == openai_client
 
 
-def test_nebius_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = NebiusProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
-
-
 def test_nebius_provider_model_profile(mocker: MockerFixture):
     provider = NebiusProvider(api_key='api-key')
 
@@ -80,52 +75,51 @@ def test_nebius_provider_model_profile(mocker: MockerFixture):
     meta_profile = provider.model_profile('meta-llama/Llama-3.3-70B-Instruct')
     meta_mock.assert_called_with('llama-3.3-70b-instruct')
     assert meta_profile is not None
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     # Test deepseek provider
     profile = provider.model_profile('deepseek-ai/DeepSeek-R1-0528')
     deepseek_mock.assert_called_with('deepseek-r1-0528')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test qwen provider
     qwen_profile = provider.model_profile('Qwen/Qwen3-30B-A3B')
     qwen_mock.assert_called_with('qwen3-30b-a3b')
     assert qwen_profile is not None
-    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     # Test google provider
     google_profile = provider.model_profile('google/gemma-2-2b-it')
     google_mock.assert_called_with('gemma-2-2b-it')
     assert google_profile is not None
-    assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
+    assert google_profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
 
     # Test harmony (for openai gpt-oss) provider
     profile = provider.model_profile('openai/gpt-oss-120b')
     harmony_mock.assert_called_with('gpt-oss-120b')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == _GptOssJsonSchemaTransformer
 
     # Test mistral provider
     profile = provider.model_profile('mistralai/Devstral-Small-2505')
     mistral_mock.assert_called_with('devstral-small-2505')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test moonshotai provider
     moonshotai_profile = provider.model_profile('moonshotai/Kimi-K2-Instruct')
     moonshotai_mock.assert_called_with('kimi-k2-instruct')
     assert moonshotai_profile is not None
-    assert moonshotai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert moonshotai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test unknown provider
     unknown_profile = provider.model_profile('unknown-provider/unknown-model')
     assert unknown_profile is not None
-    assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
-def test_nebius_provider_invalid_model_name():
-    provider = NebiusProvider(api_key='api-key')
-
-    with pytest.raises(UserError, match="Model name must be in 'provider/model' format"):
-        provider.model_profile('invalid-model-name')
+def test_nebius_provider_model_name_without_slash():
+    profile = NebiusProvider.model_profile('invalid-model-name')
+    assert profile is not None
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer

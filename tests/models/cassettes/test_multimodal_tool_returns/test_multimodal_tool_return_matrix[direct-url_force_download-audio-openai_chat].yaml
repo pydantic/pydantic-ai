@@ -1,0 +1,95 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "338"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5-mini
+        stream: false
+        messages:
+        - role: user
+          content: >-
+            Use the get_file tool now to retrieve a audio file, then describe what you
+            received.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_file
+            description: ""
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1523"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-Ee99fy904IXlzrgHiViSPjRHrBzME
+        object: chat.completion
+        created: 1793237019
+        model: gpt-5-mini-2025-08-07
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: null
+            tool_calls:
+            - id: call_Ek8nmzJzJ2JqW96MJAaYbEY6
+              type: function
+              function:
+                name: get_file
+                arguments: "{}"
+            refusal: null
+            annotations: []
+          finish_reason: tool_calls
+        usage:
+          prompt_tokens: 129
+          completion_tokens: 83
+          total_tokens: 212
+          prompt_tokens_details:
+            cached_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 64
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        service_tier: default
+        system_fingerprint: null
+  recorded_at: 2026-10-29T01:23:41.186918+00:00

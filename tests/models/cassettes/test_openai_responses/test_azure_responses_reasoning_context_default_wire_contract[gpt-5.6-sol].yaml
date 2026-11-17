@@ -1,0 +1,154 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '218'
+      content-type:
+      - application/json
+      host:
+      - pydantic-ai-realtime-dev.openai.azure.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the capital of France? Answer in one word.
+        role: user
+      model: gpt-5.6-sol
+      reasoning:
+        context: all_turns
+      stream: false
+    uri: https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1/responses
+  response:
+    headers:
+      apim-request-id:
+      - a9396b91-7fe3-4af3-9bf0-11c68e83b84a
+      azureai-fe-is-streaming:
+      - 'False'
+      content-length:
+      - '2307'
+      content-type:
+      - application/json
+      skip-error-remapping:
+      - 'true'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      background: false
+      completed_at: 1785164063
+      content_filters:
+      - blocked: false
+        content_filter_offsets:
+          check_offset: 0
+          end_offset: 828
+          start_offset: 0
+        content_filter_raw: []
+        content_filter_results:
+          hate:
+            filtered: false
+            severity: safe
+          jailbreak:
+            detected: false
+            filtered: false
+          self_harm:
+            filtered: false
+            severity: safe
+          sexual:
+            filtered: false
+            severity: safe
+          violence:
+            filtered: false
+            severity: safe
+        source_type: prompt
+      - blocked: false
+        content_filter_offsets:
+          check_offset: 0
+          end_offset: 5
+          start_offset: 0
+        content_filter_raw: []
+        content_filter_results:
+          hate:
+            filtered: false
+            severity: safe
+          protected_material_code:
+            detected: false
+            filtered: false
+          protected_material_text:
+            detected: false
+            filtered: false
+          self_harm:
+            filtered: false
+            severity: safe
+          sexual:
+            filtered: false
+            severity: safe
+          violence:
+            filtered: false
+            severity: safe
+        source_type: completion
+      created_at: 1785164063
+      error: null
+      frequency_penalty: 0.0
+      id: resp_038c17316a6bea06006a67711f1e3081939adc7b190d2a4799
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Paris
+          type: output_text
+        id: msg_038c17316a6bea06006a67711f878481939de327c5217a9f31
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 18
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 23
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

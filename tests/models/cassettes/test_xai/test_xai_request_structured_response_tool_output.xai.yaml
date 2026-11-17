@@ -1,0 +1,183 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Call `get_user_country` first, then call `final_result` with the JSON
+            result.
+        role: ROLE_SYSTEM
+      - content:
+        - text: What is the largest city in the user country?
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+      max_tokens: 80
+      tools:
+      - function:
+          name: get_user_country
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      - function:
+          name: final_result
+          description: The final response which ends this conversation
+          parameters: '{"properties": {"city": {"type": "string"}, "country": {"type":
+            "string"}}, "required": ["city", "country"], "title": "CityLocation",
+            "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_REQUIRED
+      parallel_tool_calls: false
+    raw: !!binary |
+      ClMKTwpNQ2FsbCBgZ2V0X3VzZXJfY291bnRyeWAgZmlyc3QsIHRoZW4gY2FsbCBgZmluYWxfcmVz
+      dWx0YCB3aXRoIHRoZSBKU09OIHJlc3VsdC4QAwozCi8KLVdoYXQgaXMgdGhlIGxhcmdlc3QgY2l0
+      eSBpbiB0aGUgdXNlciBjb3VudHJ5PxABEhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nOFCKAVkK
+      VwoQZ2V0X3VzZXJfY291bnRyeSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJv
+      cGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifYoB3AEK2QEKDGZpbmFsX3Jlc3VsdBIvVGhl
+      IGZpbmFsIHJlc3BvbnNlIHdoaWNoIGVuZHMgdGhpcyBjb252ZXJzYXRpb24ilwF7InByb3BlcnRp
+      ZXMiOiB7ImNpdHkiOiB7InR5cGUiOiAic3RyaW5nIn0sICJjb3VudHJ5IjogeyJ0eXBlIjogInN0
+      cmluZyJ9fSwgInJlcXVpcmVkIjogWyJjaXR5IiwgImNvdW50cnkiXSwgInRpdGxlIjogIkNpdHlM
+      b2NhdGlvbiIsICJ0eXBlIjogIm9iamVjdCJ9kgECCAOoAQA=
+  response_sample:
+    json:
+      id: bd8dd19b-75af-63e8-4fbc-9b2acd248ea7
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_18585244
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: get_user_country
+              arguments: '{}'
+      created: '2026-01-16T17:04:32.419590890Z'
+      model: grok-4-fast-non-reasoning
+      system_fingerprint: fp_4616e76413
+      usage:
+        completion_tokens: 16
+        prompt_tokens: 420
+        total_tokens: 436
+        prompt_text_tokens: 420
+        cached_prompt_text_tokens: 157
+      settings:
+        max_tokens: 80
+        tool_choice:
+          mode: TOOL_MODE_REQUIRED
+        tools:
+        - function:
+            name: get_user_country
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+        - function:
+            name: final_result
+            description: The final response which ends this conversation
+            parameters: '{"properties": {"city": {"type": "string"}, "country": {"type":
+              "string"}}, "required": ["city", "country"], "title": "CityLocation",
+              "type": "object"}'
+    raw: !!binary |
+      CiRiZDhkZDE5Yi03NWFmLTYzZTgtNGZiYy05YjJhY2QyNDhlYTcSMwgEGi8QAhorCg1jYWxsXzE4
+      NTg1MjQ0EAEYAVIWChBnZXRfdXNlcl9jb3VudHJ5EgJ7fSoMCKDfqcsGEOrlicgBMhlncm9rLTQt
+      ZmFzdC1ub24tcmVhc29uaW5nOg1mcF80NjE2ZTc2NDEzShIIEBCkAxi0AyCkAzidAVjU4ylawAII
+      UDoCCANCWQpXChBnZXRfdXNlcl9jb3VudHJ5IkN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFs
+      c2UsICJwcm9wZXJ0aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9QtwBCtkBCgxmaW5hbF9yZXN1
+      bHQSL1RoZSBmaW5hbCByZXNwb25zZSB3aGljaCBlbmRzIHRoaXMgY29udmVyc2F0aW9uIpcBeyJw
+      cm9wZXJ0aWVzIjogeyJjaXR5IjogeyJ0eXBlIjogInN0cmluZyJ9LCAiY291bnRyeSI6IHsidHlw
+      ZSI6ICJzdHJpbmcifX0sICJyZXF1aXJlZCI6IFsiY2l0eSIsICJjb3VudHJ5Il0sICJ0aXRsZSI6
+      ICJDaXR5TG9jYXRpb24iLCAidHlwZSI6ICJvYmplY3QifQ==
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Call `get_user_country` first, then call `final_result` with the JSON
+            result.
+        role: ROLE_SYSTEM
+      - content:
+        - text: What is the largest city in the user country?
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_18585244
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: get_user_country
+            arguments: '{}'
+      - content:
+        - text: Mexico
+        role: ROLE_TOOL
+      model: grok-4-fast-non-reasoning
+      max_tokens: 80
+      tools:
+      - function:
+          name: get_user_country
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      - function:
+          name: final_result
+          description: The final response which ends this conversation
+          parameters: '{"properties": {"city": {"type": "string"}, "country": {"type":
+            "string"}}, "required": ["city", "country"], "title": "CityLocation",
+            "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_REQUIRED
+      parallel_tool_calls: false
+    raw: !!binary |
+      ClMKTwpNQ2FsbCBgZ2V0X3VzZXJfY291bnRyeWAgZmlyc3QsIHRoZW4gY2FsbCBgZmluYWxfcmVz
+      dWx0YCB3aXRoIHRoZSBKU09OIHJlc3VsdC4QAwozCi8KLVdoYXQgaXMgdGhlIGxhcmdlc3QgY2l0
+      eSBpbiB0aGUgdXNlciBjb3VudHJ5PxABCjMKAgoAEAIiKwoNY2FsbF8xODU4NTI0NBABGAFSFgoQ
+      Z2V0X3VzZXJfY291bnRyeRICe30KDAoICgZNZXhpY28QBRIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNv
+      bmluZzhQigFZClcKEGdldF91c2VyX2NvdW50cnkiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBm
+      YWxzZSwgInByb3BlcnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In2KAdwBCtkBCgxmaW5hbF9y
+      ZXN1bHQSL1RoZSBmaW5hbCByZXNwb25zZSB3aGljaCBlbmRzIHRoaXMgY29udmVyc2F0aW9uIpcB
+      eyJwcm9wZXJ0aWVzIjogeyJjaXR5IjogeyJ0eXBlIjogInN0cmluZyJ9LCAiY291bnRyeSI6IHsi
+      dHlwZSI6ICJzdHJpbmcifX0sICJyZXF1aXJlZCI6IFsiY2l0eSIsICJjb3VudHJ5Il0sICJ0aXRs
+      ZSI6ICJDaXR5TG9jYXRpb24iLCAidHlwZSI6ICJvYmplY3QifZIBAggDqAEA
+  response_sample:
+    json:
+      id: 2c6b2907-8642-1b4f-615e-0f6a92307837
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_28378339
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: final_result
+              arguments: '{"city":"Mexico City","country":"Mexico"}'
+      created: '2026-01-16T17:04:33.272859174Z'
+      model: grok-4-fast-non-reasoning
+      system_fingerprint: fp_4616e76413
+      usage:
+        completion_tokens: 36
+        prompt_tokens: 448
+        total_tokens: 484
+        prompt_text_tokens: 448
+        cached_prompt_text_tokens: 436
+      settings:
+        max_tokens: 80
+        tool_choice:
+          mode: TOOL_MODE_REQUIRED
+        tools:
+        - function:
+            name: get_user_country
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+        - function:
+            name: final_result
+            description: The final response which ends this conversation
+            parameters: '{"properties": {"city": {"type": "string"}, "country": {"type":
+              "string"}}, "required": ["city", "country"], "title": "CityLocation",
+              "type": "object"}'
+    raw: !!binary |
+      CiQyYzZiMjkwNy04NjQyLTFiNGYtNjE1ZS0wZjZhOTIzMDc4MzcSVggEGlIQAhpOCg1jYWxsXzI4
+      Mzc4MzM5EAEYAVI5CgxmaW5hbF9yZXN1bHQSKXsiY2l0eSI6Ik1leGljbyBDaXR5IiwiY291bnRy
+      eSI6Ik1leGljbyJ9KgwIod+pywYQpoCOggEyGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmc6DWZw
+      XzQ2MTZlNzY0MTNKEggkEMADGOQDIMADOLQDWPDgGVrAAghQOgIIA0JZClcKEGdldF91c2VyX2Nv
+      dW50cnkiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3BlcnRpZXMiOiB7fSwg
+      InR5cGUiOiAib2JqZWN0In1C3AEK2QEKDGZpbmFsX3Jlc3VsdBIvVGhlIGZpbmFsIHJlc3BvbnNl
+      IHdoaWNoIGVuZHMgdGhpcyBjb252ZXJzYXRpb24ilwF7InByb3BlcnRpZXMiOiB7ImNpdHkiOiB7
+      InR5cGUiOiAic3RyaW5nIn0sICJjb3VudHJ5IjogeyJ0eXBlIjogInN0cmluZyJ9fSwgInJlcXVp
+      cmVkIjogWyJjaXR5IiwgImNvdW50cnkiXSwgInRpdGxlIjogIkNpdHlMb2NhdGlvbiIsICJ0eXBl
+      IjogIm9iamVjdCJ9

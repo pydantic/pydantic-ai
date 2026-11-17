@@ -1,4 +1,4 @@
-import httpx
+import httpx2
 import pytest
 from pytest_mock import MockerFixture
 
@@ -7,12 +7,11 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
 
-    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
     from pydantic_ai.providers.litellm import LiteLLMProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='OpenAI client not installed'),
-    pytest.mark.anyio,
 ]
 
 
@@ -38,16 +37,10 @@ def test_init_with_openai_client():
 def test_model_profile_returns_openai_compatible_profile(mocker: MockerFixture):
     provider = LiteLLMProvider(api_key='test-key')
 
-    # Create a proper mock profile object that can be updated
-    from dataclasses import dataclass
-
-    @dataclass
-    class MockProfile:
-        max_tokens: int = 4096
-        supports_streaming: bool = True
-
-    mock_profile = MockProfile()
-    mock_openai_profile = mocker.patch('pydantic_ai.providers.litellm.openai_model_profile', return_value=mock_profile)
+    mock_profile: dict[str, object] = {'supports_tools': True}
+    mock_openai_profile = mocker.patch(
+        'pydantic_ai.providers.openai_compatible.openai_model_profile', return_value=mock_profile
+    )
 
     profile = provider.model_profile('gpt-3.5-turbo')
 
@@ -55,46 +48,64 @@ def test_model_profile_returns_openai_compatible_profile(mocker: MockerFixture):
     mock_openai_profile.assert_called_once_with('gpt-3.5-turbo')
 
     # Verify the returned profile is an OpenAIModelProfile with OpenAIJsonSchemaTransformer
-    assert isinstance(profile, OpenAIModelProfile)
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert isinstance(profile, dict)
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
 def test_model_profile_with_different_models(mocker: MockerFixture):
     provider = LiteLLMProvider(api_key='test-key')
 
-    # Create mocks for all profile functions
-    from dataclasses import dataclass
+    mock_profile: dict[str, object] = {'supports_tools': True}
 
-    @dataclass
-    class MockProfile:
-        max_tokens: int = 4096
-        supports_streaming: bool = True
-
-    # Mock all profile functions
+    # Mock all profile functions, in the shared family map and in the OpenAI-compatible provider's own vendors
     mock_profiles = {
-        'openai': mocker.patch('pydantic_ai.providers.litellm.openai_model_profile', return_value=MockProfile()),
-        'anthropic': mocker.patch('pydantic_ai.providers.litellm.anthropic_model_profile', return_value=MockProfile()),
-        'google': mocker.patch('pydantic_ai.providers.litellm.google_model_profile', return_value=MockProfile()),
-        'meta': mocker.patch('pydantic_ai.providers.litellm.meta_model_profile', return_value=MockProfile()),
-        'mistral': mocker.patch('pydantic_ai.providers.litellm.mistral_model_profile', return_value=MockProfile()),
-        'cohere': mocker.patch('pydantic_ai.providers.litellm.cohere_model_profile', return_value=MockProfile()),
-        'amazon': mocker.patch('pydantic_ai.providers.litellm.amazon_model_profile', return_value=MockProfile()),
-        'deepseek': mocker.patch('pydantic_ai.providers.litellm.deepseek_model_profile', return_value=MockProfile()),
-        'groq': mocker.patch('pydantic_ai.providers.litellm.groq_model_profile', return_value=MockProfile()),
-        'grok': mocker.patch('pydantic_ai.providers.litellm.grok_model_profile', return_value=MockProfile()),
-        'moonshotai': mocker.patch(
-            'pydantic_ai.providers.litellm.moonshotai_model_profile', return_value=MockProfile()
-        ),
-        'qwen': mocker.patch('pydantic_ai.providers.litellm.qwen_model_profile', return_value=MockProfile()),
+        family: mocker.MagicMock(return_value=mock_profile)
+        for family in (
+            'anthropic',
+            'google',
+            'meta',
+            'mistral',
+            'cohere',
+            'amazon',
+            'deepseek',
+            'groq',
+            'grok',
+            'moonshotai',
+            'qwen',
+        )
     }
+    mock_profiles['openai'] = mocker.patch(
+        'pydantic_ai.providers.openai_compatible.openai_model_profile', return_value=mock_profile
+    )
+    mocker.patch('pydantic_ai.providers.openai_compatible.mistral_model_profile', mock_profiles['mistral'])
+    mocker.patch.dict(
+        'pydantic_ai.profiles._family._VENDOR_FAMILY_PROFILES',
+        {
+            'anthropic': mock_profiles['anthropic'],
+            'openai': mock_profiles['openai'],
+            'google': mock_profiles['google'],
+            'cohere': mock_profiles['cohere'],
+            'amazon': mock_profiles['amazon'],
+            'meta-llama': mock_profiles['meta'],
+            'meta': mock_profiles['meta'],
+            'deepseek': mock_profiles['deepseek'],
+            'moonshotai': mock_profiles['moonshotai'],
+            'x-ai': mock_profiles['grok'],
+            'qwen': mock_profiles['qwen'],
+        },
+    )
+    mocker.patch.dict(
+        'pydantic_ai.providers.openai_compatible._OPENAI_COMPATIBLE_VENDOR_PROFILES',
+        {'bedrock': mock_profiles['amazon'], 'groq': mock_profiles['groq']},
+    )
 
     # Test models without provider prefix (should use openai profile)
     models_without_prefix = ['gpt-4', 'claude-sonnet-4-5', 'gemini-pro', 'llama2-70b']
 
     for model in models_without_prefix:
         profile = provider.model_profile(model)
-        assert isinstance(profile, OpenAIModelProfile)
-        assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+        assert isinstance(profile, dict)
+        assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Verify openai_model_profile was called for each model without prefix
     assert mock_profiles['openai'].call_count == len(models_without_prefix)
@@ -124,35 +135,36 @@ def test_model_profile_with_different_models(mocker: MockerFixture):
 
     for model_name, expected_profile, expected_suffix in test_cases:
         profile = provider.model_profile(model_name)
-        assert isinstance(profile, OpenAIModelProfile)
-        assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+        assert isinstance(profile, dict)
+        assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
         # Verify the correct profile function was called with the correct suffix
         mock_profiles[expected_profile].assert_called_with(expected_suffix)
         mock_profiles[expected_profile].reset_mock()
 
     # Test unknown provider prefix (should fall back to openai)
+    # The Mistral cases above also consult the OpenAI fallback underneath the Mistral profile.
+    mock_profiles['openai'].reset_mock()
     provider.model_profile('unknown-provider/some-model')
     mock_profiles['openai'].assert_called_once_with('unknown-provider/some-model')
 
 
-async def test_cached_http_client_usage(mocker: MockerFixture):
+async def test_create_http_client_usage(mocker: MockerFixture):
     # Create a real AsyncClient for the mock
-    async with httpx.AsyncClient() as mock_cached_client:
-        mock_cached_http_client_func = mocker.patch(
-            'pydantic_ai.providers.litellm.cached_async_http_client', return_value=mock_cached_client
+    async with httpx2.AsyncClient() as mock_client:
+        mock_create_func = mocker.patch(
+            'pydantic_ai.providers._openai_compatible.create_async_httpx2_client', return_value=mock_client
         )
 
         provider = LiteLLMProvider(api_key='test-key')
 
-        # Verify cached_async_http_client was called with 'litellm' provider
-        mock_cached_http_client_func.assert_called_once_with(provider='litellm')
+        mock_create_func.assert_called_once_with()
 
         # Verify the client was created
         assert isinstance(provider.client, AsyncOpenAI)
 
 
 async def test_init_with_http_client_overrides_cached():
-    async with httpx.AsyncClient() as custom_client:
+    async with httpx2.AsyncClient() as custom_client:
         provider = LiteLLMProvider(api_key='test-key', http_client=custom_client)
 
         # Verify the provider was created successfully with custom client

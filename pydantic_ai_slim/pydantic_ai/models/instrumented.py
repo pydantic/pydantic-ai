@@ -1,70 +1,77 @@
 from __future__ import annotations
 
+import functools
 import itertools
-import json
+import time
 import warnings
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping
-from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass, field
-from typing import Any, Literal, cast
-from urllib.parse import urlparse
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field, replace
+from typing import Any, Literal, assert_never
 
 from genai_prices.types import PriceCalculation
-from opentelemetry._events import (
-    Event,  # pyright: ignore[reportPrivateImportUsage]
-    EventLogger,  # pyright: ignore[reportPrivateImportUsage]
-    EventLoggerProvider,  # pyright: ignore[reportPrivateImportUsage]
-    get_event_logger_provider,  # pyright: ignore[reportPrivateImportUsage]
-)
 from opentelemetry.metrics import MeterProvider, get_meter_provider
 from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
-from pydantic import TypeAdapter
+from pydantic_core import to_json
 
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._instrumentation import (
+    DEFAULT_INSTRUMENTATION_VERSION,
+    TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES,
+    TOKEN_HISTOGRAM_BOUNDARIES,
+    CachedMessageJson,
+    MessageJsonCache,
+    get_instructions,
+    mcp_telemetry_history_ids,
+    message_json_fragment,
+    model_request_telemetry_url_ids,
+    open_model_request_span,
+    response_cost,
+    safe_to_json,
+)
 
 from .. import _otel_messages
+from .._capability_parts import effective_authority
 from .._run_context import RunContext
+from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
+    BaseToolReturnPart,
+    CapabilityLoadDeltaPart,
+    CapabilityPart,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
+    ModelSettingsDeltaPart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SystemPromptPart,
+    ToolAvailabilityDeltaPart,
+    _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
 )
 from ..settings import ModelSettings
-from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
+from ..usage import UsageBase
+from . import (
+    KnownModelName,
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    StreamedResponse,
+    _current_request_start,  # pyright: ignore[reportPrivateUsage]
+)
 from .wrapper import WrapperModel
 
 __all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'
 
-MODEL_SETTING_ATTRIBUTES: tuple[
-    Literal[
-        'max_tokens',
-        'top_p',
-        'seed',
-        'temperature',
-        'presence_penalty',
-        'frequency_penalty',
-    ],
-    ...,
-] = (
-    'max_tokens',
-    'top_p',
-    'seed',
-    'temperature',
-    'presence_penalty',
-    'frequency_penalty',
-)
-
-ANY_ADAPTER = TypeAdapter[Any](Any)
-
-# These are in the spec:
-# https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
-TOKEN_HISTOGRAM_BOUNDARIES = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
-
 
 def instrument_model(model: Model, instrument: InstrumentationSettings | bool) -> Model:
-    """Instrument a model with OpenTelemetry/logfire."""
+    """Wrap `model` in an `InstrumentedModel` so OTel/Logfire spans are emitted around requests."""
     if instrument and not isinstance(model, InstrumentedModel):
         if instrument is True:
             instrument = InstrumentationSettings()
@@ -80,19 +87,19 @@ class InstrumentationSettings:
 
     Used in:
 
-    - `Agent(instrument=...)`
-    - [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all]
+    - [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability
+    - [`Agent.instrument`][pydantic_ai.agent.Agent.instrument] / [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all]
     - [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel]
 
-    See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+    See the [Debugging and Monitoring guide](https://pydantic.dev/docs/ai/integrations/logfire/) for more info.
     """
 
     tracer: Tracer = field(repr=False)
-    event_logger: EventLogger = field(repr=False)
-    event_mode: Literal['attributes', 'logs'] = 'attributes'
     include_binary_content: bool = True
     include_content: bool = True
-    version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION
+    include_model_request_parameters: bool = True
+    version: Literal[2, 3, 4, 5, 6] = DEFAULT_INSTRUMENTATION_VERSION
+    use_aggregated_usage_attribute_names: bool = True
 
     def __init__(
         self,
@@ -101,9 +108,9 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
-        version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION,
-        event_mode: Literal['attributes', 'logs'] = 'attributes',
-        event_logger_provider: EventLoggerProvider | None = None,
+        include_model_request_parameters: bool = True,
+        version: Literal[2, 3, 4, 5, 6] = DEFAULT_INSTRUMENTATION_VERSION,
+        use_aggregated_usage_attribute_names: bool = True,
     ):
         """Create instrumentation options.
 
@@ -114,46 +121,72 @@ class InstrumentationSettings:
             meter_provider: The OpenTelemetry meter provider to use.
                 If not provided, the global meter provider is used.
                 Calling `logfire.configure()` sets the global meter provider, so most users don't need this.
-            include_binary_content: Whether to include binary content in the instrumentation events.
+            include_binary_content: Whether to include binary file data in the instrumentation events:
+                user prompts and model responses, tool returns, the agent's output and the arguments
+                its output function receives, and run and tool deferral metadata. The media type is
+                recorded either way. Binary content is found inside dictionaries, lists and
+                `ToolReturn`s, but not inside your own types: a `BinaryContent` held as a field of a
+                model or dataclass you define is still recorded in full.
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
+            include_model_request_parameters: Whether to emit the `model_request_parameters` span attribute on
+                model request spans. This serializes the full `ModelRequestParameters` (output configuration
+                and every tool definition, including fields that are not sent to the model such as tool
+                `metadata` and, when not requested, `return_schema`). Defaults to `True`. Set to `False` to
+                omit it entirely, which is useful when large tool output schemas make the attribute big enough
+                to strain span export. The OpenTelemetry `gen_ai.tool.definitions` attribute (tool name,
+                description, and parameters) is always emitted regardless of this setting.
             version: Version of the data format. This is unrelated to the Pydantic AI package version.
-                Version 1 is based on the legacy event-based OpenTelemetry GenAI spec
-                    and will be removed in a future release.
-                    The parameters `event_mode` and `event_logger_provider` are only relevant for version 1.
+                Defaults to version 5. Versions 2, 3, and 4 are deprecated compatibility formats
+                and emit a `PydanticAIDeprecationWarning` when used.
                 Version 2 uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
                     - `gen_ai.system_instructions` for instructions passed to the agent.
                     - `gen_ai.input.messages` and `gen_ai.output.messages` on model request spans.
                     - `pydantic_ai.all_messages` on agent run spans.
-            event_mode: The mode for emitting events in version 1.
-                If `'attributes'`, events are attached to the span as attributes.
-                If `'logs'`, events are emitted as OpenTelemetry log-based events.
-            event_logger_provider: The OpenTelemetry event logger provider to use.
-                If not provided, the global event logger provider is used.
-                Calling `logfire.configure()` sets the global event logger provider, so most users don't need this.
-                This is only used if `event_mode='logs'` and `version=1`.
+                Version 3 is the same as version 2, with additional support for thinking tokens.
+                Version 4 is the same as version 3, with GenAI semantic conventions for multimodal content:
+                    URL-based media uses type='uri' with uri and mime_type fields (and modality for image/audio/video).
+                    Inline binary content uses type='blob' with mime_type and content fields (and modality for image/audio/video).
+                    https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
+                Version 5 is the same as version 4, but CallDeferred and ApprovalRequired exceptions
+                    no longer record an exception event or set the span status to ERROR — the span is left
+                    as UNSET, since deferrals are control flow, not errors.
+                Version 6 is the same as version 5, but tool results are emitted in a message with
+                    `role='tool'` rather than `role='user'`, which is the role the GenAI semantic
+                    conventions pair with the `tool_call_response` parts they carry, and retry feedback
+                    that answers no tool call moves from `role='user'` to `role='system'`, the voice it
+                    reaches the model in. Opt in to it when your telemetry consumer keys on the message
+                    role; it is not the default.
+            use_aggregated_usage_attribute_names: Whether to use `gen_ai.aggregated_usage.*` attribute names
+                for token usage on agent run spans instead of the standard `gen_ai.usage.*` names.
+                Defaults to True to prevent double-counting in observability backends that aggregate span
+                attributes across parent and child spans.
+                Note: `gen_ai.aggregated_usage.*` is a custom namespace, not part of the OpenTelemetry
+                Semantic Conventions. It may be updated if OTel introduces an official convention.
         """
         from pydantic_ai import __version__
 
         tracer_provider = tracer_provider or get_tracer_provider()
         meter_provider = meter_provider or get_meter_provider()
-        event_logger_provider = event_logger_provider or get_event_logger_provider()
         scope_name = 'pydantic-ai'
         self.tracer = tracer_provider.get_tracer(scope_name, __version__)
         self.meter = meter_provider.get_meter(scope_name, __version__)
-        self.event_logger = event_logger_provider.get_event_logger(scope_name, __version__)
-        self.event_mode = event_mode
         self.include_binary_content = include_binary_content
         self.include_content = include_content
+        self.include_model_request_parameters = include_model_request_parameters
 
-        if event_mode == 'logs' and version != 1:
+        if version not in (2, 3, 4, 5, 6):
+            raise ValueError('Instrumentation version must be one of 2, 3, 4, 5, or 6.')
+        # TODO(v3): remove instrumentation format versions 2, 3, and 4
+        # TODO(v3): default to instrumentation format version 6
+        if version in (2, 3, 4):
             warnings.warn(
-                'event_mode is only relevant for version=1 which is deprecated and will be removed in a future release.',
+                'Instrumentation format versions 2, 3, and 4 are deprecated; use `version=5` instead.',
+                PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
-            version = 1
-
         self.version = version
+        self.use_aggregated_usage_attribute_names = use_aggregated_usage_attribute_names
 
         # As specified in the OpenTelemetry GenAI metrics spec:
         # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
@@ -170,181 +203,272 @@ class InstrumentationSettings:
         except TypeError:  # pragma: lax no cover
             # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
             self.tokens_histogram = self.meter.create_histogram(
-                **tokens_histogram_kwargs,  # pyright: ignore
+                **tokens_histogram_kwargs,  # pyright: ignore[reportArgumentType]
             )
         self.cost_histogram = self.meter.create_histogram(
             'operation.cost',
             unit='{USD}',
             description='Monetary cost',
         )
+        time_to_first_chunk_histogram_kwargs = dict(
+            name='gen_ai.client.operation.time_to_first_chunk',
+            unit='s',
+            description='Time from issuing a streaming request to the first chunk being surfaced to the consumer',
+        )
+        try:
+            self.time_to_first_chunk_histogram = self.meter.create_histogram(
+                **time_to_first_chunk_histogram_kwargs,
+                explicit_bucket_boundaries_advisory=TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES,
+            )
+        except TypeError:  # pragma: lax no cover
+            # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
+            self.time_to_first_chunk_histogram = self.meter.create_histogram(
+                **time_to_first_chunk_histogram_kwargs,  # pyright: ignore[reportArgumentType]
+            )
 
-    def messages_to_otel_events(
-        self, messages: list[ModelMessage], parameters: ModelRequestParameters | None = None
-    ) -> list[Event]:
-        """Convert a list of model messages to OpenTelemetry events.
+    def messages_to_otel_messages(
+        self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str] = frozenset()
+    ) -> list[_otel_messages.ChatMessage]:
+        result: list[_otel_messages.ChatMessage] = []
+        sensitive_names = {f'mcp_server:{identity}' for identity in mcp_url_ids}
+        for message in messages:
+            match message:
+                case ModelRequest():
+                    result.extend(self._request_otel_messages(message))
+                case ModelResponse():
+                    result.append(self._response_otel_message(message, sensitive_names))
+                case _:
+                    assert_never(message)
+        return result
 
-        Args:
-            messages: The messages to convert.
-            parameters: The model request parameters.
+    def _request_otel_messages(self, message: ModelRequest) -> list[_otel_messages.ChatMessage]:
+        otel_messages: list[_otel_messages.ChatMessage] = []
+        for role, group in self._request_part_groups(message):
+            message_parts: list[_otel_messages.MessagePart] = []
+            for part in group:
+                if hasattr(part, 'otel_message_parts'):
+                    message_parts.extend(part.otel_message_parts(self))
 
-        Returns:
-            A list of OpenTelemetry events.
+            otel_messages.append(_otel_messages.ChatMessage(role=role, parts=message_parts))
+        return otel_messages
+
+    def _response_otel_message(self, message: ModelResponse, sensitive_names: set[str]) -> _otel_messages.OutputMessage:
+        if sensitive_names:
+            projected_parts: list[ModelResponsePart] = [
+                replace(part, tool_name='mcp_server:[REDACTED]')
+                if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name in sensitive_names
+                else part
+                for part in message.parts
+            ]
+            message = replace(message, parts=projected_parts)
+        otel_message = _otel_messages.OutputMessage(role='assistant', parts=message.otel_message_parts(self))
+        if message.finish_reason is not None:
+            otel_message['finish_reason'] = message.finish_reason
+        return otel_message
+
+    def _request_part_groups(self, message: ModelRequest) -> list[tuple[_otel_messages.Role, list[ModelRequestPart]]]:
+        """The OTel messages a request's parts make: each one's role and the parts that go in it.
+
+        Shared by `messages_to_otel_messages` and `_span_input_messages`, which lines its result up with this.
         """
-        events: list[Event] = []
-        instructions = InstrumentedModel._get_instructions(messages, parameters)  # pyright: ignore [reportPrivateUsage]
-        if instructions is not None:
-            events.append(
-                Event(
-                    'gen_ai.system.message',
-                    body={**({'content': instructions} if self.include_content else {}), 'role': 'system'},
+        # A baseline records what the request's instructions were and contributes nothing to a trace,
+        # so it's left out before grouping rather than becoming an empty system message.
+        request_parts = [part for part in message.parts if not isinstance(part, InstructionBaselinePart)]
+        return [
+            (role, list(group))
+            for role, group in itertools.groupby(
+                request_parts, key=functools.partial(_otel_message_role, version=self.version)
+            )
+        ]
+
+    def _span_input_messages(
+        self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str], current_request_start: int
+    ) -> list[_otel_messages.ChatMessage]:
+        """`messages_to_otel_messages`, with the parts of request-scoped system prompts the model no longer sees marked.
+
+        A [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt in a message before
+        `current_request_start` was sent with an earlier request, so its part gets `visible: false`. The marker
+        is added to what `messages_to_otel_messages` returns, so an override of it still applies. Where the
+        result doesn't have the shape the default conversion gives, the parts can't be told apart and none are
+        marked.
+        """
+        otel_messages = self.messages_to_otel_messages(messages, mcp_url_ids=mcp_url_ids)
+        if not any(_holds_request_scoped_prompt(message) for message in messages[:current_request_start]):
+            return otel_messages
+        expected = self._request_scoped_marks(messages, current_request_start)
+        if _shape_differs(expected, otel_messages):
+            return otel_messages
+        for marks, otel_message in zip(expected, otel_messages):
+            for mark, part in zip(marks or (), otel_message['parts']):
+                if mark and part['type'] == 'text':
+                    part['visible'] = False
+        return otel_messages
+
+    def _request_scoped_marks(
+        self, messages: list[ModelMessage], current_request_start: int
+    ) -> list[list[bool] | None]:
+        """For each OTel message the default conversion gives, which of its parts to mark, or `None` to leave it."""
+        expected: list[list[bool] | None] = []
+        for index, message in enumerate(messages):
+            if not isinstance(message, ModelRequest):
+                expected.append(None)
+                continue
+            mark = index < current_request_start and _holds_request_scoped_prompt(message)
+            for _, group in self._request_part_groups(message):
+                # Only a message with a part to mark needs its OTel parts counted again; the rest just need their groups.
+                expected.append(self._otel_part_marks(group) if mark else None)
+        return expected
+
+    def _otel_part_marks(self, group: list[ModelRequestPart]) -> list[bool]:
+        """Whether each OTel part a group of request parts gives comes from a request-scoped prompt."""
+        return [
+            _is_request_scoped(part)
+            for part in group
+            if hasattr(part, 'otel_message_parts')
+            for _ in part.otel_message_parts(self)
+        ]
+
+    def _input_messages_json(
+        self,
+        input_messages: list[ModelMessage],
+        message_json_cache: MessageJsonCache | None,
+    ) -> bytes:
+        """Serialize the input message history to a JSON array.
+
+        With a `message_json_cache` (agent runs, where the growing history is re-serialized every
+        request), each message's fragment is cached and concatenated, keeping the per-request cost
+        proportional to new messages rather than the whole history. Entries for messages no longer
+        in the input history are evicted, so the cache (and the `parts` lists it keeps alive) stays
+        bounded by the current history even when a history processor prunes or rebuilds messages.
+        Without a cache (one-off requests), the whole history is serialized in a single call.
+        Historical MCP names lack their original request provenance, so each cached fragment
+        withholds those names without rescanning every part on subsequent requests.
+        """
+        current_request_start = _current_request_start(input_messages)
+        if message_json_cache is None:
+            history_ids = mcp_telemetry_history_ids(input_messages, frozenset())
+            return safe_to_json(
+                self._span_input_messages(
+                    input_messages, mcp_url_ids=history_ids, current_request_start=current_request_start
                 )
             )
 
-        for message_index, message in enumerate(messages):
-            message_events: list[Event] = []
-            if isinstance(message, ModelRequest):
-                for part in message.parts:
-                    if hasattr(part, 'otel_event'):
-                        message_events.append(part.otel_event(self))
-            elif isinstance(message, ModelResponse):  # pragma: no branch
-                message_events = message.otel_events(self)
-            for event in message_events:
-                event.attributes = {
-                    'gen_ai.message.index': message_index,
-                    **(event.attributes or {}),
-                }
-            events.extend(message_events)
-
-        for event in events:
-            event.body = InstrumentedModel.serialize_any(event.body)
-        return events
-
-    def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
-        result: list[_otel_messages.ChatMessage] = []
-        for message in messages:
-            if isinstance(message, ModelRequest):
-                for is_system, group in itertools.groupby(message.parts, key=lambda p: isinstance(p, SystemPromptPart)):
-                    message_parts: list[_otel_messages.MessagePart] = []
-                    for part in group:
-                        if hasattr(part, 'otel_message_parts'):
-                            message_parts.extend(part.otel_message_parts(self))
-                    result.append(
-                        _otel_messages.ChatMessage(role='system' if is_system else 'user', parts=message_parts)
-                    )
-            elif isinstance(message, ModelResponse):  # pragma: no branch
-                otel_message = _otel_messages.OutputMessage(role='assistant', parts=message.otel_message_parts(self))
-                if message.finish_reason is not None:
-                    otel_message['finish_reason'] = message.finish_reason
-                result.append(otel_message)
-        return result
+        fragments: list[bytes] = []
+        fresh_entries: MessageJsonCache = {}
+        for index, message in enumerate(input_messages):
+            answered = index < current_request_start
+            entry = message_json_cache.get(id(message))
+            # A fragment holding a request-scoped system prompt, cached while its request was current, is
+            # rebuilt once that request has been answered, so the prompt is marked as no longer visible.
+            if (
+                entry is None
+                or entry.parts is not message.parts
+                or (entry.request_scoped and entry.answered != answered)
+            ):
+                history_ids = mcp_telemetry_history_ids([message], frozenset())
+                request_scoped = _holds_request_scoped_prompt(message)
+                answered = answered and request_scoped
+                entry = CachedMessageJson(
+                    message,
+                    message.parts,
+                    message_json_fragment(self, message, history_ids, answered=answered),
+                    history_ids,
+                    request_scoped=request_scoped,
+                    answered=answered,
+                )
+            fresh_entries[id(message)] = entry
+            if entry.fragment:
+                fragments.append(entry.fragment)
+        message_json_cache.clear()
+        message_json_cache.update(fresh_entries)
+        return b'[' + b','.join(fragments) + b']'
 
     def handle_messages(
         self,
         input_messages: list[ModelMessage],
         response: ModelResponse,
-        system: str,
         span: Span,
         parameters: ModelRequestParameters | None = None,
+        *,
+        message_json_cache: MessageJsonCache | None = None,
     ):
-        if self.version == 1:
-            events = self.messages_to_otel_events(input_messages, parameters)
-            for event in self.messages_to_otel_events([response], parameters):
-                events.append(
-                    Event(
-                        'gen_ai.choice',
-                        body={
-                            'index': 0,
-                            'message': event.body,
-                        },
-                    )
-                )
-            for event in events:
-                event.attributes = {
-                    GEN_AI_SYSTEM_ATTRIBUTE: system,
-                    **(event.attributes or {}),
+        mcp_url_ids: frozenset[str] = (
+            frozenset(model_request_telemetry_url_ids(parameters)) if parameters is not None else frozenset[str]()
+        )
+        output_messages = self.messages_to_otel_messages([response], mcp_url_ids=mcp_url_ids)
+        assert len(output_messages) == 1
+        output_message = output_messages[0]
+
+        instructions = get_instructions(input_messages, parameters)
+        system_instructions_attributes = self.system_instructions_attributes(instructions)
+
+        attributes: dict[str, AttributeValue] = {
+            'gen_ai.input.messages': self._input_messages_json(input_messages, message_json_cache).decode(),
+            'gen_ai.output.messages': safe_to_json([output_message]).decode(),
+            **system_instructions_attributes,
+            'logfire.json_schema': to_json(
+                {
+                    'type': 'object',
+                    'properties': {
+                        'gen_ai.input.messages': {'type': 'array'},
+                        'gen_ai.output.messages': {'type': 'array'},
+                        **({'gen_ai.system_instructions': {'type': 'array'}} if system_instructions_attributes else {}),
+                        **(
+                            {'model_request_parameters': {'type': 'object'}}
+                            if self.include_model_request_parameters
+                            else {}
+                        ),
+                    },
                 }
-            self._emit_events(span, events)
-        else:
-            output_messages = self.messages_to_otel_messages([response])
-            assert len(output_messages) == 1
-            output_message = output_messages[0]
-            instructions = InstrumentedModel._get_instructions(input_messages, parameters)  # pyright: ignore [reportPrivateUsage]
-            system_instructions_attributes = self.system_instructions_attributes(instructions)
-            attributes: dict[str, AttributeValue] = {
-                'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
-                'gen_ai.output.messages': json.dumps([output_message]),
-                **system_instructions_attributes,
-                'logfire.json_schema': json.dumps(
-                    {
-                        'type': 'object',
-                        'properties': {
-                            'gen_ai.input.messages': {'type': 'array'},
-                            'gen_ai.output.messages': {'type': 'array'},
-                            **(
-                                {'gen_ai.system_instructions': {'type': 'array'}}
-                                if system_instructions_attributes
-                                else {}
-                            ),
-                            'model_request_parameters': {'type': 'object'},
-                        },
-                    }
-                ),
-            }
-            span.set_attributes(attributes)
+            ).decode(),
+        }
+        span.set_attributes(attributes)
 
     def system_instructions_attributes(self, instructions: str | None) -> dict[str, str]:
         if instructions and self.include_content:
             return {
-                'gen_ai.system_instructions': json.dumps([_otel_messages.TextPart(type='text', content=instructions)]),
+                'gen_ai.system_instructions': safe_to_json(
+                    [_otel_messages.TextPart(type='text', content=instructions)]
+                ).decode(),
             }
         return {}
 
-    def _emit_events(self, span: Span, events: list[Event]) -> None:
-        if self.event_mode == 'logs':
-            for event in events:
-                self.event_logger.emit(event)
-        else:
-            attr_name = 'events'
-            span.set_attributes(
-                {
-                    attr_name: json.dumps([InstrumentedModel.event_to_dict(event) for event in events]),
-                    'logfire.json_schema': json.dumps(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                attr_name: {'type': 'array'},
-                                'model_request_parameters': {'type': 'object'},
-                            },
-                        }
-                    ),
-                }
-            )
+    def aggregated_usage_attributes(self, usage: UsageBase) -> dict[str, int]:
+        """Cumulative-usage OpenTelemetry attributes for a run/session span.
+
+        Remaps `gen_ai.usage.*` to `gen_ai.aggregated_usage.*` when `use_aggregated_usage_attribute_names`
+        is set, so a backend that sums span attributes doesn't double-count the run's cumulative usage
+        against the per-request `chat` spans' `gen_ai.usage.*`. Shared by the classic agent-run span (the
+        `Instrumentation` capability) and the realtime session span so the two can't drift.
+        """
+        attributes = usage.opentelemetry_attributes()
+        if not self.use_aggregated_usage_attribute_names:
+            return attributes
+        return {key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): value for key, value in attributes.items()}
 
     def record_metrics(
         self,
         response: ModelResponse,
         price_calculation: PriceCalculation | None,
         attributes: dict[str, AttributeValue],
+        time_to_first_chunk: float | None = None,
     ):
         for typ in ['input', 'output']:
-            if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):  # pragma: no cover
+            if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):
                 continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)
-            if price_calculation:
-                cost = float(getattr(price_calculation, f'{typ}_price'))
-                self.cost_histogram.record(cost, token_attributes)
-
-
-GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
-GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
+        if (cost := response_cost(response, price_calculation)) is not None:
+            self.cost_histogram.record(float(cost), attributes)
+        if time_to_first_chunk is not None:
+            self.time_to_first_chunk_histogram.record(time_to_first_chunk, attributes)
 
 
 @dataclass(init=False)
 class InstrumentedModel(WrapperModel):
     """Model which wraps another model so that requests are instrumented with OpenTelemetry.
 
-    See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+    See the [Debugging and Monitoring guide](https://pydantic.dev/docs/ai/integrations/logfire/) for more info.
     """
 
     instrumentation_settings: InstrumentationSettings
@@ -352,7 +476,7 @@ class InstrumentedModel(WrapperModel):
 
     def __init__(
         self,
-        wrapped: Model | KnownModelName,
+        wrapped: Model | KnownModelName | str,
         options: InstrumentationSettings | None = None,
     ) -> None:
         super().__init__(wrapped)
@@ -364,13 +488,20 @@ class InstrumentedModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        prepared_settings, prepared_parameters = self.wrapped.prepare_request(
-            model_settings,
-            model_request_parameters,
+        request_context = ModelRequestContext(
+            model=self.wrapped,
+            messages=messages,
+            model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
         )
-        with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
+        # The span's prepared context is for its attributes only. The wrapped model prepares again
+        # itself, and `prepare_request` is not idempotent — a second pass appends the prompted-output
+        # instructions a second time and re-walks an already-transformed JSON schema — so it has to
+        # be handed the originals. `Instrumentation.wrap_model_request` and `FallbackModel.request`
+        # do the same.
+        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, _):
             response = await self.wrapped.request(messages, model_settings, model_request_parameters)
-            finish(response, prepared_parameters)
+            finish(response)
             return response
 
     @asynccontextmanager
@@ -380,156 +511,100 @@ class InstrumentedModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
-        prepared_settings, prepared_parameters = self.wrapped.prepare_request(
-            model_settings,
-            model_request_parameters,
+    ) -> AsyncGenerator[StreamedResponse]:
+        request_context = ModelRequestContext(
+            model=self.wrapped,
+            messages=messages,
+            model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
         )
-        with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
+        # See `request()`: the prepared context is for span attributes only, and the wrapped model
+        # must be handed the originals because `prepare_request` is not idempotent.
+        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, _):
             response_stream: StreamedResponse | None = None
+            # Stamp the request-issue instant before the wrapped model opens the stream, so the
+            # `time_to_first_chunk` delta spans from when we issue the request to when the first
+            # chunk is surfaced to the consumer.
+            request_start = time.perf_counter()
             try:
                 async with self.wrapped.request_stream(
-                    messages, model_settings, model_request_parameters, run_context
+                    messages,
+                    model_settings,
+                    model_request_parameters,
+                    run_context,
                 ) as response_stream:
                     yield response_stream
             finally:
                 if response_stream:  # pragma: no branch
-                    finish(response_stream.get(), prepared_parameters)
-
-    @contextmanager
-    def _instrument(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> Iterator[Callable[[ModelResponse, ModelRequestParameters], None]]:
-        operation = 'chat'
-        span_name = f'{operation} {self.model_name}'
-        # TODO Missing attributes:
-        #  - error.type: unclear if we should do something here or just always rely on span exceptions
-        #  - gen_ai.request.stop_sequences/top_k: model_settings doesn't include these
-        attributes: dict[str, AttributeValue] = {
-            'gen_ai.operation.name': operation,
-            **self.model_attributes(self.wrapped),
-            **self.model_request_parameters_attributes(model_request_parameters),
-            'logfire.json_schema': json.dumps(
-                {
-                    'type': 'object',
-                    'properties': {'model_request_parameters': {'type': 'object'}},
-                }
-            ),
-        }
-
-        if model_settings:
-            for key in MODEL_SETTING_ATTRIBUTES:
-                if isinstance(value := model_settings.get(key), float | int):
-                    attributes[f'gen_ai.request.{key}'] = value
-
-        record_metrics: Callable[[], None] | None = None
-        try:
-            with self.instrumentation_settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
-
-                def finish(response: ModelResponse, parameters: ModelRequestParameters):
-                    # FallbackModel updates these span attributes.
-                    attributes.update(getattr(span, 'attributes', {}))
-                    request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
-                    system = cast(str, attributes[GEN_AI_SYSTEM_ATTRIBUTE])
-
-                    response_model = response.model_name or request_model
-                    price_calculation = None
-
-                    def _record_metrics():
-                        metric_attributes = {
-                            GEN_AI_SYSTEM_ATTRIBUTE: system,
-                            'gen_ai.operation.name': operation,
-                            'gen_ai.request.model': request_model,
-                            'gen_ai.response.model': response_model,
-                        }
-                        self.instrumentation_settings.record_metrics(response, price_calculation, metric_attributes)
-
-                    nonlocal record_metrics
-                    record_metrics = _record_metrics
-
-                    if not span.is_recording():
-                        return
-
-                    self.instrumentation_settings.handle_messages(messages, response, system, span, parameters)
-
-                    attributes_to_set = {
-                        **response.usage.opentelemetry_attributes(),
-                        'gen_ai.response.model': response_model,
-                    }
-                    try:
-                        price_calculation = response.cost()
-                    except LookupError:
-                        # The cost of this provider/model is unknown, which is common.
-                        pass
-                    except Exception as e:
-                        warnings.warn(
-                            f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
-                        )
-                    else:
-                        attributes_to_set['operation.cost'] = float(price_calculation.total_price)
-
-                    if response.provider_response_id is not None:
-                        attributes_to_set['gen_ai.response.id'] = response.provider_response_id
-                    if response.finish_reason is not None:
-                        attributes_to_set['gen_ai.response.finish_reasons'] = [response.finish_reason]
-                    span.set_attributes(attributes_to_set)
-                    span.update_name(f'{operation} {request_model}')
-
-                yield finish
-        finally:
-            if record_metrics:
-                # We only want to record metrics after the span is finished,
-                # to prevent them from being redundantly recorded in the span itself by logfire.
-                record_metrics()
-
-    @staticmethod
-    def model_attributes(model: Model) -> dict[str, AttributeValue]:
-        attributes: dict[str, AttributeValue] = {
-            GEN_AI_SYSTEM_ATTRIBUTE: model.system,
-            GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
-        }
-        if base_url := model.base_url:
-            try:
-                parsed = urlparse(base_url)
-            except Exception:  # pragma: no cover
-                pass
-            else:
-                if parsed.hostname:  # pragma: no branch
-                    attributes['server.address'] = parsed.hostname
-                if parsed.port:  # pragma: no branch
-                    attributes['server.port'] = parsed.port
-
-        return attributes
-
-    @staticmethod
-    def model_request_parameters_attributes(
-        model_request_parameters: ModelRequestParameters,
-    ) -> dict[str, AttributeValue]:
-        return {'model_request_parameters': json.dumps(InstrumentedModel.serialize_any(model_request_parameters))}
-
-    @staticmethod
-    def event_to_dict(event: Event) -> dict[str, Any]:
-        if not event.body:
-            body = {}  # pragma: no cover
-        elif isinstance(event.body, Mapping):
-            body = event.body  # type: ignore
-        else:
-            body = {'body': event.body}
-        return {**body, **(event.attributes or {})}
-
-    @staticmethod
-    def serialize_any(value: Any) -> str:
-        try:
-            return ANY_ADAPTER.dump_python(value, mode='json')
-        except Exception:
-            try:
-                return str(value)
-            except Exception as e:
-                return f'Unable to serialize: {e}'
+                    finish(
+                        response_stream.get(),
+                        time_to_first_chunk=response_stream.time_to_first_chunk(request_start),
+                    )
 
 
-class CostCalculationFailedWarning(Warning):
-    """Warning raised when cost calculation fails."""
+def _shape_differs(expected: list[list[bool] | None], otel_messages: list[_otel_messages.ChatMessage]) -> bool:
+    """Whether `otel_messages` lacks the shape the default conversion gives, so the parts to mark can't be told apart."""
+    return len(expected) != len(otel_messages) or any(
+        marks is not None
+        and (
+            len(marks) != len(otel_message['parts'])
+            or any(mark and part['type'] != 'text' for mark, part in zip(marks, otel_message['parts']))
+        )
+        for marks, otel_message in zip(expected, otel_messages)
+    )
+
+
+def _holds_request_scoped_prompt(message: ModelMessage) -> bool:
+    """Whether `message` is a request holding a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt."""
+    return isinstance(message, ModelRequest) and any(_is_request_scoped(part) for part in message.parts)
+
+
+def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.Role:
+    """The GenAI role of the message a request part belongs in.
+
+    Consecutive parts sharing a role make up one message, so a request carrying a tool return and a
+    user prompt splits into a `tool` message followed by a `user` one.
+
+    From version 6 on, a part that renders as a `tool_call_response` takes the `tool` role the
+    semantic conventions pair it with, which is also the channel the adapters send it on: a tool
+    return and a retry naming a tool both reach OpenAI as `role='tool'`, a retry naming none as
+    `role='user'`. Earlier versions keep those parts on `user`, so a consumer written against them
+    keeps reading the role it was built for.
+
+    `RetryFeedbackPart` sits on that same boundary, for the same reason. From version 6 on it takes
+    the voice it reaches the model in, which its `retry.cause` decides: `user` for a
+    `'validation_error'` or `'model_retry'`, either of which can quote back what the model wrote, and
+    `system` for `'no_output'`, whose text is the framework's own. Earlier versions keep every cause
+    on `user`, so a consumer written against them keeps reading the role it was built for — and for
+    every cause but `'no_output'` that is already the role the wire uses. Only `pydantic_ai.all_messages` moves at all: a request span records the
+    history after `prepare_messages` has already translated the part, except on a decision model,
+    which is handed the part itself.
+
+    `ToolAvailabilityDeltaPart`, like `CapabilityLoadDeltaPart`, gets `system` as the least-bad fit in a closed
+    vocabulary, not as a mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the
+    set of tools changed", while the wire form varies by model: a real `SystemPromptPart` where there is no native
+    channel, a `role='system'` entry carrying `tool_addition` blocks on Anthropic, a roleless `additional_tools` item on
+    OpenAI Responses, a tool-search exchange where schemas are withheld. `tool` is the one role that would actively
+    mislead, being paired with `tool_call_response`.
+    """
+    if (
+        isinstance(
+            part,
+            SystemPromptPart
+            | ToolAvailabilityDeltaPart
+            | CapabilityLoadDeltaPart
+            | InstructionDeltaPart
+            | ModelSettingsDeltaPart,
+        )
+        or (version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part))
+        or (isinstance(part, CapabilityPart) and effective_authority(part) == 'operator')
+    ):
+        return 'system'
+    # TODO(v3): remove `RetryPromptPart`, still reachable here because `pydantic_ai.all_messages`
+    # records the stored history rather than the prepared one.
+    elif version >= 6 and (
+        isinstance(part, BaseToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)  # pyright: ignore[reportDeprecated]
+    ):
+        return 'tool'
+    else:
+        return 'user'

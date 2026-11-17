@@ -1,6 +1,13 @@
+---
+description: "Use open source models like Qwen and DeepSeek through Hugging Face Inference Providers with Pydantic AI, choosing the provider and the organization billed."
+---
+
 # Hugging Face
 
 [Hugging Face](https://huggingface.co/) is an AI platform with all major open source models, datasets, MCPs, and demos. You can use [Inference Providers](https://huggingface.co/docs/inference-providers) to run open source models like DeepSeek R1 on scalable serverless infrastructure.
+
+!!! tip "Local embeddings via Sentence Transformers"
+    This page covers chat completions via Hugging Face Inference Providers. To run Hugging Face **embedding** models locally (no API key, no network calls), see the [Sentence Transformers embedding model](../embeddings.md#sentence-transformers-local), which works with any model in the [sentence-transformers library](https://www.sbert.net/docs/sentence_transformer/pretrained_models.html).
 
 ## Install
 
@@ -93,3 +100,27 @@ model = HuggingFaceModel(
 agent = Agent(model)
 ...
 ```
+
+## Logprobs
+
+You can return logprobs from the model by setting `huggingface_logprobs` and `huggingface_top_logprobs` in the [`HuggingFaceModelSettings`][pydantic_ai.models.huggingface.HuggingFaceModelSettings]. They are returned under `provider_details['logprobs']`, for both streamed and non-streamed requests; a streamed response sets them once the stream has finished. Logprobs are not requested by default, so `provider_details` has no `logprobs` key unless `huggingface_logprobs` is set.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.huggingface import HuggingFaceModel, HuggingFaceModelSettings
+
+model = HuggingFaceModel('Qwen/Qwen3-235B-A22B')
+settings = HuggingFaceModelSettings(huggingface_logprobs=True, huggingface_top_logprobs=2)
+agent = Agent(model, model_settings=settings)
+
+result = agent.run_sync('Your prompt here')
+provider_details = result.response.provider_details or {}
+logprobs = provider_details.get('logprobs')
+```
+
+Support depends on the selected inference provider and model. `huggingface_top_logprobs` must be between 0 and 5 and requires `huggingface_logprobs=True`; see the [Hugging Face chat completion parameters](https://huggingface.co/docs/inference-providers/tasks/chat-completion#request).
+
+## Streaming cancellation
+
+!!! note "Transport cancellation"
+    [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] safely interrupts an active local stream pull, including one running in another task. `huggingface_hub.AsyncInferenceClient` keeps the HTTP response in a client-owned exit stack and exposes no documented per-stream transport handle, so closing the returned iterator does not guarantee immediate HTTP teardown or when remote generation and billing stop. See [huggingface/huggingface_hub#4224](https://github.com/huggingface/huggingface_hub/issues/4224).

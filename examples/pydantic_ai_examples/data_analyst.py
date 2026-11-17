@@ -5,11 +5,12 @@ import duckdb
 import pandas as pd
 
 from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai.capabilities import Caching
 
 
 @dataclass
 class AnalystAgentDeps:
-    output: dict[str, pd.DataFrame] = field(default_factory=dict)
+    output: dict[str, pd.DataFrame] = field(default_factory=dict[str, pd.DataFrame])
 
     def store(self, value: pd.DataFrame) -> str:
         """Store the output in deps and return the reference such as Out[1] to be used by the LLM."""
@@ -26,9 +27,10 @@ class AnalystAgentDeps:
 
 
 analyst_agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=AnalystAgentDeps,
     instructions='You are a data analyst and your job is to analyze the data according to the user request.',
+    capabilities=[Caching()],
 )
 
 
@@ -47,7 +49,7 @@ def load_dataset(
     """
     # begin load data from hf
     builder = datasets.load_dataset_builder(path)  # pyright: ignore[reportUnknownMemberType]
-    splits: dict[str, datasets.SplitInfo] = builder.info.splits or {}  # pyright: ignore[reportUnknownMemberType]
+    splits: dict[str, datasets.SplitInfo] = builder.info.splits or {}
     if split not in splits:
         raise ModelRetry(
             f'{split} is not valid for dataset {path}. Valid splits are {",".join(splits.keys())}'
@@ -87,7 +89,7 @@ def run_duckdb(ctx: RunContext[AnalystAgentDeps], dataset: str, sql: str) -> str
     data = ctx.deps.get(dataset)
     result = duckdb.query_df(df=data, virtual_table_name='dataset', sql_query=sql)
     # pass the result as ref (because DuckDB SQL can select many rows, creating another huge dataframe)
-    ref = ctx.deps.store(result.df())  # pyright: ignore[reportUnknownMemberType]
+    ref = ctx.deps.store(result.df())
     return f'Executed SQL, result is `{ref}`'
 
 

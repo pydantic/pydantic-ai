@@ -1,0 +1,1020 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1426'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: 'Complete both tasks in order before answering: use tool search to find and call the weather tool for Paris;
+          then load the refunds capability and call its refund-policy tool for order-123.'
+        role: user
+      instructions: |-
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
+        - refunds: Refund policy tools.
+      model: gpt-5.6-sol
+      reasoning:
+        context: all_turns
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
+        name: load_capability
+        parameters:
+          additionalProperties: false
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Get the current weather in a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4669'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '2738'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785861674
+      created_at: 1785861671
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0340ae0a8b1cb97e006a721627d6ec8193814a86d0263fabb7
+      incomplete_details: null
+      instructions: |-
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
+        - refunds: Refund policy tools.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqchYqlw1tH_IUQkDiR_YsWYqIoMO-J0n0DyTNzcbpULANJ9sv3GCY1hTuoOdw3JSq9y_NmCLYma59QX5s06oyrpZVIbJQKKbBbeyCkMehhBX9mjJ_xG2ySdzcZ9aZND5yryOJ8G-sNpzmOCQ5MTBEMdSMNzXzHWnnjI6yM8q1hvqKtM7AtYtdgJUyufaQbFZRHamtrCSV9s1V9OBSRBMZsSpcSJvzD-f-9rosci29oVzJiRpQuv9WP3U48AWuapRPj-sJZO_l85cMY286pa62DZAEI-YNK0TUuTbzFo6S-x_-qaEIFNyHF6LbWy-EpPfvyyDYUUiiu0QeXLlNgLRBBOGjfwbQpUqxjRLBieAeHY0dNFuy-5NytVkCfCrkp_C01sU7xbU71rEexbUmYaQcangGOh5_5s0F1WPX7vZmF-L_A9VkZhrBilgAQv4BlOz5jMKCQsa8eONH842K-9F8zw3FEyU0SdGNBlXTaH-0HBg7OXzhG8zWFrq9AaaknoknrtVExoSQKh7HlVC0_cMJsg8_qSrpERNodswBC8yix3Pj05kfSi3RcKHYNKycd-ZbxeADG_HDfpY3qJseT8MYrkiIqwBYIYvxNt_lEZwAW107ji8O7iCIIgK-xtZUUWFi3bKYCi51bR-KbYt3_9GnyR-XtxL55FuPO7UPTL63bB-GjgymqYwxopnl8uP7Zj2Ii5k4Xtai1u1_KPRiBw_B4Mo1-EnT5SklxS190Ca5JJ7i_cxKAtE4bGaV7C0x3pnbdQOd2zHwfurdpXk-ynMcXG0oYI3SCEVEcjpY-BUgiODJWF31qJe6pWDzskA8TUXDtyALV3cGffUY17IaKuAxWjHsBPJb9Zi7g0FlIn-ZeRtMmufosxmtf2uiSO14KZ80guLYCiXtsfXYTsr2_NqHsFqcxvmgOBV0SNuAGWTkpxsImUHvFK_GBWxJhk_8lkEHHXbbNib6-EfwdvPOty5LqERBI2FzcJgucgEru85PVwshzgPQgcuDJmdWySzj3jFxnZYq1_J1wkm9K0dkyfj4jZ6sJFauxAkP34M4PAk88fzujA_Scy_Qa_5dx-zMcx5BAT7yHc7IIyWZ7U8VZZaot-q1AZ-QlDm8NVRYqbeOUW2iT3o=
+        id: rs_0340ae0a8b1cb97e006a721628d74881939148cd17d5552fde
+        summary: []
+        type: reasoning
+      - arguments:
+          paths:
+          - get_weather
+        call_id: null
+        execution: server
+        id: tsc_0340ae0a8b1cb97e006a72162958188193af444149f7c49678
+        status: completed
+        type: tool_search_call
+      - call_id: null
+        execution: server
+        id: tso_0340ae0a8b1cb97e006a72162978e08193bcf7d846e6756420
+        status: completed
+        tools:
+        - defer_loading: true
+          description: Get the current weather in a city.
+          name: get_weather
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+          type: function
+        type: tool_search_output
+      - arguments: '{"city":"Paris"}'
+        call_id: call_Fx8dukHYEhxmz6mkFyhBNMZo
+        id: fc_0340ae0a8b1cb97e006a72162a28c0819389daf38269da84cf
+        name: get_weather
+        namespace: get_weather
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
+        name: load_capability
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Get the current weather in a city.
+        name: get_weather
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - description: null
+        parameters: null
+        type: tool_search
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 748
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 72
+        output_tokens_details:
+          reasoning_tokens: 54
+        total_tokens: 820
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '3671'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: 'Complete both tasks in order before answering: use tool search to find and call the weather tool for Paris;
+          then load the refunds capability and call its refund-policy tool for order-123.'
+        role: user
+      - encrypted_content: gAAAAABqchYqlw1tH_IUQkDiR_YsWYqIoMO-J0n0DyTNzcbpULANJ9sv3GCY1hTuoOdw3JSq9y_NmCLYma59QX5s06oyrpZVIbJQKKbBbeyCkMehhBX9mjJ_xG2ySdzcZ9aZND5yryOJ8G-sNpzmOCQ5MTBEMdSMNzXzHWnnjI6yM8q1hvqKtM7AtYtdgJUyufaQbFZRHamtrCSV9s1V9OBSRBMZsSpcSJvzD-f-9rosci29oVzJiRpQuv9WP3U48AWuapRPj-sJZO_l85cMY286pa62DZAEI-YNK0TUuTbzFo6S-x_-qaEIFNyHF6LbWy-EpPfvyyDYUUiiu0QeXLlNgLRBBOGjfwbQpUqxjRLBieAeHY0dNFuy-5NytVkCfCrkp_C01sU7xbU71rEexbUmYaQcangGOh5_5s0F1WPX7vZmF-L_A9VkZhrBilgAQv4BlOz5jMKCQsa8eONH842K-9F8zw3FEyU0SdGNBlXTaH-0HBg7OXzhG8zWFrq9AaaknoknrtVExoSQKh7HlVC0_cMJsg8_qSrpERNodswBC8yix3Pj05kfSi3RcKHYNKycd-ZbxeADG_HDfpY3qJseT8MYrkiIqwBYIYvxNt_lEZwAW107ji8O7iCIIgK-xtZUUWFi3bKYCi51bR-KbYt3_9GnyR-XtxL55FuPO7UPTL63bB-GjgymqYwxopnl8uP7Zj2Ii5k4Xtai1u1_KPRiBw_B4Mo1-EnT5SklxS190Ca5JJ7i_cxKAtE4bGaV7C0x3pnbdQOd2zHwfurdpXk-ynMcXG0oYI3SCEVEcjpY-BUgiODJWF31qJe6pWDzskA8TUXDtyALV3cGffUY17IaKuAxWjHsBPJb9Zi7g0FlIn-ZeRtMmufosxmtf2uiSO14KZ80guLYCiXtsfXYTsr2_NqHsFqcxvmgOBV0SNuAGWTkpxsImUHvFK_GBWxJhk_8lkEHHXbbNib6-EfwdvPOty5LqERBI2FzcJgucgEru85PVwshzgPQgcuDJmdWySzj3jFxnZYq1_J1wkm9K0dkyfj4jZ6sJFauxAkP34M4PAk88fzujA_Scy_Qa_5dx-zMcx5BAT7yHc7IIyWZ7U8VZZaot-q1AZ-QlDm8NVRYqbeOUW2iT3o=
+        id: rs_0340ae0a8b1cb97e006a721628d74881939148cd17d5552fde
+        summary: []
+        type: reasoning
+      - arguments:
+          queries:
+          - get_weather
+        call_id: null
+        execution: server
+        id: tsc_0340ae0a8b1cb97e006a72162958188193af444149f7c49678
+        status: completed
+        type: tool_search_call
+      - call_id: null
+        execution: server
+        id: tso_0340ae0a8b1cb97e006a72162978e08193bcf7d846e6756420
+        status: completed
+        tools:
+        - defer_loading: true
+          description: Get the current weather in a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+          type: function
+        type: tool_search_output
+      - arguments: '{"city":"Paris"}'
+        call_id: call_Fx8dukHYEhxmz6mkFyhBNMZo
+        id: fc_0340ae0a8b1cb97e006a72162a28c0819389daf38269da84cf
+        name: get_weather
+        namespace: get_weather
+        type: function_call
+      - call_id: call_Fx8dukHYEhxmz6mkFyhBNMZo
+        output: 'Weather in Paris: sunny'
+        type: function_call_output
+      instructions: |-
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
+        - refunds: Refund policy tools.
+      model: gpt-5.6-sol
+      reasoning:
+        context: all_turns
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
+        name: load_capability
+        parameters:
+          additionalProperties: false
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Get the current weather in a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2787'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1148'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785861675
+      created_at: 1785861674
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0340ae0a8b1cb97e006a72162aa658819389843487137e6e1d
+      incomplete_details: null
+      instructions: |-
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
+        - refunds: Refund policy tools.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - arguments: '{"id":"refunds"}'
+        call_id: call_jqS4MBNMCfhuxTPNzyphTuIc
+        id: fc_0340ae0a8b1cb97e006a72162b78c481938eb49c049e81672b
+        name: load_capability
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
+        name: load_capability
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        strict: true
+        type: function
+      - description: null
+        parameters: null
+        type: tool_search
+      - description: Get the current weather in a city.
+        name: get_weather
+        tools:
+        - description: Get the current weather in a city.
+          name: get_weather
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+          type: function
+        type: namespace
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 405
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 20
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 425
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '4292'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: 'Complete both tasks in order before answering: use tool search to find and call the weather tool for Paris;
+          then load the refunds capability and call its refund-policy tool for order-123.'
+        role: user
+      - encrypted_content: gAAAAABqchYqlw1tH_IUQkDiR_YsWYqIoMO-J0n0DyTNzcbpULANJ9sv3GCY1hTuoOdw3JSq9y_NmCLYma59QX5s06oyrpZVIbJQKKbBbeyCkMehhBX9mjJ_xG2ySdzcZ9aZND5yryOJ8G-sNpzmOCQ5MTBEMdSMNzXzHWnnjI6yM8q1hvqKtM7AtYtdgJUyufaQbFZRHamtrCSV9s1V9OBSRBMZsSpcSJvzD-f-9rosci29oVzJiRpQuv9WP3U48AWuapRPj-sJZO_l85cMY286pa62DZAEI-YNK0TUuTbzFo6S-x_-qaEIFNyHF6LbWy-EpPfvyyDYUUiiu0QeXLlNgLRBBOGjfwbQpUqxjRLBieAeHY0dNFuy-5NytVkCfCrkp_C01sU7xbU71rEexbUmYaQcangGOh5_5s0F1WPX7vZmF-L_A9VkZhrBilgAQv4BlOz5jMKCQsa8eONH842K-9F8zw3FEyU0SdGNBlXTaH-0HBg7OXzhG8zWFrq9AaaknoknrtVExoSQKh7HlVC0_cMJsg8_qSrpERNodswBC8yix3Pj05kfSi3RcKHYNKycd-ZbxeADG_HDfpY3qJseT8MYrkiIqwBYIYvxNt_lEZwAW107ji8O7iCIIgK-xtZUUWFi3bKYCi51bR-KbYt3_9GnyR-XtxL55FuPO7UPTL63bB-GjgymqYwxopnl8uP7Zj2Ii5k4Xtai1u1_KPRiBw_B4Mo1-EnT5SklxS190Ca5JJ7i_cxKAtE4bGaV7C0x3pnbdQOd2zHwfurdpXk-ynMcXG0oYI3SCEVEcjpY-BUgiODJWF31qJe6pWDzskA8TUXDtyALV3cGffUY17IaKuAxWjHsBPJb9Zi7g0FlIn-ZeRtMmufosxmtf2uiSO14KZ80guLYCiXtsfXYTsr2_NqHsFqcxvmgOBV0SNuAGWTkpxsImUHvFK_GBWxJhk_8lkEHHXbbNib6-EfwdvPOty5LqERBI2FzcJgucgEru85PVwshzgPQgcuDJmdWySzj3jFxnZYq1_J1wkm9K0dkyfj4jZ6sJFauxAkP34M4PAk88fzujA_Scy_Qa_5dx-zMcx5BAT7yHc7IIyWZ7U8VZZaot-q1AZ-QlDm8NVRYqbeOUW2iT3o=
+        id: rs_0340ae0a8b1cb97e006a721628d74881939148cd17d5552fde
+        summary: []
+        type: reasoning
+      - arguments:
+          queries:
+          - get_weather
+        call_id: null
+        execution: server
+        id: tsc_0340ae0a8b1cb97e006a72162958188193af444149f7c49678
+        status: completed
+        type: tool_search_call
+      - call_id: null
+        execution: server
+        id: tso_0340ae0a8b1cb97e006a72162978e08193bcf7d846e6756420
+        status: completed
+        tools:
+        - defer_loading: true
+          description: Get the current weather in a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+          type: function
+        type: tool_search_output
+      - arguments: '{"city":"Paris"}'
+        call_id: call_Fx8dukHYEhxmz6mkFyhBNMZo
+        id: fc_0340ae0a8b1cb97e006a72162a28c0819389daf38269da84cf
+        name: get_weather
+        namespace: get_weather
+        type: function_call
+      - call_id: call_Fx8dukHYEhxmz6mkFyhBNMZo
+        output: 'Weather in Paris: sunny'
+        type: function_call_output
+      - arguments: '{"id":"refunds"}'
+        call_id: call_jqS4MBNMCfhuxTPNzyphTuIc
+        id: fc_0340ae0a8b1cb97e006a72162b78c481938eb49c049e81672b
+        name: load_capability
+        type: function_call
+      - call_id: call_jqS4MBNMCfhuxTPNzyphTuIc
+        output: '{}'
+        type: function_call_output
+      - role: developer
+        tools:
+        - description: Look up the refund policy for an order.
+          name: lookup_refund_policy
+          parameters:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          strict: true
+          type: function
+        type: additional_tools
+      instructions: |-
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
+        - refunds: Refund policy tools.
+      model: gpt-5.6-sol
+      reasoning:
+        context: all_turns
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
+        name: load_capability
+        parameters:
+          additionalProperties: false
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Get the current weather in a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3090'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1363'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785861677
+      created_at: 1785861676
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0340ae0a8b1cb97e006a72162beac081938ef2395cf406a2e1
+      incomplete_details: null
+      instructions: |-
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
+        - refunds: Refund policy tools.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - arguments: '{"order_id":"order-123"}'
+        call_id: call_H0ROaRkHlQhzGuiJmGeEBOEt
+        id: fc_0340ae0a8b1cb97e006a72162cee70819396f28c71006c694d
+        name: lookup_refund_policy
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
+        name: load_capability
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        strict: true
+        type: function
+      - description: Look up the refund policy for an order.
+        name: lookup_refund_policy
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            order_id:
+              type: string
+          required:
+          - order_id
+          type: object
+        strict: true
+        type: function
+      - description: null
+        parameters: null
+        type: tool_search
+      - description: Get the current weather in a city.
+        name: get_weather
+        tools:
+        - description: Get the current weather in a city.
+          name: get_weather
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+          type: function
+        type: namespace
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 562
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 23
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 585
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '4657'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: 'Complete both tasks in order before answering: use tool search to find and call the weather tool for Paris;
+          then load the refunds capability and call its refund-policy tool for order-123.'
+        role: user
+      - encrypted_content: gAAAAABqchYqlw1tH_IUQkDiR_YsWYqIoMO-J0n0DyTNzcbpULANJ9sv3GCY1hTuoOdw3JSq9y_NmCLYma59QX5s06oyrpZVIbJQKKbBbeyCkMehhBX9mjJ_xG2ySdzcZ9aZND5yryOJ8G-sNpzmOCQ5MTBEMdSMNzXzHWnnjI6yM8q1hvqKtM7AtYtdgJUyufaQbFZRHamtrCSV9s1V9OBSRBMZsSpcSJvzD-f-9rosci29oVzJiRpQuv9WP3U48AWuapRPj-sJZO_l85cMY286pa62DZAEI-YNK0TUuTbzFo6S-x_-qaEIFNyHF6LbWy-EpPfvyyDYUUiiu0QeXLlNgLRBBOGjfwbQpUqxjRLBieAeHY0dNFuy-5NytVkCfCrkp_C01sU7xbU71rEexbUmYaQcangGOh5_5s0F1WPX7vZmF-L_A9VkZhrBilgAQv4BlOz5jMKCQsa8eONH842K-9F8zw3FEyU0SdGNBlXTaH-0HBg7OXzhG8zWFrq9AaaknoknrtVExoSQKh7HlVC0_cMJsg8_qSrpERNodswBC8yix3Pj05kfSi3RcKHYNKycd-ZbxeADG_HDfpY3qJseT8MYrkiIqwBYIYvxNt_lEZwAW107ji8O7iCIIgK-xtZUUWFi3bKYCi51bR-KbYt3_9GnyR-XtxL55FuPO7UPTL63bB-GjgymqYwxopnl8uP7Zj2Ii5k4Xtai1u1_KPRiBw_B4Mo1-EnT5SklxS190Ca5JJ7i_cxKAtE4bGaV7C0x3pnbdQOd2zHwfurdpXk-ynMcXG0oYI3SCEVEcjpY-BUgiODJWF31qJe6pWDzskA8TUXDtyALV3cGffUY17IaKuAxWjHsBPJb9Zi7g0FlIn-ZeRtMmufosxmtf2uiSO14KZ80guLYCiXtsfXYTsr2_NqHsFqcxvmgOBV0SNuAGWTkpxsImUHvFK_GBWxJhk_8lkEHHXbbNib6-EfwdvPOty5LqERBI2FzcJgucgEru85PVwshzgPQgcuDJmdWySzj3jFxnZYq1_J1wkm9K0dkyfj4jZ6sJFauxAkP34M4PAk88fzujA_Scy_Qa_5dx-zMcx5BAT7yHc7IIyWZ7U8VZZaot-q1AZ-QlDm8NVRYqbeOUW2iT3o=
+        id: rs_0340ae0a8b1cb97e006a721628d74881939148cd17d5552fde
+        summary: []
+        type: reasoning
+      - arguments:
+          queries:
+          - get_weather
+        call_id: null
+        execution: server
+        id: tsc_0340ae0a8b1cb97e006a72162958188193af444149f7c49678
+        status: completed
+        type: tool_search_call
+      - call_id: null
+        execution: server
+        id: tso_0340ae0a8b1cb97e006a72162978e08193bcf7d846e6756420
+        status: completed
+        tools:
+        - defer_loading: true
+          description: Get the current weather in a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+          type: function
+        type: tool_search_output
+      - arguments: '{"city":"Paris"}'
+        call_id: call_Fx8dukHYEhxmz6mkFyhBNMZo
+        id: fc_0340ae0a8b1cb97e006a72162a28c0819389daf38269da84cf
+        name: get_weather
+        namespace: get_weather
+        type: function_call
+      - call_id: call_Fx8dukHYEhxmz6mkFyhBNMZo
+        output: 'Weather in Paris: sunny'
+        type: function_call_output
+      - arguments: '{"id":"refunds"}'
+        call_id: call_jqS4MBNMCfhuxTPNzyphTuIc
+        id: fc_0340ae0a8b1cb97e006a72162b78c481938eb49c049e81672b
+        name: load_capability
+        type: function_call
+      - call_id: call_jqS4MBNMCfhuxTPNzyphTuIc
+        output: '{}'
+        type: function_call_output
+      - role: developer
+        tools:
+        - description: Look up the refund policy for an order.
+          name: lookup_refund_policy
+          parameters:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          strict: true
+          type: function
+        type: additional_tools
+      - arguments: '{"order_id":"order-123"}'
+        call_id: call_H0ROaRkHlQhzGuiJmGeEBOEt
+        id: fc_0340ae0a8b1cb97e006a72162cee70819396f28c71006c694d
+        name: lookup_refund_policy
+        namespace: lookup_refund_policy
+        type: function_call
+      - call_id: call_H0ROaRkHlQhzGuiJmGeEBOEt
+        output: 'order-123: refund allowed'
+        type: function_call_output
+      instructions: |-
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
+        - refunds: Refund policy tools.
+      model: gpt-5.6-sol
+      reasoning:
+        context: all_turns
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
+        name: load_capability
+        parameters:
+          additionalProperties: false
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Get the current weather in a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3160'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1978'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785861679
+      created_at: 1785861677
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0340ae0a8b1cb97e006a72162d63a88193bf16843986e5c181
+      incomplete_details: null
+      instructions: |-
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded -- load the capability first rather than searching for its tools:
+        - refunds: Refund policy tools.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            - **Paris weather:** Sunny
+            - **Order order-123:** Refund allowed
+          type: output_text
+        id: msg_0340ae0a8b1cb97e006a72162eb5ec8193b89bc6a9d8843cb7
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
+        name: load_capability
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        strict: true
+        type: function
+      - description: Look up the refund policy for an order.
+        name: lookup_refund_policy
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            order_id:
+              type: string
+          required:
+          - order_id
+          type: object
+        strict: true
+        type: function
+      - description: null
+        parameters: null
+        type: tool_search
+      - description: Get the current weather in a city.
+        name: get_weather
+        tools:
+        - description: Get the current weather in a city.
+          name: get_weather
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+          type: function
+        type: namespace
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 604
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 20
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 624
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

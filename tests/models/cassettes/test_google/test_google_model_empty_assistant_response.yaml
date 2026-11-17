@@ -1,9 +1,19 @@
 interactions:
 - request:
     headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '233'
       content-type:
       - application/json
-    method: post
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
     parsed_body:
       contents:
       - parts:
@@ -13,20 +23,22 @@ interactions:
         - text: ''
         role: model
       - parts:
-        - text: Empty?
+        - text: Was your previous response empty?
         role: user
-      generationConfig: {}
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+      generationConfig:
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '724'
+      - '1123'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=387
+      - gfet4t7; dur=5027
       transfer-encoding:
       - chunked
       vary:
@@ -35,25 +47,29 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.02701732359434429
-        content:
+      - content:
           parts:
-          - text: |
-              Yes, your previous message was empty.  Is there anything I can help you with?
+          - text: |-
+              As an AI, I don't retain memory of past interactions or specific conversational history in the way a human does. Each response I generate is based on the current prompt I receive.
+
+              Therefore, I cannot directly recall if my specific previous response to you was empty.
+
+              However, I am designed to always provide a response with content. If you received an empty response, it would likely indicate a technical issue or an error in the system, rather than an intentional empty output from me.
+
+              Could you please tell me what you were expecting or if you'd like me to try again?
           role: model
         finishReason: STOP
-      modelVersion: gemini-1.5-flash
-      responseId: NHt4aPycNfzcnvgP1q6EgQw
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: 148gadDlKL-mqtsP5ruwmAs
       usageMetadata:
-        candidatesTokenCount: 19
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 19
-        promptTokenCount: 3
+        candidatesTokenCount: 119
+        promptTokenCount: 10
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 3
-        totalTokenCount: 22
+          tokenCount: 10
+        thoughtsTokenCount: 699
+        totalTokenCount: 828
     status:
       code: 200
       message: OK

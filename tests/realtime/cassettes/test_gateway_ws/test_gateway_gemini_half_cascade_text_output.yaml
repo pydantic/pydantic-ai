@@ -1,0 +1,74 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: publishers/google/models/gemini-live-2.5-flash
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: Answer in one word.
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.822
+  data:
+    setupComplete:
+      sessionId: c297f8cb-2a5a-4c99-83ef-8c9bbe203542
+- kind: message
+  direction: sent
+  at: 0.832
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is two plus two?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 1.28
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: Four
+- kind: message
+  direction: received
+  at: 1.283
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: .
+- kind: message
+  direction: received
+  at: 1.284
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 1.292
+  data:
+    serverContent:
+      turnComplete: true
+      groundingMetadata: {}
+    usageMetadata:
+      promptTokenCount: 11
+      candidatesTokenCount: 2
+      totalTokenCount: 13
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 11
+      candidatesTokensDetails:
+      - modality: TEXT
+        tokenCount: 2

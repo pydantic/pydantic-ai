@@ -1,10 +1,14 @@
+---
+description: "A Pydantic AI example that streams structured output about whales, validating the data as it arrives and displaying it as a live table with rich."
+---
+
 Information about whales — an example of streamed structured response validation.
 
 Demonstrates:
 
 * [streaming structured output](../output.md#streaming-structured-output)
 
-This script streams structured responses from GPT-4 about whales, validates the data
+This script streams structured responses about whales, validates the data
 and displays it as a dynamic table using [`rich`](https://github.com/Textualize/rich) as the data is received.
 
 ## Running the Example

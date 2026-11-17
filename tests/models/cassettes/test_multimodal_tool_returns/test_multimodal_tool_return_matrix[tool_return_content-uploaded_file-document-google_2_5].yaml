@@ -1,0 +1,166 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '373'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '876'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=841
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              name: get_file
+            thoughtSignature: Cp4CAb4+9vvI6Mi1ZqYEWydIvQ/qlOiHqC6MuZjYv8yD8y0/3lSs8JaIbWXvqOV7JhyziBt0oxFT7U1kgQeY6ZHhLQC84Yvs9nvm9efmCGC/SfX+0dGoWIRgC9VsiIeYUSIsU3YRw/qqzCUzwqaw2yRYhkNZqwaWK1I+zzqqnUeh4Dg3GUozTZWBZYd0jjzO4sOXCwWPMnZU2voXRYFOSM74fnlM1sJK01qqbMkd65GpbhN2Vul1KlmIEsX2rQAMq2AXCZfGK8ggHK7D/wTlQkHzGaNiqaTOea7rGs60rqa1UjcDQReRbP2RqlhjgvFfmhqq0y3GTPfaU86l9FQNwIpOBgHUFBb4SRO2fWj02fdmoVzIqyW2JjjWTDrFytR3wg==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: J5moaembE9zgz7IP_sTe4AU
+      usageMetadata:
+        candidatesTokenCount: 10
+        promptTokenCount: 41
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 41
+        thoughtsTokenCount: 59
+        totalTokenCount: 110
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1243'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_7ef15ea3efd844c8bd45082492b883df
+            name: get_file
+          thoughtSignature: Cp4CAb4-9vvI6Mi1ZqYEWydIvQ_qlOiHqC6MuZjYv8yD8y0_3lSs8JaIbWXvqOV7JhyziBt0oxFT7U1kgQeY6ZHhLQC84Yvs9nvm9efmCGC_SfX-0dGoWIRgC9VsiIeYUSIsU3YRw_qqzCUzwqaw2yRYhkNZqwaWK1I-zzqqnUeh4Dg3GUozTZWBZYd0jjzO4sOXCwWPMnZU2voXRYFOSM74fnlM1sJK01qqbMkd65GpbhN2Vul1KlmIEsX2rQAMq2AXCZfGK8ggHK7D_wTlQkHzGaNiqaTOea7rGs60rqa1UjcDQReRbP2RqlhjgvFfmhqq0y3GTPfaU86l9FQNwIpOBgHUFBb4SRO2fWj02fdmoVzIqyW2JjjWTDrFytR3wg==
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_7ef15ea3efd844c8bd45082492b883df
+            name: get_file
+            response:
+              return_value: File attached
+        role: user
+      - parts:
+        - fileData:
+            fileUri: https://generativelanguage.googleapis.com/v1beta/files/k8plo4aq1e1w
+            mimeType: application/pdf
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1024'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1357
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: I received a file that appears to be a dummy PDF with the text "Dummy PDF file".
+            thoughtSignature: CvICAb4+9vv5HxlT97qEo7YrtYyJQgnzw/pr7QeRp3PF4Pg/uEJdHSlFKPwgGcp6p+7tO3qhvuZ1KY19k1blgFaBdxV5bggMgiylaIpD6U/EqgYIIH12K1ki4Tg9csSGkRM79sw8U/xxQXQianfUe2wA792XLy0v0dIzozExki9eepRuwah6KFwHmcGlp9Asx4T+S3zyeAJLbgNZd3PtuO9uyAR8RSqSr7vFXCda6b8ImGtgcU7QMBcacce7JajlAUxiqTFDIK5HL5AKETRBSszOkVlFOm/dsBi2O4I/daumtZZC5kcERlFVzqfu9EagKk6kThG3f/4ArNRvjmd7AWUndcKdyGINZuH531wMz2xlnTdsDATxciefWTFyPOu56+YkLVjke3boL3VclrOJsDaKMhZrfG1TT+GgXkW+2Ap0B4xRhlmwEhN+4C/JuCF7dEZODdx4X6CsAWTB2PdweHQzJx3aV2u7DcuAl5lUmcOL7+lSVg==
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: KJmoaYCKF9Tmz7IP1dXhwAc
+      usageMetadata:
+        candidatesTokenCount: 19
+        promptTokenCount: 328
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 70
+        - modality: DOCUMENT
+          tokenCount: 258
+        thoughtsTokenCount: 78
+        totalTokenCount: 425
+    status:
+      code: 200
+      message: OK
+version: 1

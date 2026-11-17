@@ -1,0 +1,39 @@
+from __future__ import annotations
+
+from dataclasses import KW_ONLY, dataclass
+from typing import Any
+
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
+
+from .abstract import AbstractCapability
+
+
+@dataclass
+class Thinking(AbstractCapability[Any]):
+    """Enables and configures model thinking/reasoning.
+
+    Uses the unified `thinking` setting in
+    [`ModelSettings`][pydantic_ai.settings.ModelSettings] to work portably across providers.
+    Provider-specific thinking settings (e.g., `anthropic_thinking`,
+    `openai_reasoning_effort`) take precedence when both are set.
+    """
+
+    effort: ThinkingLevel = True
+    """The thinking effort level.
+
+    - `True`: Enable thinking with the provider's default effort.
+    - `False`: Disable thinking, or think as little as the model allows if it can't turn thinking off.
+    - `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'`: Enable thinking at a specific effort level.
+    """
+
+    _: KW_ONLY
+
+    id: str | None = 'thinking'
+    """One-off: an agent has a single thinking configuration, so the id is fixed by default.
+
+    Two of them resolve to one via [`combine`][pydantic_ai.capabilities.AbstractCapability.combine],
+    which keeps the last. Pass a distinct `id` to keep both, or `id=None` for derived ids.
+    """
+
+    def get_model_settings(self) -> ModelSettings | None:
+        return ModelSettings(thinking=self.effort)

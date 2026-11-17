@@ -1,178 +1,384 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '388'
+      - "425"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the largest city in the user country?
-          type: text
-        role: user
-      model: claude-sonnet-4-0
-      stream: false
-      thinking:
-        budget_tokens: 3000
-        type: enabled
-      tool_choice:
-        type: auto
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties: {}
-          type: object
-        name: get_user_country
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What is the largest city in the user country?
+            type: text
+        model: claude-sonnet-5-5
+        output_config:
+          effort: max
+        stream: true
+        thinking:
+          type: adaptive
+          display: summarized
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_user_country
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '1804'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=92
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-fce076a58ae616f1a025dbb33f243240-d84bdc1975ca5b93-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - signature: ErAECkYIBhgCKkDXWAAC20zE7J5mkGHtALn3NgWU3ZoKFCe1V3U7bjWMNcGudiauKS55nBp+BwjiEcaewtuOv3xzoY+nU5eayMzbEgzV3i7LXZe0XYX8LLoaDLSTqAggpSVuxTeNvyIwOOhIgzsXvx47YkE0qL+oU2axkJnBmwVvtY1pWzhguYxGFS0xUMkeZ05orojMtzkoKpcDmEzezNUVqAMfPX9LHiuq7IgKxbBI0s7Q0y730La7ZSILhykbg0NgTTSHapazI8DyqjqLcxyLB9FrksCa5mID+lhHcuOmnAKdyTpi67ycXbTgDzomU8XciTq65VeS3NTMBjnKub5chcVXfWS7WtK8PzDafQW+1Dy1NTAGkJ+qGti7fjm5jx4XVU5rTAYLBs2AlmX+hlm/MkDT36Av42y7KFMJCbTPJ8Gqr42K/IWugS0wuJniiQHDHjoiVNLFxhyexyzJ/nfK2PrBHFUUnSJWqwMMdAy1vL3g/u3RXrX6lpbMrORIoZJBUU8z/5lg6xOsRZ657rgCiF3He7va+N/+DWpwBXwXMW+pNCOm8lw8DX8HJCh/dfikAKCt9U0rEYY5l+SKhE9t32t6026Gzy1ttnhwM8e9kKN7PmIKex85jldsSkHdI1vcAwC+kdatVCo6JePX5pGvSwUoMCXeXy/CCXZ9+C6ivxD177GnfhHXAPJpMo1c76Ez6rlM1YGL5+bDooPRTpqcGPChJXOT7lVfwoGfj4cZmycYAQ==
-        thinking: |-
-          The user is asking about the largest city in "the user country". To answer this question, I first need to determine what country the user is in. I have access to a function called "get_user_country" that can help me determine the user's country. Once I know the country, I can then provide information about the largest city in that country.
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPEct2zfZebj9CcAdSTD","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":354,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
 
-          Let me call the get_user_country function first.
-        type: thinking
-      - text: I'll help you find the largest city in your country. First, let me determine which country you're in.
-        type: text
-      - id: toolu_0173T64tx6e3FE4qvC3hF4yN
-        input: {}
-        name: get_user_country
-        type: tool_use
-      id: msg_015Jj4Jvy6ZnS7VYHdCR6AQw
-      model: claude-sonnet-4-20250514
-      role: assistant
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 397
-        output_tokens: 158
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}             }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"I"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" need to find"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the user's country first before"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I can determ"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ine its"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" largest city,"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" so I'll use"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the function to get that information."}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSxgUKEAgTGAI4AUIIdGhpbmtpbmcSDEOXdivn5hhZerWqEhoMG3hq2hJ19UDzFibgIjDp4KHgxfZhR1fE7myn4D0nm+tAdf/3Jd9h2UMfvHVeAtGli/YSPQQuM/GnGO7r8vMq4wR8Gk9dTumwsdK6dPn0P1JmbpcHn+zGTcL3TlCPRcdk79xo7xwzcxDSyodCYkh9/rSBD47SHV8Gzke2U7Id35qrgf0h4xMtUH+0UXwKaXlpVC6qzYC462bjuYOmRd4b1A+8Oi4tBfRiNFNVGajx20q7vSWuXiIA9EIveVLh50NLZYMkdjRQc0dF3gnoXTaEzS0JB3iibtOCdHWy3hpgWbS6tMTWnaD7GDvnRitYYlWqxPCFzLqrbaSynbvuMmbLcxpCvzkZWLNHmqVvqTNyLctSAiROqjuBMTUEDiaeGVlbW7CCdKhuM6AqWfWla9QRBjAlNZHBEQYpeWESsQH5FNqN/recCFTK3t7D0JfPt+wiS+4IPycXviVoM2zZAFyIeX8eNEVaS4aj4L+TD4GW7KdHxExFM65f5/GZE/zeTaZ3iMygrVTLEQUL5Oj36O6cAPXLa4wUpuT+rFZUidbxCdJ7gfV5nTmG6j74uaOwpwuHpTTpUzJU3VEt1p3d66BiK+ksIdzcLYG2+mWSiw6gt07c35RQz986SvDlBJYistRokcUCz6BETbewV7V9klI2CDAJQK8ENEC+eW1tsj5dBo6+tiwhWAF5lVpeBGIbmcG0a9G6P9V1kXj5ckDbQazXoB/fn8XDSQ0Rjospazn6haAaZHpHPkcUojy35ESU0kEOTuH4CwWsDYjYO5xgtFTTKYF10+Y0TMTFziAzjzmiIM0K5j14y7Ve7nGfyiB343UHsm4y1ptUdBWbzDK4wvcew1rAD+3UFDdmUuoAPy8H5VDwWdI29K82JsySK3n1B5tc1pRkKRgB"}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I'll start by loo"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"king up your"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" country."}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1           }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_01ScR64hSDRHQDUX7JwLinxz","name":"get_user_country","input":{},"caller":{"type":"direct"}}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2             }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":354,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":71,"output_tokens_details":{"thinking_tokens":31}}            }
+
+        event: message_stop
+        data: {"type":"message_stop"               }
+
+  recorded_at: 2026-10-25T16:01:34.443119+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '1979'
+      - "1915"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the largest city in the user country?
-          type: text
-        role: user
-      - content:
-        - signature: ErAECkYIBhgCKkDXWAAC20zE7J5mkGHtALn3NgWU3ZoKFCe1V3U7bjWMNcGudiauKS55nBp+BwjiEcaewtuOv3xzoY+nU5eayMzbEgzV3i7LXZe0XYX8LLoaDLSTqAggpSVuxTeNvyIwOOhIgzsXvx47YkE0qL+oU2axkJnBmwVvtY1pWzhguYxGFS0xUMkeZ05orojMtzkoKpcDmEzezNUVqAMfPX9LHiuq7IgKxbBI0s7Q0y730La7ZSILhykbg0NgTTSHapazI8DyqjqLcxyLB9FrksCa5mID+lhHcuOmnAKdyTpi67ycXbTgDzomU8XciTq65VeS3NTMBjnKub5chcVXfWS7WtK8PzDafQW+1Dy1NTAGkJ+qGti7fjm5jx4XVU5rTAYLBs2AlmX+hlm/MkDT36Av42y7KFMJCbTPJ8Gqr42K/IWugS0wuJniiQHDHjoiVNLFxhyexyzJ/nfK2PrBHFUUnSJWqwMMdAy1vL3g/u3RXrX6lpbMrORIoZJBUU8z/5lg6xOsRZ657rgCiF3He7va+N/+DWpwBXwXMW+pNCOm8lw8DX8HJCh/dfikAKCt9U0rEYY5l+SKhE9t32t6026Gzy1ttnhwM8e9kKN7PmIKex85jldsSkHdI1vcAwC+kdatVCo6JePX5pGvSwUoMCXeXy/CCXZ9+C6ivxD177GnfhHXAPJpMo1c76Ez6rlM1YGL5+bDooPRTpqcGPChJXOT7lVfwoGfj4cZmycYAQ==
-          thinking: |-
-            The user is asking about the largest city in "the user country". To answer this question, I first need to determine what country the user is in. I have access to a function called "get_user_country" that can help me determine the user's country. Once I know the country, I can then provide information about the largest city in that country.
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What is the largest city in the user country?
+            type: text
+        - role: assistant
+          content:
+          - thinking: |+
+              I need to find the user's country first before I can determine its largest city, so I'll use the function to get that information.
 
-            Let me call the get_user_country function first.
-          type: thinking
-        - text: I'll help you find the largest city in your country. First, let me determine which country you're in.
-          type: text
-        - id: toolu_0173T64tx6e3FE4qvC3hF4yN
-          input: {}
-          name: get_user_country
-          type: tool_use
-        role: assistant
-      - content:
-        - content: Mexico
-          is_error: false
-          tool_use_id: toolu_0173T64tx6e3FE4qvC3hF4yN
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-0
-      stream: false
-      thinking:
-        budget_tokens: 3000
-        type: enabled
-      tool_choice:
-        type: auto
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties: {}
-          type: object
-        name: get_user_country
-    uri: https://api.anthropic.com/v1/messages?beta=true
+            signature: >-
+              CAQSxgUKEAgTGAI4AUIIdGhpbmtpbmcSDEOXdivn5hhZerWqEhoMG3hq2hJ19UDzFibgIjDp4KHgxfZhR1fE7myn4D0nm+tAdf/3Jd9h2UMfvHVeAtGli/YSPQQuM/GnGO7r8vMq4wR8Gk9dTumwsdK6dPn0P1JmbpcHn+zGTcL3TlCPRcdk79xo7xwzcxDSyodCYkh9/rSBD47SHV8Gzke2U7Id35qrgf0h4xMtUH+0UXwKaXlpVC6qzYC462bjuYOmRd4b1A+8Oi4tBfRiNFNVGajx20q7vSWuXiIA9EIveVLh50NLZYMkdjRQc0dF3gnoXTaEzS0JB3iibtOCdHWy3hpgWbS6tMTWnaD7GDvnRitYYlWqxPCFzLqrbaSynbvuMmbLcxpCvzkZWLNHmqVvqTNyLctSAiROqjuBMTUEDiaeGVlbW7CCdKhuM6AqWfWla9QRBjAlNZHBEQYpeWESsQH5FNqN/recCFTK3t7D0JfPt+wiS+4IPycXviVoM2zZAFyIeX8eNEVaS4aj4L+TD4GW7KdHxExFM65f5/GZE/zeTaZ3iMygrVTLEQUL5Oj36O6cAPXLa4wUpuT+rFZUidbxCdJ7gfV5nTmG6j74uaOwpwuHpTTpUzJU3VEt1p3d66BiK+ksIdzcLYG2+mWSiw6gt07c35RQz986SvDlBJYistRokcUCz6BETbewV7V9klI2CDAJQK8ENEC+eW1tsj5dBo6+tiwhWAF5lVpeBGIbmcG0a9G6P9V1kXj5ckDbQazXoB/fn8XDSQ0Rjospazn6haAaZHpHPkcUojy35ESU0kEOTuH4CwWsDYjYO5xgtFTTKYF10+Y0TMTFziAzjzmiIM0K5j14y7Ve7nGfyiB343UHsm4y1ptUdBWbzDK4wvcew1rAD+3UFDdmUuoAPy8H5VDwWdI29K82JsySK3n1B5tc1pRkKRgB
+            type: thinking
+          - text: I'll start by looking up your country.
+            type: text
+          - id: toolu_01ScR64hSDRHQDUX7JwLinxz
+            type: tool_use
+            name: get_user_country
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: toolu_01ScR64hSDRHQDUX7JwLinxz
+            type: tool_result
+            content:
+            - text: Mexico
+              type: text
+            is_error: false
+        model: claude-sonnet-5-5
+        output_config:
+          effort: max
+        stream: true
+        thinking:
+          type: adaptive
+          display: summarized
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_user_country
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '967'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=106
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-77fe5647cc3c3e6dcedad50a3a90476f-15e3bc30f616329f-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - text: "Based on the information that you're in Mexico, the largest city in your country is **Mexico City** (Ciudad
-          de México). \n\nMexico City is not only the largest city in Mexico but also one of the largest metropolitan areas
-          in the world. The city proper has a population of approximately 9.2 million people, while the greater Mexico City
-          metropolitan area has over 21 million inhabitants, making it the most populous metropolitan area in North America.\n\nMexico
-          City serves as the country's capital and is the political, economic, and cultural center of Mexico."
-        type: text
-      id: msg_01Nab5wHvdEKMtQ49KQhyvWw
-      model: claude-sonnet-4-20250514
-      role: assistant
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 568
-        output_tokens: 117
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPEd2kcpRBqjmq1z9DTU","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":434,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null} }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}        }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Mexico City"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" is the largest city,"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" with about 9.2 million"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" people in the city proper and ro"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ughly 21-22 million"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" in the gre"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ater metropolitan area."}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSvwcKEAgTGAI4AUIIdGhpbmtpbmcSDBVvNGNLucRDci0UaxoMB828BXpZ38w1HFv4IjCSFGOX5/PwBrlYXKwqLjipoXG5M/sH+hZwHUczfdviNnDYw4N4VRoDd8Uuf9OMsgYq3AaaQq1M6xxocLZ4sDaj+Magq5skZ3GI7GWzM0zcwWHltUxyuUpUr5EjnmK3qJ+OBxi/whlnuoTtUrbRgi7yho4GaiBGHcUgMMKVarqojiuzt9tvFN+nuJh9wqvEU3Pp/AtgtkEk1cor3zcxBYMV3utCvLnwRx54YnHbDUD8UMsSbXhV3HcHjLUCRX6ALpJiVFoeshZk/TBfJZ7s/5A6Mq6EAUqpjR+c4EDo0QJwENPOQgAKFzcs8lUVgY971fr69OtH7i8PbuPSxr6+MBLd69IcBG5K1Mnh1ULm9sm02UMuPptTd4SnV+ZeXEuMtpQqnm9Q+Poi3rPAjQFzkooETOtxmg1joBKWQyH8HgBBP/aAjHrMcrWuJ131xUHStmVtTKpJimuyoeUHz2gtbQdOF/khRjhwA0h8wIZrT4yho71gsvyii6v4KUMAGOOHhOfu/Agq1SQ4G5s5Y+TLiOTPQ24Ayy8ARxxswSXwY8hgm0D4cmxPxVCibncZoPs2aVT1g/rxVlWtlgegjSFFBZyvOz1wBEQn7nPGvGlKraWtEbfEmCj3/uwJbmkc5aO2FLj+xwvM9D7BHNh9qPBwzsIJZKu+mCHuYNy7suyxle/C1RWyYfBxJMT0HnmUEJgiMaFw/jwyr51LvEQnWR4JP7WflTSdKYA9b3+Epj3WG4AdpKE9JGF6yIZc7qYJXVsu7vbpwA2SlBca/cfMKWzXk/GZb+QV5MMfPjhWNXH3nBrPlo56HY1p0bY8XNL4aSEPco1OtGf/gzsLPTdMel7z6WCmdo2ZSfxGlUsmFdMczg4o3oeWAb6fOphCqP/hgRldOO9tuFrsh2CqpdqLA7i40c8v2t/uBpigC55AueCNI0PnRIFLPq96RGM3HE8Zs0/Mql3A6/N28JlOKl7Ifb18ky+EB3XkRFXh0Xa2ACMNTC+TX4EJzApSLl/6Vwhf/e9IkkGR2WO15KlqiaOJUyoepIocUcfIPEfoN/j3XD3o/KKFy1ibVDCQAxh2+ze9jGKqdmJZzgs3ZO4ZcgCHzX5NC9BZ5rzjhEpYPrxD9YMvY8uIDnK/OrnUo4piBGWGrbxm/wgDqp5yZOIyU52AjIX6yFEXINtCw5VHG2cMLgySmIqnKH2SKpfgXAVCKl+7i4sIVhgB"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"The larg"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"est city in Mexico is"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" **Mexico City**"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" (Ciudad de México"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"),"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" which"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" is also the cap"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ital.\n\n- **City proper"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":":** about"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 9.2 million people ("}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"2020 census).\n- **"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Metropolitan area:"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** about 21–22 million"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" people."}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" This"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" makes it one of the largest"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" ur"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ban areas in the"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Western"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Hemisphere."}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nIt s"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"its in"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Valley"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" of Mexico at an"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" el"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"evation of about 2,240"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" me"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ters (7,350"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" fe"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"et). It was built on the site"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" of the Aztec cap"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ital,"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Tenochtitlan"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"."}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1         }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":434,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":270,"output_tokens_details":{"thinking_tokens":108}}               }
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+  recorded_at: 2026-10-25T16:01:41.987526+00:00

@@ -1,0 +1,50 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - dbc45e7a-b725-48ed-b793-070573cfcbc1
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "126"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: "Reply with the single word: ok"
+        system: []
+        inferenceConfig: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "221"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 549
+        output:
+          message:
+            content:
+            - text: ok
+            role: assistant
+        stopReason: end_turn
+        usage:
+          inputTokens: 7
+          outputTokens: 2
+          serverToolUsage: {}
+          totalTokens: 9
+  recorded_at: 2026-10-20T23:00:13.359092+00:00

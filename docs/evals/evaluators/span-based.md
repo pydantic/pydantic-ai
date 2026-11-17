@@ -1,9 +1,16 @@
+---
+description: "Evaluate how an AI system behaved, not only what it returned, by querying the OpenTelemetry spans from a run with span-based evaluators in Pydantic Evals."
+---
+
 # Span-Based Evaluation
 
 Evaluate AI system behavior by analyzing OpenTelemetry spans captured during execution.
 
-!!! note "Requires Logfire"
-    Span-based evaluation requires `logfire` to be installed and configured:
+!!! note "Requires the logfire SDK"
+    These evaluators read the OpenTelemetry span tree captured during the run, so the
+    [`logfire`](../how-to/logfire-integration.md) SDK must be installed and configured. No Pydantic Logfire
+    account is needed: the SDK captures spans locally.
+
     ```bash
     pip install 'pydantic-evals[logfire]'
     ```
@@ -55,6 +62,7 @@ from pydantic_evals.evaluators import HasMatchingSpan
 logfire.configure(send_to_logfire='if-token-present')
 
 dataset = Dataset(
+    name='span_basic',
     cases=[Case(inputs='test')],
     evaluators=[
         # Check that database was queried
@@ -80,6 +88,19 @@ HasMatchingSpan(
 ```
 
 **Returns:** `bool` - `True` if any span matches the query
+
+### Checking every span
+
+`not_` negates a condition on one span, so `HasMatchingSpan(query={'not_': X})` passes whenever any span fails `X`,
+even if another span matches it. To check every span, anchor the query on the task's root span and put the
+violating condition under `no_descendant_has`, as `safe_execution` in [Verify Tool Usage](#verify-tool-usage) does:
+`{'name_equals': 'task_execution', 'no_descendant_has': {'name_contains': 'delete_database'}}`.
+
+This assumes the task wraps all its work in one root span, here `with logfire.span('task_execution'):`. Spans
+outside that root aren't checked, and the check fails if the root is missing. If the root span itself can violate
+the condition, also add it under `not_`, as the `no_errors` example in [Error Detection](#error-detection) does. To
+check every span without relying on a root, write a [custom evaluator](#custom-evaluators-with-spantree) that
+returns `not ctx.span_tree.any(query)`.
 
 ## SpanQuery Reference
 
@@ -112,6 +133,21 @@ Match spans with specific attributes:
 {'has_attribute_keys': ['user_id', 'request_id']}
 ```
 
+`has_attributes` compares [values](#spannode-properties) with `==`. A dictionary or list query also matches an
+attribute containing its JSON serialization, as emitted by instrumentation such as Logfire.
+
+### Status Conditions
+
+Match spans by their [status][pydantic_evals.otel.SpanStatus]:
+
+```python
+# Spans that recorded an error
+{'has_status': 'error'}
+
+# Spans explicitly marked OK (note: successful spans are typically 'unset', not 'ok')
+{'has_status': 'ok'}
+```
+
 ### Duration Conditions
 
 Match based on execution time:
@@ -130,6 +166,8 @@ from datetime import timedelta
 # Range
 {'min_duration': 0.5, 'max_duration': 2.0}
 ```
+
+In a [dataset file](../how-to/dataset-serialization.md), a duration can also be an ISO-8601 string such as `PT5S`, which is how [`Dataset.to_file`][pydantic_evals.dataset.Dataset.to_file] writes a `timedelta`.
 
 ### Logical Operators
 
@@ -168,7 +206,7 @@ Query relationships between spans:
 {'all_children_have': {'max_duration': 0.5}}
 
 # No children match query
-{'no_child_has': {'has_attributes': {'error': True}}}
+{'no_child_has': {'has_status': 'error'}}
 
 # Descendant queries (recursive)
 {'min_descendant_count': 5}
@@ -187,7 +225,7 @@ Query span hierarchy:
 # Ancestor queries
 {'some_ancestor_has': {'name_equals': 'agent_run'}}
 {'all_ancestors_have': {'max_duration': 10.0}}
-{'no_ancestor_has': {'has_attributes': {'error': True}}}
+{'no_ancestor_has': {'has_status': 'error'}}
 ```
 
 ### Stop Recursing
@@ -213,6 +251,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import HasMatchingSpan
 
 dataset = Dataset(
+    name='tool_verification',
     cases=[Case(inputs='test')],
     evaluators=[
         # Must call search tool
@@ -223,7 +262,10 @@ dataset = Dataset(
 
         # Must NOT call dangerous tool
         HasMatchingSpan(
-            query={'not_': {'name_contains': 'delete_database'}},
+            query={
+                'name_equals': 'task_execution',
+                'no_descendant_has': {'name_contains': 'delete_database'},
+            },
             evaluation_name='safe_execution',
         ),
     ],
@@ -264,12 +306,15 @@ Ensure operations meet latency requirements:
 from pydantic_evals.evaluators import HasMatchingSpan
 
 evaluators = [
-    # Database queries should be fast
+    # Every database query took at most 100ms
     HasMatchingSpan(
-        query={'and_': [
-            {'name_contains': 'database'},
-            {'max_duration': 0.1},  # 100ms max
-        ]},
+        query={
+            'name_equals': 'task_execution',
+            'no_descendant_has': {
+                'name_contains': 'database',
+                'not_': {'max_duration': 0.1},
+            },
+        },
         evaluation_name='fast_db_queries',
     ),
 
@@ -286,15 +331,26 @@ evaluators = [
 
 ### Error Detection
 
-Check for error conditions:
+Check for error conditions using span [status][pydantic_evals.otel.SpanStatus]:
 
 ```python
 from pydantic_evals.evaluators import HasMatchingSpan
 
 evaluators = [
-    # No errors occurred
+    # An error occurred somewhere in the trace
     HasMatchingSpan(
-        query={'not_': {'has_attributes': {'error': True}}},
+        query={'has_status': 'error'},
+        evaluation_name='had_errors',
+    ),
+
+    # No errors occurred: since HasMatchingSpan passes if *any* span matches,
+    # anchor the query on the root span and check it and all its descendants
+    HasMatchingSpan(
+        query={
+            'name_equals': 'task_execution',
+            'not_': {'has_status': 'error'},
+            'no_descendant_has': {'has_status': 'error'},
+        },
         evaluation_name='no_errors',
     ),
 
@@ -304,13 +360,15 @@ evaluators = [
         evaluation_name='had_retries',
     ),
 
-    # Fallback was used
+    # A model request attempt failed, so another one was made
     HasMatchingSpan(
-        query={'name_contains': 'fallback_model'},
-        evaluation_name='used_fallback',
+        query={'name_contains': 'model request attempt'},
+        evaluation_name='had_failed_attempts',
     ),
 ]
 ```
+
+Each attempt at a model request that failed or was rejected gets a `model request attempt <model name>` span, whether [`ModelFallback`](../../capabilities/model-fallback.md#failed-attempts-and-telemetry), a [`FallbackModel`](../../models/overview.md#failed-attempts-and-usage) or another capability that raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] moved on from it, so it shows that the request was attempted again, not that it fell back to another model. The span's `gen_ai.request.model` attribute names the model it tried.
 
 ### Complex Behavioral Checks
 
@@ -329,7 +387,7 @@ evaluators = [
         evaluation_name='used_delegation',
     ),
 
-    # Made multiple LLM calls with retries
+    # An LLM call span has a retry and at least 3 descendant spans
     HasMatchingSpan(
         query={'and_': [
             {'name_contains': 'llm_call'},
@@ -384,9 +442,9 @@ from pydantic_evals.otel import SpanTree
 # Example API (requires span_tree from context)
 def example_api(span_tree: SpanTree) -> None:
     span_tree.find(lambda n: True)  # Find all matching nodes
+    span_tree.first({'name_contains': 'test'})  # Find the first matching node
     span_tree.any({'name_contains': 'test'})  # Check if any span matches
-    span_tree.all({'name_contains': 'test'})  # Check if all spans match
-    span_tree.count({'name_contains': 'test'})  # Count matching spans
+    len(span_tree.find({'name_contains': 'test'}))  # Count matching spans
 
     # Iteration
     for node in span_tree:
@@ -394,6 +452,10 @@ def example_api(span_tree: SpanTree) -> None:
 ```
 
 ### SpanNode Properties
+
+Attributes support strings, booleans, numbers, nested dictionaries, mixed lists, and `None`. JSON-compatible values
+retain their structure across a span-tree JSON round trip. Byte-string attributes serialize as UTF-8 text;
+serializing a span tree containing invalid UTF-8 raises an error.
 
 Each [`SpanNode`][pydantic_evals.otel.SpanNode] has:
 
@@ -408,6 +470,7 @@ def example_properties(node: SpanNode) -> None:
     _ = node.attributes  # dict[str, AttributeValue]
     _ = node.start_timestamp  # datetime
     _ = node.end_timestamp  # datetime
+    _ = node.status  # 'unset' | 'ok' | 'error'
     _ = node.children  # list[SpanNode]
     _ = node.descendants  # list[SpanNode] (recursive)
     _ = node.ancestors  # list[SpanNode]
@@ -442,9 +505,10 @@ Test queries incrementally:
 
 ```python
 from pydantic_evals.evaluators import HasMatchingSpan
+from pydantic_evals.otel import SpanQuery
 
 # Start simple
-query = {'name_contains': 'tool'}
+query: SpanQuery = {'name_contains': 'tool'}
 
 # Add conditions gradually
 query = {'and_': [
@@ -512,13 +576,15 @@ evaluators = [
         evaluation_name='delegated_correctly',
     ),
 
-    # No circular delegation
+    # No circular delegation: the master agent never runs inside itself
     HasMatchingSpan(
-        query={'not_': {'and_': [
-            {'name_contains': 'agent'},
-            {'some_descendant_has': {'name_contains': 'agent'}},
-            {'some_ancestor_has': {'name_contains': 'agent'}},
-        ]}},
+        query={
+            'name_equals': 'task_execution',
+            'no_descendant_has': {
+                'name_equals': 'master_agent',
+                'some_ancestor_has': {'name_equals': 'master_agent'},
+            },
+        },
         evaluation_name='no_circular_delegation',
     ),
 ]
@@ -541,16 +607,21 @@ evaluators = [
         evaluation_name='searched_before_answering',
     ),
 
-    # Limited tool calls (no loops)
+    # No tool span has more than 5 child spans (no loops)
     HasMatchingSpan(
-        query={'and_': [
-            {'name_contains': 'tool'},
-            {'max_child_count': 5},
-        ]},
+        query={
+            'name_equals': 'task_execution',
+            'no_descendant_has': {
+                'name_contains': 'tool',
+                'not_': {'max_child_count': 5},
+            },
+        },
         evaluation_name='reasonable_tool_usage',
     ),
 ]
 ```
+
+To cap the total number of tool calls in a run, use [`MaxToolCalls`][pydantic_evals.evaluators.MaxToolCalls].
 
 ## Best Practices
 
@@ -564,4 +635,4 @@ evaluators = [
 
 - **[Logfire Integration](../how-to/logfire-integration.md)** - Set up Logfire for span capture
 - **[Custom Evaluators](custom.md)** - Write advanced span analysis
-- **[Built-in Evaluators](built-in.md)** - Other evaluator types
+- **[Native Evaluators](built-in.md)** - Other evaluator types

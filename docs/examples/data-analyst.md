@@ -1,3 +1,7 @@
+---
+description: "A Pydantic AI data analyst agent example that loads a Hugging Face dataset into pandas and queries it with DuckDB SQL, sharing DataFrames between tools in deps."
+---
+
 # Data Analyst
 
 Sometimes in an agent workflow, the agent does not need to know the exact tool
@@ -45,8 +49,8 @@ Output (debug):
 This example requires using a model that understands DuckDB SQL. You can check with `clai`:
 
 ```sh
-> clai -m bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0
-clai - Pydantic AI CLI v0.0.1.dev920+41dd069 with bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0
+> clai -m bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0
+clai - Pydantic AI CLI v0.0.1.dev920+41dd069 with bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0
 clai ➤ do you understand duckdb sql?
 # DuckDB SQL
 

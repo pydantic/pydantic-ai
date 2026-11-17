@@ -1,0 +1,50 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages/count_tokens?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "193"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: What is 2 + 2?
+            type: text
+        model: claude-sonnet-5-5
+        tool_choice:
+          type: auto
+        tools:
+        - name: memory
+          type: memory_20250818
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "22"
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=30
+    body:
+      type: json
+      content:
+        input_tokens: 1741
+  recorded_at: 2026-10-25T05:23:28.436215+00:00

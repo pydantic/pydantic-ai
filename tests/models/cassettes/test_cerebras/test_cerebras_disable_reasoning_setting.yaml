@@ -1,0 +1,75 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '155'
+      content-type:
+      - application/json
+      host:
+      - api.cerebras.ai
+    method: POST
+    parsed_body:
+      clear_thinking: false
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: zai-glm-4.7
+      reasoning_effort: none
+      stream: false
+    uri: https://api.cerebras.ai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '708'
+      content-type:
+      - application/json
+      inference-id:
+      - chatcmpl-a1af5a3c-1d9d-49ed-9a71-d1e159177a98
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: The answer is 4.
+          role: assistant
+      created: 1781275708
+      id: chatcmpl-a1af5a3c-1d9d-49ed-9a71-d1e159177a98
+      model: zai-glm-4.7
+      object: chat.completion
+      system_fingerprint: fp_ba34ecf90156e4888692
+      time_info:
+        completion_time: 0.017301406
+        created: 1781275708.3280318
+        prompt_time: 0.003222294
+        queue_time: 0.009865184
+        total_time: 0.08368825912475586
+      usage:
+        completion_tokens: 7
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 13
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 20
+    status:
+      code: 200
+      message: OK
+version: 1

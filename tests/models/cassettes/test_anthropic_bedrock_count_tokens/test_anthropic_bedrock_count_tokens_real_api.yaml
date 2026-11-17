@@ -1,0 +1,40 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-sonnet-4-6/count-tokens
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "421"
+      content-type:
+      - application/json
+      host:
+      - bedrock-runtime.us-east-1.amazonaws.com
+    body:
+      type: json
+      content:
+        input:
+          invokeModel:
+            body: >-
+              eyJhbnRocm9waWNfdmVyc2lvbiI6ImJlZHJvY2stMjAyMy0wNS0zMSIsIm1heF90b2tlbnMiOjEyODAwMCwibWVzc2FnZXMiOlt7InJvbGUiOiJ1c2VyIiwiY29udGVudCI6W3sidGV4dCI6IkhvdyBtYW55IHRva2VucyBpcyB0aGlzIHNlbnRlbmNlPyIsInR5cGUiOiJ0ZXh0In1dfV0sInN5c3RlbSI6IllvdSBhcmUgaGVscGZ1bC4iLCJhbnRocm9waWNfYmV0YSI6WyJ0b2tlbi1lZmZpY2llbnQtdG9vbHMtMjAyNS0wMi0xOSJdLCJtZXRhZGF0YSI6eyJ1c2VyX2lkIjoicHlkYW50aWMtYWktdGVzdCJ9fQ==
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "19"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        inputTokens: 36
+  recorded_at: 2026-10-26T00:09:09.445703+00:00

@@ -1,0 +1,198 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.groq.com/openai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1819"
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: >-
+            Ana Silva (no phone, Rua Augusta 10, Lisbon, Portugal) drove her Ford Focus,
+            plate AB-123-C, into a Kia Niro, plate XY-987-Z, driven by Jun Sato (phone +81 90
+            1234 5678, Mill Lane 4, Leeds, United Kingdom).
+        model: openai/gpt-oss-120b
+        "n": 1
+        stream: false
+        tool_choice: required
+        tools:
+        - type: function
+          function:
+            name: final_result
+            description: A car insurance claim.
+            parameters:
+              properties:
+                claimant:
+                  properties:
+                    full_name:
+                      type: string
+                    phone:
+                      anyOf:
+                      - type: string
+                      - type: "null"
+                    address:
+                      properties:
+                        street:
+                          type: string
+                        city:
+                          type: string
+                        country:
+                          type: string
+                      required:
+                      - street
+                      - city
+                      - country
+                      type: object
+                      additionalProperties: false
+                  required:
+                  - full_name
+                  - phone
+                  - address
+                  type: object
+                  additionalProperties: false
+                other_driver:
+                  anyOf:
+                  - properties:
+                      full_name:
+                        type: string
+                      phone:
+                        anyOf:
+                        - type: string
+                        - type: "null"
+                      address:
+                        properties:
+                          street:
+                            type: string
+                          city:
+                            type: string
+                          country:
+                            type: string
+                        required:
+                        - street
+                        - city
+                        - country
+                        type: object
+                        additionalProperties: false
+                    required:
+                    - full_name
+                    - phone
+                    - address
+                    type: object
+                    additionalProperties: false
+                  - type: "null"
+                vehicle:
+                  properties:
+                    make:
+                      type: string
+                    model:
+                      type: string
+                    license_plate:
+                      type: string
+                  required:
+                  - make
+                  - model
+                  - license_plate
+                  type: object
+                  additionalProperties: false
+                other_vehicle:
+                  anyOf:
+                  - properties:
+                      make:
+                        type: string
+                      model:
+                        type: string
+                      license_plate:
+                        type: string
+                    required:
+                    - make
+                    - model
+                    - license_plate
+                    type: object
+                    additionalProperties: false
+                  - type: "null"
+              required:
+              - claimant
+              - other_driver
+              - vehicle
+              - other_vehicle
+              type: object
+              additionalProperties: false
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-86a876a5-2d2a-4cca-92ad-920b6c3390d4
+        object: chat.completion
+        created: 1794005404
+        model: openai/gpt-oss-120b
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            reasoning: |-
+              User provided details for a claim. Need to call final_result function with appropriate structure.
+
+              We have claimant: Ana Silva, no phone, address: Rua Augusta 10, Lisbon, Portugal. Vehicle: Ford Focus, plate AB-123-C.
+
+              Other driver: Jun Sato, phone +81 90 1234 5678, address Mill Lane 4, Leeds, United Kingdom. Other vehicle: Kia Niro, plate XY-987-Z.
+
+              We need to fill other_driver and other_vehicle.
+
+              Now call function.
+            tool_calls:
+            - id: fc_7386b171-2115-4204-9db1-a284f4d615f4
+              type: function
+              function:
+                name: final_result
+                arguments: "{\"claimant\":{\"address\":{\"city\":\"Lisbon\",\"country\":\"Portugal\",\"street\":\"Rua Augusta 10\"},\"full_name\":\"Ana Silva\",\"phone\":null},\"other_driver\":{\"address\":{\"city\":\"Leeds\",\"country\":\"United Kingdom\",\"street\":\"Mill Lane 4\"},\"full_name\":\"Jun Sato\",\"phone\":\"+81 90 1234 5678\"},\"other_vehicle\":{\"license_plate\":\"XY-987-Z\",\"make\":\"Kia\",\"model\":\"Niro\"},\"vehicle\":{\"license_plate\":\"AB-123-C\",\"make\":\"Ford\",\"model\":\"Focus\"}}"
+          logprobs: null
+          finish_reason: tool_calls
+        usage:
+          queue_time: 0.00509485
+          prompt_tokens: 379
+          prompt_time: 0.010150155
+          completion_tokens: 315
+          completion_time: 0.856654693
+          total_tokens: 694
+          total_time: 0.866804848
+          prompt_tokens_details:
+            cached_tokens: 256
+          completion_tokens_details:
+            reasoning_tokens: 107
+        usage_breakdown: null
+        system_fingerprint: fp_4140daa9c2
+        x_groq:
+          id: req_01m6sgw21sedabkcj2bmdntxvn
+          seed: 1815251373
+        service_tier: on_demand
+  recorded_at: 2026-11-06T22:50:04.612632+00:00

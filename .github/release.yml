@@ -1,0 +1,19 @@
+changelog:
+  exclude:
+    labels:
+      - docs
+      - chore
+      - pkg:clai2
+  # GitHub lists each PR only under the first category it matches, so categories are
+  # change types. The release manager lists `compatibility impact` PRs again under
+  # Compatibility Notes.
+  categories:
+    - title: 🚀 Features
+      labels:
+        - feature
+    - title: 🐛 Bug Fixes
+      labels:
+        - bug
+    - title: 📦 Dependencies
+      labels:
+        - dependency

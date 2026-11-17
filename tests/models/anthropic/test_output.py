@@ -1,0 +1,768 @@
+"""Tests for Anthropic native JSON schema output and strict tool support.
+
+This module tests the implementation of Anthropic's structured outputs feature,
+including native JSON schema output for final responses and strict tool calling.
+
+Test organization:
+1. Strict Tools - Model Support
+2. Strict Tools - Schema Compatibility
+3. Native Output - Model Support
+"""
+
+from __future__ import annotations as _annotations
+
+import re
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Annotated, Any
+
+import pytest
+from pydantic import BaseModel, Field, JsonValue
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelResponse, ThinkingPart
+from pydantic_ai.output import NativeOutput
+from pydantic_ai.settings import ModelSettings
+
+from ..._inline_snapshot import snapshot
+from ...conftest import RequestCapture, try_import
+from ..test_anthropic import MockAnthropic, get_mock_chat_completion_kwargs
+
+with try_import() as imports_successful:
+    from anthropic import AsyncAnthropic, omit as OMIT
+    from anthropic.types.beta import BetaMessage, BetaTextBlock, BetaUsage
+
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+if TYPE_CHECKING:
+    from pydantic_ai.models.anthropic import AnthropicModel
+
+    ANTHROPIC_MODEL_FIXTURE = Callable[..., AnthropicModel]
+
+from ..test_anthropic import completion_message
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
+    pytest.mark.vcr,
+    pytest.mark.filterwarnings(
+        "ignore:The model 'claude-sonnet-4-0' is deprecated and will reach end-of-life.*:DeprecationWarning"
+    ),
+]
+
+
+# =============================================================================
+# STRICT TOOLS - Model Support
+# =============================================================================
+
+
+def test_strict_tools_supported_model_auto_enabled(
+    allow_model_requests: None, weather_tool_responses: list[BetaMessage]
+):
+    """sonnet-4-5: strict=None + compatible schema → no strict field."""
+    mock_client = MockAnthropic.create_mock(weather_tool_responses)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_weather(location: str) -> str:
+        return f'Weather in {location}'
+
+    agent.run_sync('What is the weather in Paris?')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    betas = completion_kwargs['betas']
+    tool = tools[0]
+    assert 'strict' not in tool  # strict was not explicitly set
+
+    assert tools == snapshot(
+        [
+            {
+                'name': 'get_weather',
+                'description': '',
+                'input_schema': {
+                    'type': 'object',
+                    'properties': {'location': {'type': 'string'}},
+                    'additionalProperties': False,
+                    'required': ['location'],
+                },
+            }
+        ]
+    )
+    assert betas == OMIT
+
+
+def test_strict_tools_supported_model_explicit_false(
+    allow_model_requests: None, weather_tool_responses: list[BetaMessage]
+):
+    """sonnet-4-5: strict=False → no strict field."""
+    mock_client = MockAnthropic.create_mock(weather_tool_responses)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=False)
+    def get_weather(location: str) -> str:
+        return f'Weather in {location}'
+
+    agent.run_sync('What is the weather in Paris?')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    betas = completion_kwargs.get('betas')
+
+    assert 'strict' not in tools[0]
+    assert tools[0]['input_schema']['additionalProperties'] is False
+    assert betas is OMIT
+
+
+def test_strict_tools_unsupported_model_no_strict_sent(
+    allow_model_requests: None, weather_tool_responses: list[BetaMessage]
+):
+    """sonnet-4-0: strict=None → no strict field (model doesn't support strict)."""
+    mock_client = MockAnthropic.create_mock(weather_tool_responses)
+    model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_weather(location: str) -> str:
+        return f'Weather in {location}'
+
+    agent.run_sync('What is the weather in Paris?')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    betas = completion_kwargs.get('betas')
+
+    # sonnet-4-0 doesn't support strict tools, so no strict field or beta header
+    assert 'strict' not in tools[0]
+    assert betas is OMIT
+
+
+# =============================================================================
+# STRICT TOOLS - Schema Compatibility
+# =============================================================================
+
+
+def test_strict_tools_incompatible_schema_not_auto_enabled(allow_model_requests: None):
+    """sonnet-4-5: strict=None → no strict field."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Sure', type='text')], BetaUsage(input_tokens=5, output_tokens=2))
+    )
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def constrained_tool(username: Annotated[str, Field(min_length=3)]) -> str:  # pragma: no cover
+        return username
+
+    agent.run_sync('Test')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    betas = completion_kwargs.get('betas')
+
+    # strict is not auto-enabled, so no strict field
+    assert 'strict' not in tools[0]
+    # because the schema wasn't transformed, it keeps the pydantic constraint
+    assert tools[0]['input_schema']['properties']['username']['minLength'] == 3
+    assert betas is OMIT
+
+
+# =============================================================================
+# NATIVE OUTPUT - Model Support
+# =============================================================================
+
+
+def test_native_output_supported_model(
+    allow_model_requests: None,
+    mock_sonnet_4_5: tuple[AnthropicModel, AsyncAnthropic],
+    city_location_schema: type[BaseModel],
+):
+    """sonnet-4-5: NativeOutput → strict=True + output_config."""
+    model, mock_client = mock_sonnet_4_5
+    agent = Agent(model, output_type=NativeOutput(city_location_schema))
+
+    agent.run_sync('What is the capital of France?')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
+    output_config = completion_kwargs['output_config']
+
+    assert output_config['format']['type'] == 'json_schema'
+    assert output_config['format']['schema']['type'] == 'object'
+    assert completion_kwargs['betas'] is OMIT
+
+
+def test_native_output_profile_default_transforms_schema(allow_model_requests: None):
+    """profile default_structured_output_mode='native' (no explicit `NativeOutput`) → schema is still transformed.
+
+    Regression test for #6471: the strict-forcing check used to run before the profile default resolved
+    'auto' to 'native', so schemas reaching native mode only via the profile default were sent to Anthropic
+    untransformed, causing a 400 for constraints like `ge`/`min_length` that Anthropic's schema dialect
+    doesn't support.
+
+    A mock test, not just the companion VCR test below, because the cassette matcher isn't sensitive to
+    request-body drift, so pinning the transformed schema directly is what actually catches a regression.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message(
+            [BetaTextBlock(text='{"confidence": 0.9, "title": "Ship it"}', type='text')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        )
+    )
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        profile={'default_structured_output_mode': 'native'},
+    )
+
+    class Decision(BaseModel):
+        confidence: float = Field(ge=0.0, le=1.0)
+        title: str = Field(min_length=1)
+
+    agent = Agent(model, output_type=Decision)
+    agent.run_sync('Should we ship the feature?')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[-1]
+    output_schema = completion_kwargs['output_config']['format']['schema']
+
+    assert output_schema == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'confidence': {'type': 'number', 'description': '{maximum: 1.0, minimum: 0.0}'},
+                'title': {'type': 'string', 'description': '{minLength: 1}'},
+            },
+            'required': ['confidence', 'title'],
+            'additionalProperties': False,
+        }
+    )
+
+
+# =============================================================================
+# COMPREHENSIVE INTEGRATION TESTS - All Combinations
+# =============================================================================
+
+
+class CityInfo(BaseModel):
+    """Information about a city."""
+
+    city: str
+    country: str
+    population: int
+
+
+def output_mode_fields(body: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    """The request fields that decide the output path: thinking, tool choice, each tool's `strict`, `output_config`.
+
+    A bare `BaseModel` output type takes Native Output on a request that thinks, so the `basemodel_output` tests turn
+    thinking off and pin that the request went out on Tool Output instead.
+    """
+    tools = body['tools']
+    assert isinstance(tools, list)
+    return {
+        'thinking': body.get('thinking'),
+        'tool_choice': body.get('tool_choice'),
+        'tools': [[tool.get('name'), tool.get('strict')] for tool in tools if isinstance(tool, dict)],
+        'output_config': body.get('output_config'),
+    }
+
+
+# =============================================================================
+# Supported Model Tests
+# =============================================================================
+
+
+@pytest.mark.vcr
+def test_no_tools_no_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Agent with no tools and no output_type."""
+    model = anthropic_model('claude-sonnet-5-5')
+    agent = Agent(model)
+    agent.run_sync('Tell me a brief fact about Paris')
+
+
+@pytest.mark.vcr
+def test_no_tools_basemodel_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+    request_capture: RequestCapture,
+) -> None:
+    """Agent with no tools and BaseModel output_type, thinking off → forced output tool."""
+    model = anthropic_model('claude-sonnet-5', capture=True)
+    agent = Agent(model, output_type=CityInfo, model_settings={'thinking': False})
+    result = agent.run_sync('Give me information about Tokyo')
+
+    assert isinstance(result.output, CityInfo)
+    assert output_mode_fields(request_capture.body('/v1/messages')) == snapshot(
+        {
+            'thinking': {'type': 'disabled'},
+            'tool_choice': {'type': 'any'},
+            'tools': [['final_result', None]],
+            'output_config': None,
+        }
+    )
+
+
+@pytest.mark.vcr
+def test_no_tools_native_output_strict_true(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Agent with NativeOutput(strict=True) → output_config."""
+    model = anthropic_model('claude-sonnet-5-5')
+    agent = Agent(model, output_type=NativeOutput(CityInfo, strict=True))
+    result = agent.run_sync('Tell me about London')
+
+    assert isinstance(result.output, CityInfo)
+
+
+@pytest.mark.vcr
+def test_no_tools_native_output_strict_none(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Agent with NativeOutput(strict=None) → forces strict=True, output_config."""
+    model = anthropic_model('claude-sonnet-5-5')
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+    result = agent.run_sync('Give me facts about Berlin')
+
+    assert isinstance(result.output, CityInfo)
+
+
+def test_no_tools_native_output_strict_false(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Agent with NativeOutput(strict=False) → raises UserError."""
+    model = anthropic_model('claude-sonnet-4-5')
+
+    agent = Agent(model, output_type=NativeOutput(CityInfo, strict=False))
+
+    with pytest.raises(
+        UserError,
+        match=r'Setting `strict=False` on `output_type=NativeOutput\(\.\.\.\)` is not allowed for Anthropic models.',
+    ):
+        agent.run_sync('Tell me about Rome')
+
+
+@pytest.mark.vcr
+def test_no_tools_profile_default_native_output(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+) -> None:
+    """Agent with profile default_structured_output_mode='native' and constrained fields → no 400.
+
+    Regression test for #6471, reproducing the reporter's MRE against the live API: native mode reached
+    via the profile default (rather than an explicit `NativeOutput(...)`) must still transform the schema.
+    """
+    model = AnthropicModel(
+        'claude-sonnet-5-5',
+        provider=AnthropicProvider(api_key=anthropic_api_key),
+        profile={'default_structured_output_mode': 'native'},
+    )
+
+    class Decision(BaseModel):
+        confidence: float = Field(ge=0.0, le=1.0)
+        title: str = Field(min_length=1)
+
+    agent = Agent(model, output_type=Decision)
+    result = agent.run_sync('Should we ship the feature? Give a confidence (0-1) and a short title.')
+
+    assert isinstance(result.output, Decision)
+
+
+@pytest.mark.vcr
+def test_strict_true_tool_no_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Tool with strict=True, no output_type → tool has strict field."""
+    model = anthropic_model('claude-sonnet-5-5')
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=True)
+    def get_weather(city: str) -> str:
+        return f'Weather in {city}: Sunny, 22°C'
+
+    agent.run_sync("What's the weather in San Francisco?")
+
+
+@pytest.mark.vcr
+def test_strict_true_tool_basemodel_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+    request_capture: RequestCapture,
+) -> None:
+    """Tool with strict=True, BaseModel output_type, thinking off → tool has strict field, output tool forced."""
+    model = anthropic_model('claude-sonnet-5', capture=True)
+    agent = Agent(model, output_type=CityInfo, model_settings={'thinking': False})
+
+    @agent.tool_plain(strict=True)
+    def get_population(city: str) -> int:
+        return 8_000_000 if city == 'New York' else 1_000_000
+
+    result = agent.run_sync('Get me info about New York including its population')
+
+    assert isinstance(result.output, CityInfo)
+    assert output_mode_fields(request_capture.body('/v1/messages')) == snapshot(
+        {
+            'thinking': {'type': 'disabled'},
+            'tool_choice': {'type': 'any'},
+            'tools': [['get_population', True], ['final_result', None]],
+            'output_config': None,
+        }
+    )
+
+
+@pytest.mark.vcr
+def test_strict_true_tool_native_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Tool with strict=True, NativeOutput → tool has strict field + output_config."""
+    model = anthropic_model('claude-sonnet-5-5')
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    @agent.tool_plain(strict=True)
+    def lookup_country(city: str) -> str:
+        return 'France' if city == 'Paris' else 'Unknown'
+
+    result = agent.run_sync('Give me details about Paris')
+
+    assert isinstance(result.output, CityInfo)
+
+
+@pytest.mark.vcr
+def test_strict_none_tool_no_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Tool with strict=None, no output_type → tool has no strict field."""
+    model = anthropic_model('claude-sonnet-5-5')
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def search_database(query: str) -> str:
+        return f'Found 42 results for "{query}"'
+
+    agent.run_sync('Find cities in Europe')
+
+
+@pytest.mark.vcr
+def test_strict_none_tool_basemodel_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+    request_capture: RequestCapture,
+) -> None:
+    """Tool with strict=None, BaseModel output_type, thinking off → tool has no strict field, output tool forced."""
+    model = anthropic_model('claude-sonnet-5', capture=True)
+    agent = Agent(model, output_type=CityInfo, model_settings={'thinking': False})
+
+    @agent.tool_plain
+    def get_timezone(city: str) -> str:
+        return 'UTC+10:00' if city == 'Sydney' else 'UTC+1:00'
+
+    result = agent.run_sync('Give me info about Sydney including its timezone')
+
+    assert isinstance(result.output, CityInfo)
+    assert output_mode_fields(request_capture.body('/v1/messages')) == snapshot(
+        {
+            'thinking': {'type': 'disabled'},
+            'tool_choice': {'type': 'any'},
+            'tools': [['get_timezone', None], ['final_result', None]],
+            'output_config': None,
+        }
+    )
+
+
+@pytest.mark.vcr
+def test_strict_none_tool_native_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Tool with strict=None, NativeOutput → output_config, tool has no strict field."""
+    model = anthropic_model('claude-sonnet-5-5')
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+    tool_called = False
+
+    @agent.tool_plain
+    def get_coordinates(city: str) -> str:
+        nonlocal tool_called
+        tool_called = True
+        return '41.3874° N, 2.1686° E' if city == 'Barcelona' else 'Unknown'
+
+    result = agent.run_sync('Give me details about Barcelona. Look up the coordinates of Barcelona first.')
+
+    # Ensure the cassette keeps exercising the tool-result turn.
+    assert tool_called
+    assert isinstance(result.output, CityInfo)
+
+
+@pytest.mark.vcr
+def test_strict_false_tool_no_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Tool with strict=False, no output_type."""
+    model = anthropic_model('claude-sonnet-5-5')
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=False)
+    def calculate_distance(city_a: str, city_b: str) -> str:
+        return f'Distance from {city_a} to {city_b}: 504 km'
+
+    agent.run_sync('How far is Madrid from Lisbon?')
+
+
+@pytest.mark.vcr
+def test_strict_false_tool_native_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Tool with strict=False, NativeOutput → output_config."""
+    model = anthropic_model('claude-sonnet-5-5')
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+    tool_called = False
+
+    @agent.tool_plain(strict=False)
+    def get_currency(country: str) -> str:
+        nonlocal tool_called
+        tool_called = True
+        return 'Mexican Peso (MXN)' if country == 'Mexico' else 'Unknown'
+
+    result = agent.run_sync('Give me details about Mexico City. Look up the currency of Mexico first.')
+
+    # Ensure the cassette keeps exercising the tool-result turn.
+    assert tool_called
+    assert isinstance(result.output, CityInfo)
+
+
+@pytest.mark.vcr
+def test_mixed_tools_no_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Mixed tools (one strict=True, one strict=None), no output_type → only strict=True has strict field."""
+    model = anthropic_model('claude-sonnet-5-5')
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=True)
+    def get_weather(city: str) -> str:
+        return f'Weather in {city}: Sunny, 22°C'
+
+    @agent.tool_plain
+    def get_elevation(city: str) -> str:
+        return f'Elevation of {city}: 650m above sea level'
+
+    agent.run_sync("What's the weather and elevation in Denver?")
+
+
+@pytest.mark.vcr
+def test_mixed_tools_basemodel_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+    request_capture: RequestCapture,
+) -> None:
+    """Mixed tools (one strict=True, one strict=None), BaseModel output_type, thinking off → only strict=True has
+    strict field, output tool forced.
+    """
+    model = anthropic_model('claude-sonnet-5', capture=True)
+    agent = Agent(model, output_type=CityInfo, model_settings={'thinking': False})
+
+    @agent.tool_plain(strict=True)
+    def get_population(city: str) -> int:
+        return 8_900_000 if city == 'London' else 1_000_000
+
+    @agent.tool_plain
+    def get_area(city: str) -> str:
+        return f'Area of {city}: 1,572 km²'
+
+    result = agent.run_sync('Tell me about London including population and area')
+
+    assert isinstance(result.output, CityInfo)
+    assert output_mode_fields(request_capture.body('/v1/messages')) == snapshot(
+        {
+            'thinking': {'type': 'disabled'},
+            'tool_choice': {'type': 'any'},
+            'tools': [['get_population', True], ['get_area', None], ['final_result', None]],
+            'output_config': None,
+        }
+    )
+
+
+@pytest.mark.vcr
+def test_mixed_tools_native_output(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Mixed tools (one strict=True, one strict=None), NativeOutput → only strict=True has strict field + output_config."""
+    model = anthropic_model('claude-sonnet-5-5')
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    @agent.tool_plain(strict=True)
+    def lookup_country(city: str) -> str:
+        return 'Japan' if city == 'Tokyo' else 'Unknown'
+
+    @agent.tool_plain
+    def get_founded_year(city: str) -> str:
+        return '1457' if city == 'Tokyo' else 'Unknown'
+
+    result = agent.run_sync('Give me complete details about Tokyo')
+
+    assert isinstance(result.output, CityInfo)
+
+
+# =============================================================================
+# Unsupported Model Tests (claude-sonnet-4-0)
+# =============================================================================
+
+
+def test_unsupported_native_output_raises(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+) -> None:
+    """Unsupported model: NativeOutput → raises UserError."""
+    model = anthropic_model('claude-sonnet-4-0')
+
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    with pytest.raises(UserError, match=re.escape('Native structured output is not supported by this model.')):
+        agent.run_sync('Tell me about Berlin')
+
+
+# =============================================================================
+# Output Mode And Thinking
+# =============================================================================
+
+
+@dataclass
+class ThinkingOutputCase:
+    model_name: str
+    model_settings: ModelSettings
+    expected_request: dict[str, Any]
+    thinks: bool
+
+
+THINKING_OUTPUT_CASES = {
+    # Thinks by default, so Tool Output's forced choice would stop it from thinking.
+    'opus-5-default': ThinkingOutputCase(
+        'claude-opus-5', {}, {'thinking': None, 'tool_choice': None, 'output_format': True}, thinks=True
+    ),
+    # Turning thinking off keeps Tool Output, forced as before.
+    'sonnet-5-thinking-off': ThinkingOutputCase(
+        'claude-sonnet-5',
+        {'thinking': False},
+        {'thinking': {'type': 'disabled'}, 'tool_choice': {'type': 'any'}, 'output_format': False},
+        thinks=False,
+    ),
+    # Doesn't think by default, so forcing costs nothing.
+    'sonnet-4-6-default': ThinkingOutputCase(
+        'claude-sonnet-4-6',
+        {},
+        {'thinking': None, 'tool_choice': {'type': 'any'}, 'output_format': False},
+        thinks=False,
+    ),
+    'sonnet-4-6-thinking': ThinkingOutputCase(
+        'claude-sonnet-4-6',
+        {'thinking': 'high'},
+        {'thinking': {'type': 'adaptive'}, 'tool_choice': None, 'output_format': True},
+        thinks=True,
+    ),
+    # Rejects a forced choice outright, and can't turn thinking off.
+    'opus-5-5-default': ThinkingOutputCase(
+        'claude-opus-5-5', {}, {'thinking': None, 'tool_choice': None, 'output_format': True}, thinks=True
+    ),
+    'sonnet-5-5-default': ThinkingOutputCase(
+        'claude-sonnet-5-5', {}, {'thinking': None, 'tool_choice': None, 'output_format': True}, thinks=True
+    ),
+    # `thinking=False` thinks at the lowest effort instead.
+    'opus-5-5-thinking-off': ThinkingOutputCase(
+        'claude-opus-5-5',
+        {'thinking': False},
+        {'thinking': {'type': 'adaptive'}, 'tool_choice': None, 'output_format': True},
+        thinks=True,
+    ),
+    # Turns thinking off with `between_tools`, so Tool Output is kept, offered with `auto` since forcing is rejected.
+    'sonnet-5-5-thinking-off': ThinkingOutputCase(
+        'claude-sonnet-5-5',
+        {'thinking': False},
+        {'thinking': {'type': 'between_tools'}, 'tool_choice': {'type': 'auto'}, 'output_format': False},
+        thinks=False,
+    ),
+}
+
+
+@pytest.mark.parametrize('case', THINKING_OUTPUT_CASES.values(), ids=THINKING_OUTPUT_CASES.keys())
+def test_structured_output_mode_follows_whether_the_request_thinks(
+    allow_model_requests: None,
+    anthropic_model: ANTHROPIC_MODEL_FIXTURE,
+    request_capture: RequestCapture,
+    case: ThinkingOutputCase,
+) -> None:
+    """A bare structured `output_type` uses Native Output when the request thinks, and Tool Output otherwise.
+
+    Anthropic accepts a forced `tool_choice` alongside adaptive thinking, but the forced response comes back
+    without a thinking block, and Tool Output forces the output tool on every request that can't end with text.
+    Whether the request thinks depends on the model as well as the settings: Claude Opus 5 and later think
+    unless thinking is turned off, where Claude Sonnet 4.6 only thinks when asked.
+    """
+    agent = Agent(anthropic_model(case.model_name, capture=True), output_type=CityInfo)
+    result = agent.run_sync(
+        'Take the country that borders both France and Austria and whose capital is not its largest city. '
+        'Give me information about its largest city.',
+        model_settings=case.model_settings,
+    )
+
+    assert result.output.city == 'Zurich'
+    body = request_capture.bodies('/v1/messages')[0]
+    assert {
+        'thinking': body.get('thinking'),
+        'tool_choice': body.get('tool_choice'),
+        'output_format': isinstance(output_config := body.get('output_config'), dict) and 'format' in output_config,
+    } == case.expected_request
+    response = result.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    assert any(isinstance(part, ThinkingPart) for part in response.parts) is case.thinks
+
+
+def test_default_output_mode_stays_put_when_thinking_toggles_per_step(
+    allow_model_requests: None, anthropic_model: ANTHROPIC_MODEL_FIXTURE, request_capture: RequestCapture
+) -> None:
+    """The default output mode is resolved on the run's first request, so turning thinking on later in the run
+    doesn't drop the output tool from `tools` and invalidate the prompt cache.
+
+    Claude Sonnet 5 thinks by default, so the first step turns thinking off to resolve Tool Output. The forced choice
+    the output tool gets falls back to `auto` once the request thinks.
+    """
+
+    def model_settings(ctx: RunContext) -> ModelSettings:
+        return {'thinking': 'high'} if ctx.run_step > 1 else {'thinking': False}
+
+    agent = Agent(anthropic_model('claude-sonnet-5', capture=True), output_type=CityInfo, model_settings=model_settings)
+
+    @agent.tool_plain
+    def get_population(city: str) -> int:
+        """Get the population of a city."""
+        return 421878
+
+    result = agent.run_sync('Look up the population of Zurich, then give me information about it.')
+
+    assert result.output == snapshot(CityInfo(city='Zurich', country='Switzerland', population=421878))
+    first, second = request_capture.bodies('/v1/messages')
+    tools = first['tools']
+    assert second['tools'] == tools
+    assert isinstance(tools, list)
+    assert [tool['name'] for tool in tools if isinstance(tool, dict)] == ['get_population', 'final_result']
+    assert [
+        {key: body[key] for key in ('thinking', 'tool_choice', 'output_config') if key in body}
+        for body in (first, second)
+    ] == snapshot(
+        [
+            {'thinking': {'type': 'disabled'}, 'tool_choice': {'type': 'any'}},
+            {'thinking': {'type': 'adaptive'}, 'tool_choice': {'type': 'auto'}, 'output_config': {'effort': 'high'}},
+        ]
+    )

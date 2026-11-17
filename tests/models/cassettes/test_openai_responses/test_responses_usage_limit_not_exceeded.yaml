@@ -1,0 +1,141 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '136'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: The quick brown fox jumps over the lazy dog.
+        role: user
+      model: gpt-4.1-mini
+    uri: https://api.openai.com/v1/responses/input_tokens
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '61'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-aqgbrbgshrc0qzcisc6v053e
+      openai-processing-ms:
+      - '35'
+      openai-project:
+      - proj_sazfDS4z1dBLe741ZQt2ckC8
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      input_tokens: 18
+      object: response.input_tokens
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '136'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: The quick brown fox jumps over the lazy dog.
+        role: user
+      model: gpt-4.1-mini
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1211'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-aqgbrbgshrc0qzcisc6v053e
+      openai-processing-ms:
+      - '512'
+      openai-project:
+      - proj_sazfDS4z1dBLe741ZQt2ckC8
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1743075639
+      error: null
+      id: resp_67e53937459c8191bfbe53cfca6a5d3e056b30c8cbeecd7c
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      metadata: {}
+      model: gpt-4.1-mini
+      object: response
+      output:
+      - content:
+        - annotations: []
+          text: That's a classic pangram! It contains every letter of the English alphabet
+            at least once. It's commonly used for testing fonts, typewriters, and keyboards.
+          type: output_text
+        id: msg_67e5393791c0819185c91fab3113b3dc056b30c8cbeecd7c
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: null
+        generate_summary: null
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools: []
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 18
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 28
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 46
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

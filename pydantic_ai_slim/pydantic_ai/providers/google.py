@@ -1,21 +1,29 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import Literal, overload
+import warnings
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Literal, overload
 
-import httpx
+import httpx2
 
 from pydantic_ai import ModelProfile
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client, get_user_agent
-from pydantic_ai.profiles.google import google_model_profile
-from pydantic_ai.providers import Provider
+from pydantic_ai._http import (
+    DEFAULT_HTTP_TIMEOUT,
+    AsyncHTTPClient,
+    create_async_httpx2_client,
+    warn_if_legacy_httpx_client,
+)
+from pydantic_ai.models import get_user_agent
+from pydantic_ai.profiles.google import google_model_profile, google_realtime_model_profile
+from pydantic_ai.providers import Provider, missing_api_key_error
+
+if TYPE_CHECKING:
+    from pydantic_ai.realtime import RealtimeModelProfile
 
 try:
-    from google.auth.credentials import Credentials
-    from google.genai._api_client import BaseApiClient
-    from google.genai.client import Client, DebugConfig
-    from google.genai.types import HttpOptions
+    from google.genai.client import Client
+    from google.genai.types import HttpOptions, HttpRetryOptions
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `google-genai` package to use the Google provider, '
@@ -23,134 +31,187 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-class GoogleProvider(Provider[Client]):
-    """Provider for Google."""
+_LONG_DECODE_TIMEOUT = 20 * 60
+"""Google [recommends](https://ai.google.dev/gemini-api/docs/generate-content/long-decode) 20 minutes for long decode."""
+
+
+def _create_google_httpx2_client() -> httpx2.AsyncClient:
+    """Create the HTTP client a Google provider owns, with a 20-minute timeout instead of `DEFAULT_HTTP_TIMEOUT`.
+
+    The Gateway's Google route creates this client too.
+    """
+    return create_async_httpx2_client(timeout=httpx2.Timeout(_LONG_DECODE_TIMEOUT, connect=5))
+
+
+class BaseGoogleProvider(Provider[Client], ABC):
+    """Common base for the Gemini API and Google Cloud providers.
+
+    Abstract — instantiate [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] for the
+    Gemini API or [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] for
+    Google Cloud. Subclasses share `base_url`, `client`, `_set_http_client`, and model-profile
+    lookup; each subclass owns its own `Client` construction.
+    """
 
     @property
-    def name(self) -> str:
-        return 'google-vertex' if self._client._api_client.vertexai else 'google-gla'  # type: ignore[reportPrivateUsage]
+    @abstractmethod
+    def name(self) -> str: ...
+
+    _canonical_system_follows_client = True
+
+    @property
+    def canonical_system(self) -> str:
+        """`'google-cloud'` with a Google Cloud (Vertex AI) client, `'google'` with a Gemini API client.
+
+        Read off the client rather than `name`, as either provider accepts either client. The two transports
+        reject each other's thought signatures.
+        """
+        return 'google-cloud' if self._client.vertexai else 'google'
 
     @property
     def base_url(self) -> str:
-        return str(self._client._api_client._http_options.base_url)  # type: ignore[reportPrivateUsage]
+        return str(self._client._api_client._http_options.base_url)  # pyright: ignore[reportPrivateUsage]
 
     @property
     def client(self) -> Client:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         return google_model_profile(model_name)
 
-    @overload
-    def __init__(
-        self, *, api_key: str, http_client: httpx.AsyncClient | None = None, base_url: str | None = None
-    ) -> None: ...
+    @staticmethod
+    def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+        return google_realtime_model_profile(model_name)
+
+    def _build_http_options(
+        self,
+        *,
+        http_client: AsyncHTTPClient | None,
+        base_url: str | None,
+        retry_options: HttpRetryOptions | None = None,
+    ) -> HttpOptions:
+        """Build `HttpOptions` and record ownership of the httpx client if we created it.
+
+        Subclasses call this before constructing their `Client(...)` to keep timeout / user-agent /
+        ownership wiring consistent.
+        """
+        if http_client is None:
+            http_client = _create_google_httpx2_client()
+            self._own_http_client = http_client
+            self._http_client_factory = _create_google_httpx2_client
+        else:
+            # 3 frames up from the helper: this method, the provider `__init__` calling it, and the
+            # user's `GoogleProvider(...)` call, which is where the warning should land.
+            warn_if_legacy_httpx_client(http_client, consumer='Google providers', stacklevel=3)
+            timeout = http_client.timeout
+            if (timeout.connect, timeout.read, timeout.write, timeout.pool) == (5.0, 5.0, 5.0, 5.0):
+                warnings.warn(
+                    "The `http_client` passed to the Google provider has httpx's default 5-second timeout, so a "
+                    'request fails when the model takes more than 5 seconds to respond. Give the client a longer '
+                    f'`timeout`, like the {_LONG_DECODE_TIMEOUT // 60} minutes Google recommends for long decode.',
+                    UserWarning,
+                    stacklevel=3,
+                )
+        # google-genai's `HttpOptions.timeout` defaults to None, which makes the SDK pass
+        # `timeout=None` to httpx and override any timeout on the supplied client. Pin the timeout
+        # here (ms) so requests actually time out. The SDK sends it as a scalar, which would set the
+        # connect and pool timeouts too; a client we created caps those at its own (see `_http.py`).
+        timeout_seconds = http_client.timeout.read or DEFAULT_HTTP_TIMEOUT
+        timeout_ms = int(timeout_seconds * 1000)
+        return HttpOptions(
+            base_url=base_url,
+            headers={'user-agent': get_user_agent()},
+            httpx_async_client=http_client,
+            timeout=timeout_ms,
+            retry_options=retry_options,
+        )
+
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
+        api_client = self._client._api_client  # pyright: ignore[reportPrivateUsage]
+        api_client._async_httpx_client = http_client  # pyright: ignore[reportPrivateUsage]
+        api_client._http_options.httpx_async_client = http_client  # pyright: ignore[reportPrivateUsage]
+
+
+class GoogleProvider(BaseGoogleProvider):
+    """Provider for the Gemini API (formerly Google AI Studio / Google GLA)."""
+
+    @property
+    def name(self) -> str:
+        # Must not change: persisted in ModelMessage.provider_name and checked during history replay.
+        return 'google'
 
     @overload
     def __init__(
         self,
         *,
-        credentials: Credentials | None = None,
-        project: str | None = None,
-        location: VertexAILocation | Literal['global'] | str | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        api_key: str | None = None,
+        http_client: AsyncHTTPClient | None = None,
         base_url: str | None = None,
+        retry_options: HttpRetryOptions | None = None,
     ) -> None: ...
 
     @overload
     def __init__(self, *, client: Client) -> None: ...
 
-    @overload
-    def __init__(
-        self,
-        *,
-        vertexai: bool = False,
-        api_key: str | None = None,
-        http_client: httpx.AsyncClient | None = None,
-        base_url: str | None = None,
-    ) -> None: ...
-
     def __init__(
         self,
         *,
         api_key: str | None = None,
-        credentials: Credentials | None = None,
-        project: str | None = None,
-        location: VertexAILocation | Literal['global'] | str | None = None,
-        vertexai: bool | None = None,
         client: Client | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: AsyncHTTPClient | None = None,
         base_url: str | None = None,
+        retry_options: HttpRetryOptions | None = None,
     ) -> None:
-        """Create a new Google provider.
+        """Create a new Google provider for the Gemini API.
 
         Args:
-            api_key: The `API key <https://ai.google.dev/gemini-api/docs/api-key>`_ to
-                use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable.
-            credentials: The credentials to use for authentication when calling the Vertex AI APIs. Credentials can be
-                obtained from environment variables and default credentials. For more information, see Set up
-                Application Default Credentials. Applies to the Vertex AI API only.
-            project: The Google Cloud project ID to use for quota. Can be obtained from environment variables
-                (for example, GOOGLE_CLOUD_PROJECT). Applies to the Vertex AI API only.
-            location: The location to send API requests to (for example, us-central1). Can be obtained from environment variables.
-                Applies to the Vertex AI API only.
-            vertexai: Force the use of the Vertex AI API. If `False`, the Google Generative Language API will be used.
-                Defaults to `False` unless `location`, `project`, or `credentials` are provided.
-            client: A pre-initialized client to use.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
-            base_url: The base URL for the Google API.
+            api_key: The [API key](https://ai.google.dev/gemini-api/docs/api-key) to
+                use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable,
+                or the legacy `GEMINI_API_KEY` environment variable (`GOOGLE_API_KEY` takes precedence).
+            client: A pre-initialized client to use. Stored as-is, so a client built for Google Cloud
+                (`Client(vertexai=True, ...)`, or its current spelling `Client(enterprise=True, ...)`)
+                is used on that transport even though `name` stays `'google'`. `GoogleModel` reads the
+                transport off the client rather than the provider name, so it routes correctly either way.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
+            base_url: The base URL for the Gemini API.
+            retry_options: HTTP retry options for transient errors (429, 5xx, etc.).
+                See `google.genai.types.HttpRetryOptions` for available fields.
         """
-        if client is None:
-            # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
-            api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
+        # The credentials the provider built its client from, for `_client_for_api_version`; unknown for a
+        # client the caller built.
+        self._api_key: str | None = None
+        self._base_url = base_url
+        if client is not None:
+            self._client = client
+            return
 
-            vertex_ai_args_used = bool(location or project or credentials)
-            if vertexai is None:
-                vertexai = vertex_ai_args_used
-
-            http_client = http_client or cached_async_http_client(
-                provider='google-vertex' if vertexai else 'google-gla'
+        # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
+        api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
+        if api_key is None:
+            raise missing_api_key_error(
+                'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
+                ' to use the Gemini API.'
             )
-            http_options = HttpOptions(
-                base_url=base_url,
-                headers={'User-Agent': get_user_agent()},
-                httpx_async_client=http_client,
-                # TODO: Remove once https://github.com/googleapis/python-genai/issues/1565 is solved.
-                async_client_args={'transport': httpx.AsyncHTTPTransport()},
-            )
-            if not vertexai:
-                if api_key is None:
-                    raise UserError(
-                        'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
-                        'to use the Google Generative Language API.'
-                    )
-                self._client = _SafelyClosingClient(vertexai=False, api_key=api_key, http_options=http_options)
-            else:
-                if vertex_ai_args_used:
-                    api_key = None
+        self._api_key = api_key
+        http_options = self._build_http_options(http_client=http_client, base_url=base_url, retry_options=retry_options)
+        self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
 
-                if api_key is None:
-                    project = project or os.getenv('GOOGLE_CLOUD_PROJECT')
-                    # From https://github.com/pydantic/pydantic-ai/pull/2031/files#r2169682149:
-                    # Currently `us-central1` supports the most models by far of any region including `global`, but not
-                    # all of them. `us-central1` has all google models but is missing some Anthropic partner models,
-                    # which use `us-east5` instead. `global` has fewer models but higher availability.
-                    # For more details, check: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions
-                    location = location or os.getenv('GOOGLE_CLOUD_LOCATION') or 'us-central1'
+    def _client_for_api_version(self, api_version: str) -> Client:
+        """A new client on `api_version` with this provider's credentials.
 
-                self._client = _SafelyClosingClient(
-                    vertexai=True,
-                    api_key=api_key,
-                    project=project,
-                    location=location,
-                    credentials=credentials,
-                    http_options=http_options,
-                )
-        else:
-            self._client = client  # pragma: no cover
+        For a request the provider's own client can't make on its API version (Gemini Live's `proactivity`
+        is `v1alpha`-only). Only for a provider that built its client from an API key (`_api_key` is set):
+        a client the caller built can't be reproduced. The caller owns and closes the new client.
+        """
+        assert self._api_key is not None
+        # Its own `HttpOptions` and HTTP clients: nothing it holds is shared with the provider's client.
+        http_options = HttpOptions(
+            base_url=self._base_url, api_version=api_version, headers={'user-agent': get_user_agent()}
+        )
+        return Client(vertexai=False, api_key=self._api_key, http_options=http_options)
 
 
-VertexAILocation = Literal[
+GoogleCloudLocation = Literal[
     'asia-east1',
     'asia-east2',
     'asia-northeast1',
@@ -181,43 +242,10 @@ VertexAILocation = Literal[
     'us-west1',
     'us-west4',
 ]
-"""Regions available for Vertex AI.
+"""Regions available for Google Cloud.
 More details [here](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#genai-locations).
+
+This lists single-region values only. `GoogleCloudProvider` also accepts the `'global'` location and the
+`'us'`/`'eu'` multi-regions (routed to the `aiplatform.{us,eu}.rep.googleapis.com` data-residency endpoints)
+as separate union members on its `location` parameter.
 """
-
-
-class _SafelyClosingClient(Client):
-    @staticmethod
-    def _get_api_client(
-        vertexai: bool | None = None,
-        api_key: str | None = None,
-        credentials: Credentials | None = None,
-        project: str | None = None,
-        location: str | None = None,
-        debug_config: DebugConfig | None = None,
-        http_options: HttpOptions | None = None,
-    ) -> BaseApiClient:
-        return _NonClosingApiClient(
-            vertexai=vertexai,
-            api_key=api_key,
-            credentials=credentials,
-            project=project,
-            location=location,
-            http_options=http_options,
-        )
-
-    def close(self) -> None:
-        # This is called from `Client.__del__`, even if `Client.__init__` raised an error before `self._api_client` is set, which would raise an `AttributeError` here.
-        # TODO: Remove once https://github.com/googleapis/python-genai/issues/1567 is solved.
-        try:
-            super().close()
-        except AttributeError:
-            pass
-
-
-class _NonClosingApiClient(BaseApiClient):
-    async def aclose(self) -> None:
-        # The original implementation also calls `await self._async_httpx_client.aclose()`, but we don't want to close our `cached_async_http_client` or the one the user passed in.
-        # TODO: Remove once https://github.com/googleapis/python-genai/issues/1566 is solved.
-        if self._aiohttp_session:
-            await self._aiohttp_session.close()  # pragma: no cover

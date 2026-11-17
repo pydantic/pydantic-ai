@@ -1,0 +1,233 @@
+version: 1
+interactions:
+- collections_method:
+    method: create
+    response_proto_type: CollectionMetadata
+    request_json:
+      name: pydantic-ai-test-8a7e057d
+      chunk_configuration:
+        chars_configuration:
+          max_chunk_size_chars: 256
+          chunk_overlap_chars: 32
+    response_json:
+      collection_id: collection_744aab7b-44f2-41ab-a982-9c49d1690c2f
+      collection_name: pydantic-ai-test-8a7e057d
+      created_at: '2026-08-05T15:28:20.222795Z'
+      index_configuration:
+        model_name: grok-embedding-small
+      chunk_configuration:
+        chars_configuration:
+          max_chunk_size_chars: 256
+          chunk_overlap_chars: 32
+    response_raw: !!binary |
+      Ci9jb2xsZWN0aW9uXzc0NGFhYjdiLTQ0ZjItNDFhYi1hOTgyLTljNDlkMTY5MGMyZhIZcHlkYW50
+      aWMtYWktdGVzdC04YTdlMDU3ZBoLCJStzdMGEPipnmoiFgoUZ3Jvay1lbWJlZGRpbmctc21hbGwq
+      BwoFCIACECCSASQyODk4YTFhMy1iY2IxLTQ5M2MtOWNjMS1mYTYwOGI4YWU1ZjI=
+- collections_method:
+    method: upload_document
+    response_proto_type: DocumentMetadata
+    request_json:
+      collection_id: collection_744aab7b-44f2-41ab-a982-9c49d1690c2f
+      name: zorblax-memo-7742.txt
+      data: <bytes len=4739>
+      wait_for_indexing: true
+      timeout: datetime.timedelta(seconds=180)
+    response_json:
+      file_metadata:
+        file_id: file_e9ef3a06-160e-4a51-a3e2-762cd070cc32
+        name: zorblax-memo-7742.txt
+        size_bytes: '4739'
+        content_type: text/plain
+        created_at: '2026-08-05T15:28:20.614Z'
+        hash: 39538abcab8556581a7d2358ccdb533a65c1ec8dfc1b8300be17bc02cbc8961d
+        upload_status: Complete
+        processing_status: Processing
+        file_path: ''
+      status: DOCUMENT_STATUS_PROCESSED
+      last_indexed_at: '2026-08-05T15:28:27.436354Z'
+      chunk_count: 6
+      chunks_processed_count: '6'
+    response_raw: !!binary |
+      CrkBCilmaWxlX2U5ZWYzYTA2LTE2MGUtNGE1MS1hM2UyLTc2MmNkMDcwY2MzMhIVem9yYmxheC1t
+      ZW1vLTc3NDIudHh0GIMlIgp0ZXh0L3BsYWluKgwIlK3N0wYQgMvjpAI6QDM5NTM4YWJjYWI4NTU2
+      NTgxYTdkMjM1OGNjZGI1MzNhNjVjMWVjOGRmYzFiODMwMGJlMTdiYzAyY2JjODk2MWRCCENvbXBs
+      ZXRlUgpQcm9jZXNzaW5nWgAYAioMCJutzdMGEND3iNABMAY4Bg==
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Using the uploaded Zorblax Research Memo, in what year was the Zorblax
+            Protocol invented and who are its three principal inventors?
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+      tools:
+      - collections_search:
+          collection_ids:
+          - collection_744aab7b-44f2-41ab-a982-9c49d1690c2f
+          limit: 1
+          instructions: Prioritize exact factual matches from the uploaded research
+            memo.
+          semantic_retrieval: {}
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      include:
+      - INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT
+    raw: !!binary |
+      CosBCoYBCoMBVXNpbmcgdGhlIHVwbG9hZGVkIFpvcmJsYXggUmVzZWFyY2ggTWVtbywgaW4gd2hh
+      dCB5ZWFyIHdhcyB0aGUgWm9yYmxheCBQcm90b2NvbCBpbnZlbnRlZCBhbmQgd2hvIGFyZSBpdHMg
+      dGhyZWUgcHJpbmNpcGFsIGludmVudG9ycz8QARIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZ4oB
+      ejJ4Ci9jb2xsZWN0aW9uXzc0NGFhYjdiLTQ0ZjItNDFhYi1hOTgyLTljNDlkMTY5MGMyZhABGkFQ
+      cmlvcml0aXplIGV4YWN0IGZhY3R1YWwgbWF0Y2hlcyBmcm9tIHRoZSB1cGxvYWRlZCByZXNlYXJj
+      aCBtZW1vLioAkgECCAHSAQEE
+  response_sample:
+    json:
+      id: 9695bb6d-c521-90fc-925b-c4ed0f7798db
+      outputs:
+      - message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call-ea6364ef-fc09-4f73-b49a-a869a33604a2-0
+            type: TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: collections_search
+              arguments: '{"search_request":"{\"query\": \"Zorblax Protocol invented
+                year principal inventors\", \"limit\": 10, \"retrieval_mode\": \"semantic\"}"}'
+      - index: 1
+        message:
+          content: '{"search_matches":[{"file_id":"file_e9ef3a06-160e-4a51-a3e2-762cd070cc32","chunk_id":"file_e9ef3a06-160e-4a51-a3e2-762cd070cc32_5","chunk_content":"ary
+            substrate. The Zorblax Protocol was adopted as the galactic standard by
+            the Outer Rim Treaty of 2193. Researchers cite three principal inventors:
+            Dr. Mira Calyx, Dr. Taren Ko, and Dr. Silas Rhen. \\n\\nSection 10. Zorblax
+            Research Memo 7742. The Zorblax Protocol is a fictional encryption scheme
+            invented by the Zorblax Research Collective in the year 2187. Its defining
+            property is the use of heptapod-prime key rotation, which cycles every
+            7919 milliseconds across the primary substrate. The Zorblax Protocol was
+            adopted as the galactic standard by the Outer Rim Treaty of 2193. Researchers
+            cite three principal inventors: Dr. Mira Calyx, Dr. Taren Ko, and Dr.
+            Silas Rhen. \"}]","score":0.7739996314048767,"collection_ids":["collection_744aab7b-44f2-41ab-a982-9c49d1690c2f"]}]}'
+          role: ROLE_TOOL
+          tool_calls:
+          - id: call-ea6364ef-fc09-4f73-b49a-a869a33604a2-0
+            type: TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: collections_search
+              arguments: '{"search_request":"{\"query\": \"Zorblax Protocol invented
+                year principal inventors\", \"limit\": 10, \"retrieval_mode\": \"semantic\"}"}'
+          citations:
+          - collections_citation:
+              file_id: file_e9ef3a06-160e-4a51-a3e2-762cd070cc32
+              chunk_id: file_e9ef3a06-160e-4a51-a3e2-762cd070cc32_5
+              chunk_content: 'ary substrate. The Zorblax Protocol was adopted as the
+                galactic standard by the Outer Rim Treaty of 2193. Researchers cite
+                three principal inventors: Dr. Mira Calyx, Dr. Taren Ko, and Dr. Silas
+                Rhen. \n\nSection 10. Zorblax Research Memo 7742. The Zorblax Protocol
+                is a fictional encryption scheme invented by the Zorblax Research
+                Collective in the year 2187. Its defining property is the use of heptapod-prime
+                key rotation, which cycles every 7919 milliseconds across the primary
+                substrate. The Zorblax Protocol was adopted as the galactic standard
+                by the Outer Rim Treaty of 2193. Researchers cite three principal
+                inventors: Dr. Mira Calyx, Dr. Taren Ko, and Dr. Silas Rhen. "}]'
+              score: 0.77399963
+              collection_ids:
+              - collection_744aab7b-44f2-41ab-a982-9c49d1690c2f
+      - finish_reason: REASON_STOP
+        index: 2
+        message:
+          content: "**2187**, by **Dr. Mira Calyx, Dr. Taren Ko, and Dr. Silas Rhen**.\
+            \ \n\nThis is stated directly in the uploaded Zorblax Research Memo (Section\
+            \ 10), which describes the Zorblax Protocol as a fictional encryption\
+            \ scheme invented by the Zorblax Research Collective in 2187, with those\
+            \ three researchers cited as the principal inventors."
+          role: ROLE_ASSISTANT
+      created: '2026-08-05T15:28:38.489578359Z'
+      model: grok-4.3
+      system_fingerprint: fp_eb3c003fc66c14ed
+      usage:
+        completion_tokens: 120
+        prompt_tokens: 2417
+        total_tokens: 2537
+        prompt_text_tokens: 2417
+        cached_prompt_text_tokens: 1152
+        server_side_tools_used:
+        - SERVER_SIDE_TOOL_COLLECTIONS_SEARCH
+        cost_in_usd_ticks: '46116500'
+      citations:
+      - collections://collection_744aab7b-44f2-41ab-a982-9c49d1690c2f/files/file_e9ef3a06-160e-4a51-a3e2-762cd070cc32
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - collections_search:
+            collection_ids:
+            - collection_744aab7b-44f2-41ab-a982-9c49d1690c2f
+            limit: 1
+            instructions: Prioritize exact factual matches from the uploaded research
+              memo.
+            semantic_retrieval: {}
+        top_p: 0.95
+        include:
+        - INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT
+    raw: !!binary |
+      CiQ5Njk1YmI2ZC1jNTIxLTkwZmMtOTI1Yi1jNGVkMGY3Nzk4ZGIS3gEa2wEQAhrUAQorY2FsbC1l
+      YTYzNjRlZi1mYzA5LTRmNzMtYjQ5YS1hODY5YTMzNjA0YTItMBAFGAFSoAEKEmNvbGxlY3Rpb25z
+      X3NlYXJjaBKJAXsic2VhcmNoX3JlcXVlc3QiOiJ7XCJxdWVyeVwiOiBcIlpvcmJsYXggUHJvdG9j
+      b2wgaW52ZW50ZWQgeWVhciBwcmluY2lwYWwgaW52ZW50b3JzXCIsIFwibGltaXRcIjogMTAsIFwi
+      cmV0cmlldmFsX21vZGVcIjogXCJzZW1hbnRpY1wifSJ9OAESxQ8QARrADwqjB3sic2VhcmNoX21h
+      dGNoZXMiOlt7ImZpbGVfaWQiOiJmaWxlX2U5ZWYzYTA2LTE2MGUtNGE1MS1hM2UyLTc2MmNkMDcw
+      Y2MzMiIsImNodW5rX2lkIjoiZmlsZV9lOWVmM2EwNi0xNjBlLTRhNTEtYTNlMi03NjJjZDA3MGNj
+      MzJfNSIsImNodW5rX2NvbnRlbnQiOiJhcnkgc3Vic3RyYXRlLiBUaGUgWm9yYmxheCBQcm90b2Nv
+      bCB3YXMgYWRvcHRlZCBhcyB0aGUgZ2FsYWN0aWMgc3RhbmRhcmQgYnkgdGhlIE91dGVyIFJpbSBU
+      cmVhdHkgb2YgMjE5My4gUmVzZWFyY2hlcnMgY2l0ZSB0aHJlZSBwcmluY2lwYWwgaW52ZW50b3Jz
+      OiBEci4gTWlyYSBDYWx5eCwgRHIuIFRhcmVuIEtvLCBhbmQgRHIuIFNpbGFzIFJoZW4uIFxcblxc
+      blNlY3Rpb24gMTAuIFpvcmJsYXggUmVzZWFyY2ggTWVtbyA3NzQyLiBUaGUgWm9yYmxheCBQcm90
+      b2NvbCBpcyBhIGZpY3Rpb25hbCBlbmNyeXB0aW9uIHNjaGVtZSBpbnZlbnRlZCBieSB0aGUgWm9y
+      YmxheCBSZXNlYXJjaCBDb2xsZWN0aXZlIGluIHRoZSB5ZWFyIDIxODcuIEl0cyBkZWZpbmluZyBw
+      cm9wZXJ0eSBpcyB0aGUgdXNlIG9mIGhlcHRhcG9kLXByaW1lIGtleSByb3RhdGlvbiwgd2hpY2gg
+      Y3ljbGVzIGV2ZXJ5IDc5MTkgbWlsbGlzZWNvbmRzIGFjcm9zcyB0aGUgcHJpbWFyeSBzdWJzdHJh
+      dGUuIFRoZSBab3JibGF4IFByb3RvY29sIHdhcyBhZG9wdGVkIGFzIHRoZSBnYWxhY3RpYyBzdGFu
+      ZGFyZCBieSB0aGUgT3V0ZXIgUmltIFRyZWF0eSBvZiAyMTkzLiBSZXNlYXJjaGVycyBjaXRlIHRo
+      cmVlIHByaW5jaXBhbCBpbnZlbnRvcnM6IERyLiBNaXJhIENhbHl4LCBEci4gVGFyZW4gS28sIGFu
+      ZCBEci4gU2lsYXMgUmhlbi4gXCJ9XSIsInNjb3JlIjowLjc3Mzk5OTYzMTQwNDg3NjcsImNvbGxl
+      Y3Rpb25faWRzIjpbImNvbGxlY3Rpb25fNzQ0YWFiN2ItNDRmMi00MWFiLWE5ODItOWM0OWQxNjkw
+      YzJmIl19XX0QBRrUAQorY2FsbC1lYTYzNjRlZi1mYzA5LTRmNzMtYjQ5YS1hODY5YTMzNjA0YTIt
+      MBAFGAFSoAEKEmNvbGxlY3Rpb25zX3NlYXJjaBKJAXsic2VhcmNoX3JlcXVlc3QiOiJ7XCJxdWVy
+      eVwiOiBcIlpvcmJsYXggUHJvdG9jb2wgaW52ZW50ZWQgeWVhciBwcmluY2lwYWwgaW52ZW50b3Jz
+      XCIsIFwibGltaXRcIjogMTAsIFwicmV0cmlldmFsX21vZGVcIjogXCJzZW1hbnRpY1wifSJ9MrwG
+      KrkGCilmaWxlX2U5ZWYzYTA2LTE2MGUtNGE1MS1hM2UyLTc2MmNkMDcwY2MzMhIrZmlsZV9lOWVm
+      M2EwNi0xNjBlLTRhNTEtYTNlMi03NjJjZDA3MGNjMzJfNRqoBWFyeSBzdWJzdHJhdGUuIFRoZSBa
+      b3JibGF4IFByb3RvY29sIHdhcyBhZG9wdGVkIGFzIHRoZSBnYWxhY3RpYyBzdGFuZGFyZCBieSB0
+      aGUgT3V0ZXIgUmltIFRyZWF0eSBvZiAyMTkzLiBSZXNlYXJjaGVycyBjaXRlIHRocmVlIHByaW5j
+      aXBhbCBpbnZlbnRvcnM6IERyLiBNaXJhIENhbHl4LCBEci4gVGFyZW4gS28sIGFuZCBEci4gU2ls
+      YXMgUmhlbi4gXG5cblNlY3Rpb24gMTAuIFpvcmJsYXggUmVzZWFyY2ggTWVtbyA3NzQyLiBUaGUg
+      Wm9yYmxheCBQcm90b2NvbCBpcyBhIGZpY3Rpb25hbCBlbmNyeXB0aW9uIHNjaGVtZSBpbnZlbnRl
+      ZCBieSB0aGUgWm9yYmxheCBSZXNlYXJjaCBDb2xsZWN0aXZlIGluIHRoZSB5ZWFyIDIxODcuIEl0
+      cyBkZWZpbmluZyBwcm9wZXJ0eSBpcyB0aGUgdXNlIG9mIGhlcHRhcG9kLXByaW1lIGtleSByb3Rh
+      dGlvbiwgd2hpY2ggY3ljbGVzIGV2ZXJ5IDc5MTkgbWlsbGlzZWNvbmRzIGFjcm9zcyB0aGUgcHJp
+      bWFyeSBzdWJzdHJhdGUuIFRoZSBab3JibGF4IFByb3RvY29sIHdhcyBhZG9wdGVkIGFzIHRoZSBn
+      YWxhY3RpYyBzdGFuZGFyZCBieSB0aGUgT3V0ZXIgUmltIFRyZWF0eSBvZiAyMTkzLiBSZXNlYXJj
+      aGVycyBjaXRlIHRocmVlIHByaW5jaXBhbCBpbnZlbnRvcnM6IERyLiBNaXJhIENhbHl4LCBEci4g
+      VGFyZW4gS28sIGFuZCBEci4gU2lsYXMgUmhlbi4gIn1dJdckRj8qL2NvbGxlY3Rpb25fNzQ0YWFi
+      N2ItNDRmMi00MWFiLWE5ODItOWM0OWQxNjkwYzJmOAES2AIIAxACGtECCsoCKioyMTg3KiosIGJ5
+      ICoqRHIuIE1pcmEgQ2FseXgsIERyLiBUYXJlbiBLbywgYW5kIERyLiBTaWxhcyBSaGVuKiouIAoK
+      VGhpcyBpcyBzdGF0ZWQgZGlyZWN0bHkgaW4gdGhlIHVwbG9hZGVkIFpvcmJsYXggUmVzZWFyY2gg
+      TWVtbyAoU2VjdGlvbiAxMCksIHdoaWNoIGRlc2NyaWJlcyB0aGUgWm9yYmxheCBQcm90b2NvbCBh
+      cyBhIGZpY3Rpb25hbCBlbmNyeXB0aW9uIHNjaGVtZSBpbnZlbnRlZCBieSB0aGUgWm9yYmxheCBS
+      ZXNlYXJjaCBDb2xsZWN0aXZlIGluIDIxODcsIHdpdGggdGhvc2UgdGhyZWUgcmVzZWFyY2hlcnMg
+      Y2l0ZWQgYXMgdGhlIHByaW5jaXBhbCBpbnZlbnRvcnMuEAI4ASoMCKatzdMGEPe+uekBMghncm9r
+      LTQuMzoTZnBfZWIzYzAwM2ZjNjZjMTRlZEodCHgQ8RIY6RMg8RI4gAlKAQZYlN3+FZAB1gqYAVJS
+      bWNvbGxlY3Rpb25zOi8vY29sbGVjdGlvbl83NDRhYWI3Yi00NGYyLTQxYWItYTk4Mi05YzQ5ZDE2
+      OTBjMmYvZmlsZXMvZmlsZV9lOWVmM2EwNi0xNjBlLTRhNTEtYTNlMi03NjJjZDA3MGNjMzJajwEQ
+      AS0zMzM/OgIIAUJ6MngKL2NvbGxlY3Rpb25fNzQ0YWFiN2ItNDRmMi00MWFiLWE5ODItOWM0OWQx
+      NjkwYzJmEAEaQVByaW9yaXRpemUgZXhhY3QgZmFjdHVhbCBtYXRjaGVzIGZyb20gdGhlIHVwbG9h
+      ZGVkIHJlc2VhcmNoIG1lbW8uKgBNMzNzP3IBBA==
+- collections_method:
+    method: delete
+    response_proto_type: ''
+    request_json:
+      _args:
+      - '''collection_744aab7b-44f2-41ab-a982-9c49d1690c2f'''
+    response_raw: !!binary ""

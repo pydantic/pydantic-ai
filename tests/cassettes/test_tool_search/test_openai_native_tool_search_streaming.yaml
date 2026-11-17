@@ -1,0 +1,295 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '869'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the current USD to EUR exchange rate?
+        role: user
+      model: gpt-5.4
+      stream: true
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_060f468708eb0ff90069f3e2f104d881938387382c02f5868c","object":"response","created_at":1777591025,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","defer_loading":true,"description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up stock price by ticker symbol.","name":"stock_lookup","parameters":{"additionalProperties":false,"properties":{"symbol":{"type":"string"}},"required":["symbol"],"type":"object"},"strict":true},{"type":"tool_search","description":null,"parameters":null}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_060f468708eb0ff90069f3e2f104d881938387382c02f5868c","object":"response","created_at":1777591025,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","defer_loading":true,"description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up stock price by ticker symbol.","name":"stock_lookup","parameters":{"additionalProperties":false,"properties":{"symbol":{"type":"string"}},"required":["symbol"],"type":"object"},"strict":true},{"type":"tool_search","description":null,"parameters":null}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"tsc_060f468708eb0ff90069f3e2f1da248193a424897296815e56","type":"tool_search_call","status":"in_progress","arguments":{},"call_id":null,"execution":"server"},"output_index":0,"sequence_number":2}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"tsc_060f468708eb0ff90069f3e2f1da248193a424897296815e56","type":"tool_search_call","status":"completed","arguments":{"paths":["get_exchange_rate"]},"call_id":null,"execution":"server"},"output_index":0,"sequence_number":3}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"tso_060f468708eb0ff90069f3e2f20c84819385b1d75b9c1ffc7d","type":"tool_search_output","status":"in_progress","call_id":null,"execution":"server","tools":[{"type":"function","defer_loading":true,"description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true}]},"output_index":1,"sequence_number":4}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"tso_060f468708eb0ff90069f3e2f20c84819385b1d75b9c1ffc7d","type":"tool_search_output","status":"completed","call_id":null,"execution":"server","tools":[{"type":"function","defer_loading":true,"description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true}]},"output_index":1,"sequence_number":5}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"fc_060f468708eb0ff90069f3e2f2bb00819398117e5b32b4a3de","type":"function_call","status":"in_progress","arguments":"","call_id":"call_CeXueyTqEJ1rgm84BHSwNPz8","name":"get_exchange_rate","namespace":"get_exchange_rate"},"output_index":2,"sequence_number":6}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"{\"","item_id":"fc_060f468708eb0ff90069f3e2f2bb00819398117e5b32b4a3de","obfuscation":"AjHRfe4YCQKBhR","output_index":2,"sequence_number":7}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"from","item_id":"fc_060f468708eb0ff90069f3e2f2bb00819398117e5b32b4a3de","obfuscation":"ZX88yUoh5fLR","output_index":2,"sequence_number":8}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"_currency","item_id":"fc_060f468708eb0ff90069f3e2f2bb00819398117e5b32b4a3de","obfuscation":"JdPjSjf","output_index":2,"sequence_number":9}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\":\"","item_id":"fc_060f468708eb0ff90069f3e2f2bb00819398117e5b32b4a3de","obfuscation":"uxlhvKYhxsfc0","output_index":2,"sequence_number":10}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"USD","item_id":"fc_060f468708eb0ff90069f3e2f2bb00819398117e5b32b4a3de","obfuscation":"eGraE5pCaP5Sv","output_index":2,"sequence_number":11}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\",\"","item_id":"fc_060f468708eb0ff90069f3e2f2bb00819398117e5b32b4a3de","obfuscation":"IysKoPG44F73U","output_index":2,"sequence_number":12}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"to","item_id":"fc_060f468708eb0ff90069f3e2f2bb00819398117e5b32b4a3de","obfuscation":"Jfhsb9CRCDYN7b","output_index":2,"sequence_number":13}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"_currency","item_id":"fc_060f468708eb0ff90069f3e2f2bb00819398117e5b32b4a3de","obfuscation":"gTXzyh1","output_index":2,"sequence_number":14}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\":\"","item_id":"fc_060f468708eb0ff90069f3e2f2bb00819398117e5b32b4a3de","obfuscation":"kwAmqr0y8HqsQ","output_index":2,"sequence_number":15}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"EUR","item_id":"fc_060f468708eb0ff90069f3e2f2bb00819398117e5b32b4a3de","obfuscation":"hKhrNdCpdyZAh","output_index":2,"sequence_number":16}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\"}","item_id":"fc_060f468708eb0ff90069f3e2f2bb00819398117e5b32b4a3de","obfuscation":"OOPP6sMU7oIhYM","output_index":2,"sequence_number":17}
+
+        event: response.function_call_arguments.done
+        data: {"type":"response.function_call_arguments.done","arguments":"{\"from_currency\":\"USD\",\"to_currency\":\"EUR\"}","item_id":"fc_060f468708eb0ff90069f3e2f2bb00819398117e5b32b4a3de","output_index":2,"sequence_number":18}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"fc_060f468708eb0ff90069f3e2f2bb00819398117e5b32b4a3de","type":"function_call","status":"completed","arguments":"{\"from_currency\":\"USD\",\"to_currency\":\"EUR\"}","call_id":"call_CeXueyTqEJ1rgm84BHSwNPz8","name":"get_exchange_rate","namespace":"get_exchange_rate"},"output_index":2,"sequence_number":19}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_060f468708eb0ff90069f3e2f104d881938387382c02f5868c","object":"response","created_at":1777591025,"status":"completed","background":false,"completed_at":1777591027,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[{"id":"tsc_060f468708eb0ff90069f3e2f1da248193a424897296815e56","type":"tool_search_call","status":"completed","arguments":{"paths":["get_exchange_rate"]},"call_id":null,"execution":"server"},{"id":"tso_060f468708eb0ff90069f3e2f20c84819385b1d75b9c1ffc7d","type":"tool_search_output","status":"completed","call_id":null,"execution":"server","tools":[{"type":"function","defer_loading":true,"description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true}]},{"id":"fc_060f468708eb0ff90069f3e2f2bb00819398117e5b32b4a3de","type":"function_call","status":"completed","arguments":"{\"from_currency\":\"USD\",\"to_currency\":\"EUR\"}","call_id":"call_CeXueyTqEJ1rgm84BHSwNPz8","name":"get_exchange_rate","namespace":"get_exchange_rate"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","defer_loading":true,"description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up stock price by ticker symbol.","name":"stock_lookup","parameters":{"additionalProperties":false,"properties":{"symbol":{"type":"string"}},"required":["symbol"],"type":"object"},"strict":true},{"type":"tool_search","description":null,"parameters":null}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":600,"input_tokens_details":{"cached_tokens":0},"output_tokens":47,"output_tokens_details":{"reasoning_tokens":21},"total_tokens":647},"user":null,"metadata":{}},"sequence_number":20}
+
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '517'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1500'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=vWWzXQsOV46IfpPxxeQjXFSQqVP.tzWtxJ_phIsyA4k-1777591024.4207492-1.0.1.1-O0ddwdNzDkI9L8zeQOBPKBubQm5dG0WrlHILfNDlE9TeJXzb1gClVW5PT2nbsI_OOtC3PUTx6cc3yHSm4YQ_w2ZUaqGenHMxQNPnNcx5THOAk.jpmknqxB.ga1hLANR0
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the current USD to EUR exchange rate?
+        role: user
+      - arguments:
+          queries:
+          - get_exchange_rate
+        call_id: tsc_060f468708eb0ff90069f3e2f1da248193a424897296815e56
+        execution: server
+        id: tsc_060f468708eb0ff90069f3e2f1da248193a424897296815e56
+        status: completed
+        type: tool_search_call
+      - arguments: '{"from_currency":"USD","to_currency":"EUR"}'
+        call_id: call_CeXueyTqEJ1rgm84BHSwNPz8
+        id: fc_060f468708eb0ff90069f3e2f2bb00819398117e5b32b4a3de
+        name: get_exchange_rate
+        namespace: get_exchange_rate
+        type: function_call
+      - call_id: call_CeXueyTqEJ1rgm84BHSwNPz8
+        output: 1 USD = 0.92 EUR
+        type: function_call_output
+      model: gpt-5.4
+      stream: true
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_060f468708eb0ff90069f3e2f63c80819388d60df11d772f73","object":"response","created_at":1777591030,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","defer_loading":true,"description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up stock price by ticker symbol.","name":"stock_lookup","parameters":{"additionalProperties":false,"properties":{"symbol":{"type":"string"}},"required":["symbol"],"type":"object"},"strict":true},{"type":"tool_search","description":null,"parameters":null}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_060f468708eb0ff90069f3e2f63c80819388d60df11d772f73","object":"response","created_at":1777591030,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","defer_loading":true,"description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up stock price by ticker symbol.","name":"stock_lookup","parameters":{"additionalProperties":false,"properties":{"symbol":{"type":"string"}},"required":["symbol"],"type":"object"},"strict":true},{"type":"tool_search","description":null,"parameters":null}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_060f468708eb0ff90069f3e2f73730819393027b9586770c1c","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_060f468708eb0ff90069f3e2f73730819393027b9586770c1c","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"1","item_id":"msg_060f468708eb0ff90069f3e2f73730819393027b9586770c1c","logprobs":[],"obfuscation":"Xy4PHKhulE5umKB","output_index":0,"sequence_number":4}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" USD","item_id":"msg_060f468708eb0ff90069f3e2f73730819393027b9586770c1c","logprobs":[],"obfuscation":"ePkbnPpsVH7l","output_index":0,"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" =","item_id":"msg_060f468708eb0ff90069f3e2f73730819393027b9586770c1c","logprobs":[],"obfuscation":"4pZ1OgP87fOKop","output_index":0,"sequence_number":6}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_060f468708eb0ff90069f3e2f73730819393027b9586770c1c","logprobs":[],"obfuscation":"48AJub0eMBuznjh","output_index":0,"sequence_number":7}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"0","item_id":"msg_060f468708eb0ff90069f3e2f73730819393027b9586770c1c","logprobs":[],"obfuscation":"01xNh3Z2KC7bzgX","output_index":0,"sequence_number":8}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_060f468708eb0ff90069f3e2f73730819393027b9586770c1c","logprobs":[],"obfuscation":"oIGNgwXLcBHTsWS","output_index":0,"sequence_number":9}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"92","item_id":"msg_060f468708eb0ff90069f3e2f73730819393027b9586770c1c","logprobs":[],"obfuscation":"Tv3yTMFUP5e5yz","output_index":0,"sequence_number":10}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" EUR","item_id":"msg_060f468708eb0ff90069f3e2f73730819393027b9586770c1c","logprobs":[],"obfuscation":"Z6XCEb19azv3","output_index":0,"sequence_number":11}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_060f468708eb0ff90069f3e2f73730819393027b9586770c1c","logprobs":[],"output_index":0,"sequence_number":12,"text":"1 USD = 0.92 EUR"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_060f468708eb0ff90069f3e2f73730819393027b9586770c1c","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"1 USD = 0.92 EUR"},"sequence_number":13}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_060f468708eb0ff90069f3e2f73730819393027b9586770c1c","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"1 USD = 0.92 EUR"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":14}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_060f468708eb0ff90069f3e2f63c80819388d60df11d772f73","object":"response","created_at":1777591030,"status":"completed","background":false,"completed_at":1777591031,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[{"id":"msg_060f468708eb0ff90069f3e2f73730819393027b9586770c1c","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"1 USD = 0.92 EUR"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","defer_loading":true,"description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up stock price by ticker symbol.","name":"stock_lookup","parameters":{"additionalProperties":false,"properties":{"symbol":{"type":"string"}},"required":["symbol"],"type":"object"},"strict":true},{"type":"tool_search","description":null,"parameters":null}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":496,"input_tokens_details":{"cached_tokens":0},"output_tokens":12,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":508},"user":null,"metadata":{}},"sequence_number":15}
+
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '821'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

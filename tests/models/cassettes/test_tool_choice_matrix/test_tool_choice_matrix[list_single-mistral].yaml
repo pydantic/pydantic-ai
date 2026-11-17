@@ -1,0 +1,105 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.mistral.ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "647"
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    body:
+      type: json
+      content:
+        model: mistral-large-latest
+        messages:
+        - content: What's the weather in Paris?
+          role: user
+        top_p: 1.0
+        stream: false
+        stop: null
+        tools:
+        - function:
+            name: get_weather
+            parameters:
+              type: object
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+            description: Get weather for a city
+          type: function
+        - function:
+            name: get_time
+            parameters:
+              type: object
+              properties:
+                timezone:
+                  type: string
+              required:
+              - timezone
+            description: Get time in a timezone
+          type: function
+        tool_choice:
+          function:
+            name: get_weather
+          type: function
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 01a141fa-af5b-7612-9d06-80050f7a271e
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: 88d84ac7b1f64097a4910cf75db483e6
+        created: 1792108310
+        model: mistral-large-latest
+        usage:
+          prompt_tokens: 75
+          total_tokens: 87
+          completion_tokens: 12
+          prompt_tokens_details:
+            cached_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+          service_tier: standard
+        object: chat.completion
+        choices:
+        - index: 0
+          finish_reason: tool_calls
+          message:
+            role: assistant
+            tool_calls:
+            - id: GWMSIKouE
+              type: function
+              function:
+                name: get_weather
+                arguments: "{\"city\": \"Paris\"}"
+              index: 0
+            content: ""
+  recorded_at: 2026-10-15T23:51:50.872574+00:00

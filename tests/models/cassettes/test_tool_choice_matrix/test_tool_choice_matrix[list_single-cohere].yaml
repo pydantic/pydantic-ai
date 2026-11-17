@@ -1,0 +1,84 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '362'
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      model: command-r7b-12-2024
+      stream: false
+      tool_choice: REQUIRED
+      tools:
+      - function:
+          description: Get weather for a city
+          name: get_weather
+          parameters:
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+    uri: https://api.cohere.com/v2/chat
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-length:
+      - '484'
+      content-type:
+      - application/json
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      num_chars:
+      - '6854'
+      num_tokens:
+      - '55'
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin,Accept-Encoding
+    parsed_body:
+      finish_reason: TOOL_CALL
+      id: e6080fed-d1b4-404b-a4e9-496e522cc5f6
+      message:
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: get_weather_k5pr4trwbbfd
+          type: function
+        tool_plan: I will use one or more of the available tools to find the answer
+      usage:
+        billed_units:
+          input_tokens: 33
+          output_tokens: 22
+        cached_tokens: 144
+        tokens:
+          input_tokens: 1452
+          output_tokens: 33
+    status:
+      code: 200
+      message: OK
+version: 1

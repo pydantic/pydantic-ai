@@ -1,0 +1,465 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1050"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5-mini
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Get weather for Paris and summarize
+        tool_choice:
+          type: allowed_tools
+          mode: required
+          tools:
+          - type: function
+            name: get_weather
+          - type: function
+            name: final_result
+        tools:
+        - name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          type: function
+          description: Get the current weather for a city.
+          strict: true
+        - name: get_time
+          parameters:
+            additionalProperties: false
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+          type: function
+          description: Get the current time in a timezone.
+          strict: true
+        - name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+            additionalProperties: false
+          type: function
+          description: The final response which ends this conversation
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "3223"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0766d93de352f99b006acf9097540887d2b373af3e556b2a4e
+        object: response
+        created_at: 1791987863
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1791987866
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5-mini-2025-08-07
+        moderation: null
+        output:
+        - id: rs_0766d93de352f99b006acf9097fca087d2b2cb6d11265d3e58
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABqz5CaKtsb2yHsfpdEVVYUbRvW-bt6seTJD3iktUi-hVh_1-r7B3pDixKrjmu2Bv1B81TM8kctq8D_R9oXuNS3NpUqtA-I3KmXfnzLJaVdGXLzDr7y-S9LYqmXIcIOxwJDjC217SMyyj-SaUd4jF9qvlqKKKsdRKItQjtBbaa4NihDLn-OqIg2vukkZivG_UmR43aM6DNg5zDc9bn3VnX6yKxmycaOqgFUJbPIwxHchAjujA6HsCP66LE0WMhdOCXxPynA4a6CIIppbLT_1zCVjwt9piRimD-MfrXYakgQXucpyUtpVkNOuSVa7A1byygas5N23xYJNKNa9SVbOQgr3Mk6Vy49VIMga2Qg13mIfzdYeHJ3TUZ_XkF4xe1V568wOy8olGtCFA9utHHyzktGsXf193K-qNKHmW6B_cQHZkoyDXsn24YHf2BP5ZXxlpD7ZiUCLeSD2a-XTTQIBSGCoLDluL0YMTUWxV1rbAXztkq9ZVpB0Yq5jK9hXvWAnbrV2uwi6jfBckUAqB4WQ27CStSPrLcvRy9ebp6Z-bf_J99lOetkyKf2cTW7CLg7nLMTgkxAYs0gdEUChFi2F7vnjonVQazqKFT7dcM5oXKj3FqsC5oFTApkeblNjr-C0oqEivVIxNXtM7-A2oH6HhIhr1rfI3Ei2hlMZ4z5en9nbmusRtlPchCYTzmY5Y5PFp0epkm7X71_MLeneam-M0gF_KmuW6n-uf9SZHx03esic1S-btcbp22ZrRohCCscmt-KRZT-Nx7eYbzRlqbEvwhLawhpCya2to2ZKmHMZ-_ZXZih7aZkdhTAbMJErO3f2fy7__6v0FbXs9O26mRX_7H6zcGbOJyIGURg8dQe-2_7Sw1eNFA5xSP72MtwSsxSNOPNzcp6s74AoPi9k95gELLGsHMYX-jvPC0bIZJZ6n9VW9fc_zu7shtYGnHX63f1RDK1M4XTvqanazaWmOC0ufr-P9IqbGap42CHOLbvUGeMS7NQSB_yJpxLWrlqFNnDx8JJS4zoeAON95Q66c0xHIARGg9ACwQt_nVrwZg_VQ2fx3XPme8PnK-iivlumwiD9ZlX2Vmtkp3U6uncITWIEGDL2_FhzE2YOQniwY8XyqfgKW642AVJu5kaX5diCdcuKzGY5S-Fk7pWmPBQy-EJB7OwkxOJJodYQDm8waQznEJm9W57SOHinY5mDJq_dmmKZ_AxQ8SOlD4Dt27CyJYW6WfBzyyFBEcQKKd_6k-IIiG2LBIqZkkxH4YV5TwOygdOD1RtZ6ORbWELNLVGpMWteGMcI6X9r-83ftLh1jmCA5937MQvPOkzpM4TPlwrg2YVMrF1ywyWTOUA470O9xXlcxTCQzglVRac0h3MdQgdx_e6MDZeI_kC9B69Uof7bi5KlTqrY_QeiV5hjpaHOn_T83KS4sGdp2MGW7DHUdzmU0g6ZajzMu2ubx6Eyevo0YLnUXfqjV2P0vFdzhtYxpYtKaCbw57DR5k7cy0EDlHx8NfqwQjMLOaqx19T0QgZKbktSe7jRkZPFMhzOb27kBdfCQy2rF_94ta_uNzTz9SYgpVFOIWtibBdyvwthC6XHjLig3e5Q5-MPwKRK6lP4uAP4xVDdd7kDVGkW80sb0ctawtOtIjR2jFEWkNzUvTAtRwKIDAUzKH1vOGygYFxkNgA1VQ-jZxJdis7OYtDqPUdL8Cb_GcQx2fvlqwWHk1s2BeItZdMMgS9FC0sH30CuSF3gxMMcCGJSwavfqG26vEJEsb-RDZBcs04CgM9sYfmb0Ajfj3DylWD3F7lhRqJJezVMmeFNFPPWfKTdU-y08bSXLHS3bOh5yzy4tM_iaS_glFOBDOqc_z-pDwYXEA1nnaYSlf0Mf8uFu0tsL1FOHya-THTmvFfSvykgJopd0zIM-HH1ZzesEFvFpnjWF1WfsIOAkhfV6JaXL89iHp1rhdm6dkk7_zvkijj4dXWkmKIQHe1XLT9-NmGUTriK93rYR4L5t2d48s21icYA5d1SxLbqjrUfB4hBuCIHjDJWVxJiNnB50FOcqLQ2M4zEsG-XggPIn1KqLxhVhmN86qrjVMYtuxtTLaIbQ8-0a5zeRe20RSUQ9t3aPtX5yg3a8_3ic-D2Lp7Qopw0EoPAeNIRw0e8DUCwJI4yVr1YrKGAOl-G8pK_7ch_KzLCaEkwYbs4TuyOpPzNKA3y8NliQSPcRF6ZF4xLDiYPGwsyVV3XxYqDO5NSyCGmx-FpbrcQs-zvTJyLK6ccNH2ei21A0ZjoBr0t5vZTLGq1Y7_LkhKhu0RFlQ4j1bR_ArbsqC6zaAuYwb8HbSxpkUbrz9eOiH0o1Ebvf1ceW7E5vw3MHBSc_OQ_udY5AiyEobR2-SAz1I1jie_lvDbS1qW3NseDXvGgGuYT4NPW4DpyNTVjLRZNszm3ej3VA7jKR5ZiOgVrKlkBOWRWjjvqZR3KN1Nd0iMwfwgr6zqRdtAFhU1XyTvKeGgnHZbuQ6hmlitxvnzD7k3J9plKv45hDVoXn3upqbwfVJhBlJWjwwdhZD7wkUGJpzsy3LtwlbgnkzaG0UrtUIN1LGiYskJgFGcS2UmVIsovpXqWH9OEDJnUXc0z7PH0BULc3kaSMMvy-v9g2E-8Xf-JNzhPLVH83rpibgQtb4FO0nEYWHDgVhTf45p44YDST5gEFxrM4ULKNV7wVINEXkenAbpAMrc6bFQ43gC7b1gsrpMBvDSkXqYomRaxtuqRhZ4bv4WWvfQ_-hbIPmAloIr3kl5gRMEAEzaVXu0Y2yHN1lMU62vcTx4ojSvgG1MpuG1Z_eD5HSoArFhunDR1MGjXxjsk8BCvN_0Z5b27qLm-rEz862Na-rqKYKNUDuZvQKbaOJrY7lqXNrOW0phfMXr-e2_pswSAODIIcH6jNSzO_3fCoowj0yTwxH_0A9vndo-3ZYLrCh92p3F1gEabBeXqfpdOQqWSXn6egMvGgwIrU0atQk8wFcnwzXoSlo8aiQGbWpEwGU8Nfw_u1P6zhLMycXu-M6YqXtdmbQfy3dhV8AM-dowzONbi59VOIgmKJgbrb37tXc83ZJKWNmHxeX_eYkVeStky0aLCPI3CMLnpYKGCbppOA8tht1wZu9g4aKNfVfL0RUW8mSomSfN8zQRKNdduSfWY6Yc1QsdkOT5wjrav9hQfJksbhIxFfRZ_AMZRpneQbpsflbh7LvHLA5jpsOBmmKdcriKim5VOCj204ycysax6-g8HWPqzRDOltZx2rB7D_ux9ruaYyfUNP8OX4s-ZRbqDiw8pj27pBEyIpRrXnw_v2PaTK9zsvfGmLUoFCDyaluo1lMN7xo7q-j62ZGonZK_GN0eihGp8DhfmbaB_Pv5wTYyoRXDsm4kcok3_p9SL9I9Q1fIbjlYfqVGC8NmIKoTHGhGnZmNNNMWb0ex9GzEYTdZFW06S3U_v4WgNK6tYw5Vn-dxWfm0PSfB9CEI_jWw0n407w==
+          summary: []
+        - id: fc_0766d93de352f99b006acf909984d087d2bb6e2a440047fbc2
+          type: function_call
+          status: completed
+          arguments: "{\"city\":\"Paris\"}"
+          call_id: call_X5EQlhe91n9JlDxW5c0ZeYjc
+          name: get_weather
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: current_turn
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice:
+          type: allowed_tools
+          mode: required
+          tools:
+          - type: function
+            name: get_weather
+          - type: function
+            name: final_result
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: Get the current weather for a city.
+          name: get_weather
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        - type: function
+          description: Get the current time in a timezone.
+          name: get_time
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+          strict: true
+        - type: function
+          description: The final response which ends this conversation
+          name: final_result
+          output_schema: null
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+            additionalProperties: false
+          strict: true
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 98
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 168
+          output_tokens_details:
+            reasoning_tokens: 128
+          total_tokens: 266
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-14T14:24:26.619193+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "4949"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5-mini
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Get weather for Paris and summarize
+        - id: rs_0766d93de352f99b006acf9097fca087d2b2cb6d11265d3e58
+          summary: []
+          encrypted_content: >-
+            gAAAAABqz5CaKtsb2yHsfpdEVVYUbRvW-bt6seTJD3iktUi-hVh_1-r7B3pDixKrjmu2Bv1B81TM8kctq8D_R9oXuNS3NpUqtA-I3KmXfnzLJaVdGXLzDr7y-S9LYqmXIcIOxwJDjC217SMyyj-SaUd4jF9qvlqKKKsdRKItQjtBbaa4NihDLn-OqIg2vukkZivG_UmR43aM6DNg5zDc9bn3VnX6yKxmycaOqgFUJbPIwxHchAjujA6HsCP66LE0WMhdOCXxPynA4a6CIIppbLT_1zCVjwt9piRimD-MfrXYakgQXucpyUtpVkNOuSVa7A1byygas5N23xYJNKNa9SVbOQgr3Mk6Vy49VIMga2Qg13mIfzdYeHJ3TUZ_XkF4xe1V568wOy8olGtCFA9utHHyzktGsXf193K-qNKHmW6B_cQHZkoyDXsn24YHf2BP5ZXxlpD7ZiUCLeSD2a-XTTQIBSGCoLDluL0YMTUWxV1rbAXztkq9ZVpB0Yq5jK9hXvWAnbrV2uwi6jfBckUAqB4WQ27CStSPrLcvRy9ebp6Z-bf_J99lOetkyKf2cTW7CLg7nLMTgkxAYs0gdEUChFi2F7vnjonVQazqKFT7dcM5oXKj3FqsC5oFTApkeblNjr-C0oqEivVIxNXtM7-A2oH6HhIhr1rfI3Ei2hlMZ4z5en9nbmusRtlPchCYTzmY5Y5PFp0epkm7X71_MLeneam-M0gF_KmuW6n-uf9SZHx03esic1S-btcbp22ZrRohCCscmt-KRZT-Nx7eYbzRlqbEvwhLawhpCya2to2ZKmHMZ-_ZXZih7aZkdhTAbMJErO3f2fy7__6v0FbXs9O26mRX_7H6zcGbOJyIGURg8dQe-2_7Sw1eNFA5xSP72MtwSsxSNOPNzcp6s74AoPi9k95gELLGsHMYX-jvPC0bIZJZ6n9VW9fc_zu7shtYGnHX63f1RDK1M4XTvqanazaWmOC0ufr-P9IqbGap42CHOLbvUGeMS7NQSB_yJpxLWrlqFNnDx8JJS4zoeAON95Q66c0xHIARGg9ACwQt_nVrwZg_VQ2fx3XPme8PnK-iivlumwiD9ZlX2Vmtkp3U6uncITWIEGDL2_FhzE2YOQniwY8XyqfgKW642AVJu5kaX5diCdcuKzGY5S-Fk7pWmPBQy-EJB7OwkxOJJodYQDm8waQznEJm9W57SOHinY5mDJq_dmmKZ_AxQ8SOlD4Dt27CyJYW6WfBzyyFBEcQKKd_6k-IIiG2LBIqZkkxH4YV5TwOygdOD1RtZ6ORbWELNLVGpMWteGMcI6X9r-83ftLh1jmCA5937MQvPOkzpM4TPlwrg2YVMrF1ywyWTOUA470O9xXlcxTCQzglVRac0h3MdQgdx_e6MDZeI_kC9B69Uof7bi5KlTqrY_QeiV5hjpaHOn_T83KS4sGdp2MGW7DHUdzmU0g6ZajzMu2ubx6Eyevo0YLnUXfqjV2P0vFdzhtYxpYtKaCbw57DR5k7cy0EDlHx8NfqwQjMLOaqx19T0QgZKbktSe7jRkZPFMhzOb27kBdfCQy2rF_94ta_uNzTz9SYgpVFOIWtibBdyvwthC6XHjLig3e5Q5-MPwKRK6lP4uAP4xVDdd7kDVGkW80sb0ctawtOtIjR2jFEWkNzUvTAtRwKIDAUzKH1vOGygYFxkNgA1VQ-jZxJdis7OYtDqPUdL8Cb_GcQx2fvlqwWHk1s2BeItZdMMgS9FC0sH30CuSF3gxMMcCGJSwavfqG26vEJEsb-RDZBcs04CgM9sYfmb0Ajfj3DylWD3F7lhRqJJezVMmeFNFPPWfKTdU-y08bSXLHS3bOh5yzy4tM_iaS_glFOBDOqc_z-pDwYXEA1nnaYSlf0Mf8uFu0tsL1FOHya-THTmvFfSvykgJopd0zIM-HH1ZzesEFvFpnjWF1WfsIOAkhfV6JaXL89iHp1rhdm6dkk7_zvkijj4dXWkmKIQHe1XLT9-NmGUTriK93rYR4L5t2d48s21icYA5d1SxLbqjrUfB4hBuCIHjDJWVxJiNnB50FOcqLQ2M4zEsG-XggPIn1KqLxhVhmN86qrjVMYtuxtTLaIbQ8-0a5zeRe20RSUQ9t3aPtX5yg3a8_3ic-D2Lp7Qopw0EoPAeNIRw0e8DUCwJI4yVr1YrKGAOl-G8pK_7ch_KzLCaEkwYbs4TuyOpPzNKA3y8NliQSPcRF6ZF4xLDiYPGwsyVV3XxYqDO5NSyCGmx-FpbrcQs-zvTJyLK6ccNH2ei21A0ZjoBr0t5vZTLGq1Y7_LkhKhu0RFlQ4j1bR_ArbsqC6zaAuYwb8HbSxpkUbrz9eOiH0o1Ebvf1ceW7E5vw3MHBSc_OQ_udY5AiyEobR2-SAz1I1jie_lvDbS1qW3NseDXvGgGuYT4NPW4DpyNTVjLRZNszm3ej3VA7jKR5ZiOgVrKlkBOWRWjjvqZR3KN1Nd0iMwfwgr6zqRdtAFhU1XyTvKeGgnHZbuQ6hmlitxvnzD7k3J9plKv45hDVoXn3upqbwfVJhBlJWjwwdhZD7wkUGJpzsy3LtwlbgnkzaG0UrtUIN1LGiYskJgFGcS2UmVIsovpXqWH9OEDJnUXc0z7PH0BULc3kaSMMvy-v9g2E-8Xf-JNzhPLVH83rpibgQtb4FO0nEYWHDgVhTf45p44YDST5gEFxrM4ULKNV7wVINEXkenAbpAMrc6bFQ43gC7b1gsrpMBvDSkXqYomRaxtuqRhZ4bv4WWvfQ_-hbIPmAloIr3kl5gRMEAEzaVXu0Y2yHN1lMU62vcTx4ojSvgG1MpuG1Z_eD5HSoArFhunDR1MGjXxjsk8BCvN_0Z5b27qLm-rEz862Na-rqKYKNUDuZvQKbaOJrY7lqXNrOW0phfMXr-e2_pswSAODIIcH6jNSzO_3fCoowj0yTwxH_0A9vndo-3ZYLrCh92p3F1gEabBeXqfpdOQqWSXn6egMvGgwIrU0atQk8wFcnwzXoSlo8aiQGbWpEwGU8Nfw_u1P6zhLMycXu-M6YqXtdmbQfy3dhV8AM-dowzONbi59VOIgmKJgbrb37tXc83ZJKWNmHxeX_eYkVeStky0aLCPI3CMLnpYKGCbppOA8tht1wZu9g4aKNfVfL0RUW8mSomSfN8zQRKNdduSfWY6Yc1QsdkOT5wjrav9hQfJksbhIxFfRZ_AMZRpneQbpsflbh7LvHLA5jpsOBmmKdcriKim5VOCj204ycysax6-g8HWPqzRDOltZx2rB7D_ux9ruaYyfUNP8OX4s-ZRbqDiw8pj27pBEyIpRrXnw_v2PaTK9zsvfGmLUoFCDyaluo1lMN7xo7q-j62ZGonZK_GN0eihGp8DhfmbaB_Pv5wTYyoRXDsm4kcok3_p9SL9I9Q1fIbjlYfqVGC8NmIKoTHGhGnZmNNNMWb0ex9GzEYTdZFW06S3U_v4WgNK6tYw5Vn-dxWfm0PSfB9CEI_jWw0n407w==
+          type: reasoning
+        - name: get_weather
+          arguments: "{\"city\":\"Paris\"}"
+          call_id: call_X5EQlhe91n9JlDxW5c0ZeYjc
+          type: function_call
+          id: fc_0766d93de352f99b006acf909984d087d2bb6e2a440047fbc2
+        - type: function_call_output
+          call_id: call_X5EQlhe91n9JlDxW5c0ZeYjc
+          output: Sunny, 22C in Paris
+        tool_choice:
+          type: allowed_tools
+          mode: required
+          tools:
+          - type: function
+            name: get_weather
+          - type: function
+            name: final_result
+        tools:
+        - name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          type: function
+          description: Get the current weather for a city.
+          strict: true
+        - name: get_time
+          parameters:
+            additionalProperties: false
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+          type: function
+          description: Get the current time in a timezone.
+          strict: true
+        - name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+            additionalProperties: false
+          type: function
+          description: The final response which ends this conversation
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "3169"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0766d93de352f99b006acf909ad79c87d2924d0efb04a47d99
+        object: response
+        created_at: 1791987866
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1791987869
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5-mini-2025-08-07
+        moderation: null
+        output:
+        - id: rs_0766d93de352f99b006acf909b995487d2b3300f8c0cd5de85
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABqz5Cd-zrOQOFQGwTQXb-4WW42tuJrB-OSxiDvd79whGFyNcv-dpB3LxaBcC5U1lVNwg1OgTDBneL3ji6aPQ-qWhkj4wE2b1A8pl64RJBAhYZoXP6IFVXSLwpGaBKb0aDY8E9UgyG6ol1vgNvzWiKQNpyOoZYZuZiHj2S9FkzMqq2NaphFtfzVm_kyEYFlH4W85V7ZGEsAGEbM6hXme7fchuCEvxTgik03JVEhcDgaWtCd9VvAkxE1SJrVL9PBQ-SxxYFdlZL_oeBr85EO8leAHGXI71X808PTdxJb2mCWpeXmvgSvL9959LImOSOgG32gus79FlEraCn8y1zJ6e0Iw39pOcCFPiztR0P_pkebzbUsV0CwK4RiR-as7hH7IP3oLL9Mvxwbfzmw-PFNBiTqkhaY69Kx8SHxK9ddRX4x6wy0Op0uN7dQy_Zn0W39iY0B07TFe9JIlp5NHeqK8vDvN0h-38i4F3dSaL4xc80d9hnMUvMZRZc7so1n7BGzIB7ZWbufXXBppPWQ1_dz99sGRFTVHlWRgxzrctUfvkblRaPKSAjsBPhSt61Re5GrMWKs44Hud0mC9ohLEX7AW9g3xjtGbSvhtN97uifhVwaqOro5E7PYbJ-k2KiG4Su42f7JzxlhYNiRe1ygP7EhLBfLIZVrC2nhHBMPMjNrbmpyJY7HP8hjYJUnSy_skGxHFM19vyV7-SKadL4rc_N1SnawY00fUTV7UDpCVINrLH8TcKk5oxFjljqRG3iusp6wF1L8vSt4y6Xiha7V7Vf1OJYW-xhlaq5LaYA0O9Z4TwEilFKaE69IM20wLOAFqHXRoljvYBv7ToPIU-CHBCoESY46T7FjcwjSea4ofXeILNCSSEbIngzb8UbRFu83tPQRe3lRKXn19wrcHq_3y32dGWOnOIxMcXTTrBSRTMrts_ZMegYM0AZ4PngA7h_pbszrZvomyky9ArbO_JIKU7Sl0X3FLAptS8JgPmZtiDm3MfSauL9fq7VUENMGgwW1MUktA4somJFqGIyo69sjoZ_Pvsssuh8tEzAbeugL7vq0ZdVRyejoEHu-U5ikQe_oNvXLkvg_tOiGRZvnIgkyq9N_3oYgRxvr66uRYTGtEyiFjGHKCbxOiOcAfmv9a9bEnN7omR14y_FZeqIh8WmFTrzpNMXcq8xffo5nTaQEZusrhzZz3oUDe41k5pkWErsUJk2FT3JtS8CfAuuO0oK4eKf3LhLkdloVFu4CBKof00Tqp9nWzz46ighJyDUWDMyb9ANoiNsW3PGHDf6PGtDZFR-QzA39FZFTS6dvyN5oy-ZpqpDMHTfPrZZ5AYL0xocFSryJjmE2bWnrS5q95jkcMiC2EwrP7kpFxzkHflkgmqDf9mTGMJD7NpU2LoJMG6flld3vv4_j_JZohd3VE3o8VVB8-blxkFRoh4l0LWGgzE6oBTv5nA3V_75ssUgr7tyJ4-IJkyU_vv6JdhgHFFLr_F_7HseB6kCiifahHaQAHxnwZOxBgSRspLIcOyJ-PNbgkorBItHVstmENC4lxVBYRUpgMCcHea5LKJXCjkRb_MGSaUtuwfrTnU0W6U2AlLGNr-yMdQm_cECnmDMwqkiQs-pDxtw9RzlPQMO_5EbqyOthAemp6jW-uBvlp27THr167RhiYciaRXMDTpbhppO7ed4iyx47S3_fzH8z6fTApv40YY8PsdIye49SUJH8xWuit-x0fy_m3_IFqNzxq-vlmqrqpM8txYYn-XvBYgKfXKj_Lwe7suwc5PaJmoYfhpNzfrHxN-gn4TxePAKboGz4O2HdN-paHHBQO56v47S1JOFhO5qvFJZDhF6aYsmbTStTc_5PfregKLwukoNZLS_NiPd3Sm5VFvOsDtAf_wENSXxpH-qq0D8MvVMnbi_8w3e6_zH8f2dBrD6Uk8yIfuo8Iq__M-5y8UW78rHN9b-oQDEy7PH9kLRMsUGBLRtPuc2jlDcv6C28zT6yQ4OrI3ko4vLZWbflDLad9CAycqrYDm86ZyYogXe_Lri7Q2qoefD1Um-c7PembN2mPf84dBkRYSftcsMyAx8aekEQO7wcB1NE3iMrW14SbaXcLnCoJ38x4_evULR3_cR7OChpoGNf-3OHblYGmnRgKQCDv57VlU7M3aXb4RPiSrwXo0URzMzuQYgOQCWUiPZQ1DwFpmN4vTeu-IGw9Xy566uVqK4lxXauYCqoywPlXW3BddjjGZxAeGADr9U3XvyqXRCKQcS63tAll78rfoGe0N-3_RJ7ju5cJVcuLaJtutSRPOkst7mz0NxMN9vdEx4HwoEH8KOFx-4VBv4pKF7KHhXoMY4Rsnq6C9jPy4KUfpqTsWTtU_IfwYpfnUtnzGvTvqK4s8YVd_nQxnDAT3aZ0msy9TGovqb7Q6GegK_nteHTsuF3QxExOlZrALVPeiRQfpMQs27sxgNySNxngZItEmk28TmGJPzYM-jgYlPoe43JCz5xEH70ZJepWz9D2e0DGPjm41Ts114PUtMhNd3SWVBBx8yoUmOLs0G99apweWu-eYzBBEehZohwzwof9pDwXqCMDisIoh6-D7Pv8aUrzQ0oxRDlp9d4371BeHKlv90T3unbuLd-IuJI187dUOM-sBid98sop9D1I_OsVbW-4cK7CXCAD-nvcaW048MU2m0EbN-_rsLzWg64Oe47kSBpHC0N89TWnoJCaS9bIR2VwVvzs5R-MPHYRz9vntF-KQqI7AVEyxtiYBoWHY7lbGguaILXKoZntEX57qa67i3NlzvWJU9yRgHkdPadEJlWhAhfAcweiZKqsrFOrq9H8bfMHqt9easrASwC9JqWtpgkQikX4rzLZ-lY3LKc3Z1KemnlJ0qpwvJrKjodveEQ1ZeVAFsWGrtIIk6JF5Iibgp5kVDsXbsQG3L8h2drA3nQvCswNqpP790mTnPmSl3ojWpCr-BGXfLZ2WB2yGh2b5KY8xTTCXaNWXHl9quJA_rrgzlmK21SAOlnvjkcAR8bUTlCtNP7usqgNgdXTnPtl-qkdIXupWosDZSZwaiMgJSBnloP14nBaF7aC0MKivkOjUcTXEr8fhvbiVe_GaETgh4V_tiAb6tFLGgMEKAIBF3Kfg8rV-PlKtJb7lOgBat9go_NL-HTk80Jx-weRvYFPQW1cV-TpGI14LaOw0jxD5UgC0KCovnN7lWLnAbDeZBJ-NaDRJiBoGCbba7OOBB3NUt6IIuB-SyKtvF_CIIfDrpdoDzyoy-3xBJgxJtyu7VDSNo9JxhvAjrF6fSwAtqKbyJBvTcDTfWIKXjkeARN008LrisQEhwasM86Vt8XzXj0XjjZmztskAp6qyd74eaiXwColmbGmxDwgu435sI7Lrp2qQIrL32hDp115TYmVb6atktcLV1QuHcVJW4yUpTHBIKhcXmTNI4v7jglUUpKu6p_98WbCsQSm9CLh_iDNaRuvGkS2VHyZ-TnmZQmU8iofUP6TX4szFdZRRLZy2Q7hA1iBY-6mBgm0FEj6aorlVhudKjyQCv1gSDASINZEg-sFzIQbbt0_tny1rsn-o98kk5wUY1zeUp2l1DWNHgZOFX-RS2DVuu0Kpli2AZXwrjqEjg-3RAmYgRCXg0O3qiWiqCH00AcXSsG-E8bZCa2B3iCr8wNw_os1QXD97SLdX2Loq9NKTqUlQQhMsj8jZ4_KAMFILW0gaFJqqQx-uVOI3uNFrR1lDQchFJi0BRnZw7C6NRQ4RjTVMmzZS2Tka14zfRRf9DMyq_WvoHD9BjWbj1bE7FcRR2kzFpAuusV7vY2X1We78-onAUOge1Mir0kuemzmOxg0TkqWbwJmyOcfgZ1wtCFGiHx-_K4m7Pl4cpHuKLq9IkmxjG8qTBixPWoPa7ViLqfLzhrqjTQDp13jxk5L3xyU8T-R4f48gysuDcWRLCT1jZPL9fRbmiuvAHvIvnhu1iJ-D35y4xR1aD3NqR7m8tn9NUX3HfuxdX8mDuWqv4p6wPGAI6oMZPQwYV8fjqVMNTZMjdc6iBVd6j8RGc_nQw6ziH3GmsFvQrNmpsRdwryOvPua029L_M_RmZxM1_YhlPVYoBm_BwxJVWwGNPG9fS-Ilw17qvMxCUyIIcW499T5iHWGUnw7qM81V4b9IMKncVzHT7q8fW2mIQO3ZlHtlpW673Y3_6r3xtfaqsUcFDNiF4wCGNRjxkYZDNalKtFNCxSMNIp4OXh_5WBgICJJw5-G2pVkIbyfjeIpt5DYlF_KxXIK4yg5ruOBsfP8u_ozdQDEo1LieEMTBnOUIcTE8f5pEooza2kDs4-lvMB29MUEmBNqpPK40_KZCTIB1HdBDCbwioWa1Ddsk6MK361emrew_OaCPphglDazWZ-x_D6dq4yP4w-b6J4-_vPU18C2UcDhhwDYaZxI2OoEgkAMfjdAB75TbhkG0EaGprW4rT0zNgOJIPE5JLm2QNsmn9invqtFlzB0w0P4FZMihil9KWTycfBWXQ23PZfjRCAKeWmybc8Mobz3o32bUe9VjNYVMxyNkEoGGw14NZPZnrls5nxutbcV9y5vJqrKdESHd_9-LjJlFa81g-yO6pAZgd7OQowGHIsodUYNOjjdlMSAuMqB5u2IoNwbrXuEDfNRoriee0UX3ZQZ99ak5hkr0B3zYjk0xsZlVXhFNiAhW5ZaSekljOjMebq6jUL4BIfjaqCTHYOxc4szrPmVAMjLWu-dHvtuCG-GYNjGsRYClCnkSM8q-spAaGEZnMVHb5yjf5wzYKwnK81g5GYuhpxNlOCEXiy2hMSqW4HnsTzw-_I3ocyJ_HLMcSAn3qGzvblTEYqgfH4KOS06_l6KdThvsmcSo5O-IbqMInGTHovBtan4bth2uFUTfboyvmVSs8fwMtrMKk8giT3fPNNdPIAt9bMiaYHXV4cFTBglnm9EkpMA4_hGXoRw97bEbOURq8ndLQYOoSND3aPJlCYeHPmoW11BSBbZFs5GpBX3e5n8QL-w5vqYNrhCxSEI3Le3E7ct9-gS6m3BcXhJVG-1s9YJ02LkaxTURG-X2DmQ6Y3y-4O1bQ1g2NblVfg7oztULK7xQ4JeJexdlPuyI_-rX5t_graTqN2Q_BrWUCz5hdaOG7eudVT8RrpjMeCdTjqaUSfL2traW0JAKn-KKNJirSpgXeGxycIzerwI4Q4SZlakfieIBoUWBIfMFb0lRZnMAZp-SQ264aKKMkfOQihwimBLjJkiVQZrhTcyhrJ7i5QOx0n9OyOtMJQVvJcl48__TkVf8nAvO8f4NZYl_GXtWT9CspSo-uFjmv0RNLXVarmEE2qS7W4UkQbCxU3tThgTxrmOZnC0Ps5wS6eGPl1iHEXFEGNGc-AQOLlRG4T8NBSAG06QUeep8sJ3-SLmcSSWkl2aPj5ZObQE5lyqvg7AdC1D5LuE4A8ho90vuXCcXgISpFDyPspJpD65KhxPPuXDyw-6jIJ8nHhrcI83Dku8-abBk8Yg-0=
+          summary: []
+        - id: fc_0766d93de352f99b006acf909d75ec87d2b9d47900537076b1
+          type: function_call
+          status: completed
+          arguments: "{\"city\":\"Paris\",\"summary\":\"Currently sunny in Paris with a temperature of 22°C. Conditions are pleasant and mild -- comfortable for outdoor activities; a light layer may be sufficient in the evening. Would you like a forecast for today/tomorrow or hourly details?\"}"
+          call_id: call_sqMRtJr1VRtyMBEVSXBZE2Ng
+          name: final_result
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: current_turn
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice:
+          type: allowed_tools
+          mode: required
+          tools:
+          - type: function
+            name: get_weather
+          - type: function
+            name: final_result
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: Get the current weather for a city.
+          name: get_weather
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        - type: function
+          description: Get the current time in a timezone.
+          name: get_time
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+          strict: true
+        - type: function
+          description: The final response which ends this conversation
+          name: final_result
+          output_schema: null
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+            additionalProperties: false
+          strict: true
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 284
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 384
+          output_tokens_details:
+            reasoning_tokens: 256
+          total_tokens: 668
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-14T14:24:30.118461+00:00

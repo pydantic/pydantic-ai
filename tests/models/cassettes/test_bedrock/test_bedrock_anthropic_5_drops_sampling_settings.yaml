@@ -1,0 +1,46 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is 2+2? Answer with the number only."}]}], "system":
+      [], "inferenceConfig": {"maxTokens": 16}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZTBiN2JhOWItODZiOC00MWE5LWE3YjItZDFjZmNhNTQ0YjMw
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '152'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.eu-central-1.amazonaws.com/model/eu.anthropic.claude-opus-5/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '280'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 960
+      output:
+        message:
+          content:
+          - text: '4'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        inputTokens: 21
+        outputTokens: 3
+        serverToolUsage: {}
+        totalTokens: 24
+    status:
+      code: 200
+      message: OK
+version: 1

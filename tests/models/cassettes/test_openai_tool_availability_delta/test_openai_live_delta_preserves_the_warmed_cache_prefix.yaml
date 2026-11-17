@@ -1,0 +1,348 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '535'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: 'Reply only with: ready'
+        role: user
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - defer_loading: true
+        description: Look up the refund policy for an order.
+        name: lookup_refund_policy
+        parameters:
+          additionalProperties: false
+          properties:
+            order_id:
+              type: string
+          required:
+          - order_id
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1999'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1146'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785776383
+      created_at: 1785776382
+      error: null
+      frequency_penalty: 0.0
+      id: resp_00b44a28ef26ca91006a70c8fe8384819791517154e922de64
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: ready
+          type: output_text
+        id: msg_00b44a28ef26ca91006a70c8ff5e148197bc0aa1e9542abbf0
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - defer_loading: true
+        description: Look up the refund policy for an order.
+        name: lookup_refund_policy
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            order_id:
+              type: string
+          required:
+          - order_id
+          type: object
+        strict: true
+        type: function
+      - description: null
+        parameters: null
+        type: tool_search
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 392
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 397
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1092'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: 'Reply only with: ready'
+        role: user
+      - content:
+        - annotations: []
+          text: ready
+          type: output_text
+        id: msg_00b44a28ef26ca91006a70c8ff5e148197bc0aa1e9542abbf0
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - role: developer
+        tools:
+        - description: Look up the refund policy for an order.
+          name: lookup_refund_policy
+          parameters:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          strict: true
+          type: function
+        type: additional_tools
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - defer_loading: true
+        description: Look up the refund policy for an order.
+        name: lookup_refund_policy
+        parameters:
+          additionalProperties: false
+          properties:
+            order_id:
+              type: string
+          required:
+          - order_id
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3371'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '2033'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785776385
+      created_at: 1785776383
+      error: null
+      frequency_penalty: 0.0
+      id: resp_00b44a28ef26ca91006a70c8ffca148197a46e18b24c0118b4
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqcMkBa1wjXtAurQsOfP1H_MWx5Cvaf1DUQeptTZjHF8Yn4jWRhQG7Dy5ByK8FhrmDRdKgW_GJMKp9xILVBAvlTFbWgIwE92yV5gd9Lq9SE8oJ9QbGXtRV6hmDglXdowNXHJIT1FnhRlTyKFdfFPHVXhGXwhejL37Ow_9p29s6QLDKhWpetpifJU8z8kyRuKCn1wbAiCeH-mbuej1SOLNWFxv__SSsSwgXVLaN0BulPuIQNPvzveQ3wgEA0XaIoN2CZZRBM78n3RizYSkDkgpdQPcTmeT9jhUs4jAAfEYiK7-t1BQ5G7xr8ETabcSjme2ZiqtBgBh6OQENDFLMlbpyQpBMQ4cDqGn02nqwiGAvJs5wqj8Ps5CqCEQmIVmdW-6PWju7Joo3N-jbvxcdoIP7dGb7UKRgyQjbZ8DL_rIFg3ryb5PLps95N4GMzNWWLgVK7bPwmesuLK5XhLAMhsdFwUETDF5CXd9oSChqinpP7BFK9-QUqMpyEZa01-ozBjKgWpE3wFD3UBkySFcD5H6yfKjANM2zrePHidKY4Z3Hgy0cum4INF0-h5zHYtp66ufGjko4akT2hrlkE1NJ7Iw_S0Z2uxWUyMtoNXSNS9mlVdqFzHweC2rru1zSiETD7en1HO0vu5WX0UQgNSzZ3mpNchyQ0m0y2OmkXGqJS97oQ_T4ATexXwd0srJsY2KW14N9kE5o4efDQbZvE6U5gYhMPAZJtlq975C9aMl9e3HFuBEPDBwE7lkjew7F-jh4in7MlG9IEEeK9h9yKbm06YVXdpobXFOYXD-EeApUoCopHxsLbLHWdgJqd25I34uKZgNQzj7KavgD4jacU3AcC9YU6utBtYZA5fmscCMI0C80NvQkH2rg2BJpKjzBnHKIrn7iaENasfA6Gdx9CQW258-GQHiJ8t0hnTtvTG_OiNl7B9VjnsGEBZiByodi7dgak-QG_762Pwxm9AzJDYIYs8ji3bymUEWpjEReh4J-b9L-FhF0fdv50aWvkJnSo1Tb3F5IGbDSOsJpQGdvpM6f2wZa0dqq79xg_NJfeMhUwaSTfWCm-jqLXHcmUkt5CZsj6BotnY3wt1y6ygCETdGcWB8XgCuF2X_aHAkQ95bfOKTVDSrwshhCW-62ZpMrB5wMnc6pc2Pl-HlpTj2RsnOHLP6gO9DaDk7Po_CjcjbmFOxOl2pkdNEj5cyGj4KO7iuA-c6yfaW4KbDYfd2BSKsIpxHPd1Z5CQ==
+        id: rs_00b44a28ef26ca91006a70c90085e081978e947c367ee171cb
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: ready
+          type: output_text
+        id: msg_00b44a28ef26ca91006a70c9015dac81978f267d93212ece16
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Look up the refund policy for an order.
+        name: lookup_refund_policy
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            order_id:
+              type: string
+          required:
+          - order_id
+          type: object
+        strict: true
+        type: function
+      - description: null
+        parameters: null
+        type: tool_search
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 142
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 54
+        output_tokens_details:
+          reasoning_tokens: 47
+        total_tokens: 196
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

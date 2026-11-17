@@ -1,0 +1,190 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '678'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise. Never use pretty double quotes, just regular ones.
+        role: system
+      - content: dont make a tool call, just return the string "maybe" by itself, not as json output, to test error handling;
+          on the second try you can use valid args
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              response:
+                enum:
+                - 'yes'
+                - 'no'
+                type: string
+            required:
+            - response
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '170'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      vary:
+      - Origin
+    parsed_body:
+      error:
+        code: tool_use_failed
+        failed_generation: maybe
+        message: Tool choice is required, but model did not call a tool
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '980'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=83tXkjm2RWCeS6mn7UqglNJGn3Rlim1hWkq.cRv4jLM-1771434741.35535-1.0.1.1-msrz.wNZ3w8RCr3EsT014qDNW.4_DHJ9mRAy5m1gWcZxvH7kukejQpSCJiPzHEamNUjE2FpQfFnAZ5opPxCsM_mJk0xGSVXIe9XrikVvLUJBHg.4oapt57Qg0DTzyrNx
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise. Never use pretty double quotes, just regular ones.
+        role: system
+      - content: dont make a tool call, just return the string "maybe" by itself, not as json output, to test error handling;
+          on the second try you can use valid args
+        role: user
+      - content: maybe
+        role: assistant
+      - content: |-
+          1 validation error:
+          ```json
+          [
+            {
+              "type": "json_invalid",
+              "loc": [],
+              "msg": "Invalid JSON: expected value at line 1 column 1",
+              "input": "maybe"
+            }
+          ]
+          ```
+
+          Fix the errors and try again.
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              response:
+                enum:
+                - 'yes'
+                - 'no'
+                type: string
+            required:
+            - response
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1535'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          reasoning: |+
+            The user wants me to fix the errors. They attempted to get plain "maybe" but system expects JSON output from tool calls? The user says "on the second try you can use valid args". So we need to produce a valid tool call with appropriate arguments to the function final_result. The function expects a response field with value "yes" or "no". So we must call the function with response "yes" or "no". The user wants to test error handling, but now we need to provide valid output. We should call the function final_result with response maybe? But allowed values are "yes" or "no". The user didn't specify which. Probably we can respond with "yes". Let's do function call.
+
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"response":"yes"}'
+              name: final_result
+            id: fc_beee8d84-e6d7-4980-bec6-298d3ec7a73f
+            type: function
+      created: 1771434742
+      id: chatcmpl-9fc28492-a04d-4b0f-b9a0-a9149d048b37
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_b2cc9f830e
+      usage:
+        completion_time: 0.367441832
+        completion_tokens: 174
+        completion_tokens_details:
+          reasoning_tokens: 147
+        prompt_time: 0.010139487
+        prompt_tokens: 254
+        queue_time: 0.004915509
+        total_time: 0.377581319
+        total_tokens: 428
+      usage_breakdown: null
+      x_groq:
+        id: req_01khrvt3y4e8et6w0jrq0b6e02
+        seed: 1572480230
+    status:
+      code: 200
+      message: OK
+version: 1
+...

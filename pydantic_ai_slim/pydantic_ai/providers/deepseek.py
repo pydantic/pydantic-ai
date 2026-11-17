@@ -1,28 +1,35 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
-
-import httpx
-from openai import AsyncOpenAI
+from typing import Literal, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles.deepseek import _DEEPSEEK_V4_PATTERN, deepseek_model_profile  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
-from pydantic_ai.providers import Provider
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the DeepSeek provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+else:
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
-class DeepSeekProvider(Provider[AsyncOpenAI]):
+DeepSeekModelName = Literal[
+    'deepseek-v4-pro',
+    'deepseek-flash',
+]
+
+
+class DeepSeekProvider(_OpenAISDKProvider):
     """Provider for DeepSeek API."""
 
     @property
@@ -31,51 +38,99 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
 
     @property
     def base_url(self) -> str:
-        return 'https://api.deepseek.com'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         profile = deepseek_model_profile(model_name)
+        is_flash_or_v4 = model_name == 'deepseek-flash' or _DEEPSEEK_V4_PATTERN.match(model_name) is not None
+        thinks_by_default = is_flash_or_v4 or model_name == 'deepseek-reasoner'
 
-        # As DeepSeekProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+        # As DeepSeekProvider is most often used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly.
         # This was not the case when using a DeepSeek model with another model class (e.g. BedrockConverseModel or GroqModel),
         # so we won't do this in `deepseek_model_profile` unless we learn it's always needed.
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            # Scope this API alias's thinking support to DeepSeek's endpoint.
+            ModelProfile(supports_thinking=True) if model_name == 'deepseek-flash' else None,
+            OpenAIModelProfile(
+                supports_json_object_output=True,
+                openai_chat_thinking_field='reasoning_content',
+                # For a conversation carrying tools, DeepSeek documents that `reasoning_content` must be
+                # passed back in every subsequent request. See https://api-docs.deepseek.com/guides/thinking_mode.
+                openai_chat_send_back_thinking_parts='field',
+                # DeepSeek 400s on a thinking request whose current-turn tool call lacks `reasoning_content`
+                # even when no earlier response thought, as after a `FallbackModel` step served without thinking.
+                openai_chat_thinking_requires_field_on_tool_calls=True,
+                # DeepSeek's Responses endpoint documents merging each function call into the
+                # assistant message adjacent to it, unlike the official Responses API, so an
+                # assistant item between two calls strands the first one without its output.
+                openai_responses_supports_interleaved_function_calls=False,
+                # DeepSeek rejects a forced tool choice only while thinking is on, answering
+                # `Thinking mode does not support this tool_choice`. `deepseek-reasoner` cannot turn
+                # thinking off, so for it the restriction is unconditional; Flash and V4 models can, so
+                # theirs is evaluated per request. The shared V4 point-release matcher covers future
+                # deepseek-v4-* SKUs without listing each one.
+                supports_forced_tool_choice=model_name != 'deepseek-reasoner',
+                supports_forced_tool_choice_with_thinking=not is_flash_or_v4,
+                # Thinking is on by default on Flash, V4 models and `deepseek-reasoner`; every other
+                # model name (including `deepseek-chat`) is treated as thinking-off by default.
+                thinking_enabled_by_default=thinks_by_default,
+                # DeepSeek's Responses endpoint honors `text.format` of type `json_schema`, while its
+                # Chat Completions endpoint rejects it with `This response_format type is unavailable now`.
+                openai_responses_supports_json_schema_output=True,
+                # Flash and V4's native efforts are `low`, `high` and `max`, and they map `xhigh` to `high`, so
+                # `max` is the only way to reach their deepest reasoning. See https://api-docs.deepseek.com/guides/thinking_mode.
+                openai_chat_supports_max_reasoning_effort=is_flash_or_v4,
+                # DeepSeek's Chat Completions endpoint documents only `max_tokens` and silently ignores
+                # `max_completion_tokens`. See https://api-docs.deepseek.com/api/create-chat-completion.
+                openai_chat_supports_max_completion_tokens=False,
+                # `openai_supports_phase` is deliberately left at its `False` default even though
+                # DeepSeek labels its Responses API output with `phase`: the field is absent from
+                # DeepSeek's documented input items, and its API silently ignores what it doesn't
+                # support, so a request carrying `phase` returns 200 without that proving the model
+                # reads it. Sending it back would add an undocumented field for no observable gain.
+                # See https://api-docs.deepseek.com/guides/responses_api.
+            ),
+        )
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
-
-    @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
-
-    @overload
-    def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        openai_client: None = None,
+        http_client: _OpenAIHTTPClient | None = None,
+    ) -> None: ...
 
     def __init__(
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         api_key = api_key or os.getenv('DEEPSEEK_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
                 'Set the `DEEPSEEK_API_KEY` environment variable or pass it via `DeepSeekProvider(api_key=...)`'
-                'to use the DeepSeek provider.'
+                ' to use the DeepSeek provider.'
             )
 
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
+        self._base_url = base_url or 'https://api.deepseek.com'
         if openai_client is not None:
             self._client = openai_client
-        elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = cached_async_http_client(provider='deepseek')
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = self._create_openai_client(base_url=self.base_url, api_key=api_key, http_client=http_client)

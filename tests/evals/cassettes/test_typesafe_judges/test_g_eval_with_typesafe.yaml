@@ -1,0 +1,78 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '972'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        score:
+          criteria:
+          - '0: the worst score according to the evaluation criteria.'
+          - '1: an intermediate score between the worst and best.'
+          - '2: an intermediate score between the worst and best.'
+          - '3: an intermediate score between the worst and best.'
+          - '4: the best score according to the evaluation criteria.'
+          instructions:
+            field: score
+            goal: Grade the output using the evaluation criteria and steps.
+            question: What score does the output earn according to the criteria and evaluation steps?
+          type: score
+      state: |-
+        <Output>
+        Checkout returns a 500 for every customer right now.
+        </Output>
+        <Rubric>
+        Evaluation criteria: urgency
+
+        Evaluation steps (apply each step in order):
+        1. Decide whether someone is blocked now or many users are affected.
+        2. Assign the score.
+
+        Produce a single integer score between 0 and 4 inclusive,
+        where 0 is the worst and 4 is the best according to the criteria.
+        </Rubric>
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '547'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        score:
+          confidence: 0.0
+          legend:
+            '0': '0: the worst score according to the evaluation criteria.'
+            '1': '1: an intermediate score between the worst and best.'
+            '2': '2: an intermediate score between the worst and best.'
+            '3': '3: an intermediate score between the worst and best.'
+            '4': '4: the best score according to the evaluation criteria.'
+          probabilities:
+            '0': 0.44
+            '1': 0.0
+            '2': 0.0
+            '3': 0.01
+            '4': 0.55
+          score: 2.21
+          type: score
+      model: jev-1.13.0
+      usage:
+        input_tokens: 491
+        output_tokens: 17
+    status:
+      code: 200
+      message: OK
+version: 1

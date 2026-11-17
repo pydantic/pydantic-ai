@@ -2,21 +2,25 @@ from __future__ import annotations as _annotations
 
 import os
 
-import httpx
-
 from pydantic_ai import ModelProfile
+from pydantic_ai._http import AsyncHTTPClient
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.providers import Provider
 
 try:
-    from cohere import AsyncClientV2
-except ImportError as _import_error:  # pragma: no cover
+    from cohere import AsyncClient, AsyncClientV2
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `cohere` package to use the Cohere provider, '
         'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
     ) from _import_error
+
+# Below the guard on purpose: `cohere` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
 
 
 class CohereProvider(Provider[AsyncClientV2]):
@@ -28,20 +32,35 @@ class CohereProvider(Provider[AsyncClientV2]):
 
     @property
     def base_url(self) -> str:
-        client_wrapper = self.client._client_wrapper  # type: ignore
+        client_wrapper = self.client._client_wrapper  # pyright: ignore[reportPrivateUsage]
         return str(client_wrapper.get_base_url())
 
     @property
     def client(self) -> AsyncClientV2:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
-        return cohere_model_profile(model_name)
+    @property
+    def v1_client(self) -> AsyncClient | None:
+        return self._v1_client
+
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile:
+        profile = merge_profile(cohere_model_profile(model_name), ModelProfile(supports_inline_system_prompts=True))
+        if profile.get('supports_thinking', False):
+            # Cohere's reasoning models think by default, but `CohereModel` can turn that off with
+            # `thinking={'type': 'disabled'}` (verified live 2026-10-22 on `command-a-reasoning-08-2025`). The shared
+            # `cohere_model_profile` keeps them always-on for routes that can't send that.
+            # https://docs.cohere.com/docs/reasoning
+            profile = merge_profile(
+                profile, ModelProfile(thinking_always_enabled=False, thinking_enabled_by_default=True)
+            )
+        return profile
 
     def __init__(
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         cohere_client: AsyncClientV2 | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
@@ -50,26 +69,40 @@ class CohereProvider(Provider[AsyncClientV2]):
         Args:
             api_key: The API key to use for authentication, if not provided, the `CO_API_KEY` environment variable
                 will be used if available.
+            base_url: The base URL to use for requests, if not provided, the `CO_BASE_URL` environment variable
+                will be used if available.
             cohere_client: An existing
                 [AsyncClientV2](https://github.com/cohere-ai/cohere-python)
-                client to use. If provided, `api_key` and `http_client` must be `None`.
+                client to use. If provided, `api_key`, `base_url` and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         if cohere_client is not None:
             assert http_client is None, 'Cannot provide both `cohere_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `cohere_client` and `api_key`'
+            assert base_url is None, 'Cannot provide both `cohere_client` and `base_url`'
             self._client = cohere_client
+            self._v1_client = None
         else:
             api_key = api_key or os.getenv('CO_API_KEY')
             if not api_key:
                 raise UserError(
                     'Set the `CO_API_KEY` environment variable or pass it via `CohereProvider(api_key=...)`'
-                    'to use the Cohere provider.'
+                    ' to use the Cohere provider.'
                 )
 
-            base_url = os.getenv('CO_BASE_URL')
+            base_url = base_url or os.getenv('CO_BASE_URL')
             if http_client is not None:
                 self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
+                self._v1_client = AsyncClient(api_key=api_key, httpx_client=http_client, base_url=base_url)
             else:
-                http_client = cached_async_http_client(provider='cohere')
+                http_client = create_async_http_client()
+                self._own_http_client = http_client
+                self._http_client_factory = create_async_http_client
                 self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
+                self._v1_client = AsyncClient(api_key=api_key, httpx_client=http_client, base_url=base_url)
+
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
+        assert isinstance(http_client, httpx.AsyncClient)
+        self._client._client_wrapper.httpx_client.httpx_client = http_client  # pyright: ignore[reportPrivateUsage]
+        if self._v1_client is not None:  # pragma: no branch
+            self._v1_client._client_wrapper.httpx_client.httpx_client = http_client  # pyright: ignore[reportPrivateUsage]

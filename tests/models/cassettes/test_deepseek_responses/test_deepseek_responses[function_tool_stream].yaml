@@ -1,0 +1,296 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '410'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the temperature in Tokyo?
+        role: user
+      model: deepseek-v4-flash
+      stream: true
+      tool_choice: auto
+      tools:
+      - description: Get the current temperature in a city.
+        name: get_temperature
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.deepseek.com/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"1235b7ba-fdc9-4a1c-bfe4-6137c207baf3","object":"response","created_at":1785983456,"status":"in_progress","background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"deepseek-v4-flash","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[{"type":"function","name":"get_temperature","description":"Get the current temperature in a city.","parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"1235b7ba-fdc9-4a1c-bfe4-6137c207baf3","object":"response","created_at":1785983456,"status":"in_progress","background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"deepseek-v4-flash","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[{"type":"function","name":"get_temperature","description":"Get the current temperature in a city.","parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"type":"reasoning","id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","status":"in_progress","content":[],"summary":[]},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"part":{"type":"reasoning_text","text":""},"sequence_number":3}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"The","item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"sequence_number":4}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" user","item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"sequence_number":5}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" asks","item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"sequence_number":6}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" about","item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"sequence_number":7}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" temperature","item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"sequence_number":8}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" in","item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"sequence_number":9}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" Tokyo","item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"sequence_number":10}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"sequence_number":11}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" I","item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"sequence_number":12}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"'ll","item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"sequence_number":13}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" call","item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"sequence_number":14}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" the","item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"sequence_number":15}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" tool","item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"sequence_number":16}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"sequence_number":17}
+
+        event: response.reasoning_text.done
+        data: {"type":"response.reasoning_text.done","content_index":0,"item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"sequence_number":18,"text":"The user asks about temperature in Tokyo. I'll call the tool."}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","output_index":0,"part":{"type":"reasoning_text","text":"The user asks about temperature in Tokyo. I'll call the tool."},"sequence_number":19}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"type":"reasoning","id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","status":"completed","content":[{"type":"reasoning_text","text":"The user asks about temperature in Tokyo. I'll call the tool."}],"summary":[]},"output_index":0,"sequence_number":20}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"type":"function_call","id":"62bf2bb7-56af-4e3a-883b-83d4aad54da1","status":"in_progress","arguments":"","call_id":"call_00_xjY8Z2BvSlzgEmmw0DtH0464","name":"get_temperature"},"output_index":1,"sequence_number":21}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"{","item_id":"62bf2bb7-56af-4e3a-883b-83d4aad54da1","output_index":1,"sequence_number":22}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\"","item_id":"62bf2bb7-56af-4e3a-883b-83d4aad54da1","output_index":1,"sequence_number":23}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"city","item_id":"62bf2bb7-56af-4e3a-883b-83d4aad54da1","output_index":1,"sequence_number":24}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\"","item_id":"62bf2bb7-56af-4e3a-883b-83d4aad54da1","output_index":1,"sequence_number":25}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":": ","item_id":"62bf2bb7-56af-4e3a-883b-83d4aad54da1","output_index":1,"sequence_number":26}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\"","item_id":"62bf2bb7-56af-4e3a-883b-83d4aad54da1","output_index":1,"sequence_number":27}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"Tokyo","item_id":"62bf2bb7-56af-4e3a-883b-83d4aad54da1","output_index":1,"sequence_number":28}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\"","item_id":"62bf2bb7-56af-4e3a-883b-83d4aad54da1","output_index":1,"sequence_number":29}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"}","item_id":"62bf2bb7-56af-4e3a-883b-83d4aad54da1","output_index":1,"sequence_number":30}
+
+        event: response.function_call_arguments.done
+        data: {"type":"response.function_call_arguments.done","arguments":"{\"city\": \"Tokyo\"}","item_id":"62bf2bb7-56af-4e3a-883b-83d4aad54da1","output_index":1,"sequence_number":31}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"type":"function_call","id":"62bf2bb7-56af-4e3a-883b-83d4aad54da1","status":"completed","arguments":"{\"city\": \"Tokyo\"}","call_id":"call_00_xjY8Z2BvSlzgEmmw0DtH0464","name":"get_temperature"},"output_index":1,"sequence_number":32}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"1235b7ba-fdc9-4a1c-bfe4-6137c207baf3","object":"response","created_at":1785983456,"status":"completed","background":false,"completed_at":1785983456,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"deepseek-v4-flash","moderation":null,"output":[{"type":"reasoning","id":"fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba","status":"completed","content":[{"type":"reasoning_text","text":"The user asks about temperature in Tokyo. I'll call the tool."}],"summary":[]},{"type":"function_call","id":"62bf2bb7-56af-4e3a-883b-83d4aad54da1","status":"completed","arguments":"{\"city\": \"Tokyo\"}","call_id":"call_00_xjY8Z2BvSlzgEmmw0DtH0464","name":"get_temperature"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[{"type":"function","name":"get_temperature","description":"Get the current temperature in a city.","parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":366,"input_tokens_details":{"cached_tokens":256},"output_tokens":59,"output_tokens_details":{"reasoning_tokens":14},"total_tokens":425},"user":null,"metadata":{}},"sequence_number":33}
+
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '873'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the temperature in Tokyo?
+        role: user
+      - content:
+        - text: The user asks about temperature in Tokyo. I'll call the tool.
+          type: reasoning_text
+        encrypted_content: null
+        id: fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba
+        summary: []
+        type: reasoning
+      - arguments: '{"city": "Tokyo"}'
+        call_id: call_00_xjY8Z2BvSlzgEmmw0DtH0464
+        name: get_temperature
+        type: function_call
+      - call_id: call_00_xjY8Z2BvSlzgEmmw0DtH0464
+        output: '21.0'
+        type: function_call_output
+      model: deepseek-v4-flash
+      stream: true
+      tool_choice: auto
+      tools:
+      - description: Get the current temperature in a city.
+        name: get_temperature
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+    uri: https://api.deepseek.com/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"33df88f0-9f36-4616-95b0-ead91a37f7f1","object":"response","created_at":1785983457,"status":"in_progress","background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"deepseek-v4-flash","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[{"type":"function","name":"get_temperature","description":"Get the current temperature in a city.","parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"33df88f0-9f36-4616-95b0-ead91a37f7f1","object":"response","created_at":1785983457,"status":"in_progress","background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"deepseek-v4-flash","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[{"type":"function","name":"get_temperature","description":"Get the current temperature in a city.","parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"type":"message","id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"The","item_id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","logprobs":[],"output_index":0,"sequence_number":4}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" current","item_id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","logprobs":[],"output_index":0,"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" temperature","item_id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","logprobs":[],"output_index":0,"sequence_number":6}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" in","item_id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","logprobs":[],"output_index":0,"sequence_number":7}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" Tokyo","item_id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","logprobs":[],"output_index":0,"sequence_number":8}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" is","item_id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","logprobs":[],"output_index":0,"sequence_number":9}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" **","item_id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","logprobs":[],"output_index":0,"sequence_number":10}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"21","item_id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","logprobs":[],"output_index":0,"sequence_number":11}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","logprobs":[],"output_index":0,"sequence_number":12}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"0","item_id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","logprobs":[],"output_index":0,"sequence_number":13}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"°","item_id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","logprobs":[],"output_index":0,"sequence_number":14}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"C","item_id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","logprobs":[],"output_index":0,"sequence_number":15}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"**.","item_id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","logprobs":[],"output_index":0,"sequence_number":16}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","logprobs":[],"output_index":0,"sequence_number":17,"text":"The current temperature in Tokyo is **21.0°C**."}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"The current temperature in Tokyo is **21.0°C**."},"sequence_number":18}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"type":"message","id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"The current temperature in Tokyo is **21.0°C**."}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":19}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"33df88f0-9f36-4616-95b0-ead91a37f7f1","object":"response","created_at":1785983457,"status":"completed","background":false,"completed_at":1785983457,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"deepseek-v4-flash","moderation":null,"output":[{"type":"message","id":"305ae5c3-aed7-4986-88b5-4bcbb950ca6b","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"The current temperature in Tokyo is **21.0°C**."}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[{"type":"function","name":"get_temperature","description":"Get the current temperature in a city.","parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":440,"input_tokens_details":{"cached_tokens":384},"output_tokens":14,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":454},"user":null,"metadata":{}},"sequence_number":20}
+
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    status:
+      code: 200
+      message: OK
+version: 1
+...

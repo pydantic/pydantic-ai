@@ -1,11 +1,16 @@
+---
+description: "Build multi-agent systems with Pydantic AI: delegate to sub-agents through tools, hand off between agents in your code, or orchestrate them with graphs."
+---
+
 # Multi-agent Applications
 
-There are roughly four levels of complexity when building applications with Pydantic AI:
+There are roughly five levels of complexity when building applications with Pydantic AI:
 
 1. Single agent workflows — what most of the `pydantic_ai` documentation covers
-2. [Agent delegation](#agent-delegation) — agents using another agent via tools
+2. [Agent delegation](#agent-delegation) — agents using another agent via tools, either wired up by hand or with the Harness's [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) capability
 3. [Programmatic agent hand-off](#programmatic-agent-hand-off) — one agent runs, then application code calls another agent
 4. [Graph based control flow](graph.md) — for the most complex cases, a graph-based state machine can be used to control the execution of multiple agents
+5. [Deep Agents](#deep-agents) — autonomous agents with planning, file operations, task delegation, and sandboxed code execution
 
 Of course, you can combine multiple strategies in a single application.
 
@@ -14,35 +19,43 @@ Of course, you can combine multiple strategies in a single application.
 "Agent delegation" refers to the scenario where an agent delegates work to another agent, then takes back control when the delegate agent (the agent called from within a tool) finishes.
 If you want to hand off control to another agent completely, without coming back to the first agent, you can use an [output function](output.md#output-functions).
 
+!!! tip "`SubAgents` does this for you"
+    [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) ships a [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) capability that is the most convenient way to delegate: you hand it a list of named agents and it exposes a single `delegate_task(agent_name, task)` tool, forwards dependencies, threads usage limits, and lists the available delegates in the system prompt as a static instruction so the listing stays in the cacheable prefix (see [prompt caching](models/anthropic.md#prompt-caching)). Each delegation runs in its own run with its own message history, so a delegate never sees the parent conversation.
+
+    Write the delegation tool by hand, as below, when you need control `SubAgents` doesn't give you — a bespoke tool schema, per-delegate argument validation, or passing the parent's message history through.
+
 Since agents are stateless and designed to be global, you do not need to include the agent itself in agent [dependencies](dependencies.md).
 
-You'll generally want to pass [`ctx.usage`][pydantic_ai.RunContext.usage] to the [`usage`][pydantic_ai.agent.AbstractAgent.run] keyword argument of the delegate agent run so usage within that run counts towards the total usage of the parent agent run.
+You'll generally want to pass [`ctx.usage`][pydantic_ai.tools.RunContext.usage] to the [`usage`][pydantic_ai.agent.AbstractAgent.run] keyword argument of the delegate agent run so usage within that run counts towards the total usage of the parent agent run.
+
+[Cancellation](agent.md#cancellation-and-sub-agents) is run-scoped: a delegate agent cancelling itself surfaces to the parent as a failed tool return rather than cancelling the parent, and a shared [`CancellationToken`][pydantic_ai.CancellationToken] cancels a whole tree of runs at once.
 
 !!! note "Multiple models"
-    Agent delegation doesn't need to use the same model for each agent. If you choose to use different models within a run, calculating the monetary cost from the final [`result.usage()`][pydantic_ai.agent.AgentRunResult.usage] of the run will not be possible, but you can still use [`UsageLimits`][pydantic_ai.usage.UsageLimits] — including `request_limit`, `total_tokens_limit`, and `tool_calls_limit` — to avoid unexpected costs or runaway tool loops.
+    Agent delegation doesn't need to use the same model for each agent. If you choose different models within a run, the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] still accumulates any per-response cost that could be calculated. However, monetary cost cannot be reconstructed from its aggregate token counts because models may have different pricing. You can use [`UsageLimits`][pydantic_ai.usage.UsageLimits] — including `cost_limit`, `request_limit`, `total_tokens_limit`, and `tool_calls_limit` — to avoid unexpected costs or runaway tool loops.
 
 ```python {title="agent_delegation_simple.py"}
 from pydantic_ai import Agent, RunContext, UsageLimits
 
 joke_selection_agent = Agent(  # (1)!
-    'openai:gpt-5',
-    system_prompt=(
+    '{{ openai:medium }}',
+    name='joke_selection_agent',  # (2)!
+    instructions=(
         'Use the `joke_factory` to generate some jokes, then choose the best. '
         'You must return just a single joke.'
     ),
 )
-joke_generation_agent = Agent(  # (2)!
-    'google-gla:gemini-2.5-flash', output_type=list[str]
+joke_generation_agent = Agent(  # (3)!
+    '{{ google:medium }}', name='joke_generation_agent', output_type=list[str]
 )
 
 
 @joke_selection_agent.tool
-async def joke_factory(ctx: RunContext[None], count: int) -> list[str]:
-    r = await joke_generation_agent.run(  # (3)!
+async def joke_factory(ctx: RunContext, count: int) -> list[str]:
+    r = await joke_generation_agent.run(  # (4)!
         f'Please generate {count} jokes.',
-        usage=ctx.usage,  # (4)!
+        usage=ctx.usage,  # (5)!
     )
-    return r.output  # (5)!
+    return r.output  # (6)!
 
 
 result = joke_selection_agent.run_sync(
@@ -51,17 +64,34 @@ result = joke_selection_agent.run_sync(
 )
 print(result.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
-print(result.usage())
-#> RunUsage(input_tokens=204, output_tokens=24, requests=3, tool_calls=1)
+print(result.usage)
+"""
+RunUsage(
+    cost=Decimal('0.00047625'),
+    input_tokens=165,
+    output_tokens=24,
+    requests=3,
+    tool_calls=1,
+)
+"""
 ```
 
 1. The "parent" or controlling agent.
-2. The "delegate" agent, which is called from within a tool of the parent agent.
-3. Call the delegate agent from within a tool of the parent agent.
-4. Pass the usage from the parent agent to the delegate agent so the final [`result.usage()`][pydantic_ai.agent.AgentRunResult.usage] includes the usage from both agents.
-5. Since the function returns `#!python list[str]`, and the `output_type` of `joke_generation_agent` is also `#!python list[str]`, we can simply return `#!python r.output` from the tool.
+2. Passing `name` is optional but recommended when you run more than one agent: it labels each agent's run span, so naming both lets you tell the parent and delegate apart in [Logfire](logfire.md). When omitted, the name is inferred from the variable the agent is assigned to and falls back to `'agent'` when it can't be (e.g. agents kept in a list or dict).
+3. The "delegate" agent, which is called from within a tool of the parent agent.
+4. Call the delegate agent from within a tool of the parent agent.
+5. Pass the usage from the parent agent to the delegate agent so the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] includes the usage from both agents.
+6. Since the function returns `#!python list[str]`, and the `output_type` of `joke_generation_agent` is also `#!python list[str]`, we can simply return `#!python r.output` from the tool.
 
 _(This example is complete, it can be run "as is")_
+
+!!! warning "Delegate from an `async def` function, not a sync one"
+    Note that `joke_factory` above is `async def` and uses `await joke_generation_agent.run(...)`. That's required, not stylistic: [`run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] cannot be used inside a tool, [output function](output.md#output-functions), or other function called during an agent run, and raise [`UserError`][pydantic_ai.exceptions.UserError] there.
+
+    The parent agent can still be started with `run_sync()`, as in the example above; only the delegating function has to be `async def`. If it also needs to do blocking work, keep it `async def` and push just that part into [`asyncio.to_thread()`][asyncio.to_thread].
+
+!!! note "Delegation inside a Temporal workflow"
+    A tool running in a [Temporal](durable_execution/temporal.md) activity receives a copy of the run context, so `usage=ctx.usage` does not carry the delegate's usage back to the parent run. See [Agent Run Context and Dependencies](durable_execution/temporal.md#agent-run-context-and-dependencies).
 
 The control flow for this example is pretty simple and can be summarised as follows:
 
@@ -97,18 +127,20 @@ class ClientAndKey:  # (1)!
 
 
 joke_selection_agent = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
+    name='joke_selection_agent',
     deps_type=ClientAndKey,  # (2)!
-    system_prompt=(
+    instructions=(
         'Use the `joke_factory` tool to generate some jokes on the given subject, '
         'then choose the best. You must return just a single joke.'
     ),
 )
 joke_generation_agent = Agent(
-    'google-gla:gemini-2.5-flash',
+    '{{ google:medium }}',
+    name='joke_generation_agent',
     deps_type=ClientAndKey,  # (4)!
     output_type=list[str],
-    system_prompt=(
+    instructions=(
         'Use the "get_jokes" tool to get some jokes on the given subject, '
         'then extract each joke into a list.'
     ),
@@ -142,8 +174,16 @@ async def main():
         result = await joke_selection_agent.run('Tell me a joke.', deps=deps)
         print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
-        print(result.usage())  # (6)!
-        #> RunUsage(input_tokens=309, output_tokens=32, requests=4, tool_calls=2)
+        print(result.usage)  # (6)!
+        """
+        RunUsage(
+            cost=Decimal('0.00054750'),
+            input_tokens=220,
+            output_tokens=32,
+            requests=4,
+            tool_calls=2,
+        )
+        """
 ```
 
 1. Define a dataclass to hold the client and API key dependencies.
@@ -153,7 +193,7 @@ async def main():
 5. Define a tool on the delegate agent that uses the dependencies to make an HTTP request.
 6. Usage now includes 4 requests — 2 from the calling agent and 2 from the delegate agent.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 This example shows how even a fairly simple agent delegation can lead to a complex control flow:
 
@@ -177,6 +217,12 @@ graph TD
 
 Here agents don't need to use the same deps.
 
+!!! tip "Message history between agents"
+    To give another agent the previous conversation as context, pass
+    `message_history` to its run method. See
+    [Sharing messages between agents](message-history.md#sharing-messages-between-agents)
+    for the details on instructions, system prompts, and tool context.
+
 Here we show two agents used in succession, the first to find a flight and the second to extract the user's seat preference.
 
 ```python {title="programmatic_handoff.py"}
@@ -196,10 +242,11 @@ class Failed(BaseModel):
     """Unable to find a satisfactory choice."""
 
 
-flight_search_agent = Agent[None, FlightDetails | Failed](  # (1)!
-    'openai:gpt-5',
-    output_type=FlightDetails | Failed,  # type: ignore
-    system_prompt=(
+flight_search_agent = Agent[object, FlightDetails | Failed](  # (1)!
+    '{{ openai:medium }}',
+    name='flight_search_agent',
+    output_type=FlightDetails | Failed,
+    instructions=(
         'Use the "flight_search" tool to find a flight '
         'from the given origin to the given destination.'
     ),
@@ -208,7 +255,7 @@ flight_search_agent = Agent[None, FlightDetails | Failed](  # (1)!
 
 @flight_search_agent.tool  # (2)!
 async def flight_search(
-    ctx: RunContext[None], origin: str, destination: str
+    ctx: RunContext, origin: str, destination: str
 ) -> FlightDetails | None:
     # in reality, this would call a flight search API or
     # use a browser to scrape a flight search website
@@ -244,10 +291,11 @@ class SeatPreference(BaseModel):
 
 
 # This agent is responsible for extracting the user's seat selection
-seat_preference_agent = Agent[None, SeatPreference | Failed](  # (5)!
-    'openai:gpt-5',
-    output_type=SeatPreference | Failed,  # type: ignore
-    system_prompt=(
+seat_preference_agent = Agent[object, SeatPreference | Failed](  # (5)!
+    '{{ openai:medium }}',
+    name='seat_preference_agent',
+    output_type=SeatPreference | Failed,
+    instructions=(
         "Extract the user's seat preference. "
         'Seats A and F are window seats. '
         'Row 1 is the front row and has extra leg room. '
@@ -294,7 +342,7 @@ async def main():  # (7)!
 6. Define a function to find the user's seat preference, which asks the user for their seat preference and then calls the agent to extract the seat preference.
 7. Now that we've put our logic for running each agent into separate functions, our main app becomes very simple.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 The control flow for this example can be summarised as follows:
 
@@ -322,8 +370,56 @@ graph TB
 
 See the [graph](graph.md) documentation on when and how to use graphs.
 
+## Deep Agents
+
+Deep agents are autonomous agents that combine multiple architectural patterns and capabilities to handle complex, multi-step tasks reliably. [Pydantic AI Harness](harness/index.md) ships each of these patterns as a capability you can compose with Pydantic AI's built-in features:
+
+- **Planning and progress tracking** — agents break down complex tasks into steps and track their progress, giving users visibility into what the agent is working on. See [`Planning`](harness/planning.md).
+- **File system operations** — reading, writing, and editing files in the run's workspace, on the local machine or in a sandboxed container. See [`FileSystem`](harness/filesystem.md) and [`Shell`](harness/shell.md).
+- **Task delegation** — spawning specialized sub-agents for specific tasks, with isolated context to prevent recursive delegation issues. See [`SubAgents`](harness/subagents.md) and [Agent Delegation](#agent-delegation) above.
+- **Sandboxed code execution** — running AI-generated code in isolated environments to prevent accidents. See [`Shell`](harness/shell.md) with a workspace backend such as [`DockerContainer`](harness/docker-container.md), and [`CodeMode`](harness/code-mode.md).
+- **Context management** — automatic conversation compaction to handle long sessions that would otherwise exceed token limits. See [Compaction](capabilities/compaction.md) and the Harness [compaction strategies](harness/compaction.md).
+- **Human-in-the-loop** — approval workflows for dangerous operations like code execution or file deletion. See [Requiring Tool Approval](toolsets.md#requiring-tool-approval).
+- **Durable execution** — preserving agent state across transient API failures and application errors or restarts. See [Durable Execution](durable_execution/overview.md).
+
+For a ready-made assembly of these pieces, [`Coder`](harness/coder.md) combines file system, shell, delegation, and context management capabilities into a coding agent you can use whole or take apart.
+
+## Observing Multi-Agent Systems
+
+Multi-agent systems can be challenging to debug due to their complexity; when multiple agents interact, understanding the flow of execution becomes essential.
+
+### Tracing Agent Delegation
+
+Run `uvx logfire-cli wizard --task pydantic-ai` once from your project to [set up Logfire](logfire.md#using-logfire) and trace the entire flow across multiple agents. It has your coding agent add this instrumentation:
+
+```python
+import logfire
+
+logfire.configure()
+logfire.instrument_pydantic_ai()
+
+# Your multi-agent code here...
+```
+
+Logfire shows you:
+
+- **Which agent handled which part** of the request
+- **Delegation decisions**—when and why one agent called another
+- **End-to-end latency** broken down by agent
+- **Token usage and costs** per agent
+- **What triggered the agent run**—the HTTP request, scheduled job, or user action that started it all
+- **What happened inside tool calls**—database queries, HTTP requests, file operations, and any other instrumented code that tools execute
+
+This is essential for understanding and optimizing complex agent workflows. When something goes wrong in a multi-agent system, you'll see exactly which agent failed and what it was trying to do, and whether the problem was in the agent's reasoning or in the backend systems it called.
+
+### Full-Stack Visibility
+
+If your Pydantic AI application includes a TypeScript frontend, API gateway, or services in other languages, Logfire can trace them too—Logfire provides SDKs for Python, JavaScript/TypeScript, and Rust, plus compatibility with any OpenTelemetry-instrumented application. See traces from your entire stack in a unified view. For details on sending data from other languages using standard OpenTelemetry, see the [alternative clients guide](https://logfire.pydantic.dev/docs/how-to-guides/alternative-clients/).
+
+Pydantic AI's instrumentation is built on [OpenTelemetry](https://opentelemetry.io/), so you can also use any OTel-compatible backend. See the [Logfire integration guide](logfire.md#using-logfire) for details.
+
 ## Examples
 
-The following examples demonstrate how to use dependencies in Pydantic AI:
+The following examples demonstrate how to use multi-agent patterns in Pydantic AI:
 
 - [Flight booking](examples/flight-booking.md)

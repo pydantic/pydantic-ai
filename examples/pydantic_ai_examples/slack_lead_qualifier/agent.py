@@ -5,13 +5,14 @@ import logfire
 
 ### [imports]
 from pydantic_ai import Agent, NativeOutput
+from pydantic_ai.capabilities import Caching
 from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool  ### [/imports]
 
 from .models import Analysis, Profile
 
 ### [agent]
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     instructions=dedent(
         """
         When a new person joins our public Slack, please put together a brief snapshot so we can be most useful to them.
@@ -37,6 +38,7 @@ agent = Agent(
     ),
     tools=[duckduckgo_search_tool()],
     output_type=NativeOutput([Analysis, NoneType]),
+    capabilities=[Caching()],
 )  ### [/agent]
 
 

@@ -1,10 +1,14 @@
+---
+description: "A Pydantic AI text-to-SQL example that turns user requests into PostgreSQL queries, with an output validator that checks each query using EXPLAIN."
+---
+
 # SQL Generation
 
 Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.
 
 Demonstrates:
 
-- [dynamic system prompt](../agents.md#system-prompts)
+- [dynamic instructions](../agent.md#instructions)
 - [structured `output_type`](../output.md#structured-output)
 - [output validation](../output.md#output-validator-functions)
 - [agent dependencies](../dependencies.md)
@@ -31,7 +35,7 @@ or to use a custom prompt:
 python/uv-run -m pydantic_ai_examples.sql_gen "find me errors"
 ```
 
-This model uses `gemini-2.5-flash` by default since Gemini is good at single shot queries of this kind.
+This model uses `gemini-3-flash-preview` by default since Gemini is good at single shot queries of this kind.
 
 ## Example Code
 

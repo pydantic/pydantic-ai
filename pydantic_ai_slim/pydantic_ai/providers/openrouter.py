@@ -1,16 +1,20 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
-
-import httpx
-from openai import AsyncOpenAI
+from datetime import timedelta
+from typing import Literal, overload
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
+from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.anthropic import (
+    _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES as _ANTHROPIC_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
+    anthropic_model_profile,
+)
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -20,18 +24,246 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.providers import Provider
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the OpenRouter provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+else:
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
-class OpenRouterProvider(Provider[AsyncOpenAI]):
+class OpenRouterModelProfile(OpenAIModelProfile, total=False):
+    """Profile for models used with OpenRouterModel.
+
+    ALL FIELDS MUST BE `openrouter_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
+
+    openrouter_supports_cache_control: bool
+    """Whether the downstream provider supports explicit `cache_control` breakpoints via OpenRouter."""
+    openrouter_supports_trailing_cache_control: bool
+    """Whether a conversation `cache_control` breakpoint can end the request or sit on a tool result.
+
+    Defaults to `True`. `False` for Gemini routes, where OpenRouter uses only the last breakpoint across message
+    content: a breakpoint on the final content part of the request makes OpenRouter's Google Vertex endpoint bill the
+    prompt twice, and one on a tool result isn't used. There, the last breakpoint goes on the closest earlier user or
+    assistant message instead."""
+    openrouter_supports_cache_ttl: bool
+    """Whether the downstream provider supports TTL in `cache_control`."""
+    openrouter_supports_tool_cache: bool
+    """Whether the downstream provider supports `cache_control` on tool definitions."""
+    openrouter_supports_dynamic_instruction_cache: bool
+    """Whether instruction cache boundaries can exclude later dynamic instruction blocks."""
+    openrouter_max_cache_points: int | None
+    """Maximum number of `cache_control` breakpoints the downstream provider allows per request.
+
+    Anthropic enforces a limit of 4. When set, excess breakpoints are silently removed
+    from messages (newest kept first). `None` means no limit."""
+    openrouter_system_messages_precede_generation: bool
+    """Whether the downstream provider keeps a mid-conversation `system` message only right before an assistant turn or at the end of the request.
+
+    OpenRouter turns one anywhere else into user text on Anthropic routes, so `OpenRouterModel` moves each one past
+    the user and tool messages that follow it, as `AnthropicModel` does. Only meaningful together with
+    `supports_inline_system_prompts`."""
+    openrouter_lowest_reasoning_effort: Literal['minimal', 'low']
+    """The lowest `reasoning.effort` the route accepts, which `thinking=False` sends when `thinking_always_enabled`.
+
+    Unset means `'low'`: an always-reasoning model such as `openai/o3` rejects `'minimal'`."""
+    openrouter_supports_forced_tool_choice_with_thinking: bool
+    """Deprecated: use [`supports_forced_tool_choice_with_thinking`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice_with_thinking] instead.
+
+    Translated (with a deprecation warning) whenever profiles are merged.
+    """
+
+
+class _OpenRouterGoogleJsonSchemaTransformer(JsonSchemaTransformer):
+    """Legacy Google JSON schema transformer for OpenRouter compatibility.
+
+    OpenRouter's compatibility layer doesn't fully support modern JSON Schema features
+    like $defs/$ref and anyOf for nullable types. This transformer restores v1.19.0
+    behavior by inlining definitions and simplifying nullable unions.
+
+    See: https://github.com/pydantic/pydantic-ai/issues/3617
+    """
+
+    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+        super().__init__(schema, strict=strict, prefer_inlined_defs=True, simplify_nullable_unions=True)
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        # Remove properties not supported by Gemini
+        schema.pop('$schema', None)
+        schema.pop('title', None)
+        schema.pop('discriminator', None)
+        schema.pop('examples', None)
+        schema.pop('exclusiveMaximum', None)
+        schema.pop('exclusiveMinimum', None)
+
+        if (const := schema.pop('const', None)) is not None:
+            schema['enum'] = [const]
+
+        # Convert enums to string type (legacy Gemini requirement)
+        if enum := schema.get('enum'):
+            schema['type'] = 'string'
+            schema['enum'] = [str(val) for val in enum]
+
+        # Convert oneOf to anyOf for discriminated unions
+        if 'oneOf' in schema and 'type' not in schema:
+            schema['anyOf'] = schema.pop('oneOf')
+
+        # Handle string format -> description
+        type_ = schema.get('type')
+        if type_ == 'string' and (fmt := schema.pop('format', None)):
+            description = schema.get('description')
+            if description:
+                schema['description'] = f'{description} (format: {fmt})'
+            else:
+                schema['description'] = f'Format: {fmt}'
+
+        return schema
+
+
+def _openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Google model accessed via OpenRouter.
+
+    Uses the legacy transformer to maintain compatibility with OpenRouter's
+    translation layer, which doesn't fully support modern JSON Schema features.
+    """
+    profile = google_model_profile(model_name)
+    if profile is None:  # pragma: no cover
+        return None
+    return merge_profile(profile, ModelProfile(json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer))
+
+
+_MANDATORY_REASONING_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
+    'aion-labs': ('aion-2.0', 'aion-3.0', 'aion-3.5'),
+    # Claude Sonnet 5.5 turns thinking off with `thinking={'type': 'between_tools'}` on the Anthropic API, which
+    # OpenRouter's `reasoning` field can't express.
+    'anthropic': (
+        'claude-sonnet-5-5',
+        'claude-fable-latest',
+        'claude-opus-latest',
+        'claude-sonnet-latest',
+    ),
+    'google': (
+        'gemini-3.5-flash',
+        'gemini-3.6-flash',
+        'gemini-3.7-flash',
+        'gemini-3.8-flash',
+        'gemini-4-argon',
+        'gemini-flash-latest',
+    ),
+    'liquid': ('lfm-2.5-2.6b', 'lfm-2.5-24b-a2b'),
+    'meta': (
+        'muse-glimmer-30b',
+        'muse-spark-1.1',
+        'muse-spark-1.2',
+        'muse-spark-1.3',
+        'muse-spark-open',
+        'muse-wonder',
+    ),
+    # Not `minimax-m2-her`, which doesn't reason.
+    'minimax': ('minimax-m2.5', 'minimax-m2.7', 'minimax-m3.1-flash'),
+    # Not in OpenRouter's list, but Mistral itself rejects turning reasoning off on it.
+    'mistralai': ('mistral-large-4-0',),
+    'moonshotai': ('kimi-k2.7-code', 'kimi-k2-thinking'),
+    'openai': ('gpt-5.2-codex', 'gpt-oss-', 'gpt-6.1-terra-pro', 'gpt-astra-latest', 'gpt-sol-latest'),
+    'perplexity': ('sonar-deep-research', 'sonar-pro-search', 'sonar-reasoning-pro'),
+    'qwen': (
+        'qwen3.8-max',
+        'qwen3.8-2.4t',
+        'qwen3-vl-30b-a3b-thinking',
+        'qwen3-next-80b-a3b-thinking',
+        'qwen3-235b-a22b-thinking',
+    ),
+    'recursive': ('flint-v1.0',),
+    'reflection': ('beam-1.0-501b-a23b',),
+    'rekaai': ('reka-flash-3',),
+    'sakana': ('fugu-max', 'fugu-ultra'),
+    'stepfun': ('step-3.5-flash', 'step-3.7-flash', 'step-5-preview'),
+    'x-ai': ('grok-4.20-multi-agent', 'grok-build', 'grok-latest'),
+    'z-ai': ('glm-5.3', 'glm-latest', 'glm-flash-latest'),
+}
+"""Model-name prefixes, per upstream provider, of the OpenRouter routes that make reasoning mandatory.
+
+OpenRouter rejects `reasoning={'effort': 'none'}` on these with "Reasoning is mandatory for this endpoint and cannot
+be disabled", including for models that can turn reasoning off on their own API, so their OpenRouter profile marks
+them always-on and `thinking=False` asks for the lowest effort instead: `minimal`, which every one of them accepted
+live (2026-11-05), except on the routes in `_LOW_REASONING_FLOOR_MODEL_PREFIXES`. Taken from `reasoning.mandatory` in
+[OpenRouter's model list](https://openrouter.ai/api/v1/models); `~vendor/…-latest` aliases match without the `~`.
+"""
+
+_LOW_REASONING_FLOOR_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
+    'perplexity': ('sonar-deep-research',),
+}
+"""Mandatory-reasoning routes not known to accept `minimal`, so `thinking=False` keeps sending `low`.
+
+Each Sonar Deep Research call runs a paid research job, so it wasn't probed, and Perplexity doesn't document its
+effort values.
+"""
+
+_FORCED_TOOL_CHOICE_REJECTED_WHILE_REASONING_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
+    'qwen': ('qwen3.8-flash',),
+}
+"""Model-name prefixes, per upstream provider, of the OpenRouter routes that reject forcing a tool while reasoning.
+
+Every route listed here must reason by default: `OpenRouterProvider.model_profile` sets `thinking_enabled_by_default`
+for them.
+
+Live probes (2026-10-31, 2026-11-17) got a 400 for a forced `tool_choice` while Qwen3.8 Flash reasons: "The
+tool_choice parameter does not support being set to required or object in thinking mode". Alibaba, its only host on
+OpenRouter, returns it. OpenRouter's model list advertises `tool_choice` for the route, so it can't be used to find
+these routes. A route also served by a host that accepts forcing while reasoning doesn't belong here, since OpenRouter
+may send the request there: Qwen3.8 2.4T is rejected on Alibaba but accepted on Venice, and Muse Spark 1.3 is rejected
+on Meta but accepted on Google Vertex.
+"""
+
+
+_MID_CONVERSATION_EFFORT_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
+    'anthropic': ('claude-fable-5-1', 'claude-fable-5-2', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'),
+    'openai': ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol'),
+}
+"""Model-name prefixes, per upstream provider, of the OpenRouter routes that accept a mid-conversation effort change.
+
+OpenRouter routes a request carrying a `configuration_update` only to endpoints that accept it, and rejects it with a
+400 ("Mid-conversation reasoning effort (configuration_update) is not supported") on every other model, so this lists
+the models live probes found accepting it (2026-10-26, and 2026-11-10 for Claude Fable 5.2): Claude Fable 5.1 and 5.2,
+Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5, and GPT-6 Astra, Sol and Luna and GPT-6.1 Sol. Claude Fable 5 and Sonnet 5,
+GPT-6.1 Terra and GPT-5.6 are rejected, as is every `-pro` variant, which `OpenRouterProvider.model_profile` excludes.
+https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#changing-effort-mid-conversation
+"""
+
+
+_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
+    'anthropic': _ANTHROPIC_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES,
+}
+"""Model-name prefixes, per upstream provider, of the OpenRouter routes that keep a mid-conversation `system` message.
+
+Besides these, every `openai/*` route keeps one except the open-weight `gpt-oss-*` models, which OpenRouter serves from
+other hosts' chat templates. Measured live on Chat Completions (2026-10-30), by whether the prompt cache still hits past
+the message and whether a withdrawal it carries is followed where the same text as a user message is not:
+
+- OpenAI routes keep it where it was sent, from GPT-4o through GPT-6.1, `-pro` variants and o3 included. One `gpt-oss`
+  host dropped it from the prompt altogether.
+- Anthropic routes keep it as a native entry only where Anthropic's own API accepts one, right before an assistant turn
+  or at the end of the request (see `openrouter_system_messages_precede_generation`), and only on the models Anthropic
+  serves the role on, which is the same list as `AnthropicProvider`'s. On Claude Sonnet 4.6, Opus 4.7 and Haiku 4.5,
+  OpenRouter moves it into the top-level system prompt, which busts the cached prefix after it. Claude Sonnet 5 keeps
+  it in place, but Anthropic documents that model as not acting on the entry. This held on every upstream OpenRouter
+  used: Anthropic, Claude Platform on AWS, Amazon Bedrock, Google Vertex AI and Azure.
+- Gemini routes move it into the system instruction, which busts the cached prefix after it.
+
+Mythos isn't routable on OpenRouter and is included on the strength of Anthropic's list.
+"""
+
+
+class OpenRouterProvider(_OpenAISDKProvider):
     """Provider for OpenRouter API."""
 
     @property
@@ -39,16 +271,23 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         return 'openrouter'
 
     @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing reasoning details. Which upstream verifies
+        # them depends on where OpenRouter routed the request, so no other provider is declared compatible.
+        return 'openrouter'
+
+    @property
     def base_url(self) -> str:
-        return 'https://openrouter.ai/api/v1'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile = {
-            'google': google_model_profile,
+            'google': _openrouter_google_model_profile,
             'openai': openai_model_profile,
             'anthropic': anthropic_model_profile,
             'mistralai': mistral_model_profile,
@@ -63,48 +302,180 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         profile = None
 
-        provider, model_name = model_name.split('/', 1)
+        # OpenRouter identifies models as `provider/model`.
+        if '/' not in model_name:
+            raise UserError(
+                f'OpenRouter model names must be prefixed with the upstream provider, e.g. '
+                f'{("openai/" + model_name)!r}, not {model_name!r}. '
+                'See https://openrouter.ai/models for the available model names.'
+            )
+
+        # OpenRouter exposes latest-model aliases as `~provider/model`; strip the
+        # alias marker before using the provider prefix for profile selection.
+        provider, model_name = model_name.removeprefix('~').split('/', 1)
+        model_name, *_ = model_name.split(':', 1)  # drop tags
         if provider in provider_to_profile:
-            model_name, *_ = model_name.split(':', 1)  # drop tags
+            if provider == 'anthropic':
+                model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
+        elif provider == 'z-ai':
+            # Only GLM-5.3's schema fix, without Z.AI's native thinking settings.
+            profile = _glm_5_3_schema_profile(model_name)
 
-        # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        if model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ())):
+            low_floor = model_name.lower().startswith(_LOW_REASONING_FLOOR_MODEL_PREFIXES.get(provider, ()))
+            profile = merge_profile(
+                profile,
+                OpenRouterModelProfile(
+                    thinking_always_enabled=True,
+                    openrouter_lowest_reasoning_effort='low' if low_floor else 'minimal',
+                ),
+            )
+        forcing_rejected_while_reasoning = model_name.lower().startswith(
+            _FORCED_TOOL_CHOICE_REJECTED_WHILE_REASONING_MODEL_PREFIXES.get(provider, ())
+        )
+        if forcing_rejected_while_reasoning:
+            # Every route in the table reasons unless told not to (`reasoning.default_enabled` in OpenRouter's model
+            # list), so a request without a thinking setting counts as reasoning. A route that rejects forcing while
+            # reasoning but doesn't reason by default needs its own handling, not this table.
+            profile = merge_profile(profile, ModelProfile(thinking_enabled_by_default=True))
+        # OpenRouter rejects the change on every pro variant, such as `openai/gpt-6-astra-pro`.
+        supports_mid_conversation_effort = model_name.lower().startswith(
+            _MID_CONVERSATION_EFFORT_MODEL_PREFIXES.get(provider, ())
+        ) and not model_name.lower().endswith('-pro')
+
+        supports_inline_system_prompts = (
+            provider == 'openai' and not model_name.lower().startswith('gpt-oss-')
+        ) or model_name.lower().startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES.get(provider, ()))
+
+        # Cache capability flags are set on the gateway layer based on the downstream provider.
+        # The TTL / tool-cache / dynamic-instruction flags are kept separate even though they all
+        # coincide with `supports_anthropic_cache` today: they model independent OpenRouter cache
+        # capabilities that merely happen to line up on the current Anthropic-only provider set, so a
+        # future non-Anthropic downstream can enable any of them independently without re-coupling them.
+        supports_cache_control = provider in ('anthropic', 'google')
+        supports_anthropic_cache = provider == 'anthropic'
+
+        # Three-layer merge:
+        # 1. Fallback layer — `OpenAIJsonSchemaTransformer` is the default unless an upstream profile sets one explicitly
+        #    (e.g. `_openrouter_google_model_profile` installs `_OpenRouterGoogleJsonSchemaTransformer`).
+        # 2. Upstream profile — model-specific traits from the lab's profile function.
+        # 3. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
+        #    the OpenRouter gateway adds (web plugin, file URLs, custom thinking field, cache capabilities). OpenRouter
+        #    accepts `reasoning` universally, so the gate also forces `supports_thinking=True` so the unified `thinking`
+        #    setting is always forwarded regardless of the upstream model's own thinking support. OpenRouter only
+        #    accepts the older `max_tokens` field, so `openai_chat_supports_max_completion_tokens=False`.
+        #    It keeps mid-conversation system messages only on some routes (see `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`)
+        #    and moves or rewrites them on the others, so those get the deliberate `<system>`-wrapped fallback.
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            OpenRouterModelProfile(
+                openai_chat_send_back_thinking_parts='field',
+                openai_chat_thinking_field='reasoning',
+                openai_chat_supports_file_urls=True,
+                openai_chat_supports_web_search=True,
+                openai_chat_supports_max_completion_tokens=False,
+                supports_inline_system_prompts=supports_inline_system_prompts,
+                openrouter_system_messages_precede_generation=provider == 'anthropic',
+                supports_thinking=True,
+                # OpenRouter's own Chat Completions extension: a content-less `system` message carrying a
+                # `configuration_update`. Set here because the upstream provider's own channel isn't what's sent.
+                supports_mid_conversation_effort=supports_mid_conversation_effort,
+                # OpenRouter's native tools (web search plugin, advisor) are gateway features that
+                # work with any underlying model, so the upstream profile's vendor-specific tool
+                # gating (e.g. Anthropic's valid-executor list) doesn't apply. Neutralize it here;
+                # `OpenRouterModel.supported_native_tools()` caps the effective set via the
+                # intersection in `Model.profile`.
+                supported_native_tools=SUPPORTED_NATIVE_TOOLS,
+                supports_cache=supports_cache_control,
+                # Only Anthropic routes take a TTL; Gemini caches at its 5-minute default.
+                supported_cache_retentions=('5m', '1h') if supports_anthropic_cache else (),
+                openrouter_supports_cache_control=supports_cache_control,
+                # On Gemini routes, a breakpoint at the end of the request doubles the billed prompt on OpenRouter's
+                # Google Vertex endpoint, so the message breakpoint goes on an earlier message.
+                openrouter_supports_trailing_cache_control=provider != 'google',
+                openrouter_supports_cache_ttl=supports_anthropic_cache,
+                openrouter_supports_tool_cache=supports_anthropic_cache,
+                openrouter_supports_dynamic_instruction_cache=supports_anthropic_cache,
+                openrouter_max_cache_points=4 if supports_anthropic_cache else None,
+                # Anthropic errors on a forced `tool_choice` with thinking enabled; OpenRouter instead
+                # drops `reasoning` from the request and returns a response with no reasoning at all.
+                # https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
+                # The routes in `_FORCED_TOOL_CHOICE_REJECTED_WHILE_REASONING_MODEL_PREFIXES` return a 400 instead.
+                supports_forced_tool_choice_with_thinking=provider != 'anthropic'
+                and not forcing_rejected_while_reasoning,
+                # OpenRouter documents cache TTLs for the providers whose cache control it passes through:
+                # Anthropic's 5-minute default (1-hour opt-in via `CachePoint`) and Gemini's 5-minute cache
+                # writes. Other routed caches have no OpenRouter-level retention commitment.
+                # https://openrouter.ai/docs/features/prompt-caching
+                default_cache_retention=timedelta(minutes=5) if supports_cache_control else None,
+            ),
+            special_token_route_profile('openrouter', model_name),
+        )
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
-
-    @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
-
-    @overload
-    def __init__(self, *, http_client: httpx.AsyncClient) -> None: ...
-
-    @overload
-    def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        app_url: str | None = None,
+        app_title: str | None = None,
+        openai_client: None = None,
+        http_client: _OpenAIHTTPClient | None = None,
+    ) -> None: ...
 
     def __init__(
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
+        app_url: str | None = None,
+        app_title: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
+        """Configure the provider with either an API key or prebuilt client.
+
+        Args:
+            api_key: OpenRouter API key. Falls back to `OPENROUTER_API_KEY`
+                when omitted and required unless `openai_client` is provided.
+            base_url: The base URL to use for requests, if not provided, `https://openrouter.ai/api/v1` will be used.
+            app_url: Optional url for app attribution. Falls back to
+                `OPENROUTER_APP_URL` when omitted.
+            app_title: Optional title for app attribution. Falls back to
+                `OPENROUTER_APP_TITLE` when omitted.
+            openai_client: Existing `AsyncOpenAI` client to reuse instead of
+                creating one internally.
+            http_client: Custom `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to pass into the
+                `AsyncOpenAI` constructor when building a client.
+
+        Raises:
+            UserError: If no API key is available and no `openai_client` is
+                provided.
+        """
         api_key = api_key or os.getenv('OPENROUTER_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
                 'Set the `OPENROUTER_API_KEY` environment variable or pass it via `OpenRouterProvider(api_key=...)`'
-                'to use the OpenRouter provider.'
+                ' to use the OpenRouter provider.'
             )
 
+        attribution_headers: dict[str, str] = {}
+        if http_referer := app_url or os.getenv('OPENROUTER_APP_URL'):
+            attribution_headers['HTTP-Referer'] = http_referer
+        if x_title := app_title or os.getenv('OPENROUTER_APP_TITLE'):
+            attribution_headers['X-Title'] = x_title
+
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
+        self._base_url = base_url or 'https://openrouter.ai/api/v1'
         if openai_client is not None:
             self._client = openai_client
-        elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = cached_async_http_client(provider='openrouter')
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = self._create_openai_client(
+                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=attribution_headers
+            )

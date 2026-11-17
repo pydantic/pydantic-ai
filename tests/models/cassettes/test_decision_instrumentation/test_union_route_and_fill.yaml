@@ -1,0 +1,97 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1126'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        Escalation.team:
+          criteria:
+            billing: null
+            engineering: null
+            security: null
+          instructions:
+            field: team
+            premise: 'If the user''s request calls for Escalation: Hand the ticket to a specialist team.'
+            question: Which team should handle it?
+          type: choice
+        Refund.full_refund:
+          instructions:
+            field: full_refund
+            premise: 'If the user''s request calls for Refund: Refund the customer for a charge.'
+            question: Should the whole charge be refunded?
+          type: noul
+        Refund.reason:
+          criteria:
+            cancelled_order: null
+            duplicate_charge: null
+            service_outage: null
+          instructions:
+            field: reason
+            premise: 'If the user''s request calls for Refund: Refund the customer for a charge.'
+            question: Why is the refund due?
+          type: choice
+        route:
+          criteria:
+            Escalation: Hand the ticket to a specialist team.
+            Refund: Refund the customer for a charge.
+          instructions: Which of these does this call for?
+          type: choice
+      state: I was charged twice for my March subscription. Please put the second charge back.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '593'
+      content-type:
+      - application/json
+      x-typesafe-request-id:
+      - req_01a0d6b2991b7daf9e72938d34b33cf5
+    parsed_body:
+      answers:
+        Escalation.team:
+          choice: billing
+          confidence: 1.0
+          probabilities:
+            billing: 1.0
+            engineering: 0.0
+            security: 0.0
+          type: choice
+        Refund.full_refund:
+          noul: 0.86
+          type: noul
+        Refund.reason:
+          choice: duplicate_charge
+          confidence: 1.0
+          probabilities:
+            cancelled_order: 0.0
+            duplicate_charge: 1.0
+            service_outage: 0.0
+          type: choice
+        route:
+          choice: Refund
+          confidence: 1.0
+          probabilities:
+            Escalation: 0.0
+            Refund: 1.0
+          type: choice
+      model: jev-1.13.0
+      usage:
+        input_tokens: 555
+        output_tokens: 138
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,85 @@
+name: Fetch dynamic prompt
+description: >-
+  Resolve an agentic-workflow prompt from a Logfire managed variable, falling
+  back to a committed default prompt file when the variable is unset or
+  unreachable. The resolved value is the COMPLETE prompt (never a fragment).
+  Shared by the pydantic-ai-* agentic workflows so the Logfire/OFREP/fallback
+  logic lives in exactly one place.
+
+inputs:
+  logfire-variable-key:
+    description: Logfire managed variable key holding the full prompt.
+    required: true
+  default-prompt-file:
+    description: Path to the committed default prompt file (the complete fallback prompt).
+    required: true
+  logfire-read-key:
+    description: >-
+      Logfire read key — pass the LOGFIRE_READ_EXTERNAL_VARIABLES secret from
+      the calling workflow. Empty/unset disables the Logfire lookup and uses
+      the committed default.
+    required: false
+    default: ""
+  logfire-base-url:
+    description: Logfire OFREP base URL.
+    required: false
+    default: https://logfire-api.pydantic.dev
+
+outputs:
+  dynamic_prompt:
+    description: The resolved prompt — the Logfire managed-variable value, or the committed default.
+    value: ${{ steps.resolve.outputs.dynamic_prompt }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      # Inputs are passed via env (never interpolated into the script body) so
+      # the resolver is injection-safe.
+      env:
+        LOGFIRE_READ_KEY: ${{ inputs.logfire-read-key }}
+        LOGFIRE_BASE_URL: ${{ inputs.logfire-base-url }}
+        LOGFIRE_VARIABLE_KEY: ${{ inputs.logfire-variable-key }}
+        DEFAULT_PROMPT_FILE: ${{ inputs.default-prompt-file }}
+        TARGETING_KEY: gh-aw-${{ github.repository }}
+      run: |
+        set -euo pipefail
+
+        emit_prompt() {
+          {
+            echo "dynamic_prompt<<__GH_AW_DYNAMIC_PROMPT_EOF__"
+            printf '%s\n' "$1"
+            echo "__GH_AW_DYNAMIC_PROMPT_EOF__"
+          } >> "$GITHUB_OUTPUT"
+        }
+
+        # The Logfire managed variable holds the COMPLETE prompt. When it is
+        # unset or unreachable, fall back to the full committed default so the
+        # agent always receives a complete prompt — never a partial one.
+        use_default() {
+          echo "::notice::$1 — using the committed default prompt (${DEFAULT_PROMPT_FILE})."
+          emit_prompt "$(cat "${DEFAULT_PROMPT_FILE}")"
+          exit 0
+        }
+
+        [ -n "${LOGFIRE_READ_KEY:-}" ] || use_default "LOGFIRE_READ_EXTERNAL_VARIABLES not set"
+
+        RESPONSE="$(curl --fail --silent --show-error \
+          --max-time 20 \
+          -X POST \
+          -H "Authorization: Bearer ${LOGFIRE_READ_KEY}" \
+          -H "Content-Type: application/json" \
+          -d "{\"context\":{\"targetingKey\":\"${TARGETING_KEY}\"}}" \
+          "${LOGFIRE_BASE_URL%/}/v1/ofrep/v1/evaluate/flags/${LOGFIRE_VARIABLE_KEY}")" \
+          || use_default "Logfire OFREP request failed"
+
+        PROMPT="$(printf '%s' "$RESPONSE" | jq -r '.value // empty')"
+
+        if [ -z "$PROMPT" ]; then
+          REASON="$(printf '%s' "$RESPONSE" | jq -r '.reason // "UNKNOWN"')"
+          use_default "No Logfire value for ${LOGFIRE_VARIABLE_KEY} (reason: ${REASON})"
+        fi
+
+        emit_prompt "$PROMPT"
+        echo "Loaded full prompt (${#PROMPT} chars) from Logfire variable '${LOGFIRE_VARIABLE_KEY}'."

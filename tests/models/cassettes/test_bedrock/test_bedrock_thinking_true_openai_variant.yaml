@@ -1,0 +1,40 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Reply with the single word: ok"}]}], "system": [], "inferenceConfig": {}, "additionalModelRequestFields": {"reasoning_effort": "medium"}}'
+    headers:
+      Content-Length:
+      - '190'
+      Content-Type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+      User-Agent:
+      - !!binary |
+        Qm90bzMvMS40Mi42MyBtZC9Cb3RvY29yZSMxLjQyLjYzIHVhLzIuMSBvcy9tYWNvcyMyNS4wLjAg
+        bWQvYXJjaCNhcm02NCBsYW5nL3B5dGhvbiMzLjEyLjEyIG1kL3B5aW1wbCNDUHl0aG9uIG0vMyxi
+        LE4sWixEIGNmZy9yZXRyeS1tb2RlI2xlZ2FjeSBCb3RvY29yZS8xLjQyLjYz
+      amz-sdk-invocation-id:
+      - !!binary |
+        NzQ5OWNhOTUtMzgxMC00OThkLWIxZjktYzAzYjlkNDljMjRl
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/openai.gpt-oss-120b-1%3A0/converse
+  response:
+    body:
+      string: '{"metrics": {"latencyMs": 391}, "output": {"message": {"content": [{"reasoningContent": {"reasoningText": {"text": "User wants reply with the single word: ok. So just \"ok\"."}}}, {"text": "ok"}], "role": "assistant"}}, "stopReason": "end_turn", "usage": {"inputTokens": 74, "outputTokens": 26, "serverToolUsage": {}, "totalTokens": 100}}'
+    headers:
+      Transfer-Encoding:
+      - chunked
+      content-type:
+      - application/json
+      date:
+      - Thu, 14 May 2026 07:44:10 GMT
+      via:
+      - 1.1 google
+      x-amzn-requestid:
+      - c46eb10b-f3d1-4838-bd57-8720009f5e0b
+    status:
+      code: 200
+      message: OK
+version: 1

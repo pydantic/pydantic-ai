@@ -1,0 +1,557 @@
+"""Tool-search typed message parts and cross-provider history translation.
+
+Tool search has two execution paths that produce typed message parts:
+
+* **Native server-side** (Anthropic BM25/regex, OpenAI Responses): the provider runs
+  the search and emits typed
+  [`NativeToolSearchCallPart`][pydantic_ai.messages.NativeToolSearchCallPart] /
+  [`NativeToolSearchReturnPart`][pydantic_ai.messages.NativeToolSearchReturnPart].
+* **Local fallback** (any provider): the model calls the regular `search_tools`
+  function tool; the toolset emits typed
+  [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] /
+  [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart].
+
+User code can match these typed subclasses via `isinstance` (e.g. for UI rendering)
+and synthesize them directly to inject discoveries mid-run.
+
+`synthesize_local_tool_search_messages` translates `NativeToolSearch*Part` history
+into the local-shape typed parts when the next turn cannot replay that provider's
+native representation, so previously discovered tools remain accessible across
+provider boundaries.
+"""
+
+from __future__ import annotations
+
+from collections import OrderedDict
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Literal, NotRequired, assert_never
+
+import pydantic
+from typing_extensions import TypedDict
+
+from . import messages as _messages
+
+# `messages.py` imports this module before its `ModelMessage` / `ModelRequest` / `ModelResponse`
+# types are defined; bind the parts we need at class-definition time directly here, and access
+# the message-level types via `_messages.ModelResponse` etc. at function-call time.
+from .messages import (
+    _TYPED_PART_TAGS,  # pyright: ignore[reportPrivateUsage]
+    _TYPED_PART_TAGS_BY_TYPE,  # pyright: ignore[reportPrivateUsage]
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    ToolCallPart,
+    ToolKind,
+    ToolReturnPart,
+)
+from .usage import RequestUsage
+
+if TYPE_CHECKING:
+    from .messages import (
+        ModelMessage,
+        ModelResponse,
+        ModelResponsePart,
+        _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
+    )
+
+
+_NO_MATCHES_MESSAGE = 'No matching tools found. The tools you need may not be available.'
+"""Canonical model-facing message used when a tool-search call returned zero matches.
+
+Shared by the local-fallback toolset's `_empty_return` and the Anthropic adapter's
+custom-callable empty-results path (where wire-time filtering left
+`tool_result.content=[]`, which Anthropic rejects, so we send a single text block instead).
+"""
+
+
+class ToolSearchMatch(TypedDict):
+    """A single match in a tool-search result."""
+
+    name: str
+    """Name of the discovered tool, as the model will call it.
+
+    Each discovered tool's full [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]
+    (including its description and parameter schema) is made available to the model on the
+    next request, so only the name is carried here.
+    """
+
+
+@pydantic.with_config(extra='allow')
+class ToolSearchArgs(TypedDict):
+    """Typed arguments for a tool-search call.
+
+    Carried on
+    [`NativeToolSearchCallPart.args`][pydantic_ai.messages.NativeToolSearchCallPart.args]
+    (native server-side path) and
+    [`ToolSearchCallPart.args`][pydantic_ai.messages.ToolSearchCallPart.args]
+    (local-fallback path) as the canonical cross-provider shape. Each adapter
+    normalizes its provider's wire format into this shape on parse, and rebuilds the
+    wire format from this shape on emit.
+    """
+
+    queries: list[str]
+    """Normalized search inputs.
+
+    * Anthropic BM25 / regex: single-item list with the query string.
+    * OpenAI server-executed `tool_search`: the list of tool paths the model picked.
+    * OpenAI client-execution / local `search_tools` fallback: single-item list with
+      the keywords string.
+    """
+
+
+@pydantic.with_config(extra='allow')
+class ToolSearchReturnContent(TypedDict):
+    """Typed return value of the framework-managed tool-search builtin.
+
+    Carried on
+    [`NativeToolSearchReturnPart.content`][pydantic_ai.messages.NativeToolSearchReturnPart.content]
+    (native server-side path) and
+    [`ToolSearchReturnPart.content`][pydantic_ai.messages.ToolSearchReturnPart.content]
+    (local-fallback path) as the canonical cross-provider shape.
+    """
+
+    discovered_tools: list[ToolSearchMatch]
+    """Matches ordered by relevance. An empty list means "search ran, nothing matched"."""
+
+    message: NotRequired[str]
+    """Optional text shown to the model when no matches were found.
+
+    Rendered as text on local fallback / Anthropic custom-callable empty-results path.
+    Stripped on OpenAI client-execution and Anthropic server-side replay (those carry
+    only structural fields).
+    """
+
+
+TOOL_SEARCH_KIND = ToolKind._core(  # pyright: ignore[reportPrivateUsage]
+    'tool-search', args=ToolSearchArgs, content=ToolSearchReturnContent
+)
+"""The kind of tool search, run natively by the provider or locally by the `search_tools` tool."""
+
+
+@dataclass(repr=False)
+class NativeToolSearchCallPart(NativeToolCallPart[ToolSearchArgs], kind=TOOL_SEARCH_KIND):
+    """Typed view of a [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] for tool search.
+
+    Used on the native server-side tool-search path (Anthropic BM25/regex, OpenAI
+    Responses) where the provider executes the search and emits a native result.
+    The local-fallback path uses
+    [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] instead.
+
+    `part.tool_kind == 'tool-search'` answers which tool a part belongs to, whatever its
+    outcome and whether search ran server-side or locally. To read a search result, check
+    `isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart)` instead: a failed
+    or denied return keeps its `tool_kind`, but its content is an error, not the typed result.
+
+    Shadows `args` with a narrower type. The `str` variant covers the
+    streaming / partial-args case before parsing completes; once parsed,
+    `args` is a [`ToolSearchArgs`][pydantic_ai.messages.ToolSearchArgs]
+    `TypedDict`.
+    """
+
+    tool_name: Literal['tool_search'] = 'tool_search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Default tool name for the typed subclass. Discrimination drives off `tool_kind`."""
+
+    args: str | ToolSearchArgs | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Tool-search query payload.
+
+    Narrows the parent's `str | dict[str, Any] | None` to a typed
+    [`ToolSearchArgs`][pydantic_ai.messages.ToolSearchArgs] when parsed. Streaming /
+    partial-args still arrive as `str` until they're complete.
+    """
+
+    tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Discriminator for the typed subclass (cross-provider tool-search call)."""
+
+    @property
+    def queries(self) -> list[str]:
+        """Subfield accessor for `typed_args['queries']`.
+
+        Returns an empty list if args haven't been parsed yet (streaming-partial,
+        i.e. `typed_args` is `None`).
+        """
+        typed = self.typed_args
+        if typed is None:
+            return []
+        return list(typed.get('queries', []))
+
+
+@dataclass(repr=False)
+class NativeToolSearchReturnPart(NativeToolReturnPart[ToolSearchReturnContent], kind=TOOL_SEARCH_KIND):
+    """Typed view of a [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] for tool search.
+
+    Used on the native server-side tool-search path (Anthropic BM25/regex, OpenAI
+    Responses) where the provider executes the search and emits a native result.
+    The local-fallback path uses
+    [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] instead.
+
+    `part.tool_kind == 'tool-search'` answers which tool a part belongs to, whatever its
+    outcome and whether search ran server-side or locally. To read a search result, check
+    `isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart)` instead: a failed
+    or denied return keeps its `tool_kind`, but its content is an error, not the typed result.
+
+    Shadows `content` with a narrower
+    [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]
+    `TypedDict`.
+    """
+
+    # `kw_only=True` keeps the redeclared `content` valid alongside the subclass's defaulted
+    # `tool_name` override: removing `content`'s default would otherwise place a non-default
+    # field after a default one in the synthesized `__init__`.
+    content: ToolSearchReturnContent = field(kw_only=True)
+    """Discovered-tools payload.
+
+    Narrows the parent's `ToolReturnContent` to a typed
+    [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent].
+    """
+
+    tool_name: Literal['tool_search'] = 'tool_search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Default tool name for the typed subclass. Discrimination drives off `tool_kind`."""
+
+    tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Discriminator for the typed subclass (cross-provider tool-search return)."""
+
+    @property
+    def discovered_tools(self) -> list[ToolSearchMatch]:
+        """Subfield accessor for `content['discovered_tools']`."""
+        return self.content['discovered_tools']
+
+    @property
+    def message(self) -> str | None:
+        """Subfield accessor for `content.get('message')`.
+
+        The message is `NotRequired` on
+        [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent];
+        returns `None` when no message was set (e.g. on non-empty match returns).
+        """
+        return self.content.get('message')
+
+
+@dataclass(repr=False)
+class ToolSearchCallPart(ToolCallPart[ToolSearchArgs], kind=TOOL_SEARCH_KIND):
+    """Typed view of a [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] for the local `search_tools` function call.
+
+    Used on the local-fallback path (and as the synthetic-injection target on
+    non-native providers receiving cross-provider history). The native server-side
+    path uses
+    [`NativeToolSearchCallPart`][pydantic_ai.messages.NativeToolSearchCallPart]
+    instead.
+
+    `part.tool_kind == 'tool-search'` answers which tool a part belongs to, whatever its
+    outcome and whether search ran server-side or locally. To read a search result, check
+    `isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart)` instead: a failed
+    or denied return keeps its `tool_kind`, but its content is an error, not the typed result.
+
+    Shadows `args` with the canonical typed shape. The `str` variant covers the
+    streaming / partial-args case before parsing completes; once parsed,
+    `args` is a [`ToolSearchArgs`][pydantic_ai.messages.ToolSearchArgs]
+    `TypedDict`.
+    """
+
+    tool_name: Literal['search_tools'] = 'search_tools'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Default tool name for the typed subclass. Discrimination drives off `tool_kind`."""
+
+    args: str | ToolSearchArgs | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Tool-search query payload.
+
+    Narrows the parent's `str | dict[str, Any] | None` to a typed
+    [`ToolSearchArgs`][pydantic_ai.messages.ToolSearchArgs] when parsed. Streaming /
+    partial-args still arrive as `str` until they're complete.
+    """
+
+    tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Discriminator for the typed subclass (framework-emitted `search_tools` call)."""
+
+    @property
+    def queries(self) -> list[str]:
+        """Subfield accessor for `typed_args['queries']`.
+
+        Returns an empty list if args haven't been parsed yet (streaming-partial,
+        i.e. `typed_args` is `None`).
+        """
+        typed = self.typed_args
+        if typed is None:
+            return []
+        return list(typed.get('queries', []))
+
+
+@dataclass(repr=False)
+class ToolSearchReturnPart(ToolReturnPart[ToolSearchReturnContent], kind=TOOL_SEARCH_KIND):
+    """Typed view of a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] for the local `search_tools` function return.
+
+    Used on the local-fallback path (and as the synthetic-injection target on
+    non-native providers receiving cross-provider history). The native server-side
+    path uses
+    [`NativeToolSearchReturnPart`][pydantic_ai.messages.NativeToolSearchReturnPart]
+    instead.
+
+    `part.tool_kind == 'tool-search'` answers which tool a part belongs to, whatever its
+    outcome and whether search ran server-side or locally. To read a search result, check
+    `isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart)` instead: a failed
+    or denied return keeps its `tool_kind`, but its content is an error, not the typed result.
+
+    Shadows `content` with a narrower
+    [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]
+    `TypedDict`.
+    """
+
+    # `kw_only=True` keeps the redeclared `content` valid alongside the subclass's defaulted
+    # `tool_name` override: removing `content`'s default would otherwise place a non-default
+    # field after a default one in the synthesized `__init__`.
+    content: ToolSearchReturnContent = field(kw_only=True)
+    """Discovered-tools payload.
+
+    Narrows the parent's `ToolReturnContent` to a typed
+    [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent].
+    """
+
+    tool_name: Literal['search_tools'] = 'search_tools'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Default tool name for the typed subclass. Discrimination drives off `tool_kind`."""
+
+    tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Discriminator for the typed subclass (framework-emitted `search_tools` return)."""
+
+    @property
+    def discovered_tools(self) -> list[ToolSearchMatch]:
+        """Subfield accessor for `content['discovered_tools']`."""
+        return self.content['discovered_tools']
+
+    @property
+    def message(self) -> str | None:
+        """Subfield accessor for `content.get('message')`.
+
+        The message is `NotRequired` on
+        [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent];
+        returns `None` when no message was set (e.g. on non-empty match returns).
+        """
+        return self.content.get('message')
+
+
+# Register typed-part discriminator tags so `messages._model_request_part_discriminator` /
+# `_model_response_part_discriminator` can route serialized dicts and Python instances to
+# the right typed subclass without hard-coded if/elif chains.
+_TYPED_PART_TAGS[('builtin-tool-call', 'tool-search')] = 'builtin-tool-search-call'
+_TYPED_PART_TAGS[('builtin-tool-return', 'tool-search')] = 'builtin-tool-search-return'
+_TYPED_PART_TAGS[('tool-call', 'tool-search')] = 'tool-search-call'
+_TYPED_PART_TAGS[('tool-return', 'tool-search')] = 'tool-search-return'
+
+_TYPED_PART_TAGS_BY_TYPE[NativeToolSearchCallPart] = 'builtin-tool-search-call'
+_TYPED_PART_TAGS_BY_TYPE[NativeToolSearchReturnPart] = 'builtin-tool-search-return'
+_TYPED_PART_TAGS_BY_TYPE[ToolSearchCallPart] = 'tool-search-call'
+_TYPED_PART_TAGS_BY_TYPE[ToolSearchReturnPart] = 'tool-search-return'
+
+
+def _split_response(original: ModelResponse, parts: list[ModelResponsePart], *, first: bool) -> ModelResponse:
+    """Build a split-off `ModelResponse` carrying a subset of `original`'s parts.
+
+    `first=True` keeps the original's identity-level metadata (provider response id,
+    usage, etc.). `first=False` blanks `provider_response_id` and zeroes `usage` so
+    downstream consumers don't double-count usage or find two responses for one API
+    call. Other contextual fields (model name, provider name, timestamp) carry over
+    unchanged — they're informational on a synthetic split.
+    """
+    if first:
+        return replace(original, parts=parts)
+    return replace(
+        original,
+        parts=parts,
+        provider_response_id=None,
+        usage=RequestUsage(),
+    )
+
+
+def synthesize_local_from_native_call(part: NativeToolSearchCallPart) -> ToolSearchCallPart:
+    """Translate a server-side tool-search call to a local function-tool call.
+
+    Preserves `tool_call_id` so the matching return part links up; drops
+    `provider_*` because the local-shape part is provider-agnostic.
+    """
+    return ToolSearchCallPart(
+        args=part.args,
+        tool_call_id=part.tool_call_id,
+    )
+
+
+def synthesize_local_from_native_return(part: NativeToolSearchReturnPart) -> ToolSearchReturnPart:
+    """Translate a server-side tool-search return to a local function-tool return.
+
+    Preserves `tool_call_id`, `content` (the typed
+    [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]),
+    and `metadata`; drops `provider_*` because the local-shape part is
+    provider-agnostic.
+    """
+    return ToolSearchReturnPart(
+        content=part.content,
+        tool_call_id=part.tool_call_id,
+        metadata=part.metadata,
+        timestamp=part.timestamp,
+        outcome=part.outcome,
+    )
+
+
+def synthesize_local_tool_search_messages(
+    messages: list[ModelMessage],
+    *,
+    keeps_native: _StatelessArtifactPredicate | None = None,
+    pair_returns: bool = False,
+) -> list[ModelMessage]:
+    """Translate any `NativeToolSearch*Part` instances in the message history into local equivalents.
+
+    Returns a new list with translated copies of any messages that contain
+    `NativeToolSearch*Part`s that `keeps_native` doesn't accept; messages without
+    such parts are returned unchanged (no copy). Passing no predicate translates
+    every native part, which is suitable for adapters without native tool search.
+    A native-capable adapter passes its
+    [`accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts],
+    the predicate it replays native tool-search parts by, so parts it can send keep
+    their exact replay shape while foreign parts take the provider-agnostic path.
+
+    A native server-side tool-search exchange is a single `ModelResponse` carrying both
+    `NativeToolSearchCallPart` (the call) and `NativeToolSearchReturnPart` (the inline
+    server-side result). Local function-tool execution shapes the same exchange as a pair
+    of messages — `ModelResponse(parts=[ToolSearchCallPart(...)])` followed by
+    `ModelRequest(parts=[ToolSearchReturnPart(...)])` — because the model produces the
+    call and the framework produces the return in a separate request turn.
+
+    Each `NativeToolSearchReturnPart` acts as a flush boundary when splitting: parts
+    before it (text, the search call itself) become a `ModelResponse`, the return becomes
+    a `ModelRequest`, and any parts after it (downstream tool calls, more text) become a
+    fresh `ModelResponse`. This preserves the natural turn order — e.g. a native turn
+    `[Text, SearchCall, SearchReturn, ToolCall(weather)]` translates to four messages
+    where the weather call sits on its own response after the search return, matching
+    what the model would have emitted across two turns on a non-native provider.
+
+    Identity-level metadata (`provider_response_id`, `usage`) is kept on the first split
+    response only; subsequent splits get blank/zero values so downstream consumers don't
+    double-count usage or treat one API call as two distinct responses.
+
+    With `pair_returns`, a translated return whose `tool_call_id` names no translated call
+    earlier in the history takes the ID of the oldest call in its response that no return has
+    answered yet. Stored OpenAI history can give an anonymous search output's return the output
+    item's ID (`tso_…`) rather than its call's, which an API that pairs tool results by ID
+    rejects. A return naming a call from an earlier response keeps its ID: Anthropic can deliver
+    a search result in the response after its call. Without `pair_returns`, every return keeps
+    its ID.
+    """
+    out: list[ModelMessage] = []
+    any_changed = False
+    translated_call_ids: set[str] = set()
+
+    for msg in messages:
+        if isinstance(msg, _messages.ModelResponse):
+            if (split := _synthesize_local_response(msg, keeps_native, translated_call_ids, pair_returns)) is None:
+                out.append(msg)
+            else:
+                any_changed = True
+                out.extend(split)
+        elif isinstance(msg, _messages.ModelRequest):
+            # A base `ToolReturnPart` with `tool_kind='tool-search'` was already promoted to
+            # `ToolSearchReturnPart` when its `ModelRequest` was built, so requests pass through.
+            out.append(msg)
+        else:
+            assert_never(msg)
+
+    return out if any_changed else messages
+
+
+def _synthesize_local_response(
+    msg: ModelResponse,
+    keeps_native: _StatelessArtifactPredicate | None,
+    translated_call_ids: set[str],
+    pair_returns: bool,
+) -> list[ModelMessage] | None:
+    """The messages `synthesize_local_tool_search_messages` splits `msg` into, or `None` if it translates no part.
+
+    Adds the IDs of the calls it translates to `translated_call_ids`.
+    """
+    out: list[ModelMessage] = []
+    buffer: list[ModelResponsePart] = []
+    split_emitted = False  # Tracks whether we've emitted a response from this msg already.
+    changed = False
+    # Insertion-ordered for the FIFO fallback, with constant-time lookup and removal for long histories.
+    unanswered_call_ids: OrderedDict[str, None] = OrderedDict()
+    for part in msg.parts:
+        if isinstance(part, NativeToolSearchCallPart) and (keeps_native is None or not keeps_native(msg, part)):
+            buffer.append(synthesize_local_from_native_call(part))
+            unanswered_call_ids[part.tool_call_id] = None
+            translated_call_ids.add(part.tool_call_id)
+            changed = True
+        elif isinstance(part, NativeToolSearchReturnPart) and (keeps_native is None or not keeps_native(msg, part)):
+            # Flush the buffered parts as a `ModelResponse` (skip if empty), then
+            # emit the search return as its own `ModelRequest`. Subsequent parts
+            # start a fresh buffer that becomes the next `ModelResponse`.
+            if buffer:
+                out.append(_split_response(msg, buffer, first=not split_emitted))
+                split_emitted = True
+            out.append(
+                _messages.ModelRequest(
+                    parts=[
+                        _synthesize_paired_local_return(part, unanswered_call_ids, translated_call_ids, pair_returns)
+                    ],
+                ),
+            )
+            buffer = []
+            changed = True
+        else:
+            buffer.append(part)
+    if not changed:
+        return None
+    if buffer:
+        out.append(_split_response(msg, buffer, first=not split_emitted))
+    return out
+
+
+def _synthesize_paired_local_return(
+    part: NativeToolSearchReturnPart,
+    unanswered_call_ids: OrderedDict[str, None],
+    translated_call_ids: set[str],
+    pair_returns: bool,
+) -> ToolSearchReturnPart:
+    """Translate `part`, onto the call it answers with `pair_returns`, as `synthesize_local_tool_search_messages` says.
+
+    `unanswered_call_ids` holds the translated calls of `part`'s response that no return has answered
+    yet, oldest first, and loses the one `part` answers.
+    """
+    if not pair_returns:
+        return synthesize_local_from_native_return(part)
+    if part.tool_call_id in unanswered_call_ids:
+        del unanswered_call_ids[part.tool_call_id]
+    elif part.tool_call_id not in translated_call_ids and unanswered_call_ids:
+        part = replace(part, tool_call_id=unanswered_call_ids.popitem(last=False)[0])
+    return synthesize_local_from_native_return(part)
+
+
+def repair_dangling_translated_calls(
+    messages: list[ModelMessage], untranslated: list[ModelMessage]
+) -> list[ModelMessage]:
+    """Answer each translated tool-search call that has no return with a synthesized interrupted return.
+
+    `untranslated` is the history before `synthesize_local_tool_search_messages` translated it,
+    which names the translated calls. A provider can end a response before answering its own
+    search call: Anthropic stops on a client tool call and delivers the result in its next
+    response. Once the history goes to another provider, that result never arrives, and the
+    provider rejects a call with no return.
+
+    The returns are the ones `_repair_dangling_tool_calls` synthesizes, placed where it places
+    them, so run this after every pass that reorders tool results. An agent run applies that
+    repair to the prepared messages itself, so its request stays as it was, and `FallbackModel`,
+    which sends each model the messages that model prepared, sends the same returns. A trailing
+    response is left alone, as the live frontier a resumed run continues.
+    """
+    native_call_ids = {
+        part.tool_call_id
+        for message in untranslated
+        if isinstance(message, _messages.ModelResponse)
+        for part in message.parts
+        if isinstance(part, NativeToolSearchCallPart)
+    }
+    if not native_call_ids:
+        return messages
+    # The private repair helpers of `messages.py`, so these returns are the ones an agent run's own repair would add.
+    dangling_by_response = _messages._dangling_tool_calls_to_repair(  # pyright: ignore[reportPrivateUsage]
+        messages, repair_last_response=isinstance(messages[-1], _messages.ModelRequest)
+    )
+    translated_by_response = {
+        index: translated
+        for index, calls in dangling_by_response.items()
+        if (translated := [call for call in calls if call.tool_call_id in native_call_ids])
+    }
+    return _messages._close_out_dangling_tool_calls(messages, translated_by_response)  # pyright: ignore[reportPrivateUsage]

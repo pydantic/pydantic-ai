@@ -3,36 +3,76 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import KW_ONLY, dataclass, field
+from typing import Any, Literal
 
 from pydantic_core import to_json
 
+from ...exceptions import RunCancelled, RunTimedOut
 from ...messages import (
-    BaseToolReturnPart,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
+    ERROR_OUTCOMES,
+    CapabilityLoadDeltaEvent,
+    CompactionPart,
+    CustomEvent,
+    EnqueuedMessagesEvent,
     FilePart,
+    FinishReason as PydanticFinishReason,
+    FunctionToolCallEvent,
     FunctionToolResultEvent,
-    RetryPromptPart,
+    ModelSettingsDeltaEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
+    ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolReturnPart,
 )
 from ...output import OutputDataT
-from ...tools import AgentDepsT
+from ...run import AgentRunResultEvent
+from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
+from .._adapter import (
+    capability_load_delta_payload,
+    compaction_payload,
+    enqueued_messages_for_client,
+    model_settings_delta_payload,
+    tool_availability_delta_payload,
+)
+from .._utils import client_error_text
+from ._utils import (
+    CAPABILITY_LOAD_DELTA_DATA_TYPE,
+    COMPACTION_DATA_TYPE,
+    DATA_CHUNK_TYPES,
+    ENQUEUED_MESSAGES_DATA_TYPE,
+    MODEL_SETTINGS_DELTA_DATA_TYPE,
+    TOOL_AVAILABILITY_DELTA_DATA_TYPE,
+    dump_message_metadata,
+    dump_provider_metadata,
+    dump_text_metadata,
+    iter_citation_source_chunks,
+    iter_metadata_chunks,
+    merged_text_citations,
+    tool_return_output,
+)
 from .request_types import RequestData
 from .response_types import (
+    AbortChunk,
     BaseChunk,
+    DataChunk,
     DoneChunk,
     ErrorChunk,
     FileChunk,
     FinishChunk,
+    FinishReason,
     FinishStepChunk,
+    MessageMetadataChunk,
     ReasoningDeltaChunk,
     ReasoningEndChunk,
     ReasoningStartChunk,
@@ -41,12 +81,24 @@ from .response_types import (
     TextDeltaChunk,
     TextEndChunk,
     TextStartChunk,
+    ToolApprovalRequestChunk,
     ToolInputAvailableChunk,
     ToolInputDeltaChunk,
+    ToolInputErrorChunk,
     ToolInputStartChunk,
     ToolOutputAvailableChunk,
+    ToolOutputDeniedChunk,
     ToolOutputErrorChunk,
 )
+
+# Map Pydantic AI finish reasons to Vercel AI format
+_FINISH_REASON_MAP: dict[PydanticFinishReason, FinishReason] = {
+    'stop': 'stop',
+    'length': 'length',
+    'content_filter': 'content-filter',
+    'tool_call': 'tool-calls',
+    'error': 'error',
+}
 
 __all__ = ['VercelAIEventStream']
 
@@ -63,17 +115,53 @@ def _json_dumps(obj: Any) -> str:
 class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Vercel AI protocol."""
 
+    _: KW_ONLY
+    sdk_version: Literal[5, 6, 7] = 5
+    """Vercel AI SDK version to target. Setting to 6 enables tool approval streaming; 7 emits the
+    same wire as 6 (v7's data-stream protocol equals v6's)."""
+    server_message_id: str | None = None
+    """Optional server-generated message ID to include in the `StartChunk`."""
+    manage_system_prompt: Literal['server', 'client'] = 'server'
+    """Who owns the system prompt, as [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
+
+    With `'server'`, `SystemPromptPart`s delivered by [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue]
+    are left out of the enqueued messages sent to the frontend.
+    """
+
     _step_started: bool = False
+    _finish_reason: FinishReason = None
+    _invalidated_tool_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
+    """Calls whose `tool-input-available` chunk was suppressed because validation failed.
+
+    Keyed by tool call ID; the part carries the raw args and provider metadata that the
+    later `tool-input-error` chunk needs to mirror what the suppressed `tool-input-available`
+    would have shown. The entry is popped by `_handle_tool_result` when the matching retry
+    result arrives, so `tool-input-error` is emitted there instead of `tool-output-error`.
+    """
+    _streamed_call_parts: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
+    """Tool call parts seen at `PartEndEvent` time, kept until `_handle_tool_call` takes over.
+
+    Used by `_handle_tool_result` to backfill `tool-input-available` if the agent raises
+    before the call event fires (e.g. output-tool `UnexpectedModelBehavior` with no prior
+    `final_result`, where `_agent_graph.py` raises without yielding `OutputToolCallEvent`).
+    Without the backfill, both v5 and v6 frontends would transition `input-streaming` ->
+    `output-error` with no input announcement in between.
+    """
+
+    _text_parts: list[TextPart] = field(default_factory=list[TextPart])
+    """Text parts streamed so far into the current UI text part."""
+    _source_urls: set[str] = field(default_factory=set[str])
+    """Web source URLs already emitted as `source-url` chunks, so each source is listed once per message."""
 
     @property
     def response_headers(self) -> Mapping[str, str] | None:
         return VERCEL_AI_DSP_HEADERS
 
     def encode_event(self, event: BaseChunk) -> str:
-        return f'data: {event.encode()}\n\n'
+        return f'data: {event.encode(self.sdk_version)}\n\n'
 
     async def before_stream(self) -> AsyncIterator[BaseChunk]:
-        yield StartChunk()
+        yield StartChunk(message_id=self.server_message_id)
 
     async def before_response(self) -> AsyncIterator[BaseChunk]:
         if self._step_started:
@@ -85,56 +173,138 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def after_stream(self) -> AsyncIterator[BaseChunk]:
         yield FinishStepChunk()
 
-        yield FinishChunk()
+        if self.cancelled is None:
+            yield FinishChunk(finish_reason=self._finish_reason)
         yield DoneChunk()
 
+    async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[BaseChunk]:
+        pydantic_reason = event.result.response.finish_reason
+        if pydantic_reason:
+            self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason, 'other')
+
+        # The AI SDK *merges* `messageMetadata` into `message.metadata` rather than replacing it.
+        # Emitting exactly one metadata chunk per run (and none at `start`) keeps merge equivalent
+        # to assignment; adding a `start`-time or mid-stream chunk would need the merge revisited.
+        # Request-side messages have no analogous chunk — frontends that rebuild history purely
+        # from streamed chunks see timestamps only on assistant responses, whereas `dump_messages`
+        # populates both sides.
+        yield MessageMetadataChunk(message_metadata=dump_message_metadata(event.result.response))
+
+        # Emit tool approval requests for deferred approvals (only when sdk_version >= 6)
+        output = event.result.output
+        if self.sdk_version >= 6 and isinstance(output, DeferredToolRequests):
+            for tool_call in output.approvals:
+                yield ToolApprovalRequestChunk(
+                    approval_id=tool_call.tool_call_id,
+                    tool_call_id=tool_call.tool_call_id,
+                )
+            return
+        return
+        yield
+
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
+        # Announce any tool call whose args were streamed but never made available: `tool-input-available`
+        # normally fires at the call/result event, but a mid-stream error aborts the run before either,
+        # leaving the client stuck in `input-streaming`. The base class synthesizes the open part's
+        # `PartEndEvent` on error, which `handle_tool_call_end` stashes here, so flush whatever remains.
+        for part in self._streamed_call_parts.values():
+            yield self._tool_input_available_chunk(part)
+        self._streamed_call_parts.clear()
+
+        # No `MessageMetadataChunk` here: an errored run has no `AgentRunResultEvent` to source
+        # `timestamp` from, so any partial assistant message rendered on the client is persisted
+        # without one. A future opt-in that broadens the roundtrip should revisit this path.
+        self._finish_reason = 'error'
         yield ErrorChunk(error_text=str(error))
 
+    async def on_cancelled(self, cancelled: RunCancelled) -> AsyncIterator[BaseChunk]:
+        if isinstance(cancelled, RunTimedOut):
+            yield AbortChunk(reason='The agent run timed out.')
+        else:
+            yield AbortChunk(reason='The agent run was cancelled.')
+
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseChunk]:
+        provider_metadata = dump_provider_metadata(
+            id=part.id,
+            provider_name=part.provider_name,
+            provider_details=part.provider_details,
+            canonical_system=self._canonical_system_for(part.provider_name),
+        )
         if follows_text:
             message_id = self.message_id
         else:
             message_id = self.new_message_id()
-            yield TextStartChunk(id=message_id)
+            self._text_parts = []
+            yield TextStartChunk(id=message_id, provider_metadata=provider_metadata)
 
         if part.content:
-            yield TextDeltaChunk(id=message_id, delta=part.content)
+            yield TextDeltaChunk(id=message_id, delta=part.content, provider_metadata=provider_metadata)
 
     async def handle_text_delta(self, delta: TextPartDelta) -> AsyncIterator[BaseChunk]:
         if delta.content_delta:  # pragma: no branch
-            yield TextDeltaChunk(id=self.message_id, delta=delta.content_delta)
+            provider_metadata = dump_provider_metadata(
+                provider_name=delta.provider_name, provider_details=delta.provider_details
+            )
+            yield TextDeltaChunk(id=self.message_id, delta=delta.content_delta, provider_metadata=provider_metadata)
 
     async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[BaseChunk]:
+        # Consecutive text parts stream into one UI text part, whose metadata is sent on its `text-end` chunk.
+        self._text_parts.append(part)
         if not followed_by_text:
-            yield TextEndChunk(id=self.message_id)
+            yield TextEndChunk(
+                id=self.message_id,
+                provider_metadata=dump_text_metadata(self._text_parts, canonical_system_for=self._canonical_system_for),
+            )
+            for chunk in iter_citation_source_chunks(merged_text_citations(self._text_parts), self._source_urls):
+                yield chunk
 
     async def handle_thinking_start(
         self, part: ThinkingPart, follows_thinking: bool = False
     ) -> AsyncIterator[BaseChunk]:
         message_id = self.new_message_id()
-        yield ReasoningStartChunk(id=message_id)
+        provider_metadata = dump_provider_metadata(
+            id=part.id,
+            signature=part.signature,
+            provider_name=part.provider_name,
+            provider_details=part.provider_details,
+            canonical_system=self._canonical_system_for(part.provider_name),
+        )
+        yield ReasoningStartChunk(id=message_id, provider_metadata=provider_metadata)
         if part.content:
-            yield ReasoningDeltaChunk(id=message_id, delta=part.content)
+            yield ReasoningDeltaChunk(id=message_id, delta=part.content, provider_metadata=provider_metadata)
 
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[BaseChunk]:
         if delta.content_delta:  # pragma: no branch
-            yield ReasoningDeltaChunk(id=self.message_id, delta=delta.content_delta)
+            provider_metadata = dump_provider_metadata(
+                provider_name=delta.provider_name,
+                signature=delta.signature_delta,
+                provider_details=delta.provider_details,
+            )
+            yield ReasoningDeltaChunk(
+                id=self.message_id, delta=delta.content_delta, provider_metadata=provider_metadata
+            )
 
     async def handle_thinking_end(
         self, part: ThinkingPart, followed_by_thinking: bool = False
     ) -> AsyncIterator[BaseChunk]:
-        yield ReasoningEndChunk(id=self.message_id)
+        provider_metadata = dump_provider_metadata(
+            id=part.id,
+            signature=part.signature,
+            provider_name=part.provider_name,
+            provider_details=part.provider_details,
+            canonical_system=self._canonical_system_for(part.provider_name),
+        )
+        yield ReasoningEndChunk(id=self.message_id, provider_metadata=provider_metadata)
 
-    def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
+    def handle_tool_call_start(self, part: ToolCallPart | NativeToolCallPart) -> AsyncIterator[BaseChunk]:
         return self._handle_tool_call_start(part)
 
-    def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
+    def handle_builtin_tool_call_start(self, part: NativeToolCallPart) -> AsyncIterator[BaseChunk]:
         return self._handle_tool_call_start(part, provider_executed=True)
 
     async def _handle_tool_call_start(
         self,
-        part: ToolCallPart | BuiltinToolCallPart,
+        part: ToolCallPart | NativeToolCallPart,
         tool_call_id: str | None = None,
         provider_executed: bool | None = None,
     ) -> AsyncIterator[BaseChunk]:
@@ -143,53 +313,257 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             tool_call_id=tool_call_id,
             tool_name=part.tool_name,
             provider_executed=provider_executed,
+            provider_metadata=dump_provider_metadata(
+                id=part.id,
+                tool_kind=part.tool_kind,
+                provider_name=part.provider_name,
+                provider_details=part.provider_details,
+                canonical_system=self._canonical_system_for(part.provider_name),
+            ),
         )
         if part.args:
-            yield ToolInputDeltaChunk(tool_call_id=tool_call_id, input_text_delta=part.args_as_json_str())
+            # A `str` is emitted raw: the args this first chunk carries can be a partial JSON fragment
+            # that only becomes valid once the following deltas are concatenated, and
+            # `args_as_json_str()` would degrade it to the `INVALID_JSON` wrapper. `dict` args always
+            # arrive complete, so the helper is still the right encoder for them.
+            yield ToolInputDeltaChunk(
+                tool_call_id=tool_call_id,
+                input_text_delta=part.args if isinstance(part.args, str) else part.args_as_json_str(),
+            )
 
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[BaseChunk]:
         tool_call_id = delta.tool_call_id or ''
         assert tool_call_id, '`ToolCallPartDelta.tool_call_id` must be set'
+        if delta.args_delta is None:
+            # ID-only update: nothing to append to the argument text, so no argument event is
+            # emitted. Identity check, not truthiness: a genuine `'null'` fragment must pass through.
+            return
         yield ToolInputDeltaChunk(
             tool_call_id=tool_call_id,
             input_text_delta=delta.args_delta if isinstance(delta.args_delta, str) else _json_dumps(delta.args_delta),
         )
 
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseChunk]:
-        yield ToolInputAvailableChunk(
-            tool_call_id=part.tool_call_id, tool_name=part.tool_name, input=part.args_as_dict()
+        # Stash the streamed part. `_handle_tool_call` (post-validation) takes over emission
+        # in the normal flow and pops the stash. If the agent raises before the call event
+        # fires (e.g. output-tool `UnexpectedModelBehavior` with no `final_result`, or a
+        # mid-stream error while the call is still streaming), the stash survives and the
+        # `tool-input-available` is backfilled by `_handle_tool_result` or, for an interrupted
+        # run with no result event, flushed by `on_error`.
+        self._streamed_call_parts[part.tool_call_id] = part
+        return
+        # Marks this an async generator.
+        yield  # pragma: no cover
+
+    def _tool_input_available_chunk(self, part: ToolCallPart) -> ToolInputAvailableChunk:
+        """Build the `tool-input-available` chunk announcing a streamed tool call's input."""
+        return ToolInputAvailableChunk(
+            tool_call_id=part.tool_call_id,
+            tool_name=part.tool_name,
+            input=part.args_as_dict(),
+            provider_metadata=dump_provider_metadata(
+                id=part.id,
+                provider_name=part.provider_name,
+                provider_details=part.provider_details,
+                canonical_system=self._canonical_system_for(part.provider_name),
+                tool_kind=part.tool_kind,
+            ),
         )
 
-    async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
+    async def handle_function_tool_call(self, event: FunctionToolCallEvent) -> AsyncIterator[BaseChunk]:
+        async for chunk in self._handle_tool_call(event):
+            yield chunk
+
+    async def handle_output_tool_call(self, event: OutputToolCallEvent) -> AsyncIterator[BaseChunk]:
+        async for chunk in self._handle_tool_call(event):
+            yield chunk
+
+    async def _handle_tool_call(self, event: ToolCallEvent) -> AsyncIterator[BaseChunk]:
+        part = event.part
+        # `args_valid is None`: the call wasn't validated because it won't run here. On resume of
+        # a non-`ToolApproved` deferred result (`ToolDenied`, `ModelRetry`, direct return), the
+        # original `tool-input-available` already fired on the first agent run, so nothing is
+        # emitted. For a call skipped because a final result was already processed, the input
+        # streamed in this run: keep the stash so `_handle_tool_result` backfills the chunk.
+        if event.args_valid is None:
+            return
+
+        # We own the input-chunk lifecycle from here. Drop the stash so `_handle_tool_result`
+        # doesn't double-emit a backfill chunk.
+        self._streamed_call_parts.pop(part.tool_call_id, None)
+
+        # SDK v6+ supports `tool-input-error`, so we suppress `tool-input-available` on
+        # validation failure and let `_handle_tool_result` emit the dedicated error chunk
+        # when the matching retry result arrives. v5 does not have `tool-input-error`;
+        # for v5 we keep the pre-PR behavior of emitting `tool-input-available` regardless
+        # of validity (with `tool-output-error` later from the result handler) so the tool
+        # call lifecycle stays observable for v5 frontends.
+        if event.args_valid is False and self.sdk_version >= 6:
+            self._invalidated_tool_calls[part.tool_call_id] = part
+            return
+
+        yield self._tool_input_available_chunk(part)
+
+    async def handle_builtin_tool_call_end(self, part: NativeToolCallPart) -> AsyncIterator[BaseChunk]:
         yield ToolInputAvailableChunk(
             tool_call_id=part.tool_call_id,
             tool_name=part.tool_name,
             input=part.args_as_dict(),
             provider_executed=True,
-            provider_metadata={'pydantic_ai': {'provider_name': part.provider_name}},
+            provider_metadata=dump_provider_metadata(
+                id=part.id,
+                provider_name=part.provider_name,
+                provider_details=part.provider_details,
+                canonical_system=self._canonical_system_for(part.provider_name),
+                tool_kind=part.tool_kind,
+            ),
         )
 
-    async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseChunk]:
-        yield ToolOutputAvailableChunk(
-            tool_call_id=part.tool_call_id,
-            output=self._tool_return_output(part),
-            provider_executed=True,
-        )
+    async def handle_builtin_tool_return(self, part: NativeToolReturnPart) -> AsyncIterator[BaseChunk]:
+        if self.sdk_version >= 6 and part.outcome == 'denied':
+            yield ToolOutputDeniedChunk(tool_call_id=part.tool_call_id)
+        elif part.outcome in ERROR_OUTCOMES:
+            yield ToolOutputErrorChunk(tool_call_id=part.tool_call_id, error_text=client_error_text(part))
+        else:
+            # `'success'` and `'interrupted'` both render as neutral tool output. Only the error
+            # outcomes are errors; `'interrupted'` (a call cut off before it produced a result)
+            # must never be.
+            yield ToolOutputAvailableChunk(
+                tool_call_id=part.tool_call_id,
+                output=tool_return_output(part),
+                provider_executed=True,
+            )
 
     async def handle_file(self, part: FilePart) -> AsyncIterator[BaseChunk]:
         file = part.content
         yield FileChunk(url=file.data_uri, media_type=file.media_type)
 
+    async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[BaseChunk]:
+        yield DataChunk(
+            type=COMPACTION_DATA_TYPE,
+            data=compaction_payload(part, canonical_system=self._canonical_system_for(part.provider_name)),
+        )
+
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
-        part = event.result
-        if isinstance(part, RetryPromptPart):
-            yield ToolOutputErrorChunk(tool_call_id=part.tool_call_id, error_text=part.model_response())
+        async for chunk in self._handle_tool_result(event.part):
+            yield chunk
+
+    async def handle_capability_load_delta(self, event: CapabilityLoadDeltaEvent) -> AsyncIterator[BaseChunk]:
+        yield DataChunk(type=CAPABILITY_LOAD_DELTA_DATA_TYPE, data=capability_load_delta_payload(event.part))
+
+    async def handle_model_settings_delta(self, event: ModelSettingsDeltaEvent) -> AsyncIterator[BaseChunk]:
+        yield DataChunk(type=MODEL_SETTINGS_DELTA_DATA_TYPE, data=model_settings_delta_payload(event.part))
+
+    async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[BaseChunk]:
+        part = event.part
+        yield DataChunk(
+            type=TOOL_AVAILABILITY_DELTA_DATA_TYPE,
+            data=tool_availability_delta_payload(part),
+        )
+
+    async def handle_enqueued_messages(self, event: EnqueuedMessagesEvent) -> AsyncIterator[BaseChunk]:
+        # The adapter module imports this one to build its stream.
+        from ._adapter import VercelAIAdapter
+
+        # A data part rather than chat messages: the AI SDK keeps it on the assistant message, so a
+        # client that rebuilds history from the stream sends the messages back without rendering them.
+        # Keyed on the enqueue call: run-scoped default IDs would repeat across deliveries in one run.
+        messages = enqueued_messages_for_client(event.messages, manage_system_prompt=self.manage_system_prompt)
+        if not messages:
+            return
+        ui_messages = VercelAIAdapter.dump_messages(
+            messages,
+            sdk_version=self.sdk_version,
+            generate_message_id=lambda _message, role, index: f'{event.enqueue_id}-{role}-{index}',
+        )
+        yield DataChunk(
+            type=ENQUEUED_MESSAGES_DATA_TYPE,
+            id=event.enqueue_id,
+            data={
+                'messages': [
+                    message.model_dump(mode='json', by_alias=True, exclude_none=True) for message in ui_messages
+                ]
+            },
+        )
+
+    async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseChunk]:
+        async for chunk in self._handle_tool_result(event.part):
+            yield chunk
+
+    async def handle_custom_event(self, event: CustomEvent) -> AsyncIterator[BaseChunk]:
+        # A data-carrying chunk payload (`DataChunk`, `SourceUrlChunk`, etc.) is passed through verbatim,
+        # mirroring the tool-return metadata passthrough.
+        payload = event.to_payload()
+        if isinstance(payload, DATA_CHUNK_TYPES):
+            yield payload
         else:
-            yield ToolOutputAvailableChunk(tool_call_id=part.tool_call_id, output=self._tool_return_output(part))
+            # The data is always the bare payload, whether or not the event is tool-scoped: a
+            # frontend written against one shape must not break when the same event class is later
+            # emitted from inside a tool. An event that wants its attribution on the wire includes
+            # it by overriding `to_payload`.
+            yield DataChunk(type=f'data-{event.name}', data=payload)
 
-        # ToolCallResultEvent.content may hold user parts (e.g. text, images) that Vercel AI does not currently have events for
+    async def _handle_tool_result(self, part: ToolReturnPart) -> AsyncIterator[BaseChunk]:
+        tool_call_id = part.tool_call_id
 
-    def _tool_return_output(self, part: BaseToolReturnPart) -> Any:
-        output = part.model_response_object()
-        # Unwrap the return value from the output dictionary if it exists
-        return output.get('return_value', output)
+        invalidated_part = self._invalidated_tool_calls.pop(tool_call_id, None)
+        streamed_part = self._streamed_call_parts.pop(tool_call_id, None)
+
+        # Backfill `tool-input-available` if `_handle_tool_call` didn't emit it for this
+        # streamed call. Two cases:
+        # - The call was skipped because a final result was already processed: its call
+        #   event is unvalidated (`args_valid is None`), so `_handle_tool_call` kept the
+        #   stash, and the stub return arrives here.
+        # - The agent raised before yielding the call event (e.g. output-tool
+        #   `UnexpectedModelBehavior` with no prior `final_result`). The base class then
+        #   synthesizes a `ToolReturnPart(outcome='failed')` for the pending call, which
+        #   arrives here.
+        # Without the backfill, v5/v6 frontends would move the call out of `input-streaming`
+        # with no input announcement in between.
+        # `invalidated_part is not None` means `_handle_tool_call` deliberately suppressed
+        # the chunk for the v6 invalidated path — don't backfill in that case.
+        if streamed_part is not None and invalidated_part is None:
+            yield self._tool_input_available_chunk(streamed_part)
+
+        if self.sdk_version >= 6 and part.outcome == 'denied':
+            yield ToolOutputDeniedChunk(tool_call_id=tool_call_id)
+        elif invalidated_part is not None:
+            # The original `tool-input-available` was suppressed because `args_valid=False`.
+            # Complete the v6 lifecycle by emitting `tool-input-error` instead of letting the
+            # result chunk (success/output-error) fire — the call never actually executed.
+            # `error_text` comes from `ToolReturnPart.model_response_str()` — the retry feedback
+            # itself, or the status part on the exhaustive output-strategy skip path (which says
+            # e.g. "Output tool not used …").
+            yield ToolInputErrorChunk(
+                tool_call_id=tool_call_id,
+                tool_name=invalidated_part.tool_name,
+                input=invalidated_part.args_as_dict(),
+                provider_metadata=dump_provider_metadata(
+                    id=invalidated_part.id,
+                    provider_name=invalidated_part.provider_name,
+                    provider_details=invalidated_part.provider_details,
+                    canonical_system=self._canonical_system_for(invalidated_part.provider_name),
+                    tool_kind=invalidated_part.tool_kind,
+                ),
+                error_text=client_error_text(part),
+            )
+        elif part.outcome in ERROR_OUTCOMES:
+            # A retry takes the error channel like a failure does, and its `error_text` is the
+            # feedback itself — unwrapped, and with none of the instruction framing the retry part
+            # it replaces rendered (https://github.com/pydantic/pydantic-ai/pull/4869).
+            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=client_error_text(part))
+        else:
+            # `'success'` and `'interrupted'` both render as neutral tool output. Only the error
+            # outcomes are errors; a synthesized `'interrupted'` return (from message-history repair)
+            # must never be surfaced as one — its content string carries the interruption message as
+            # the output.
+            yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=tool_return_output(part))
+
+        # ToolOutputAvailableChunk/ToolOutputErrorChunk.output may hold user parts
+        # (e.g. text, images) that Vercel AI does not currently have chunk types for.
+
+        # Check for data-carrying Vercel AI chunks returned by tool calls via metadata.
+        # Only data-carrying chunks (DataChunk, SourceUrlChunk, etc.) are yielded;
+        # protocol-control chunks are filtered out by iter_metadata_chunks.
+        for chunk in iter_metadata_chunks(part):
+            yield chunk

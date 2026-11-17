@@ -1,13 +1,14 @@
 from __future__ import annotations as _annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from io import StringIO
-from typing import Any, Generic, Literal, Protocol, cast
+from typing import Any, Generic, Literal, Protocol, assert_never
 
 from pydantic import BaseModel, TypeAdapter
 from rich.console import Console, Group, RenderableType
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -16,6 +17,16 @@ from typing_extensions import TypedDict, TypeVar
 from pydantic_evals._utils import UNSET, Unset
 
 from ..evaluators import EvaluationResult
+from .analyses import (
+    ConfusionMatrix,
+    LinePlot,
+    PrecisionRecall,
+    PrecisionRecallCurve,
+    PrecisionRecallPoint,
+    ReportAnalysis,
+    ScalarResult,
+    TableResult,
+)
 from .render_numbers import (
     default_render_duration,
     default_render_duration_diff,
@@ -31,17 +42,58 @@ __all__ = (
     'ReportCaseAdapter',
     'ReportCaseFailure',
     'ReportCaseFailureAdapter',
+    'ReportCaseGroup',
     'EvaluationRenderer',
     'RenderValueConfig',
     'RenderNumberConfig',
     'ReportCaseAggregate',
+    'ReportAnalysis',
+    'ConfusionMatrix',
+    'LinePlot',
+    'PrecisionRecall',
+    'PrecisionRecallCurve',
+    'PrecisionRecallPoint',
+    'ScalarResult',
+    'TableResult',
 )
 
-from ..evaluators.evaluator import EvaluatorFailure
+from ..evaluators.evaluator import EvaluationScalar, EvaluatorFailure
 
 MISSING_VALUE_STR = '[i]<missing>[/i]'
 EMPTY_CELL_STR = '-'
 EMPTY_AGGREGATE_CELL_STR = ''
+
+
+# `rich` degrades its own box-drawing glyphs on a console whose stream can't encode them, but it passes
+# through text we hand it, so a report printed to e.g. a redirected Windows stdout (which falls back to the
+# ANSI code page) would raise `UnicodeEncodeError`. These pick the fallbacks off the same `ascii_only` signal.
+def _check_mark(ascii_only: bool) -> str:
+    return 'v' if ascii_only else '✔'
+
+
+def _cross_mark(ascii_only: bool) -> str:
+    return 'x' if ascii_only else '✗'
+
+
+def _arrow(ascii_only: bool) -> str:
+    return '->' if ascii_only else '→'
+
+
+def _escape_markup(text: str) -> str:
+    """Escape `text` so Rich shows it as written instead of parsing it as markup.
+
+    `rich.markup.escape` also doubles a single trailing backslash so a closing tag right after the text still works,
+    but the extra backslash shows anywhere else, so it's dropped here; `_style_markup` handles those closing tags.
+    """
+    escaped = escape(text)
+    return escaped[:-1] if escaped.endswith('\\\\') and not text.endswith('\\\\') else escaped
+
+
+def _style_markup(markup: str, style: str) -> str:
+    """Wrap `markup` in a `style` tag, doubling any trailing backslashes so they don't escape the closing tag."""
+    markup += '\\' * (len(markup) - len(markup.rstrip('\\')))
+    return f'[{style}]{markup}[/]'
+
 
 InputsT = TypeVar('InputsT', default=Any)
 OutputT = TypeVar('OutputT', default=Any)
@@ -55,11 +107,11 @@ class ReportCase(Generic[InputsT, OutputT, MetadataT]):
     name: str
     """The name of the [case][pydantic_evals.Case]."""
     inputs: InputsT
-    """The inputs to the task, from [`Case.inputs`][pydantic_evals.Case.inputs]."""
+    """The inputs to the task, from [`Case.inputs`][pydantic_evals.dataset.Case.inputs]."""
     metadata: MetadataT | None
-    """Any metadata associated with the case, from [`Case.metadata`][pydantic_evals.Case.metadata]."""
+    """Any metadata associated with the case, from [`Case.metadata`][pydantic_evals.dataset.Case.metadata]."""
     expected_output: OutputT | None
-    """The expected output of the task, from [`Case.expected_output`][pydantic_evals.Case.expected_output]."""
+    """The expected output of the task, from [`Case.expected_output`][pydantic_evals.dataset.Case.expected_output]."""
     output: OutputT
     """The output of the task execution."""
 
@@ -73,12 +125,16 @@ class ReportCase(Generic[InputsT, OutputT, MetadataT]):
     task_duration: float
     total_duration: float  # includes evaluator execution time
 
+    source_case_name: str | None = None
+    """The original case name before run-indexing. Serves as the aggregation key
+    for multi-run experiments. None when repeat == 1."""
+
     trace_id: str | None = None
     """The trace ID of the case span."""
     span_id: str | None = None
     """The span ID of the case span."""
 
-    evaluator_failures: list[EvaluatorFailure] = field(default_factory=list)
+    evaluator_failures: list[EvaluatorFailure] = field(default_factory=list[EvaluatorFailure])
 
 
 @dataclass(kw_only=True)
@@ -88,16 +144,20 @@ class ReportCaseFailure(Generic[InputsT, OutputT, MetadataT]):
     name: str
     """The name of the [case][pydantic_evals.Case]."""
     inputs: InputsT
-    """The inputs to the task, from [`Case.inputs`][pydantic_evals.Case.inputs]."""
+    """The inputs to the task, from [`Case.inputs`][pydantic_evals.dataset.Case.inputs]."""
     metadata: MetadataT | None
-    """Any metadata associated with the case, from [`Case.metadata`][pydantic_evals.Case.metadata]."""
+    """Any metadata associated with the case, from [`Case.metadata`][pydantic_evals.dataset.Case.metadata]."""
     expected_output: OutputT | None
-    """The expected output of the task, from [`Case.expected_output`][pydantic_evals.Case.expected_output]."""
+    """The expected output of the task, from [`Case.expected_output`][pydantic_evals.dataset.Case.expected_output]."""
 
     error_message: str
     """The message of the exception that caused the failure."""
     error_stacktrace: str
     """The stacktrace of the exception that caused the failure."""
+
+    source_case_name: str | None = None
+    """The original case name before run-indexing. Serves as the aggregation key
+    for multi-run experiments. None when repeat == 1."""
 
     trace_id: str | None = None
     """The trace ID of the case span."""
@@ -107,6 +167,32 @@ class ReportCaseFailure(Generic[InputsT, OutputT, MetadataT]):
 
 ReportCaseAdapter = TypeAdapter(ReportCase[Any, Any, Any])
 ReportCaseFailureAdapter = TypeAdapter(ReportCaseFailure[Any, Any, Any])
+
+
+@dataclass(kw_only=True)
+class ReportCaseGroup(Generic[InputsT, OutputT, MetadataT]):
+    """Grouped results from running the same case multiple times.
+
+    This is a computed view, not stored data. Obtain via
+    `EvaluationReport.case_groups()`.
+    """
+
+    name: str
+    """The original case name (shared across all runs)."""
+    inputs: InputsT
+    """The inputs (same for all runs)."""
+    metadata: MetadataT | None
+    """The metadata (same for all runs)."""
+    expected_output: OutputT | None
+    """The expected output (same for all runs)."""
+
+    runs: Sequence[ReportCase[InputsT, OutputT, MetadataT]]
+    """Individual run results."""
+    failures: Sequence[ReportCaseFailure[InputsT, OutputT, MetadataT]]
+    """Runs that failed with exceptions."""
+
+    summary: ReportCaseAggregate
+    """Aggregated statistics across runs."""
 
 
 class ReportCaseAggregate(BaseModel):
@@ -136,37 +222,12 @@ class ReportCaseAggregate(BaseModel):
                 total_duration=0.0,
             )
 
-        def _scores_averages(scores_by_name: list[dict[str, int | float | bool]]) -> dict[str, float]:
-            counts_by_name: dict[str, int] = defaultdict(int)
-            sums_by_name: dict[str, float] = defaultdict(float)
-            for sbn in scores_by_name:
-                for name, score in sbn.items():
-                    counts_by_name[name] += 1
-                    sums_by_name[name] += score
-            return {name: sums_by_name[name] / counts_by_name[name] for name in sums_by_name}
-
-        def _labels_averages(labels_by_name: list[dict[str, str]]) -> dict[str, dict[str, float]]:
-            counts_by_name: dict[str, int] = defaultdict(int)
-            sums_by_name: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-            for lbn in labels_by_name:
-                for name, label in lbn.items():
-                    counts_by_name[name] += 1
-                    sums_by_name[name][label] += 1
-            return {
-                name: {value: count / counts_by_name[name] for value, count in sums_by_name[name].items()}
-                for name in sums_by_name
-            }
-
         average_task_duration = sum(case.task_duration for case in cases) / num_cases
         average_total_duration = sum(case.total_duration for case in cases) / num_cases
 
         # average_assertions: dict[str, float] = _scores_averages([{k: v.value for k, v in case.scores.items()} for case in cases])
-        average_scores: dict[str, float] = _scores_averages(
-            [{k: v.value for k, v in case.scores.items()} for case in cases]
-        )
-        average_labels: dict[str, dict[str, float]] = _labels_averages(
-            [{k: v.value for k, v in case.labels.items()} for case in cases]
-        )
+        average_scores: dict[str, float] = _scores_averages([_result_values(case.scores) for case in cases])
+        average_labels: dict[str, dict[str, float]] = _labels_averages([_result_values(case.labels) for case in cases])
         average_metrics: dict[str, float] = _scores_averages([case.metrics for case in cases])
 
         average_assertions: float | None = None
@@ -185,6 +246,92 @@ class ReportCaseAggregate(BaseModel):
             total_duration=average_total_duration,
         )
 
+    @staticmethod
+    def average_from_aggregates(aggregates: list[ReportCaseAggregate]) -> ReportCaseAggregate:
+        """Average across multiple aggregates (used for multi-run experiment summaries)."""
+        if not aggregates:
+            return ReportCaseAggregate(
+                name='Averages',
+                scores={},
+                labels={},
+                metrics={},
+                assertions=None,
+                task_duration=0.0,
+                total_duration=0.0,
+            )
+
+        def _avg_numeric_dicts(dicts: list[dict[str, float | int]]) -> dict[str, float | int]:
+            all_keys: set[str] = set()
+            for d in dicts:
+                all_keys.update(d)
+            return {key: sum(vals) / len(vals) for key in all_keys if (vals := [d[key] for d in dicts if key in d])}
+
+        avg_scores = _avg_numeric_dicts([a.scores for a in aggregates])
+        avg_metrics = _avg_numeric_dicts([a.metrics for a in aggregates])
+
+        avg_labels = _avg_label_distributions(aggregates)
+
+        # Average assertions
+        assertion_values = [a.assertions for a in aggregates if a.assertions is not None]
+        avg_assertions: float | None = None
+        if assertion_values:
+            avg_assertions = sum(assertion_values) / len(assertion_values)
+
+        # Average durations
+        task_durs = [a.task_duration for a in aggregates]
+        total_durs = [a.total_duration for a in aggregates]
+
+        return ReportCaseAggregate(
+            name='Averages',
+            scores=avg_scores,
+            labels=avg_labels,
+            metrics=avg_metrics,
+            assertions=avg_assertions,
+            task_duration=sum(task_durs) / len(task_durs),
+            total_duration=sum(total_durs) / len(total_durs),
+        )
+
+
+def _scores_averages(scores_by_name: list[dict[str, int | float | bool]]) -> dict[str, float]:
+    counts_by_name: dict[str, int] = defaultdict(int)
+    sums_by_name: dict[str, float] = defaultdict(float)
+    for sbn in scores_by_name:
+        for name, score in sbn.items():
+            counts_by_name[name] += 1
+            sums_by_name[name] += score
+    return {name: sums_by_name[name] / counts_by_name[name] for name in sums_by_name}
+
+
+def _labels_averages(labels_by_name: list[dict[str, str]]) -> dict[str, dict[str, float]]:
+    counts_by_name: dict[str, int] = defaultdict(int)
+    sums_by_name: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for lbn in labels_by_name:
+        for name, label in lbn.items():
+            counts_by_name[name] += 1
+            sums_by_name[name][label] += 1
+    return {
+        name: {value: count / counts_by_name[name] for value, count in sums_by_name[name].items()}
+        for name in sums_by_name
+    }
+
+
+def _avg_label_distributions(aggregates: list[ReportCaseAggregate]) -> dict[str, dict[str, float]]:
+    """Average the label distributions of several aggregates."""
+    all_label_keys: set[str] = set()
+    for a in aggregates:
+        all_label_keys.update(a.labels)
+    avg_labels: dict[str, dict[str, float]] = {}
+    for key in all_label_keys:
+        combined: dict[str, float] = {}
+        count = 0
+        for a in aggregates:
+            if key in a.labels:
+                count += 1
+                for label_val, freq in a.labels[key].items():
+                    combined[label_val] = combined.get(label_val, 0.0) + freq
+        avg_labels[key] = {k: v / count for k, v in combined.items()}
+    return avg_labels
+
 
 @dataclass(kw_only=True)
 class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
@@ -195,8 +342,16 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
 
     cases: list[ReportCase[InputsT, OutputT, MetadataT]]
     """The cases in the report."""
-    failures: list[ReportCaseFailure[InputsT, OutputT, MetadataT]] = field(default_factory=list)
+    failures: list[ReportCaseFailure[InputsT, OutputT, MetadataT]] = field(
+        default_factory=list[ReportCaseFailure[InputsT, OutputT, MetadataT]]
+    )
     """The failures in the report. These are cases where task execution raised an exception."""
+
+    analyses: list[ReportAnalysis] = field(default_factory=list[ReportAnalysis])
+    """Experiment-wide analyses produced by report evaluators."""
+
+    report_evaluator_failures: list[EvaluatorFailure] = field(default_factory=list[EvaluatorFailure])
+    """Failures from report evaluators that raised exceptions."""
 
     experiment_metadata: dict[str, Any] | None = None
     """Metadata associated with the specific experiment represented by this report."""
@@ -204,9 +359,57 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     """The trace ID of the evaluation."""
     span_id: str | None = None
     """The span ID of the evaluation."""
+    dataset_name: str | None = None
+    """The name of the dataset that produced this report, if it has one."""
+
+    def case_groups(self) -> list[ReportCaseGroup[InputsT, OutputT, MetadataT]] | None:
+        """Group cases by source_case_name and compute per-group aggregates.
+
+        Returns None if no cases have source_case_name set (i.e., single-run experiment).
+        """
+        if not any(c.source_case_name for c in self.cases) and not any(f.source_case_name for f in self.failures):
+            return None
+
+        groups: dict[
+            str,
+            tuple[list[ReportCase[InputsT, OutputT, MetadataT]], list[ReportCaseFailure[InputsT, OutputT, MetadataT]]],
+        ] = {}
+        for case in self.cases:
+            key = case.source_case_name or case.name
+            groups.setdefault(key, ([], []))[0].append(case)
+        for failure in self.failures:
+            key = failure.source_case_name or failure.name
+            groups.setdefault(key, ([], []))[1].append(failure)
+
+        result: list[ReportCaseGroup[InputsT, OutputT, MetadataT]] = []
+        for group_name, (runs, failures) in groups.items():
+            first: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT] = (
+                runs[0] if runs else failures[0]
+            )
+            result.append(
+                ReportCaseGroup(
+                    name=group_name,
+                    inputs=first.inputs,
+                    metadata=first.metadata,
+                    expected_output=first.expected_output,
+                    runs=runs,
+                    failures=failures,
+                    summary=ReportCaseAggregate.average(list(runs)),
+                )
+            )
+        return result
 
     def averages(self) -> ReportCaseAggregate | None:
-        if self.cases:
+        """Aggregate scores, labels, and metrics averaged across the report's cases.
+
+        For multi-run reports, per-group summaries are averaged instead; returns `None` when there
+        is nothing to aggregate.
+        """
+        groups = self.case_groups()
+        if groups is not None:
+            non_empty_summaries = [g.summary for g in groups if g.runs]
+            return ReportCaseAggregate.average_from_aggregates(non_empty_summaries) if non_empty_summaries else None
+        elif self.cases:
             return ReportCaseAggregate.average(self.cases)
         return None
 
@@ -226,6 +429,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         include_errors: bool = True,
         include_error_stacktrace: bool = False,
         include_evaluator_failures: bool = True,
+        include_analyses: bool = True,
         input_config: RenderValueConfig | None = None,
         metadata_config: RenderValueConfig | None = None,
         output_config: RenderValueConfig | None = None,
@@ -256,6 +460,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             include_errors=include_errors,
             include_error_stacktrace=include_error_stacktrace,
             include_evaluator_failures=include_evaluator_failures,
+            include_analyses=include_analyses,
             input_config=input_config,
             metadata_config=metadata_config,
             output_config=output_config,
@@ -284,6 +489,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         include_errors: bool = True,
         include_error_stacktrace: bool = False,
         include_evaluator_failures: bool = True,
+        include_analyses: bool = True,
         input_config: RenderValueConfig | None = None,
         metadata_config: RenderValueConfig | None = None,
         output_config: RenderValueConfig | None = None,
@@ -295,12 +501,18 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     ) -> None:
         """Print this report to the console, optionally comparing it to a baseline report.
 
-        If you want more control over the output, use `console_table` instead and pass it to `rich.Console.print`.
-        """
-        if console is None:  # pragma: no branch
-            console = Console(width=width)
+        On a console `rich` reports as ASCII-only — a non-UTF-8 stream, as Windows produces when stdout is
+        redirected to a file or a pipe — `v`, `x` and `->` stand in for the `✔`, `✗` and `→` glyphs, and default
+        sub-millisecond duration formatters use `us` instead of `µs`.
 
-        metadata_panel = self._metadata_panel(baseline=baseline)
+        If you want more control over the output, use `console_table` instead and pass it to `rich.Console.print`,
+        forwarding `ascii_only=console.options.ascii_only` from the console you print to.
+        """
+        if console is None:
+            console = Console(width=width)
+        ascii_only = console.options.ascii_only
+
+        metadata_panel = self._metadata_panel(baseline=baseline, ascii_only=ascii_only)
         renderable: RenderableType = self.console_table(
             baseline=baseline,
             include_input=include_input,
@@ -321,12 +533,23 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             duration_config=duration_config,
             include_reasons=include_reasons,
             with_title=not metadata_panel,
+            ascii_only=ascii_only,
         )
         # Wrap table with experiment metadata panel if present
         if metadata_panel:
             renderable = Group(metadata_panel, renderable)
         console.print(renderable)
-        if include_errors and self.failures:  # pragma: no cover
+        if include_analyses and self.analyses:
+            for analysis in self.analyses:
+                console.print(_render_analysis(analysis))
+        if include_evaluator_failures and self.report_evaluator_failures:
+            console.print(
+                Text('\nReport Evaluator Failures:', style='bold red'),
+            )
+            for failure in self.report_evaluator_failures:
+                msg = f'  {failure.name}: {failure.error_message}'
+                console.print(Text(msg, style='red'))
+        if include_errors and self.failures:
             failures_table = self.failures_table(
                 include_input=include_input,
                 include_metadata=include_metadata,
@@ -338,7 +561,6 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             )
             console.print(failures_table, style='red')
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def console_table(
         self,
         baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None,
@@ -361,12 +583,28 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         duration_config: RenderNumberConfig | None = None,
         include_reasons: bool = False,
         with_title: bool = True,
-    ) -> Table:
+        ascii_only: bool = False,
+    ) -> RenderableType:
         """Return a table containing the data from this report.
 
         If a baseline is provided, returns a diff between this report and the baseline report.
         Optionally include input and output details.
+
+        `ascii_only` renders `v`, `x` and `->` in place of the `✔`, `✗` and `→` glyphs, and uses `us` instead of
+        `µs` from the default sub-millisecond duration formatters. Only the caller holding that console can answer
+        this, so it defaults to `False`; pass `ascii_only=console.options.ascii_only` from the console you print the
+        table to.
         """
+        if ascii_only and not duration_config:
+            duration_config = {
+                **_DEFAULT_DURATION_CONFIG,
+                'value_formatter': lambda value: default_render_duration(value).replace('µs', 'us'),
+                'diff_formatter': lambda old, new: (
+                    rendered.replace('µs', 'us')
+                    if (rendered := default_render_duration_diff(old, new)) is not None
+                    else None
+                ),
+            }
         renderer = EvaluationRenderer(
             include_input=include_input,
             include_metadata=include_metadata,
@@ -387,6 +625,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             metric_configs=metric_configs or {},
             duration_config=duration_config or _DEFAULT_DURATION_CONFIG,
             include_reasons=include_reasons,
+            ascii_only=ascii_only,
         )
         if baseline is None:
             return renderer.build_table(self, with_title=with_title)
@@ -394,77 +633,77 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             return renderer.build_diff_table(self, baseline, with_title=with_title)
 
     def _metadata_panel(
-        self, baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None
+        self, baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None, *, ascii_only: bool = False
     ) -> RenderableType | None:
-        """Wrap a table with an experiment metadata panel if metadata exists.
+        """Build an experiment metadata panel if metadata exists.
 
         Args:
-            table: The table to wrap
-            baseline: Optional baseline report for diff metadata
+            baseline: Optional baseline report for diff metadata.
+            ascii_only: Whether the target console needs ASCII fallbacks for the diff arrow.
 
         Returns:
-            Either the table unchanged or a Group with Panel and Table
+            A `Panel` with the experiment (or diff) metadata, or `None` if there is no metadata to show.
         """
         if baseline is None:
             # Single report - show metadata if present
-            if self.experiment_metadata:
-                metadata_text = Text()
-                items = list(self.experiment_metadata.items())
-                for i, (key, value) in enumerate(items):
-                    metadata_text.append(f'{key}: {value}', style='dim')
-                    if i < len(items) - 1:
-                        metadata_text.append('\n')
-                return Panel(
-                    metadata_text,
-                    title=f'Evaluation Summary: {self.name}',
-                    title_align='left',
-                    border_style='dim',
-                    padding=(0, 1),
-                    expand=False,
-                )
+            if not self.experiment_metadata:
+                return None
+            title = f'Evaluation Summary: {self.name}'
+            lines_styles = [(f'{key}: {value}', 'dim') for key, value in self.experiment_metadata.items()]
         else:
             # Diff report - show metadata diff if either has metadata
-            if self.experiment_metadata or baseline.experiment_metadata:
-                diff_name = baseline.name if baseline.name == self.name else f'{baseline.name} → {self.name}'
-                metadata_text = Text()
-                lines_styles: list[tuple[str, str]] = []
-                if baseline.experiment_metadata and self.experiment_metadata:
-                    # Collect all keys from both
-                    all_keys = sorted(set(baseline.experiment_metadata.keys()) | set(self.experiment_metadata.keys()))
-                    for key in all_keys:
-                        baseline_val = baseline.experiment_metadata.get(key)
-                        report_val = self.experiment_metadata.get(key)
-                        if baseline_val == report_val:
-                            lines_styles.append((f'{key}: {report_val}', 'dim'))
-                        elif baseline_val is None:
-                            lines_styles.append((f'+ {key}: {report_val}', 'green'))
-                        elif report_val is None:
-                            lines_styles.append((f'- {key}: {baseline_val}', 'red'))
-                        else:
-                            lines_styles.append((f'{key}: {baseline_val} → {report_val}', 'yellow'))
-                elif self.experiment_metadata:
-                    lines_styles = [(f'+ {k}: {v}', 'green') for k, v in self.experiment_metadata.items()]
-                else:  # baseline.experiment_metadata only
-                    assert baseline.experiment_metadata is not None
-                    lines_styles = [(f'- {k}: {v}', 'red') for k, v in baseline.experiment_metadata.items()]
+            if not (self.experiment_metadata or baseline.experiment_metadata):
+                return None
+            diff_name = (
+                baseline.name if baseline.name == self.name else f'{baseline.name} {_arrow(ascii_only)} {self.name}'
+            )
+            title = f'Evaluation Diff: {diff_name}'
+            lines_styles = self._metadata_diff_lines(baseline, ascii_only=ascii_only)
 
-                for i, (line, style) in enumerate(lines_styles):
-                    metadata_text.append(line, style=style)
-                    if i < len(lines_styles) - 1:
-                        metadata_text.append('\n')
+        metadata_text = Text()
+        for i, (line, style) in enumerate(lines_styles):
+            metadata_text.append(line, style=style)
+            if i < len(lines_styles) - 1:
+                metadata_text.append('\n')
 
-                return Panel(
-                    metadata_text,
-                    title=f'Evaluation Diff: {diff_name}',
-                    title_align='left',
-                    border_style='dim',
-                    padding=(0, 1),
-                    expand=False,
-                )
+        return Panel(
+            metadata_text,
+            title=title,
+            title_align='left',
+            border_style='dim',
+            padding=(0, 1),
+            expand=False,
+        )
 
-        return None
+    def _metadata_diff_lines(
+        self, baseline: EvaluationReport[InputsT, OutputT, MetadataT], *, ascii_only: bool
+    ) -> list[tuple[str, str]]:
+        """Diff the experiment metadata against the baseline's, as `(line, style)` pairs.
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
+        At least one of the two reports has metadata.
+        """
+        if not baseline.experiment_metadata:
+            assert self.experiment_metadata is not None
+            return [(f'+ {k}: {v}', 'green') for k, v in self.experiment_metadata.items()]
+        if not self.experiment_metadata:
+            return [(f'- {k}: {v}', 'red') for k, v in baseline.experiment_metadata.items()]
+
+        lines_styles: list[tuple[str, str]] = []
+        # Collect all keys from both
+        all_keys = sorted(set(baseline.experiment_metadata.keys()) | set(self.experiment_metadata.keys()))
+        for key in all_keys:
+            baseline_val = baseline.experiment_metadata.get(key)
+            report_val = self.experiment_metadata.get(key)
+            if baseline_val == report_val:
+                lines_styles.append((f'{key}: {report_val}', 'dim'))
+            elif baseline_val is None:
+                lines_styles.append((f'+ {key}: {report_val}', 'green'))
+            elif report_val is None:
+                lines_styles.append((f'- {key}: {baseline_val}', 'red'))
+            else:
+                lines_styles.append((f'{key}: {baseline_val} {_arrow(ascii_only)} {report_val}', 'yellow'))
+        return lines_styles
+
     def failures_table(
         self,
         *,
@@ -475,7 +714,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         include_error_stacktrace: bool = True,
         input_config: RenderValueConfig | None = None,
         metadata_config: RenderValueConfig | None = None,
-    ) -> Table:
+    ) -> RenderableType:
         """Return a table containing the failures in this report."""
         renderer = EvaluationRenderer(
             include_input=include_input,
@@ -523,14 +762,16 @@ class _ValueRenderer:
     diff_checker: Callable[[Any, Any], bool] | None = lambda x, y: x != y
     diff_formatter: Callable[[Any, Any], str | None] | None = None
     diff_style: str = 'magenta'
+    ascii_only: bool = False
 
     @staticmethod
-    def from_config(config: RenderValueConfig) -> _ValueRenderer:
+    def from_config(config: RenderValueConfig, *, ascii_only: bool) -> _ValueRenderer:
         return _ValueRenderer(
             value_formatter=config.get('value_formatter', '{}'),
             diff_checker=config.get('diff_checker', lambda x, y: x != y),
             diff_formatter=config.get('diff_formatter'),
             diff_style=config.get('diff_style', 'magenta'),
+            ascii_only=ascii_only,
         )
 
     def render_value(self, name: str | None, v: Any) -> str:
@@ -545,16 +786,16 @@ class _ValueRenderer:
         if old_str == new_str:
             result = old_str
         else:
-            result = f'{old_str} → {new_str}'
+            result = f'{old_str} {_arrow(self.ascii_only)} {new_str}'
 
             has_diff = self.diff_checker and self.diff_checker(old, new)
             if has_diff:  # pragma: no branch
                 # If there is a diff, make the name bold and compute the diff_str
-                name = name and f'[bold]{name}[/]'
+                name = name and _style_markup(name, 'bold')
                 diff_str = self.diff_formatter and self.diff_formatter(old, new)
-                if diff_str:  # pragma: no cover
-                    result += f' ({diff_str})'
-                result = f'[{self.diff_style}]{result}[/]'
+                if diff_str:
+                    result += f' ({_escape_markup(diff_str)})'
+                result = _style_markup(result, self.diff_style)
 
         # Add the name
         if name:
@@ -566,9 +807,9 @@ class _ValueRenderer:
         if value is None:
             return MISSING_VALUE_STR
         if isinstance(self.value_formatter, str):
-            return self.value_formatter.format(value)
+            return _escape_markup(self.value_formatter.format(value))
         else:
-            return self.value_formatter(value)
+            return _escape_markup(self.value_formatter(value))
 
 
 class RenderNumberConfig(TypedDict, total=False):
@@ -642,6 +883,7 @@ class _NumberRenderer:
     diff_rtol: float
     diff_increase_style: str
     diff_decrease_style: str
+    ascii_only: bool
 
     def render_value(self, name: str | None, v: float | int) -> str:
         result = self._get_value_str(v)
@@ -655,14 +897,14 @@ class _NumberRenderer:
         if old_str == new_str:
             result = old_str
         else:
-            result = f'{old_str} → {new_str}'
+            result = f'{old_str} {_arrow(self.ascii_only)} {new_str}'
 
             diff_style = self._get_diff_style(old, new)
             if diff_style:
                 # If there is a diff, make the name bold and compute the diff_str
-                name = name and f'[bold]{name}[/]'
+                name = name and _style_markup(name, 'bold')
                 diff_str = self._get_diff_str(old, new)
-                if diff_str:  # pragma: no branch
+                if diff_str:
                     result += f' ({diff_str})'
                 result = f'[{diff_style}]{result}[/]'
 
@@ -674,7 +916,11 @@ class _NumberRenderer:
 
     @staticmethod
     def infer_from_config(
-        config: RenderNumberConfig, kind: Literal['score', 'metric', 'duration'], values: list[float | int]
+        config: RenderNumberConfig,
+        kind: Literal['score', 'metric', 'duration'],
+        values: list[float | int],
+        *,
+        ascii_only: bool,
     ) -> _NumberRenderer:
         value_formatter = config.get('value_formatter', UNSET)
         if isinstance(value_formatter, Unset):
@@ -708,6 +954,7 @@ class _NumberRenderer:
             diff_atol=diff_atol,
             diff_increase_style=diff_increase_style,
             diff_decrease_style=diff_decrease_style,
+            ascii_only=ascii_only,
         )
 
     def _get_value_str(self, value: float | int | None) -> str:
@@ -736,7 +983,12 @@ class _NumberRenderer:
         diff = new - old
         if abs(diff) < self.diff_atol + self.diff_rtol * abs(old):
             return None
-        return self.diff_increase_style if diff > 0 else self.diff_decrease_style
+        if diff > 0:
+            return self.diff_increase_style
+        if diff <= 0:
+            return self.diff_decrease_style
+        # A `nan` difference has no direction, so it gets neither the increase nor the decrease style.
+        return None
 
 
 T_contra = TypeVar('T_contra', contravariant=True)
@@ -761,6 +1013,11 @@ _DEFAULT_DURATION_CONFIG = RenderNumberConfig(
 
 
 T = TypeVar('T')
+ScalarT = TypeVar('ScalarT', bound=EvaluationScalar)
+
+
+def _result_values(results: Mapping[str, EvaluationResult[ScalarT]]) -> dict[str, ScalarT]:
+    return {name: result.value for name, result in results.items()}
 
 
 @dataclass(kw_only=True)
@@ -787,8 +1044,8 @@ class ReportCaseRenderer:
     label_renderers: Mapping[str, _ValueRenderer]
     metric_renderers: Mapping[str, _NumberRenderer]
     duration_renderer: _NumberRenderer
+    ascii_only: bool = False
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_base_table(self, title: str) -> Table:
         """Build and return a Rich Table for the diff output."""
         table = Table(title=title, show_lines=True)
@@ -815,7 +1072,6 @@ class ReportCaseRenderer:
             table.add_column('Durations' if self.include_total_duration else 'Duration', justify='right')
         return table
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_failures_table(self, title: str) -> Table:
         """Build and return a Rich Table for the failures output."""
         table = Table(title=title, show_lines=True)
@@ -834,7 +1090,7 @@ class ReportCaseRenderer:
 
     def build_row(self, case: ReportCase) -> list[str]:
         """Build a table row for a single case."""
-        row = [case.name]
+        row = [_escape_markup(case.name)]
 
         if self.include_input:
             row.append(self.input_renderer.render_value(None, case.inputs) or EMPTY_CELL_STR)
@@ -849,10 +1105,10 @@ class ReportCaseRenderer:
             row.append(self.output_renderer.render_value(None, case.output) or EMPTY_CELL_STR)
 
         if self.include_scores:
-            row.append(self._render_dict({k: v for k, v in case.scores.items()}, self.score_renderers))
+            row.append(self._render_eval_result_dict(case.scores, self.score_renderers))
 
         if self.include_labels:
-            row.append(self._render_dict({k: v for k, v in case.labels.items()}, self.label_renderers))
+            row.append(self._render_eval_result_dict(case.labels, self.label_renderers))
 
         if self.include_metrics:
             row.append(self._render_dict(case.metrics, self.metric_renderers))
@@ -911,7 +1167,7 @@ class ReportCaseRenderer:
     ) -> list[str]:
         """Build a table row for a given case ID."""
         assert baseline.name == new_case.name, 'This should only be called for matching case IDs'
-        row = [baseline.name]
+        row = [_escape_markup(baseline.name)]
 
         if self.include_input:  # pragma: no branch
             input_diff = self.input_renderer.render_diff(None, baseline.inputs, new_case.inputs) or EMPTY_CELL_STR
@@ -936,17 +1192,13 @@ class ReportCaseRenderer:
 
         if self.include_scores:  # pragma: no branch
             scores_diff = self._render_dicts_diff(
-                {k: v.value for k, v in baseline.scores.items()},
-                {k: v.value for k, v in new_case.scores.items()},
-                self.score_renderers,
+                _result_values(baseline.scores), _result_values(new_case.scores), self.score_renderers
             )
             row.append(scores_diff)
 
         if self.include_labels:  # pragma: no branch
             labels_diff = self._render_dicts_diff(
-                {k: v.value for k, v in baseline.labels.items()},
-                {k: v.value for k, v in new_case.labels.items()},
-                self.label_renderers,
+                _result_values(baseline.labels), _result_values(new_case.labels), self.label_renderers
             )
             row.append(labels_diff)
 
@@ -1020,7 +1272,7 @@ class ReportCaseRenderer:
 
     def build_failure_row(self, case: ReportCaseFailure) -> list[str]:
         """Build a table row for a single case failure."""
-        row = [case.name]
+        row = [_escape_markup(case.name)]
 
         if self.include_input:
             row.append(self.input_renderer.render_value(None, case.inputs) or EMPTY_CELL_STR)
@@ -1032,10 +1284,10 @@ class ReportCaseRenderer:
             row.append(self.output_renderer.render_value(None, case.expected_output) or EMPTY_CELL_STR)
 
         if self.include_error_message:
-            row.append(case.error_message or EMPTY_CELL_STR)
+            row.append(_escape_markup(case.error_message) or EMPTY_CELL_STR)
 
         if self.include_error_stacktrace:
-            row.append(case.error_stacktrace or EMPTY_CELL_STR)
+            row.append(_escape_markup(case.error_stacktrace) or EMPTY_CELL_STR)
 
         return row
 
@@ -1083,23 +1335,35 @@ class ReportCaseRenderer:
         for key in sorted(keys):
             old_val = baseline_dict.get(key)
             new_val = new_dict.get(key)
-            rendered = renderers[key].render_diff(key if include_names else None, old_val, new_val)
+            rendered = renderers[key].render_diff(_escape_markup(key) if include_names else None, old_val, new_val)
             diff_lines.append(rendered)
         return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
 
     def _render_dict(
         self,
-        case_dict: Mapping[str, EvaluationResult[T] | T],
+        case_dict: Mapping[str, T],
         renderers: Mapping[str, _AbstractRenderer[T]],
+        *,
+        include_names: bool = True,
+    ) -> str:
+        diff_lines = [
+            renderers[key].render_value(_escape_markup(key) if include_names else None, val)
+            for key, val in case_dict.items()
+        ]
+        return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
+
+    def _render_eval_result_dict(
+        self,
+        case_dict: Mapping[str, EvaluationResult[ScalarT]],
+        renderers: Mapping[str, _AbstractRenderer[ScalarT]],
         *,
         include_names: bool = True,
     ) -> str:
         diff_lines: list[str] = []
         for key, val in case_dict.items():
-            value = cast(EvaluationResult[T], val).value if isinstance(val, EvaluationResult) else val
-            rendered = renderers[key].render_value(key if include_names else None, value)
-            if self.include_reasons and isinstance(val, EvaluationResult) and (reason := val.reason):
-                rendered += f'\n  Reason: {reason}\n'
+            rendered = renderers[key].render_value(_escape_markup(key) if include_names else None, val.value)
+            if self.include_reasons and (reason := val.reason):
+                rendered += f'\n  Reason: {_escape_markup(reason)}\n'
             diff_lines.append(rendered)
         return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
 
@@ -1111,46 +1375,57 @@ class ReportCaseRenderer:
             return EMPTY_CELL_STR
         lines: list[str] = []
         for a in assertions:
-            line = '[green]✔[/]' if a.value else '[red]✗[/]'
+            line = self._render_assertion_mark(a)
             if self.include_reasons:
-                line = f'{a.name}: {line}\n'
-                line = f'{line}  Reason: {a.reason}\n\n' if a.reason else line
+                line = f'{_escape_markup(a.name)}: {line}\n'
+                line = f'{line}  Reason: {_escape_markup(a.reason)}\n\n' if a.reason else line
             lines.append(line)
         return ''.join(lines)
 
-    @staticmethod
     def _render_aggregate_assertions(
+        self,
         assertions: float | None,
     ) -> str:
         return (
-            default_render_percentage(assertions) + ' [green]✔[/]'
+            default_render_percentage(assertions) + f' [green]{_check_mark(self.ascii_only)}[/]'
             if assertions is not None
             else EMPTY_AGGREGATE_CELL_STR
         )
 
-    @staticmethod
     def _render_assertions_diff(
-        assertions: list[EvaluationResult[bool]], new_assertions: list[EvaluationResult[bool]]
+        self, assertions: list[EvaluationResult[bool]], new_assertions: list[EvaluationResult[bool]]
     ) -> str:
         if not assertions and not new_assertions:  # pragma: no cover
             return EMPTY_CELL_STR
 
-        old = ''.join(['[green]✔[/]' if a.value else '[red]✗[/]' for a in assertions])
-        new = ''.join(['[green]✔[/]' if a.value else '[red]✗[/]' for a in new_assertions])
-        return old if old == new else f'{old} → {new}'
+        old = ''.join([self._render_assertion_mark(a) for a in assertions])
+        new = ''.join([self._render_assertion_mark(a) for a in new_assertions])
+        return old if old == new else f'{old} {_arrow(self.ascii_only)} {new}'
 
-    @staticmethod
+    def _render_assertion_mark(self, assertion: EvaluationResult[bool]) -> str:
+        if assertion.value:
+            return f'[green]{_check_mark(self.ascii_only)}[/]'
+        return f'[red]{_cross_mark(self.ascii_only)}[/]'
+
     def _render_aggregate_assertions_diff(
+        self,
         baseline: float | None,
         new: float | None,
     ) -> str:
         if baseline is None and new is None:  # pragma: no cover
             return EMPTY_AGGREGATE_CELL_STR
+        check_mark = _check_mark(self.ascii_only)
         rendered_baseline = (
-            default_render_percentage(baseline) + ' [green]✔[/]' if baseline is not None else EMPTY_CELL_STR
+            default_render_percentage(baseline) + f' [green]{check_mark}[/]' if baseline is not None else EMPTY_CELL_STR
         )
-        rendered_new = default_render_percentage(new) + ' [green]✔[/]' if new is not None else EMPTY_CELL_STR
-        return rendered_new if rendered_baseline == rendered_new else f'{rendered_baseline} → {rendered_new}'
+        rendered_new = (
+            default_render_percentage(new) + f' [green]{check_mark}[/]' if new is not None else EMPTY_CELL_STR
+        )
+        return (
+            rendered_new
+            if rendered_baseline == rendered_new
+            else f'{rendered_baseline} {_arrow(self.ascii_only)} {rendered_new}'
+        )
 
     def _render_evaluator_failures(
         self,
@@ -1160,9 +1435,9 @@ class ReportCaseRenderer:
             return EMPTY_CELL_STR  # pragma: no cover
         lines: list[str] = []
         for failure in failures:
-            line = f'[red]{failure.name}[/]'
+            line = _style_markup(_escape_markup(failure.name), 'red')
             if failure.error_message:
-                line += f': {failure.error_message}'
+                line += f': {_escape_markup(failure.error_message)}'
             lines.append(line)
         return '\n'.join(lines)
 
@@ -1175,7 +1450,7 @@ class ReportCaseRenderer:
         new_str = self._render_evaluator_failures(new_failures)
         if baseline_str == new_str:
             return baseline_str  # pragma: no cover
-        return f'{baseline_str}\n→\n{new_str}'
+        return f'{baseline_str}\n{_arrow(self.ascii_only)}\n{new_str}'
 
 
 @dataclass(kw_only=True)
@@ -1209,6 +1484,9 @@ class EvaluationRenderer:
     include_error_stacktrace: bool
     include_evaluator_failures: bool
 
+    ascii_only: bool = False
+    """Whether to render `v`, `x` and `->` in place of the `✔`, `✗` and `→` glyphs."""
+
     def include_scores(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
         return any(case.scores for case in self._all_cases(report, baseline))
 
@@ -1241,14 +1519,17 @@ class EvaluationRenderer:
     def _get_case_renderer(
         self, report: EvaluationReport, baseline: EvaluationReport | None = None
     ) -> ReportCaseRenderer:
-        input_renderer = _ValueRenderer.from_config(self.input_config)
-        metadata_renderer = _ValueRenderer.from_config(self.metadata_config)
-        output_renderer = _ValueRenderer.from_config(self.output_config)
+        input_renderer = _ValueRenderer.from_config(self.input_config, ascii_only=self.ascii_only)
+        metadata_renderer = _ValueRenderer.from_config(self.metadata_config, ascii_only=self.ascii_only)
+        output_renderer = _ValueRenderer.from_config(self.output_config, ascii_only=self.ascii_only)
         score_renderers = self._infer_score_renderers(report, baseline)
         label_renderers = self._infer_label_renderers(report, baseline)
         metric_renderers = self._infer_metric_renderers(report, baseline)
         duration_renderer = _NumberRenderer.infer_from_config(
-            self.duration_config, 'duration', [x.task_duration for x in self._all_cases(report, baseline)]
+            self.duration_config,
+            'duration',
+            [x.task_duration for x in self._all_cases(report, baseline)],
+            ascii_only=self.ascii_only,
         )
 
         return ReportCaseRenderer(
@@ -1273,9 +1554,9 @@ class EvaluationRenderer:
             label_renderers=label_renderers,
             metric_renderers=metric_renderers,
             duration_renderer=duration_renderer,
+            ascii_only=self.ascii_only,
         )
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_table(self, report: EvaluationReport, *, with_title: bool = True) -> Table:
         """Build a table for the report.
 
@@ -1301,7 +1582,6 @@ class EvaluationRenderer:
 
         return table
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_diff_table(
         self, report: EvaluationReport, baseline: EvaluationReport, *, with_title: bool = True
     ) -> Table:
@@ -1317,7 +1597,48 @@ class EvaluationRenderer:
         """
         report_cases = report.cases
         baseline_cases = self._baseline_cases_to_include(report, baseline)
+        diff_cases, removed_cases, added_cases = self._pair_cases(report_cases, baseline_cases)
 
+        case_renderer = self._get_case_renderer(report, baseline)
+        diff_name = (
+            baseline.name
+            if baseline.name == report.name
+            else f'{baseline.name} {_arrow(self.ascii_only)} {report.name}'
+        )
+
+        title = f'Evaluation Diff: {diff_name}' if with_title else ''
+        table = case_renderer.build_base_table(title)
+
+        for baseline_case, new_case in diff_cases:
+            table.add_row(*case_renderer.build_diff_row(new_case, baseline_case))
+        for case in added_cases:
+            row = case_renderer.build_row(case)
+            row[0] = f'[green]+ Added Case[/]\n{row[0]}'
+            table.add_row(*row)
+        for case in removed_cases:
+            row = case_renderer.build_row(case)
+            row[0] = f'[red]- Removed Case[/]\n{row[0]}'
+            table.add_row(*row)
+
+        if self.include_averages:  # pragma: no branch
+            # Use flat averaging for both sides to keep the diff symmetric.
+            # baseline_cases is already filtered to only cases matching the report.
+            # Note: for multi-run reports, this differs from build_table which uses two-level
+            # aggregation via report.averages(). In practice the results are identical when all
+            # runs succeed (equal group sizes), and only diverge with partial failures within a
+            # group — a rare edge case. We can revisit if users report confusing behavior.
+            report_average = ReportCaseAggregate.average(report_cases) if report_cases else None
+            baseline_average = ReportCaseAggregate.average(baseline_cases) if baseline_cases else None
+            if report_average and baseline_average:  # pragma: no branch
+                table.add_row(*case_renderer.build_diff_aggregate_row(report_average, baseline_average))
+
+        return table
+
+    @staticmethod
+    def _pair_cases(
+        report_cases: list[ReportCase], baseline_cases: list[ReportCase]
+    ) -> tuple[list[tuple[ReportCase, ReportCase]], list[ReportCase], list[ReportCase]]:
+        """Pair cases by name: `(baseline, report)` pairs, then baseline-only cases, then report-only cases."""
         report_cases_by_id = {case.name: case for case in report_cases}
         baseline_cases_by_id = {case.name: case for case in baseline_cases}
 
@@ -1336,32 +1657,8 @@ class EvaluationRenderer:
                 added_cases.append(maybe_report_case)
             else:  # pragma: no cover
                 assert False, 'This should be unreachable'
+        return diff_cases, removed_cases, added_cases
 
-        case_renderer = self._get_case_renderer(report, baseline)
-        diff_name = baseline.name if baseline.name == report.name else f'{baseline.name} → {report.name}'
-
-        title = f'Evaluation Diff: {diff_name}' if with_title else ''
-        table = case_renderer.build_base_table(title)
-
-        for baseline_case, new_case in diff_cases:
-            table.add_row(*case_renderer.build_diff_row(new_case, baseline_case))
-        for case in added_cases:
-            row = case_renderer.build_row(case)
-            row[0] = f'[green]+ Added Case[/]\n{row[0]}'
-            table.add_row(*row)
-        for case in removed_cases:
-            row = case_renderer.build_row(case)
-            row[0] = f'[red]- Removed Case[/]\n{row[0]}'
-            table.add_row(*row)
-
-        if self.include_averages:  # pragma: no branch
-            report_average = ReportCaseAggregate.average(report_cases)
-            baseline_average = ReportCaseAggregate.average(baseline_cases)
-            table.add_row(*case_renderer.build_diff_aggregate_row(report_average, baseline_average))
-
-        return table
-
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_failures_table(self, report: EvaluationReport) -> Table:
         case_renderer = self._get_case_renderer(report)
         table = case_renderer.build_failures_table('Case Failures')
@@ -1384,7 +1681,9 @@ class EvaluationRenderer:
         for name, values in values_by_name.items():
             merged_config = _DEFAULT_NUMBER_CONFIG.copy()
             merged_config.update(self.score_configs.get(name, {}))
-            all_renderers[name] = _NumberRenderer.infer_from_config(merged_config, 'score', values)
+            all_renderers[name] = _NumberRenderer.infer_from_config(
+                merged_config, 'score', values, ascii_only=self.ascii_only
+            )
         return all_renderers
 
     def _infer_label_renderers(
@@ -1400,7 +1699,7 @@ class EvaluationRenderer:
         for name in all_names:
             merged_config = _DEFAULT_VALUE_CONFIG.copy()
             merged_config.update(self.label_configs.get(name, {}))
-            all_renderers[name] = _ValueRenderer.from_config(merged_config)
+            all_renderers[name] = _ValueRenderer.from_config(merged_config, ascii_only=self.ascii_only)
         return all_renderers
 
     def _infer_metric_renderers(
@@ -1417,14 +1716,68 @@ class EvaluationRenderer:
         for name, values in values_by_name.items():
             merged_config = _DEFAULT_NUMBER_CONFIG.copy()
             merged_config.update(self.metric_configs.get(name, {}))
-            all_renderers[name] = _NumberRenderer.infer_from_config(merged_config, 'metric', values)
+            all_renderers[name] = _NumberRenderer.infer_from_config(
+                merged_config, 'metric', values, ascii_only=self.ascii_only
+            )
         return all_renderers
 
-    def _infer_duration_renderer(
-        self, report: EvaluationReport, baseline: EvaluationReport | None
-    ) -> _NumberRenderer:  # pragma: no cover
-        all_cases = self._all_cases(report, baseline)
-        all_durations = [x.task_duration for x in all_cases]
-        if self.include_total_duration:
-            all_durations += [x.total_duration for x in all_cases]
-        return _NumberRenderer.infer_from_config(self.duration_config, 'duration', all_durations)
+
+def _render_analysis(
+    analysis: ConfusionMatrix | PrecisionRecall | ScalarResult | TableResult | LinePlot,
+) -> RenderableType:
+    """Render a single report analysis as a Rich renderable."""
+    match analysis:
+        case ConfusionMatrix():
+            return _render_confusion_matrix(analysis)
+        case ScalarResult():
+            return _render_scalar_result(analysis)
+        case PrecisionRecall():
+            return _render_precision_recall(analysis)
+        case LinePlot():
+            return _render_line_plot(analysis)
+        case TableResult():
+            return _render_table_result(analysis)
+        case _:
+            assert_never(analysis)
+
+
+def _render_confusion_matrix(analysis: ConfusionMatrix) -> RenderableType:
+    table = Table(title=analysis.title, show_lines=True)
+    table.add_column('Expected \\ Predicted', style='bold')
+    for label in analysis.class_labels:
+        table.add_column(label, justify='right')
+    for i, row_label in enumerate(analysis.class_labels):
+        row = [row_label] + [str(v) for v in analysis.matrix[i]]
+        table.add_row(*row)
+    return table
+
+
+def _render_scalar_result(analysis: ScalarResult) -> RenderableType:
+    value_str = str(analysis.value)
+    if analysis.unit:
+        value_str += f' {analysis.unit}'
+    return Text(f'{analysis.title}: {value_str}')
+
+
+def _render_precision_recall(analysis: PrecisionRecall) -> RenderableType:
+    lines: list[str] = [analysis.title]
+    for curve in analysis.curves:
+        auc_str = f', AUC={curve.auc:.4f}' if curve.auc is not None else ''
+        lines.append(f'  {curve.name}: {len(curve.points)} points{auc_str}')
+    return Text('\n'.join(lines))
+
+
+def _render_line_plot(analysis: LinePlot) -> RenderableType:
+    lines: list[str] = [analysis.title]
+    for curve in analysis.curves:
+        lines.append(f'  {curve.name}: {len(curve.points)} points')
+    return Text('\n'.join(lines))
+
+
+def _render_table_result(analysis: TableResult) -> RenderableType:
+    table = Table(title=analysis.title, show_lines=True)
+    for col in analysis.columns:
+        table.add_column(col)
+    for row in analysis.rows:
+        table.add_row(*[str(v) if v is not None else '' for v in row])
+    return table

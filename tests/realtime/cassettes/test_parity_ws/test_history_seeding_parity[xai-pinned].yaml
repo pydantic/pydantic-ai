@@ -1,0 +1,516 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  data:
+    type: session.created
+    event_id: d10b0e80-0ad9-450f-8dd5-aae045085843
+    session:
+      id: 1bea3e349713416f80f1daba77a62456
+      object: realtime.session
+      instructions: ''
+      voice: ara
+      modalities:
+      - audio
+      turn_detection:
+        type: null
+      tools: []
+      model: grok-voice-think-fast-1.0
+- kind: message
+  direction: sent
+  data:
+    type: session.update
+    session:
+      instructions: Answer in one short sentence.
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+- kind: message
+  direction: received
+  data:
+    type: conversation.created
+    event_id: f2d1840f-6afb-4c1d-a389-f208d5a75097
+    conversation:
+      id: f5bb5732-0bcd-425c-b36c-ba7b86208d90
+      object: realtime.conversation
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: ping
+    event_id: 77ce90c4-38ac-498a-bb1d-1a76f85afcb5
+    timestamp: 1785457280605
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    session:
+      instructions: Answer in one short sentence.
+      enable_noise_suppression: true
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      model: grok-voice-think-fast-1.0
+      keep_context: false
+      enable_phonetic_spelling: false
+      input_audio_transcription:
+        model: grok-transcribe
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+    type: session.updated
+    event_id: c0458fc5-958b-4ea8-b684-7a8cfcd099ee
+    previous_item_id: null
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: My name is Alice and my favorite color is teal.
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: assistant
+      content:
+      - type: output_text
+        text: Nice to meet you, Alice!
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is my name and favorite color?
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: 595e5205-ddfe-4b19-9198-ea40b9a9d658
+    item:
+      id: 5351a458-4329-4039-ae0d-3abd5a3bcfe4
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: My name is Alice and my favorite color is teal.
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: 03d98a09-c643-4188-b34a-82eef31d43d5
+    item:
+      id: 3463037a-0c9d-4a18-a078-5057a9f5eb36
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: Nice to meet you, Alice!
+    previous_item_id: 5351a458-4329-4039-ae0d-3abd5a3bcfe4
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: fa3a1f36-53a4-40fe-aa06-c1780aa81e70
+    item:
+      id: 32e367e5-df86-4236-8c35-83d2d7acbe3b
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is my name and favorite color?
+    previous_item_id: 3463037a-0c9d-4a18-a078-5057a9f5eb36
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: 1ae27cae-b10d-41d1-8e4c-8668a07c9409
+    response:
+      id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+      object: realtime.response
+      output: []
+      status: in_progress
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: e6290de2-a1d2-45be-a614-912f92ba7fe5
+    item:
+      id: 7b6ab8b2-9d26-48ef-b940-140852609634
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: 5510785a-ea0e-4656-87b1-ffdbfdddcdb1
+    item:
+      id: 7b6ab8b2-9d26-48ef-b940-140852609634
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    previous_item_id: 32e367e5-df86-4236-8c35-83d2d7acbe3b
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: 1fd05509-5bab-41fe-bf96-c1022f7ece04
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 153a4d2c-c677-4c6d-9e91-8f89a1c5e802
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    delta: EQAaAB4AHAAUAAwACQAIAAsAFQAdAB8AHAAZABUAEgAP
+    content_index: 0
+    output_index: 0
+    rid: 13a507a5-fd24-482a-9586-bbc4f40340ff
+    latency: '0.73'
+    audio_duration_ms: 489
+    ts: 1785457281521
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 13a507a5-fd24-482a-9586-bbc4f40340ff
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    delta: Your name is Alice and your favorite
+    content_index: 0
+    output_index: 0
+    rid: 13a507a5-fd24-482a-9586-bbc4f40340ff
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 8c57b977-73b6-430e-a372-2ba051c8898c
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    delta: cvpK+3T7V/tA+3T7F/zn/Cr+p/+gAHoByAF/Aq4DpgRp
+    content_index: 0
+    output_index: 0
+    rid: 13a507a5-fd24-482a-9586-bbc4f40340ff
+    audio_duration_ms: 520
+    ts: 1785457281841
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 6bf36019-4fc6-40bb-9805-d7089993fa91
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    delta: ' color is teal.'
+    content_index: 0
+    output_index: 0
+    rid: 6bf36019-4fc6-40bb-9805-d7089993fa91
+    start_time: 1.7
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 35f23b75-fa49-47f4-bc78-582b34b36ac6
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    delta: bf/mANv+WAAAAd/94AH//jr/mAE7/kYAIAH5/TcCe/2w
+    content_index: 0
+    output_index: 0
+    rid: 13a507a5-fd24-482a-9586-bbc4f40340ff
+    audio_duration_ms: 245
+    ts: 1785457281988
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 4217a2e4-78e5-495e-b6d1-ff4a7d5d5605
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    delta: LOEM4TjhyuH54gjkS+Tx5G7m5ucb6cLpZOoJ7E3uGPBa
+    content_index: 0
+    output_index: 0
+    rid: 6bf36019-4fc6-40bb-9805-d7089993fa91
+    audio_duration_ms: 673
+    ts: 1785457282445
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: d59b0e4b-a1e5-4813-918e-42bb82e0970d
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    delta: ' That''s all the information you''ve shared with me so far.'
+    content_index: 0
+    output_index: 0
+    rid: d59b0e4b-a1e5-4813-918e-42bb82e0970d
+    start_time: 2.94
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: c5d4181e-6364-4d79-b981-62179156b609
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    delta: TgIqAlAC+wGhAnUDGgUjBwQITAhhCFgIGQnQCRQKMAqW
+    content_index: 0
+    output_index: 0
+    rid: 6bf36019-4fc6-40bb-9805-d7089993fa91
+    audio_duration_ms: 581
+    ts: 1785457282554
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 22bffd9a-47fe-4720-b575-5c0d7682d4d4
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    delta: 4v5g/s4AtQKuA08CMf8y/pP+bP9W/70BqQLMAgACRQCj
+    content_index: 0
+    output_index: 0
+    rid: 6bf36019-4fc6-40bb-9805-d7089993fa91
+    audio_duration_ms: 336
+    ts: 1785457282558
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 624d8a0a-e128-4ee2-b00e-83d5bbd8178c
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    delta: /P/2//H/7P/p/+v/7//x//L/9P/5//7/AQAFAAUABAAD
+    content_index: 0
+    output_index: 0
+    rid: d59b0e4b-a1e5-4813-918e-42bb82e0970d
+    audio_duration_ms: 520
+    ts: 1785457282851
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 0280889c-814b-439c-ba61-e4ed6a0692cd
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    delta: pfdU9y/37/Z+9gf2lfU99cD0nvO/8czvV+8q8cvzK/XJ
+    content_index: 0
+    output_index: 0
+    rid: d59b0e4b-a1e5-4813-918e-42bb82e0970d
+    audio_duration_ms: 581
+    ts: 1785457282979
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 74773885-3cad-4fd8-98fc-0e649ca04467
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    delta: LgD8/4T/4v5B/rv9Nf2n/Bb8e/sn+8z6WfrM+SP5uvgi
+    content_index: 0
+    output_index: 0
+    rid: d59b0e4b-a1e5-4813-918e-42bb82e0970d
+    audio_duration_ms: 642
+    ts: 1785457283150
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 452a2c74-1032-4f5e-9e6b-66f9a63c53de
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    delta: OP2E/bz9z/2m/Uv9E/0U/VL9uf0g/mD+VP4T/tD9rv3A
+    content_index: 0
+    output_index: 0
+    rid: d59b0e4b-a1e5-4813-918e-42bb82e0970d
+    audio_duration_ms: 581
+    ts: 1785457283442
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 881f3cbf-55cb-4729-b724-0433a7fc7c48
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    delta: 1v8pAAb/x/+FAJb/sgBm/9P/qgDG/04AY//+/3UAyv8X
+    content_index: 0
+    output_index: 0
+    rid: d59b0e4b-a1e5-4813-918e-42bb82e0970d
+    audio_duration_ms: 275
+    ts: 1785457283447
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: cc627947-8139-44b0-beae-37b9938fa79a
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    delta: WwA2AAcA1/+z/6P/pv+4/9b//P8jAEYAVgBOADIADQDq
+    content_index: 0
+    output_index: 0
+    rid: d59b0e4b-a1e5-4813-918e-42bb82e0970d
+    audio_duration_ms: 124
+    ts: 1785457283448
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 22a93581-678b-4809-82a8-5f5bcafd5d64
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    transcript: Your name is Alice and your favorite color is teal. That's all the
+      information you've shared with me so far.
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: 778670b6-9757-46ed-9696-85af27bc4a50
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.done
+    event_id: 7933140a-b69c-4031-91e0-6c46d949e3da
+    item_id: 7b6ab8b2-9d26-48ef-b940-140852609634
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: 7cbccb55-c5b4-4cca-b02d-0a12332f9801
+    item:
+      id: 7b6ab8b2-9d26-48ef-b940-140852609634
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: 91180238-19f1-477e-b80d-d17feb7deae6
+    response:
+      id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+      object: realtime.response
+      output:
+      - id: 7b6ab8b2-9d26-48ef-b940-140852609634
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: Your name is Alice and your favorite color is teal. That's all
+            the information you've shared with me so far.
+      status: completed
+      status_details: unimplemented
+      usage: {}
+    response_id: 74fbdfd7-fe0b-41ac-84be-f78570ec9bdf
+    usage:
+      input_tokens: 8
+      input_token_details:
+        text_tokens: 8
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 301
+      output_token_details:
+        text_tokens: 22
+        audio_tokens: 279
+        grok_tokens: 0
+      total_tokens: 309
+      output_audio_seconds: 5.567499999999999
+      billable_audio_seconds: 3
+    previous_item_id: null

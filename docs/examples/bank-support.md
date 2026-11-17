@@ -1,8 +1,12 @@
+---
+description: "A small but complete Pydantic AI example of a support agent for a bank, using dynamic instructions, structured output and tools."
+---
+
 Small but complete example of using Pydantic AI to build a support agent for a bank.
 
 Demonstrates:
 
-- [dynamic system prompt](../agents.md#system-prompts)
+- [dynamic instructions](../agent.md#instructions)
 - [structured `output_type`](../output.md#structured-output)
 - [tools](../tools.md)
 
@@ -14,7 +18,7 @@ With [dependencies installed and environment variables set](./setup.md#usage), r
 python/uv-run -m pydantic_ai_examples.bank_support
 ```
 
-(or `PYDANTIC_AI_MODEL=gemini-2.5-flash ...`)
+(or `PYDANTIC_AI_MODEL=gemini-3-flash-preview ...`)
 
 ## Example Code
 

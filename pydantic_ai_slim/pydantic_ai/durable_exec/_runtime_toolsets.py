@@ -1,0 +1,133 @@
+"""Validation of per-run toolsets for durable execution engines.
+
+Durable execution engines (DBOS, Prefect, Temporal) durably wrap the *executing* toolsets an agent is
+constructed with — function tools become steps/tasks/activities and MCP servers get their I/O
+checkpointed — so their side effects are recorded and replayed deterministically. Toolsets passed
+per-run via `run(toolsets=...)` arrive after that wrapping has happened (and, for Temporal, after
+activities have been registered with the worker), so an *executing* runtime toolset would run
+un-checkpointed inside the workflow.
+
+We therefore reject executing runtime toolsets, while still allowing non-executing ones like
+`ExternalToolset` whose tools are resolved outside the agent run and so need no durable wrapping.
+
+Classification mirrors the engines' own wrapping: only the leaf types the wrappers durabilize
+(`FunctionToolset`, `MCPToolset`) plus `DynamicToolset` (whose contents can't be inspected up front)
+are rejected. A custom `AbstractToolset` leaf that executes I/O isn't recognized and passes through —
+the same blind spot the constructor-time `dbosify`/`prefectify`/`temporalize` wrapping already has for
+unknown leaf types.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import Any, Literal
+
+from ..exceptions import UserError
+from ..toolsets import AbstractToolset
+
+RuntimeToolsetKind = Literal['function', 'mcp', 'dynamic']
+"""A leaf toolset kind that a durable execution engine may need to reject when passed per-run."""
+
+
+def cancellation_token_unsupported_error(engine: str) -> UserError:
+    """The error raised when a same-process cancellation token meets a durable execution boundary."""
+    return UserError(
+        f'`cancellation_token` cannot be used with {engine} durable execution because it is a same-process '
+        'handle and cannot cross the durable execution boundary. Cancel the durable workflow or flow instead.'
+    )
+
+
+def reject_cancellation_token(cancellation_token: object | None, *, engine: str) -> None:
+    """Reject same-process cancellation tokens at a durable execution boundary."""
+    if cancellation_token is not None:
+        raise cancellation_token_unsupported_error(engine)
+
+
+def reject_run_timeout(timeout: float | None, *, wrapper: str, capability: str) -> None:
+    """Reject a run `timeout` on a deprecated durable wrapper agent, which has no replay-safe clock."""
+    if timeout is not None:
+        raise UserError(
+            f'`timeout` is not supported by the deprecated `{wrapper}`. Use the `{capability}` capability, '
+            "which keeps the run's deadline when the durable execution is replayed or recovered."
+        )
+
+
+def _runtime_toolset_kind(toolset: AbstractToolset[Any]) -> RuntimeToolsetKind | None:
+    """Classify a leaf toolset for durable-execution runtime support, or `None` if it needs no wrapping."""
+    from ..toolsets._dynamic import DynamicToolset
+    from ..toolsets.function import FunctionToolset
+
+    # A dynamic toolset resolves its inner toolset lazily per run/run step, so we can't tell ahead of
+    # time whether it produces executing leaves that would need durable wrapping.
+    if isinstance(toolset, DynamicToolset):
+        return 'dynamic'
+    if isinstance(toolset, FunctionToolset):
+        return 'function'
+    try:
+        from ..mcp import MCPToolset
+    except ImportError:  # pragma: no cover
+        pass
+    else:
+        if isinstance(toolset, MCPToolset):
+            return 'mcp'
+    return None
+
+
+def reject_unsupported_runtime_toolsets(
+    toolsets: Sequence[AbstractToolset[Any]] | None,
+    *,
+    unsupported_kinds: frozenset[RuntimeToolsetKind],
+    engine: str,
+    tool_config_key: str | None = None,
+) -> None:
+    """Raise a `UserError` if any per-run toolset contains a leaf `engine` can't durably wrap at runtime.
+
+    Args:
+        toolsets: The toolsets passed to `run`/`run_sync`/`iter` for this run.
+        unsupported_kinds: The leaf kinds this engine cannot handle when added per-run. Engines that run
+            function tools inline (DBOS) omit `'function'`.
+        engine: Human-readable engine name for the error message (e.g. `'DBOS'`).
+        tool_config_key: Metadata key whose explicit `False` value opts async function tools out of wrapping.
+    """
+    if not toolsets:
+        return
+
+    bad_toolsets: dict[RuntimeToolsetKind, list[AbstractToolset[Any]]] = {}
+
+    def collect(leaf: AbstractToolset[Any]) -> None:
+        kind = _runtime_toolset_kind(leaf)
+        if kind == 'function' and tool_config_key is not None:
+            from ..toolsets.function import FunctionToolset
+
+            assert isinstance(leaf, FunctionToolset)
+            if leaf.tools and all((tool.metadata or {}).get(tool_config_key) is False for tool in leaf.tools.values()):
+                return
+        if kind in unsupported_kinds:
+            bad_toolsets.setdefault(kind, []).append(leaf)
+
+    for toolset in toolsets:
+        toolset.apply(collect)
+
+    if bad_toolsets:
+        offenders: list[str] = []
+        for kind in sorted(bad_toolsets):
+            for toolset in bad_toolsets[kind]:
+                label = toolset.label
+                if kind == 'mcp' and not toolset.id and label == repr(toolset):
+                    label = 'MCPToolset'
+                offenders.append(label)
+        offenders_text = ', '.join(offenders)
+        opt_out = (
+            f" Async tools that don't need durable wrapping can opt out with "
+            f'metadata={{{tool_config_key!r}: False}} to be allowed at runtime.'
+            if tool_config_key is not None
+            else ''
+        )
+        raise UserError(
+            f'{offenders_text} cannot be added at runtime with {engine}, because toolsets '
+            'that execute their own tools or resolve dynamically must be registered for durable execution '
+            'when the agent is constructed. Pass them to the agent constructor instead -- not to '
+            '`run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. '
+            'Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
+            f'{opt_out}'
+        )

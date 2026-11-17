@@ -1,0 +1,436 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '874'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the current USD to EUR exchange rate?
+        role: user
+      model: gpt-5.6-sol
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4318'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '32260'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1783719075
+      created_at: 1783719043
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0489b1f645a1aa85006a516483b0c8819686cd13994fc43588
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqUWSjO2SGkKr_M8OgVa7BaRCaprM0MKk9tolzZSIPE6WIWcdAWHGotRK5_OtquPPZylCw2sd_qb72zbN_RRCq5CNML5e8J9J8K0NN0kbEPrBALHpgf1iEXkrykPZphnX52EWvxaR7I-GCLJt2xwSAel7yqGeaXnHfxFuHnXZsDXGMERvZMp4It6zByCCjLtrpD6OCot8VwJV4gvAjDRwBCz67eFakoCoMIGBhgzvDz8YbipljBjStVRxQC4i70UneJgjnc_OorKCVEZlaSNxMM0Xp_asRYq88cIRWf4qXouFIYq4xFSh_2yl_Pjc7X443PLNtOjl_hfvgbsbxDpZ0B4xuT2fHMQ0kyy6tCmf3i875l5jAVqlkQA0soC-9S-FeKD6z83eXO1UzgJEy8wQq2kS4678ZU7A-58QwoKIu-wzQhmO5c0rtT-cyfOkdlrnk_FYgerqbt072ksLSpiC5X1BjGZBrqxtP09xh2lPHBpNPvcBryER_mLYrCjbW8dtpRtEDu2plH6gPHLt5hNLgELUhp3GnLRcTDjJ2Q1vHz9Mlo7f3bGffOKUF2GFoKx4i4BeR6TEMgZvXtnl7P_bkkMPnvMfMixQpRHn63G_bH8olBOGttQOpDKGQETvCBpmZ1j94c_1peDjCFOVxz8YAq8HecCyBl2NgSK3o3ZcO8pWDPAnfSA6tb40i8on66W3Tm_ZfzPG8XEDXfzMcVi95JIlTq0Lpe5mTECBti4IY5zZynpAigvKfWFoNKImvLzh31QUCLHuFPXzQ7PUAUCq9W2R0tzKToN19k3BPZAyEoMFq1F7C71EggxL4iVOQ2SIiw-WIQ99oXn14YjxsoyUtexThdGv6EmkYSJvj8i8GYaLXjTUuhTOvyzjw0ONmngSBkJ22Jf_zXitf_B3RvypuCCqg6liGqTsOBvmITvRJubtngzDLK3ZZZHKEHS65btnO-wVx-v8_Nx4mVbAOCEOMbYpxCA==
+        id: rs_0489b1f645a1aa85006a51649fd6648196babd4e851ffdede9
+        summary: []
+        type: reasoning
+      - arguments:
+          paths:
+          - get_exchange_rate
+        call_id: null
+        execution: server
+        id: tsc_0489b1f645a1aa85006a5164a1505c8196b4ee11daad7a1c38
+        status: completed
+        type: tool_search_call
+      - call_id: null
+        execution: server
+        id: tso_0489b1f645a1aa85006a5164a1959481969c75e36cb3545c6b
+        status: completed
+        tools:
+        - defer_loading: true
+          description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          strict: true
+          type: function
+        type: tool_search_output
+      - arguments: '{"from_currency":"USD","to_currency":"EUR"}'
+        call_id: call_lRWI31sPzLp5ep5gSbVID3v7
+        id: fc_0489b1f645a1aa85006a5164a2ecb08196b8fed4e0deebd9da
+        name: get_exchange_rate
+        namespace: get_exchange_rate
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+      - description: null
+        parameters: null
+        type: tool_search
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 613
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 61
+        output_tokens_details:
+          reasoning_tokens: 35
+        total_tokens: 674
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2627'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the current USD to EUR exchange rate?
+        role: user
+      - encrypted_content: gAAAAABqUWSjO2SGkKr_M8OgVa7BaRCaprM0MKk9tolzZSIPE6WIWcdAWHGotRK5_OtquPPZylCw2sd_qb72zbN_RRCq5CNML5e8J9J8K0NN0kbEPrBALHpgf1iEXkrykPZphnX52EWvxaR7I-GCLJt2xwSAel7yqGeaXnHfxFuHnXZsDXGMERvZMp4It6zByCCjLtrpD6OCot8VwJV4gvAjDRwBCz67eFakoCoMIGBhgzvDz8YbipljBjStVRxQC4i70UneJgjnc_OorKCVEZlaSNxMM0Xp_asRYq88cIRWf4qXouFIYq4xFSh_2yl_Pjc7X443PLNtOjl_hfvgbsbxDpZ0B4xuT2fHMQ0kyy6tCmf3i875l5jAVqlkQA0soC-9S-FeKD6z83eXO1UzgJEy8wQq2kS4678ZU7A-58QwoKIu-wzQhmO5c0rtT-cyfOkdlrnk_FYgerqbt072ksLSpiC5X1BjGZBrqxtP09xh2lPHBpNPvcBryER_mLYrCjbW8dtpRtEDu2plH6gPHLt5hNLgELUhp3GnLRcTDjJ2Q1vHz9Mlo7f3bGffOKUF2GFoKx4i4BeR6TEMgZvXtnl7P_bkkMPnvMfMixQpRHn63G_bH8olBOGttQOpDKGQETvCBpmZ1j94c_1peDjCFOVxz8YAq8HecCyBl2NgSK3o3ZcO8pWDPAnfSA6tb40i8on66W3Tm_ZfzPG8XEDXfzMcVi95JIlTq0Lpe5mTECBti4IY5zZynpAigvKfWFoNKImvLzh31QUCLHuFPXzQ7PUAUCq9W2R0tzKToN19k3BPZAyEoMFq1F7C71EggxL4iVOQ2SIiw-WIQ99oXn14YjxsoyUtexThdGv6EmkYSJvj8i8GYaLXjTUuhTOvyzjw0ONmngSBkJ22Jf_zXitf_B3RvypuCCqg6liGqTsOBvmITvRJubtngzDLK3ZZZHKEHS65btnO-wVx-v8_Nx4mVbAOCEOMbYpxCA==
+        id: rs_0489b1f645a1aa85006a51649fd6648196babd4e851ffdede9
+        summary: []
+        type: reasoning
+      - arguments:
+          queries:
+          - get_exchange_rate
+        call_id: tsc_0489b1f645a1aa85006a5164a1505c8196b4ee11daad7a1c38
+        execution: server
+        id: tsc_0489b1f645a1aa85006a5164a1505c8196b4ee11daad7a1c38
+        status: completed
+        type: tool_search_call
+      - arguments: '{"from_currency":"USD","to_currency":"EUR"}'
+        call_id: call_lRWI31sPzLp5ep5gSbVID3v7
+        id: fc_0489b1f645a1aa85006a5164a2ecb08196b8fed4e0deebd9da
+        name: get_exchange_rate
+        namespace: get_exchange_rate
+        type: function_call
+      - call_id: call_lRWI31sPzLp5ep5gSbVID3v7
+        output: 1 USD = 0.92 EUR
+        type: function_call_output
+      model: gpt-5.6-sol
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2419'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1466'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1783719077
+      created_at: 1783719076
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0489b1f645a1aa85006a5164a40f8c8196afade8180284154d
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: The current exchange rate is **1 USD = 0.92 EUR**.
+          type: output_text
+        id: msg_0489b1f645a1aa85006a5164a4e9a881969f36f90dbba9f20c
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+      - description: null
+        parameters: null
+        type: tool_search
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 510
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 20
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 530
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

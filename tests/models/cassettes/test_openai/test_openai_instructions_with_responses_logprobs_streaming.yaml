@@ -1,0 +1,104 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '213'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - message.output_text.logprobs
+      input:
+      - content: What is the capital of Minas Gerais?
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-4o-mini
+      stream: true
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0ecff685e411ca7b0069e063569c7c819bbc74c80d853802e6","object":"response","created_at":1776313174,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0ecff685e411ca7b0069e063569c7c819bbc74c80d853802e6","object":"response","created_at":1776313174,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0ecff685e411ca7b0069e063580128819b9ec474594c61b988","type":"message","status":"in_progress","content":[],"role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0ecff685e411ca7b0069e063580128819b9ec474594c61b988","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"The","item_id":"msg_0ecff685e411ca7b0069e063580128819b9ec474594c61b988","logprobs":[{"bytes":[84,104,101],"logprob":-1.9361264946837764e-7,"token":"The","top_logprobs":[]}],"obfuscation":"gXy977j6nL2j2","output_index":0,"sequence_number":4}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" capital","item_id":"msg_0ecff685e411ca7b0069e063580128819b9ec474594c61b988","logprobs":[{"bytes":[32,99,97,112,105,116,97,108],"logprob":0.0,"token":" capital","top_logprobs":[]}],"obfuscation":"ZjYeFP5e","output_index":0,"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" of","item_id":"msg_0ecff685e411ca7b0069e063580128819b9ec474594c61b988","logprobs":[{"bytes":[32,111,102],"logprob":0.0,"token":" of","top_logprobs":[]}],"obfuscation":"l5dIydTWrP8SP","output_index":0,"sequence_number":6}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" Minas","item_id":"msg_0ecff685e411ca7b0069e063580128819b9ec474594c61b988","logprobs":[{"bytes":[32,77,105,110,97,115],"logprob":0.0,"token":" Minas","top_logprobs":[]}],"obfuscation":"VqIpOmrVS3","output_index":0,"sequence_number":7}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" Gerais","item_id":"msg_0ecff685e411ca7b0069e063580128819b9ec474594c61b988","logprobs":[{"bytes":[32,71,101,114,97,105,115],"logprob":-3.128163257315464e-7,"token":" Gerais","top_logprobs":[]}],"obfuscation":"9YP9RAWJi","output_index":0,"sequence_number":8}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" is","item_id":"msg_0ecff685e411ca7b0069e063580128819b9ec474594c61b988","logprobs":[{"bytes":[32,105,115],"logprob":-0.00007493430894101039,"token":" is","top_logprobs":[]}],"obfuscation":"dT9hAh52scXbG","output_index":0,"sequence_number":9}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" Belo","item_id":"msg_0ecff685e411ca7b0069e063580128819b9ec474594c61b988","logprobs":[{"bytes":[32,66,101,108,111],"logprob":-0.00005371605948312208,"token":" Belo","top_logprobs":[]}],"obfuscation":"l8YHf0YqoFj","output_index":0,"sequence_number":10}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" Horizonte","item_id":"msg_0ecff685e411ca7b0069e063580128819b9ec474594c61b988","logprobs":[{"bytes":[32,72,111,114,105,122,111,110,116,101],"logprob":-2.45848218582978e-6,"token":" Horizonte","top_logprobs":[]}],"obfuscation":"CKHfqE","output_index":0,"sequence_number":11}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_0ecff685e411ca7b0069e063580128819b9ec474594c61b988","logprobs":[{"bytes":[46],"logprob":-3.128163257315464e-7,"token":".","top_logprobs":[]}],"obfuscation":"qPMevXQgeGhNXT2","output_index":0,"sequence_number":12}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0ecff685e411ca7b0069e063580128819b9ec474594c61b988","logprobs":[{"bytes":[84,104,101],"logprob":-1.9361264946837764e-7,"token":"The","top_logprobs":[]},{"bytes":[32,99,97,112,105,116,97,108],"logprob":0.0,"token":" capital","top_logprobs":[]},{"bytes":[32,111,102],"logprob":0.0,"token":" of","top_logprobs":[]},{"bytes":[32,77,105,110,97,115],"logprob":0.0,"token":" Minas","top_logprobs":[]},{"bytes":[32,71,101,114,97,105,115],"logprob":-3.128163257315464e-7,"token":" Gerais","top_logprobs":[]},{"bytes":[32,105,115],"logprob":-0.00007493430894101039,"token":" is","top_logprobs":[]},{"bytes":[32,66,101,108,111],"logprob":-0.00005371605948312208,"token":" Belo","top_logprobs":[]},{"bytes":[32,72,111,114,105,122,111,110,116,101],"logprob":-2.45848218582978e-6,"token":" Horizonte","top_logprobs":[]},{"bytes":[46],"logprob":-3.128163257315464e-7,"token":".","top_logprobs":[]}],"output_index":0,"sequence_number":13,"text":"The capital of Minas Gerais is Belo Horizonte."}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0ecff685e411ca7b0069e063580128819b9ec474594c61b988","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"The capital of Minas Gerais is Belo Horizonte."},"sequence_number":14}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0ecff685e411ca7b0069e063580128819b9ec474594c61b988","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[{"bytes":[84,104,101],"logprob":-0.0,"token":"The","top_logprobs":[]},{"bytes":[32,99,97,112,105,116,97,108],"logprob":0.0,"token":" capital","top_logprobs":[]},{"bytes":[32,111,102],"logprob":0.0,"token":" of","top_logprobs":[]},{"bytes":[32,77,105,110,97,115],"logprob":0.0,"token":" Minas","top_logprobs":[]},{"bytes":[32,71,101,114,97,105,115],"logprob":-0.0,"token":" Gerais","top_logprobs":[]},{"bytes":[32,105,115],"logprob":-0.000075,"token":" is","top_logprobs":[]},{"bytes":[32,66,101,108,111],"logprob":-0.000054,"token":" Belo","top_logprobs":[]},{"bytes":[32,72,111,114,105,122,111,110,116,101],"logprob":-2e-6,"token":" Horizonte","top_logprobs":[]},{"bytes":[46],"logprob":-0.0,"token":".","top_logprobs":[]}],"text":"The capital of Minas Gerais is Belo Horizonte."}],"role":"assistant"},"output_index":0,"sequence_number":15}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0ecff685e411ca7b0069e063569c7c819bbc74c80d853802e6","object":"response","created_at":1776313174,"status":"completed","background":false,"completed_at":1776313176,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-mini-2024-07-18","output":[{"id":"msg_0ecff685e411ca7b0069e063580128819b9ec474594c61b988","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[{"bytes":[84,104,101],"logprob":-0.0,"token":"The","top_logprobs":[]},{"bytes":[32,99,97,112,105,116,97,108],"logprob":0.0,"token":" capital","top_logprobs":[]},{"bytes":[32,111,102],"logprob":0.0,"token":" of","top_logprobs":[]},{"bytes":[32,77,105,110,97,115],"logprob":0.0,"token":" Minas","top_logprobs":[]},{"bytes":[32,71,101,114,97,105,115],"logprob":-0.0,"token":" Gerais","top_logprobs":[]},{"bytes":[32,105,115],"logprob":-0.000075,"token":" is","top_logprobs":[]},{"bytes":[32,66,101,108,111],"logprob":-0.000054,"token":" Belo","top_logprobs":[]},{"bytes":[32,72,111,114,105,122,111,110,116,101],"logprob":-2e-6,"token":" Horizonte","top_logprobs":[]},{"bytes":[46],"logprob":-0.0,"token":".","top_logprobs":[]}],"text":"The capital of Minas Gerais is Belo Horizonte."}],"role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":25,"input_tokens_details":{"cached_tokens":0},"output_tokens":10,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":35},"user":null,"metadata":{}},"sequence_number":16}
+
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - ellm
+      openai-processing-ms:
+      - '55'
+      openai-project:
+      - proj_U4ZUUUALGCRY6USPUQ5bOlvh
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

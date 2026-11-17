@@ -1,0 +1,107 @@
+A round trip through a UI protocol must give back everything the model sees, unchanged and in order, and client-returned history is untrusted: see [Message History & Prompt Caching](../../../agent_docs/message-history-and-caching.md), "UI round trips are faithful".
+
+## Backwards compatibility in UI adapters (specially AG-UI)
+
+Since [3971](https://github.com/pydantic/pydantic-ai/pull/3971#discussion_r3011028336) we decided to introduce the policy of sticking to the lower (existing) version requirement. In short, this means:
+- version requirement bumps are disallowed
+- new functionality should be gated behind version checks (including imports)
+- older versions don't error out when they encounter new functionality, but instead skip it
+
+The inbound half of that last rule lives in `ag_ui/_forward_compat.py`: AG-UI's `Message`, `InputContent` and a media part's `source` are discriminated unions, so a `role`, `type` or `source.type` added after the installed version is a hard validation failure for the whole request unless it's skipped first. A tag the SDK retired, rather than one it has not learned yet, is translated to its replacement (`binary` on 1.0, whose `id` becomes a provider-less `file` source); a retired item with no payload at all is malformed and still fails, as it did below 1.0. Skipping is scoped to exactly that — an unknown tag only counts as new functionality when the item also satisfies the contract every member of its union shares (for `Message`, a string `id`), so anything else malformed must still fail.
+
+Outbound, three inputs decide what the event stream emits. The `HAS_*` constants (in `_lifecycle_1_0.py`, `_interrupt.py`, `_forward_compat.py`) say what the installed SDK can construct and are the ceiling. `ag_ui_version` defaults to the installed version and can only lower that ceiling, for a client older than the server. From 1.0 the client also declares its own version on `RunAgentInput.protocolVersion`. A field a pre-1.0 client passes through (`protocolVersion` on `RUN_STARTED`, `usage`) needs only the first two; a shape its strict outcome schema rejects (the `cancelled` outcome, `pendingToolCallIds`) also needs the client to declare 1.0, or it drops the whole stream at `RUN_FINISHED`. No declaration means a pre-versioning peer; an unreadable one counts as newer, as the spec requires. `dump_messages` is the one place the installed SDK beats `ag_ui_version`: 1.0's `UserMessage.content` union no longer admits the retired `binary` part, so a 1.0 install writes typed media for every negotiated version.
+
+Tests for version-gated behavior belong behind `requires_ag_ui('<version>')` in `tests/test_ag_ui.py`, never behind the module-level `imports_successful()` gate: a name that only exists above the floor in that import block skips the entire module on CI's `test-lowest-versions` job, which is the only job that exercises the floor these gates exist for. Expectations that differ by installed SDK go through a version-aware helper (`run_finished_outcome()`-style) so the same test runs at the floor; a test that constructs a shape a newer SDK removed is skipped on that SDK with a dedicated marker (`skip_if_ag_ui_1_0`).
+
+## Inbound messages never gain harness provenance on their own
+
+`RetryFeedbackPart` dumps in the voice the model is shown it in, which its `retry.cause` decides: a
+user-role message for a `'validation_error'` or `'model_retry'`, a system-role one for `'no_output'`.
+Either way that is, on the wire, the same shape as a message the client wrote — so `load_messages`
+reconstructs the part **only** from the adapter's own `retry_feedback` metadata claim (Vercel AI's
+`providerMetadata`, AG-UI's `encrypted_value`), and everything else stays a plain prompt part. Keep that
+an explicit branch on both roles in both adapters when you touch either loader.
+
+The claim is client-echoed, so it separates provenance rather than proving it: a well-formed forged
+marker does rebuild the part, and it can name any cause. Only `'no_output'` reaches the model in the
+system voice, so whenever the server owns the system prompt `sanitize_messages` demotes a
+client-returned `'no_output'` part to the same fenced, attributed user text the other causes get. The
+wording doesn't matter: what earns the system voice is provenance, and a client part has none, so even
+the framework's own fixed directives don't keep it when a client sends them. The user-voice causes go
+out fenced behind the application attribution line, which a client could write as plain user text
+anyway. A future part belongs in that strip (or that demotion) when it can carry **client-controlled
+content** into the system voice. `ToolAvailabilityDeltaPart` becomes a `SystemPromptPart` too and is deliberately left out: it can only name tools the developer registered,
+and [7104](https://github.com/pydantic/pydantic-ai/pull/7104#discussion_r3732386493) settled that as
+the framework's pinned trust model, not an oversight.
+
+`strip_system_prompts=False` (`manage_system_prompt='client'`) therefore lets a client-authored
+`'no_output'` `RetryFeedbackPart` reach the model in the system voice with whatever text it carries,
+exactly as it already lets a client-authored `SystemPromptPart` through. That is the setting's meaning
+— the client owns the system prompt — so reach for it only when the client is as trusted as the server.
+
+The marker is also an outbound channel, and it may carry no more than the rendered text beside it.
+`retry_feedback_payload` strips each error's `ctx` before the part rides out, because the client reads
+and echoes that channel. Strip in the payload helper, not at the call sites — there are two, and a
+third would inherit the disclosure by default.
+
+## Adapter properties are shared concepts the adapter itself consumes
+
+An unread field on a protocol's run input is not a gap. `run_input` is public, so every field is already reachable as `adapter.run_input.<field>`; a property that only forwards one adds no capability and takes on a permanent public-API commitment. AG-UI's `context`, `forwardedProps` and `parentRunId` are deliberately left that way — see [7106](https://github.com/pydantic/pydantic-ai/pull/7106#discussion_r3723844005), which closed [7105](https://github.com/pydantic/pydantic-ai/issues/7105) by documenting the wiring instead of exposing `AGUIAdapter.context`.
+
+A field earns an adapter property when **both** hold:
+- the adapter consumes it, feeding it into run args or the event stream — that's what `messages`, `toolset`, `state`, `conversation_id` and `deferred_tool_results` all do
+- it names a concept every UI protocol has, so it can live on `UIAdapter` with one normalized type
+
+One without the other is the trap: a protocol-specific property with a generic name means the day a second protocol grows the same concept, the base-class version can't be added without breaking the first adapter's return type. Normalizing early to dodge that is not the fix either — a shape derived from a single protocol is a guess, and a lossy one when it discards structure the protocol chose (AG-UI's `context` is a `list` of `description`/`value` pairs, and `description` is not unique, so a `dict` silently drops entries).
+
+The agent run is not a sink for the leftovers, either: `RunContext.metadata` is attached to the run span, so routing client-submitted text there by default would put unbounded untrusted content into every user's traces.
+
+## AG-UI response identities follow real `Agent` turn transitions
+
+Each model response gets a fresh AG-UI parent message ID. A regular
+`FunctionToolCallEvent` moves `UIEventStream` from the response turn to the
+request turn; its result is emitted in that request turn, and the next
+response's `PartStartEvent` invokes `before_response()` to replace the parent
+ID. This is the lifecycle established by [#3325](https://github.com/pydantic/pydantic-ai/pull/3325).
+
+Every parent ID the stream emits is announced before it is referenced.
+`_handle_tool_call_start` starts a content-free message when the response has no
+text before its first tool call, so a consumer never has to synthesize the
+assistant message that ID names — a synthesized one carries an ID the server
+never emitted, which is what breaks telling new messages apart from replayed
+history ([#7527](https://github.com/pydantic/pydantic-ai/issues/7527)). Close
+that pair on the spot: the AG-UI *client's* event verifier (`verifyEvents` in the
+TypeScript `@ag-ui/client`, not the Python package) rejects `RUN_FINISHED` while a
+text message is still open.
+
+That content-free pair is not the shape [#2754](https://github.com/pydantic/pydantic-ai/pull/2754)
+removed. Those `THINKING_TEXT_MESSAGE_*` envelopes carried no ID anyone needed —
+thinking already has an outer `THINKING_START`/`THINKING_END` envelope, so the
+inner empty message signalled state and nothing else. An assistant message has no
+outer envelope, so `TEXT_MESSAGE_START` is the only event that can name its ID,
+which is the thing a consumer needs. Emit an empty envelope only when it carries
+something; here it carries the identity.
+
+Native tool returns differ because another native call can follow inside the
+same model response. That path uses a one-off result ID without replacing the
+response parent; regular tool results intentionally retain the request-turn ID
+mutation. The distinction was retained explicitly in
+[#6659](https://github.com/pydantic/pydantic-ai/pull/6659#discussion_r3632483479).
+
+Regression tests for cross-response identity must run through the supported
+`Agent` and `AGUIAdapter` boundary. A synthetic stream that includes a regular
+tool result must include its preceding `FunctionToolCallEvent`; otherwise it
+does not exercise a production-reachable turn sequence. Assert relationships
+between emitted string IDs, not between matcher objects.
+
+## The event stream is an encoder, so it owns what it emits
+
+`UIEventStream.run_input` is optional because a stream is constructible with no request behind it: transports that carry native events out of band — a durable execution workflow, a queue, a websocket fan-out — encode at an API edge the adapter never reaches ([6970](https://github.com/pydantic/pydantic-ai/issues/6970)).
+
+So a value a subclass emits is a field of that subclass, overwritten from `run_input` in `__post_init__` when one is given — the request's identity wins over an explicitly passed value, it doesn't merely default it, and passing both warns rather than discarding one in silence — that's `AGUIEventStream.thread_id` / `run_id`, which the protocol requires on `RUN_STARTED` and `RUN_FINISHED`. Telling an explicitly passed value apart from a generated default is what `_GeneratedID` is for: comparing against the run input's value can't, since a generated ID differs from it too. Reading `self.run_input.<field>` at emit time is what makes a stream un-constructible without a request, and it's the reason a `run_input` stub had to be fabricated before.
+
+This is the opposite case from the adapter-property rule above, not an exception to it: the field exists because the stream *emits* it, not to forward a protocol object's contents to the caller. An unread `run_input` field still earns nothing.
+
+## Round trips are checked with the real JavaScript clients
+
+What a frontend sends back is decided by its client library, not by our types: `@ag-ui/client` leaves `activity` messages out of every request it sends, for example. So a change to how an adapter dumps, streams or loads history is checked in `tests/ui_roundtrip`, which drives the AI SDK's `AbstractChat` and `@ag-ui/client`'s `AbstractAgent` from Node and compares what comes back with the server's history and provider requests. Add a scenario there for a new record or part kind, rather than a Python port of a client reducer: a port only shows what its author thought the client does. Run `npm ci --ignore-scripts` in that directory to run them locally; the `UI round trip` workflow runs them in CI.

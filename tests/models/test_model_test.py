@@ -5,36 +5,75 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import re
-from datetime import timezone
+from collections.abc import Callable
+from datetime import UTC
 from typing import Annotated, Any, Literal
 
 import pytest
 from annotated_types import Ge, Gt, Le, Lt, MaxLen, MinLen
 from anyio import Event
-from inline_snapshot import snapshot
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Discriminator, Field, Tag
 
 from pydantic_ai import (
     Agent,
+    AgentRunResultEvent,
     AudioUrl,
     BinaryContent,
     ImageUrl,
     ModelRequest,
     ModelResponse,
     ModelRetry,
-    RetryPromptPart,
+    RetryInfo,
     RunContext,
+    StructuredDict,
     TextPart,
+    Tool,
     ToolCallPart,
+    ToolOutput,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import ToolAvailabilityDeltaPart
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsNow, IsStr
+from .._inline_snapshot import snapshot
+from ..conftest import IsDatetime, IsNow, IsStr
+
+
+def test_response_metadata_consistent_between_run_and_run_stream():
+    """Regression test for #6062: TestModel response metadata should not depend on run mode."""
+    agent = Agent(model=TestModel())
+
+    run_result = agent.run_sync('hello')
+
+    stream_result = agent.run_stream_sync('hello')
+    list(stream_result.stream_text())
+
+    run_responses = [message for message in run_result.all_messages() if isinstance(message, ModelResponse)]
+    stream_responses = [message for message in stream_result.all_messages() if isinstance(message, ModelResponse)]
+
+    expected_responses = snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                model_id='test:test',
+                timestamp=IsNow(tz=UTC),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            )
+        ]
+    )
+    assert run_responses == expected_responses
+    assert stream_responses == expected_responses
 
 
 def test_call_one():
@@ -56,12 +95,88 @@ def test_call_one():
     assert calls == ['a']
 
 
+def test_call_hidden_tool_has_clear_error() -> None:
+    agent = Agent(TestModel(call_tools=['hidden']))
+
+    @agent.tool_plain(defer_loading=True)
+    def hidden() -> str:  # pragma: no cover
+        return 'hidden'
+
+    with pytest.raises(
+        UserError,
+        match=r"Tool 'hidden' has visibility 'withheld'.*revealed.*before `TestModel` can call it",
+    ):
+        agent.run_sync('call hidden')
+
+
+def test_call_unknown_tool_has_clear_error() -> None:
+    agent = Agent(TestModel(call_tools=['missing']))
+
+    with pytest.raises(UserError, match=r"TestModel was configured to call unknown tool 'missing'"):
+        agent.run_sync('call missing')
+
+
+def _native_addition_agent(call_tools: list[str] | Literal['all']) -> Agent:
+    """An agent on a delta-native profile: reveals stay in history as `ToolAvailabilityDeltaPart`s
+    and the revealed tool's visibility resolves to `'via_history'` rather than `'visible'`."""
+    profile = ModelProfile(tool_deferral_mode='standalone', tool_addition_mode='with_definitions')
+    agent = Agent(TestModel(profile=profile, call_tools=call_tools))
+
+    @agent.tool_plain
+    def revealer() -> ToolReturn:
+        return ToolReturn(return_value='revealed', tools=['hidden'])
+
+    @agent.tool_plain(defer_loading=True)
+    def hidden() -> str:  # pragma: no cover
+        return 'hidden'
+
+    return agent
+
+
+def test_native_tool_addition_profile_runs_without_crashing() -> None:
+    """The delta part a native-addition profile keeps in history must not blow up usage
+    estimation — it is legitimately present, not a skipped-`prepare_messages` violation."""
+    result = _native_addition_agent('all').run_sync('go')
+
+    assert result.output == snapshot(
+        '{"revealer":"revealed","search_tools":{"discovered_tools":[],"message":"No matching tools found. The tools you need may not be available."}}'
+    )
+    assert any(
+        isinstance(part, ToolAvailabilityDeltaPart)
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+
+
+async def test_delta_part_without_native_profile_still_raises() -> None:
+    """On the default profile (no native addition channel), a delta part in a direct
+    `Model.request()` history still means `prepare_messages` was skipped — keep teaching that."""
+    model = TestModel()
+    messages: list[Any] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['hidden'])]),
+    ]
+    with pytest.raises(UserError, match=r'Call `model.prepare_messages\(messages\)` first'):
+        await model.request(messages, None, ModelRequestParameters())
+
+
+def test_revealed_via_history_tool_is_callable_in_named_mode() -> None:
+    """A revealed tool whose definition travels via history is callable; replaying its history
+    must not raise the misleading 'must be revealed' error on later steps."""
+    history = _native_addition_agent('all').run_sync('go').all_messages()
+
+    result = _native_addition_agent(['hidden']).run_sync('continue', message_history=history)
+    assert result.output == snapshot(
+        '{"revealer":"revealed","search_tools":{"discovered_tools":[],"message":"No matching tools found. The tools you need may not be available."}}'
+    )
+
+
 def test_custom_output_text():
     agent = Agent()
     result = agent.run_sync('x', model=TestModel(custom_output_text='custom'))
     assert result.output == snapshot('custom')
     agent = Agent(output_type=tuple[str, str])
-    with pytest.raises(AssertionError, match='Plain response not allowed, but `custom_output_text` is set.'):
+    with pytest.raises(AssertionError, match=re.escape('Plain response not allowed, but `custom_output_text` is set.')):
         agent.run_sync('x', model=TestModel(custom_output_text='custom'))
 
 
@@ -75,10 +190,12 @@ def test_custom_output_args():
                 parts=[
                     UserPromptPart(
                         content='x',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -90,8 +207,11 @@ def test_custom_output_args():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='test:test',
+                provider_name='test',
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -99,10 +219,12 @@ def test_custom_output_args():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -122,10 +244,12 @@ def test_custom_output_args_model():
                 parts=[
                     UserPromptPart(
                         content='x',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -137,8 +261,11 @@ def test_custom_output_args_model():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=6),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='test:test',
+                provider_name='test',
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -146,10 +273,12 @@ def test_custom_output_args_model():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -165,10 +294,12 @@ def test_output_type():
                 parts=[
                     UserPromptPart(
                         content='x',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -180,8 +311,11 @@ def test_output_type():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='test:test',
+                provider_name='test',
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -189,10 +323,12 @@ def test_output_type():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -217,48 +353,61 @@ def test_tool_retry():
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='test:test',
+                provider_name='test',
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        content='First call failed',
-                        tool_name='my_ret',
-                        timestamp=IsNow(tz=timezone.utc),
-                        tool_call_id=IsStr(),
-                    )
-                ],
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=61, output_tokens=8),
-                model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='my_ret', content='1', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        content='First call failed',
+                        tool_name='my_ret',
+                        timestamp=IsNow(tz=UTC),
+                        tool_call_id=IsStr(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=57, output_tokens=8),
+                model_name='test',
+                model_id='test:test',
+                provider_name='test',
+                timestamp=IsNow(tz=UTC),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='my_ret', content='1', tool_call_id=IsStr(), timestamp=IsNow(tz=UTC))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"my_ret":"1"}')],
-                usage=RequestUsage(input_tokens=62, output_tokens=12),
+                usage=RequestUsage(input_tokens=58, output_tokens=12),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='test:test',
+                provider_name='test',
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -269,17 +418,17 @@ def test_output_tool_retry_error_handled():
         x: int
         y: str
 
-    agent = Agent('test', output_type=OutputModel, retries=2)
+    agent = Agent('test', output_type=OutputModel, retries={'tools': 2, 'output': 2})
 
     call_count = 0
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: OutputModel) -> OutputModel:
+    def validate_output(ctx: RunContext, output: OutputModel) -> OutputModel:
         nonlocal call_count
         call_count += 1
         raise ModelRetry('Fail')
 
-    with pytest.raises(UnexpectedModelBehavior, match=re.escape('Exceeded maximum retries (2) for output validation')):
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
         agent.run_sync('Hello', model=TestModel())
 
     assert call_count == 3
@@ -290,13 +439,12 @@ class AgentRunDeps:
     run_id: int
 
 
-@pytest.mark.anyio
 async def test_multiple_concurrent_tool_retries():
     class OutputModel(BaseModel):
         x: int
         y: str
 
-    agent = Agent('test', deps_type=AgentRunDeps, output_type=OutputModel, retries=2)
+    agent = Agent('test', deps_type=AgentRunDeps, output_type=OutputModel, retries={'tools': 2, 'output': 2})
     retried_run_ids = set[int]()
     event = Event()
 
@@ -307,7 +455,8 @@ async def test_multiple_concurrent_tool_retries():
         if ctx.deps.run_id not in retried_run_ids:
             retried_run_ids.add(ctx.deps.run_id)
             raise ModelRetry('Fail')
-        if len(retried_run_ids) == len(run_ids):  # pragma: no branch  # won't branch if all runs happen very quickly
+        # Won't branch if all runs happen very quickly.
+        if len(retried_run_ids) == len(run_ids):  # pragma: no branch
             event.set()
         await event.wait()  # ensure a retry is done by all runs before any of them finish their flow
         return None
@@ -320,9 +469,9 @@ def test_output_tool_retry_error_handled_with_custom_args():
         x: int
         y: str
 
-    agent = Agent('test', output_type=ResultModel, retries=2)
+    agent = Agent('test', output_type=ResultModel, retries={'tools': 2, 'output': 2})
 
-    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(2\) for output validation'):
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
         agent.run_sync('Hello', model=TestModel(custom_output_args={'foo': 'a', 'bar': 1}))
 
 
@@ -418,6 +567,91 @@ def test_json_schema_test_data_additional():
     TestModel.model_validate(data)
 
 
+def test_json_schema_test_data_equal_inclusive_bounds():
+    class TestModel(BaseModel):
+        my_int_eq: Annotated[int, Ge(7), Le(7)]
+        my_float_eq: Annotated[float, Ge(7.5), Le(7.5)]
+
+    json_schema = TestModel.model_json_schema()
+    data = _JsonSchemaTestData(json_schema).generate()
+    assert data == snapshot({'my_int_eq': 7, 'my_float_eq': 7.5})
+    TestModel.model_validate(data)
+
+
+def test_json_schema_test_data_narrow_exclusive_bounds():
+    """Narrow ranges with exclusive bounds must not crash or produce out-of-range values."""
+
+    class TestModel(BaseModel):
+        probability: Annotated[float, Ge(0), Lt(1)]
+        strict_fraction: Annotated[float, Gt(0), Lt(1)]
+        rate: Annotated[float, Gt(0.0), Le(1.0)]
+        only_one: Annotated[int, Gt(0), Lt(2)]
+
+    json_schema = TestModel.model_json_schema()
+    for seed in range(3):
+        data = _JsonSchemaTestData(json_schema, seed=seed).generate()
+        TestModel.model_validate(data)
+    assert _JsonSchemaTestData(json_schema).generate() == snapshot(
+        {'probability': 0.0, 'strict_fraction': 0.5, 'rate': 0.5, 'only_one': 1}
+    )
+
+
+@pytest.mark.parametrize('type_', ['foo', []])
+def test_gen_unknown_type(type_: str | list[str]):
+    """A hand-written tool schema can name a `type` no Pydantic model emits, so this calls the generator directly.
+
+    An empty `type` list names no type to generate from.
+    """
+    with pytest.raises(NotImplementedError, match=re.escape(f'Unknown type: {type_}')):
+        _JsonSchemaTestData({'type': type_}).generate()
+
+
+def test_json_schema_number_uses_strictest_bounds():
+    class TestModel(BaseModel):
+        lower: Annotated[float, Field(ge=0, gt=0.5, le=1)]
+        upper: Annotated[float, Field(ge=0, le=2, lt=0.5)]
+
+    json_schema = TestModel.model_json_schema()
+    for seed in range(3):
+        data = _JsonSchemaTestData(json_schema, seed=seed).generate()
+        TestModel.model_validate(data)
+    assert _JsonSchemaTestData(json_schema).generate() == snapshot({'lower': 0.75, 'upper': 0.0})
+
+
+def test_int_uses_strictest_bounds():
+    class MyOutput(BaseModel):
+        lower: Annotated[int, Field(ge=0, gt=5)]
+        upper: Annotated[int, Field(le=10, lt=-5)]
+        both: Annotated[int, Field(ge=0, gt=5, le=100, lt=20)]
+
+    agent = Agent(output_type=MyOutput)
+    outputs = [agent.run_sync('hello', model=TestModel(seed=seed)).output for seed in range(3)]
+    assert [(output.lower, output.upper, output.both) for output in outputs] == snapshot(
+        [(6, -6, 6), (7, -7, 7), (8, -8, 8)]
+    )
+
+
+def test_narrow_exclusive_bounds_tool_args():
+    """An agent tool with `Field(ge=0, lt=1)`-style parameters runs without errors."""
+
+    agent = Agent()
+    calls: list[dict[str, Any]] = []
+
+    @agent.tool_plain
+    def set_sampling(temperature: Annotated[float, Field(ge=0, lt=1)]) -> str:
+        calls.append({'temperature': temperature})
+        return 'ok'
+
+    agent.run_sync('hello', model=TestModel())
+    assert calls == snapshot([{'temperature': 0.0}])
+
+
+def test_json_schema_number_generation():
+    assert _JsonSchemaTestData({'type': 'number', 'exclusiveMinimum': 0}).generate() == 1.0
+    assert _JsonSchemaTestData({'type': 'number', 'exclusiveMaximum': 0}).generate() == -1.0
+    assert _JsonSchemaTestData({'type': 'number'}).generate() == 0.0
+
+
 def test_chars_wrap():
     class TestModel(BaseModel):
         a: Annotated[set[str], MinLen(4)]
@@ -447,6 +681,225 @@ def test_max_items():
     assert data == snapshot([])
 
 
+@pytest.mark.parametrize('const', ['', False, 0, None])
+def test_json_schema_test_data_falsy_const(const: Any) -> None:
+    schema = {
+        'type': 'object',
+        'required': ['value'],
+        'properties': {'value': {'const': const}},
+    }
+
+    assert _JsonSchemaTestData(schema).generate() == {'value': const}
+
+
+def test_falsy_const_tool_args() -> None:
+    """Regression test for #7629: falsy JSON Schema `const` values must be generated as-is."""
+
+    agent = Agent()
+    calls: list[dict[str, Any]] = []
+
+    @agent.tool_plain
+    def my_tool(empty: Literal[''], flag: Literal[False], zero: Literal[0]) -> str:
+        calls.append({'empty': empty, 'flag': flag, 'zero': zero})
+        return 'ok'
+
+    agent.run_sync('hello', model=TestModel())
+    assert calls == snapshot([{'empty': '', 'flag': False, 'zero': 0}])
+
+
+def test_json_pointer_ref_tool_args() -> None:
+    """A local JSON-pointer `$ref` is followed like a `$defs` one when generating tool arguments.
+
+    The MCP TypeScript SDK sends this shape for a zod v3 tool `{ from: Address, to: Address }`: the reused
+    subschema points at its first occurrence instead of `$defs`.
+    """
+    address = {
+        'type': 'object',
+        'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+        'required': ['street', 'city'],
+        'additionalProperties': False,
+    }
+    calls: list[dict[str, Any]] = []
+
+    def ship_order(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'shipped'
+
+    tool = Tool.from_schema(
+        ship_order,
+        name='ship_order',
+        description=None,
+        json_schema={
+            'type': 'object',
+            'properties': {'from': address, 'to': {'$ref': '#/properties/from'}},
+            'required': ['from', 'to'],
+            'additionalProperties': False,
+        },
+    )
+
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot([{'from': {'street': 'a', 'city': 'a'}, 'to': {'street': 'a', 'city': 'a'}}])
+
+
+def test_list_form_items_tool_args() -> None:
+    """A tool schema spelling a tuple as a draft-7 `items` list gets one generated value per element, up to `maxItems`.
+
+    `zod-to-json-schema`, which the MCP TypeScript SDK uses for zod v3 tool schemas, emits this shape.
+    When the schema also has `prefixItems`, those are generated instead of the list.
+    """
+    calls: list[dict[str, Any]] = []
+
+    def pair_tool(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'pair': {'type': 'array', 'minItems': 2, 'maxItems': 2, 'items': [{'type': 'string'}, {'type': 'integer'}]},
+            'head': {'type': 'array', 'maxItems': 1, 'items': [{'type': 'string'}, {'type': 'integer'}]},
+            'prefixed': {
+                'type': 'array',
+                'prefixItems': [{'type': 'string'}],
+                'items': [{'type': 'integer'}, {'type': 'integer'}],
+            },
+        },
+        'required': ['pair', 'head', 'prefixed'],
+    }
+    tool = Tool.from_schema(pair_tool, name='pair_tool', description='Takes a pair.', json_schema=schema)
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot([{'pair': ['a', 0], 'head': ['a'], 'prefixed': ['a']}])
+
+
+def test_prefix_items_max_items_tool_args() -> None:
+    """`prefixItems` longer than `maxItems` is cut to `maxItems`, but never below `minItems`."""
+    calls: list[dict[str, Any]] = []
+
+    def head_tool(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'head': {'type': 'array', 'maxItems': 1, 'prefixItems': [{'type': 'string'}, {'type': 'integer'}]},
+            'floor': {
+                'type': 'array',
+                'minItems': 2,
+                'maxItems': 1,
+                'prefixItems': [{'type': 'string'}, {'type': 'integer'}],
+            },
+        },
+        'required': ['head', 'floor'],
+    }
+    tool = Tool.from_schema(head_tool, name='head_tool', description='Takes a head.', json_schema=schema)
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot([{'head': ['a'], 'floor': ['a', 0]}])
+
+
+def test_boolean_schema_tool_args() -> None:
+    """A `true` subschema, which constrains nothing, is generated like a schema without a `type`."""
+    calls: list[dict[str, Any]] = []
+
+    def any_tool(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema = {
+        'type': 'object',
+        'properties': {'anything': True, 'pair': {'type': 'array', 'items': [True, {'type': 'integer'}]}},
+        'required': ['anything', 'pair'],
+    }
+    tool = Tool.from_schema(any_tool, name='any_tool', description='Takes anything.', json_schema=schema)
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot([{'anything': 'a', 'pair': ['a', 0]}])
+
+
+def test_int_hand_written_bounds_tool_args() -> None:
+    """Integer arguments are integers inside the unusual bounds a hand-written tool schema can carry.
+
+    Pydantic never emits a fractional, infinite, null or draft-4 boolean bound for an `int` field.
+    """
+    calls: list[dict[str, Any]] = []
+
+    def bounded_tool(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    properties = {
+        'collapsed': {'type': 'integer', 'minimum': 1, 'maximum': 1, 'exclusiveMinimum': 0.5},
+        'narrow': {'type': 'integer', 'minimum': 0, 'maximum': 1, 'exclusiveMinimum': 0.5},
+        'exclusive': {'type': 'integer', 'exclusiveMinimum': 0.5},
+        'inclusive_lower': {'type': 'integer', 'minimum': 2.5},
+        'inclusive_upper': {'type': 'integer', 'maximum': -2.5},
+        'unbounded': {'type': 'integer', 'minimum': 0, 'maximum': float('inf')},
+        'null_bound': {'type': 'integer', 'minimum': None, 'maximum': 3},
+        'draft4_exclusive': {'type': 'integer', 'minimum': -5, 'maximum': 0, 'exclusiveMinimum': False},
+        'huge': {'type': 'integer', 'minimum': 0, 'maximum': 10**400},
+    }
+    schema = {'type': 'object', 'properties': properties, 'required': list(properties)}
+    tool = Tool.from_schema(
+        bounded_tool, name='bounded_tool', description='Takes bounded integers.', json_schema=schema
+    )
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot(
+        [
+            {
+                'collapsed': 1,
+                'narrow': 1,
+                'exclusive': 1,
+                'inclusive_lower': 3,
+                'inclusive_upper': -3,
+                'unbounded': 0,
+                'null_bound': 3,
+                'draft4_exclusive': -5,
+                'huge': 0,
+            }
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'seed,expected',
+    [
+        (0, snapshot({'nullable': 'a', 'null_first': None, 'multi': 3, 'list': [0], 'obj': {'x': False}})),
+        (1, snapshot({'nullable': None, 'null_first': 'b', 'multi': 'bb', 'list': None, 'obj': None})),
+    ],
+)
+def test_tool_type_list_args(seed: int, expected: dict[str, object]) -> None:
+    """The seed picks one member of a JSON Schema `type` list, as it picks an `anyOf` member.
+
+    The picked type keeps the sibling keywords (`minimum`, `minLength`, `items`, `properties`), and type lists
+    nested under `items` and an object property are generated the same way. `TestModel` makes no provider
+    request, so there is nothing to record.
+    """
+    calls: list[dict[str, object]] = []
+
+    def lookup(**kwargs: object) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema: dict[str, object] = {
+        'type': 'object',
+        'properties': {
+            'nullable': {'type': ['string', 'null']},
+            'null_first': {'type': ['null', 'string']},
+            'multi': {'type': ['integer', 'string'], 'minimum': 3, 'minLength': 2},
+            'list': {'type': ['array', 'null'], 'minItems': 1, 'items': {'type': ['integer', 'null']}},
+            'obj': {
+                'type': ['object', 'null'],
+                'properties': {'x': {'type': ['boolean', 'null']}},
+                'required': ['x'],
+            },
+        },
+        'required': ['nullable', 'null_first', 'multi', 'list', 'obj'],
+    }
+    tool = Tool.from_schema(lookup, name='lookup', description='Look something up.', json_schema=schema)
+    Agent(TestModel(seed=seed), tools=[tool]).run_sync('hello')
+
+    assert calls == [expected]
+
+
 @pytest.mark.parametrize(
     'content',
     [
@@ -460,4 +913,299 @@ def test_different_content_input(content: AudioUrl | VideoUrl | ImageUrl | Binar
     agent = Agent()
     result = agent.run_sync(['x', content], model=TestModel(custom_output_text='custom'))
     assert result.output == snapshot('custom')
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=1))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=1))
+
+
+def test_int_inclusive_upper_bound_reachable():
+    """Plain inclusive integer ranges reach their ceiling, and the ranges here with an exclusive key don't."""
+
+    class MyOutput(BaseModel):
+        integer: Annotated[int, Field(ge=2, le=5)]
+        integer_float_bounds: Annotated[int, Field(ge=2.0, le=5.0)]
+        exclusive_minimum: Annotated[int, Field(ge=2, gt=1, le=5)]
+        exclusive_integer: Annotated[int, Field(ge=2, le=5, lt=5)]
+        number: Annotated[float, Field(ge=2, le=5)]
+
+    agent = Agent(output_type=MyOutput)
+    outputs = [agent.run_sync('hello', model=TestModel(seed=seed)).output for seed in range(4)]
+
+    assert [
+        (
+            output.integer,
+            output.integer_float_bounds,
+            output.exclusive_minimum,
+            output.exclusive_integer,
+            output.number,
+        )
+        for output in outputs
+    ] == snapshot([(2, 2, 2, 2, 2.0), (3, 3, 3, 3, 3.0), (4, 4, 4, 2, 4.0), (5, 5, 2, 3, 2.0)])
+
+    def generated_values(minimum: float, maximum: float, seeds: list[int]) -> list[Any]:
+        schema = {
+            'type': 'object',
+            'required': ['value'],
+            'properties': {'value': {'type': 'integer', 'minimum': minimum, 'maximum': maximum}},
+        }
+        return [_JsonSchemaTestData(schema, seed=seed).generate()['value'] for seed in seeds]
+
+    assert generated_values(2.5, 5.5, list(range(4))) == [3, 4, 5, 3]
+    assert generated_values(2.0, 5.5, list(range(5))) == [2, 3, 4, 5, 2]
+    assert generated_values(0.0, 1e20, [10**20]) == [10**20]
+
+
+class Cat(BaseModel):
+    kind: Literal['cat']
+    name: str
+
+
+class Dog(BaseModel):
+    kind: Literal['dog']
+    breed: str
+
+
+Discriminated = Annotated[Cat | Dog, Field(discriminator='kind')]
+
+
+def test_tool_output_oneof_discriminated_union():
+    outputs = [
+        Agent(model=TestModel(seed=seed), output_type=ToolOutput(Discriminated)).run_sync('hello').output
+        for seed in (0, 1)
+    ]
+
+    assert outputs == snapshot([Cat(kind='cat', name='a'), Dog(kind='dog', breed='b')])
+
+
+def test_function_tool_oneof_discriminated_union_arg():
+    received: list[Cat | Dog] = []
+
+    agent = Agent(model=TestModel())
+
+    @agent.tool_plain
+    def pet_name(pet: Discriminated) -> str:
+        received.append(pet)
+        return pet.kind
+
+    agent.run_sync('hello')
+
+    assert received == snapshot([Cat(kind='cat', name='a')])
+
+
+class DefaultedCat(BaseModel):
+    kind: Literal['cat'] = 'cat'
+    color: Literal['black']
+
+
+class DefaultedDog(BaseModel):
+    kind: Literal['dog'] = 'dog'
+    breed: str
+
+
+def test_tool_output_oneof_discriminated_union_defaulted_tag():
+    """Pydantic leaves a defaulted tag out of `required`, but validation needs it to pick the member."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=ToolOutput(Annotated[DefaultedCat | DefaultedDog, Field(discriminator='kind')]),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot(DefaultedCat(color='black'))
+
+
+class WhiteCat(BaseModel):
+    kind: Literal['cat'] = 'cat'
+    color: Literal['white']
+
+
+def cat_color(cat: DefaultedCat | WhiteCat | dict[str, str]) -> str:
+    return cat['color'] if isinstance(cat, dict) else cat.color
+
+
+CatsByColor = Annotated[DefaultedCat | WhiteCat, Field(discriminator='color')]
+CatsByCallable = Annotated[
+    Annotated[DefaultedCat, Tag('black')] | Annotated[WhiteCat, Tag('white')], Discriminator(cat_color)
+]
+
+
+def test_tool_output_oneof_nested_discriminated_union_defaulted_tag():
+    """The outer tag must reach the member the inner union picks."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=ToolOutput(Annotated[CatsByColor | DefaultedDog, Field(discriminator='kind')]),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot(DefaultedCat(color='black'))
+
+
+def test_tool_output_oneof_nested_callable_discriminator_defaulted_tag():
+    """A callable `Discriminator` emits `oneOf` with no `discriminator` keyword, but still passes the outer tag on."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=ToolOutput(Annotated[CatsByCallable | DefaultedDog, Field(discriminator='kind')]),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot(DefaultedCat(color='black'))
+
+
+@pytest.mark.parametrize(
+    'discriminator', [pytest.param({}, id='absent'), pytest.param({'discriminator': 'value'}, id='swagger-2-string')]
+)
+def test_structured_dict_oneof_without_discriminator(discriminator: dict[str, str]):
+    """A `oneOf` without an OpenAPI `discriminator` object picks a member like `anyOf`."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=StructuredDict(
+            {
+                'type': 'object',
+                'properties': {'value': {'oneOf': [{'type': 'integer'}, {'type': 'string'}], **discriminator}},
+                'required': ['value'],
+            }
+        ),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot({'value': 0})
+
+
+def test_structured_dict_oneof_boolean_member():
+    """A boolean subschema in `oneOf` has no structure to generate from, so `TestModel` writes a character."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=StructuredDict(
+            {
+                'type': 'object',
+                'properties': {'value': {'oneOf': [True, {'type': 'integer'}]}},
+                'required': ['value'],
+            }
+        ),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot({'value': 'a'})
+
+
+def test_structured_dict_oneof_beside_type():
+    """A `oneOf` beside a `type` only narrows it, so the `type` drives generation."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=StructuredDict(
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'integer'}, 'b': {'type': 'string'}, 'c': {'type': 'string'}},
+                'required': ['a'],
+                'oneOf': [{'required': ['b']}, {'required': ['c']}],
+            }
+        ),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot({'a': 0})
+
+
+def _get_city(city: str, country: str) -> str:
+    return f'{city}, {country}'
+
+
+def _get_weather(city: str, days: int) -> str:
+    return f'sunny in {city} for {days} days'
+
+
+class _City(BaseModel):
+    city: str
+    country: str
+
+
+@dataclasses.dataclass(frozen=True)
+class UsageCase:
+    id: str
+    response_usages: list[RequestUsage]
+    total: RunUsage
+    tools: tuple[Callable[..., str], ...] = ()
+    output_type: type[str] | type[_City] = str
+    custom_output_text: str | None = None
+
+
+USAGE_CASES = [
+    UsageCase(
+        id='text',
+        response_usages=snapshot([RequestUsage(input_tokens=51, output_tokens=4)]),
+        total=snapshot(RunUsage(input_tokens=51, output_tokens=4, requests=1)),
+    ),
+    UsageCase(
+        id='one_tool',
+        tools=(_get_city,),
+        response_usages=snapshot(
+            [RequestUsage(input_tokens=51, output_tokens=7), RequestUsage(input_tokens=53, output_tokens=12)]
+        ),
+        total=snapshot(RunUsage(input_tokens=104, output_tokens=19, requests=2, tool_calls=1)),
+    ),
+    UsageCase(
+        id='two_tools',
+        tools=(_get_city, _get_weather),
+        response_usages=snapshot(
+            [RequestUsage(input_tokens=51, output_tokens=13), RequestUsage(input_tokens=59, output_tokens=25)]
+        ),
+        total=snapshot(RunUsage(input_tokens=110, output_tokens=38, requests=2, tool_calls=2)),
+    ),
+    UsageCase(
+        id='output_tool',
+        output_type=_City,
+        response_usages=snapshot([RequestUsage(input_tokens=51, output_tokens=7)]),
+        total=snapshot(RunUsage(input_tokens=51, output_tokens=7, requests=1)),
+    ),
+    UsageCase(
+        id='text_with_delimiters',
+        custom_output_text='Paris, France.',
+        response_usages=snapshot([RequestUsage(input_tokens=51, output_tokens=3)]),
+        total=snapshot(RunUsage(input_tokens=51, output_tokens=3, requests=1)),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in USAGE_CASES])
+async def test_usage_consistent_across_run_modes(case: UsageCase):
+    """Regression test for #11854: streamed `TestModel` usage equals `run()` usage, per response and in total."""
+    agent = Agent(TestModel(custom_output_text=case.custom_output_text), output_type=case.output_type, tools=case.tools)
+    usages: dict[str, tuple[list[RequestUsage], RunUsage]] = {}
+
+    run_result = await agent.run('hello')
+    usages['run'] = ([m.usage for m in run_result.all_messages() if isinstance(m, ModelResponse)], run_result.usage)
+
+    async with agent.run_stream('hello') as stream_result:
+        await stream_result.get_output()
+    usages['run_stream'] = (
+        [m.usage for m in stream_result.all_messages() if isinstance(m, ModelResponse)],
+        stream_result.usage,
+    )
+
+    async with agent.run_stream_events('hello') as event_stream:
+        async for event in event_stream:
+            if isinstance(event, AgentRunResultEvent):
+                usages['run_stream_events'] = (
+                    [m.usage for m in event.result.all_messages() if isinstance(m, ModelResponse)],
+                    event.result.usage,
+                )
+
+    async with agent.iter('hello') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for _ in request_stream:
+                        pass
+    assert agent_run.result is not None
+    usages['iter_node_stream'] = (
+        [m.usage for m in agent_run.result.all_messages() if isinstance(m, ModelResponse)],
+        agent_run.result.usage,
+    )
+
+    run_response_usages, run_total = usages['run']
+    assert run_response_usages == case.response_usages
+    assert run_total == case.total
+    assert usages == dict.fromkeys(['run', 'run_stream', 'run_stream_events', 'iter_node_stream'], usages['run'])

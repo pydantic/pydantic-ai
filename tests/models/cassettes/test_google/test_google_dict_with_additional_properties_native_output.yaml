@@ -1,0 +1,78 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '519'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Create a config named "api-config" with metadata author="Alice" and version="1.0"
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          description: A response with configuration metadata.
+          properties:
+            metadata:
+              additionalProperties:
+                type: string
+              type: object
+            name:
+              type: string
+          required:
+          - name
+          - metadata
+          title: ConfigResponse
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '631'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1379
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: '{"name": "api-config", "metadata": {"author": "Alice", "version": "1.0"}}'
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: CZMUacOtKv2SxN8Pi7TrsAs
+      usageMetadata:
+        candidatesTokenCount: 25
+        promptTokenCount: 23
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 23
+        thoughtsTokenCount: 158
+        totalTokenCount: 206
+    status:
+      code: 200
+      message: OK
+version: 1

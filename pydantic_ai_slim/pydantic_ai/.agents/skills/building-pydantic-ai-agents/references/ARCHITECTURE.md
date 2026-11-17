@@ -1,0 +1,273 @@
+# Architecture and Decision Guide
+
+Detailed decision trees, comparison tables, and architecture overview for Pydantic AI.
+
+## Contents
+
+- [Task-Family References](#task-family-references)
+- [Decision Trees](#decision-trees)
+  - [Choosing a Tool Registration Method](#choosing-a-tool-registration-method)
+  - [Choosing an Output Mode](#choosing-an-output-mode)
+  - [Choosing a Multi-Agent Pattern](#choosing-a-multi-agent-pattern)
+  - [Choosing How to Extend Agent Behavior](#choosing-how-to-extend-agent-behavior)
+  - [Choosing What to Load Eagerly](#choosing-what-to-load-eagerly)
+  - [Choosing a Capability](#choosing-a-capability)
+  - [Choosing a Testing Approach](#choosing-a-testing-approach)
+- [Comparison Tables](#comparison-tables)
+  - [Output Mode Comparison](#output-mode-comparison)
+  - [Model Provider Prefixes](#model-provider-prefixes)
+  - [Tool Decorator Comparison](#tool-decorator-comparison)
+  - [Built-in Capabilities](#built-in-capabilities)
+  - [When to Use Each Agent Method](#when-to-use-each-agent-method)
+- [Architecture Overview](#architecture-overview)
+
+## Task-Family References
+
+Use this file for comparisons and abstraction choices.
+
+If the user already knows what they want to do, load the narrower task guide instead:
+
+- [AGENTS-CORE.md](./AGENTS-CORE.md)
+- [CAPABILITIES-AND-HOOKS.md](./CAPABILITIES-AND-HOOKS.md)
+- [ON-DEMAND-CAPABILITIES.md](./ON-DEMAND-CAPABILITIES.md)
+- [TOOLS-CORE.md](./TOOLS-CORE.md)
+- [NATIVE-TOOLS.md](./NATIVE-TOOLS.md)
+- [TOOLS-ADVANCED.md](./TOOLS-ADVANCED.md)
+- [INPUT-AND-HISTORY.md](./INPUT-AND-HISTORY.md)
+- [TESTING-AND-DEBUGGING.md](./TESTING-AND-DEBUGGING.md)
+- [ORCHESTRATION-AND-INTEGRATIONS.md](./ORCHESTRATION-AND-INTEGRATIONS.md)
+
+## Decision Trees
+
+### Choosing a Tool Registration Method
+
+```
+Need RunContext (deps, usage, messages)?
+├── Yes → Use @agent.tool
+└── No → Pure function, no context needed?
+    ├── Yes → Use @agent.tool_plain
+    └── Tools defined outside agent file?
+        ├── Yes → Use tools=[Tool(...)] in constructor
+        └── Dynamic tools based on context?
+            ├── Yes → Use ToolPrepareFunc
+            └── Multiple related tools as a group?
+                └── Yes → Use FunctionToolset
+```
+
+### Choosing an Output Mode
+
+```
+Need structured data with Pydantic validation?
+├── Yes → Does provider support native JSON mode?
+│   ├── Yes, and you want it → Use NativeOutput(MyModel)
+│   └── No, or prefer consistency → Use ToolOutput(MyModel) [default]
+└── No → Need custom parsing logic?
+    ├── Yes → Use TextOutput(parser_fn)
+    └── No → Just plain text?
+        └── Yes → Use output_type=str [default]
+
+Dynamic schema at runtime?
+├── Pick one of a set of options built at runtime?
+│   └── Yes → Use Choices({key: description}) [Choice(description, value=...) to pick an action]
+└── Otherwise → Use StructuredDict(json_schema)
+```
+
+### Choosing a Multi-Agent Pattern
+
+```
+Child agent returns result to parent?
+├── Yes → Use agent delegation via tools
+└── No → Permanent hand-off to specialist?
+    ├── Yes → Use output functions
+    └── Application code between agents?
+        ├── Yes → Use programmatic hand-off
+        └── Complex state machine?
+            └── Yes → Use Graph-based control
+```
+
+### Choosing How to Extend Agent Behavior
+
+```
+Need reusable behavior across agents (tools + hooks + instructions)?
+├── Yes → Build a custom capability, then consider whether `defer_loading=True` should be the default
+└── No → Just intercepting lifecycle events?
+    ├── Yes → Complex interception needing tools/instructions too?
+    │   ├── Yes → Subclass AbstractCapability
+    │   └── No → Use Hooks capability with decorators
+    └── No → Defining agents from config files?
+        ├── Yes → Use Agent.from_file() with YAML/JSON specs
+        └── No → Just adding tools?
+            ├── Yes → Use @agent.tool or Toolset
+            └── Pass args directly to Agent constructor
+```
+
+### Choosing What to Load Eagerly
+
+```
+Is this part of a capability?
+├── Yes → First consider `defer_loading=True`; would eager loading improve most turns or be required for hooks/settings?
+│   ├── Yes → Keep it eager in an always-on capability
+│   └── No → Use capabilities on demand with `defer_loading=True`
+└── No → Will this information/tool schema improve most model turns?
+    ├── Yes → Keep it eager in the base agent or hot-path toolset
+    └── No → Is it a named workflow with instructions plus tools?
+        ├── Yes → Use capabilities on demand with `defer_loading=True`
+        └── No → Is it one of many individually discoverable tools?
+            ├── Yes → Use tool-level `defer_loading=True` and ToolSearch
+            └── No → Can the caller fetch it outside the agent and pass only the relevant slice?
+                ├── Yes → Keep it out of the agent; inject the slice through deps, prompt, or retrieval
+                └── No → Reconsider whether the agent actually needs this context
+```
+
+Be opinionated here. Any capability should at least be evaluated for deferral; eager loading is a choice to justify, not the unexamined default. Pydantic AI agents should not carry large optional policy text, rarely used schemas, or specialist runbooks in the eager prompt just because they are available. Prefer progressive disclosure unless the information is genuinely universal.
+
+### Choosing a Capability
+
+```
+Need model thinking/reasoning?
+├── Yes → Use Thinking(effort='high')
+└── Need web search?
+    ├── Yes → Use WebSearch() (auto-fallback to local)
+    └── Need URL fetching?
+        ├── Yes → Use WebFetch()
+        └── Need MCP servers?
+            ├── Yes → Use MCP()
+            └── Need lifecycle hooks only?
+                ├── Yes → Use Hooks()
+                └── Need to filter/modify tool defs per step?
+                    └── Yes → Use PrepareTools()
+```
+
+### Choosing a Testing Approach
+
+```
+Need deterministic, fast tests?
+├── Yes → Use TestModel with agent.override()
+└── Need specific tool call behavior?
+    ├── Yes → Use FunctionModel
+    └── Testing against real API (integration)?
+        └── Yes → Use cassetter with recorded cassettes
+```
+
+## Comparison Tables
+
+### Output Mode Comparison
+
+| Scenario | Mode |
+|----------|------|
+| Need structured data and want maximum provider compatibility | `ToolOutput` (default) — works with all providers, supports streaming |
+| Want the provider to natively enforce JSON schema compliance | `NativeOutput` — OpenAI, Anthropic, Google only; limited streaming; Anthropic limits strict schema complexity per request (`ModelRequestRejectedError` before sending when over) |
+| Provider doesn't support tools or JSON mode | `PromptedOutput` — works everywhere as a fallback |
+| LLM returns non-JSON structured text (markdown, YAML, domain-specific) | `TextOutput` — custom parsing function |
+
+### Model Provider Prefixes
+
+| Provider | Prefix | Example |
+|----------|--------|---------|
+| OpenAI | `openai:` | `openai:gpt-5.2` |
+| Anthropic | `anthropic:` | `anthropic:claude-sonnet-4-6` |
+| Google (Gemini API) | `google:` | `google:gemini-3-pro-preview` |
+| Google Cloud | `google-cloud:` | `google-cloud:gemini-3-pro-preview` |
+| Groq | `groq:` | `groq:llama-3.3-70b-versatile` |
+| Mistral | `mistral:` | `mistral:mistral-large-latest` |
+| Cohere | `cohere:` | `cohere:command-r-plus-08-2024` |
+| TypeSafe (Jev, structured output only) | `typesafe:` | `typesafe:jev-latest` |
+| OpenAI Decisions API (text and image input; structured output only) | `openai-decisions:` | `openai-decisions:gpt-6-luna` |
+| Gemini API decisions endpoint (text and image input; structured output only) | `google-decisions:` | `google-decisions:gemini-decision-1` |
+| Decision models on the `/v1/systemone` API (CLM, Laya; structured output only; needs `SYSTEM_ONE_BASE_URL`) | `system-one:` | `system-one:clm-latest` |
+| AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-6` |
+| AWS Bedrock Mantle | `bedrock-mantle:` | `bedrock-mantle:openai.gpt-oss-120b` |
+| Azure | `azure:` | `azure:gpt-5.2` |
+| OpenRouter | `openrouter:` | `openrouter:anthropic/claude-sonnet-4-6` |
+| xAI | `xai:` | `xai:grok-4.3` |
+| DeepSeek | `deepseek:` | `deepseek:deepseek-v4-flash` |
+| Fireworks | `fireworks:` | `fireworks:accounts/fireworks/models/llama-v3p3-70b-instruct` |
+| Together | `together:` | `together:meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo` |
+| Ollama (local) | `ollama:` | `ollama:llama3.2` |
+| vLLM (local or remote) | `vllm:` | `vllm:Qwen/Qwen3.8-27B` |
+| GitHub Copilot | `github-copilot:` | `github-copilot:claude-haiku-4.5` |
+| Hugging Face | `huggingface:` | `huggingface:meta-llama/Llama-3.3-70B-Instruct` |
+| Cerebras | `cerebras:` | `cerebras:llama-4-scout-17b-16e-instruct` |
+| Heroku | `heroku:` | `heroku:claude-sonnet-4-6` |
+| Snowflake Cortex | `snowflake:` | `snowflake:claude-sonnet-4-6` |
+| Crusoe | `crusoe:` | `crusoe:zai/GLM-5.2` |
+| Meta (Muse; Responses API) | `meta:` | `meta:muse-spark-1.3` |
+
+**Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For any other OpenAI-compatible endpoint, point `OpenAIChatModel` at it with `provider=OpenAICompatibleProvider('<service-name>', base_url=..., api_key=...)` from `pydantic_ai.providers.openai_compatible`; keep `OpenAIProvider(base_url=...)` for OpenAI itself or a transparent proxy to it. For anything that isn't OpenAI-compatible, subclass `Model`. For a backend that answers typed yes/no, pick-one and rubric questions rather than writing text, like TypeSafe's Jev, subclass `DecisionModel` from `pydantic_ai.models.decision` and implement `decide`; see the [Decision models guide](https://pydantic.dev/docs/ai/models/decision/).
+
+For GitHub Copilot device login, use `GitHubCopilotOAuthFlow(client_id=...)` from `pydantic_ai.providers.github_copilot`. Call `start()`, display the returned `verification_uri` and `user_code`, then await `wait_for_authorization()`. Pass its `access_token` to `GitHubCopilotProvider(api_key=...)`. The application must have device flow enabled; GitHub authorization does not establish Copilot entitlement or acceptance of that application's token. Browser opening, credential storage, and renewal stay application-owned. See the [Copilot provider guide](https://pydantic.dev/docs/ai/models/github-copilot/#device-login).
+
+To let the users of an open-source or local app run it on their own ChatGPT plan, use `OpenAIChatGPTOAuthFlow(app_name=..., host_id=...)` from `pydantic_ai.providers.openai_chatgpt`: open `authorization_url()` in the browser and await `exchange_code_from_callback()`, which listens on `http://127.0.0.1:1455/auth/callback`. Persist the returned credentials, including the issued `client_id` that later sign-ins pass back, and give them to `OpenAIChatGPTProvider` with an `OpenAIResponsesModel`. Credentials without plan usage (`plan_usage_granted` is `False`) are refused. See the [ChatGPT plan usage guide](https://pydantic.dev/docs/ai/models/openai-chatgpt/).
+
+### Tool Decorator Comparison
+
+| Scenario | Decorator |
+|----------|-----------|
+| Tool needs access to deps, usage stats, messages, or retry info | `@agent.tool` — `RunContext` as required first param |
+| Pure function, no agent context needed | `@agent.tool_plain` |
+| Tools defined in a separate module or shared across agents | `Tool(fn)` — pass to agent constructor via `tools=[...]` |
+
+### Built-in Capabilities
+
+| Capability | What it provides | Usable in YAML Specs |
+|---|---|:---:|
+| `Thinking` | Model thinking/reasoning at configurable effort | Yes |
+| `Hooks` | Decorator-based lifecycle hook registration | No |
+| `RaiseContentFilterError` | Raises `ContentFilterError` for model responses with `finish_reason='content_filter'` | Yes |
+| `WebSearch` | Web search — native when supported, local fallback | Yes |
+| `WebFetch` | URL fetching — native when supported, custom fallback | Yes |
+| `ImageGeneration` | Image generation — native when supported, direct fallback via an image model name or `ImageGenerator` | Yes |
+| `MCP` | MCP server — native when supported, direct connection | Yes |
+| `LocalWorkspace` | A `ctx.workspace` on this machine (host subprocesses and files, no isolation); `read_only=True` refuses commands and changes; `authority='user'` or `'none'` marks its files as not the operator's, `path_authority={path: level}` per directory or file | Yes |
+| `FileUnderstanding` | Replaces files the serving model's profile rejects with descriptions written by `fallback_subagent_model`, judged per attempt (each `ModelFallback` candidate by its own profile) | Yes |
+| `PrepareTools` | Filters or modifies tool definitions per step | No |
+| `PrefixTools` | Wraps a capability and prefixes its tool names | Yes |
+| `NativeTool` | Registers a provider-native tool with the agent | Yes |
+| `Toolset` | Wraps an `AbstractToolset` | No |
+| `ProcessHistory` | Wraps a history processor function — a thin wrapper over the `before_model_request` hook | No |
+| `ModelFallback` | Attempts other models when a request fails or its response is rejected | Yes |
+| `BatchModelRequests` | Sends model requests through the OpenAI, Anthropic or Gemini batch API at batch prices; runs started together share batches | Yes |
+
+### When to Use Each Agent Method
+
+| Scenario | Method |
+|----------|--------|
+| Building a chatbot or assistant that shows tool calls, progress, and output in real-time | `agent.run(event_stream_handler=...)` — streams all events while running to completion |
+| Running an autonomous agent, batch job, or background task | `agent.run()` |
+| Writing a CLI tool, script, or Jupyter notebook (no async) | `agent.run_sync()` |
+| Streaming final text word-by-word to a UI | `agent.run_stream()` |
+| Synchronous streaming for CLI tools or scripts (no async) | `agent.run_stream_sync()` |
+| Delegating to another agent from a tool or output function | `await agent.run()` in an `async def` function; the sync run methods cannot be used inside an agent run |
+| Receiving an async iterable of typed events (tool calls, results, final output) | `agent.run_stream_events()` |
+| Inspecting or modifying state between agent steps, human-in-the-loop approval | `agent.iter()` |
+
+See [Run Methods and Streaming](./AGENTS-CORE.md#run-methods-and-streaming) for `event_stream_handler` details.
+
+## Architecture Overview
+
+**Agent execution flow:**
+`Agent.run()` → `UserPromptNode` → `ModelRequestNode` → `CallToolsNode` → (loop or end)
+
+**Key generic types:**
+
+- `Agent[AgentDepsT, OutputDataT]` — dependency type + output type
+- `RunContext[AgentDepsT]` — available in tools and system prompts
+- `AbstractCapability[AgentDepsT]` — base class for reusable behavior bundles
+
+**Agent construction:**
+
+- **Python:** `Agent(model, instructions=..., tools=..., capabilities=...)`
+- **Declarative:** `Agent.from_file('agent.yaml')` or `Agent.from_spec({...})`
+
+**Capabilities** are the primary extension point — they bundle tools, lifecycle hooks, instructions, and model settings into reusable units. Built-in capabilities include `Thinking`, `WebSearch`, `WebFetch`, `Hooks`, `MCP`, and more.
+
+**Lifecycle hooks** (via `Hooks` or `AbstractCapability`) intercept every stage. Each stage follows `wrap_X(handler: before_X → core operation / on_X_error recovery → after_X)`: `wrap_X` is outermost, and a wrapper that does not call its handler skips the inner lifecycle. `agent.run_stream()` is the node-hook exception: it fires `before_node_run` before streaming, wraps only later graph advancement for non-final nodes, and skips `wrap_node_run`/`after_node_run` for the final streamed `ModelRequestNode`.
+
+**Model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5.2"`, `"anthropic:claude-sonnet-4-6"`, `"google:gemini-3-pro-preview"`)
+
+**Output modes:**
+
+- `ToolOutput` — structured data via tool calls (default for Pydantic models)
+- `NativeOutput` — provider-specific structured output
+- `PromptedOutput` — prompt-based structured extraction
+- `TextOutput` — plain text responses

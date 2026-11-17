@@ -1,0 +1,100 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What's the weather in Paris?
+        role: ROLE_USER
+      model: grok-3-fast
+      tools:
+      - function:
+          name: get_weather
+          description: Get the current weather for a city.
+          parameters: '{"additionalProperties": false, "properties": {"city": {"type":
+            "string"}}, "required": ["city"], "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_NONE
+    raw: !!binary |
+      CiIKHgocV2hhdCdzIHRoZSB3ZWF0aGVyIGluIFBhcmlzPxABEgtncm9rLTMtZmFzdIoBqgEKpwEK
+      C2dldF93ZWF0aGVyEiNHZXQgdGhlIGN1cnJlbnQgd2VhdGhlciBmb3IgYSBjaXR5LiJzeyJhZGRp
+      dGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHsiY2l0eSI6IHsidHlwZSI6
+      ICJzdHJpbmcifX0sICJyZXF1aXJlZCI6IFsiY2l0eSJdLCAidHlwZSI6ICJvYmplY3QifZIBAggC
+  response_sample:
+    json:
+      id: 0c90744e-319f-5f7f-b0cb-6f4cab884d0f
+      outputs:
+      - finish_reason: REASON_STOP
+        message:
+          content: 'I’m not able to provide real-time data like the current weather
+            in Paris since I don’t have access to the internet or live updates. However,
+            I can tell you that Paris, France, typically experiences a temperate climate
+            with mild winters and warm summers. Average temperatures range from about
+            3°C (37°F) in January to 20°C (68°F) in July. Rainfall is fairly evenly
+            distributed throughout the year.
+
+
+            For the most accurate and up-to-date weather information, I recommend
+            checking a reliable source like:
+
+
+            - **Weather apps**: Apps like Weather Underground, AccuWeather, or the
+            default weather app on your phone.
+
+            - **Websites**: Sites like weather.com, bbc.com/weather, or meteociel.fr
+            (a popular French weather site).
+
+            - **Local news**: French news outlets like France 24 or Le Parisien often
+            provide weather updates.
+
+
+            If you’d like, I can help you formulate a search query or suggest how
+            to find this info! Just let me know. 😊 What''s the date you''re curious
+            about, or are you looking for a general forecast?'
+          role: ROLE_ASSISTANT
+      created: '2026-01-29T21:33:17.165098882Z'
+      model: grok-3
+      system_fingerprint: fp_a50f881eb7
+      usage:
+        completion_tokens: 219
+        prompt_tokens: 12
+        total_tokens: 231
+        prompt_text_tokens: 12
+        cached_prompt_text_tokens: 2
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_NONE
+        tools:
+        - function:
+            name: get_weather
+            description: Get the current weather for a city.
+            parameters: '{"additionalProperties": false, "properties": {"city": {"type":
+              "string"}}, "required": ["city"], "type": "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiQwYzkwNzQ0ZS0zMTlmLTVmN2YtYjBjYi02ZjRjYWI4ODRkMGYSgggIAxr9Bwr4B0nigJltIG5v
+      dCBhYmxlIHRvIHByb3ZpZGUgcmVhbC10aW1lIGRhdGEgbGlrZSB0aGUgY3VycmVudCB3ZWF0aGVy
+      IGluIFBhcmlzIHNpbmNlIEkgZG9u4oCZdCBoYXZlIGFjY2VzcyB0byB0aGUgaW50ZXJuZXQgb3Ig
+      bGl2ZSB1cGRhdGVzLiBIb3dldmVyLCBJIGNhbiB0ZWxsIHlvdSB0aGF0IFBhcmlzLCBGcmFuY2Us
+      IHR5cGljYWxseSBleHBlcmllbmNlcyBhIHRlbXBlcmF0ZSBjbGltYXRlIHdpdGggbWlsZCB3aW50
+      ZXJzIGFuZCB3YXJtIHN1bW1lcnMuIEF2ZXJhZ2UgdGVtcGVyYXR1cmVzIHJhbmdlIGZyb20gYWJv
+      dXQgM8KwQyAoMzfCsEYpIGluIEphbnVhcnkgdG8gMjDCsEMgKDY4wrBGKSBpbiBKdWx5LiBSYWlu
+      ZmFsbCBpcyBmYWlybHkgZXZlbmx5IGRpc3RyaWJ1dGVkIHRocm91Z2hvdXQgdGhlIHllYXIuCgpG
+      b3IgdGhlIG1vc3QgYWNjdXJhdGUgYW5kIHVwLXRvLWRhdGUgd2VhdGhlciBpbmZvcm1hdGlvbiwg
+      SSByZWNvbW1lbmQgY2hlY2tpbmcgYSByZWxpYWJsZSBzb3VyY2UgbGlrZToKCi0gKipXZWF0aGVy
+      IGFwcHMqKjogQXBwcyBsaWtlIFdlYXRoZXIgVW5kZXJncm91bmQsIEFjY3VXZWF0aGVyLCBvciB0
+      aGUgZGVmYXVsdCB3ZWF0aGVyIGFwcCBvbiB5b3VyIHBob25lLgotICoqV2Vic2l0ZXMqKjogU2l0
+      ZXMgbGlrZSB3ZWF0aGVyLmNvbSwgYmJjLmNvbS93ZWF0aGVyLCBvciBtZXRlb2NpZWwuZnIgKGEg
+      cG9wdWxhciBGcmVuY2ggd2VhdGhlciBzaXRlKS4KLSAqKkxvY2FsIG5ld3MqKjogRnJlbmNoIG5l
+      d3Mgb3V0bGV0cyBsaWtlIEZyYW5jZSAyNCBvciBMZSBQYXJpc2llbiBvZnRlbiBwcm92aWRlIHdl
+      YXRoZXIgdXBkYXRlcy4KCklmIHlvdeKAmWQgbGlrZSwgSSBjYW4gaGVscCB5b3UgZm9ybXVsYXRl
+      IGEgc2VhcmNoIHF1ZXJ5IG9yIHN1Z2dlc3QgaG93IHRvIGZpbmQgdGhpcyBpbmZvISBKdXN0IGxl
+      dCBtZSBrbm93LiDwn5iKIFdoYXQncyB0aGUgZGF0ZSB5b3UncmUgY3VyaW91cyBhYm91dCwgb3Ig
+      YXJlIHlvdSBsb29raW5nIGZvciBhIGdlbmVyYWwgZm9yZWNhc3Q/EAIqCwidpO/LBhCC69xOMgZn
+      cm9rLTM6DWZwX2E1MGY4ODFlYjdKEQjbARAMGOcBIAw4AljInegPWr0BEAEtMzMzPzoCCAJCqgEK
+      pwEKC2dldF93ZWF0aGVyEiNHZXQgdGhlIGN1cnJlbnQgd2VhdGhlciBmb3IgYSBjaXR5LiJzeyJh
+      ZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHsiY2l0eSI6IHsidHlw
+      ZSI6ICJzdHJpbmcifX0sICJyZXF1aXJlZCI6IFsiY2l0eSJdLCAidHlwZSI6ICJvYmplY3QifU0z
+      M3M/

@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-import asyncio
-from asyncio import Lock
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
-from typing import Any
-
-from typing_extensions import Self
+from typing import Any, Self
 
 from .._run_context import AgentDepsT, RunContext
+from .._utils import gather
 from ..exceptions import UserError
+from ..messages import InstructionPart
+from ._instruction_collection import flatten_instruction_contributions
 from .abstract import AbstractToolset, ToolsetTool
 
 
@@ -31,37 +30,40 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
     toolsets: Sequence[AbstractToolset[AgentDepsT]]
 
-    _enter_lock: Lock = field(compare=False, init=False, default_factory=Lock)
-    _entered_count: int = field(init=False, default=0)
     _exit_stack: AsyncExitStack | None = field(init=False, default=None)
 
     @property
     def id(self) -> str | None:
-        return None  # pragma: no cover
+        return None
 
     @property
     def label(self) -> str:
         return f'{self.__class__.__name__}({", ".join(toolset.label for toolset in self.toolsets)})'  # pragma: no cover
 
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        new_toolsets = await gather(*(t.for_run(ctx) for t in self.toolsets))
+        return replace(self, toolsets=new_toolsets)
+
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        new_toolsets = await gather(*(t.for_run_step(ctx) for t in self.toolsets))
+        if all(new is old for new, old in zip(new_toolsets, self.toolsets)):
+            return self
+        return replace(self, toolsets=new_toolsets)
+
     async def __aenter__(self) -> Self:
-        async with self._enter_lock:
-            if self._entered_count == 0:
-                async with AsyncExitStack() as exit_stack:
-                    for toolset in self.toolsets:
-                        await exit_stack.enter_async_context(toolset)
-                    self._exit_stack = exit_stack.pop_all()
-            self._entered_count += 1
+        async with AsyncExitStack() as exit_stack:
+            for toolset in self.toolsets:
+                await exit_stack.enter_async_context(toolset)
+            self._exit_stack = exit_stack.pop_all()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        async with self._enter_lock:
-            self._entered_count -= 1
-            if self._entered_count == 0 and self._exit_stack is not None:
-                await self._exit_stack.aclose()
-                self._exit_stack = None
+        if self._exit_stack is not None:
+            await self._exit_stack.aclose()
+            self._exit_stack = None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        toolsets_tools = await asyncio.gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))
+        toolsets_tools = await gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))
         all_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
 
         for toolset, tools in zip(self.toolsets, toolsets_tools):
@@ -73,11 +75,18 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                         f'{capitalized_toolset_label} defines a tool whose name conflicts with existing tool from {existing_tool.toolset.label}: {name!r}. {toolset.tool_name_conflict_hint}'
                     )
 
+                tool_def = tool.tool_def
+                # Only an `id` chosen for the toolset is stamped: a hostname-derived one would change tool
+                # definitions that durable engines hash and serialize, and that telemetry exports.
+                if tool_def.toolset_id is None and (toolset_id := tool_toolset._explicit_id) is not None:
+                    tool_def = replace(tool_def, toolset_id=toolset_id)
+
                 all_tools[name] = _CombinedToolsetTool(
                     toolset=tool_toolset,
-                    tool_def=tool.tool_def,
+                    tool_def=tool_def,
                     max_retries=tool.max_retries,
                     args_validator=tool.args_validator,
+                    args_validator_func=tool.args_validator_func,
                     source_toolset=toolset,
                     source_tool=tool,
                 )
@@ -87,7 +96,13 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         assert isinstance(tool, _CombinedToolsetTool)
-        return await tool.source_toolset.call_tool(name, tool_args, ctx, tool.source_tool)
+        # Dispatch with the `tool_def` from the tool we were handed, not the one `source_tool` cached at
+        # `get_tools()` time: a toolset wrapping this one (like `PreparedToolset`) may have changed it since.
+        # The `toolset_id` on our outward-facing `tool_def` is ours to set, so the source toolset gets its own back.
+        source_tool_def = replace(tool.tool_def, toolset_id=tool.source_tool.tool_def.toolset_id)
+        return await tool.source_toolset.call_tool(
+            name, tool_args, ctx, replace(tool.source_tool, tool_def=source_tool_def)
+        )
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         for toolset in self.toolsets:
@@ -97,3 +112,14 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
         return replace(self, toolsets=[toolset.visit_and_replace(visitor) for toolset in self.toolsets])
+
+    async def get_instructions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        return flatten_instruction_contributions(await self._collect_child_instruction_contributions(ctx)) or None
+
+    def _instruction_children(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        return self.toolsets
+
+    def _authors_own_instructions(self) -> bool:
+        return type(self).get_instructions is not CombinedToolset.get_instructions

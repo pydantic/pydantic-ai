@@ -1,0 +1,108 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "437"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-sonnet-5.5
+        stream: false
+        messages:
+        - role: user
+          content: What tools do you have available? Just list them briefly.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: ""
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+          cache_control:
+            type: ephemeral
+            ttl: 5m
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,x-openrouter-error-origin,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793763605-ZB0dZRSZ9S0gHSD9ijui
+        object: chat.completion
+        created: 1793763605
+        model: anthropic/claude-sonnet-5.5
+        provider: Claude Platform on AWS
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: |-
+              I have one tool:
+
+              - **get_weather**: Gets weather information for a city. It takes one required parameter, `city`, which is a string.
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 377
+          completion_tokens: 45
+          total_tokens: 422
+          cost: 0.001204
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.001204
+            upstream_inference_prompt_cost: 0.000754
+            upstream_inference_completions_cost: 0.00045
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-11-04T03:40:06.817276+00:00

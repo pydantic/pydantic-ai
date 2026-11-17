@@ -1,0 +1,101 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "222"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-sonnet-5
+        stream: false
+        messages:
+        - role: user
+          content: >-
+            How many prime numbers are there between 100 and 150? Reply with just the
+            number.
+        reasoning:
+          effort: medium
+          enabled: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1792905400-8KR9Nopbrd6Q9SPVKZAP
+        object: chat.completion
+        created: 1792905400
+        model: anthropic/claude-sonnet-5
+        provider: Claude Platform on AWS
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: "10"
+            refusal: null
+            reasoning: |+
+              Listing out the primes between 100 and 150, I count ten of them.
+
+            reasoning_details:
+            - type: reasoning.text
+              text: |+
+                Listing out the primes between 100 and 150, I count ten of them.
+
+              format: anthropic-claude-v1
+              index: 0
+              signature: >-
+                Eo8ECuQCCBMYAipA8987lftZNg5q2mL7VZDNjesY0w3T80s1vd0MPMZgvDjG/16K5m7lsXf7ADSOK43AnRTgUrKVv+llaFAR+al8ETIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0YzBmMDQ2Zi0yNWZkLTQ1ZmItYmZiMy1hMDhhOGUyNDljYTd6HnVwcm9mXzAxMUNmV0xtdjlGeVFOcGF6WUtxRVNxepoBEQoPY2xhdWRlLXNvbm5ldC01qAG7ofbWBsIBOggEEAAaDALaigNPNwX4fQQmrSABMgQScc8lOgQ4MyOKQgQ4MyOKSgQ4MyOKUABaBNkF4VZgAmgBcADaAWAKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIH8heLMmd810iLLi0ur1ezD0AYmV/SUDIjTk2DjWHXPfIgAyIMLAE8hqnJLiL5ZvPYYXdo+LekTJAq3MCXv6HgmK+04fSAMSDGmWwq5YguuZ1FhVeRoM7m4sdu1nHIomVHXxIjDYxkWOmv/DYjjRlQUEB/yOAuD7Zdzzs3yDI0ulHVhoVzT0jCBiDm97WayS+qQCH58qWOoTSwk6V12vS+SimlcQcwBvWC8K6PpnMaoTZlbIrPfstrZCUGV+2fai3R0mpyOfEFLB3TD5a7FN4NQ8X3L19cYFkJt2hjc7PLg/PV2twAFmlKhqGguiAEAYAQ==.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS0yMDI2MDYzMHxjbGF1ZGUtb24tYXdzIn0
+        usage:
+          prompt_tokens: 31
+          completion_tokens: 41
+          total_tokens: 72
+          cost: 0.000472
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.000472
+            upstream_inference_prompt_cost: 0.000062
+            upstream_inference_completions_cost: 0.00041
+          completion_tokens_details:
+            reasoning_tokens: 37
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-25T05:16:43.521415+00:00

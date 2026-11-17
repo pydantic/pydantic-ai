@@ -1,0 +1,852 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "495"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              First, in the code sandbox, write the text "sentinel-42" to /tmp/state.txt.
+              Then use web search once to find the latest pydantic-ai version on PyPI. Reply with
+              just the version.
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        tools:
+        - name: web_search
+          type: web_search_20250305
+          max_uses: 1
+          allowed_domains: null
+          blocked_domains: null
+          user_location: null
+          allowed_callers:
+          - code_execution_20260120
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=244
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-972e680f2361cfef6736021c0455b288-9446529bb7cad395-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CgRUPSmjmPzg91d4AhAcc","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4427,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"not_available","speed":"standard"},"diagnostics":null}       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}           }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll help you with"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" that."}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Let me first write the text to"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the file, then search for the latest"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" pydantic-ai version."}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_01KrbJfn6Tq43uEnzFdMpr9E","name":"bash_code_execution","input":{}}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"nd\": \"e"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"cho \\\"s"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"entinel"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"-42\\\" >"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" /tmp/s"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"tate.tx"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"t\"}"}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"server_tool_use","id":"srvtoolu_01M6KQbCc4boUgqqZ8yAUYg1","name":"code_execution","input":{}}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"code\": \"\\nimport"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" json"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n\\nresult"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" = await"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" web"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"_search("}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\\\""}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"query\\\": \\\"pydantic-ai"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" latest version Py"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"PI\\\"})\\nparsed"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" = json.loads(result)"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n\\n# Look"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" for version"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" information in"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" the search"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" results\\nfor"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" item in parsed[:"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"3"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"]:  # Check"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" first few"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" results"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n    if item"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":".get('"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"type"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"') == 'web"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"_search_"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"result':"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n        content"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" = item."}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"get('content', '')\\n        if"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" 'py"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"pi."}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"org' in item"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":".get('url', '')."}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"lower() and"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" 'pydantic-ai'"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" in content.lower():\\n            print"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"(f\\\"Found Py"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"PI page"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\\")"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n            #"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" Extract version from content"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n            if"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" content"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":":\\n                print"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"(content"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"[:"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"500"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"])"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"  # Print"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" snippet"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" to"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" find"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" version\\n            "}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"break\\n"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\"}"}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2           }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_01KrbJfn6Tq43uEnzFdMpr9E","content":{"type":"bash_code_execution_result","stdout":"","stderr":"","return_code":0,"content":[]}}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"server_tool_use","id":"srvtoolu_01S7ykBJ6Ae96wsMvQ9RAsXs","name":"web_search","input":{"query":"pydantic-ai latest version PyPI"},"caller":{"type":"code_execution_20260120","tool_id":"srvtoolu_01M6KQbCc4boUgqqZ8yAUYg1"}}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":5,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01S7ykBJ6Ae96wsMvQ9RAsXs","content":[{"type":"web_search_result","title":"pydantic-ai (PyPI) — Safety Package & Vulnerability Database","url":"https://getsafety.com/packages/pypi/pydantic-ai","encrypted_content":"EusCCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDLEG727OC/IMSbDJtRoMBOvYOX+lmqHDLZSMIjAh7mkhlG1xVIxkEP7qCB/JF1Fdnq5awTiiZQIMwcOMtRg5WWppM0i7ZfrmVru+CzUq7gGOU+B7Dt9cciHvBvP+TMYYMWH23uLzmAJS9yq97c2xJJNSYn2FRufH0BLpt5rg4XUHYsgJ92iuPsiSW3+srnV91jlpPW8xOQe+e0BU0JwqqQsSXn2vBZh2vdN2UsjEi66XJaTP3sFMcZwX1sdNS1Iaac4OvrQ2ErwNjF31x7+gYAg/RRQ+g1vt6+ezcNfMN3pjyZHifEQEW11R823OdfDWnxx0/YSHP9D+MuKkQWTtPomgzAaFT00KCl+5ZRdowJDGkPsDAhAvKjDh97Y8aENvWRYakPVFBuW/KG9w4bhX8bLR2kHJwRPywFSgtCSkGAM=","page_age":null},{"type":"web_search_result","title":"pydantic-ai · 185.3M downloads on PyPI","url":"https://pepy.tech/projects/pydantic-ai","encrypted_content":"Et4JCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDHNvbLlUzfMMGgaPPhoMpCbp+Rhc+6saClmoIjAAfNdr6uOOdGFcTnuUKfMTGSVvVxwA1LLmBbSsxdWCZTwfQsrpwD+p+tmSRShTgscq4QiFESpQxpnpi0gQTidzP+rUr+dOhbUDDOPoedSkrKf+XyFv4I2Ftfmmwdxa/G8I5vEUmMsIuyk+6N6AcnOCptFi/4r5Szxy/Hi/scDTft18/hJrkDHnzNTwCTHs/DAI9gaUJ29XojgT26wKdfYBmf1ZFF28FTeSzc//r+lIPB9gdSatHbzRSv354VGrPogpyBomZ6ImIBl5NWaqqJKvbgG5aghFYrX1M2FFRr4FRzC2I1kFfsaesXC1CfGtJ93wBO9zZKFyyRwPS2A4IsdXwn4bzIUCc/Vt4oUigfy1lDVJHrXuJxA5HJrWPpzZHssQ+3L+rnRhcLHXSxjJEIERi+x0xFbn5ZHr4XUBZ3uEPFgJlPl8NC4PYgEnlmg/5Vwsioq5bDRcWB8sKA5SoeDexsOpHISzpeZkn7fT8/POMmVWgSUYdnw6PIG/EteCrAWqYmJzNuhk1/dGQGswWzUCAWiSdB7zrOqOWQyF0Ygd1jcDUmpgz221kafTiL3FAusU1fCGO0hMfu5Zj/xrqycjjhXEE8KeyudJBMTGQDtqx1efE6Djk6vnZpRdJHO5O+Yf84vqAN/Pxjv/H0f9mP1TvT8+hNlkjr3pc5YxV6Q7+zEl6RWm/1AbjUzVIMUai9LxaJkwbfA7ljF3CGPjk0QHjgbVW04W8rPcKwlg4q1gMCSz08LhZFUtwWVnFCw54yuft8O1Y8EVvLWF78Zue94LYhX54/Nuzyt3FPQxm8InMZUwzfmJgvCwHqetXjFaAvnAXyfTEdUCivVUFXs+BuTTIidAJRs9beMUeVQHFtBlFr/FE/iJPLPd7XCs2Vt5e9Nl5TtanROLPbG9uXYxx2vLYD+rv3Vg/HI7IdE7AzoUJVFtvsXts8NKtQBjNdjHLiNyvwXkdJcA2tyi8tMLOnGJE7gHHAp76Z2kJx1fPVyfuKcKP/tanAh13cCa+IE+bz+LXu7KNMjJcVMUYmOuYWTUOqPXg280RGKEwEgbz255hUAd3akaVud79ZVYFZhjtSzRg9fgqMvfoH/PL7S/dZZ10n34KThQBNPSg3fJysx5x7HY71EEBxwuf/X8JITgDIGiWozmuQ5e12GuHm1PtxfhoqZmLYkOm3GEkXNFsX/fEf8dhStc/nCwYbDIOdEjbXtb+A2b6HB96nxOYhU/C80wvs89BoJEpN0CM9zPn8tOrayi1S13zwzVR4G6XQdNJWKH1MKvbTq1y1NzhG9aHoe7s3o9l87s4EJMyd3UKK+g+lBPQioLi7eNJFr7BVvKBQO1FGDLlxsNxS4VOoxieMODmnUcSj0lh9StqimqlXErnYp39PIJUsK6L0XMZKXiQpamxcFomIKXAZOf3czSS7rSoLPAXykev/DhqoxT7DPmx/x+vXb8fmTvJYW45oOWtmt46XzlAm66MJ6pQqMIEEDXouwAOlrjp5TteccqqoXFKKfPoSvdhYdBNEaZ/pahbiEjN1ndlpuAE1emzIWTR1f94D1GvhgD","page_age":"156 days ago"},{"type":"web_search_result","title":"pydantic-ai 1.67.0","url":"https://guide.sonatype.com/component/pypi/pydantic-ai/1.67.0/versions","encrypted_content":"EpcKCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDDJ3HG+7tPOk6+ciJRoMRDVwwJSHzIdqd7v0IjAOcXrxm6Mn7NUOxLJW0TLg5oL7YV9SFv2rIgQ7icw6VK8YY7n8lcnCISVcJB5lpqUqmglokAU2SmKqQ/IZw9bQyF83RuF1Ucu1z27PBLwwiGItEOZVG5Y8y5q+gIUxNN5m3gNL8nJSnhe4gHJwzAKj/qPi3TrEVB9T4uJQyoYiLczlOqSpljZd6VtmSj3+/QJjOyQ7cV41ZMlbES8T+aVeF5Q196Bc/wa8F/uypVRWcnMtnmSh6Y7QK1Ei9psXEoYDnf6JioPiiY3qgr9ip1ViCDkWJTYj6WaleE/ez7SYHZQNqIxuJWjPOdP4z35d8TZ1XecVnd/U0QaqkBIjJxRLj2akkILreofMLVcFwLrp7NYxGf0AXx4CHCRmNXFyhub43H/ND2OFjuzCNXb5y2sLpCSXP//8KXEai1Za9mIcl+OG6IMhEMRJH+J8cW/ptQSGKKadGjA5SLhta10z7YVfKQB85ebEegfLPHm95MzFESKVBX+5Ne7E0PkJDvU0t+kKRko7syBUXWmFfmEKUIfDjJHovxEtE6l3skHV9y+2DVS67WnxH2TDft9oPYLq6OZgTfXuiVVLtiSMjo9h/G1JsGuNPtx7kYRnyGMF1ZQDpfO+PKsu4rtSy7IyfdQ8dSyvBCojqQ6SOWEUd3OHC/W6SRzKVFtEhHNfqkN+/YLJtqlkNcWqBrZuMP29pwEKmlfknRUHwJx/tqjgRq2dNLf+hYLXkDneG0GD6rzvwufGVz+OakUliM7FQHGSjQvCRBI1waHQhmBtYn+cOTrrB9Ienu8WkF4m3iaIWrjUJTgOaDBolDSBVlHCw2CN4ppEZR6pAMxgkgbYP2sUWf8qrmRgMQA7H8ptp5UZ5jQtfyBrpEqQzKkDOWbZSiX/cbV1VkAXZdZJi1ClkNrSHkqnrFXt7JQXC5pgRQqWoUkppkup4DUGDCCJMiRw0zhPNegsJHOsrrm+IzQgwZ5diNueYWLmr/0h/F4yoO2fXgKFi92h+jaSKk3UPq7Xqo5Jf+wYE2K4jD5kGQrqgtxEvicTeEb2oIUeaTMvNB0FxljID7pHYAW57uayb04ds+qt3konaRF1oeyIB+TiLtaaqweQ5pDyKeNqDY+E6T22FiZBbYaY4kF5CctnNArwV/x/LICcE1OnozLuzMkkePWaPt0J1wwDlk98nX7jY92KwCTCF4itLW/BcNE7QByTj2J3vT0MP5QVahpMD6u5lkeKJYy259Zg62z02oKR7xdRPNezJjv8y8zNZlXRwUPQvJJGXdp72zgcO7iXXeySMEBDTuMRb/Az6pn353CcK2FVF0CmwwxgivNas2e5J0jJ2OGieHsxNy+8r1KoHYG73obLtEhxgCBjyezKCoPqcGSZbmFNxMoZjp3zibdgcn5JTkbixOKIQa4asFJEACllO5PxYkyGqvDo2ynjrbprgZfyrBUjnCpVYy6RAs7qblBxTIjwye5ewapF08bVigAw+fa/kOCea0r4v2tSMRua5XZ2pj0bn7JxmUklTGS/BucdkvCYwJeig18Ppl1vECFenH0S7xfbHq3K+dF7IoNdsJibvQv0NOnCrLUMGwOF/kSMsNqI2m2YAsK3U/QWcilcmJQ54LllJzIqCFIBv6X/1QeAc2sGEBgD","page_age":null},{"type":"web_search_result","title":"pydantic-ai · PyPI","url":"https://pypi.org/project/pydantic-ai/","encrypted_content":"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","page_age":"94 days ago"},{"type":"web_search_result","title":"pydantic-ai","url":"https://pypistats.org/packages/pydantic-ai","encrypted_content":"EscFCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDDLhJeVRMaw0pnAC9hoMFVpfRA1omyyf6k+BIjDyaPcGkgy4TcKEM2Gid6HcHxrOQQVaPu8ahI8uISrxgBFooUtr6g8RF1T+uskfYv0qygSD2YpBzwpfP7M+t77b1gAZX2Eaqm9/7ABDZTqrYDv14QRuCwvFFKBgUiIlBGdpbSxoSxLSUbw7pBg9W1Jad3oGmRGx2G677vw8QHFeqS2+dYFtrkCaEUqdmByW+Qfu9mLD2JOtQJCGvFfv55Bhkr1qweLEVyezQaZazWnk05hdZjMM0soWFaBW2cEnpj5JtBvs4wsUaeZTVbz6/7kH17HVHkEqOwp/eyJEL4UgEaFU49q9jvMxrx0fdIBTwqrI2mVR5WaOyx/kWtmoGwZcQHDTeB6rB5GDKUX4OprDXlFRzwBuioAf12v7kIA2Z3ivGJlWA52+SnYwP3+fl/rbV6ij6MWveosYI0DEj6jkB+I/0cwqF53NqtdjVYWtIshPcfFSuQNpx/8EAhaMdGVJBPcfvo4uK++OlnWtLQbwcFYAKIgqZhaHQetkogHTKIN7TM89k48XnjbVS3iwapjnHFZTLFKoJPsqA9bhlKrOzZYGfw6PSuqEWMiodErEZMrRUUtAV12/ZhEGefwyAaztFNoyeMsXpIhcEuHNEM232tvs0XIIjqSb5HbkEdhXSK22/7aNpfng6zF8E2KIV9H7fHqIFsUQ+yxwLgaglIVkZ7/hLp+s7VxEgi2zH9Jj7Jn6S7O/2XkOtIkJdJKcjFOEielnQQVwCW785kQ5/vh7eSp4MJbK1AM7P/syiSl7+YH0OEKQdQ9n/d+khXfkDJRKnsX+CKMnLtUPEtDxcoft4h2czkWWJB/zRdhZ7E+ZQTkMBoZ/ZHJ+aSSV5CFWGAM=","page_age":null},{"type":"web_search_result","title":"Upgrade Guide","url":"https://ai.pydantic.dev/changelog/","encrypted_content":"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","page_age":"312 days ago"},{"type":"web_search_result","title":"Releases · pydantic/pydantic-ai · GitHub","url":"https://github.com/pydantic/pydantic-ai/releases","encrypted_content":"Et4ICioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDGTpj5Md7PVyZN9lNBoMkPMDX2EC/KK2htOvIjDqO/Y5+ppskBq8ErSaLyieMTqyeFLW5kHLEFL7m68NRO5MawQ6/09ZsIFuF25z5O4q4Qc1m/Pbcq5XK++/0olXq6Q/iCjAVc86RygFse4fLy+pibArgc7IREUvv2thORlivWTmtHAiCGyshcVUXNo3cqAg+qsldrGHwCYR+vOdOezKWPPXV+yzxMzwG6OO5oROxxlWJA2mGJuwWubUCvmStZW2wQTKygWZO5RtuRV0B5YxdEPOewQyUoGxDNG4rXuKB3Dxj0dAtXoJSW9Z1n38vodKrS7hu+T31Q2QnN3uZl4vLPhOYTHYE7hrnEpWfrQ5PyzhVosEEFk0EUSqv7F+MFIW7T5I6M97vZ8p3Gy1TCitMjgQ9uc+52wIEmKq6qZyF1iMnGz1ZTT0iJuK2RxBpKkc+zPVxEqXNVs2YpAXWiKnZ0HiH1vloUTRF7SLFHWrtOLHuFIx1QL9TH943WAK5XGzDH+D/ithhXRqp6FCUkaz0mJchpsIzR9AgoIO/wY9HPKjf3UojhXnMp0f6MhMybM6ydXJSWmvohVzRYkBVDJumkfri1bwnVGFYnCY/LjDAT1MlFzk4v0lAHzi4nEhtYRw7VsXIrZZw5Fea/fPAx3s/IyPOs0rGd/psanvi/F3HUrOtSgBjGld9W0YtzYNtNd2PRlAPFrqIPCVoYcGdNV/RCmJOBI19EWOiZp9CcvAAlnI5+Q7vQN/IkDHGAUWGtUbadfMNJQ9+rQTmLTCxlXmBJBSFadnJ4ka9cxcpBWbhb4293oKsz42AGYdG1aWbtsfz9fgV0B7HB+sLw7h7AORd6g0s4VzpSKSNoOje7Fui8v/vQ6o8w+vAmWMSiXB+1HBzcU3PM9ND23Ri570vSDIBSXDpCje742tntRkmp2ooGn0jWPA9cJO8UuruMDz+WONerWggqUKEYoDWFm88n7pz0oHgGfR3Na4rCc5MG7J9I78v64GSrYaZeANhjkZrdM2YsatEu5aSKiPlLw+0wey4aE4dNLMpwsmRSu5TX2D4txxYbjIK/j72mz6Ne4xmZIUCahjpG5QUKOoBfv0eN5cnrKMeBsXSgKL2KuRmEvfyPoROLQgKenOW7j4yhXKgX7TulZUrDslAOMYBJtUCc/AXh7nLycf4g1XfJWAtfwXBK1pdezY8lJXNKQof4XbS8nVqgheNFRt0z3fN2oUsItAnzY8u7q3RkGWCpzgoiKJTkRSFAxwI/LRDBeIJTtOs8Frjlbbbzg57eB9utkYOf34dybxY3qT4SrYgLPHaar5WzCvm4cUUn4v064SRSzibEXeTHooleW+eC7WY1sT2eThOr/gPY10TSwB3OPMWwcv6oUndGNXWeErKAPXmn/pvyVn2pHh6LaE568AEoUVD6IP5bcYAw==","page_age":"62 days ago"},{"type":"web_search_result","title":"Upgrade Guide","url":"https://pydantic.dev/docs/ai/project/changelog/","encrypted_content":"Ev8GCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDN2jJLgmTu40jlnvkRoMR3tfFz5fnzvw1SjzIjCkzDskzto949XHfxVpnGSPEt0Qh7P7o8BeFbH6pDZIavNI0smh2tyOeHdcjkv7ygEqggacW7h/+MoaO6vBAGiQsTA76MxxY/QkIecbO8NfwrXqiK5VInwV9eCIgZ6RYZGlYRQrR/OEMVFXJJK37EXoV75oK1wUJCEyitXJE5qaNRzGFVrZUimDSWdAs4Jayc6Ps6h8Hf5s+BljTQNu8rTgboih6aygoy6BogOqDJMzs0bWTpAgJ/FUfQBKC+Qz1gkfezL+NHpwe1lrlVyGZUIWywCGG9S6bgJNTJNITuBu68hYr6Fc1sFF7/dy5tluxm3Akr3JZg9ZD6RG1HVWKdRe7EPuegjOMJBwr2UhlcKiI9MprOTUHZVBZzdKCmubZ7RPGsRP/taeI2sfidbEf201RCG9dpB0suOqiLOb7YqVUJ8xl5jzxGnNx0XPgpi1zwtVsYKxW0GA2kYcuNNt9PBBiWXf7VEmXFMlY5ozXoMsGMLlNfaZpYTvINkCidelbY2kIFlADsy50MVSSys6RtHQfDV0ppGV6T29Pzqjaw46M3QDoa3juuD5kcOLfGyBJmtZMy5W+tYDJNFkvEDcajdlvhNqcu19pPdy0nV1gF1ff3lHggkZhgzHiMb80UnI+OAC/6gKguIWUVQ2hb2bK9sLC9D5OhDGPnImFu1LLNrlyKd/2XE+TPmUxom60zLS+aUAA5FIxcKZ/NJ8eyALg9itiQs6gtTb1Hu1jJcBAj1+3UbERxrxNb9+3IMQbmJSPtIzn2ecYTx3N1J784wtSSIWNZVtZZWvwnDVEurs4A7kQF6LX9/7/Rf+0D8aONlHQYuwjLhWc788MUhBZgTEAMWVDXMUFiPKJ04dFSN0nb7sGHfwFbbIG8h5ByOKLs+srdf5pDHPFWDIa92sszuq3nImW+RkU4977pG1dog1Uj8oBrLDWFzdWIMsK2xjAjcHIqYyaZ1F0dp1iQLGISQxeKE1Q8Xu0z//pfycXWWFEbwSZ0v46bRuPr3fDQWMc87h4H2AKdmR3aGrGkwNmnVf7u29SzYPEU0h685TKJPQxIG4jnFSMt6ajqb7cDAOGziM5UAjdIsBNhgD","page_age":"416 days ago"},{"type":"web_search_result","title":"Pydantic AI Review 2026: Type-Safe Agents & Alternatives","url":"https://www.promptquorum.com/power-local-llm/pydantic-ai-review","encrypted_content":"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","page_age":"45 days ago"}],"caller":{"type":"code_execution_20260120","tool_id":"srvtoolu_01M6KQbCc4boUgqqZ8yAUYg1"}}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":5    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":6,"content_block":{"type":"code_execution_tool_result","tool_use_id":"srvtoolu_01M6KQbCc4boUgqqZ8yAUYg1","content":{"type":"encrypted_code_execution_result","encrypted_stdout":"Eo4BCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDOtZ1JfuMOOe5HlBLhoMnUxvM+HsDWsU8MYYIjAu+RzUyA6uS+tcpusKj6huPsFgJZ7rYeSMak88qD5xCblJOwF/SfihSx3/a5UOtdAqEsOwM4RfMon/uTD9yEjMmu0pgBgD","stderr":"","return_code":0,"content":[]}}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":6        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":7,"content_block":{"type":"server_tool_use","id":"srvtoolu_01UXhjSAKqWprnYz4CkMwdH3","name":"code_execution","input":{}}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"{\"code\": \"\\n#"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":" Let me"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":" check"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":" what"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":" results"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":" we got"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"\\nfor"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":" i"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":", item in enumerate(parsed):"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"\\n    if item.get('type"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"') == 'web_search_"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"result':\\n        print"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"(f\\\"Result {i}:"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":" {item.get('title"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"', '')"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"[:"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"100]"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"}\\\")\\n        "}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"print"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"(f\\\"URL: {item."}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"get('url', '')[:"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"100]}\\\")\\n        print()"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"\\n"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"\"}"}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":7 }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":8,"content_block":{"type":"code_execution_tool_result","tool_use_id":"srvtoolu_01UXhjSAKqWprnYz4CkMwdH3","content":{"type":"code_execution_result","stdout":"Result 0: pydantic-ai (PyPI) — Safety Package & Vulnerability Database\nURL: https://getsafety.com/packages/pypi/pydantic-ai\n\nResult 1: pydantic-ai · 185.3M downloads on PyPI\nURL: https://pepy.tech/projects/pydantic-ai\n\nResult 2: pydantic-ai 1.67.0\nURL: https://guide.sonatype.com/component/pypi/pydantic-ai/1.67.0/versions\n\nResult 3: pydantic-ai · PyPI\nURL: https://pypi.org/project/pydantic-ai/\n\nResult 4: pydantic-ai\nURL: https://pypistats.org/packages/pydantic-ai\n\nResult 5: Upgrade Guide\nURL: https://ai.pydantic.dev/changelog/\n\nResult 6: Releases · pydantic/pydantic-ai · GitHub\nURL: https://github.com/pydantic/pydantic-ai/releases\n\nResult 7: Upgrade Guide\nURL: https://pydantic.dev/docs/ai/project/changelog/\n\nResult 8: Pydantic AI Review 2026: Type-Safe Agents & Alternatives\nURL: https://www.promptquorum.com/power-local-llm/pydantic-ai-review\n\n","stderr":"","return_code":0,"content":[],"abort_reason":null}}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":8  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":9,"content_block":{"type":"server_tool_use","id":"srvtoolu_014TSkhzHwqLGcLPW8BH5Vuo","name":"code_execution","input":{}}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":"{\"code\": \"\\n#"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":" Check"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":" the Py"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":"PI page content"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":"\\nfor"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":" item"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":" in parsed:\\n    if "}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":"'pypi.org/"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":"project/pydantic-ai'"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":" in item.get('url', '"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":"'):"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":"\\n        content"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":" = item.get('content', '')"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":"\\n        #"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":" Look for version number"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":" patterns"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":"\\n        import"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":" re\\n        versions"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":" = re.findall(r'\\\\"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":"b"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":"\\\\d+\\\\.\\\\d+\\\\"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":".\\\\d+\\\\b', content[:"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":"1000])\\n        if versions:"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":"\\n            print(f\\\"Found version"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":": {versions[0]}\\\")"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":"\\n        "}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":"break\\n"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"input_json_delta","partial_json":"\"}"}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":9  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":10,"content_block":{"type":"code_execution_tool_result","tool_use_id":"srvtoolu_014TSkhzHwqLGcLPW8BH5Vuo","content":{"type":"code_execution_result","stdout":"Found version: 2.59.0\n","stderr":"","return_code":0,"content":[],"abort_reason":null}}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":10             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":11,"content_block":{"type":"text","text":""}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"2"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"."}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"59.0"}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":11 }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_01W1nGdMjr6ewoBnEq97mHHQ","expires_at":"2026-10-26T21:24:04.134733Z"}},"usage":{"input_tokens":19981,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":612,"server_tool_use":{"web_search_requests":1,"web_fetch_requests":0}}       }
+
+        event: message_stop
+        data: {"type":"message_stop" }
+
+  recorded_at: 2026-10-26T20:24:10.348953+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "22621"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              First, in the code sandbox, write the text "sentinel-42" to /tmp/state.txt.
+              Then use web search once to find the latest pydantic-ai version on PyPI. Reply with
+              just the version.
+            type: text
+        - role: assistant
+          content:
+          - text: >-
+              I'll help you with that. Let me first write the text to the file, then search
+              for the latest pydantic-ai version.
+            type: text
+          - id: srvtoolu_01KrbJfn6Tq43uEnzFdMpr9E
+            type: server_tool_use
+            name: bash_code_execution
+            input:
+              command: echo "sentinel-42" > /tmp/state.txt
+          - id: srvtoolu_01M6KQbCc4boUgqqZ8yAUYg1
+            type: server_tool_use
+            name: code_execution
+            input:
+              code: |
+
+                import json
+
+                result = await web_search({"query": "pydantic-ai latest version PyPI"})
+                parsed = json.loads(result)
+
+                # Look for version information in the search results
+                for item in parsed[:3]:  # Check first few results
+                    if item.get('type') == 'web_search_result':
+                        content = item.get('content', '')
+                        if 'pypi.org' in item.get('url', '').lower() and 'pydantic-ai' in content.lower():
+                            print(f"Found PyPI page")
+                            # Extract version from content
+                            if content:
+                                print(content[:500])  # Print snippet to find version
+                            break
+          - tool_use_id: srvtoolu_01KrbJfn6Tq43uEnzFdMpr9E
+            type: bash_code_execution_tool_result
+            content:
+              content: []
+              return_code: 0
+              stderr: ""
+              stdout: ""
+              type: bash_code_execution_result
+          - id: srvtoolu_01S7ykBJ6Ae96wsMvQ9RAsXs
+            type: server_tool_use
+            name: web_search
+            input:
+              query: pydantic-ai latest version PyPI
+            caller:
+              tool_id: srvtoolu_01M6KQbCc4boUgqqZ8yAUYg1
+              type: code_execution_20260120
+          - tool_use_id: srvtoolu_01S7ykBJ6Ae96wsMvQ9RAsXs
+            type: web_search_tool_result
+            content:
+            - encrypted_content: >-
+                EusCCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDLEG727OC/IMSbDJtRoMBOvYOX+lmqHDLZSMIjAh7mkhlG1xVIxkEP7qCB/JF1Fdnq5awTiiZQIMwcOMtRg5WWppM0i7ZfrmVru+CzUq7gGOU+B7Dt9cciHvBvP+TMYYMWH23uLzmAJS9yq97c2xJJNSYn2FRufH0BLpt5rg4XUHYsgJ92iuPsiSW3+srnV91jlpPW8xOQe+e0BU0JwqqQsSXn2vBZh2vdN2UsjEi66XJaTP3sFMcZwX1sdNS1Iaac4OvrQ2ErwNjF31x7+gYAg/RRQ+g1vt6+ezcNfMN3pjyZHifEQEW11R823OdfDWnxx0/YSHP9D+MuKkQWTtPomgzAaFT00KCl+5ZRdowJDGkPsDAhAvKjDh97Y8aENvWRYakPVFBuW/KG9w4bhX8bLR2kHJwRPywFSgtCSkGAM=
+              page_age: null
+              title: pydantic-ai (PyPI) -- Safety Package & Vulnerability Database
+              type: web_search_result
+              url: https://getsafety.com/packages/pypi/pydantic-ai
+            - encrypted_content: >-
+                Et4JCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDHNvbLlUzfMMGgaPPhoMpCbp+Rhc+6saClmoIjAAfNdr6uOOdGFcTnuUKfMTGSVvVxwA1LLmBbSsxdWCZTwfQsrpwD+p+tmSRShTgscq4QiFESpQxpnpi0gQTidzP+rUr+dOhbUDDOPoedSkrKf+XyFv4I2Ftfmmwdxa/G8I5vEUmMsIuyk+6N6AcnOCptFi/4r5Szxy/Hi/scDTft18/hJrkDHnzNTwCTHs/DAI9gaUJ29XojgT26wKdfYBmf1ZFF28FTeSzc//r+lIPB9gdSatHbzRSv354VGrPogpyBomZ6ImIBl5NWaqqJKvbgG5aghFYrX1M2FFRr4FRzC2I1kFfsaesXC1CfGtJ93wBO9zZKFyyRwPS2A4IsdXwn4bzIUCc/Vt4oUigfy1lDVJHrXuJxA5HJrWPpzZHssQ+3L+rnRhcLHXSxjJEIERi+x0xFbn5ZHr4XUBZ3uEPFgJlPl8NC4PYgEnlmg/5Vwsioq5bDRcWB8sKA5SoeDexsOpHISzpeZkn7fT8/POMmVWgSUYdnw6PIG/EteCrAWqYmJzNuhk1/dGQGswWzUCAWiSdB7zrOqOWQyF0Ygd1jcDUmpgz221kafTiL3FAusU1fCGO0hMfu5Zj/xrqycjjhXEE8KeyudJBMTGQDtqx1efE6Djk6vnZpRdJHO5O+Yf84vqAN/Pxjv/H0f9mP1TvT8+hNlkjr3pc5YxV6Q7+zEl6RWm/1AbjUzVIMUai9LxaJkwbfA7ljF3CGPjk0QHjgbVW04W8rPcKwlg4q1gMCSz08LhZFUtwWVnFCw54yuft8O1Y8EVvLWF78Zue94LYhX54/Nuzyt3FPQxm8InMZUwzfmJgvCwHqetXjFaAvnAXyfTEdUCivVUFXs+BuTTIidAJRs9beMUeVQHFtBlFr/FE/iJPLPd7XCs2Vt5e9Nl5TtanROLPbG9uXYxx2vLYD+rv3Vg/HI7IdE7AzoUJVFtvsXts8NKtQBjNdjHLiNyvwXkdJcA2tyi8tMLOnGJE7gHHAp76Z2kJx1fPVyfuKcKP/tanAh13cCa+IE+bz+LXu7KNMjJcVMUYmOuYWTUOqPXg280RGKEwEgbz255hUAd3akaVud79ZVYFZhjtSzRg9fgqMvfoH/PL7S/dZZ10n34KThQBNPSg3fJysx5x7HY71EEBxwuf/X8JITgDIGiWozmuQ5e12GuHm1PtxfhoqZmLYkOm3GEkXNFsX/fEf8dhStc/nCwYbDIOdEjbXtb+A2b6HB96nxOYhU/C80wvs89BoJEpN0CM9zPn8tOrayi1S13zwzVR4G6XQdNJWKH1MKvbTq1y1NzhG9aHoe7s3o9l87s4EJMyd3UKK+g+lBPQioLi7eNJFr7BVvKBQO1FGDLlxsNxS4VOoxieMODmnUcSj0lh9StqimqlXErnYp39PIJUsK6L0XMZKXiQpamxcFomIKXAZOf3czSS7rSoLPAXykev/DhqoxT7DPmx/x+vXb8fmTvJYW45oOWtmt46XzlAm66MJ6pQqMIEEDXouwAOlrjp5TteccqqoXFKKfPoSvdhYdBNEaZ/pahbiEjN1ndlpuAE1emzIWTR1f94D1GvhgD
+              page_age: 156 days ago
+              title: pydantic-ai · 185.3M downloads on PyPI
+              type: web_search_result
+              url: https://pepy.tech/projects/pydantic-ai
+            - encrypted_content: >-
+                EpcKCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDDJ3HG+7tPOk6+ciJRoMRDVwwJSHzIdqd7v0IjAOcXrxm6Mn7NUOxLJW0TLg5oL7YV9SFv2rIgQ7icw6VK8YY7n8lcnCISVcJB5lpqUqmglokAU2SmKqQ/IZw9bQyF83RuF1Ucu1z27PBLwwiGItEOZVG5Y8y5q+gIUxNN5m3gNL8nJSnhe4gHJwzAKj/qPi3TrEVB9T4uJQyoYiLczlOqSpljZd6VtmSj3+/QJjOyQ7cV41ZMlbES8T+aVeF5Q196Bc/wa8F/uypVRWcnMtnmSh6Y7QK1Ei9psXEoYDnf6JioPiiY3qgr9ip1ViCDkWJTYj6WaleE/ez7SYHZQNqIxuJWjPOdP4z35d8TZ1XecVnd/U0QaqkBIjJxRLj2akkILreofMLVcFwLrp7NYxGf0AXx4CHCRmNXFyhub43H/ND2OFjuzCNXb5y2sLpCSXP//8KXEai1Za9mIcl+OG6IMhEMRJH+J8cW/ptQSGKKadGjA5SLhta10z7YVfKQB85ebEegfLPHm95MzFESKVBX+5Ne7E0PkJDvU0t+kKRko7syBUXWmFfmEKUIfDjJHovxEtE6l3skHV9y+2DVS67WnxH2TDft9oPYLq6OZgTfXuiVVLtiSMjo9h/G1JsGuNPtx7kYRnyGMF1ZQDpfO+PKsu4rtSy7IyfdQ8dSyvBCojqQ6SOWEUd3OHC/W6SRzKVFtEhHNfqkN+/YLJtqlkNcWqBrZuMP29pwEKmlfknRUHwJx/tqjgRq2dNLf+hYLXkDneG0GD6rzvwufGVz+OakUliM7FQHGSjQvCRBI1waHQhmBtYn+cOTrrB9Ienu8WkF4m3iaIWrjUJTgOaDBolDSBVlHCw2CN4ppEZR6pAMxgkgbYP2sUWf8qrmRgMQA7H8ptp5UZ5jQtfyBrpEqQzKkDOWbZSiX/cbV1VkAXZdZJi1ClkNrSHkqnrFXt7JQXC5pgRQqWoUkppkup4DUGDCCJMiRw0zhPNegsJHOsrrm+IzQgwZ5diNueYWLmr/0h/F4yoO2fXgKFi92h+jaSKk3UPq7Xqo5Jf+wYE2K4jD5kGQrqgtxEvicTeEb2oIUeaTMvNB0FxljID7pHYAW57uayb04ds+qt3konaRF1oeyIB+TiLtaaqweQ5pDyKeNqDY+E6T22FiZBbYaY4kF5CctnNArwV/x/LICcE1OnozLuzMkkePWaPt0J1wwDlk98nX7jY92KwCTCF4itLW/BcNE7QByTj2J3vT0MP5QVahpMD6u5lkeKJYy259Zg62z02oKR7xdRPNezJjv8y8zNZlXRwUPQvJJGXdp72zgcO7iXXeySMEBDTuMRb/Az6pn353CcK2FVF0CmwwxgivNas2e5J0jJ2OGieHsxNy+8r1KoHYG73obLtEhxgCBjyezKCoPqcGSZbmFNxMoZjp3zibdgcn5JTkbixOKIQa4asFJEACllO5PxYkyGqvDo2ynjrbprgZfyrBUjnCpVYy6RAs7qblBxTIjwye5ewapF08bVigAw+fa/kOCea0r4v2tSMRua5XZ2pj0bn7JxmUklTGS/BucdkvCYwJeig18Ppl1vECFenH0S7xfbHq3K+dF7IoNdsJibvQv0NOnCrLUMGwOF/kSMsNqI2m2YAsK3U/QWcilcmJQ54LllJzIqCFIBv6X/1QeAc2sGEBgD
+              page_age: null
+              title: pydantic-ai 1.67.0
+              type: web_search_result
+              url: https://guide.sonatype.com/component/pypi/pydantic-ai/1.67.0/versions
+            - encrypted_content: >-
+                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
+              page_age: 94 days ago
+              title: pydantic-ai · PyPI
+              type: web_search_result
+              url: https://pypi.org/project/pydantic-ai/
+            - encrypted_content: >-
+                EscFCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDDLhJeVRMaw0pnAC9hoMFVpfRA1omyyf6k+BIjDyaPcGkgy4TcKEM2Gid6HcHxrOQQVaPu8ahI8uISrxgBFooUtr6g8RF1T+uskfYv0qygSD2YpBzwpfP7M+t77b1gAZX2Eaqm9/7ABDZTqrYDv14QRuCwvFFKBgUiIlBGdpbSxoSxLSUbw7pBg9W1Jad3oGmRGx2G677vw8QHFeqS2+dYFtrkCaEUqdmByW+Qfu9mLD2JOtQJCGvFfv55Bhkr1qweLEVyezQaZazWnk05hdZjMM0soWFaBW2cEnpj5JtBvs4wsUaeZTVbz6/7kH17HVHkEqOwp/eyJEL4UgEaFU49q9jvMxrx0fdIBTwqrI2mVR5WaOyx/kWtmoGwZcQHDTeB6rB5GDKUX4OprDXlFRzwBuioAf12v7kIA2Z3ivGJlWA52+SnYwP3+fl/rbV6ij6MWveosYI0DEj6jkB+I/0cwqF53NqtdjVYWtIshPcfFSuQNpx/8EAhaMdGVJBPcfvo4uK++OlnWtLQbwcFYAKIgqZhaHQetkogHTKIN7TM89k48XnjbVS3iwapjnHFZTLFKoJPsqA9bhlKrOzZYGfw6PSuqEWMiodErEZMrRUUtAV12/ZhEGefwyAaztFNoyeMsXpIhcEuHNEM232tvs0XIIjqSb5HbkEdhXSK22/7aNpfng6zF8E2KIV9H7fHqIFsUQ+yxwLgaglIVkZ7/hLp+s7VxEgi2zH9Jj7Jn6S7O/2XkOtIkJdJKcjFOEielnQQVwCW785kQ5/vh7eSp4MJbK1AM7P/syiSl7+YH0OEKQdQ9n/d+khXfkDJRKnsX+CKMnLtUPEtDxcoft4h2czkWWJB/zRdhZ7E+ZQTkMBoZ/ZHJ+aSSV5CFWGAM=
+              page_age: null
+              title: pydantic-ai
+              type: web_search_result
+              url: https://pypistats.org/packages/pydantic-ai
+            - encrypted_content: >-
+                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
+              page_age: 312 days ago
+              title: Upgrade Guide
+              type: web_search_result
+              url: https://ai.pydantic.dev/changelog/
+            - encrypted_content: >-
+                Et4ICioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDGTpj5Md7PVyZN9lNBoMkPMDX2EC/KK2htOvIjDqO/Y5+ppskBq8ErSaLyieMTqyeFLW5kHLEFL7m68NRO5MawQ6/09ZsIFuF25z5O4q4Qc1m/Pbcq5XK++/0olXq6Q/iCjAVc86RygFse4fLy+pibArgc7IREUvv2thORlivWTmtHAiCGyshcVUXNo3cqAg+qsldrGHwCYR+vOdOezKWPPXV+yzxMzwG6OO5oROxxlWJA2mGJuwWubUCvmStZW2wQTKygWZO5RtuRV0B5YxdEPOewQyUoGxDNG4rXuKB3Dxj0dAtXoJSW9Z1n38vodKrS7hu+T31Q2QnN3uZl4vLPhOYTHYE7hrnEpWfrQ5PyzhVosEEFk0EUSqv7F+MFIW7T5I6M97vZ8p3Gy1TCitMjgQ9uc+52wIEmKq6qZyF1iMnGz1ZTT0iJuK2RxBpKkc+zPVxEqXNVs2YpAXWiKnZ0HiH1vloUTRF7SLFHWrtOLHuFIx1QL9TH943WAK5XGzDH+D/ithhXRqp6FCUkaz0mJchpsIzR9AgoIO/wY9HPKjf3UojhXnMp0f6MhMybM6ydXJSWmvohVzRYkBVDJumkfri1bwnVGFYnCY/LjDAT1MlFzk4v0lAHzi4nEhtYRw7VsXIrZZw5Fea/fPAx3s/IyPOs0rGd/psanvi/F3HUrOtSgBjGld9W0YtzYNtNd2PRlAPFrqIPCVoYcGdNV/RCmJOBI19EWOiZp9CcvAAlnI5+Q7vQN/IkDHGAUWGtUbadfMNJQ9+rQTmLTCxlXmBJBSFadnJ4ka9cxcpBWbhb4293oKsz42AGYdG1aWbtsfz9fgV0B7HB+sLw7h7AORd6g0s4VzpSKSNoOje7Fui8v/vQ6o8w+vAmWMSiXB+1HBzcU3PM9ND23Ri570vSDIBSXDpCje742tntRkmp2ooGn0jWPA9cJO8UuruMDz+WONerWggqUKEYoDWFm88n7pz0oHgGfR3Na4rCc5MG7J9I78v64GSrYaZeANhjkZrdM2YsatEu5aSKiPlLw+0wey4aE4dNLMpwsmRSu5TX2D4txxYbjIK/j72mz6Ne4xmZIUCahjpG5QUKOoBfv0eN5cnrKMeBsXSgKL2KuRmEvfyPoROLQgKenOW7j4yhXKgX7TulZUrDslAOMYBJtUCc/AXh7nLycf4g1XfJWAtfwXBK1pdezY8lJXNKQof4XbS8nVqgheNFRt0z3fN2oUsItAnzY8u7q3RkGWCpzgoiKJTkRSFAxwI/LRDBeIJTtOs8Frjlbbbzg57eB9utkYOf34dybxY3qT4SrYgLPHaar5WzCvm4cUUn4v064SRSzibEXeTHooleW+eC7WY1sT2eThOr/gPY10TSwB3OPMWwcv6oUndGNXWeErKAPXmn/pvyVn2pHh6LaE568AEoUVD6IP5bcYAw==
+              page_age: 62 days ago
+              title: Releases · pydantic/pydantic-ai · GitHub
+              type: web_search_result
+              url: https://github.com/pydantic/pydantic-ai/releases
+            - encrypted_content: >-
+                Ev8GCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDN2jJLgmTu40jlnvkRoMR3tfFz5fnzvw1SjzIjCkzDskzto949XHfxVpnGSPEt0Qh7P7o8BeFbH6pDZIavNI0smh2tyOeHdcjkv7ygEqggacW7h/+MoaO6vBAGiQsTA76MxxY/QkIecbO8NfwrXqiK5VInwV9eCIgZ6RYZGlYRQrR/OEMVFXJJK37EXoV75oK1wUJCEyitXJE5qaNRzGFVrZUimDSWdAs4Jayc6Ps6h8Hf5s+BljTQNu8rTgboih6aygoy6BogOqDJMzs0bWTpAgJ/FUfQBKC+Qz1gkfezL+NHpwe1lrlVyGZUIWywCGG9S6bgJNTJNITuBu68hYr6Fc1sFF7/dy5tluxm3Akr3JZg9ZD6RG1HVWKdRe7EPuegjOMJBwr2UhlcKiI9MprOTUHZVBZzdKCmubZ7RPGsRP/taeI2sfidbEf201RCG9dpB0suOqiLOb7YqVUJ8xl5jzxGnNx0XPgpi1zwtVsYKxW0GA2kYcuNNt9PBBiWXf7VEmXFMlY5ozXoMsGMLlNfaZpYTvINkCidelbY2kIFlADsy50MVSSys6RtHQfDV0ppGV6T29Pzqjaw46M3QDoa3juuD5kcOLfGyBJmtZMy5W+tYDJNFkvEDcajdlvhNqcu19pPdy0nV1gF1ff3lHggkZhgzHiMb80UnI+OAC/6gKguIWUVQ2hb2bK9sLC9D5OhDGPnImFu1LLNrlyKd/2XE+TPmUxom60zLS+aUAA5FIxcKZ/NJ8eyALg9itiQs6gtTb1Hu1jJcBAj1+3UbERxrxNb9+3IMQbmJSPtIzn2ecYTx3N1J784wtSSIWNZVtZZWvwnDVEurs4A7kQF6LX9/7/Rf+0D8aONlHQYuwjLhWc788MUhBZgTEAMWVDXMUFiPKJ04dFSN0nb7sGHfwFbbIG8h5ByOKLs+srdf5pDHPFWDIa92sszuq3nImW+RkU4977pG1dog1Uj8oBrLDWFzdWIMsK2xjAjcHIqYyaZ1F0dp1iQLGISQxeKE1Q8Xu0z//pfycXWWFEbwSZ0v46bRuPr3fDQWMc87h4H2AKdmR3aGrGkwNmnVf7u29SzYPEU0h685TKJPQxIG4jnFSMt6ajqb7cDAOGziM5UAjdIsBNhgD
+              page_age: 416 days ago
+              title: Upgrade Guide
+              type: web_search_result
+              url: https://pydantic.dev/docs/ai/project/changelog/
+            - encrypted_content: >-
+                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
+              page_age: 45 days ago
+              title: "Pydantic AI Review 2026: Type-Safe Agents & Alternatives"
+              type: web_search_result
+              url: https://www.promptquorum.com/power-local-llm/pydantic-ai-review
+            caller:
+              tool_id: srvtoolu_01M6KQbCc4boUgqqZ8yAUYg1
+              type: code_execution_20260120
+          - tool_use_id: srvtoolu_01M6KQbCc4boUgqqZ8yAUYg1
+            type: code_execution_tool_result
+            content:
+              content: []
+              encrypted_stdout: >-
+                Eo4BCioIFRgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDOtZ1JfuMOOe5HlBLhoMnUxvM+HsDWsU8MYYIjAu+RzUyA6uS+tcpusKj6huPsFgJZ7rYeSMak88qD5xCblJOwF/SfihSx3/a5UOtdAqEsOwM4RfMon/uTD9yEjMmu0pgBgD
+              return_code: 0
+              stderr: ""
+              type: encrypted_code_execution_result
+          - id: srvtoolu_01UXhjSAKqWprnYz4CkMwdH3
+            type: server_tool_use
+            name: code_execution
+            input:
+              code: |
+
+                # Let me check what results we got
+                for i, item in enumerate(parsed):
+                    if item.get('type') == 'web_search_result':
+                        print(f"Result {i}: {item.get('title', '')[:100]}")
+                        print(f"URL: {item.get('url', '')[:100]}")
+                        print()
+          - tool_use_id: srvtoolu_01UXhjSAKqWprnYz4CkMwdH3
+            type: code_execution_tool_result
+            content:
+              content: []
+              return_code: 0
+              stderr: ""
+              stdout: |+
+                Result 0: pydantic-ai (PyPI) -- Safety Package & Vulnerability Database
+                URL: https://getsafety.com/packages/pypi/pydantic-ai
+
+                Result 1: pydantic-ai · 185.3M downloads on PyPI
+                URL: https://pepy.tech/projects/pydantic-ai
+
+                Result 2: pydantic-ai 1.67.0
+                URL: https://guide.sonatype.com/component/pypi/pydantic-ai/1.67.0/versions
+
+                Result 3: pydantic-ai · PyPI
+                URL: https://pypi.org/project/pydantic-ai/
+
+                Result 4: pydantic-ai
+                URL: https://pypistats.org/packages/pydantic-ai
+
+                Result 5: Upgrade Guide
+                URL: https://ai.pydantic.dev/changelog/
+
+                Result 6: Releases · pydantic/pydantic-ai · GitHub
+                URL: https://github.com/pydantic/pydantic-ai/releases
+
+                Result 7: Upgrade Guide
+                URL: https://pydantic.dev/docs/ai/project/changelog/
+
+                Result 8: Pydantic AI Review 2026: Type-Safe Agents & Alternatives
+                URL: https://www.promptquorum.com/power-local-llm/pydantic-ai-review
+
+              type: code_execution_result
+              abort_reason: null
+          - id: srvtoolu_014TSkhzHwqLGcLPW8BH5Vuo
+            type: server_tool_use
+            name: code_execution
+            input:
+              code: |
+
+                # Check the PyPI page content
+                for item in parsed:
+                    if 'pypi.org/project/pydantic-ai' in item.get('url', ''):
+                        content = item.get('content', '')
+                        # Look for version number patterns
+                        import re
+                        versions = re.findall(r'\b\d+\.\d+\.\d+\b', content[:1000])
+                        if versions:
+                            print(f"Found version: {versions[0]}")
+                        break
+          - tool_use_id: srvtoolu_014TSkhzHwqLGcLPW8BH5Vuo
+            type: code_execution_tool_result
+            content:
+              content: []
+              return_code: 0
+              stderr: ""
+              stdout: |
+                Found version: 2.59.0
+              type: code_execution_result
+              abort_reason: null
+          - text: 2.59.0
+            type: text
+        - role: user
+          content:
+          - text: >-
+              In the code sandbox, print the contents of /tmp/state.txt. Reply with exactly
+              what it printed.
+            type: text
+        model: claude-sonnet-4-5
+        container: container_01W1nGdMjr6ewoBnEq97mHHQ
+        stream: true
+        tools:
+        - name: web_search
+          type: web_search_20250305
+          max_uses: 1
+          allowed_domains: null
+          blocked_domains: null
+          user_location: null
+          allowed_callers:
+          - code_execution_20260120
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=333
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-a126039c004116175d65881bddf5ddf6-dafb15a6aacc1c07-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CgRUTQVgWRGrd2uDaB1Z1","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":5509,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"not_available","speed":"standard"},"diagnostics":null}          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_01YKrzk35uwfrCvN7gJPagDx","name":"bash_code_execution","input":{}} }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"nd\": \"c"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"at /tmp"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"/state."}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"txt\"}"} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_01YKrzk35uwfrCvN7gJPagDx","content":{"type":"bash_code_execution_result","stdout":"sentinel-42\n","stderr":"","return_code":0,"content":[]}}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1           }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"sentinel"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"-42"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2       }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_01W1nGdMjr6ewoBnEq97mHHQ","expires_at":"2026-10-26T21:24:18.150599Z"}},"usage":{"input_tokens":11100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":67,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}         }
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+  recorded_at: 2026-10-26T20:24:27.190902+00:00

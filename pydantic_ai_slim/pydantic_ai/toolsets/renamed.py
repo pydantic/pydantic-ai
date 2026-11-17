@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any
 
-from .._run_context import AgentDepsT, RunContext
+from .._run_context import AgentDepsT, RunContext, with_tool_name_layer
+from ..exceptions import UserError
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
@@ -19,10 +20,16 @@ class RenamedToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_to_new_name_map = {v: k for k, v in self.name_map.items()}
-        original_tools = await super().get_tools(ctx)
+        original_tools = await super().get_tools(with_tool_name_layer(ctx, original_to_new_name_map))
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for original_name, tool in original_tools.items():
             new_name = original_to_new_name_map.get(original_name, None)
+            final_name = new_name or original_name
+            if final_name in tools:
+                if final_name != original_name:
+                    raise UserError(f'Renaming tool {original_name!r} to {final_name!r} conflicts with existing tool.')
+                else:
+                    raise UserError(f'Tool name conflicts with previously renamed tool: {final_name!r}.')
             if new_name:
                 tools[new_name] = replace(
                     tool,
