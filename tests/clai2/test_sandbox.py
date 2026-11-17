@@ -63,7 +63,7 @@ from pydantic_clai2.builtin_plugins.sandbox.providers import (
     render as render_provider,
     sprites as sprites_provider,
 )
-from pydantic_clai2.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, give_github_login
+from pydantic_clai2.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, give_github_login, saved_key
 from pydantic_clai2.builtin_plugins.sandbox.providers.e2b import E2BProvider
 from pydantic_clai2.builtin_plugins.sandbox.seed import (
     SandboxBackend,
@@ -381,6 +381,20 @@ class TestSeed:
         del ref
         with pytest.raises(ValueError, match=r'Could not copy the checkout into the sandbox: .*missing\.git'):
             await seed(backend, await to_thread.run_sync(snapshot, checkout))
+
+
+def test_a_saved_key_is_trimmed_and_a_malformed_one_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('E2B_API_KEY', ' e2b_key\n')
+    assert saved_key('E2B_API_KEY') == 'e2b_key'
+    monkeypatch.setenv('E2B_API_KEY', '   ')
+    assert saved_key('E2B_API_KEY') is None
+    # An SDK would send these in a header, and the HTTP library refusing it would quote the key in its error.
+    for malformed in ('e2b key', 'e2b\nkey', 'e2b\x01key'):
+        monkeypatch.setenv('E2B_API_KEY', malformed)
+        with pytest.raises(UserError) as caught:
+            saved_key('E2B_API_KEY')
+        assert str(caught.value) == 'E2B_API_KEY contains a space or control character; save it again in /keys.'
+        assert 'e2b' not in str(caught.value).replace('E2B_API_KEY', '')
 
 
 def test_github_credential() -> None:

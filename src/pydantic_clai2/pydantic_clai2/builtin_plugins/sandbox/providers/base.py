@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
 from pydantic_clai2.builtin_plugins.sandbox.seed import GITHUB_TOKEN_FILE, SandboxBackend
 from pydantic_clai2.config.api_keys import load_keys
@@ -102,9 +103,16 @@ class SandboxProvider(Protocol):
 
 
 def saved_key(name: str) -> str | None:
-    """The key saved in `/keys` as `name`, else the environment variable `name`."""
+    """The key saved in `/keys` as `name`, else the environment variable `name`, without surrounding whitespace.
+
+    A key with a space or control character inside is refused: the provider's SDK would send it in a header, and
+    the HTTP library refusing that header quotes the key in its error, which `/sandbox` then shows.
+    """
     saved = load_keys().get(name)
-    return saved.get_secret_value() if saved is not None else os.environ.get(name) or None
+    key = (saved.get_secret_value() if saved is not None else os.environ.get(name) or '').strip()
+    if any(char.isspace() or not char.isprintable() for char in key):
+        raise UserError(f'{name} contains a space or control character; save it again in /keys.')
+    return key or None
 
 
 @runtime_checkable
