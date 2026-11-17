@@ -18,6 +18,7 @@ import httpx2
 import pytest
 
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, ModelFallback
 from pydantic_ai.capabilities._gateway_fallback import GatewayFallback
 from pydantic_ai.durable_exec._utils import reject_serving_wrapper
@@ -60,10 +61,9 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers.openai import OpenAIProvider
 
-if not imports_successful():
-    pytest.skip(
-        'openai, anthropic, google-genai or boto3 not installed', allow_module_level=True
-    )  # pragma: lax no cover
+pytestmark = pytest.mark.skipif(
+    not imports_successful(), reason='openai, anthropic, google-genai or boto3 not installed'
+)
 
 
 API_KEY = 'pylf_v1_us_test'
@@ -556,6 +556,19 @@ def test_the_next_provider_is_created_once_per_format():
     fallback = _fallback_provider(original, 'anthropic')
     assert _fallback_provider(original, 'anthropic') is fallback
     assert _fallback_provider(original, 'bedrock') is not fallback
+
+
+async def test_the_next_provider_gets_its_own_client_when_its_route_rejects_the_callers():
+    """A caller's legacy `httpx.AsyncClient` works on the OpenAI route but not the Anthropic one, so a hand-back from
+    the first to the second builds the Anthropic provider with a client of its own instead of failing.
+    """
+    async with httpx.AsyncClient() as client:
+        with pytest.warns(PydanticAIDeprecationWarning, match='`httpx.AsyncClient` support'):
+            original = gateway_provider('openai', api_key=API_KEY, base_url=BASE_URL, http_client=client)
+
+        fallback = _fallback_provider(original, 'anthropic')
+
+    assert fallback.base_url == f'{BASE_URL}/openai/'
 
 
 @contextmanager
