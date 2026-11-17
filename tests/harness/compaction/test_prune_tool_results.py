@@ -172,16 +172,14 @@ class TestPruneToolResults:
 
         returns = _returns(result.all_messages())
         assert returns['g1'] == JUNK
-        assert returns['p1'] == "Not pruned: 'g1' is not a result from your previous step that can be pruned."
+        assert returns['p1'] == "Not pruned: 'g1' is not a result from your previous step."
 
     async def test_refuses_an_unknown_id_on_the_first_step(self) -> None:
         script = Script([_prune('nope'), DONE])
 
         result = await _agent(script, PruneToolResults()).run('find the TODOs')
 
-        assert _returns(result.all_messages())['p1'] == (
-            "Not pruned: 'nope' is not a result from your previous step that can be pruned."
-        )
+        assert _returns(result.all_messages())['p1'] == ("Not pruned: 'nope' is not a result from your previous step.")
 
     async def test_refuses_a_typed_result(self) -> None:
         search = ToolSearchReturnPart(
@@ -197,7 +195,7 @@ class TestPruneToolResults:
         result = await _agent(script, PruneToolResults()).run(message_history=history)
 
         assert _returns(result.all_messages())['p1'] == (
-            "Not pruned: 'ts1' is not a result from your previous step that can be pruned."
+            "Not pruned: the result of 'ts1' is structured data that cannot be replaced."
         )
         assert result.all_messages()[2].parts == [search]
 

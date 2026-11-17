@@ -286,7 +286,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'PruneToolResults': Combines(
         'one `prune_tool_result` tool per agent',
-        lambda: (PruneToolResults[Any](placeholder='[first]'), PruneToolResults[Any](placeholder='[second]')),
+        lambda: (PruneToolResults[None](placeholder='[first]'), PruneToolResults[None](placeholder='[second]')),
         _check_prune_tool_results,
     ),
     'ToolOutputLimits': Combines(

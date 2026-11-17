@@ -94,8 +94,10 @@ class PruneToolResults(AbstractCapability[AgentDepsT]):
         tool_call_id: str = args['tool_call_id']
         content = f'{self.placeholder} {args["summary"]}'
         target = next((part for part in _latest_returns(ctx.messages) if part.tool_call_id == tool_call_id), None)
-        if target is None or cleared_return(target, content) is None:
-            return f'Not pruned: {tool_call_id!r} is not a result from your previous step that can be pruned.'
+        if target is None:
+            return f'Not pruned: {tool_call_id!r} is not a result from your previous step.'
+        if cleared_return(target, content) is None:
+            return f'Not pruned: the result of {tool_call_id!r} is structured data that cannot be replaced.'
         if len(content) >= len(str(target.content)):
             return 'Not pruned: the summary is not shorter than the result.'
         messages: list[ModelMessage] = list(ctx.messages)
