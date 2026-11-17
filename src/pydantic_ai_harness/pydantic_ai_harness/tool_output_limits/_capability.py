@@ -348,7 +348,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                     `offset` and `limit` then count bytes, so pass a larger `limit` (up to 50,000).
             """
             store = self._store_for(ctx)
-            return await _read_slice(store, handle, offset, limit, from_end, pattern, unit, _reader(ctx, handle))
+            return await _read_slice(store, handle, offset, limit, from_end, pattern, unit, _reader_name(ctx))
 
         async def grep_tool_result(
             ctx: RunContext[AgentDepsT],
@@ -371,7 +371,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 offset: Number of matches to skip, to continue a previous search. Must be >= 0.
             """
             store = self._store_for(ctx)
-            return await _grep(store, handle, pattern, context, max_matches, offset, _reader(ctx, handle))
+            return await _grep(store, handle, pattern, context, max_matches, offset, _reader_name(ctx))
 
         prepare = step_aside_for_read_file if self._spills_to_run_workspace else None
         tools = [
@@ -1064,8 +1064,9 @@ class _Reader:
         return f'the cut line continues at {self.call(args)}'
 
 
-def _reader(ctx: RunContext[Any], handle: str) -> _Reader:
-    return _Reader(handle, ctx.tool_name_for_kind(READ_TOOL_RESULT_KIND) or READ_TOOL_NAME)
+def _reader_name(ctx: RunContext[Any]) -> str:
+    """`read_tool_result` as it is called in this run step, for the hints that point to it."""
+    return ctx.tool_name_for_kind(READ_TOOL_RESULT_KIND) or READ_TOOL_NAME
 
 
 async def _capped(store: OverflowStore, page: _Page, more: str, reader: _Reader) -> str:
@@ -1087,7 +1088,7 @@ async def _read_slice(
     from_end: bool,
     pattern: str | None,
     unit: _ReadUnit,
-    reader: _Reader,
+    reader_name: str,
 ) -> str:
     """Filter and slice a spilled payload for `read_tool_result`, bounded in both axes.
 
@@ -1105,6 +1106,7 @@ async def _read_slice(
     if unit == 'bytes':
         return await _guarded(handle, _byte_slice(store, handle, offset, min(limit, _MAX_READ_CHARS), from_end))
     limit = min(limit, _MAX_READ_LINES)
+    reader = _Reader(handle, reader_name)
     return await _guarded(handle, _line_slice(store, handle, offset, limit, from_end, pattern, reader))
 
 
@@ -1213,13 +1215,13 @@ async def _grep(
     context: int,
     max_matches: int,
     offset: int,
-    reader: _Reader,
+    reader_name: str,
 ) -> str:
     """Find literal `pattern` in a spilled payload for `grep_tool_result`, with 1-based line numbers.
 
     Context windows that overlap or touch merge into one group. Matches, context, and the joined
     output are all capped, so one call can never return an unbounded amount of text. What the cap
-    leaves out is described as a call to `reader`.
+    leaves out is described as a call to the `read_tool_result` named `reader_name`.
     """
     if not pattern:
         raise ModelRetry('`pattern` must not be empty.')
@@ -1230,6 +1232,7 @@ async def _grep(
     if offset < 0:
         raise ModelRetry('`offset` must be >= 0.')
     page = range(offset, offset + min(max_matches, _MAX_GREP_MATCHES))
+    reader = _Reader(handle, reader_name)
     return await _guarded(handle, _grep_page(store, handle, pattern, min(context, _MAX_GREP_CONTEXT), page, reader))
 
 

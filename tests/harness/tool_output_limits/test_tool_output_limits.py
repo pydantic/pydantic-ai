@@ -62,7 +62,6 @@ from pydantic_ai_harness.tool_output_limits._capability import (
     _build_spill_preview,  # pyright: ignore[reportPrivateUsage]
     _head_tail_preview,  # pyright: ignore[reportPrivateUsage]
     _read_slice,  # pyright: ignore[reportPrivateUsage]
-    _Reader,  # pyright: ignore[reportPrivateUsage]
     _select_action,  # pyright: ignore[reportPrivateUsage]
     _Unit,  # pyright: ignore[reportPrivateUsage]
     _with_handles,  # pyright: ignore[reportPrivateUsage]
@@ -1367,7 +1366,7 @@ class TestReadBack:
             from_end=False,
             pattern=None,
             unit='lines',
-            reader=_Reader('h', READ_TOOL_NAME),
+            reader_name=READ_TOOL_NAME,
         )
         assert 'line 0' in out and 'line 2' in out and 'line 3' not in out
 
@@ -1382,7 +1381,7 @@ class TestReadBack:
             from_end=True,
             pattern=None,
             unit='lines',
-            reader=_Reader('h', READ_TOOL_NAME),
+            reader_name=READ_TOOL_NAME,
         )
         assert 'line 49' in out and 'line 48' in out
 
@@ -1397,7 +1396,7 @@ class TestReadBack:
             from_end=False,
             pattern='av',
             unit='lines',
-            reader=_Reader('h', READ_TOOL_NAME),
+            reader_name=READ_TOOL_NAME,
         )
         assert 'avocado' in out and 'apple' not in out and 'banana' not in out
 
@@ -1413,7 +1412,7 @@ class TestReadBack:
             from_end=False,
             pattern='^a',
             unit='lines',
-            reader=_Reader('h', READ_TOOL_NAME),
+            reader_name=READ_TOOL_NAME,
         )
         assert 'anchored' in out and 'plain line' not in out
 
@@ -1429,7 +1428,7 @@ class TestReadBack:
                 from_end=False,
                 pattern=None,
                 unit='lines',
-                reader=_Reader('h', READ_TOOL_NAME),
+                reader_name=READ_TOOL_NAME,
             )
 
     async def test_read_slice_limit_too_small(self, tmp_path: Path):
@@ -1444,7 +1443,7 @@ class TestReadBack:
                 from_end=False,
                 pattern=None,
                 unit='lines',
-                reader=_Reader('h', READ_TOOL_NAME),
+                reader_name=READ_TOOL_NAME,
             )
 
     async def test_read_slice_limit_clamped(self, tmp_path: Path):
@@ -1458,7 +1457,7 @@ class TestReadBack:
             from_end=False,
             pattern=None,
             unit='lines',
-            reader=_Reader('h', READ_TOOL_NAME),
+            reader_name=READ_TOOL_NAME,
         )
         assert out.count('\n') <= 1_000  # clamped to the line cap
 
@@ -1474,7 +1473,7 @@ class TestReadBack:
             from_end=False,
             pattern=None,
             unit='lines',
-            reader=_Reader('h', READ_TOOL_NAME),
+            reader_name=READ_TOOL_NAME,
         )
         assert 'No stored tool result' in out
         assert 're-run the original tool' in out
@@ -1502,7 +1501,7 @@ class TestReadBack:
                 from_end=from_end,
                 pattern=pattern,
                 unit='lines',
-                reader=_Reader('h', READ_TOOL_NAME),
+                reader_name=READ_TOOL_NAME,
             )
             end = len(lines) - offset
             body = '\n'.join(lines[max(0, end - 2) : end] if from_end else lines[offset : offset + 2])
@@ -1539,7 +1538,7 @@ class TestReadBack:
             from_end=False,
             pattern=None,
             unit='lines',
-            reader=_Reader('h', READ_TOOL_NAME),
+            reader_name=READ_TOOL_NAME,
         )
         assert out == "[handle 'h/1.0': 1,000 matching line(s); showing 3]\nline 10\nline 11\nline 12"
         out = await _read_slice(
@@ -1550,7 +1549,7 @@ class TestReadBack:
             from_end=True,
             pattern=None,
             unit='lines',
-            reader=_Reader('h', READ_TOOL_NAME),
+            reader_name=READ_TOOL_NAME,
         )
         assert out == "[handle 'h/1.0': 1,000 matching line(s); showing 2]\nline 998\nline 999"
         for file in opened:
@@ -1582,7 +1581,7 @@ class TestReadBack:
                 from_end=False,
                 pattern=None,
                 unit='lines',
-                reader=_Reader('h', READ_TOOL_NAME),
+                reader_name=READ_TOOL_NAME,
             )
             tg.cancel_scope.cancel()
             assert out == f'[handle {handle!r}: 1,000 matching line(s); showing 3]\nline 10\nline 11\nline 12'
@@ -1600,7 +1599,7 @@ class TestReadBack:
             from_end=from_end,
             pattern=None,
             unit='lines',
-            reader=_Reader('h', READ_TOOL_NAME),
+            reader_name=READ_TOOL_NAME,
         )
         assert out == "[handle 'h/1.0': 2 matching line(s); showing 0]"
 
@@ -1619,7 +1618,7 @@ class TestReadBack:
             from_end=False,
             pattern=None,
             unit='lines',
-            reader=_Reader('h', READ_TOOL_NAME),
+            reader_name=READ_TOOL_NAME,
         )
         assert out == "[handle 'h/1.0': 2 matching line(s); showing 2]\nA\nB"
 
@@ -1634,7 +1633,7 @@ class TestReadBack:
             from_end=False,
             pattern=None,
             unit='lines',
-            reader=_Reader('h', READ_TOOL_NAME),
+            reader_name=READ_TOOL_NAME,
         )
         assert out == "[handle 'h': 3 matching line(s); showing 2]\nb\nc"
 
