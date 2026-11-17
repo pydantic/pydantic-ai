@@ -271,9 +271,9 @@ def double(n: int) -> int:
     return n * 2
 
 
-def blob() -> dict[str, bytes | float]:
-    """Return bytes that are not UTF-8 and a NaN, neither of which plain JSON carries."""
-    return {'raw': b'\xff\x00', 'nan': float('nan')}
+def blob() -> dict[str, Any]:
+    """Return values plain JSON does not carry: bytes that are not UTF-8 and a NaN, nested too."""
+    return {'raw': b'\xff\x00', 'nan': float('nan'), 'nested': {'a': {'b': b'\xff', 'c': 2}, 't': [[1, b'x']]}}
 
 
 _CALL_SITE_SNIPPETS = [
@@ -295,7 +295,8 @@ _CALL_SITE_SNIPPETS = [
     'try:\n    await add(a=P(1), b=2)\nexcept TypeError as e:\n    arg_error = str(e)\n'
     '[P(1), arg_error]',
     # Values plain JSON would change, in a tool result and in the snippet's result.
-    'v = await blob()\n[type(v["raw"]).__name__, v["raw"], v["nan"] != v["nan"], (1, ...), {1: b"a"}]',
+    'v = await blob()\n'
+    '[type(v["raw"]).__name__, v["raw"], v["nan"] != v["nan"], v["nested"], (1, ...), {(1, 2): {"k": (b"a",)}}]',
 ]
 
 

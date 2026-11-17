@@ -788,8 +788,9 @@ off. Keep `start_to_close_timeout` above `max_duration_seconds`: otherwise Tempo
 first and retries it, instead of Code Mode reporting the time limit to the model. With
 `'unlimited'`, `start_to_close_timeout` is the only bound on a turn.
 
-Tool results and the snippet's result reach the other side with the same types as in workflow code,
-`bytes` included. A nested call whose arguments have no JSON form, such as an instance of a class the
+Tool results reach the sandbox with the same types as in workflow code, `bytes` included. The
+snippet's result keeps its built-in types, such as `bytes`, tuples and NaN; a value of another type,
+such as a `datetime`, arrives as its JSON form, which is what the model sees either way. A nested call whose arguments have no JSON form, such as an instance of a class the
 snippet defined, raises `TypeError` in the snippet: its arguments cannot reach the tool's activity. If
 the server no longer has a run's stored state, for example because it expired, Code Mode resets the
 session and tells the model the connection was lost, as for a dropped connection outside Temporal.

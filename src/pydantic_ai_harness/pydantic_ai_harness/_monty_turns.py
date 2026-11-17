@@ -104,9 +104,16 @@ def from_wire(value: object) -> Any:
         case 'tuple':
             return tuple(from_wire(data))
         case 'dict':
-            return {from_wire(key): from_wire(item) for key, item in from_wire(data)}
+            assert _is_list_or_tuple(data)
+            return dict(_decoded_pair(pair) for pair in data)
         case _:
             return data
+
+
+def _decoded_pair(pair: object) -> tuple[Any, Any]:
+    assert _is_list_or_tuple(pair)
+    key, item = pair
+    return from_wire(key), from_wire(item)
 
 
 def settled_data(result: ExternalSettledResult) -> SettledData:
