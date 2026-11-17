@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
@@ -27,6 +27,22 @@ def _agent(capability: CurrentTime[None], sent: list[ModelRequest]) -> Agent[Non
     return Agent(FunctionModel(reply), deps_type=type(None), capabilities=[capability])
 
 
+class _HostZone(tzinfo):
+    """A `tzinfo` whose `str()` is a host path, as `dateutil`'s are; the prompt names it by `tzname()`."""
+
+    def utcoffset(self, dt: datetime | None) -> timedelta:
+        return timedelta(hours=3)
+
+    def dst(self, dt: datetime | None) -> timedelta:
+        return timedelta(0)  # pragma: no cover
+
+    def tzname(self, dt: datetime | None) -> str:
+        return 'XST'
+
+    def __repr__(self) -> str:
+        return "tzfile('/usr/share/zoneinfo/XST')"
+
+
 def _clock(monkeypatch: pytest.MonkeyPatch, now: datetime) -> None:
     # The run stamps each request with this clock, and the capability reads the time from that stamp.
     monkeypatch.setattr('pydantic_ai._agent_graph.now_utc', lambda: now)
@@ -46,6 +62,7 @@ class TestCurrentTime:
                 CurrentTime[None](timezone=ZoneInfo('Europe/Amsterdam'), precision='hour'),
                 'The current time is within the hour starting 2026-01-03T00:00+01:00 (Saturday, Europe/Amsterdam).',
             ),
+            (CurrentTime[None](timezone=_HostZone()), "Today's date is Saturday, 2026-01-03 (XST)."),
         ],
     )
     async def test_states_the_request_time(

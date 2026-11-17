@@ -50,5 +50,3 @@ The capability reads no clock of its own, only the request's timestamp, so it is
 ## Composition
 
 Two `CurrentTime` on one agent share the default `id` and merge into one, with the later one's settings. To state the time in two zones, give the second its own `id`.
-
-See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/current_time/).

@@ -44,10 +44,12 @@ class CurrentTime(AbstractCapability[AgentDepsT]):
         stamp = next((m.timestamp for m in reversed(ctx.messages) if isinstance(m, ModelRequest) and m.timestamp), None)
         if stamp is None:
             return None
-        now = stamp.astimezone(self._zone())
+        zone = self._zone()
+        now = stamp.astimezone(zone)
+        name = zone.key if isinstance(zone, ZoneInfo) else now.tzname()
         if self.precision == 'date':
-            text = f"Today's date is {now:%A}, {now.date().isoformat()} ({self.timezone})."
+            text = f"Today's date is {now:%A}, {now.date().isoformat()} ({name})."
         else:
             hour = now.replace(minute=0, second=0, microsecond=0).isoformat(timespec='minutes')
-            text = f'The current time is within the hour starting {hour} ({now:%A}, {self.timezone}).'
+            text = f'The current time is within the hour starting {hour} ({now:%A}, {name}).'
         return InstructionPart(text, on_change='append')
