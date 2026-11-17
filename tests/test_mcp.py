@@ -123,7 +123,7 @@ with try_import() as imports_successful:
     from pydantic_ai.messages import TextContent
     from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
-    from .mcp_task_server import TaskConfig, TasksExtension
+    from .mcp_task_server import TASK_SERVER_UNAVAILABLE, TaskConfig, TasksExtension
 
 with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -3102,14 +3102,7 @@ def as_legacy_mcp_session(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Client, 'initialize_result', property(lambda self: init_result))
 
 
-# FastMCP 4 moved task execution into the optional `fastmcp-tasks` package, which only the
-# `mcp-tasks` extra installs — and a server declaring task tools refuses to start without it. Install
-# shapes that leave the extra out skip the integration below; the FastMCP 3 ones still run it,
-# because that generation serves task tools itself.
-_TASKS_UNAVAILABLE = MCP_SDK_V2 and TasksExtension is None
-
-
-@pytest.mark.skipif(_TASKS_UNAVAILABLE, reason='fastmcp-tasks not installed')
+@pytest.mark.skipif(TASK_SERVER_UNAVAILABLE, reason='fastmcp-tasks not installed')
 class TestMCPToolsetBackgroundTasks:
     """Task-augmented execution across both generations.
 

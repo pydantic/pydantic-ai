@@ -732,8 +732,9 @@ metadata.
 
 MCPToolsetClient: TypeAlias = FastMCPClient[Any] | ClientTransport | FastMCP | _MCPSDKServer | AnyUrl | Path | str
 """Anything `MCPToolset` accepts as its `client` argument — a pre-built `fastmcp.Client`, a FastMCP
-`ClientTransport`, an in-process `FastMCP` server, an `AnyUrl`/URL string, a script `Path`, or a
-URL/path/script string.
+`ClientTransport`, an in-process `fastmcp.FastMCP` server or MCP SDK server (`MCPServer` on SDK v2,
+`mcp.server.fastmcp.FastMCP` on SDK v1), an `AnyUrl`/URL string, a script `Path`, or a URL/path/script
+string.
 
 For multi-server JSON config files, use [`load_mcp_toolsets`][pydantic_ai.mcp.load_mcp_toolsets]
 instead — it expands env vars and constructs one `MCPToolset` per server entry."""

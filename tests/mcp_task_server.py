@@ -2,6 +2,8 @@ from typing import TYPE_CHECKING, Any
 
 from fastmcp.server import Context, FastMCP
 
+from pydantic_ai._mcp_compat import MCP_SDK_V2
+
 if TYPE_CHECKING:
     from fastmcp.utilities.tasks import TaskConfig
 else:
@@ -20,6 +22,11 @@ else:
         from fastmcp_tasks import TasksExtension
     except ImportError:
         TasksExtension = None
+
+# FastMCP 4 moved task execution into the optional `fastmcp-tasks` package, which only the
+# `mcp-tasks` extra installs, and refuses to start a server declaring task tools without it. Tests
+# that run this server skip on such installs; FastMCP 3 serves task tools itself.
+TASK_SERVER_UNAVAILABLE = MCP_SDK_V2 and TasksExtension is None
 
 mcp: FastMCP[None] = FastMCP('Pydantic AI MCP Task Server')
 

@@ -191,6 +191,7 @@ try:
 
     from pydantic_ai._mcp_compat import MCP_SDK_V2
     from pydantic_ai.mcp import MCPToolset
+    from tests.mcp_task_server import TASK_SERVER_UNAVAILABLE
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -1209,6 +1210,7 @@ def test_prefect_mcp_wrappers_of_same_host_servers_keep_their_derived_id() -> No
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_task_server` over stdio')
+@pytest.mark.skipif(TASK_SERVER_UNAVAILABLE, reason='fastmcp-tasks not installed')
 async def test_prefect_mcptoolset_preserves_task_routing() -> None:
     """Effective task routing forwards through Prefect task wrappers end-to-end.
 
