@@ -675,7 +675,7 @@ before their branch receives the provider migration. Update the branch from
 configuration blocks the run; the provider-incident rules below say which runs open an incident for it.
 
 The controller keeps one assigned operational incident for a matching failure
-scope and marks it with both `agentic-workflows` and `pydanty:meta`. Leave both labels
+scope and marks it with both `area:agentic-workflows` and `pydanty:meta`. Leave both labels
 in place: `pydanty:meta` keeps the automatic `@claude` issue/comment workflow from
 starting on controller metadata. Do not create a second issue for the same open
 provider, workflow, or task incident.
