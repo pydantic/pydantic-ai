@@ -2396,6 +2396,24 @@ async def test_anthropic_thinking_keeps_the_sampling_settings_it_accepts(
     assert {key: value for key, value in body.items() if key in ('temperature', 'top_p', 'top_k')} == model_settings
 
 
+async def test_anthropic_thinking_keeps_top_p_when_it_drops_temperature(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """With thinking, a `temperature` other than `1` is dropped, so an accepted `top_p` no longer conflicts and is kept.
+
+    Claude Haiku 4.5 takes `temperature` or `top_p`, not both, but only `top_p` is left to send here.
+    """
+    agent = Agent(anthropic_model('claude-haiku-4-5', capture=True))
+
+    await agent.run(
+        'What is 2+2? Answer with the number only.',
+        model_settings=ModelSettings(thinking=True, temperature=0.5, top_p=0.97),
+    )
+
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p')} == snapshot({'top_p': 0.97})
+
+
 async def test_anthropic_drops_top_p_set_together_with_temperature(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
