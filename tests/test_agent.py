@@ -3156,9 +3156,7 @@ def test_structured_dict_without_validate_accepts_output_not_matching_the_schema
 
 
 @requires_jsonschema
-def test_structured_dict_validate_resolves_local_refs_but_never_fetches_remote_ones(monkeypatch: pytest.MonkeyPatch):
-    from referencing.exceptions import Unresolvable
-
+def test_structured_dict_validate_resolves_local_refs_and_rejects_others(monkeypatch: pytest.MonkeyPatch):
     def no_fetch(*args: object, **kwargs: object) -> None:
         raise AssertionError('fetched a remote schema')  # pragma: no cover
 
@@ -3176,11 +3174,9 @@ def test_structured_dict_validate_resolves_local_refs_but_never_fetches_remote_o
     with pytest.raises(ValidationError, match=r"\$\.tire\.size: 'x' is not of type 'integer'"):
         adapter.validate_python({'tire': {'size': 'x'}})
 
-    RemoteDict = StructuredDict(
-        {'type': 'object', 'properties': {'a': {'$ref': 'http://127.0.0.1:9/schema.json'}}}, validate=True
-    )
-    with pytest.raises(Unresolvable):
-        TypeAdapter(RemoteDict).validate_python({'a': 1})
+    for ref in ['http://127.0.0.1:9/schema.json', '#/$defs/Missing']:
+        with pytest.raises(UserError, match=re.escape(f'only resolves references within the schema, and {ref!r}')):
+            StructuredDict({'type': 'object', 'properties': {'a': {'$ref': ref}}}, validate=True)
 
 
 @requires_jsonschema

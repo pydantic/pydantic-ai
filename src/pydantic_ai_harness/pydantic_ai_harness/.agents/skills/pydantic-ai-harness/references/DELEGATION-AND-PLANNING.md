@@ -354,7 +354,7 @@ Gotchas:
   (from `pydantic_ai_harness.dynamic_workflow`) renames without editing the agent.
 - `task` is keyword-only in the script. A structured `output_type` arrives as a `dict`: `r['field']`.
 - `WorkflowAgent(agent, allow_output_schema=True)` lets the script pass `output_schema=` (an object JSON
-  schema with inline nested objects; `$ref`, `$defs` and `pattern` are rejected) to replace the child's
+  schema with inline nested objects; `$ref`, `$defs`, `pattern` and `uniqueItems` are rejected, as is more than 1,000 values or 16 `anyOf`/`allOf`/`oneOf` options) to replace the child's
   `output_type` for that call with `StructuredDict(schema, validate=True)`. The `dict` result is validated
   against it, and a mismatch is retried. A child with output validators fails such a call.
 - Without `sub_agent_usage_limits`, children sharing usage run under the parent `run(usage_limits=...)`;

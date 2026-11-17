@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import copy
+import importlib.util
 import json
 import sys
 import warnings
@@ -667,9 +668,11 @@ class WorkflowAgent(Generic[AgentDepsT]):
     own output type, including any validation it does, is bypassed for the call."""
 
     def __post_init__(self) -> None:
-        if self.allow_output_schema:
-            # Raises `UserError` now, rather than on the script's first call, if `jsonschema` is missing.
-            output_schema_type({'type': 'object'})
+        if self.allow_output_schema and importlib.util.find_spec('jsonschema') is None:
+            raise UserError(
+                '`WorkflowAgent(allow_output_schema=True)` validates outputs with the `jsonschema` package. '
+                'Install it with `pip install "pydantic-ai-harness[dynamic-workflow]"`.'
+            )
 
     @property
     def resolved_name(self) -> str | None:

@@ -566,7 +566,10 @@ finding = await researcher(task='x', output_schema={
 
 def test_allow_output_schema_requires_jsonschema(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, 'jsonschema', None)
-    with pytest.raises(UserError, match=re.escape('`StructuredDict(validate=True)` requires the `jsonschema` package')):
+    with pytest.raises(
+        UserError,
+        match=re.escape('`WorkflowAgent(allow_output_schema=True)` validates outputs with the `jsonschema` package'),
+    ):
         WorkflowAgent(_sub_agent(), allow_output_schema=True)
 
 
@@ -742,9 +745,22 @@ async def test_output_schema_reusing_a_dict_is_rejected_before_it_expands() -> N
     code = """\
 s = {'type': 'string'}
 for _ in range(40):
-    s = {'type': 'object', 'anyOf': [{'properties': {'a': s}}, {'properties': {'a': s}}]}
+    s = {'type': 'object', 'properties': {'a': s, 'b': s}}
 await sub(task='x', output_schema=s)"""
     with pytest.raises(ModelRetry, match='output_schema is not usable: it has more than 1000 values'):
+        await _run_script(ts, code)
+
+
+@requires_jsonschema
+async def test_output_schema_with_too_many_options_is_rejected() -> None:
+    # Every option is checked against the same output value, so their total bounds the work per value.
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(_sub_agent(), allow_output_schema=True)])
+    code = """\
+options = [{'type': 'object'} for _ in range(9)]
+await sub(task='x', output_schema={'type': 'object', 'anyOf': options, 'properties': {'a': {'oneOf': options}}})"""
+    with pytest.raises(
+        ModelRetry, match='output_schema is not usable: it has more than 16 anyOf, allOf and oneOf options'
+    ):
         await _run_script(ts, code)
 
 

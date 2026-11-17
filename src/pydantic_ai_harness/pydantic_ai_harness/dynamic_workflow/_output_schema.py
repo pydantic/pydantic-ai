@@ -12,12 +12,15 @@ from pydantic_ai import StructuredDict
 
 _MAX_ERRORS = 10
 _MAX_SCHEMA_VALUES = 1_000
+_MAX_SCHEMA_OPTIONS = 16
+_COMBINATORS = ('anyOf', 'allOf', 'oneOf')
 
 _JsonType = Literal['object', 'array', 'string', 'integer', 'number', 'boolean', 'null']
 
 
 # The schema is model output that is processed and validated against on the host, so references, which
-# would be inlined there, and regular expressions, which can backtrack, are left out.
+# would be inlined there, regular expressions, which can backtrack, and `uniqueItems`, which compares
+# every pair of items, are left out.
 @with_config(ConfigDict(extra='forbid'))
 class OutputSchema(TypedDict, total=False):
     """The JSON schema subset a workflow script can pass as `output_schema`."""
@@ -41,7 +44,6 @@ class OutputSchema(TypedDict, total=False):
     maxLength: int
     minItems: int
     maxItems: int
-    uniqueItems: bool
     minProperties: int
     maxProperties: int
     format: str
@@ -63,19 +65,23 @@ def _is_list(value: object) -> TypeGuard[list[object]]:
 
 
 def _check_size(schema: object) -> None:
-    """Raise `ValueError` if `schema` holds more than `_MAX_SCHEMA_VALUES` values, counting each reuse.
+    """Raise `ValueError` if `schema` is too big to process and validate against on the host, counting each reuse.
 
     A script can reuse one dict at many places, so a schema that is small in the sandbox can expand into
-    exponentially many values once copied or validated against on the host.
+    exponentially many values once copied on the host. Every `anyOf`, `allOf` and `oneOf` option is checked
+    against the same output value, so their total bounds the validation work per value.
     """
     stack = [schema]
-    count = 0
+    count = options = 0
     while stack:
         count += 1
         if count > _MAX_SCHEMA_VALUES:
             raise ValueError(f'it has more than {_MAX_SCHEMA_VALUES} values')
         node = stack.pop()
         if _is_dict(node):
+            options += sum(len(value) for key in _COMBINATORS if _is_list(value := node.get(key)))
+            if options > _MAX_SCHEMA_OPTIONS:
+                raise ValueError(f'it has more than {_MAX_SCHEMA_OPTIONS} anyOf, allOf and oneOf options')
             stack.extend(node.values())
         elif _is_list(node):
             stack.extend(node)

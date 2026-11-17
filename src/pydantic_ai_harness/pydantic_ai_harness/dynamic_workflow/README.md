@@ -198,10 +198,11 @@ The schema is model output that is processed on the host, so nested objects are 
 it can use only the keywords `type`, `properties`, `required`, `additionalProperties`, `items`,
 `enum`, `const`, `anyOf`, `allOf`, `oneOf`, the numeric, length, item and property bounds
 (`minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `minLength`,
-`maxLength`, `minItems`, `maxItems`, `uniqueItems`, `minProperties`, `maxProperties`), and the
-annotations `format`, `title`, `description`, `default` and `examples`. A schema that is not an
-object schema, that uses any other keyword (such as `$ref`, `$defs` or `pattern`), or that holds
-more than 1,000 values, fails the call before it counts against `max_agent_calls`. A sub-agent with
+`maxLength`, `minItems`, `maxItems`, `minProperties`, `maxProperties`), and the annotations
+`format`, `title`, `description`, `default` and `examples`. A schema that is not an object schema,
+that uses any other keyword (such as `$ref`, `$defs`, `pattern` or `uniqueItems`), that holds more
+than 1,000 values, or that has more than 16 `anyOf`, `allOf` and `oneOf` options in total, fails the
+call before it counts against `max_agent_calls`. A sub-agent with
 [output validators](https://pydantic.dev/docs/ai/core-concepts/output/#output-validator-functions)
 cannot take a per-run output type, so a call to it with `output_schema` raises a `RuntimeError` in
 the script.
