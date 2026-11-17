@@ -11,7 +11,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field, replace
 from functools import partial
 from itertools import pairwise
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import anyio
@@ -174,6 +174,8 @@ def _vetoed_reply(what: str, event: ParentMessageEvent | AgentCreatedEvent) -> s
 
 _EventT = TypeVar('_EventT', bound=CapabilityEvent)
 
+_RECOVERABLE = 'Treat this as a recoverable observation and decide from existing evidence.'
+
 
 # Signals that must always reach the parent run, even when a delegate has
 # `contain_errors` on. Containing the first five would break the agent graph
@@ -250,8 +252,8 @@ class SubAgent(Generic[AgentDepsT]):
     on_failure: str | None = None
     """Steering message returned to the parent for any soft degradation of this
     delegate (timeout, child failure, a child run ending with `DeferredToolRequests` or `PendingModelResponse`,
-    usage budget reached, call budget exhausted), in place of the built-in default. Setting it also makes child
-    failures soft: a child error returns this message as a normal tool result
+    usage budget reached, call budget exhausted), in place of the built-in default. While `on_model_error` is unset,
+    setting it also makes child failures soft: a child error returns this message as a normal tool result
     instead of raising a parent `ModelRetry`."""
 
     contain_errors: bool | None = None
@@ -266,6 +268,14 @@ class SubAgent(Generic[AgentDepsT]):
     propagate regardless. Unset inherits `SubAgents.contain_errors` (default off).
     Orthogonal to `on_failure`, which only sets the message for expected soft
     degradations; a contained crash always raises the loud `ModelRetry`."""
+
+    on_model_error: Literal['retry', 'return'] | None = dataclass_field(default=None, kw_only=True)
+    """What the parent gets when the child fails with `ModelRetry` or `UnexpectedModelBehavior`.
+
+    `'retry'` raises a parent `ModelRetry` naming the error, bounded by `SubAgents.tool_retries`. `'return'` returns
+    the error followed by the `on_failure` message, or a default steering message, as a normal tool result. Either
+    way `on_failure` only sets message text. Unset keeps the earlier coupling: `'return'` with the `on_failure`
+    message alone when `on_failure` is set, `'retry'` otherwise."""
 
     read_only: bool = dataclass_field(default=False, kw_only=True)
     """Run in a `ReadOnlyWorkspace`; supply only trusted read-only tools as well."""
@@ -1630,10 +1640,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             # A shared/parent usage limit means the whole tree is out of budget.
             raise
         except (ModelRetry, UnexpectedModelBehavior) as exc:
-            if sub_agent.on_failure is not None:
-                return _Ended(outcome='failed', output=sub_agent.on_failure)
-            # Soft sub-agent failures come back to the parent as a retry it can react to.
-            return _Ended(outcome='failed', output=f'Sub-agent {agent_name!r} failed: {exc}', cause=exc)
+            return self._model_error_outcome(agent_name, sub_agent, exc)
         except _ALWAYS_PROPAGATE:
             raise
         except Exception as exc:
@@ -1651,6 +1658,17 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 ),
             )
         return _Ended(outcome='ok', output=str(result.output))
+
+    def _model_error_outcome(
+        self, agent_name: str, sub_agent: SubAgent[AgentDepsT], exc: ModelRetry | UnexpectedModelBehavior
+    ) -> _Ended:
+        """Return a child's soft model error to the parent, or raise it as a retry, per `on_model_error`."""
+        failure = f'Sub-agent {agent_name!r} failed: {exc}'
+        if sub_agent.on_model_error == 'return':
+            return _Ended(outcome='failed', output=f'{failure}\n\n{self._steer(sub_agent.on_failure, _RECOVERABLE)}')
+        if sub_agent.on_model_error is None and sub_agent.on_failure is not None:
+            return _Ended(outcome='failed', output=sub_agent.on_failure)
+        return _Ended(outcome='failed', output=failure, cause=exc)
 
     def _crash_outcome(self, agent_name: str, sub_agent: SubAgent[AgentDepsT], exc: Exception) -> _Ended:
         """Contain an unexpected child crash, or let it abort the parent."""
@@ -1679,9 +1697,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         output_tools: Container[str],
     ) -> _Ended:
         """For a child stopped by its timeout or own usage budget: the steering message, plus its last text when kept."""
-        output = self._steer(
-            sub_agent.on_failure, f'{reason} Treat this as a recoverable observation and decide from existing evidence.'
-        )
+        output = self._steer(sub_agent.on_failure, f'{reason} {_RECOVERABLE}')
         if sub_agent.keep_partial_output and (text := _last_text(messages, output_tools)):
             output = f'{output}\n\n{wrap(_PARTIAL_OUTPUT_TAG, text)}'
         return _Ended(outcome=outcome, output=output)

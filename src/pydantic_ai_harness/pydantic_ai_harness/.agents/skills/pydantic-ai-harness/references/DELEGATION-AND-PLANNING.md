@@ -128,7 +128,7 @@ orchestrator = Agent(
 ```
 
 `SubAgent(agent, name=None, description=None, models=None, usage_limits=None, timeout_seconds=None,
-max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate controls.
+max_calls=None, on_failure=None, contain_errors=None, on_model_error=None)` sets per-delegate controls.
 
 `SubAgents` parameters that change behaviour:
 
@@ -170,7 +170,9 @@ Gotchas:
   `DeferredToolRequests` or `PendingModelResponse` (the parent cannot resume it) are soft: a steering
   message (or `on_failure`) comes back as the tool result, with outcome `failed`. A model request the
   child left pending (e.g. in a `BatchModelRequests` batch) is cancelled first, best effort, on a
-  remote `SubAgentWorker` too; a batch is only cancelled once no other request in it still waits. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
+  remote `SubAgentWorker` too; a batch is only cancelled once no other request in it still waits. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`;
+  `on_model_error='return'` returns the error plus steering as a tool result instead (unset, `on_failure` does that
+  without the error). Other
   crashes abort the parent unless `contain_errors=True`.
 - `SubAgent(keep_partial_output=True)` appends the child's last text response, framed as
   `<partial_output>`, to the steering message when its timeout or own usage budget stops it. The text
