@@ -238,39 +238,23 @@ _ENCODED_RUN = re.compile(r'[A-Za-z0-9+/_-]{24,}={0,2}')
 That rules out paths and identifiers, and leaves lowercase hex (hashes, UUIDs) at the prose rate.
 """
 
-_JSON_PUNCTUATION = '{}[],:"'
-
-_PROSE_PUNCTUATION_SHARE = 0.12
-_PROSE_DIGIT_SHARE = 0.08
-"""The shares of a text prose and code stay under; only JSON punctuation and digits beyond them are surcharged.
-
-Charging the surplus rather than switching on a density threshold keeps the estimate monotone: added text
-never lowers it, since the surplus shrinks by at most 0.14 tokens per added character against the
-baseline's 0.25.
-"""
-
-_PUNCTUATION_SURCHARGE = 1.0
-"""A surplus `_JSON_PUNCTUATION` character costs ~1.25 tokens, and a surplus digit half of one."""
-
-_NON_ASCII_CHARS_PER_TOKEN = 1.5
-"""Characters per token of non-ASCII text outside CJK and the astral planes (Cyrillic measures ~1.9)."""
-
-_ENCODED_CHARS_PER_TOKEN = 1.25
-"""Characters per token of encoded runs (random base64 measures ~1.4 on cl100k_base)."""
-
-_NON_ASCII_SURCHARGE = 1 / _NON_ASCII_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN
-_ENCODED_SURCHARGE = 1 / _ENCODED_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN
-_TOKEN_SURCHARGE = 1 - 1 / CHARS_PER_TOKEN
-_DIGIT_SURCHARGE = 1 / 2 - 1 / CHARS_PER_TOKEN
-_ASTRAL_SURCHARGE = 3 - 1 / CHARS_PER_TOKEN
-
 
 def _dense_surcharge(text: str) -> float:
     """Tokens *text* costs beyond `CHARS_PER_TOKEN`, for content that tokenizes denser than English prose.
 
-    Rates are set at or above common tokenizers' counts: an overcount compacts a little early,
-    an undercount sends a request the provider rejects.
+    Rates are set at or above cl100k_base counts: an overcount compacts a little early, an undercount
+    sends a request the provider rejects.
+
+    - Hangul, CJK and kana cost a token each, code points outside the BMP three, and other non-ASCII
+      text 1.5 characters per token (Cyrillic measures ~1.9).
+    - Encoded runs cost 1.25 characters per token (random base64 measures ~1.4).
+    - Of the rest, the baseline covers a 12% share of JSON punctuation and an 8% share of digits, which
+      prose and code stay under; each one beyond that costs ~1.25 and 0.5 tokens. Charging the surplus
+      rather than switching on a density threshold means appended prose never lowers the estimate: the
+      surplus shrinks by at most 0.14 tokens per added character, against the baseline's 0.25. Text
+      under 32 characters skips this, so a reference like `See file 1a2b3c.` stays at the baseline.
     """
+    baseline = 1 / CHARS_PER_TOKEN
     ascii_chars = len(text) if text.isascii() else len(text.encode('ascii', 'ignore'))
     non_ascii = len(text) - ascii_chars
     cjk = len(text) - len(_CJK.sub('', text)) if non_ascii else 0
@@ -282,20 +266,20 @@ def _dense_surcharge(text: str) -> float:
     ]
     encoded = sum(map(len, runs))
     surcharge = (
-        cjk * _TOKEN_SURCHARGE
-        + astral * _ASTRAL_SURCHARGE
-        + (non_ascii - cjk - astral) * _NON_ASCII_SURCHARGE
-        + encoded * _ENCODED_SURCHARGE
+        cjk * (1 - baseline)
+        + astral * (3 - baseline)
+        + (non_ascii - cjk - astral) * (1 / 1.5 - baseline)
+        + encoded * (1 / 1.25 - baseline)
     )
-    plain = len(text) - encoded
-    if plain < 32:
+    if len(text) < 32:
         return surcharge
-    punctuation = sum(text.count(c) for c in _JSON_PUNCTUATION)
+    plain = len(text) - encoded
+    punctuation = sum(text.count(c) for c in '{}[],:"')
     digits = sum(text.count(c) - sum(run.count(c) for run in runs) for c in string.digits)
     return (
         surcharge
-        + max(0, punctuation - plain * _PROSE_PUNCTUATION_SHARE) * _PUNCTUATION_SURCHARGE
-        + max(0, digits - plain * _PROSE_DIGIT_SHARE) * _DIGIT_SURCHARGE
+        + max(0, punctuation - 0.12 * plain) * (1.25 - baseline)
+        + max(0, digits - 0.08 * plain) * (0.5 - baseline)
     )
 
 

@@ -61,20 +61,19 @@ definitions, every prior message), so only the messages added since are estimate
 those, and the fallback when no response carries usage yet, is the text estimate: ~4 characters per
 token for English-like prose, one token per CJK character, three per character outside the Basic
 Multilingual Plane (most emoji, CJK Extension B), ~1.5 characters per token for other non-ASCII text
-and ~1.25 for base64-like runs, and about 1.25 tokens per `{}[],:"` character and half a token per
-digit beyond the share prose and code carry, which is what makes compact JSON dense. Dense content
-is deliberately estimated high, since an undercount can send a request over the context window. The
-same estimate measures `keep_tokens`, `max_part_tokens`, `ToolOutputLimits(over_tokens=True)` bands
-and the `compaction.tokens_*` span attributes. Pass a `tokenizer` callable (e.g. `tiktoken`) to
-measure with a real tokenizer instead. Instruction replacement and withdrawal records contribute
-their full rendered system text to token estimates. Superseded updates before a new instruction
-baseline are excluded.
-Newly revealed tool schemas that are pending in the request are conservatively
-estimated by the implementation. `DeduplicateFileReads` runs on every request when no trigger is set (it is
-cheap and near-lossless). `TieredCompaction` triggers and stops on a single `target_tokens` /
-`target_fraction` budget. `ClampOversizedMessages` triggers per *part* (`max_part_tokens` /
-`max_part_chars`), not on the whole history -- the failure it targets is one oversized part, not a
-large total.
+and ~1.25 for base64-like runs (24+ characters mixing digits and both cases), and about 1.25 tokens
+per `{}[],:"` character and half a token per digit beyond the share prose and code carry, which is
+what makes compact JSON dense. Dense content is deliberately estimated high, since an undercount can
+send a request over the context window. The same estimate measures `keep_tokens`, `max_part_tokens`,
+`ToolOutputLimits(over_tokens=True)` bands and the `compaction.tokens_*` span attributes. Pass a
+`tokenizer` callable (e.g. `tiktoken`) to measure with a real tokenizer instead. Instruction
+replacement and withdrawal records contribute their full rendered system text to token estimates.
+Superseded updates before a new instruction baseline are excluded. Newly revealed tool schemas that
+are pending in the request are conservatively estimated by the implementation.
+`DeduplicateFileReads` runs on every request when no trigger is set (it is cheap and near-lossless).
+`TieredCompaction` triggers and stops on a single `target_tokens` / `target_fraction` budget.
+`ClampOversizedMessages` triggers per *part* (`max_part_tokens` / `max_part_chars`), not on the
+whole history -- the failure it targets is one oversized part, not a large total.
 
 ### What counts toward `keep_tokens`
 
