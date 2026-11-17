@@ -45,7 +45,7 @@ from decimal import Decimal
 
 from pydantic_ai import Agent
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget
+from pydantic_ai_harness.spend_limits import Budget
 
 agent = Agent(
     '{{ openai:medium }}',
@@ -63,7 +63,7 @@ A budget is a ceiling, a period, and optionally a partition. They compose, so se
 from decimal import Decimal
 
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget
+from pydantic_ai_harness.spend_limits import Budget
 
 SpendLimits(
     budgets=[
@@ -77,7 +77,7 @@ SpendLimits(
 
 | Field | Meaning |
 |---|---|
-| `usd` / `tokens` | ceilings; set either, both, or neither |
+| `usd` / `tokens` | ceilings; set either, both, or neither, as a value or a callable resolving one from the run |
 | `window` | `run`, `conversation`, `day`, `month`, `total` |
 | `scope` | derives a partition key from the run, so tenants count separately; typed against the agent's `deps` |
 | `warn_at` | fraction past which `BudgetStatus.warning` is set; never blocks |
@@ -90,11 +90,41 @@ Budgets that share a `name`, `window`, and `scope` share one counter, which is h
 
 `Budget` is generic in the agent's dependency type, so a `scope` is checked against it: pass the capability to an `Agent` with a `deps_type` and a scope reaching for a field those deps do not have is a type error rather than an `AttributeError` on the first request.
 
+A ceiling can come from the run too, so each partition of a scope gets its own allowance -- a customer's plan, an agent's configured cap, a job's approved budget -- rather than one number they all share:
+
+```python
+from dataclasses import dataclass
+from decimal import Decimal
+
+from pydantic_ai_harness import SpendLimits
+from pydantic_ai_harness.spend_limits import Budget
+
+
+@dataclass
+class Account:
+    id: str
+    allowance_usd: Decimal | None
+
+
+SpendLimits[Account](
+    budgets=[
+        Budget(
+            usd=lambda ctx: ctx.deps.allowance_usd,
+            window='month',
+            scope=lambda ctx: ctx.deps.id,
+            name='account',
+        ),
+    ]
+)
+```
+
+The callable is typed against the agent's `deps` like `scope` (the `Ceiling` type alias names the accepted forms), and is called alongside it whenever the budget is read, more than once per request, so keep it to reading what the application loaded before the run. Return `None` for no ceiling on that partition. Unlike a plain ceiling, a resolved zero or less is accepted: it means nothing is allowed, so the partition reads as exhausted and its requests are refused with `SpendLimitExceeded`. The refusal and `warn_at` use the resolved ceiling. `BudgetStatus.usd_limit` and `token_limit` report it, as `SpendRecordedEvent` does, and `BudgetStatus.budget` stays the budget as configured. If the callable raises, the response is still accrued, but neither `SpendRecordedEvent` nor `on_spend` reports it, and the run fails with that error. The counter key does not include the ceiling, so what a partition has spent carries over when its allowance changes.
+
 A budget with no ceiling is a counter. It accumulates and reports and never refuses anything, which is how per-tenant accounting with no cap is expressed:
 
 ```python
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget
+from pydantic_ai_harness.spend_limits import Budget
 
 SpendLimits(budgets=[Budget(window='month', scope=lambda ctx: ctx.deps.tenant_id, name='chargeback')])
 ```
@@ -112,7 +142,7 @@ from decimal import Decimal
 
 from pydantic_ai import Agent
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget, SpendRecordedEvent
+from pydantic_ai_harness.spend_limits import Budget, SpendRecordedEvent
 
 limits = SpendLimits(budgets=[Budget(usd=Decimal('100'))])
 agent = Agent('{{ anthropic:medium }}', capabilities=[limits])
@@ -137,7 +167,7 @@ async def report(limits: SpendLimits[None]) -> None:
         print(status.budget.name, status.spent.usd, status.exhausted)
 ```
 
-Without a run context, budgets on a `run` or `conversation` window are omitted, and so is a budget declaring a `scope` unless `scope=` names the partition to read. Pass `ctx` inside a run and every budget resolves.
+Without a run context, budgets on a `run` or `conversation` window are omitted, so is a budget whose ceiling is a callable, and so is a budget declaring a `scope` unless `scope=` names the partition to read. Pass `ctx` inside a run and every budget resolves.
 
 Set `expose_tools=True` to give the agent a `get_spend` tool. It is off by default: a tool costs schema tokens on every request, and most applications want the number on a screen rather than in the model's context.
 
@@ -158,7 +188,7 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import RunContext
 
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget
+from pydantic_ai_harness.spend_limits import Budget
 
 limits = SpendLimits[None](budgets=[Budget(usd=Decimal('100'), warn_at=0.8)])
 approvals: asyncio.Queue[bool] = asyncio.Queue()
@@ -192,7 +222,7 @@ from decimal import Decimal
 from pydantic_ai import Agent, capture_run_messages
 
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget, SpendLimitExceeded
+from pydantic_ai_harness.spend_limits import Budget, SpendLimitExceeded
 
 limits = SpendLimits[None](budgets=[Budget(usd=Decimal('1'), name='daily')])
 agent = Agent('{{ openai:medium }}', deps_type=type(None), capabilities=[limits])
@@ -209,7 +239,7 @@ async def ask(prompt: str, ceiling: Decimal) -> str:
     return (await agent.run(message_history=resumable)).output
 ```
 
-Assigning `budgets` does not repeat the checks the constructor runs over budget combinations, so keep a replacement to the same names, windows, and scopes. It also raises the ceiling for every run sharing this `SpendLimits`, not just the one that was refused, and nothing lowers it again.
+Assigning `budgets` does not repeat the checks the constructor runs over budget combinations, so keep a replacement to the same names, windows, and scopes. It also raises the ceiling for every run sharing this `SpendLimits`, not just the one that was refused, and nothing lowers it again. To raise one partition's ceiling, resolve it from the run with a callable `usd` or `tokens` and change the value the callable reads.
 
 ## Sharing a counter across processes
 
@@ -221,7 +251,7 @@ from decimal import Decimal
 from redis.asyncio import Redis
 
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget, RedisSpendStore
+from pydantic_ai_harness.spend_limits import Budget, RedisSpendStore
 
 store = RedisSpendStore(Redis.from_url('redis://localhost'))
 limits = SpendLimits(budgets=[Budget(usd=Decimal('100'), window='day')], store=store)
@@ -257,7 +287,7 @@ from decimal import Decimal
 import asyncpg
 
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget, PostgresSpendStore
+from pydantic_ai_harness.spend_limits import Budget, PostgresSpendStore
 
 
 async def build_limits() -> tuple[SpendLimits[None], asyncpg.Pool]:
@@ -302,7 +332,7 @@ SpendLimits(price=lambda response: Decimal('0.002') if response.model_name == 'i
 
 An amount returned by `price` must be finite and not negative. Anything else -- a credit, a `NaN`, an infinity -- fails the run with `UserError`, because a credit moves a budget away from its ceiling and the other two are a broken pricing function rather than a price. An exception raised by `price` is reported through the same `UserError` path. The response is still recorded first: it was billed by the provider whatever the function returned, so its tokens and request count are accrued and `on_spend` fires before the error is raised. When one lifecycle committed several provider responses, an error pricing or reporting one response is deferred until the remaining responses accrue.
 
-Under durable execution, `price` and each budget's `scope` callable must be deterministic for the same response and run context. Pricing runs in orchestration outside the journaled accrual, so a changed result can make `on_spend` disagree with the recorded counter or turn a successful recovery into a pricing error. A changed scope selects a different store key from the one in the recorded accrual; `SpendLimits` reports that mismatch as a `UserError` naming the determinism requirement.
+Under durable execution, `price` and each budget's `scope` and ceiling callables must be deterministic for the same response and run context. A ceiling is read in orchestration, so a changed value can flip a replayed refusal. Pricing runs in orchestration outside the journaled accrual, so a changed result can make `on_spend` disagree with the recorded counter or turn a successful recovery into a pricing error. A changed scope selects a different store key from the one in the recorded accrual; `SpendLimits` reports that mismatch as a `UserError` naming the determinism requirement.
 
 `SpendLimits` calls `price` first. A finite, non-negative amount it returns is treated as the complete response price, including when usage is incomplete. Returning `None` falls through to the registry. When usage is incomplete, the registry can still supply a known cost subtotal, which `SpendLimits` records, but the response remains unpriced because its full cost is unknown. The `on_unpriced` policy still applies: `'zero'` (the default) increments `Spent.unpriced_requests` and continues with the known subtotal, while `'raise'` records the subtotal and fails the run with `UnpricedModelError`. Known token totals for incomplete usage are lower bounds. With `'zero'` and a `usd` budget, `UnpricedModelWarning` is emitted once per model when no complete price is available. If callers choose the model, prefer `'raise'` or supply `price`.
 
@@ -369,38 +399,40 @@ A refusal emits a `spend budget exhausted` span with `spend.budget` and `spend.w
     on_unpriced: raise
 ```
 
-`store`, `price`, `on_spend`, `clock`, and a budget's `scope` take callables or live objects. A spec naming them is rejected rather than ignored.
+`store`, `price`, `on_spend`, `clock`, a budget's `scope`, and a callable `usd` or `tokens` take callables or live objects. A spec naming them is rejected rather than ignored.
 
 The fields above are what `SpendLimits.from_spec` names in its signature, which is also what Pydantic AI reads to generate the spec's JSON schema -- so an editor following the `$schema` line completes and validates them. `BudgetSpec` is the entry shape, exported for anyone building a spec in code.
 
-Source: [`pydantic_ai_harness/spend/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/spend/).
+Source: [`pydantic_ai_harness/spend_limits/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/spend_limits/).
 
 ## API reference
 
-::: pydantic_ai_harness.spend.SpendLimits
+::: pydantic_ai_harness.spend_limits.SpendLimits
 
-::: pydantic_ai_harness.spend.Budget
+::: pydantic_ai_harness.spend_limits.Budget
 
-::: pydantic_ai_harness.spend.SpendSnapshot
+::: pydantic_ai_harness.spend_limits.Ceiling
 
-::: pydantic_ai_harness.spend.BudgetStatus
+::: pydantic_ai_harness.spend_limits.SpendSnapshot
 
-::: pydantic_ai_harness.spend.Spent
+::: pydantic_ai_harness.spend_limits.BudgetStatus
 
-::: pydantic_ai_harness.spend.BatchSpendStore
+::: pydantic_ai_harness.spend_limits.Spent
 
-::: pydantic_ai_harness.spend.SpendEntry
+::: pydantic_ai_harness.spend_limits.BatchSpendStore
 
-::: pydantic_ai_harness.spend.SpendStore
+::: pydantic_ai_harness.spend_limits.SpendEntry
 
-::: pydantic_ai_harness.spend.InMemorySpendStore
+::: pydantic_ai_harness.spend_limits.SpendStore
 
-::: pydantic_ai_harness.spend.RedisSpendStore
+::: pydantic_ai_harness.spend_limits.InMemorySpendStore
 
-::: pydantic_ai_harness.spend.PostgresSpendStore
+::: pydantic_ai_harness.spend_limits.RedisSpendStore
 
-::: pydantic_ai_harness.spend.SpendLimitExceeded
+::: pydantic_ai_harness.spend_limits.PostgresSpendStore
 
-::: pydantic_ai_harness.spend.UnpricedModelError
+::: pydantic_ai_harness.spend_limits.SpendLimitExceeded
 
-::: pydantic_ai_harness.spend.UnpricedModelWarning
+::: pydantic_ai_harness.spend_limits.UnpricedModelError
+
+::: pydantic_ai_harness.spend_limits.UnpricedModelWarning

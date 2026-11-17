@@ -43,6 +43,9 @@ class FakeGh:
     def hang_on_token(self) -> None:
         (self.state / 'token-hang').write_text('')
 
+    def hang_on_api(self) -> None:
+        (self.state / 'api-hang').write_text('')
+
     def calls(self) -> list[str]:
         path = self.state / 'calls'
         return path.read_text().splitlines() if path.exists() else []
@@ -136,6 +139,7 @@ def isolated_environment(
     monkeypatch.setenv('PYTHON_KEYRING_BACKEND', 'keyring.backends.null.Keyring')
     # The encryption key is read once per process; each test gets a fresh keyring, so a fresh read.
     credential_store._stored_key.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    credential_store._warn_plaintext_fallback.cache_clear()  # pyright: ignore[reportPrivateUsage]
     credential_store._NO_OLDER_ENTRY.clear()  # pyright: ignore[reportPrivateUsage]
 
 

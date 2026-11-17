@@ -24,6 +24,13 @@ Agentic Workflow.
 | Use the agent inside Zed or another ACP editor | `pydantic_ai_harness.experimental.acp` |
 | Run the agent headless on GitHub issues/PRs/schedules | the gh-aw `pydantic-ai` engine |
 
+A model error's `retry_after` (a provider's `Retry-After`) is waited durably before the engine's next attempt at
+the model request: on AWS Lambda as the step retry's timed suspension, on Azure Durable Task as a durable timer
+within the model `RetryPolicy`, on Absurd and pgtask as a recorded failed attempt and a `sleep_for` that suspends
+the task, at most as many times per model request as the task has attempts left. Render Workflows can't, so its
+task `Retry` applies. Set `model_settings={'max_retries': 0}` so the provider SDK doesn't also retry inside the
+durable unit.
+
 ## AzureDurableTaskDurability
 
 Attach `AzureDurableTaskDurability()` to a named agent. Retrieve the bound copy with
@@ -41,7 +48,8 @@ Orchestrator-side code must be deterministic and I/O-free. Tool effects must be 
 Set native retry policies with `model_options`, `tool_options`, `event_options` and `capability_options`.
 `resolve_tool_options` returns a native policy, `None` to keep `tool_options`, or `False`
 to run a function tool inline. Function tools can also opt out with
-`metadata={'azure_durable_task': False}`. Inline tools must be deterministic and I/O-free.
+`metadata={'azure_durable_task': False}`, or async ones with the engine-neutral
+`durable=False`. Inline tools must be deterministic and I/O-free.
 See [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/).
 
 ## StepPersistence
@@ -50,6 +58,14 @@ Records an append-only event log, full-history snapshots at settled tool-cycle b
 of tool calls (`started`/`completed`/`failed`). It stores message history only: it does not restore
 capability state, graph-node state, or in-flight streams, and it does not replay anything by itself.
 You continue a run by passing a snapshot's messages to `Agent.run(message_history=...)`.
+
+It is not the recommended session store: to store conversations, use core's `ConversationStore`
+(`pydantic_ai.conversation_store`), which also keeps usage and deferred tool requests. To move sessions
+already stored with `StepPersistence`, save each `SqliteConversationStore` head, or else each session
+ID's newest `complete` snapshot, as a `Conversation`, skipping conversations the store already has.
+Settle a session whose newest run ends on unanswered tool calls (a pending approval or deferred result)
+first: its last `complete` snapshot leaves that turn out (see "Moving sessions to a `ConversationStore`"
+on the Step Persistence page).
 
 ```python
 import asyncio
@@ -98,8 +114,8 @@ Stores, all in `pydantic_ai_harness.step_persistence`, all async, all accepting
   write, so the user needs index-creation privileges.
 - `PostgresStepStore(pool, *, table='step_persistence')`: `pool` is your own `asyncpg` pool (the
   driver-neutral `PostgresPool` protocol); no harness extra, and you own the pool lifecycle. `table`
-  is a prefix of at most 40 characters. It creates its tables on first use, so the role needs
-  `CREATE` on the schema.
+  is a prefix of at most 40 characters. It creates its tables on first use unless they all exist, so only that
+  first call needs `CREATE` on the schema.
 
 File, SQLite, Mongo, and Postgres stores move `BinaryContent` and any text part of 64 KiB or more to a
 `MediaStore` (disk, same DB, same Mongo client, or same pool by default). Pass `media_store=None` to keep them
@@ -141,8 +157,9 @@ Gotchas:
 - Shapes a test sees: when a streamed model request fails, the saved history (default read included)
   ends with an empty or partial-text `ModelResponse`. With `Planning`, each plan tool's `ToolReturnPart`
   ends with the plan in a `<plan_reminder>` tag and carries
-  `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1', 'plan': ...}`; a user-channel plan
-  record with that origin appears only when the latest plan isn't visible (after compaction, say).
+  `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1', 'plan': ...}`; a `PlanReminderPart`
+  (from `pydantic_ai_harness.planning`) records the plan only when the latest plan isn't visible (after
+  compaction, say).
   Assert on the parts you need, not exact message shapes.
 - `run_id` is per `Agent.run`. Reusing one instance with the same explicit `run_id` raises `ValueError`.
   Group turns with `conversation_id=` on `Agent.run`.
@@ -277,7 +294,8 @@ Parameters: `AWSLambdaDurability(*, models=None, event_stream_handler=None, name
 `models` maps ids to extra models for `agent.run(model='<id>')`. `step_config` sets the base
 `retry_strategy`/`step_semantics`/`serdes` for all steps. Per-tool `metadata={'aws_lambda': {...}}`
 overrides it key by key, and `metadata={'aws_lambda': False}` opts a function tool out (MCP tools cannot
-opt out).
+opt out). The engine-neutral `durable=False` opts an async function tool out on every
+engine; an engine's own key on the same tool wins.
 
 Approvals: add core `HandleDeferredToolCalls(ask, timeout=timedelta(...))` (`pydantic_ai.capabilities`), whose `ask` takes a resume token,
 next to `AWSLambdaDurability()` instead of ending the run with `DeferredToolRequests` output and starting
@@ -463,21 +481,21 @@ active on the **next** run, and only if you pass it in:
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 
 from pydantic_ai_harness import CapabilityCreation
 
+workspace = LocalWorkspaceBackend('.')
 creation = CapabilityCreation(directory=Path('.authored'))
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[LocalWorkspace('.'), creation])
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[creation])
 
 
 
 async def main():
     history = None
     for prompt in ['Add a capability that logs tool calls.', 'Now refactor utils.py.']:
-        result = await agent.run(
-            prompt, message_history=history, capabilities=creation.store.load_active()
-        )
+        extra = await creation.load_active(workspace)
+        result = await agent.run(prompt, message_history=history, capabilities=extra, workspace=workspace)
         history = result.all_messages()
 ```
 
@@ -485,8 +503,11 @@ Gotchas: a run raises `UserError` unless its workspace is a writable `LocalWorks
 authored code executes in your process and would bypass a sandbox. A run also raises `UserError` unless
 `ctx.workspace.authority_of(directory)` is `'operator'`, so point `directory` at code the operator controls, not
 a clone or an upload; a directory outside the working directory needs `path_authority={path: 'operator'}`.
-With `defer_loading=True` these checks refuse each authoring tool call instead. `store.load_active()` runs outside this check, since it has no workspace. Only use it where you would run the
-model's code yourself. Authored code runs during `author_capability` validation, in the current run.
+With `defer_loading=True` these checks refuse each authoring tool call instead. `creation.load_active(workspace)`
+makes them against `workspace` before loading, and only against it, so pass the same workspace as `agent.run(workspace=...)`
+instead of a `LocalWorkspace` capability (for a directory outside the working directory,
+`AuthorityWorkspace(Workspace(LocalWorkspaceBackend('.')), authority='operator', path_authority={'/abs/path': 'operator'})`); `creation.store.load_active()` has no workspace and skips them, so only
+use it where you would run the model's code yourself. Authored code runs during `author_capability` validation, in the current run.
 `load_active()` runs the same checks and skips entries that fail them. Inside a Temporal or DBOS
 workflow, `capabilities=` on a run is refused, so authored capabilities cannot be activated there;
 a Prefect flow accepts only authored capabilities that contribute no function, MCP, or dynamic
@@ -524,7 +545,10 @@ or `{Name: {kwargs}}`, and each class's `from_spec` builds the instance. Opted o
 or live agents, and raise `ValueError` if listed): `AWSLambdaDurability`, `AbsurdDurability`,
 `PGTaskDurability`, `CapabilityCreation`, `DynamicWorkflow`, `InputGuardrail`, `OutputGuardrail`, `SubAgents`,
 `SystemReminders`, `ToolGuardrail`, `TrajectoryJudge`. `AskUser` has a spec name but needs an
-`answerer` callable, so in practice it is passed in code too. Pass those instances with the
+`answerer` callable, so in practice it is passed in code too. `CompactOnRequest`, `DeduplicateFileReads`,
+`FallbackCompaction` and `TieredCompaction` have spec names too, but each requires strategies or a
+`file_key` callable that JSON cannot express, so the spec schema leaves them out and they are
+Python-only. Pass those instances with the
 `capabilities=` keyword of `Agent.from_spec`/`Agent.from_file`, which adds them to the spec's list.
 Keep secrets out of spec files and let capabilities read their env vars.
 
@@ -551,19 +575,19 @@ from pydantic_ai import Agent
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 
 from pydantic_ai_harness.experimental.acp import (
-    AcpSession,
-    AcpSessionConfig,
+    ACPSession,
+    ACPSessionConfig,
     InMemorySessionStore,
     run_acp_stdio_sync,
 )
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 
 agent = Agent('anthropic:claude-opus-5-5')
 
 
-def session_config(session: AcpSession) -> AcpSessionConfig[None]:
-    return AcpSessionConfig(
+def session_config(session: ACPSession) -> ACPSessionConfig[None]:
+    return ACPSessionConfig(
         deps=None,
         capabilities=[FileSystem[None](), Shell[None]()],
         workspace=LocalWorkspaceBackend(session.cwd),
@@ -576,7 +600,7 @@ if __name__ == '__main__':
     )
 ```
 
-`AcpSessionConfig` requires only `deps` (`None` for no deps); `capabilities`, `toolsets`, and
+`ACPSessionConfig` requires only `deps` (`None` for no deps); `capabilities`, `toolsets`, and
 `workspace` default to `None`, so an agent without file or shell tools needs no workspace.
 
 Gotchas: root tools at `session.cwd` through `session_config`, not a static `FileSystem`. Tools marked

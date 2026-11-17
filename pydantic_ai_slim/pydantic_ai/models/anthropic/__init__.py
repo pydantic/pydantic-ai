@@ -14,6 +14,7 @@ from typing_extensions import TypedDict
 
 from ... import UnexpectedModelBehavior, _utils, usage
 from ..._context_size import mark_context_input_tokens
+from ..._file_input import registered_media_type
 from ..._http import to_httpx2_timeout
 from ..._instrumentation import current_model_request_span
 from ..._run_context import RunContext
@@ -184,6 +185,7 @@ try:
     from anthropic import (
         DEFAULT_TIMEOUT,
         NOT_GIVEN,
+        APIConnectionError,
         APIStatusError,
         AsyncAnthropicAWS,
         AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
@@ -277,9 +279,9 @@ try:
     from ._cache_control import (
         ANTHROPIC_CACHEABLE_PARAM_TYPES,
         add_cache_control_param,
-        blocks_before_request_scoped_text,
         last_cacheable_block_has_cache_control,
         last_message_content,
+        lasting_blocks_at_end,
         lasting_messages,
         raise_earlier_breakpoint_ttls,
     )
@@ -304,7 +306,7 @@ try:
         without_unanswered_tool_calls,
     )
     from ._containers import is_tool_result_only
-    from ._errors import is_expired_container_error, map_api_errors
+    from ._errors import is_expired_container_error, map_api_errors, status_and_body
     from ._message_passes import (
         anchor_system_messages,
         drop_unpaired_native_tool_calls,
@@ -345,6 +347,7 @@ try:
         last_pass_input_tokens,
         map_usage,
         mark_continuation_context_input_tokens,
+        report_inference_geo,
         response_provider_details,
     )
     from ._streaming import AnthropicEventStream, AnthropicStreamedResponse
@@ -505,6 +508,24 @@ _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS = (AsyncAnthropicFoundry, AsyncAnthropi
 # so `anthropic_calls_cited_web_tools_directly` stays off for them. The other clients don't send those versions.
 _CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS = (
     AsyncAnthropicAWS,
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
+# The Claude API rejects a `tool_use` with no `tool_result`, and a `tool_result` whose `tool_use_id` names no
+# `tool_use` (https://github.com/pydantic/pydantic-ai/issues/13404). The platform clients aren't verified to, so
+# `rejects_unpaired_tool_calls` stays off for them and their requests keep the history as translated.
+_UNPAIRED_TOOL_CALLS_UNVERIFIED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
+# Anthropic documents `inference_geo` as not applicable on Bedrock, Vertex AI (Google managed) and Foundry, where the
+# endpoint or deployment decides the inference region. Claude Platform on AWS and Claude on Google Cloud (Anthropic
+# managed) take it, and their clients are `AsyncAnthropic` subclasses.
+_INFERENCE_GEO_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicBedrock,
     AsyncAnthropicBedrockMantle,
     AsyncAnthropicFoundry,
@@ -792,6 +813,22 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Note: switching between `'fast'` and `'standard'` invalidates the prompt cache.
     """
 
+    anthropic_inference_geo: Literal['us', 'global'] | str
+    """Where model inference runs for this request, sent as Anthropic's `inference_geo` parameter.
+
+    `'us'` keeps inference on US-based infrastructure, at 1.1x the standard price, which Pydantic AI's computed cost
+    ([`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost]) doesn't include yet; `'global'` lets it run in
+    any available geography. Other values are sent as given, for the API to accept or reject. When unset, the
+    workspace's default inference geo applies. Where the request ran is reported
+    in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `'inference_geo'`.
+
+    It's sent on the Claude API, Claude Platform on AWS, Claude on Google Cloud (Anthropic managed), and in
+    Message Batches. Models that don't support data residency (Claude Opus 4.5, Sonnet 4.5, Haiku 4.5 and older)
+    reject it with a 400. On the Bedrock, Vertex AI and Foundry clients, where the endpoint or deployment decides the
+    inference region, it's ignored with a `UserWarning`. See
+    [the Anthropic docs](https://platform.claude.com/docs/en/manage-claude/data-residency) for details.
+    """
+
     anthropic_context_management: BetaContextManagementConfigParam
     """Context management configuration for automatic compaction.
 
@@ -913,6 +950,7 @@ class _MessageCreateParams(TypedDict):
     compaction: BetaCompactionConfigParam | Omit
     container: BetaContainerParams | str | Omit
     service_tier: Literal['auto', 'standard_only'] | Omit
+    inference_geo: str | Omit
     diagnostics: BetaDiagnosticsParam | Omit
     extra_body: object | None
 
@@ -945,6 +983,7 @@ class _PreparedMessagesCreate:
     initial_betas: set[str]
     initial_thinking_override: dict[str, object] | None
     initial_effective_thinking: dict[str, object] | Omit
+    inference_geo: str | Omit
 
 
 def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
@@ -1025,7 +1064,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     _honors_compaction_boundaries = True
     # The Messages API has no audio or video block, and its document block takes a PDF or plain text.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
-    _supported_document_media_types = frozenset({'application/pdf', 'text/plain'})
+    _supported_media_types = {'document': frozenset({'application/pdf', 'text/plain'})}
 
     _model_name: AnthropicModelName = field(repr=False)
     _provider: Provider[AsyncAnthropicClient] = field(repr=False)
@@ -1222,6 +1261,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         clients whose count endpoints aren't verified to accept server tools, unless the provider's profile already
         sets it.
 
+        `anthropic_supports_inference_geo` is on for `AsyncAnthropic` clients and off for the Bedrock, Vertex AI and
+        Foundry clients, where the endpoint decides the inference region, unless the provider's profile already sets it.
+
         The legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't serve
         from the Messages API infrastructure, so `supports_auto_cache` is narrowed by model on the legacy Bedrock
         client, and `anthropic_cache` and the unified `cache` setting place a breakpoint on the last block there
@@ -1234,6 +1276,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         `anthropic_calls_cited_web_tools_directly` is on for `AsyncAnthropic` clients and off for every client in
         `_CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS`, Claude Platform on AWS included, unless the provider's profile
         already sets it.
+
+        `rejects_unpaired_tool_calls` is on for `AsyncAnthropic` clients and off for the Bedrock, Bedrock Mantle,
+        Vertex AI and Foundry clients, which aren't verified to reject an unpaired tool call, unless the provider's
+        profile already sets it.
         """
         client = self._provider.client
         profile = merge_profile(
@@ -1256,6 +1302,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             self._model_name
         ):
             profile = merge_profile(profile, AnthropicModelProfile(supports_auto_cache=False))
+        if 'anthropic_supports_inference_geo' not in profile:
+            profile = merge_profile(
+                profile,
+                AnthropicModelProfile(
+                    anthropic_supports_inference_geo=not isinstance(client, _INFERENCE_GEO_UNSUPPORTED_CLIENTS)
+                ),
+            )
         if isinstance(client, _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS):
             profile = merge_profile(profile, AnthropicModelProfile(anthropic_enforces_strict_schema_limits=False))
         if 'anthropic_calls_cited_web_tools_directly' not in profile:
@@ -1265,6 +1318,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     anthropic_calls_cited_web_tools_directly=not isinstance(
                         client, _CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS
                     )
+                ),
+            )
+        if 'rejects_unpaired_tool_calls' not in profile:
+            profile = merge_profile(
+                profile,
+                AnthropicModelProfile(
+                    rejects_unpaired_tool_calls=not isinstance(client, _UNPAIRED_TOOL_CALLS_UNVERIFIED_CLIENTS)
                 ),
             )
         return profile
@@ -1664,9 +1724,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await create(prepared.container, initial_thinking, initial_betas, initial_thinking_override)
-            except APIStatusError as error:
+            except (APIStatusError, APIConnectionError) as error:
+                # `status_and_body` also reads a status a retrying transport gave up on, which `anthropic` wraps in
+                # `APIConnectionError`, so the recoveries below run for it as for the SDK's own error.
+                response = status_and_body(error)
                 if (
-                    is_expired_container_error(error)
+                    response is not None
+                    and is_expired_container_error(*response)
                     and prepared.container_from_history
                     and any(
                         is_str_dict(block) and block['type'] == 'container_upload'
@@ -1676,13 +1740,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 ):
                     try:
                         return await create(None, initial_thinking, initial_betas, initial_thinking_override)
-                    except APIStatusError as fallback_error:
+                    except (APIStatusError, APIConnectionError) as fallback_error:
                         # Classify what the fallback hit, not the 500 that caused it, so a stale
                         # thinking block rejected only on this attempt still reaches the retry
                         # below. The history-resolved container is gone, so it stays dropped there.
-                        error = fallback_error
+                        error, response = fallback_error, status_and_body(fallback_error)
                         retry_container = None
-                if not is_stale_thinking_block_error(anthropic_profile, prepared.initial_effective_thinking, error):
+                if response is None or not is_stale_thinking_block_error(
+                    anthropic_profile, prepared.initial_effective_thinking, *response
+                ):
                     raise error
 
             result = await create(
@@ -1778,6 +1844,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             'compaction': prepared.compaction or OMIT,
             'container': container or OMIT,
             'service_tier': _resolve_anthropic_service_tier(model_settings),
+            'inference_geo': prepared.inference_geo,
             'diagnostics': self._cache_diagnostics(messages, model_settings),
             'extra_body': _build_extra_body(
                 model_settings, thinking_override, bedrock=isinstance(self.client, AsyncAnthropicBedrock)
@@ -1876,6 +1943,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             initial_betas=initial_betas,
             initial_thinking_override=initial_thinking_override,
             initial_effective_thinking=initial_effective_thinking,
+            inference_geo=self._effective_inference_geo(model_settings, anthropic_profile),
         )
 
     def _stale_thinking_block_recovery_history(
@@ -2103,6 +2171,30 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 stacklevel=2,
             )
         return OMIT
+
+    def _effective_inference_geo(
+        self, model_settings: AnthropicModelSettings, anthropic_profile: AnthropicModelProfile
+    ) -> str | Omit:
+        """The `inference_geo` to send, or OMIT when it's unset or the client doesn't take it."""
+        inference_geo = model_settings.get('anthropic_inference_geo')
+        if inference_geo is None:
+            return OMIT
+        if self._sends_inference_geo(model_settings, anthropic_profile):
+            return inference_geo
+        warnings.warn(
+            f'`anthropic_inference_geo` is not supported on `{type(self.client).__name__}`, where the endpoint decides '
+            f'the inference region; the setting {inference_geo!r} will be ignored.',
+            UserWarning,
+            stacklevel=2,
+        )
+        return OMIT
+
+    @staticmethod
+    def _sends_inference_geo(model_settings: AnthropicModelSettings, anthropic_profile: AnthropicModelProfile) -> bool:
+        """Whether the request carries `inference_geo`, so where it ran is reported in `provider_details`."""
+        return model_settings.get('anthropic_inference_geo') is not None and anthropic_profile.get(
+            'anthropic_supports_inference_geo', False
+        )
 
     def _client_supports_fast_speed(self, anthropic_profile: AnthropicModelProfile) -> bool:
         """Fast mode is only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry)."""
@@ -2347,8 +2439,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await count(initial_thinking, initial_betas, initial_thinking_override)
-            except APIStatusError as error:
-                if not is_stale_thinking_block_error(anthropic_profile, initial_effective_thinking, error):
+            except (APIStatusError, APIConnectionError) as error:
+                # As in `_messages_create`, a status a retrying transport gave up on is recovered from too.
+                if (response := status_and_body(error)) is None or not is_stale_thinking_block_error(
+                    anthropic_profile, initial_effective_thinking, *response
+                ):
                     raise
 
             result = await count(
@@ -2467,7 +2562,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             canonical_system=self._canonical_system_stamp,
             finish_reason=finish_reason,
             state='suspended' if response.stop_reason == 'pause_turn' else 'complete',
-            provider_details=response_provider_details(response),
+            provider_details=report_inference_geo(
+                response_provider_details(response),
+                response.usage.inference_geo,
+                report=self._sends_inference_geo(model_settings, self.profile),
+            ),
         )
         if (context_input_tokens := last_pass_input_tokens(response.usage)) is not None:
             mark_context_input_tokens(model_response, context_input_tokens)
@@ -2540,6 +2639,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 model_request_parameters, model_settings, code_execution_in_open_turn
             ),
             _history_fetched_pages=history_fetched_pages,
+            _report_inference_geo=self._sends_inference_geo(model_settings, self.profile),
         )
         streamed_response.canonical_system = self._canonical_system_stamp
         return streamed_response
@@ -3481,7 +3581,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             [q for q in cast('list[Any]', raw_queries) if isinstance(q, str)] if isinstance(raw_queries, list) else []
         )
         wire_key = 'pattern' if strategy == 'regex' else 'query'
-        return native_name, {wire_key: ' '.join(queries)}
+        # Input fields beyond the query (e.g. `limit`) go back as the model sent them.
+        extra_input: dict[str, Any] = details.get('extra_input') or {}
+        return native_name, {wire_key: ' '.join(queries), **extra_input}
 
     def _map_native_tool_return_part(
         self,
@@ -3761,8 +3863,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         That's the last block of the last message, skipping request-scoped content: a native request-scoped
         entry (`cache_control` on one is a 400) and trailing text blocks rendering a request-scoped prompt
-        on a model that can't clear it. A breakpoint on either would write a cache entry the next request
-        can't read, since the content is cleared or no longer sent by then.
+        on a model that can't clear it or a downgraded request-scoped capability part. A breakpoint on either
+        would write a cache entry the next request can't read, since the content is cleared or no longer sent by
+        then. Nor can it go on a `system` entry behind such a block, whose position the next request changes.
 
         If the chosen block already has `cache_control` (e.g. from an explicit `CachePoint`),
         it is left unchanged to preserve the user's chosen TTL. On Bedrock, when the previous
@@ -3775,14 +3878,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             previous_tail = previous_tail_needing_breakpoint([message['role'] for message in lasting], block_counts)
             if previous_tail is not None:
                 self._add_message_cache_control(lasting[previous_tail], ttl)
-        remaining = request_scoped_texts
-        for message in reversed(anthropic_messages):
-            if message.get('clear_at') == 'next_user_message':
-                continue
-            blocks, remaining = blocks_before_request_scoped_text(message, remaining)
-            if blocks:
-                self._add_cache_control_to_last_cacheable_param(blocks, ttl)
-                return
+        if blocks := lasting_blocks_at_end(anthropic_messages, request_scoped_texts):
+            self._add_cache_control_to_last_cacheable_param(blocks, ttl)
 
     def _add_message_cache_control(self, message: BetaMessageParam, ttl: Literal['5m', '1h']) -> None:
         """Add `cache_control` to the last cacheable content block of `message`, unless it already has one."""
@@ -3830,7 +3927,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> BetaImageBlockParam | BetaRequestDocumentBlockParam:
         if media_type.startswith('image/'):
             return BetaImageBlockParam(
-                source={'data': base64.b64encode(data).decode(), 'media_type': media_type, 'type': 'base64'},  # pyright: ignore[reportArgumentType]
+                source={
+                    'data': base64.b64encode(data).decode(),
+                    'media_type': registered_media_type(media_type),
+                    'type': 'base64',
+                },  # pyright: ignore[reportArgumentType]
                 type='image',
             )
         elif media_type == 'application/pdf':

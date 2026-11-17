@@ -3,7 +3,7 @@
 Harness capabilities that touch files or run commands (`Coder`, `FileSystem`, `Shell`, `RepoContext`,
 `Macroscope`) act in the run's **workspace**, never on a path they pick themselves. Attach the
 workspace as its own capability: `LocalWorkspace` for this machine, or `ModalSandbox` / `E2BSandbox` /
-`RenderSandbox` / `SpritesSandbox` / `DaytonaSandbox` / `BoxdSandbox` for an isolated cloud machine, or `SmolSandbox` / `BoxLiteSandbox` for a microVM on this machine, or `DockerContainer` for a container on this machine (it shares your kernel, so it is not a security boundary), or `OpenSandbox` for a sandbox on your own OpenSandbox server. Core workspace semantics (refs, `workspace=`
+`RenderSandbox` / `SpritesSandbox` / `DaytonaSandbox` / `BoxdSandbox` for an isolated cloud machine, `KubernetesSandbox` for a pod on your own cluster, or `SmolSandbox` / `BoxLiteSandbox` for a microVM on this machine, or `DockerContainer` for a container on this machine (it shares your kernel, so it is not a security boundary), or `OpenSandbox` for a sandbox on your own OpenSandbox server. Core workspace semantics (refs, `workspace=`
 precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 `building-pydantic-ai-agents` skill's WORKSPACES.md reference; this file covers the harness side.
 
@@ -13,7 +13,8 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | --- | --- |
 | General coding agent: investigate, edit, test, delegate | `Coder()` + a workspace |
 | Narrower agent: file tools and/or commands with policy (allowlists, patterns, read-only) | `FileSystem()` and/or `Shell()` + a workspace |
-| Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `RenderSandbox()` / `SpritesSandbox()` / `DaytonaSandbox()` / `BoxdSandbox()`; tool capabilities stay the same |
+| Files and commands start in a specific directory | `LocalWorkspace('./repo')`, or `working_dir=` on a sandbox |
+| Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `RenderSandbox()` / `SpritesSandbox()` / `DaytonaSandbox()` / `BoxdSandbox()`; tool capabilities stay the same. For a repo the operator didn't write, add `authority='none'` (every sandbox and `SSHWorkspace` takes `authority` and `path_authority`, like `LocalWorkspace`) |
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | A disposable environment on this machine with Docker or Podman, not a security boundary | `DockerContainer(image='python:3.13-slim')`: a local container on your kernel |
@@ -44,10 +45,25 @@ except UserError as e:
   or a sandbox capability, or pass `workspace=` to `run()`.
 - Set the directory **on the workspace**: `LocalWorkspace('./repo')`. `Coder('dir')`, `Shell(cwd=)`,
   `FileSystem(cwd=)`, `Macroscope(cwd=)`, `RepoContext(workspace_dir=)` warn and are **ignored**.
-- `LocalWorkspace` needs a POSIX host (use WSL or a sandbox on Windows) and is not a sandbox.
+- `LocalWorkspace` needs a POSIX host and is not a sandbox.
   Commands inherit only `PATH`, `HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`; pass the rest with
   `LocalWorkspace('.', env={'GH_TOKEN': ...})`. Never pass `os.environ` (leaks LLM API keys to the
   model's commands). Under `uv run`, `python`/`pytest` resolve from the agent's venv via `PATH`.
+- For a token the sandbox's commands can use but not read (such as `GH_TOKEN` for `git push`/`gh`), use the
+  provider's proxy option, which only shapes a new sandbox. Each provider's docs page has a section on it:
+  - E2B: `E2BSandbox(network={'rules': {host: [{'transform': {'headers': {...}}}]}})`; HTTPS only.
+  - boxd: `BoxdSandbox(secrets=['GH_TOKEN'])`, naming a secret made beforehand with
+    `secrets.set(name, value, scope='private-unattached', domains=[...])`; without `domains` the real value is set.
+    boxd also substitutes request bodies, so a command can store the value on a named host (a GitHub
+    issue or gist) and read it back: use a fine-grained token without Gists access.
+  - Daytona: `DaytonaSandbox(secrets={'GH_TOKEN': 'secret-name'})`, mounting an organization Secret created with
+    `hosts` (without them it goes to any host); HTTPS headers only, Basic auth included.
+  - OpenSandbox: `OpenSandboxBackend(credential_proxy=CredentialProxyConfig(enabled=True), network_policy=...)`
+    (backend only), then fill `(await backend.get_sandbox()).credential_vault` before passing the backend as
+    `workspace=`. Needs the server's egress sidecar in `dns+nft` mode and a policy allowing every bound host.
+- On Windows, use `WindowsWorkspace('.')` (same options, also not a sandbox); `Coder()` without a
+  workspace fails as on POSIX. Commands run in PowerShell and paths are Windows paths. `Shell` offers no `run_command` there and refuses `max_file_bytes`; `grep` and
+  `list_files` read the files when `rg` is missing.
 - **Harness files** (Shell job logs, sticky-`cd` state, tool-output spills) go in
   `.pydantic-ai-harness/` under the working directory, with a `.gitignore` of `*`. Spills are never
   pruned. `FileSystem` keeps that directory read-only.
@@ -137,6 +153,12 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
 uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5
 ```
 
+### BenchmarkInstructions
+
+For benchmark runs, bind `BenchmarkInstructions()` next to `Coder()`: it adds the benchmark-only guidance
+(self-contained deliverables checked from a clean directory, using every field of the provided data)
+that `Coder`'s defaults leave out.
+
 ### Sharing a workspace across runs and agents
 
 ```python {test="skip" lint="skip"}
@@ -204,9 +226,9 @@ descendants; denied and read-only patterns ignore case), `read_only=False` (`Tru
 - Walkers skip dotfiles and dot-directories unless a path or pattern names one explicitly, and filter entries, not the root, by
   `allowed_patterns`. A read-only workspace gets only read tools.
 - Veto writes with `@agent.on_event(FileChangeRequestedEvent)` (not `FileChangeRequestEvent`) +
-  `event.cancel(reason)` (from `pydantic_ai_harness.filesystem`); the event carries a unified `diff`.
+  `event.cancel(reason)` (from `pydantic_ai_harness.file_system`); the event carries a unified `diff`.
 - Recognize the file tools by kind, never by name: each declares `tool_kind` `file_system.<tool>`
-  (`READ_FILE_KIND`, `WRITE_FILE_KIND`, ... from `pydantic_ai_harness.filesystem`), and its calls
+  (`READ_FILE_KIND`, `WRITE_FILE_KIND`, ... from `pydantic_ai_harness.file_system`), and its calls
   become typed parts (`isinstance(part, ReadFileCallPart)`; `part.typed_args` is `None` until the
   arguments validate). Only `read_file` has a typed return part (`ReadFileReturnPart`, successful
   returns only).
@@ -298,7 +320,7 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
 | Lifetime | `sandbox_timeout=86_400` (10 to 86,400), optional `idle_timeout`; then terminated | `sandbox_timeout=3_600` (Pro: up to 86,400); then **paused**, resumed on attach | `sandbox_timeout=3_600` (up to 86,400); then terminated | Unlimited: sleeps when idle, persists until deleted | Unlimited: stopped after `auto_stop_interval` idle minutes (default 15), started again on attach; archived after 7 days stopped, never deleted | Unlimited: suspended, then hibernated, when idle (organization defaults; `auto_suspend_timeout` seconds), woken by the next command; a stopped machine is started on attach; no delete timer unless the organization sets one |
 | Default cwd / user | `/root`, `root` | `/home/user`, `user` | home directory, `root` | `/home/sprite`, `sprite` | `/home/daytona`, `daytona` | `/home/boxd`, `boxd` |
 | `rg` preinstalled | Yes | No | Not documented | No | Yes | Yes |
-| New-sandbox options | `image`, `app_name`, `create_app_if_missing`, `client` | `template`, `allow_internet_access`, `client` | `allow_internet_access`, `client` | `runtime`, `client` | `snapshot`, `auto_stop_interval`, `allow_internet_access`, `client` | `org`, `snapshot`, `vcpu`, `auto_suspend_timeout`, `client` |
+| New-sandbox options | `image`, `app_name`, `create_app_if_missing`, `client` | `template`, `allow_internet_access`, `network`, `client` | `allow_internet_access`, `client` | `runtime`, `client` | `snapshot`, `auto_stop_interval`, `allow_internet_access`, `secrets`, `client` | `org`, `snapshot`, `vcpu`, `auto_suspend_timeout`, `secrets`, `client` |
 
 All take `working_dir` (absolute; created on a new sandbox, must exist on an attached one) and `env`
 (nothing from your machine is passed through). All are asyncio-only and reject `defer_loading=True`.
@@ -394,6 +416,21 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
 
+### KubernetesSandbox
+
+`KubernetesSandbox(*, warm_pool, namespace='default', connection='port-forward', sandbox_timeout=86_400,
+working_dir=None, env=None)` (backend `KubernetesSandboxBackend`, extra `[kubernetes]`) claims a pod from a
+[kubernetes-sigs/agent-sandbox](https://agent-sandbox.sigs.k8s.io) `SandboxWarmPool` on first use. Credentials
+are your kubeconfig (or the pod's service account in the cluster); `'port-forward'` also needs `kubectl`.
+
+- The pool's `SandboxTemplate` must run sandboxd; commands run in that container, so its image decides the
+  tools. Commands start in sandboxd's root directory (`/workspace` by default).
+- The ref is `WorkspaceRef(provider='kubernetes', id='<namespace>/<claim name>')`. Runs never delete the claim;
+  `sandbox_timeout` does, or `await KubernetesSandbox(warm_pool=...).destroy(ref)` (quiet if gone).
+- From inside the cluster use `connection='in-cluster-pod-ip'` or `'in-cluster-service'`; the template's
+  NetworkPolicy must admit the agent on ports 8080 and 9090. Port-forward does not work on gVisor or Kata.
+- File operations go through the sandbox's shell.
+
 ### SmolSandbox
 
 `SmolSandbox(*, image=None, cpus=None, memory_mb=None, allow_internet_access=False,
@@ -464,7 +501,7 @@ Python up to 3.14.
 
 ### OpenSandbox
 
-`OpenSandbox(*, image=None, connection=None, resource=None, allow_internet_access=True, secure_access=False, sandbox_timeout=None, working_dir='/workspace', env=None)`
+`OpenSandbox(*, image=None, connection=None, resource=None, allow_internet_access=True, network_policy=None, secure_access=False, sandbox_timeout=None, working_dir='/workspace', env=None)`
 (backend `OpenSandboxBackend`, extra `[opensandbox]`) runs commands and file operations in a sandbox on
 your own OpenSandbox server, which runs it as a Docker container or a Kubernetes pod.
 
@@ -484,11 +521,13 @@ your own OpenSandbox server, which runs it as a Docker container or a Kubernetes
 - `allow_internet_access=False` asks the server for a deny-all egress policy on a new sandbox; the default
   sends none, so the server's configuration applies. The server's egress sidecar enforces it: its default `dns`
   mode filters DNS lookups only, and `dns+nft` also blocks direct IP connections. asyncio only.
+- `network_policy=` takes the SDK's `NetworkPolicy` for a new sandbox, passed through unchanged; it cannot be
+  combined with `allow_internet_access=False` (`UserError`; `ValueError` on the backend).
 - `secure_access=True` asks the server to turn on Secure Access for a new sandbox (Kubernetes with the ingress
   gateway; Docker rejects it). The gateway and server proxy then require the sandbox's token, which the SDK
   fetches with the server API key and sends automatically. Requests that reach the pod directly are not checked.
 - Without the server proxy, the SDK does not send the server API key to a sandbox's endpoint; the endpoint checks
-  only what the server configures for it. Attaching never changes `allow_internet_access` or `secure_access`.
+  only what the server configures for it. Attaching never changes `allow_internet_access`, `network_policy` or `secure_access`.
 
 ## Remote hosts and bubblewrap
 
@@ -588,12 +627,23 @@ for resolution, labels, and backend requirements.
 `nested_traversal=True` (the default) surfaces the instruction files between the working directory and
 whatever `FileSystem` reads, lists, writes or edits in, shallowest first, each directory once while its note is in the
 conversation (`nested_inject='contents'` by default, or `'pointer'`), in the message tail so the cached
-prefix stays stable. With it on, the instructions also gain one static sentence: each instruction file
-applies to its subtree, the deeper file wins, and the user's direct instructions win over all of them.
+prefix stays stable. Notes are workspace-sourced `DataCapabilityPart`s, `ContextFilePathPart`
+(`<context_file_path>`) or `ContextFilePart` (`<context_file path="...">`), from
+`pydantic_ai_harness.repo_context`; find them by type, and their `directory` field. With it on, the
+instructions also gain one static sentence: each instruction file applies to its subtree, the deeper file
+wins, and the user's direct instructions win over all of them.
 `nested_max_chars` (32,000 by default) caps the `'contents'` inlined per conversation, counting the
 inlined notes still in history, so a compaction frees room: a file that would go past it becomes a pointer;
 `None` removes the cap. It doesn't apply with
 `nested_inject='pointer'`.
+`nested_exclude` (`('node_modules', '.venv', 'venv', 'site-packages')` by default) lists `fnmatch` patterns for
+directory names below the working directory whose instruction files nested traversal never surfaces, nor
+anything beneath them.
+
+To pin files a user accepted (instruction files, `SKILL.md`, sub-agent definitions), record
+`file_digest(workspace, path)` at acceptance and pass the digests to
+`await pin_accepted_files(workspace, accepted, changed='none')` (both from `pydantic_ai_harness.repo_context`)
+before each run: a changed file is capped at `changed` in `authority_of` until its new digest is recorded.
 
 ## Macroscope
 

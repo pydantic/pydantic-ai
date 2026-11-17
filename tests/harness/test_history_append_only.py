@@ -13,7 +13,7 @@ import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import anyio
 import pytest
@@ -21,11 +21,19 @@ from mcp.server.fastmcp import FastMCP
 
 import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai.capabilities import AbstractCapability, Capability, LocalWorkspace, ToolSearch, Toolset
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    LocalWorkspace,
+    RawToolArgs,
+    ToolSearch,
+    Toolset,
+)
 from pydantic_ai.capabilities.abstract import leaf_capabilities
-from pydantic_ai.messages import ModelMessage, TextContent, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness import (
     Advisor,
@@ -48,7 +56,9 @@ from pydantic_ai_harness import (
     ManagedPrompt,
     Ordinal,
     OutputGuardrail,
+    Peers,
     PostHog,
+    PruneToolResults,
     Pylon,
     RelevanceCompaction,
     RepoContext,
@@ -58,6 +68,7 @@ from pydantic_ai_harness import (
     SlidingWindowCompaction,
     SmartSearch,
     StackOne,
+    StreamGuardrail,
     SummarizingCompaction,
     SystemReminders,
     TieredCompaction,
@@ -71,16 +82,17 @@ from pydantic_ai_harness.github import GitHub
 from pydantic_ai_harness.linear import Linear
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
+from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox, read_peer_message
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from pydantic_ai_harness.subagents import (
+from pydantic_ai_harness.sub_agents import (
     DelegationReports,
     DelegationTaskEvent,
     DelegationTasks,
     SubAgent,
     SubAgents,
-    is_task_report,
+    TaskOutputPart,
 )
 from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
@@ -102,6 +114,9 @@ from ..append_only import (
     run_conversation,
     skip_unless_installed,
 )
+
+if TYPE_CHECKING:
+    from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
 pytestmark = pytest.mark.filterwarnings(
@@ -163,6 +178,18 @@ def _deduplicate_file_reads(tmp_path: Path) -> list[AbstractCapability[Any]]:
 
 def _run_look_up(topic: str) -> tuple[str, dict[str, Any]]:
     return 'run_code', {'code': f'await look_up(topic={topic!r})'}
+
+
+class _PruneLatestReturn(AbstractCapability[None]):
+    """Points a scripted `prune_tool_result` call at the previous step's result, whose ID differs by provider."""
+
+    async def before_tool_validate(
+        self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
+    ) -> RawToolArgs:
+        if call.tool_name != 'prune_tool_result':
+            return args
+        [latest] = [part.tool_call_id for part in ctx.messages[-2].parts if isinstance(part, ToolReturnPart)]
+        return {**call.args_as_dict(), 'tool_call_id': latest}
 
 
 def _forecast(city: str) -> str:
@@ -279,6 +306,14 @@ def _modal_sandbox() -> AbstractCapability[Any]:
     return ModalSandbox(warn_if_no_tools=False)
 
 
+def _kubernetes_sandbox() -> KubernetesSandbox:
+    # Imported here, so collecting this file never imports the agent-sandbox SDK. The test has already
+    # skipped when it isn't installed (`OPTIONAL_DEPENDENCIES`).
+    from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
+
+    return KubernetesSandbox(warm_pool='python-pool')
+
+
 def _ipython_code_mode() -> AbstractCapability[Any]:
     # Imported here, so collecting this file never imports `jupyter_client`. The test has already skipped
     # when it isn't installed (`OPTIONAL_DEPENDENCIES`).
@@ -319,11 +354,13 @@ FIXTURES: dict[str, Fixture] = {
     # Keeps the scenario's tools native, so the conversation checks the `run_code` declaration without
     # launching a kernel process for every provider.
     'IPythonCodeMode': lambda _: _ipython_code_mode(),
+    'KubernetesSandbox': lambda _: _kubernetes_sandbox(),
     'Macroscope': _workspace(Macroscope),
     'ManagedPrompt': lambda _: ManagedPrompt('assistant', default='You answer questions about the news.'),
     'ModalSandbox': lambda _: _modal_sandbox(),
     'OutputGuardrail': lambda _: OutputGuardrail(guard=lambda output: True),
     'Pixeltable': lambda _: pydantic_ai_harness.Pixeltable(tables=['*']),
+    'PruneToolResults': lambda _: [PruneToolResults(), _PruneLatestReturn()],
     'RepoContext': _repo_context,
     'RelevanceCompaction': lambda _: RelevanceCompaction(TestModel(), max_tokens=20, keep_tokens=1),
     'Researcher': _workspace(Researcher),
@@ -332,6 +369,7 @@ FIXTURES: dict[str, Fixture] = {
     'SlidingWindowCompaction': lambda _: SlidingWindowCompaction(max_messages=6, keep_messages=2),
     'SmartSearch': _workspace(lambda: SmartSearch(model=TestModel())),
     'StackOne': lambda _: StackOne('account', client=_hosted_server()),
+    'StreamGuardrail': lambda _: StreamGuardrail(guard=lambda part: True),
     'SummarizingCompaction': lambda _: SummarizingCompaction(TestModel(), max_messages=6, keep_messages=2),
     'SystemReminders': lambda _: SystemReminders(dynamic_reminders=[_time_reminder]),
     'TieredCompaction': lambda _: TieredCompaction(
@@ -483,6 +521,8 @@ SCENARIOS: dict[str, Scenario] = {
     'Planning': Scenario(
         state_calls=(('add_task', {'content': 'Check the weather'}), ('add_task', {'content': 'Check the sports'}))
     ),
+    # The first run's second step prunes the first step's result.
+    'PruneToolResults': Scenario(state_calls=(('prune_tool_result', {'tool_call_id': '', 'summary': 'Quiet.'}),)),
     # Each run ends with a review round, which takes a turn of its own.
     'RefineOutput': Scenario(
         turns=(
@@ -534,6 +574,10 @@ ALLOWED: dict[str, Allowed] = {
     ),
     'DeduplicateFileReads': Allowed(
         'Clears superseded file reads in place, as documented, when the model reads a file again',
+        (('messages', 'tool-return'),),
+    ),
+    'PruneToolResults': Allowed(
+        'Replaces the tool result the model pruned, once per accepted `prune_tool_result` call',
         (('messages', 'tool-return'),),
     ),
     # With a 20-token trigger every request is over it, so each request with an older step outside the
@@ -639,6 +683,7 @@ OPTIONAL_DEPENDENCIES: dict[str, str] = {
     'ExaAgent': 'exa_py',
     'ExaSearch': 'exa_py',
     'IPythonCodeMode': 'jupyter_client',
+    'KubernetesSandbox': 'k8s_agent_sandbox',
     'ModalSandbox': 'modal',
     'OpenSandbox': 'opensandbox',
     'Pixeltable': 'pixeltable',
@@ -699,12 +744,10 @@ def _delegation_reports(
     def delivered_once(result: ConversationResult) -> None:
         parts = [part for message in result.history for part in getattr(message, 'parts', ()) if _REPORT in str(part)]
         assert len(parts) == 1, f'expected the report in history once, found {len(parts)}'
-        # Delivered as framed `<task_output>` data on the user channel, recognized by its metadata.
+        # Delivered as a typed `<task_output>` capability part, which survives serialization as one.
         (part,) = parts
-        assert is_task_report(part), f'expected a task report, found {part!r}'
-        assert not isinstance(part.content, str)
-        (text,) = part.content
-        assert isinstance(text, TextContent) and text.content.startswith('<task_output task_id=')
+        assert isinstance(part, TaskOutputPart), f'expected a task report, found {part!r}'
+        assert part.content == _REPORT
 
     scenario = Scenario(
         turns=(
@@ -726,7 +769,34 @@ def _delegation_reports(
     return capabilities, scenario, delivered_once
 
 
+_PEER_NOTE = 'The deploy finished.'
+
+
+def _peer_message(
+    tmp_path: Path,
+) -> tuple[list[AbstractCapability[Any]], Scenario, Callable[[ConversationResult], None]]:
+    """A peer message that arrives between the runs enters the second run's history once, as peer data."""
+    network = InMemoryPeerNetwork()
+    inbox = LocalPeerInbox(path=tmp_path / 'inbox.json')
+    view = network.join(handle='self', inbox=inbox)
+    sender = network.join(handle='ops')
+
+    async def send() -> None:
+        (recipient,) = await sender.peers()
+        await sender.send(recipient.id, _PEER_NOTE, key='ops:1')
+
+    def delivered_once(result: ConversationResult) -> None:
+        parts = [
+            part for message in result.history for part in getattr(message, 'parts', ()) if _PEER_NOTE in str(part)
+        ]
+        assert len(parts) == 1, f'expected the peer message in history once, found {len(parts)}'
+        assert read_peer_message(parts[0]) is not None, f'expected a peer message, found {parts[0]!r}'
+
+    return [Peers(network=view, inbox=inbox)], Scenario(between_runs=send), delivered_once
+
+
 CONVERSATIONS = {
+    'Peers': _peer_message,
     'DelegationReports': _delegation_reports,
     'SummarizingCompaction+Capability(defer_loading=True)': _summarized_load(
         ('load_capability', {'id': 'forecasting'})

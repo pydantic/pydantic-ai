@@ -206,11 +206,13 @@ agent = Agent(model)
 
 This passes the options through to the SDK's [`HttpOptions.retry_options`](https://googleapis.github.io/python-genai/genai.html#genai.types.HttpOptions.retry_options). [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) overrides the number of attempts for a model, agent or run, keeping the delays and status codes set here, or the SDK's defaults (a first delay of one second; status 408, 429, 500, 502, 503 and 504) when `retry_options` isn't set. See the [Vertex AI retry strategy documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/retry-strategy) for guidance on choosing values.
 
-When a Google error carries no `retry-after-ms` or `Retry-After` header, [`ModelAPIError.retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] is read from the `google.rpc.RetryInfo` detail in its body, including for an error chunk inside a stream. [Temporal](../durable_execution/temporal.md) waits that long before retrying a model activity, and you can use it in your own backoff ([Retries](../retries.md#transport-retries)). The SDK's `retry_options` above and [`wait_retry_after`](../retries.md#wait_retry_after) read only headers.
+When a Google error carries no `retry-after-ms` or `Retry-After` header, [`ModelAPIError.retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] is read from the `google.rpc.RetryInfo` detail in its body, including for an error chunk inside a stream and for a status a [retrying transport](../retries.md#error-handling) gave up on. [Temporal](../durable_execution/temporal.md) waits that long before retrying a model activity, and you can use it in your own backoff ([Retries](../retries.md#transport-retries)). The SDK's `retry_options` above and [`wait_retry_after`](../retries.md#wait_retry_after) read only headers.
 
 ## Document, Image, Audio, and Video Input
 
 `GoogleModel` supports multi-modal input, including documents, images, audio, and video.
+
+Gemini reads JPEG, PNG, GIF, WebP, HEIC, HEIF, AVIF and BMP images. On Google Cloud it also reads TIFF, which the Gemini API rejects. Gemini 2.5 models don't read Word or Excel documents; Gemini 3 models do. A file of another type that a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance).
 
 YouTube video URLs can be passed directly to Google models:
 
@@ -390,6 +392,10 @@ anyway.
 
 On Google Cloud, `gemini-4-argon` rejects a `thinking_budget` in `google_thinking_config` with a 400 error: use
 `thinking_level` instead.
+
+Gemma 4 (`gemma-4-31b-it`, `gemma-4-26b-a4b-it`) supports only the `minimal` and `high` levels on the Gemini API and
+rejects any `thinking_budget`, so `thinking=False` and `'low'` resolve to `minimal`, and `'medium'` and above to
+`high`. Without a `thinking` setting it thinks by default there.
 
 `thinking=False` turns thinking off where the model allows it. The Pro models can't turn it off, so they think as
 little as they allow instead: Gemini 3 Pro models use their lowest thinking level (`low` on `gemini-3.1-pro-preview`),
@@ -578,6 +584,14 @@ decode is one model request:
   already billed. A streamed run keeps what it streamed as a response with
   [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] that carries the finished requests' usage, which
   [`capture_run_messages()`][pydantic_ai.capture_run_messages] returns.
+- With `google-genai` 2.31.0 and later, a streamed run sends a later request that fails before it streams any output
+  3 more times from the same continuation token, with no wait. If they all fail, the model request fails as above.
+  This applies to errors the HTTP client raises: a connection that can't be opened or that drops, a timeout, or the
+  `HTTPStatusError` of a [retrying transport](../retries.md#transport-retries) that gave up. It doesn't apply to an
+  error status the SDK reads itself. `retry_options` and
+  [`max_retries`](../retries.md#setting-the-sdk-retry-count-per-request) can't turn this off, and they also retry a
+  connection that can't be opened, or a timeout before the response arrives, on each of those 4 requests: with
+  `max_retries=2`, such an error goes on the wire 12 times.
 - The SDK resumes a dropped stream from its last continuation token. If output was streamed after that token, the
   model request fails as above instead, since the resumed request would repeat that output.
 - On [Temporal](../durable_execution/temporal.md#activity-configuration), the whole long decode runs in one model

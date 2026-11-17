@@ -210,6 +210,21 @@ Never fetch labels individually or pass raw label API responses.
 Keep the category label aligned with the PR's purpose: `bug`, `feature`, `docs`, `chore` or `dependency`. A refactor also carries `refactor`, alongside `chore`.
 A PR labelled `test-suite` or `github-actions` takes `chore`, never `bug`; `.github/workflows/package-label.yml` fails it otherwise.
 Add existing topic labels for every subject materially covered by the final title, body, and diff.
+Choose the `area:` and `provider:` topic labels this way:
+
+- Apply one or two `area:` labels when the change touches a subsystem in the catalog. The repo's own agentic workflows and bots take `area:agentic-workflows`; other repository infrastructure (CI, tests, routine dependency updates, contributor docs and skills) takes none.
+  A change to a package's extras or version constraints takes `area:packaging`.
+  Choose the subsystem whose code changes, not the API a reporter called.
+  A Harness capability built on a core concept takes that concept's area.
+  An engine label (`area:temporal`, `area:dbos`, `area:prefect`, `area:absurd` or `area:pgtask`) also takes `area:durable-exec`, which does not count toward the two.
+  A change labelled `pkg:evals`, `pkg:graph`, `pkg:clai2` or `pkg:clai` takes no `area:` label: its package label is its segment. The exception is `area:clai2-web-ui`, for a `pkg:clai2` change to its web UI.
+  `clai web` and `Agent.to_web()` live in `pydantic_ai_slim/pydantic_ai/` (`_cli/web.py`, `ui/_web/`), so a change to them is `pkg:core` and takes `area:web-chat-ui`.
+- Apply zero to two `provider:` labels, only when the behavior depends on a vendor endpoint. Leave them off when the change reproduces with `TestModel`.
+- Label a provider adapter's request or response mapping `area:models`. Label any other adapter change with the area of the feature it implements, such as `area:thinking` or `area:streaming`.
+- For an OpenAI-compatible vendor, apply `provider:<vendor>` when the catalog has one.
+  Add `provider:openai-compatible` when the change lands in the shared OpenAI classes, and apply it alone for a vendor without its own label or a custom `base_url`.
+  Never apply `provider:openai` to a compatible vendor.
+
 Ignore incidental references, checklist text, and verification boilerplate when choosing topics.
 Remove topic labels only when the final scope no longer supports those labels.
 Preserve size, priority, review, and automation labels. Do not create or rename labels unless the user requests that change or approves a cluster name under [PR clusters](#pr-clusters).
@@ -238,7 +253,7 @@ If creating or applying the label fails, apply neither. Tell the person driving 
 After the prefix, the title follows the root `AGENTS.md` convention.
 
 A `cluster:` label marks a time-bound work stream. It adds to the PR's topic labels and never replaces them.
-It is not an `area:` label. An `area:` label such as `area:ui-adapters` marks a permanent ownership area.
+It is not an `area:` label. An `area:` label such as `area:ui-adapters` marks a permanent subsystem.
 
 Detect clusters yourself. The people driving agents rarely name them, and a subagent does not know your sibling PRs.
 You usually notice a cluster because you started after another agent's work on the same theme, or because you coordinate with sibling PRs.
