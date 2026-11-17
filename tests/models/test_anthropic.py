@@ -94,6 +94,7 @@ from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
@@ -6958,24 +6959,28 @@ async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests
     assert kwargs.get('output_config') is OMIT
 
 
-_TYPED_BUDGET_THINKING = "`anthropic_thinking={'type': 'enabled', 'budget_tokens': ...}`"
-_EXTRA_BODY_BUDGET_THINKING = (
-    "`extra_body={'thinking': {'type': 'enabled', 'budget_tokens': ...}}`, which overrides `anthropic_thinking`"
+_TYPED_BUDGET_THINKING_REJECTED = (
+    "does not support `anthropic_thinking={'type': 'enabled', 'budget_tokens': ...}`. "
+    "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
+)
+_EXTRA_BODY_BUDGET_THINKING_REJECTED = (
+    "does not support `extra_body={'thinking': {'type': 'enabled', 'budget_tokens': ...}}`. "
+    "Remove `extra_body['thinking']` or set it to `{'type': 'adaptive'}`."
 )
 
 
 @pytest.mark.parametrize(
-    ('settings', 'rejected', 'error'),
+    ('settings', 'message', 'error'),
     [
         pytest.param(
             {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}},
-            _TYPED_BUDGET_THINKING,
+            _TYPED_BUDGET_THINKING_REJECTED,
             UserError,
             id='anthropic_thinking',
         ),
         pytest.param(
             {'extra_body': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}},
-            _EXTRA_BODY_BUDGET_THINKING,
+            _EXTRA_BODY_BUDGET_THINKING_REJECTED,
             ModelRequestRejectedError,
             id='extra_body',
         ),
@@ -6984,7 +6989,7 @@ _EXTRA_BODY_BUDGET_THINKING = (
                 'anthropic_thinking': {'type': 'adaptive'},
                 'extra_body': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
             },
-            _EXTRA_BODY_BUDGET_THINKING,
+            _EXTRA_BODY_BUDGET_THINKING_REJECTED,
             ModelRequestRejectedError,
             id='extra_body_over_adaptive',
         ),
@@ -6995,7 +7000,7 @@ async def test_anthropic_opus_47_rejects_budget_thinking(
     allow_model_requests: None,
     model_name: str,
     settings: AnthropicModelSettings,
-    rejected: str,
+    message: str,
     error: type[UserError | ModelRequestRejectedError],
 ):
     """Claude Opus 4.7 and later reject budget-based thinking with a 400, so we raise before sending.
@@ -7013,10 +7018,9 @@ async def test_anthropic_opus_47_rejects_budget_thinking(
 
     with pytest.raises(error) as exc_info:
         await Agent(m).run('What is 2+2?')
-    assert str(exc_info.value) == (
-        f"'{model_name}' does not support {rejected}. "
-        "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
-    )
+    assert str(exc_info.value) == f"'{model_name}' {message}"
+    with pytest.raises(error):
+        await m.count_tokens([ModelRequest.user_text_prompt('What is 2+2?')], None, ModelRequestParameters())
     assert get_mock_chat_completion_kwargs(mock_client) == []
 
     # A caller's `extra_body` thinking is what reaches the wire, so it decides.
@@ -7034,11 +7038,21 @@ async def test_anthropic_opus_47_rejects_budget_thinking(
     assert (await Agent(allowed).run('What is 2+2?')).output == '4'
 
 
-async def test_anthropic_extra_body_budget_thinking_rejection_falls_back(allow_model_requests: None) -> None:
-    """`FallbackModel` falls back on the guard's error by default, as it does on the API's 400.
+@pytest.mark.parametrize('structured', [False, True], ids=['str_output', 'structured_output'])
+@pytest.mark.parametrize('fallback', ['FallbackModel', 'ModelFallback'])
+async def test_anthropic_extra_body_budget_thinking_rejection_falls_back(
+    allow_model_requests: None, fallback: str, structured: bool
+) -> None:
+    """`FallbackModel` and `ModelFallback` fall back on the guard's error by default, as they do on the API's 400.
 
-    A unit test: the guard fires before any request, so there is nothing to record.
+    Structured output resolves its output mode through `prepare_request` before the request attempt that
+    `ModelFallback` watches, so the guard has to run on the request path. A unit test: the guard fires before any
+    request, so there is nothing to record.
     """
+
+    class Answer(BaseModel):
+        answer: int
+
     mock_client = MockAnthropic.create_mock(
         completion_message(
             [BetaTextBlock(text='unused', type='text')], usage=BetaUsage(input_tokens=1, output_tokens=1)
@@ -7049,11 +7063,16 @@ async def test_anthropic_extra_body_budget_thinking_rejection_falls_back(allow_m
         provider=AnthropicProvider(anthropic_client=mock_client),
         settings={'extra_body': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}},
     )
-    backup = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('from backup')]), model_name='backup')
+    backup = TestModel()
+    output_type = Answer if structured else str
+    if fallback == 'FallbackModel':
+        agent = Agent(FallbackModel(primary, backup), output_type=output_type)
+    else:
+        agent = Agent(primary, output_type=output_type, capabilities=[ModelFallback(backup)])
 
-    result = await Agent(FallbackModel(primary, backup)).run('What is 2+2?')
+    result = await agent.run('What is 2+2?')
 
-    assert result.output == 'from backup'
+    assert result.output == (Answer(answer=0) if structured else 'success (no tool calls)')
     assert get_mock_chat_completion_kwargs(mock_client) == []
 
 

@@ -906,7 +906,7 @@ def _is_str_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
 
 
 def _effective_thinking(
-    model_settings: ModelSettings, thinking: BetaThinkingConfigParam | Omit
+    model_settings: AnthropicModelSettings, thinking: BetaThinkingConfigParam | Omit
 ) -> dict[str, object] | Omit:
     """Resolve the thinking object that reaches the wire after `extra_body` precedence."""
     if (caller_thinking := _extra_body_thinking(model_settings)) is not None:
@@ -1572,7 +1572,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         profile = self.profile
         merged = merge_model_settings(self.settings, model_settings) or {}
-        self._validate_budget_thinking(merged)
+
+        if (
+            profile.get('anthropic_disallows_budget_thinking', False)
+            and (anthropic_thinking := merged.get('anthropic_thinking'))
+            and anthropic_thinking.get('type') == 'enabled'
+            # A caller's `extra_body` thinking is what reaches the wire: `_reject_extra_body_budget_thinking` judges it.
+            and _extra_body_thinking(merged) is None
+        ):
+            raise UserError(
+                f'{self.model_name!r} does not support '
+                "`anthropic_thinking={'type': 'enabled', 'budget_tokens': ...}`. "
+                "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
+            )
 
         # Resolve 'auto' here so the strict-forcing check below also applies when native mode is reached
         # via the default rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would
@@ -1607,29 +1619,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             prepared_settings = self._translate_cache(cast(AnthropicModelSettings, prepared_settings or {}), cache)
         return prepared_settings, model_request_parameters
 
-    def _validate_budget_thinking(self, model_settings: ModelSettings) -> None:
-        """Reject budget-based thinking on a model that requires adaptive thinking and returns a 400 for it.
+    def _reject_extra_body_budget_thinking(self, model_settings: AnthropicModelSettings) -> None:
+        """Reject budget-based `extra_body` thinking on a model that requires adaptive thinking.
 
-        Validate what reaches the wire, where a caller's `extra_body` thinking wins.
+        The API returns a 400 for it, so this raises that 400's category while the request is built, where
+        `FallbackModel`, `ModelFallback` and `except ModelAPIError` handle it as they handle the 400. It can't run in
+        `prepare_request`: for structured output, the agent also calls that before the request `ModelFallback` watches.
         """
-        if not self.profile.get('anthropic_disallows_budget_thinking', False):
-            return
-        thinking = _effective_thinking(model_settings, model_settings.get('anthropic_thinking') or OMIT)
-        if isinstance(thinking, Omit) or thinking.get('type') != 'enabled':
-            return
-        remedy = "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
-        if _extra_body_thinking(model_settings) is None:
-            raise UserError(
-                f"{self.model_name!r} does not support `anthropic_thinking={{'type': 'enabled', 'budget_tokens': ...}}`. "
-                f'{remedy}'
+        if (
+            self.profile.get('anthropic_disallows_budget_thinking', False)
+            and (thinking := _extra_body_thinking(model_settings)) is not None
+            and thinking.get('type') == 'enabled'
+        ):
+            raise ModelRequestRejectedError(
+                self.model_name,
+                f'{self.model_name!r} does not support '
+                "`extra_body={'thinking': {'type': 'enabled', 'budget_tokens': ...}}`. "
+                "Remove `extra_body['thinking']` or set it to `{'type': 'adaptive'}`.",
             )
-        # The API returns a 400 for this, so raise that 400's category: `FallbackModel` and `except ModelAPIError`
-        # handle it as they handle the 400. The typed setting keeps raising `UserError` for backward compatibility.
-        raise ModelRequestRejectedError(
-            self.model_name,
-            f"{self.model_name!r} does not support `extra_body={{'thinking': {{'type': 'enabled', 'budget_tokens': ...}}}}`, "
-            f'which overrides `anthropic_thinking`. {remedy}',
-        )
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         dropped = {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
@@ -1873,6 +1880,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         *,
         compaction: BetaCompactionConfigParam | None = None,
     ) -> _PreparedMessagesCreate:
+        self._reject_extra_body_budget_thinking(model_settings)
         model_request_parameters = self._declare_newcomers_left_alone(model_settings, model_request_parameters)
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
         # entries are then appended in history order; Anthropic excludes them from its cache key.
@@ -2300,6 +2308,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> BetaMessageTokensCount:
+        self._reject_extra_body_budget_thinking(model_settings)
         # Anthropic docs: https://platform.claude.com/docs/en/api/messages/count_tokens
         # The wire `tools` list keeps client-side tools like `MemoryTool`, which contribute real tokens, and the
         # server tools where `anthropic_count_tokens_accepts_server_tools` says the endpoint takes them. Verified
