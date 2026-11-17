@@ -652,6 +652,25 @@ def _still_thinking(config: ThinkingConfigDict, thinking_summary: bool | None) -
     return config
 
 
+def _thinking_off_config(profile: GoogleModelProfile, thinking_summary: bool | None) -> ThinkingConfigDict:
+    """The thinking config for unified `thinking=False`."""
+    if not profile.get('google_supports_thinking_level', True):
+        # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0, which Gemini 2.5 Pro rejects
+        # ("Budget 0 is invalid. This model only works in thinking mode."), so it gets its minimum budget.
+        if profile.get('thinking_always_enabled', False):
+            return _still_thinking(
+                ThinkingConfigDict(thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET), thinking_summary
+            )
+        return ThinkingConfigDict(thinking_budget=0)
+    if profile.get('google_disables_thinking_with_zero_budget', False):
+        return ThinkingConfigDict(thinking_budget=0)
+    # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
+    return _still_thinking(
+        ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile))),
+        thinking_summary,
+    )
+
+
 def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleModelProfile) -> GoogleThinkingLevel:
     """Map unified thinking to the closest thinking level the model supports."""
     levels = profile.get('google_thinking_levels')
@@ -1243,21 +1262,7 @@ class GoogleModel(Model[Client]):
         profile = self.profile
         supports_thinking_level = profile.get('google_supports_thinking_level', True)
         if thinking is False:
-            if not supports_thinking_level:
-                # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0, which Gemini 2.5 Pro rejects
-                # ("Budget 0 is invalid. This model only works in thinking mode."), so it gets its minimum budget.
-                if profile.get('thinking_always_enabled', False):
-                    return _still_thinking(
-                        ThinkingConfigDict(thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET), thinking_summary
-                    )
-                return ThinkingConfigDict(thinking_budget=0)
-            if profile.get('google_disables_thinking_with_zero_budget', False):
-                return ThinkingConfigDict(thinking_budget=0)
-            # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
-            return _still_thinking(
-                ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile))),
-                thinking_summary,
-            )
+            return _thinking_off_config(profile, thinking_summary)
 
         if not supports_thinking_level:
             # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget

@@ -806,12 +806,7 @@ def _openrouter_settings_to_openai_settings(
         if messages:
             model_settings['openrouter_cache_messages'] = ttl
 
-    reasoning = model_settings.get('openrouter_reasoning')
-    if not explicit_reasoning and model_settings.get('thinking_summary') is False:
-        # Only on the wire: in `openrouter_reasoning`, `exclude` would read as a request to reason. Anthropic routes
-        # still return the thinking in `reasoning_details`.
-        reasoning = {**(reasoning or {}), 'exclude': True}
-    if reasoning:
+    if reasoning := _wire_reasoning(model_settings, explicit_reasoning=explicit_reasoning):
         extra_body['reasoning'] = reasoning
     if usage := model_settings.pop('openrouter_usage', None):
         extra_body['usage'] = usage
@@ -824,6 +819,18 @@ def _openrouter_settings_to_openai_settings(
     model_settings['extra_body'] = extra_body
 
     return OpenAIChatModelSettings(**model_settings)  # type: ignore[reportCallIssue]
+
+
+def _wire_reasoning(
+    model_settings: OpenRouterModelSettings, *, explicit_reasoning: bool
+) -> OpenRouterReasoning | dict[str, Any] | None:
+    """The `reasoning` body field: `openrouter_reasoning`, plus `exclude` for `thinking_summary=False`."""
+    reasoning = model_settings.get('openrouter_reasoning')
+    if not explicit_reasoning and model_settings.get('thinking_summary') is False:
+        # Only on the wire: in `openrouter_reasoning`, `exclude` would read as a request to reason. Anthropic routes
+        # still return the thinking in `reasoning_details`.
+        return {**(reasoning or {}), 'exclude': True}
+    return reasoning
 
 
 def _openrouter_reasoning_from_thinking(

@@ -1050,6 +1050,28 @@ def _code_execution_may_call_web_tools(
     return supports_dynamic_filtering or any(caller != 'direct' for caller in allowed_callers)
 
 
+def _thinking_off_config(
+    profile: AnthropicModelProfile, display: AnthropicThinkingDisplay | None, *, thinks_by_default: bool
+) -> BetaThinkingConfigParam:
+    """The `thinking` parameter for unified `thinking=False`."""
+    if profile.get('thinking_always_enabled', False):
+        # A model that can't turn thinking off thinks as little as it can: adaptively at the lowest effort,
+        # which `_build_output_config` adds. A model without an effort setting is left at its default.
+        # Summaries are only asked for here when requested, since `thinking=False` asked for no thinking.
+        if display is not None:
+            return {'type': 'adaptive', 'display': display}
+        if profile.get('anthropic_supports_effort', False):
+            return {'type': 'adaptive'}
+        return OMIT  # type: ignore[return-value]
+    # `display` is rejected on the `between_tools` and `disabled` blocks.
+    if profile.get('anthropic_disables_thinking_with_between_tools', False):
+        return {'type': 'between_tools'}
+    if thinks_by_default:
+        # Omitting `thinking` leaves it on for these models.
+        return {'type': 'disabled'}
+    return OMIT  # type: ignore[return-value]
+
+
 @dataclass(init=False)
 class AnthropicModel(Model[AsyncAnthropicClient]):
     """A model that uses the Anthropic API.
@@ -1671,22 +1693,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_settings.get('anthropic_thinking_display'), model_settings.get('thinking_summary')
         )
         if thinking is False:
-            if self.profile.get('thinking_always_enabled', False):
-                # A model that can't turn thinking off thinks as little as it can: adaptively at the lowest effort,
-                # which `_build_output_config` adds. A model without an effort setting is left at its default.
-                # Summaries are only asked for here when requested, since `thinking=False` asked for no thinking.
-                if display is not None:
-                    return {'type': 'adaptive', 'display': display}
-                if self.profile.get('anthropic_supports_effort', False):
-                    return {'type': 'adaptive'}
-                return OMIT  # type: ignore[return-value]
-            # `display` is rejected on the `between_tools` and `disabled` blocks.
-            if self.profile.get('anthropic_disables_thinking_with_between_tools', False):
-                return {'type': 'between_tools'}
-            if thinks_by_default:
-                # Omitting `thinking` leaves it on for these models.
-                return {'type': 'disabled'}
-            return OMIT  # type: ignore[return-value]
+            return _thinking_off_config(self.profile, display, thinks_by_default=thinks_by_default)
         if thinking is None:
             if display is not None and thinks_by_default:
                 # These models think without a `thinking` parameter, so choosing what they return takes the
