@@ -332,7 +332,6 @@ COMBINE_POLICY: dict[str, Policy] = {
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
     'OpenSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'DockerContainer': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
-    'DockerSandbox': Anonymous('deprecated alias of `DockerContainer`, and combines the same way'),
     'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'KubernetesSandbox': Anonymous(
         'two coexist; the first supplies the run workspace, as core picks the first supplier'
@@ -430,10 +429,6 @@ COMBINE_POLICY: dict[str, Policy] = {
     'Notion': Narrows(
         'one Notion connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
-    ),
-    'PyaiDocs': Narrows(
-        'deprecated alias of `PydanticAIDocs`, and combines the same way',
-        lambda cls: (cls(), cls(cache=False)),
     ),
     'Macroscope': Narrows(
         'one `run_macroscope_review` tool per id; two that differ need their own ids and PrefixTools',
