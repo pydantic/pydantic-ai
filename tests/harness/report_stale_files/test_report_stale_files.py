@@ -168,7 +168,7 @@ class TestReportStaleFiles:
         )
         result = await agent.run('go')
         assert _notices(result.all_messages())[-1] == [
-            f'{CHANGED}\n- `config.py`\n- `{(tmp_path / "shared.txt").as_posix()}`'
+            f'{CHANGED}\n- `{(tmp_path / "shared.txt").as_posix()}`\n- `config.py`'
         ]
 
     async def test_windows_workspace_paths_are_named_relative_to_the_working_directory(self, tmp_path: Path) -> None:
@@ -184,17 +184,57 @@ class TestReportStaleFiles:
         result = await agent.run('go', workspace=DriveBackend(tmp_path))
         assert _notices(result.all_messages())[-1] == [f'{CHANGED}\n- `src/app.py`']
 
-    async def test_file_too_large_to_read_is_skipped(self, tmp_path: Path) -> None:
-        target = tmp_path / 'big.bin'
-        target.write_bytes(b'small')
+    async def test_files_past_the_byte_budget_are_not_checked(self, tmp_path: Path) -> None:
+        """The most recently read file is checked first; the older one no longer fits in what is left."""
+        names = ('older.txt', 'newer.txt')
+        for name in names:
+            (tmp_path / name).write_text('one\n')
 
-        def grow() -> None:
-            with target.open('r+b') as file:
-                file.truncate(65 << 20)
+        def change_both() -> None:
+            for name in names:
+                (tmp_path / name).write_text('two\n')
 
-        agent = _agent(tmp_path, (None, _read('big.bin')), (grow, _LIST), (None, 'done'))
+        agent = _agent(
+            tmp_path,
+            *((None, _read(name)) for name in names),
+            (change_both, _LIST),
+            (None, 'done'),
+            capability=ReportStaleFiles(max_checked_bytes=6),
+        )
         result = await agent.run('go')
-        assert _notices(result.all_messages()) == [[], [], []]
+        assert _notices(result.all_messages())[-1] == [f'{CHANGED}\n- `newer.txt`']
+
+    async def test_one_notice_names_changed_then_deleted_files_within_one_budget(self, tmp_path: Path) -> None:
+        for name in ('changed.txt', 'deleted.txt', 'gone.txt'):
+            (tmp_path / name).write_text('one\n')
+
+        def change_and_delete() -> None:
+            (tmp_path / 'changed.txt').write_text('two\n')
+            (tmp_path / 'deleted.txt').unlink()
+            (tmp_path / 'gone.txt').unlink()
+
+        agent = _agent(
+            tmp_path,
+            (None, _read('gone.txt')),
+            (None, _read('deleted.txt')),
+            (None, _read('changed.txt')),
+            (change_and_delete, _LIST),
+            (None, 'done'),
+            capability=ReportStaleFiles(max_reported_files=2),
+        )
+        result = await agent.run('go')
+        assert _notices(result.all_messages())[-1] == snapshot(
+            [
+                """\
+These files changed in the workspace after you last read them, so what you saw of them is out of date. Read them again before relying on them or editing them:
+- `changed.txt`
+
+These files you read were deleted from the workspace:
+- `deleted.txt`
+- and 1 more\
+"""
+            ]
+        )
 
     async def test_least_recently_observed_file_is_dropped_past_the_limit(self, tmp_path: Path) -> None:
         for name in ('a.txt', 'b.txt'):
@@ -232,7 +272,7 @@ class TestReportStaleFiles:
             capability=ReportStaleFiles(max_reported_files=1),
         )
         result = await agent.run('go')
-        assert _notices(result.all_messages())[-1] == [f'{CHANGED}\n- `a.txt`\n- and 2 more']
+        assert _notices(result.all_messages())[-1] == [f'{CHANGED}\n- `b.txt`\n- and 2 more']
 
     async def test_change_between_runs_of_a_conversation_is_reported(self, tmp_path: Path) -> None:
         config = tmp_path / 'config.py'
@@ -289,6 +329,8 @@ class TestReportStaleFiles:
             ReportStaleFiles[None](max_tracked_files=0)
         with pytest.raises(ValueError, match=r'`max_reported_files` must be at least 1\.'):
             ReportStaleFiles[None](max_reported_files=0)
+        with pytest.raises(ValueError, match=r'`max_checked_bytes` must be at least 1\.'):
+            ReportStaleFiles[None](max_checked_bytes=0)
 
 
 def _ctx(*, conversation_id: str | None) -> RunContext[None]:

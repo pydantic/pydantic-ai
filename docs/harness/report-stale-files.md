@@ -34,8 +34,8 @@ agent = Agent(
     - `src/config.py`
     ```
 
-- A changed file is named on every request until the model reads it again. A deleted file is named once, then forgotten. A file that can't be read for another reason, such as a permission error or a workspace failure, is skipped and checked again on the next request, as is a file over 64 MiB, which `read_file` won't return either.
-- Paths are named the way the file tools take them: relative to the workspace's working directory, or absolute when outside it.
+- A changed file is named on every request until the model reads it again. A deleted file is named once, then forgotten. A file that can't be read for another reason, such as a permission error or a workspace failure, is skipped and checked again on the next request.
+- Paths are named the way the file tools take them: relative to the workspace's working directory, or absolute when outside it. The most recently read or written file comes first.
 - The notice is request-scoped: the model sees it for the request it is sent with, and it stays in the message history without moving the cached prefix (see [request-scoped system prompts](../message-history.md#request-scoped-system-prompts)).
 
 ## Options
@@ -44,8 +44,9 @@ agent = Agent(
 |---|---|---|
 | `max_tracked_files` | `100` | How many files to check before each request. Past it, the least recently read or written file is dropped. |
 | `max_reported_files` | `20` | How many paths one notice names. The rest are counted (`- and 3 more`). |
+| `max_checked_bytes` | `8 << 20` (8 MiB) | How many bytes of recorded files to read before one request, most recently read or written first. A file that doesn't fit in what is left is not checked on that request. |
 
-Every check reads each recorded file in full, which detects a rewrite that keeps the size, but costs one read per file per request. On a remote workspace each read is a round trip, so lower `max_tracked_files` if requests slow down.
+Every check reads each recorded file in full, which detects a rewrite that keeps the size, but costs a `stat` and a read per file per request. `max_checked_bytes` bounds the bytes read before one request; on a remote workspace each file is also a round trip, so lower `max_tracked_files` if requests slow down.
 
 ## Scope
 

@@ -651,10 +651,11 @@ per conversation, in memory on the instance, so a continued run hears about chan
 ```python
 from pydantic_ai_harness import FileSystem, ReportStaleFiles
 
-capabilities = [FileSystem(), ReportStaleFiles(max_tracked_files=100, max_reported_files=20)]
+capabilities = [FileSystem(), ReportStaleFiles(max_tracked_files=100, max_reported_files=20, max_checked_bytes=8 << 20)]
 ```
 
-Each check reads every recorded file in full; lower `max_tracked_files` on a slow remote workspace.
+Each check reads every recorded file in full, most recent first, up to `max_checked_bytes` per request; lower
+`max_tracked_files` on a slow remote workspace.
 
 ## Macroscope
 

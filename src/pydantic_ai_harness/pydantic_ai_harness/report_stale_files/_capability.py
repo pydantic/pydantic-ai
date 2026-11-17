@@ -29,9 +29,6 @@ _DELETED = 'These files you read were deleted from the workspace:'
 _SHOWN_PATH = re.compile(r'[A-Za-z0-9._/:@+-]{1,200}')
 """Paths a notice names. The notice is in system voice, so a path with other characters is only counted."""
 
-_MAX_CHECKED_BYTES = 64 << 20
-"""Files larger than this, which `read_file` won't return either, are not read to be checked."""
-
 _CONVERSATIONS_KEPT = 1024
 """How many conversations' observations an instance keeps, most recently used first."""
 
@@ -47,8 +44,8 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
     `FileWrittenEvent`. Before each model request it reads the recorded files through the run's workspace,
     and when one no longer matches, it sends a request-scoped system prompt naming it. A changed file is
     named on every request until the model reads it again; a deleted file is named once. A file that can't
-    be read for another reason, such as a permission error or a workspace failure, or that is over 64 MiB, is
-    skipped and checked again on the next request.
+    be read for another reason, such as a permission error or a workspace failure, or that doesn't fit in
+    `max_checked_bytes`, is skipped and checked again on the next request.
 
     Observations are kept per conversation, in memory on the instance the agent was built with, so a run
     continued from an earlier run's `message_history` hears about changes made between the runs.
@@ -71,6 +68,12 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
     max_reported_files: int = 20
     """How many paths one notice names; the rest are counted."""
 
+    max_checked_bytes: int = 8 << 20
+    """How many bytes of recorded files to read before each request, most recently read or written first.
+
+    A file that doesn't fit in what is left is not checked on that request.
+    """
+
     _conversations: OrderedDict[str, _Observations] = field(
         default_factory=OrderedDict[str, _Observations], init=False, repr=False, compare=False
     )
@@ -81,6 +84,8 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
             raise ValueError('`max_tracked_files` must be at least 1.')
         if self.max_reported_files < 1:
             raise ValueError('`max_reported_files` must be at least 1.')
+        if self.max_checked_bytes < 1:
+            raise ValueError('`max_checked_bytes` must be at least 1.')
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> ReportStaleFiles[AgentDepsT]:
         """Bind the run to its conversation's observations; a run without a conversation id keeps its own."""
@@ -111,8 +116,10 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
             return request_context
         changed: list[str] = []
         deleted: list[str] = []
-        for path, content_hash in list(self._observations.items()):
-            state = await _state(ctx.workspace, path, content_hash)
+        budget = self.max_checked_bytes
+        for path, content_hash in reversed(list(self._observations.items())):
+            state, read = await _state(ctx.workspace, path, content_hash, budget)
+            budget -= read
             if state == 'deleted':
                 self._observations.pop(path, None)
                 deleted.append(path)
@@ -131,19 +138,22 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
 
 
 async def _state(
-    workspace: Workspace, path: str, content_hash: str
-) -> Literal['fresh', 'changed', 'deleted', 'unknown']:
-    """Whether the file at `path` still has `content_hash`; `'unknown'` when it can't be read."""
+    workspace: Workspace, path: str, content_hash: str, budget: int
+) -> tuple[Literal['fresh', 'changed', 'deleted', 'unknown'], int]:
+    """Whether the file at `path` still has `content_hash`, and how many bytes were read to tell.
+
+    `'unknown'` when it can't be read, or is larger than `budget`.
+    """
     try:
         entry = await workspace.stat(path)
-        if entry.is_dir or (entry.size is not None and entry.size > _MAX_CHECKED_BYTES):
-            return 'unknown'
+        if entry.is_dir or (entry.size is not None and entry.size > budget):
+            return 'unknown', 0
         content = await workspace.read_bytes(path)
     except (FileNotFoundError, NotADirectoryError):
-        return 'deleted'
+        return 'deleted', 0
     except (OSError, WorkspaceError):
-        return 'unknown'
-    return 'fresh' if bytes_hash(content) == content_hash else 'changed'
+        return 'unknown', 0
+    return ('fresh' if bytes_hash(content) == content_hash else 'changed'), len(content)
 
 
 def _shown(path: str, working_dir: str, paths: WorkspacePaths) -> str:
