@@ -33,7 +33,9 @@ from pydantic_ai_harness.skills._loader import (
 
 _MAX_DESCRIPTION_LENGTH = 1024
 _MAX_READ_CHARS = 50_000
-"""The most of a skill file `read_skill_file` returns at once, as `FileSystem` caps a read."""
+"""The most of a skill file `read_skill_file` returns, and scans, at once, as `FileSystem` caps a read."""
+_MAX_FILE_BYTES = 10 * 1024 * 1024
+"""The largest skill file `read_skill_file` reads, since a workspace read loads the whole file."""
 
 
 @dataclass(frozen=True)
@@ -207,7 +209,7 @@ class Skills(AbstractCapability[AgentDepsT]):
             scanner: An `ArtifactScanner` that checks each skill's description, `when_to_use` and body for prompt injection,
                 credential exfiltration, and hidden content. A flagged skill is left out of the catalog, with
                 a warning, as a `SkippedSkill` whose `reason` is `'flagged'`. Omit to load skills unscanned.
-                With `read_files`, it also scans each file the model reads, and withholds a flagged one.
+                With `read_files`, it also scans the text each file read returns, and withholds it if flagged.
             read_files: Give the model a `read_skill_file` tool that reads a UTF-8 text file in the
                 directory of a skill it has loaded, from the workspace the skill was read from. It
                 works without file tools and for a `workspace=` library, and does not reach files
@@ -367,16 +369,19 @@ class Skills(AbstractCapability[AgentDepsT]):
         if skill not in ctx.loaded_capability_ids:
             raise ModelRetry(f'Load the skill {skill!r} with `load_capability` before reading its files.')
         text = await _read_text(entry, path)
+        if offset and offset >= len(text):
+            raise ModelRetry(f'offset={offset} is past the end of {path!r}, which has {len(text):,} characters.')
+        end = offset + _MAX_READ_CHARS
+        window = text[offset:end]
         scanner = entry.source.scanner
-        if scanner is not None and (scan := scanner.scan(text, source=f'skill:{skill}/{path}')).flagged:
+        if scanner is not None and (scan := scanner.scan(window, source=f'skill:{skill}/{path}')).flagged:
             record_flagged(
                 ctx.tracer, scan, artifact='skill', action='withheld', include_content=ctx.trace_include_content
             )
             raise ModelRetry(f'{path!r} in skill {skill!r} was withheld: an artifact scan flagged it.')
-        end = offset + _MAX_READ_CHARS
         if end >= len(text):
-            return text[offset:]
-        return f'{text[offset:end]}\n\n[Characters {offset:,} to {end:,} of {len(text):,}; read on from offset={end}.]'
+            return window
+        return f'{window}\n\n[Characters {offset:,} to {end:,} of {len(text):,}; read on from offset={end}.]'
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Read the selected skills, from each configuration's `workspace=` or else the run's workspace.
@@ -518,6 +523,8 @@ async def _read_text(entry: _Entry, path: str) -> str:
         target = await _contained(workspace, directory, path)
         if target is None:
             raise ModelRetry(f'{path!r} is outside the directory of skill {skill!r}.')
+        if (size := (await workspace.stat(target)).size) is not None and size > _MAX_FILE_BYTES:
+            raise ToolFailed(f'{path!r} in skill {skill!r} is {size:,} bytes, over the {_MAX_FILE_BYTES:,}-byte limit.')
         return await workspace.read_text(target)
     except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
         raise ModelRetry(f'Skill {skill!r} has no file {path!r}.') from None

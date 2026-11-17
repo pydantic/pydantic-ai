@@ -322,7 +322,7 @@ relative to its directory, such as `references/guide.md`. It reads from the
 workspace the skill came from, including a `workspace=` backend, so it also
 works for [skills shipped with your application](#ship-skills-with-your-application).
 A read returns at most 50,000 characters, and says which `offset` to pass to
-read on.
+read on. A file over 10 MiB is refused.
 
 The tool refuses a skill the model has not loaded with `load_capability`, an
 absolute path, a path that leads outside the skill's directory through `..` or
@@ -332,8 +332,8 @@ prompt. A host-rendered skill the model can load becomes readable once the
 model loads it. The tool reads nothing from a workspace whose backend
 implements neither `SupportsRealpath` nor `SupportsCommands`, since it cannot
 resolve symlinks. When two `Skills` combine, only the libraries of one with
-`read_files=True` are readable. With a `scanner`, each file is scanned before
-it is returned, and a flagged file is withheld.
+`read_files=True` are readable. With a `scanner`, the text a read returns is
+scanned first, and withheld if flagged.
 
 `Skills` reads the libraries itself: the model does not need `FileSystem` or
 `Shell` to load a skill, and adding either does not change which files `Skills`
