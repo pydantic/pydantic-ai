@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import contextvars
 import json
+import re
 import subprocess
 import sys
 from collections.abc import AsyncIterator
@@ -289,6 +290,9 @@ _CALL_SITE_SNIPPETS = [
     # Only a fresh session's first snippet is type-checked: this one fails and resets the session,
     # the next one passes, and the third runs unchecked.
     'add(3, 4)',
+    # The print cap, which the test lowers to 200 bytes, holds across the turns sleeps split a snippet
+    # into. Going over it resets the session, as running out of memory does.
+    'import time\nfor _ in range(3):\n    print("x" * 80)\n    time.sleep(0)',
     'n = await add(a=1, b=1)\nn',
     # A sequential tool, an error raised at a call site, an undefined name, and a mounted file read
     # each resume the paused call directly instead of deferring it.
@@ -311,6 +315,9 @@ _CALL_SITE_SNIPPETS = [
     ' {(1, 2): {"k": (b"a",)}}, datetime.date(2026, 1, 1)]',
     # Bytes that are not UTF-8 reach the tool's call as on the workflow-side path, which rejects them.
     'await echo(value=b"\\xff")',
+    # So does `max_suspensions`, 16 here, which counts every pause in the session, earlier snippets'
+    # included. Last, as the session can then pause no more.
+    'import time\nfor _ in range(20):\n    time.sleep(0)',
 ]
 
 
@@ -340,6 +347,7 @@ call_site_code_mode_agent = Agent(
             id='code',
             monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
             mount=MountDir(virtual_path='/tests', host_path=str(Path(__file__).parent), mode='read-only'),
+            resource_limits={'max_suspensions': 16},
         ),
         TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
     ],
@@ -393,6 +401,8 @@ def _session_loss_model(messages: list[ModelRequest | ModelResponse], info: Agen
         prompt = next(part.content for part in messages[0].parts if isinstance(part, UserPromptPart))
         if prompt == 'expire the record':
             SERVER.records.clear()
+        elif prompt == 'drop the connection':
+            SERVER.drops_next_feed = ConnectionResetError('wss://monty:secret-token@sandbox.example closed')
         else:
             SERVER.stores = False
         return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'x + 1'}, tool_call_id='read')])
@@ -946,17 +956,18 @@ async def _run_call_sites(client: Client, workflow_id: str, *, stores: bool) -> 
     return json.loads(output)
 
 
-async def test_remote_turns_resume_calls_in_place(client: Client) -> None:
+async def test_remote_turns_resume_calls_in_place(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
     """Calls resolved at the call site resume the stored snapshot with their result, errors included.
 
     Every snippet returns what it returns on the workflow-side path, which a server that stores nothing
     falls back to, except for an argument with no JSON form, which raises `TypeError` at the call site.
     """
     workflow_id = 'test_code_mode_temporal_call_sites'
+    monkeypatch.setattr('pydantic_ai_harness._monty_exec._PRINT_LIMIT_BYTES', 200)
     returns = await _run_call_sites(client, workflow_id, stores=True)
     workflow_side = await _run_call_sites(client, f'{workflow_id}_workflow_side', stores=False)
 
-    type_error, added, call_sites, syntax_error, no_json_form, values, not_utf8 = returns
+    type_error, prints, added, call_sites, syntax_error, no_json_form, values, not_utf8, sleeps = returns
     assert type_error.startswith('Type error in code:\nerror[missing-argument]')
     assert added == 2
     first_line = (Path(__file__).parent / 'stored_sessions.py').read_text().splitlines()[0]
@@ -973,7 +984,15 @@ async def test_remote_turns_resume_calls_in_place(client: Client) -> None:
         'add() got an argument that has no JSON form, so it cannot be sent to the tool',
     ]
     # On the workflow-side path that argument fails the tool's validation, which fails the snippet.
-    assert [*returns[:4], values, not_utf8] == [*workflow_side[:4], *workflow_side[5:]]
+    assert [type_error, added, call_sites, syntax_error, values, not_utf8] == [
+        workflow_side[i] for i in (0, 2, 3, 4, 6, 7)
+    ]
+    # The print cap and `max_suspensions` stop both paths at the same point. The numbers in Monty's
+    # message differ: a turn's limits are what the earlier turns left.
+    for limited, limited_in_workflow in [(prints, workflow_side[1]), (sleeps, workflow_side[8])]:
+        assert re.sub(r'\d+', 'N', limited) == re.sub(r'\d+', 'N', limited_in_workflow)
+    assert 'MemoryError: memory limit exceeded' in prints
+    assert 'RuntimeError: suspension limit 1 exceeded' in sleeps
     assert not_utf8.endswith('ValueError: Error serializing to JSON: invalid utf-8 sequence of 1 bytes from index 0')
 
     history = await client.get_workflow_handle(workflow_id).fetch_history()
@@ -981,6 +1000,8 @@ async def test_remote_turns_resume_calls_in_place(client: Client) -> None:
     # and the undefined name are answered inside a turn; only `double`, `add`, `blob` and `echo` leave it.
     assert _activity_types(history) == [
         *['model_request', 'monty_turn'],
+        # Each sleep ends a turn; the third turn's print goes over the cap.
+        *['model_request', 'monty_turn', 'monty_turn', 'monty_turn'],
         *['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn'],
         *['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn'],
         *['model_request', 'monty_turn'],
@@ -988,7 +1009,9 @@ async def test_remote_turns_resume_calls_in_place(client: Client) -> None:
         *['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn'],
         *['monty_turn', 'call_tool', 'monty_turn'],
         # The non-UTF-8 argument fails before the tool's activity starts.
-        *['model_request', 'monty_turn', 'monty_turn', 'monty_turn', 'model_request'],
+        *['model_request', 'monty_turn', 'monty_turn', 'monty_turn'],
+        # Three sleeps use the session's last pauses, and the fourth goes over `max_suspensions`.
+        *['model_request', 'monty_turn', 'monty_turn', 'monty_turn', 'monty_turn', 'model_request'],
     ]
     replay_result = await Replayer(
         workflows=[CallSiteWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=_workflow_runner()
@@ -1020,13 +1043,21 @@ async def test_failed_turn_activity_fails_the_workflow(client: Client) -> None:
     assert activity_error.cause.type == 'ConnectionRefusedError'
 
 
-@pytest.mark.parametrize('prompt', ['expire the record', 'stop storing'])
-async def test_remote_turns_report_a_lost_session(client: Client, prompt: str) -> None:
+@pytest.mark.parametrize(
+    ('prompt', 'reported'),
+    [
+        ('expire the record', 'The sandbox connection was lost and the session was reset.'),
+        ('stop storing', 'The sandbox connection was lost and the session was reset.'),
+        ('drop the connection', 'Code execution failed and the session was reset.'),
+    ],
+)
+async def test_remote_turns_report_a_lost_session(client: Client, prompt: str, reported: str) -> None:
     """A run whose stored state the server no longer has resets the session and tells the model.
 
     It does not move to the workflow-side path, which would start an empty REPL without saying so, or
     rerun nested calls the snippet already made. Either way the second `run_code` reads `x` from
-    state that is gone.
+    state that is gone. A dropped connection's error text, which can hold credentials, stays out of
+    the workflow history, as it stays out of what the model sees.
     """
     workflow_id = f'test_code_mode_temporal_session_loss_{prompt.split()[0]}'
     try:
@@ -1046,6 +1077,16 @@ async def test_remote_turns_report_a_lost_session(client: Client, prompt: str) -
             )
     finally:
         SERVER.stores = True
+        SERVER.drops_next_feed = None
     first, second = json.loads(output)
     assert first == 1
-    assert second.startswith('The sandbox connection was lost and the session was reset.')
+    assert second.startswith(reported)
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    activity_results = [
+        payload.data
+        for event in history.events
+        if event.HasField('activity_task_completed_event_attributes')
+        for payload in event.activity_task_completed_event_attributes.result.payloads
+    ]
+    assert activity_results
+    assert not [result for result in activity_results if b'secret-token' in result]

@@ -23,6 +23,8 @@ class Server:
 
     records: dict[bytes, bytes] = field(default_factory=dict[bytes, bytes])
     stores: bool = True
+    drops_next_feed: Exception | None = None
+    """An error the next `feed_start` raises, as a connection that drops mid-feed does."""
 
     def load(self, record_id: bytes) -> bytes:
         # Empty bytes are not a Monty dump, so loading a lost record raises Monty's own error.
@@ -53,6 +55,12 @@ class StoredSession:
 
     async def load_snapshot(self, state: bytes, **kwargs: Any) -> AsyncSnapshot:
         return await self.session.load_snapshot(SERVER.load(state), **kwargs)
+
+    async def feed_start(self, code: str, **kwargs: Any) -> Any:
+        if (error := SERVER.drops_next_feed) is not None:
+            SERVER.drops_next_feed = None
+            raise error
+        return await self.session.feed_start(code, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.session, name)

@@ -182,6 +182,8 @@ class MontyRunState:
     has_executed_feed: bool = False
     stored_state: str | None = None
     """The server's record of the session when each turn runs as a durable operation (see `TurnFeed`)."""
+    suspensions: int = 0
+    """The pauses the session's turns made, which count toward its `max_suspensions` (see `TurnFeed`)."""
     durable_turns: bool | None = None
     """Whether this run's `run_code` calls run each turn as a durable operation; `None` until the first call decides."""
     _pool_stack: AsyncExitStack = field(default_factory=AsyncExitStack, repr=False)
@@ -237,6 +239,7 @@ class MontyRunState:
         stack, self._session_stack = self._session_stack, AsyncExitStack()
         self.session = None
         self.stored_state = None
+        self.suspensions = 0
         self.has_executed_feed = False
         await _release_monty(stack)
 
@@ -273,11 +276,15 @@ def is_sandbox_panic(exc: BaseException) -> bool:
     return type(exc).__name__ == 'PanicException'
 
 
+_PRINT_LIMIT_BYTES = 10 * 1024 * 1024
+"""The most a feed may print, `CollectString`'s default cap; Monty raises `MemoryError` past it."""
+
+
 class PrintCapture:
     """Collects bounded print output from a Monty REPL."""
 
     def __init__(self) -> None:
-        self.callback = CollectString()
+        self.callback = CollectString(max_bytes=_PRINT_LIMIT_BYTES)
         self._relayed = ''
 
     @property
@@ -287,6 +294,11 @@ class PrintCapture:
     def relay(self, printed: str) -> None:
         """Add output a turn printed in another process (see `TurnFeed`)."""
         self._relayed += printed
+
+    @property
+    def unused_bytes(self) -> int:
+        """How much more the next turn may print, so the whole feed stays under the cap."""
+        return _PRINT_LIMIT_BYTES - len(self._relayed.encode())
 
     def prepend_to(self, error_message: str) -> str:
         """Prefix captured stdout to an error message, so the model sees what printed before the error."""
@@ -336,10 +348,25 @@ class TurnFeed:
 
     async def start(self, code: str, type_check_stubs: str | None) -> TurnSnapshot:
         state = self.run_state.stored_state
-        return await self._turn(TurnRequest(state, self.limits, code=code, type_check_stubs=type_check_stubs))
+        limits = self._limits(restored_pauses=0)
+        request = TurnRequest(state, limits, self.capture.unused_bytes, code=code, type_check_stubs=type_check_stubs)
+        return await self._turn(request)
 
     async def resume(self, resume: TurnResume) -> TurnSnapshot:
-        return await self._turn(TurnRequest(self.run_state.stored_state, self.limits, resume=resume))
+        limits = self._limits(restored_pauses=1)
+        request = TurnRequest(self.run_state.stored_state, limits, self.capture.unused_bytes, resume=resume)
+        return await self._turn(request)
+
+    def _limits(self, *, restored_pauses: int) -> ResourceLimits:
+        """`limits`, with `max_suspensions` lowered by the pauses the session made before this turn.
+
+        Monty counts `max_suspensions` across a session's feeds, but a loaded record restarts the
+        count: at 0 for a session, and at 1 for a snapshot, counting the pause it resumes.
+        """
+        max_suspensions = self.limits.get('max_suspensions')
+        if max_suspensions is None:
+            return self.limits
+        return {**self.limits, 'max_suspensions': max_suspensions - self.run_state.suspensions + restored_pauses}
 
     async def _turn(self, request: TurnRequest) -> TurnSnapshot:
         try:
@@ -347,6 +374,7 @@ class TurnFeed:
         except Exception as error:
             raise MontyTurnUnavailable(error) from error
         self.capture.relay(turn.prints)
+        self.run_state.suspensions += turn.suspensions
         # A turn that stored nothing failed in a way that resets the session, which clears this again.
         self.run_state.stored_state = turn.state
         match turn.kind:

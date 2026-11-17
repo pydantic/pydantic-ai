@@ -786,14 +786,15 @@ from the same stored ID, so it runs the turn again from the same state. Writes t
 workflow fails with Temporal's `ActivityError`. Errors in the snippet itself, such as syntax errors,
 exceptions, and time limits, are returned to the model as model retries, as they are outside Temporal.
 
-`resource_limits` apply to each turn, including `max_duration_seconds`, which workflow code turns
-off. Keep `start_to_close_timeout` above `max_duration_seconds`: otherwise Temporal stops a long turn
+`max_memory` and `max_duration_seconds` apply to each turn; workflow code turns `max_duration_seconds`
+off. `max_suspensions` and the 10 MiB print cap count across a session's turns, as in workflow code.
+Keep `start_to_close_timeout` above `max_duration_seconds`: otherwise Temporal stops a long turn
 first and retries it, instead of Code Mode reporting the time limit to the model. With
 `'unlimited'`, `start_to_close_timeout` is the only bound on a turn.
 
 Tool results and nested call arguments keep their types, `bytes` and tuples included, and the model
-sees the same snippet result as in workflow code. A nested call whose arguments have no JSON form, such as an instance of a class the
-snippet defined, raises `TypeError` in the snippet: its arguments cannot reach the tool's activity. If
+sees the same snippet result as in workflow code. A nested call whose arguments have no JSON form,
+such as an instance of a class the snippet defined, raises `TypeError` in the snippet: its arguments cannot reach the tool's activity. If
 the server no longer has a run's stored state, for example because it expired, Code Mode resets the
 session and tells the model the connection was lost, as for a dropped connection outside Temporal.
 

@@ -17,8 +17,9 @@ from __future__ import annotations
 import base64
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, field
-from typing import Any, Literal, TypeGuard, get_args
+from contextlib import suppress
+from dataclasses import dataclass, field, replace
+from typing import Any, Literal, TypeGuard, TypeVar, get_args
 
 from pydantic_core import PydanticSerializationError, to_json
 from pydantic_monty import (
@@ -207,6 +208,8 @@ class TurnRequest:
     """The stored record to start from, base64-encoded; `None` starts a fresh session."""
     limits: ResourceLimits
     """The run's configured limits, applied to this turn."""
+    print_bytes: int
+    """How much this turn may print: what earlier turns of the feed left of the feed's print cap."""
     code: str | None = None
     resume: TurnResume | None = None
     type_check_stubs: str | None = None
@@ -290,11 +293,28 @@ class MontyTurn:
     Encoded here rather than typed `Base64Bytes`: Temporal's Pydantic converter serializes a value
     by its runtime types, so bytes would go out as UTF-8 text whatever this field declares."""
     prints: str = ''
+    suspensions: int = 0
+    """How many times the snippet paused in this turn; each pause counts toward `max_suspensions`."""
     call: TurnCall | None = None
     pending_call_ids: list[int] = field(default_factory=list[int])
     output: object = None
     """The snippet's result, as `to_wire` encodes it."""
     failure: MontyFailure | None = None
+
+
+_Snapshot = TypeVar('_Snapshot', bound=AsyncSnapshot | MontyComplete)
+
+
+@dataclass
+class _Pauses:
+    """Counts the snapshots a turn pauses at: every pause, answered in the turn or not, is a suspension."""
+
+    count: int = 0
+
+    def seen(self, snapshot: _Snapshot) -> _Snapshot:
+        if not isinstance(snapshot, MontyComplete):
+            self.count += 1
+        return snapshot
 
 
 def _session_lost() -> MontyTurn:
@@ -328,7 +348,8 @@ async def run_monty_turn(
             # A server can also fail to store one session in time. Only a run with nothing stored yet
             # can move to the workflow; later, the state the run has built is lost.
             return MontyTurn('not_stored') if request.state is None else _session_lost()
-        capture = CollectString()
+        capture = CollectString(max_bytes=request.print_bytes)
+        pauses = _Pauses()
         try:
             paused = await _load(session, request, mount=mount, capture=capture)
         except MontyRuntimeError:
@@ -338,25 +359,36 @@ async def run_monty_turn(
         try:
             if paused is None:
                 assert request.code is not None, 'a turn that resumes nothing feeds code'
-                snapshot = await session.feed_start(
-                    request.code, print_callback=capture, mount=mount, skip_type_check=not type_check
+                snapshot = pauses.seen(
+                    await session.feed_start(
+                        request.code, print_callback=capture, mount=mount, skip_type_check=not type_check
+                    )
                 )
             else:
                 assert request.resume is not None, 'a turn that loads a snapshot resumes it'
-                snapshot = await _resume(paused, request.resume)
-            snapshot = await _answer_in_turn(snapshot)
+                snapshot = pauses.seen(await _resume(paused, request.resume))
+            snapshot = await _answer_in_turn(snapshot, pauses)
         except BaseException as error:
             failure = MontyFailure.from_error(error)
             if failure is None:  # pragma: no cover -- an activity cancelled while the snippet runs
                 raise
+            if failure.kind == 'other':
+                # A remote error's text can carry the pool's URL or credentials, and this result is
+                # kept in workflow history. CodeMode shows the model only the error's type.
+                failure = replace(failure, display='')
+            state = None
             # Only these leave the session usable; the caller resets it after any other failure.
-            state = await _dump(session) if failure.kind in ('syntax', 'runtime') else None
-            return MontyTurn('failed', state=state, prints=capture.output, failure=failure)
+            if failure.kind in ('syntax', 'runtime'):
+                # Monty finishes the checkout when the print cap fires in a snippet with later
+                # calls, so nothing is left to store. CodeMode resets the session after that error.
+                with suppress(RuntimeError):
+                    state = await _dump(session)
+            return MontyTurn('failed', state=state, prints=capture.output, suspensions=pauses.count, failure=failure)
         state = await _dump(session)
         prints = capture.output
         if isinstance(snapshot, MontyComplete):
             output = to_wire(model_safe_result(snapshot.output))
-            return MontyTurn('complete', state=state, prints=prints, output=output)
+            return MontyTurn('complete', state=state, prints=prints, suspensions=pauses.count, output=output)
         if isinstance(snapshot, AsyncFunctionSnapshot):
             call = TurnCall(
                 function_name=snapshot.function_name,
@@ -365,12 +397,18 @@ async def run_monty_turn(
                 call_id=snapshot.call_id,
                 is_os_function=snapshot.is_os_function,
             )
-            return MontyTurn('call', state=state, prints=prints, call=call)
-        return MontyTurn('waiting', state=state, prints=prints, pending_call_ids=snapshot.pending_call_ids)
+            return MontyTurn('call', state=state, prints=prints, suspensions=pauses.count, call=call)
+        return MontyTurn(
+            'waiting',
+            state=state,
+            prints=prints,
+            suspensions=pauses.count,
+            pending_call_ids=snapshot.pending_call_ids,
+        )
 
 
 async def _answer_in_turn(
-    snapshot: AsyncSnapshot | MontyComplete,
+    snapshot: AsyncSnapshot | MontyComplete, pauses: _Pauses
 ) -> AsyncFunctionSnapshot | AsyncFutureSnapshot | MontyComplete:
     """Answer the pauses CodeMode answers the same way every time, without leaving the turn.
 
@@ -382,16 +420,16 @@ async def _answer_in_turn(
     """
     while True:
         if isinstance(snapshot, AsyncNameLookupSnapshot):
-            snapshot = await snapshot.resume()
+            snapshot = pauses.seen(await snapshot.resume())
         elif not isinstance(snapshot, AsyncFunctionSnapshot):
             return snapshot
         elif snapshot.is_os_function and snapshot.function_name not in SLEEP_FUNCTIONS:
-            snapshot = await snapshot.resume_auto()
+            snapshot = pauses.seen(await snapshot.resume_auto())
         elif not _serializes((to_wire(snapshot.args), to_wire(snapshot.kwargs))):
             message = (
                 f'{snapshot.function_name}() got an argument that has no JSON form, so it cannot be sent to the tool'
             )
-            snapshot = await snapshot.resume({'exception': TypeError(message)})
+            snapshot = pauses.seen(await snapshot.resume({'exception': TypeError(message)}))
         else:
             return snapshot
 

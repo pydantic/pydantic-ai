@@ -239,7 +239,7 @@ workflow task that does not yield within 2 seconds fails, so move heavy computat
 With a remote `monty_sandbox` whose server stores sessions and `CodeMode(id=...)`, each turn (the code
 between two waits on the host: nested calls, sleeps, deferred calls) runs as its own activity instead, so sandbox computation does not count
 against the 2 seconds and replay reads turn results from history. Runs stay workflow-side without an
-`id`, against a server that stores nothing, with `os_access` set, with an `'overlay'` mount (the
+`id`, against a server that stores nothing, with `os_access` or `repl_store` set, with an `'overlay'` mount (the
 default mode; use `'read-only'` or `'read-write'`), or when the workflow started before this change.
 Turns use `TemporalDurability`'s `activity_config`; a turn that still fails after its retries fails
 the workflow with `ActivityError`. In a turn activity `max_duration_seconds` applies again, so keep
