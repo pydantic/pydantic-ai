@@ -45,7 +45,7 @@ These tools are never bridged, so they reach the model as usual:
 - Framework control tools, such as tool search and `load_capability`.
 - Local fallbacks for a provider-native tool (`unless_native`), so the model can drop them when the provider runs the tool natively.
 
-Tools with `defer_loading=True` are bridged and found with `tool_search`, so [`ToolSearch`](../capabilities/tool-search.md) has nothing left to reveal. A tool a deferred capability owns joins the bridge once the capability is loaded. The tool names `tool_search`, `tool_describe` and `tool_call` are reserved: a native tool with one of them raises a `UserError`.
+Tools with `defer_loading=True` are bridged and found with `tool_search`, so [`ToolSearch`](../capabilities/tool-search.md) has nothing left to reveal. A tool a deferred capability owns joins the bridge once the capability is loaded. A tool whose `unless_tool_kind` names another tool's kind is left out, as it would be without the bridge. The tool names `tool_search`, `tool_describe` and `tool_call` are reserved: a native tool with one of them raises a `UserError`.
 
 ## Trade-offs
 

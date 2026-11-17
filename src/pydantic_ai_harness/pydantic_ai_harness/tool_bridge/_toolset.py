@@ -13,7 +13,10 @@ from pydantic_ai import ToolDefinition
 from pydantic_ai.capabilities import ToolSearchFunc
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolCallPart
-from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.tool_manager import (
+    ToolManager,
+    _drop_superseded_tools as drop_superseded_tools,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import WrapperToolset
 from pydantic_ai.toolsets._tool_search import keywords_search_fn
@@ -102,7 +105,8 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         """Return the dispatcher tools plus the tools that aren't bridged."""
         native: dict[str, ToolsetTool[AgentDepsT]] = {}
         bridged: dict[str, ToolsetTool[AgentDepsT]] = {}
-        for name, tool in (await self.wrapped.get_tools(ctx)).items():
+        # Dropped here because the run's own `unless_tool_kind` filter only sees the tools left native.
+        for name, tool in drop_superseded_tools(await self.wrapped.get_tools(ctx)).items():
             if await self._bridges(ctx, tool.tool_def):
                 # The bridge discloses its tools itself, so tool search must not hold a deferred one back.
                 bridged[name] = replace(tool, tool_def=replace(tool.tool_def, defer_loading=False))

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
 
 from pydantic_ai import Agent, FunctionToolset, RunContext, Tool, ToolDefinition
-from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ToolSearch
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, LocalWorkspace, ToolSearch
 from pydantic_ai.capabilities.abstract import ValidatedToolArgs
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
@@ -23,7 +25,8 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai_harness import ToolBridge
+from pydantic_ai_harness import FileSystem, ToolBridge
+from pydantic_ai_harness.file_system import READ_FILE_KIND
 from pydantic_ai_harness.tool_bridge import ToolBridgeToolset
 
 
@@ -361,3 +364,29 @@ class TestToolBridge:
             'tool_describe': False,
             'tool_call': True,
         }
+
+    @pytest.mark.parametrize('bridged', [None, ['cat_file']], ids=['both-bridged', 'reader-native'])
+    async def test_tool_that_steps_aside_is_dropped(self, bridged: list[str] | None, tmp_path: Path):
+        def cat_file(path: str) -> str:
+            """Read a file."""
+            return 'unused'  # pragma: no cover
+
+        async def step_aside(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
+            return replace(tool_def, unless_tool_kind=READ_FILE_KIND)
+
+        model = _scripted([_call('tool_describe', name='cat_file')])
+        agent = Agent(
+            model,
+            tools=[Tool(cat_file, prepare=step_aside)],
+            capabilities=[
+                FileSystem(),
+                LocalWorkspace(tmp_path),
+                ToolBridge() if bridged is None else ToolBridge(bridged),
+            ],
+        )
+
+        result = await agent.run('read a file')
+
+        assert _returns(result.all_messages()) == [
+            "No tool named 'cat_file' is available through `tool_call`. Use `tool_search` to find one."
+        ]
