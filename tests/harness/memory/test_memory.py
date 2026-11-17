@@ -1706,6 +1706,31 @@ class TestInjection:
         [snapshot] = _snapshot_parts(result.all_messages())
         assert snapshot.source == ModelSource('agent in an earlier run')
 
+    async def test_a_lowered_store_of_its_own_keeps_its_location_and_scope_from_the_model(self, tmp_path: Path) -> None:
+        # The note names the file's author, but not where the store keeps it, its namespace or the agent's name.
+        (tmp_path / 'secretdir' / 'tenantsecret' / 'agentsecret').mkdir(parents=True)
+        (tmp_path / 'secretdir' / 'tenantsecret' / 'agentsecret' / 'MEMORY.md').write_text('- a planted fact')
+        store = FileMemoryStore(
+            'secretdir',
+            workspace=AuthorityWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), authority='none'),
+        )
+        sent: list[str] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(str(messages) + (info.instructions or ''))
+            return ModelResponse(parts=[TextPart('done')])
+
+        result = await Agent(
+            FunctionModel(model),
+            capabilities=[Memory(store=store, namespace='tenantsecret', agent_name='agentsecret')],
+        ).run('go')
+
+        [snapshot] = _snapshot_parts(result.all_messages())
+        assert isinstance(snapshot.source, WorkspaceSource)
+        assert (snapshot.source.path, snapshot.source.authority) == ('MEMORY.md', 'none')
+        assert 'a planted fact' in sent[0]
+        assert not any(secret in sent[0] for secret in ('secretdir', 'tenantsecret', 'agentsecret'))
+
     async def test_emptied_memory_appends_an_empty_snapshot(self) -> None:
         store = InMemoryMemoryStore()
         mutation = await _seed(store, 'main/MEMORY.md', '- a fact')

@@ -342,14 +342,15 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail without a workspace, and load walk-up instruction files so `get_instructions` is sync."""
         require_workspace(ctx.workspace, 'RepoContext', ctx.messages)
-        if not self.autoload_instructions:
-            return
         workspace = ctx.workspace
-        working_dir = await self._working_dir(workspace)
         if self.nested_traversal and not self._lowered:
             # With any file below `'operator'` where nested traversal reads, the precedence sentence mustn't rank its
             # files over the operator's.
-            self._lowered = await lowest_authority_under(workspace, str(working_dir)) != 'operator'
+            root = str(await self._working_dir(workspace))
+            self._lowered = await lowest_authority_under(workspace, root) != 'operator'
+        if not self.autoload_instructions:
+            return
+        working_dir = await self._working_dir(workspace)
         top: Path | None = None
         if self.home_dir is not None:
             # The working directory has its symlinks resolved, so `home_dir` needs them resolved too to contain it.
@@ -395,8 +396,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     def get_instructions(self) -> str | Callable[[RunContext[AgentDepsT]], str | None] | None:
         """Cache-stable instructions resolved after `before_run` loads workspace files."""
-        if not self.autoload_instructions:
-            # Neither part depends on the run, so they stay static and inside the cached prefix.
+        if not self.autoload_instructions and not self.nested_traversal:
+            # Nothing depends on the run, so it stays static and inside the cached prefix. The precedence sentence
+            # nested traversal adds depends on the levels `before_run` finds, after this is called.
             return '\n\n'.join(self._static_instructions()) or None
 
         def instructions(_ctx: RunContext[AgentDepsT]) -> str | None:
