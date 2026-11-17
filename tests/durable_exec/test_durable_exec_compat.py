@@ -76,11 +76,13 @@ from pydantic_ai.messages import (
     CapabilityEvent,
     CapabilityLoadDeltaEvent,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionEndEvent,
     CompactionPart,
     CompactionRecord,
     CompactionStartEvent,
     CustomEvent,
+    DataCapabilityPart,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
     EnqueuedMessagesEvent,
@@ -104,6 +106,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    OperatorSource,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
@@ -957,6 +960,9 @@ def test_model_request_context_projection_is_exhaustive() -> None:
         # The live wrapper a capability's `get_wrapper_model` built around `model`, with the model it wraps; the
         # durable unit re-applies the hook to the model it rebuilds, so it's never carried across.
         '_serving_wrapper',
+        # The request's messages as the hooks left them, set caller-side after every hook has run, for readers of
+        # the request (such as `TrajectoryJudge`) in `after_model_request`; a durable hook never sees it.
+        '_hooked_messages',
     }
     projected = {field.name for field in fields(ModelRequestContextProjection)}
     context_fields = {field.name for field in fields(ModelRequestContext)}
@@ -1000,6 +1006,11 @@ class GoldenProgressEvent(CustomEvent, name='golden_progress'):
 
 @dataclass(kw_only=True)
 class GoldenCheckpointEvent(CapabilityEvent, namespace='golden', name='checkpoint'):
+    label: str
+
+
+@dataclass(kw_only=True)
+class GoldenReportPart(DataCapabilityPart, namespace='golden', name='report', tag='report', attributes=('label',)):
     label: str
 
 
@@ -1063,6 +1074,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         InstructionDeltaPart(id=None, content='delta'),
         InstructionBaselinePart(instructions=[InstructionPart('baseline')]),
         CompactionPart(content='summary'),
+        GoldenReportPart(content='report', source=OperatorSource(), label='l'),
     ]
     response_parts: list[ModelResponsePart] = [
         TextPart('text'),
@@ -1133,12 +1145,14 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
     # `RetryPromptPart` stays in the union for type checking and the published JSON schema: the
     # discriminator translates a legacy payload into one of its replacements, so it never
     # round-trips as itself. Parts and deltas match by exact type, since several members subclass
-    # another member; events match by `isinstance`, as `CustomEvent` and `CapabilityEvent` are
-    # covered by registered subclasses.
+    # another member, except `CapabilityPart`, which is covered by a registered subclass; events match
+    # by `isinstance`, as `CustomEvent` and `CapabilityEvent` are covered by registered subclasses.
     assert {
         member.__name__
         for member in _union_members(ModelRequestPart)
-        if not any(type(part) is member for part in request_parts)
+        if not any(
+            isinstance(part, member) if member is CapabilityPart else type(part) is member for part in request_parts
+        )
     } == {'RetryPromptPart'}
     assert [
         member.__name__

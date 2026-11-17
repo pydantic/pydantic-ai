@@ -983,7 +983,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     ) -> bool:
         """Allow provider subclasses to express conditional forcing support.
 
-        Overrides should raise `UserError` when the user explicitly requested forcing.
+        Overrides should raise `UserError` when the user explicitly requested forcing, or
+        `ModelRequestRejectedError` where the API would reject the request.
         """
         return support_openai_tool_forcing(
             self.model_name,

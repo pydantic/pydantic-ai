@@ -51,6 +51,14 @@ of tool calls (`started`/`completed`/`failed`). It stores message history only: 
 capability state, graph-node state, or in-flight streams, and it does not replay anything by itself.
 You continue a run by passing a snapshot's messages to `Agent.run(message_history=...)`.
 
+It is not the recommended session store: to store conversations, use core's `ConversationStore`
+(`pydantic_ai.conversation_store`), which also keeps usage and deferred tool requests. To move sessions
+already stored with `StepPersistence`, save each `SqliteConversationStore` head, or else each session
+ID's newest `complete` snapshot, as a `Conversation`, skipping conversations the store already has.
+Settle a session whose newest run ends on unanswered tool calls (a pending approval or deferred result)
+first: its last `complete` snapshot leaves that turn out (see "Moving sessions to a `ConversationStore`"
+on the Step Persistence page).
+
 ```python
 import asyncio
 
@@ -141,8 +149,9 @@ Gotchas:
 - Shapes a test sees: when a streamed model request fails, the saved history (default read included)
   ends with an empty or partial-text `ModelResponse`. With `Planning`, each plan tool's `ToolReturnPart`
   ends with the plan in a `<plan_reminder>` tag and carries
-  `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1', 'plan': ...}`; a user-channel plan
-  record with that origin appears only when the latest plan isn't visible (after compaction, say).
+  `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1', 'plan': ...}`; a `PlanReminderPart`
+  (from `pydantic_ai_harness.planning`) records the plan only when the latest plan isn't visible (after
+  compaction, say).
   Assert on the parts you need, not exact message shapes.
 - `run_id` is per `Agent.run`. Reusing one instance with the same explicit `run_id` raises `ValueError`.
   Group turns with `conversation_id=` on `Agent.run`.
