@@ -2363,6 +2363,29 @@ class TestPlaywrightBrowserLifecycle:
             inherited.url = 'https://example.com/'
             assert await tools.get_text() == 'Allowed content'
 
+    async def test_default_context_leaves_out_a_tab_whose_url_arrives_off_the_web(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class LoadsTheStartPage(_FakePage):
+            async def wait_for_load_state(self, state: str, *, timeout: float | None = None) -> None:
+                await super().wait_for_load_state(state, timeout=timeout)
+                self.url = 'chrome://newtab/'
+
+        _install_fake_driver(monkeypatch, _FakePage(url='about:blank'))
+        start = LoadsTheStartPage(url='', body='RECENT_HISTORY')
+        _populate_default_context(monkeypatch, tabs=1, inherit=lambda context: context.opened.insert(0, start))
+        # An open policy admits `chrome://newtab/`: only the scheme rule keeps the tab out.
+        session = PlaywrightBrowserSession(
+            cdp_url='http://localhost:9222', cdp_context='default', policy=EgressPolicy(block_private_addresses=False)
+        )
+        async with session:
+            tools = PlaywrightBrowserToolset[None](session=session)
+            refused = await tools.get_text()
+            assert 'showing a page the agent cannot read (chrome://newtab).' in refused
+            assert 'RECENT_HISTORY' not in refused
+            assert await tools.get_text() == 'Hello body'
+        assert not start.closed and start.goto_calls == [] and not any(start.handlers.values())
+
     @pytest.mark.parametrize(
         'load_state_error',
         [None, PlaywrightTimeoutError('Timeout 1000ms exceeded.')],
