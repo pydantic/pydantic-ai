@@ -316,10 +316,14 @@ raise that as a model error too, before the agent sees the response, so it's han
 | [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] | The provider sent no response, e.g. a stream that ended before its first event, or a completion without choices. Often a transient glitch, so sending the request again may help. [`RetryOnModelErrors`](../capabilities/retry-on-model-errors.md) doesn't retry it by default; pass `retry_on=(*TRANSIENT_MODEL_ERRORS, ModelEmptyResponseError)` to include it. |
 | [`ModelInvalidResponseError`][pydantic_ai.exceptions.ModelInvalidResponseError] | The response couldn't be read, e.g. a completion that doesn't match the API's schema. Sending the same request again often gets the same response. |
 
-Both are also an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which these responses
-used to raise, so existing `except UnexpectedModelBehavior` blocks keep catching them. As model errors, though, they're now also what a [`FallbackModel`](#fallback-model) or [`ModelFallback`](../capabilities/model-fallback.md) falls back on by default, so when every model in the chain fails, the run raises a [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup], which only `except*` or `except FallbackExceptionGroup` catches. A response the agent can't use
-once the model has returned it, like one with no output or one cut off at the token limit, is judged in the
-[agent loop](../agent.md) instead, and raises a plain `UnexpectedModelBehavior` or is re-prompted.
+Both are also an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which these responses used
+to raise, so existing `except UnexpectedModelBehavior` blocks keep catching them. As model errors, though, they're now
+also what a [`FallbackModel`](#fallback-model) or [`ModelFallback`](../capabilities/model-fallback.md) falls back on by
+default, so when every model in the chain fails, the run raises a
+[`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup], which only `except*` or `except
+FallbackExceptionGroup` catches. A response the agent can't use once the model has returned it, like one with no output
+or one cut off at the token limit, is judged in the [agent loop](../agent.md) instead, and raises a plain
+`UnexpectedModelBehavior` or is re-prompted.
 
 Some adapters still raise a plain [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] for the same kind of
 response, like OpenRouter's `null` `choices`, or a body that isn't JSON on most providers, so to handle all of them,
