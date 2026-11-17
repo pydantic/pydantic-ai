@@ -81,6 +81,7 @@ from .images import (
     ImageGenerationSettings,
     ImageGenerator,
 )
+from .in_flight import InFlightWorkEvent
 from .messages import (
     AgentInstructionSource,
     AgentStreamEvent,
@@ -360,6 +361,7 @@ __all__ = (
     'DocumentMediaType',
     'DocumentUrl',
     'EnqueuedMessagesEvent',
+    'InFlightWorkEvent',
     'FileUrl',
     'FilePart',
     'DeferredToolRequestsEvent',
