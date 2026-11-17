@@ -1506,7 +1506,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """
         if isinstance(error, MontyTurnUnavailable):
             await run_state.reset()
-            return None
+            raise error.error
         failure = error.failure if isinstance(error, MontyTurnFailed) else MontyFailure.from_error(error)
         if failure is None:
             # An interruption re-raises unchanged after dropping the suspended session.

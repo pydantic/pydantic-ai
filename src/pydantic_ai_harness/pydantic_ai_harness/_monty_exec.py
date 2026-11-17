@@ -55,6 +55,7 @@ try:
     )
 
     from pydantic_ai_harness._monty_turns import (
+        SLEEP_FUNCTIONS,
         MontyFailure,
         MontyTurn,
         TurnCall,
@@ -178,7 +179,7 @@ class MontyRunState:
     session: AsyncMontySession | None = None
     portal: BlockingPortal | None = None
     has_executed_feed: bool = False
-    stored_state: bytes | None = None
+    stored_state: str | None = None
     """The server's record of the session when each turn runs as a durable operation (see `TurnFeed`)."""
     durable_turns: bool | None = None
     """Whether this run's `run_code` calls run each turn as a durable operation; `None` until the first call decides."""
@@ -307,7 +308,15 @@ class MontyTurnFailed(Exception):
 
 
 class MontyTurnUnavailable(Exception):
-    """The durable operation that runs a turn failed, so the turn's outcome is unknown; see `__cause__`."""
+    """The durable operation that runs a turn failed, so the turn's outcome is unknown.
+
+    CodeMode resets the session and re-raises `error`, so the run fails as it does when any other
+    activity fails.
+    """
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__('The durable operation running a Monty turn failed.')
+        self.error = error
 
 
 @dataclass
@@ -333,12 +342,10 @@ class TurnFeed:
         try:
             turn = await self.run_turn(request)
         except Exception as error:
-            raise MontyTurnUnavailable('The durable operation running a Monty turn failed.') from error
-        if turn.kind == 'not_stored':
-            raise MontySessionsNotStored
+            raise MontyTurnUnavailable(error) from error
         self.capture.relay(turn.prints)
-        if turn.state is not None:
-            self.run_state.stored_state = turn.state
+        # A turn that stored nothing failed in a way that resets the session, which clears this again.
+        self.run_state.stored_state = turn.state
         match turn.kind:
             case 'call':
                 assert turn.call is not None
@@ -350,6 +357,8 @@ class TurnFeed:
             case 'failed':
                 assert turn.failure is not None
                 raise MontyTurnFailed(turn.failure)
+            case _:  # 'not_stored'
+                raise MontySessionsNotStored
 
 
 @dataclass
@@ -384,12 +393,6 @@ class TurnFunctionSnapshot:
 
     async def resume(self, result: ExternalResult) -> TurnSnapshot:
         return await self.feed.resume(TurnResume.from_result(result))
-
-    async def resume_auto(self) -> TurnSnapshot:
-        return await self.feed.resume(TurnResume('auto'))
-
-    async def resume_not_handled(self) -> TurnSnapshot:
-        return await self.feed.resume(TurnResume('not_handled'))
 
 
 @dataclass
@@ -501,15 +504,20 @@ class MontyExecutor:
         """Dispatch (or defer) a single external function call."""
         if snapshot.is_os_function:
             match snapshot.function_name:
-                case 'time.sleep' | 'asyncio.sleep' | 'system.sleep' | 'system.async_sleep':
+                case name if name in SLEEP_FUNCTIONS:
                     return await self._sleep(snapshot)
                 case (
                     'os.getenv' | 'os.environ' | 'date.today' | 'datetime.now' | 'os.urandom' | 'time.time' as name
-                ) if self.portal is not None and self.os_handler is not None:
+                ) if (
+                    isinstance(snapshot, AsyncFunctionSnapshot)
+                    and self.portal is not None
+                    and self.os_handler is not None
+                ):
                     return await self._answer_os_call(snapshot, self.os_handler, name)
                 case _:  # file calls: Monty answers them from the mounts first
                     # OS calls (env, clock, filesystem) are answered from the feed's mounts and the
                     # `os=` handler captured at `feed_start`, falling back to monty's unhandled default.
+                    assert isinstance(snapshot, AsyncFunctionSnapshot), 'a turn answers these calls itself'
                     return await call_monty(self.portal, snapshot.resume_auto)
 
         name = snapshot.function_name
@@ -577,7 +585,7 @@ class MontyExecutor:
         self._pending[snapshot.call_id] = PendingCall(task, otel_context.get_current())
         return await call_monty(self.portal, snapshot.resume, ExternalFuture(future=...))
 
-    async def _answer_os_call(self, snapshot: FunctionSnapshot, handler: OsHandler, name: OsFunction) -> Snapshot:
+    async def _answer_os_call(self, snapshot: AsyncFunctionSnapshot, handler: OsHandler, name: OsFunction) -> Snapshot:
         """Call `os_access` on the workflow's own thread, so it can use `temporalio.workflow` APIs.
 
         Through the portal Monty would call it from another thread. File calls are not routed here:

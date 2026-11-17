@@ -27,17 +27,18 @@ import subprocess
 import sys
 from collections.abc import AsyncIterator
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
 from anyio.from_thread import start_blocking_portal
-from pydantic_monty import MontyRefusedError
+from pydantic_monty import MontyRefusedError, MountDir
 
 try:
     from temporalio import workflow
     from temporalio.client import Client, WorkflowExecutionStatus, WorkflowFailureError
     from temporalio.common import RetryPolicy
-    from temporalio.exceptions import ApplicationError
+    from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Replayer, Worker
     from temporalio.worker.workflow_sandbox import (
@@ -55,7 +56,7 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
-from pydantic_ai import Agent, ToolDefinition
+from pydantic_ai import Agent, Tool, ToolDefinition
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -64,6 +65,7 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
 from tests.harness._temporal import ignore_source_reads_left_open
 from tests.harness.code_mode.grpc_relay import serve_monty_relay
+from tests.harness.code_mode.stored_sessions import StoredSessionPool
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
@@ -230,6 +232,124 @@ remote_code_mode_agent = Agent(
         TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
     ],
 )
+
+
+def _not_storing_pool() -> StoredSessionPool:
+    return StoredSessionPool(stores=False)
+
+
+# The doubles stand in for `AsyncMontyRemote`, which this factory type names.
+storing_code_mode_agent = Agent(
+    FunctionModel(_code_mode_model),
+    name='code_mode_temporal_storing_agent',
+    toolsets=[FunctionToolset(tools=[add], id='math')],
+    capabilities=[
+        CodeMode(id='code', monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+not_storing_code_mode_agent = Agent(
+    FunctionModel(_code_mode_model),
+    name='code_mode_temporal_not_storing_agent',
+    toolsets=[FunctionToolset(tools=[add], id='math')],
+    capabilities=[
+        CodeMode(id='code', monty_sandbox=_not_storing_pool),  # pyright: ignore[reportArgumentType]
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+def double(n: int) -> int:
+    """Double a number."""
+    return n * 2
+
+
+_CALL_SITE_SNIPPETS = [
+    # Only a fresh session's first snippet is type-checked: this one fails and resets the session,
+    # the next one passes, and the third runs unchecked.
+    'add(3, 4)',
+    'n = await add(a=1, b=1)\nn',
+    # A sequential tool, an error raised at a call site, an undefined name, and a mounted file read
+    # each resume the paused call directly instead of deferring it.
+    'from pathlib import Path\n'
+    'try:\n    add(3, 4)\nexcept TypeError as e:\n    error = str(e)\n'
+    'try:\n    missing_name\nexcept NameError:\n    error += " / NameError"\n'
+    'line = Path("/tests/stored_sessions.py").read_text().splitlines()[0]\n'
+    'f"{double(n=n)} | {error} | {line}"',
+    'def broken(:',
+]
+
+
+def _call_site_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+    """Model that runs each of `_CALL_SITE_SNIPPETS`, then returns what they returned."""
+    returns = [
+        part.content
+        for msg in messages
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    if len(returns) == len(_CALL_SITE_SNIPPETS):
+        return ModelResponse(parts=[TextPart(content=json.dumps(returns))])
+    code = _CALL_SITE_SNIPPETS[len(returns)]
+    return ModelResponse(
+        parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id=f'site_{len(returns)}')]
+    )
+
+
+call_site_code_mode_agent = Agent(
+    FunctionModel(_call_site_model),
+    name='code_mode_temporal_call_site_agent',
+    toolsets=[FunctionToolset(tools=[add, Tool(double, sequential=True)], id='math')],
+    capabilities=[
+        CodeMode(
+            id='code',
+            monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
+            mount=MountDir(virtual_path='/tests', host_path=str(Path(__file__).parent), mode='read-only'),
+        ),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class CallSiteWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await call_site_code_mode_agent.run('Exercise the call sites')
+        return result.output
+
+
+def _refusing_pool() -> StoredSessionPool:
+    raise ConnectionRefusedError('the Monty server refused the connection')
+
+
+refusing_code_mode_agent = Agent(
+    FunctionModel(_code_mode_model),
+    name='code_mode_temporal_refusing_agent',
+    toolsets=[FunctionToolset(tools=[add], id='math')],
+    capabilities=[
+        CodeMode(id='code', monty_sandbox=_refusing_pool),  # pyright: ignore[reportArgumentType]
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class RefusedTurnWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await refusing_code_mode_agent.run('Calculate 3 + 4')
+        return result.output  # pragma: no cover
+
+
+@workflow.defn
+class StoredSessionsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, stores: bool) -> str:
+        agent = storing_code_mode_agent if stores else not_storing_code_mode_agent
+        result = await agent.run(prompt)
+        return str(result.output)
 
 
 @workflow.defn
@@ -556,3 +676,159 @@ async def test_code_mode_runs_remotely_in_temporal_workflow(client: Client) -> N
         workflow_runner=_workflow_runner(),
     ).replay_workflow(history)
     assert replay_result.replay_failure is None
+
+
+def _activity_types(history: Any) -> list[str]:
+    """The activities a workflow scheduled, by the last part of their name (`monty_turn`, `call_tool`)."""
+    return [
+        event.activity_task_scheduled_event_attributes.activity_type.name.rpartition('__')[2]
+        for event in history.events
+        if event.HasField('activity_task_scheduled_event_attributes')
+    ]
+
+
+@pytest.mark.parametrize(
+    'prompt,expected_output,expected_activities',
+    [
+        pytest.param(
+            'Calculate 3 + 4',
+            'done: 70',
+            # Each nested call is a turn that pauses at it, then one that defers it and waits on it.
+            ['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn']
+            + ['model_request', 'monty_turn', 'model_request'],
+            id='sequential',
+        ),
+        pytest.param(
+            'Gather two additions',
+            # The second snippet reads `result`, which this one never set: a failed turn.
+            'done: Runtime error:\nTraceback (most recent call last):\n  File "<python-input-1>", line 1, in <module>\n'
+            "    result * 10\n    ~~~~~~\nNameError: name 'result' is not defined",
+            ['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn', 'call_tool', 'monty_turn']
+            + ['model_request', 'monty_turn', 'model_request'],
+            id='gather',
+        ),
+    ],
+)
+async def test_remote_turns_run_as_activities(
+    client: Client, prompt: str, expected_output: str, expected_activities: list[str]
+) -> None:
+    """With a server that stores sessions, each remote turn is an activity and the workflow only waits on it.
+
+    A turn that computes for longer than Temporal's 2 second workflow-task limit then stays out of the
+    workflow task. In the sequential case the second `run_code` reads `result` from the first, so the
+    REPL carries across turns that each start a fresh session from the stored record.
+    """
+    workflow_id = f'test_code_mode_temporal_stored_{prompt.split()[0].lower()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StoredSessionsWorkflow],
+        plugins=[AgentPlugin(storing_code_mode_agent)],
+        workflow_runner=_workflow_runner(),
+    ):
+        output = await client.execute_workflow(
+            StoredSessionsWorkflow.run,
+            args=[prompt, True],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+
+    assert output == expected_output
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    assert _activity_types(history) == expected_activities
+    replay_result = await Replayer(
+        workflows=[StoredSessionsWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=_workflow_runner()
+    ).replay_workflow(history)
+    assert replay_result.replay_failure is None
+
+
+async def test_remote_turns_fall_back_without_stored_sessions(client: Client) -> None:
+    """A server that stores no sessions keeps the session open in the workflow, as before this change.
+
+    The first turn finds nothing stored and runs nothing, and every later Monty call stays in the workflow.
+    """
+    workflow_id = 'test_code_mode_temporal_not_stored'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StoredSessionsWorkflow],
+        plugins=[AgentPlugin(not_storing_code_mode_agent)],
+        workflow_runner=_workflow_runner(),
+    ):
+        output = await client.execute_workflow(
+            StoredSessionsWorkflow.run, args=['Calculate 3 + 4', False], id=workflow_id, task_queue=TASK_QUEUE
+        )
+
+    assert output == 'done: 70'
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    assert _activity_types(history) == ['model_request', 'monty_turn', 'call_tool', 'model_request', 'model_request']
+
+
+async def test_remote_turns_resume_calls_in_place(client: Client) -> None:
+    """Calls resolved at the call site resume the stored snapshot with their result, errors included.
+
+    The `TypeError` crosses the activity boundary as data and is raised in the sandbox as the same type
+    with the same message, and a syntax error comes back as a failed turn with Monty's report.
+    """
+    workflow_id = 'test_code_mode_temporal_call_sites'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CallSiteWorkflow],
+        plugins=[AgentPlugin(call_site_code_mode_agent)],
+        workflow_runner=_workflow_runner(),
+    ):
+        output = await client.execute_workflow(
+            CallSiteWorkflow.run, id=workflow_id, task_queue=TASK_QUEUE, execution_timeout=timedelta(seconds=30)
+        )
+    type_error, added, call_sites, syntax_error = json.loads(output)
+    assert type_error.startswith('Type error in code:\nerror[missing-argument]')
+    assert added == 2
+    first_line = (Path(__file__).parent / 'stored_sessions.py').read_text().splitlines()[0]
+    assert (
+        call_sites
+        == f'4 | add() does not accept positional arguments; use keyword arguments / NameError | {first_line}'
+    )
+    assert syntax_error == (
+        'Syntax error in code:\nTraceback (most recent call last):\n  File "<python-input-2>", line 1\n'
+        '    def broken(:\n               ~\nSyntaxError: Expected a parameter or the end of the parameter list'
+    )
+
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    # The type-checked snippet that fails and the syntax error are one turn each. The mounted file read
+    # and the undefined name are answered inside a turn; only `double` and `add` leave it.
+    assert _activity_types(history) == [
+        *['model_request', 'monty_turn'],
+        *['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn'],
+        *['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn'],
+        *['model_request', 'monty_turn', 'model_request'],
+    ]
+    replay_result = await Replayer(
+        workflows=[CallSiteWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=_workflow_runner()
+    ).replay_workflow(history)
+    assert replay_result.replay_failure is None
+
+
+async def test_failed_turn_activity_fails_the_workflow(client: Client) -> None:
+    """A turn activity that fails after its retries fails the run like any other activity, rather than
+    raising an error Temporal would treat as a workflow bug and retry forever."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RefusedTurnWorkflow],
+        plugins=[AgentPlugin(refusing_code_mode_agent)],
+        workflow_runner=_workflow_runner(),
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                RefusedTurnWorkflow.run,
+                id='test_code_mode_temporal_refused_turn',
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert activity_error.activity_type.endswith('__monty_turn')
+    assert isinstance(activity_error.cause, ApplicationError)
+    assert activity_error.cause.type == 'ConnectionRefusedError'
