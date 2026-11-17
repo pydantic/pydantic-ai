@@ -2246,6 +2246,52 @@ class TestCodeMode:
         assert isinstance(tool_return, ToolReturnPart)
         assert tool_return.content == 'deleted a.txt'
 
+    @pytest.mark.parametrize(
+        ('tools', 'sandboxed'),
+        [pytest.param('all', False, id='all'), pytest.param(['delete_file'], True, id='explicit')],
+    )
+    async def test_discovered_approval_required_tool_placement_with_dynamic_catalog(
+        self, tools: Literal['all'] | list[str], sandboxed: bool
+    ) -> None:
+        """With the default dynamic catalog, a discovered approval-required tool stays native under `'all'`.
+
+        An explicit selector keeps it off the wire until it's found and then folds it into `run_code`.
+        """
+
+        def delete_file(path: str) -> str:
+            """Delete a file."""
+            return f'deleted {path}'  # pragma: no cover
+
+        declared: list[list[str]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            declared.append(sorted(tool.name for tool in info.function_tools))
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('search_tools', {'queries': ['delete']}, tool_call_id='s1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        code_mode = CodeMode[object](tools=tools)
+        agent = Agent(
+            FunctionModel(model_fn),
+            tools=[Tool(delete_file, requires_approval=True, defer_loading=True)],
+            capabilities=[ToolSearch[object](), code_mode],
+        )
+        with capture_run_messages() as messages:
+            await agent.run('delete a.txt')
+
+        assert 'delete_file' not in declared[0]
+        assert ('delete_file' in declared[-1]) is not sandboxed
+        announced = [
+            part.metadata
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, SystemPromptPart) and part.metadata
+        ]
+        assert announced == (
+            [{'origin': 'pydantic-ai-harness.code_mode.discovery.v1', 'tools': ['delete_file']}] if sandboxed else []
+        )
+
     async def test_tool_without_return_schema_warns(self) -> None:
         """A sandboxed tool with no return_schema triggers a one-time warning."""
         td = ToolDefinition(
