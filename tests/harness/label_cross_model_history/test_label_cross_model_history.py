@@ -8,8 +8,8 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai_harness import LabelCrossModelHistory
 from pydantic_ai_harness.label_cross_model_history import DEFAULT_CROSS_MODEL_NOTICE
 
@@ -95,7 +95,7 @@ class TestLabelCrossModelHistory:
         agent = Agent(a, capabilities=[LabelCrossModelHistory()])
         first = agent.run_sync('hello')
         agent.run_sync('again', message_history=first.all_messages(), model=FallbackModel(b, a))
-        agent.run_sync('again', message_history=first.all_messages(), model=InstrumentedModel(FallbackModel(b, a)))
+        agent.run_sync('again', message_history=first.all_messages(), model=WrapperModel(FallbackModel(b, a)))
         agent.run_sync('again', message_history=first.all_messages(), model=FallbackModel(b, TestModel()))
         assert seen == [None, None, None, DEFAULT_CROSS_MODEL_NOTICE]
 
