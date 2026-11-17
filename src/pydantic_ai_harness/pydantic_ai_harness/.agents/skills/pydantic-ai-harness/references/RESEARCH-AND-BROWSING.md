@@ -2,6 +2,7 @@
 
 Web research and browser capabilities: `Researcher` (a ready-made research stack), `ExaSearch` /
 `ExaAgent` (Exa API), `YouSearch` / `YouResearch` (You.com API), `KeenableSearch` (Keenable API, keyless),
+`FirecrawlSearch` (Firecrawl API, key optional),
 `BrowserUse` (hand a goal to an autonomous browser agent), and `PlaywrightBrowser` (the model drives Chromium itself). All are
 capabilities passed in `Agent(capabilities=[...])`.
 
@@ -11,7 +12,7 @@ capabilities passed in `Agent(capabilities=[...])`.
 | --- | --- |
 | Search and read public pages; follow whatever the model's provider offers | Core `WebSearch(local=True)` + `WebFetch(local=True)` from `pydantic_ai.capabilities` |
 | A research agent with cited answers, sub-question delegation, and bounded tool output, no API keys beyond the model | `Researcher` |
-| Same search behaviour on every model, excerpts per hit, domain filters, one vendor | `ExaSearch` or `YouSearch` |
+| Same search behaviour on every model, excerpts per hit, domain filters, one vendor | `ExaSearch`, `YouSearch`, or `FirecrawlSearch` |
 | Same search behaviour on every model with no API key and no extra to install | `KeenableSearch` |
 | Synthesized, cited answer or multi-step research in one tool call | `ExaSearch(include_deep_search=True)`, `ExaAgent`, or `YouResearch` |
 | Fuzzy goal on unknown pages ("find the Pro plan price") | `BrowserUse` |
@@ -22,16 +23,16 @@ fetching is acceptable. `WebSearch()` and `WebFetch()` with no arguments are nat
 models without native support; pass `local=True` for the fallback (needs `pydantic-ai-slim[duckduckgo]`
 and `pydantic-ai-slim[web-fetch]`).
 
-Tool-name collisions: core `WebSearch` (its native tool on Anthropic models), `ExaSearch`, `YouSearch`, and
-`KeenableSearch` all expose a tool named `web_search`; `ExaSearch`, `YouSearch`, and `KeenableSearch` all expose
+Tool-name collisions: core `WebSearch` (its native tool on Anthropic models), `ExaSearch`, `YouSearch`,
+`KeenableSearch`, and `FirecrawlSearch` all expose a tool named `web_search`; the four harness ones all expose
 `get_page`. Use one search capability
 per agent, wrap extras in core `PrefixTools(wrapped=..., prefix='cb')` (a second instance of the same
 class also needs its own `id=`, since each carries a default one), or use `WebSearch(native=False, local=True)`
 (needs the `pydantic-ai-slim[duckduckgo]` extra) whose DuckDuckGo tool is `duckduckgo_search`. `Researcher` includes core `WebSearch`, so do not add
-`ExaSearch`/`YouSearch`/`KeenableSearch` next to it on Anthropic models without `PrefixTools`.
+`ExaSearch`/`YouSearch`/`KeenableSearch`/`FirecrawlSearch` next to it on Anthropic models without `PrefixTools`.
 
-To use the provider's native search where the model has one and Exa or You.com elsewhere, set
-`ExaSearch(native=True)` / `YouSearch(native=True)` (their `web_search` is then only sent to models without
+To use the provider's native search where the model has one and Exa, You.com, or Firecrawl elsewhere, set
+`ExaSearch(native=True)` / `YouSearch(native=True)` / `FirecrawlSearch(native=True)` (their `web_search` is then only sent to models without
 native search, or whose native search can't apply the `include_domains`/`exclude_domains` filters, like Gemini's;
 `get_page` stays), or pass `WebSearch(local=ExaSearch().web_search_tool())` to keep core
 `WebSearch`'s native options. `KeenableSearch().web_search_tool()` works as that keyless fallback too, with `web_search` only (no
@@ -246,6 +247,43 @@ Gotchas:
   `ExaSearch` and `YouSearch`.
 - Citations under `metadata['sources']` as `KeenableSource`, like Exa.
 
+## FirecrawlSearch
+
+`FirecrawlSearch` adds `web_search` (query-relevant highlights per hit, or each hit's full markdown)
+and `get_page` (one URL scraped as markdown). It needs no extra: the client uses `httpx2`, and
+Firecrawl's search and scrape endpoints accept keyless requests.
+
+```bash
+uv add pydantic-ai-harness   # FIRECRAWL_API_KEY is optional and lifts rate limits
+```
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import FirecrawlSearch
+
+agent = Agent('anthropic:claude-sonnet-5', capabilities=[FirecrawlSearch(max_results=5)])
+```
+
+Fields: `max_results=5` (1 to 100, sent as Firecrawl's `limit`), `extraction_mode='highlights'`
+(or `'full_page'`, which scrapes and bills every result), `max_text_chars=10_000` (cap on each
+result body and on `get_page`), `include_domains=[]` / `exclude_domains=[]` (mutually exclusive,
+`web_search` only), `guidance=None`, `native=False`, `client=None`.
+
+Gotchas:
+
+- Bad budgets, an unknown `extraction_mode`, or both domain lists raise `ValueError` when the
+  capability is built.
+- `FIRECRAWL_API_URL` points at a self-hosted Firecrawl and must be `https://` (plain `http` only on
+  loopback), or `UserError` is raised.
+- Rate limits, 5xx, a non-JSON or `success: false` body, a page whose site answered 4xx/5xx, and an
+  empty page become `ModelRetry`; 401/402/403 stop the run. For tests, pass `client=` a fake
+  satisfying the exported `FirecrawlClient` protocol.
+- `HttpFirecrawlClient(http_client=...)` sends every request through your `httpx2.AsyncClient`; you
+  close it. Each request has a 90-second deadline.
+- Citations under `metadata['sources']` as `FirecrawlSource`; durable execution records each request
+  under the default `id` (`firecrawl_search`).
+
 ## BrowserUse
 
 One `browse_web` tool that hands a self-contained goal to a browser-use agent driving real Chromium,
@@ -410,6 +448,7 @@ Gotchas:
 - https://pydantic.dev/docs/ai/harness/exa-search/
 - https://pydantic.dev/docs/ai/harness/youdotcom/
 - https://pydantic.dev/docs/ai/harness/keenable-search/
+- https://pydantic.dev/docs/ai/harness/firecrawl-search/
 - https://pydantic.dev/docs/ai/harness/browser-use/
 - https://pydantic.dev/docs/ai/harness/playwright/
 - https://pydantic.dev/docs/ai/capabilities/web-search/

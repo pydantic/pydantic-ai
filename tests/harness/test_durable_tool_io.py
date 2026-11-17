@@ -43,6 +43,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai_harness.advisor import Advisor
 from pydantic_ai_harness.capability_creation import CapabilityCreation, CapabilityStore
 from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
+from pydantic_ai_harness.firecrawl import FirecrawlSearch
 from pydantic_ai_harness.keenable import KeenableSearch
 from pydantic_ai_harness.localstack import LocalStack
 from pydantic_ai_harness.memory import InMemoryMemoryStore, Memory
@@ -231,6 +232,24 @@ class _KeenableClient:
         return {'url': url, 'title': 'A', 'content': 'body'}
 
 
+class _FirecrawlClient:
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        full_page: bool,
+        include_domains: Sequence[str],
+        exclude_domains: Sequence[str],
+    ) -> list[dict[str, object]]:
+        _requests['firecrawl.search'] += 1
+        return [{'url': 'https://a.dev', 'title': 'A', 'description': 'excerpt'}]
+
+    async def scrape(self, url: str) -> dict[str, object]:
+        _requests['firecrawl.scrape'] += 1
+        return {'markdown': 'body', 'metadata': {'url': url, 'title': 'A'}}
+
+
 def _counting_aws_cli() -> str:
     """An `aws` stand-in that counts its runs in the file named by `HARNESS_AWS_CLI_COUNT`."""
     directory = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_'))
@@ -306,6 +325,12 @@ _AGENTS: dict[str, Agent[None, str]] = {
     'keenable_search': _agent(
         'keenable_search_agent',
         KeenableSearch[None](client=_KeenableClient()),
+        ('web_search', {'query': 'q'}),
+        ('get_page', {'url': 'https://a.dev'}),
+    ),
+    'firecrawl_search': _agent(
+        'firecrawl_search_agent',
+        FirecrawlSearch[None](client=_FirecrawlClient()),
         ('web_search', {'query': 'q'}),
         ('get_page', {'url': 'https://a.dev'}),
     ),
@@ -429,6 +454,7 @@ _EXPECTED_STEPS: dict[str, Collection[str]] = {
     'you_search': ['you_search.web_search', 'you_search.get_page'],
     'you_research': ['you_research.answer', 'you_research.research', 'you_research.finance_research'],
     'keenable_search': ['keenable_search.web_search', 'keenable_search.get_page'],
+    'firecrawl_search': ['firecrawl_search.web_search', 'firecrawl_search.get_page'],
     'localstack': ['localstack.aws_cli'],
     'capability_creation': [
         'capability_creation.write',
@@ -668,6 +694,7 @@ async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
         pytest.param(lambda: YouSearch[None](client=_YouClient()), id='you_search'),
         pytest.param(lambda: YouResearch[None](client=_YouClient()), id='you_research'),
         pytest.param(lambda: KeenableSearch[None](client=_KeenableClient()), id='keenable_search'),
+        pytest.param(lambda: FirecrawlSearch[None](client=_FirecrawlClient()), id='firecrawl_search'),
         pytest.param(lambda: LocalStack[None](), id='localstack'),
         pytest.param(lambda: CapabilityCreation[None](directory=_CREATION_DIRECTORY), id='capability_creation'),
         pytest.param(lambda: Advisor[None]('test', native=False), id='advisor'),
