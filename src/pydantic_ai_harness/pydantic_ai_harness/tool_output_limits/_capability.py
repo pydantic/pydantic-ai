@@ -8,7 +8,6 @@ import posixpath
 import warnings
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from itertools import accumulate
 from typing import Any, Literal
 
 from pydantic_ai import FunctionToolset, Tool, ToolKind
@@ -322,7 +321,8 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 limit: Maximum number of lines (or bytes) to return (>= 1; clamped to a built-in cap).
                 from_end: Count `offset`/`limit` from the end of the result.
                 pattern: Optional literal substring; only lines containing it are returned.
-                unit: `'bytes'` slices raw bytes, for output without useful line breaks such as minified JSON.
+                unit: `'bytes'` slices raw bytes, for output without useful line breaks such as minified JSON;
+                    `offset` and `limit` then count bytes, so pass a larger `limit` (up to 50,000).
             """
             return await _read_slice(self._store_for(ctx).read, handle, offset, limit, from_end, pattern, unit)
 
@@ -901,7 +901,7 @@ async def _load(read: Callable[[str], Awaitable[bytes]], handle: str) -> bytes |
 
 
 _Entry = tuple[str, str, int, bool]
-"""A line to render: its prefix, its text, the byte offset the text starts at, and whether it is a match."""
+"""A line to render: its prefix, its text, its index in the spill, and whether it is a match."""
 
 
 def _byte_len(text: str) -> int:
@@ -909,31 +909,29 @@ def _byte_len(text: str) -> int:
 
 
 def _display(text: str) -> str:
-    """Render a line split by `_split` for the model, with undecodable bytes as U+FFFD."""
+    """Render a line of `_decode`d text for the model, with undecodable bytes as U+FFFD."""
     return text.encode('utf-8', 'surrogateescape').decode('utf-8', errors='replace')
 
 
-def _split(data: bytes) -> tuple[list[str], list[int]]:
-    """Split a spill into lines and the byte offset each starts at.
-
-    `surrogateescape` keeps every stored byte recoverable, so the offsets are exact even when the
-    payload is not valid UTF-8.
-    """
-    text = data.decode('utf-8', 'surrogateescape')
-    starts = list(accumulate((_byte_len(line) for line in text.splitlines(keepends=True)), initial=0))
-    return text.splitlines(), starts
+def _decode(data: bytes) -> str:
+    """Decode a spill so every stored byte stays recoverable, keeping byte offsets exact for any payload."""
+    return data.decode('utf-8', 'surrogateescape')
 
 
-def _fill(entries: Iterable[_Entry]) -> tuple[list[str], int, int | None]:
-    """Render `entries` up to the output cap: the lines, how many matches they show, and where a cut match continues.
+_Cut = tuple[int, int]
+"""A line cut by the output cap: its index in the spill and how many of its bytes were shown."""
+
+
+def _fill(entries: Iterable[_Entry]) -> tuple[list[str], int, _Cut | None]:
+    """Render `entries` up to the output cap: the lines, how many matches they show, and the match cut, if any.
 
     Stops before a line that would cross the cap, so the match count stays true to the body. Until
     the first match is in, leading context is dropped instead, so every page makes progress. A match
-    longer than the cap on its own is cut, and the byte offset its rest starts at is returned.
+    longer than the cap on its own is cut.
     """
     rendered: list[str] = []
     size = shown = 0
-    for prefix, line, start, match in entries:
+    for prefix, line, index, match in entries:
         text = prefix + _display(line)
         if size + len(text) > _MAX_READ_CHARS:
             if shown:
@@ -944,7 +942,7 @@ def _fill(entries: Iterable[_Entry]) -> tuple[list[str], int, int | None]:
                 continue
             if len(text) > _MAX_READ_CHARS:
                 kept = line[: _MAX_READ_CHARS - len(prefix)]
-                return [prefix + _display(kept)], 1, start + _byte_len(kept)
+                return [prefix + _display(kept)], 1, (index, _byte_len(kept))
         rendered.append(text)
         size += len(text) + 1
         shown += match
@@ -953,9 +951,13 @@ def _fill(entries: Iterable[_Entry]) -> tuple[list[str], int, int | None]:
     return rendered, shown, None
 
 
-def _capped(cut: int | None, more: str) -> str:
+def _capped(text: str, cut: _Cut | None, more: str) -> str:
     """The header note for output stopped at the cap, saying where the rest continues."""
-    notes = [f"the cut line continues at unit='bytes', offset={cut}"] if cut is not None else []
+    notes: list[str] = []
+    if cut is not None:
+        index, shown_bytes = cut
+        offset = sum(_byte_len(line) for line in text.splitlines(keepends=True)[:index]) + shown_bytes
+        notes.append(f"the cut line continues at unit='bytes', offset={offset}, limit={_MAX_READ_CHARS}")
     if more:
         notes.append(more)
     return f', output capped at {_MAX_READ_CHARS:,} chars; {"; ".join(notes)}' if notes else ''
@@ -990,8 +992,11 @@ async def _read_slice(
         return _byte_slice(handle, data, offset, min(limit, _MAX_READ_CHARS), from_end)
 
     limit = min(limit, _MAX_READ_LINES)
-    lines, starts = _split(data)
-    indices = [index for index, line in enumerate(lines) if pattern is None or pattern in line]
+    text = _decode(data)
+    lines = text.splitlines()
+    indices: Sequence[int] = (
+        range(len(lines)) if pattern is None else [index for index, line in enumerate(lines) if pattern in line]
+    )
     total = len(indices)
     if from_end:
         end = max(0, total - offset)
@@ -1001,9 +1006,9 @@ async def _read_slice(
         end = offset + limit
     window = indices[first:end]
 
-    rendered, shown, cut = _fill(('', lines[index], starts[index], True) for index in window)
+    rendered, shown, cut = _fill(('', lines[index], index, True) for index in window)
     more = f'the next line is at offset={first + shown}, from_end=False' if shown < len(window) else ''
-    header = f'[handle {handle!r}: {total:,} matching line(s); showing {shown}{_capped(cut, more)}]'
+    header = f'[handle {handle!r}: {total:,} matching line(s); showing {shown}{_capped(text, cut, more)}]'
     return '\n'.join([header, *rendered])
 
 
@@ -1021,7 +1026,7 @@ def _byte_slice(handle: str, data: bytes, offset: int, limit: int, from_end: boo
     return f'{header}\n{body}' if body else header
 
 
-def _grep_lines(lines: list[str], starts: list[int], page: list[int], context: int) -> Iterator[_Entry]:
+def _grep_lines(lines: list[str], page: list[int], context: int) -> Iterator[_Entry]:
     """Yield the matches in `page` with `context` lines around each, and a `--` entry between groups.
 
     Windows that overlap or touch merge into one group. Only lines in `page` are marked as matches.
@@ -1035,7 +1040,7 @@ def _grep_lines(lines: list[str], starts: list[int], page: list[int], context: i
         end = min(len(lines), index + context + 1)
         for n in range(start, end):
             match = n in hits
-            yield f'{n + 1}{":" if match else "-"}', lines[n], starts[n], match
+            yield f'{n + 1}{":" if match else "-"}', lines[n], n, match
 
 
 async def _grep(
@@ -1066,11 +1071,14 @@ async def _grep(
     if isinstance(data, str):
         return data
 
-    lines, starts = _split(data)
+    text = _decode(data)
+    lines = text.splitlines()
     matches = [index for index, line in enumerate(lines) if pattern in line]
     page = matches[offset : offset + max_matches]
-    rendered, shown, cut = _fill(_grep_lines(lines, starts, page, context))
+    rendered, shown, cut = _fill(_grep_lines(lines, page, context))
     more = len(matches) - offset - shown
     remaining = f', {more:,} more; continue with offset={offset + shown}' if more > 0 else ''
-    header = f'[handle {handle!r}: {len(matches):,} matching line(s); showing {shown}{remaining}{_capped(cut, "")}]'
+    header = (
+        f'[handle {handle!r}: {len(matches):,} matching line(s); showing {shown}{remaining}{_capped(text, cut, "")}]'
+    )
     return '\n'.join([header, *rendered])

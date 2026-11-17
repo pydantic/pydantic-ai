@@ -51,8 +51,8 @@ is re-sent on every later model request, paying its token cost for the rest of t
 `Spill` is lossless: the full payload is persisted and the model reads slices of it through
 the registered `read_tool_result(handle, offset, limit, from_end, pattern, unit)` tool, and searches
 it with `grep_tool_result` ([Querying a spill](#querying-a-spill)).
-Both tools are bounded: `offset >= 0`, `limit` clamped to a built-in cap, the joined output
-capped, and `pattern` is a literal substring (not a regex), so a model-supplied value cannot
+Both tools are bounded: `offset >= 0`, `read_tool_result`'s `limit` and `grep_tool_result`'s `context`
+and `max_matches` clamped to built-in caps, the joined output capped, and `pattern` is a literal substring (not a regex), so a model-supplied value cannot
 hang the host with catastrophic backtracking.
 
 ## Usage
@@ -285,7 +285,7 @@ continue from. The model can then page around a match with `read_tool_result`.
 
 `read_tool_result(..., unit='bytes')` slices the raw stored bytes instead of lines, for output
 without useful line breaks such as minified JSON. `offset` and `limit` count bytes (`limit` is
-clamped to 50,000), `from_end` counts from the end, and a range past the end is clamped. The header
+clamped to 50,000, and its default of 200 counts bytes too), `from_end` counts from the end, and a range past the end is clamped. The header
 reports the returned interval and the total length, such as
 `bytes 50000-100000 of 240311 (end exclusive)`, so the model knows where to continue. A
 multi-byte UTF-8 character cut at either edge of the slice, and any byte of a binary spill that is
@@ -362,7 +362,7 @@ When spills are files in the run's workspace (the default `WorkspaceOverflowStor
 `workspace=` of its own) and `FileSystem` is on the agent, `read_tool_result` and `grep_tool_result`
 step aside for `FileSystem`'s `read_file`. The tools are marked with
 [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind]
-set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. The
+set to `READ_FILE_KIND`, so they are left out of every run step that has a tool of that kind. The
 spill marker then names that tool as it is called in the run, with the spill's path:
 
 ```text

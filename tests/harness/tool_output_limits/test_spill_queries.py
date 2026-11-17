@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -25,7 +25,9 @@ from pydantic_ai_harness.tool_output_limits import (
 _LOG = '\n'.join(f'ERROR {i}' if i in {5, 7, 15} else f'line {i}' for i in range(1, 21))
 
 
-async def _query(tmp_path: Path, payload: str, tool_name: str, args: dict[str, Any], handle: str | None = None) -> str:
+async def _query(
+    tmp_path: Path, payload: str, tool_name: str, args: dict[str, object], handle: str | None = None
+) -> str:
     """Spill `payload`, call `tool_name` on its handle with `args`, and return what the model got back."""
     offered: dict[str, str | None] = {}
 
@@ -105,7 +107,7 @@ class TestGrepToolResult:
         out = await _query(tmp_path, 'é\n' + 'x' * 60_000, GREP_TOOL_NAME, {'pattern': 'x'})
         header, body = out.split('\n', 1)
         assert header.endswith(
-            ": 1 matching line(s); showing 1, output capped at 50,000 chars; the cut line continues at unit='bytes', offset=50001]"
+            ": 1 matching line(s); showing 1, output capped at 50,000 chars; the cut line continues at unit='bytes', offset=50001, limit=50000]"
         )
         assert len(body) == 50_000 and body.startswith('2:x')
 
@@ -159,7 +161,7 @@ class TestGrepToolResult:
             ({'pattern': 'x', 'offset': -1}, '`offset` must be >= 0.'),
         ],
     )
-    async def test_invalid_input_asks_for_a_retry(self, tmp_path: Path, args: dict[str, Any], error: str) -> None:
+    async def test_invalid_input_asks_for_a_retry(self, tmp_path: Path, args: dict[str, object], error: str) -> None:
         assert await _query(tmp_path, _LOG, GREP_TOOL_NAME, args) == f'retry: {error}'
 
     async def test_result_is_not_reduced(self, tmp_path: Path) -> None:
@@ -202,11 +204,14 @@ class TestReadToolResultCap:
         header, body = out.split('\n', 1)
         assert header.endswith(
             ": 3 matching line(s); showing 1, output capped at 50,000 chars; the cut line continues at unit='bytes', "
-            'offset=50007; the next line is at offset=2, from_end=False]'
+            'offset=50007, limit=50000; the next line is at offset=2, from_end=False]'
         )
         assert body == 'x' * 50_000
-        rest = await _query(tmp_path, payload, READ_TOOL_NAME, {'unit': 'bytes', 'offset': 50_007, 'limit': 4})
-        assert rest.endswith(': bytes 50007-50011 of 50016 (end exclusive)]\nTAIL')
+        hint = re.search(r"unit='bytes', offset=(\d+), limit=(\d+)", header)
+        assert hint is not None
+        args: dict[str, object] = {'unit': 'bytes', 'offset': int(hint[1]), 'limit': int(hint[2])}
+        rest = await _query(tmp_path, payload, READ_TOOL_NAME, args)
+        assert rest.endswith(': bytes 50007-50016 of 50016 (end exclusive)]\nTAIL\nnext')
 
     async def test_stops_before_a_line_that_would_cross_the_cap(self, tmp_path: Path) -> None:
         payload = '\n'.join(['a' * 30_000, 'b' * 30_000, 'c'])
