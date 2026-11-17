@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import inspect
 import itertools
-from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, TypeGuard, cast, overload
 
-from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler, JsonValue
+from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import PydanticCustomError, core_schema
 from typing_extensions import TypeAliasType, TypeForm, TypeVar
@@ -479,16 +479,8 @@ def StructuredDict(
 _MAX_JSON_SCHEMA_ERRORS = 10
 
 
-def _json_refs(node: JsonValue) -> Iterator[str]:
-    """Every `$ref` in `node`."""
-    if isinstance(node, dict):
-        if isinstance(ref := node.get('$ref'), str):
-            yield ref
-        for value in node.values():
-            yield from _json_refs(value)
-    elif isinstance(node, list):
-        for value in node:
-            yield from _json_refs(value)
+def _is_json_object(value: object) -> TypeGuard[dict[str, Any]]:
+    return isinstance(value, dict)
 
 
 def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, Any]], dict[str, Any]]:
@@ -515,15 +507,21 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
         raise exceptions.UserError(f'`StructuredDict` got an invalid JSON schema: {e.message}') from e
     # An empty registry resolves references within the schema only, so a remote `$ref` is never fetched.
     # Resolving each one now turns one that doesn't resolve into a `UserError`, not a failure of every run.
+    # Walking subresources visits schema positions only, from the resource (`$id`) each one is in.
     registry: Registry[Any] = Registry()
-    resolver = registry.resolver_with_root(Resource.from_contents(json_schema, default_specification=DRAFT202012))
-    for ref in _json_refs(json_schema):
-        try:
-            resolver.lookup(ref)
-        except Unresolvable as e:
-            raise exceptions.UserError(
-                f'`StructuredDict(validate=True)` only resolves references within the schema, and {ref!r} is not one.'
-            ) from e
+    root = Resource.from_contents(json_schema, default_specification=DRAFT202012)
+    pending = [(registry.resolver_with_root(root), root)]
+    while pending:
+        resolver, resource = pending.pop()
+        contents: object = resource.contents
+        if _is_json_object(contents) and isinstance(ref := contents.get('$ref'), str):
+            try:
+                resolver.lookup(ref)
+            except Unresolvable as e:
+                raise exceptions.UserError(
+                    f'`StructuredDict(validate=True)` only resolves references within the schema, and {ref!r} is not one.'
+                ) from e
+        pending.extend((resolver.in_subresource(subresource), subresource) for subresource in resource.subresources())
     schema_validator = validator_class(json_schema, registry=registry)
 
     def validate(value: dict[str, Any]) -> dict[str, Any]:

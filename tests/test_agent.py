@@ -3174,6 +3174,28 @@ def test_structured_dict_validate_resolves_local_refs_and_rejects_others(monkeyp
     with pytest.raises(ValidationError, match=r"\$\.tire\.size: 'x' is not of type 'integer'"):
         adapter.validate_python({'tire': {'size': 'x'}})
 
+    # A `$ref` in a value position is data, and an embedded resource resolves its refs against its own `$id`.
+    DataDict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'link': {'const': {'$ref': 'https://example.com/elsewhere'}},
+                'pet': {
+                    '$id': 'https://example.com/pet',
+                    'type': 'object',
+                    'properties': {'name': {'$ref': '#/$defs/Name'}},
+                    '$defs': {'Name': {'type': 'string'}},
+                },
+            },
+        },
+        validate=True,
+    )
+    data_adapter = TypeAdapter(DataDict)
+    value = {'link': {'$ref': 'https://example.com/elsewhere'}, 'pet': {'name': 'Rex'}}
+    assert data_adapter.validate_python(value) == value
+    with pytest.raises(ValidationError, match=re.escape("$.pet.name: 1 is not of type 'string'")):
+        data_adapter.validate_python({'pet': {'name': 1}})
+
     for ref in ['http://127.0.0.1:9/schema.json', '#/$defs/Missing']:
         with pytest.raises(UserError, match=re.escape(f'only resolves references within the schema, and {ref!r}')):
             StructuredDict({'type': 'object', 'properties': {'a': {'$ref': ref}}}, validate=True)
