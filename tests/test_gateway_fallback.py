@@ -163,10 +163,16 @@ ADVERTISED = {'x-pydantic-ai-fallback': '1; formats=openai,anthropic,gemini,bedr
 @pytest.mark.parametrize('stream', [False, True])
 async def test_the_gateway_sends_the_request_to_a_model_in_another_format(allow_model_requests: None, stream: bool):
     """The request goes to the model the gateway names, on the same route with the same key, carrying its state."""
+    bodies: list[dict[str, Any]] = []
+
+    def answer(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return anthropic_message(request, 'Hello from Claude')
+
     gateway = FakeGateway(
         [
             ('/responses', lambda _: hand_back('gateway/anthropic:claude-sonnet-4-5', 'state-1')),
-            ('/v1/messages', lambda request: anthropic_message(request, 'Hello from Claude')),
+            ('/v1/messages', answer),
         ]
     )
     agent = Agent(gateway.openai_model(route='my-endpoint'))
@@ -193,6 +199,10 @@ async def test_the_gateway_sends_the_request_to_a_model_in_another_format(allow_
     assert isinstance(response, ModelResponse)
     assert (response.model_name, response.provider_name) == ('claude-sonnet-4-5', 'anthropic')
     assert [(attempt.model_name, attempt.outcome) for attempt in response.failed_attempts or []] == [('gpt-5', 'error')]
+    # The request was rebuilt for the new model, in its format, with the user's prompt.
+    [body] = bodies
+    assert body['model'] == 'claude-sonnet-4-5'
+    assert body['messages'] == [{'role': 'user', 'content': [{'type': 'text', 'text': 'Hello'}]}]
 
 
 @pytest.mark.parametrize(
@@ -208,6 +218,11 @@ def test_the_gateways_format_ids_map_to_pydantic_ai_providers(named: str, follow
     headers = {'pydantic-ai-gateway-fallback-model': named, 'pydantic-ai-gateway-fallback-state': 'state-1'}
 
     assert _fallback_target(headers) == (followed, 'state-1')
+
+
+def test_a_424_without_headers_names_no_target():
+    """A `ModelHTTPError` without response headers isn't a hand-back."""
+    assert _fallback_target(None) is None
 
 
 async def test_a_hand_back_can_name_the_format_by_the_gateways_id_for_it(allow_model_requests: None):
