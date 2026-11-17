@@ -1547,11 +1547,17 @@ ends with &lt;/pyai:tool_result
             await agent.run('go')
 
     async def test_error_finishing_after_a_deferred_pause_is_reached_ends_the_run(self) -> None:
+        """An error ends the run at once, without waiting for the other live tasks, which the run then cancels."""
         paused = asyncio.Event()
+        never = asyncio.Event()
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='broken', args='{}'), ToolCallPart(tool_name='needs_approval', args='{}')]
+                parts=[
+                    ToolCallPart(tool_name='stuck', args='{}'),
+                    ToolCallPart(tool_name='broken', args='{}'),
+                    ToolCallPart(tool_name='needs_approval', args='{}'),
+                ]
             )
 
         agent = Agent(
@@ -1559,6 +1565,11 @@ ends with &lt;/pyai:tool_result
             output_type=[str, DeferredToolRequests],
             capabilities=[BackgroundTools(), _ReleaseAtPause(paused)],
         )
+
+        @agent.tool_plain(metadata={'background': True})
+        async def stuck() -> str:
+            await never.wait()
+            return 'never'  # pragma: no cover
 
         @agent.tool_plain(metadata={'background': True})
         async def broken() -> str:

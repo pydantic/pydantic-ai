@@ -1165,11 +1165,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                     )
 
                                 # Like `next()`, but events emitted as the run ends also reach `event_stream_handler`.
-                                await agent_run._run_node_with_hooks(  # pyright: ignore[reportPrivateUsage]
-                                    _agent_graph.SetFinalResult(final_result),
-                                    agent_run._stream_and_advance,  # pyright: ignore[reportPrivateUsage]
-                                    event_stream_handler,
-                                )
+                                # Content queued at a deferred pause is recorded as the run ends, after `messages`
+                                # was copied, so it's carried over even if a handler fails on its event.
+                                recorded_from = len(graph_ctx.state.message_history)
+                                try:
+                                    await agent_run._run_node_with_hooks(  # pyright: ignore[reportPrivateUsage]
+                                        _agent_graph.SetFinalResult(final_result),
+                                        agent_run._stream_and_advance,  # pyright: ignore[reportPrivateUsage]
+                                        event_stream_handler,
+                                    )
+                                finally:
+                                    messages.extend(graph_ctx.state.message_history[recorded_from:])
 
                                 # The tool calls above (and any agents they delegated to) added usage to the run
                                 # after the stream snapshotted it. The final response itself is only recorded once

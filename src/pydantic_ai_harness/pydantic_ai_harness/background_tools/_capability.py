@@ -121,6 +121,13 @@ _Outcome = _Completion | BaseException
 """What a finished background task hands to the run: the completed call, or the error that ends the run."""
 
 
+def _completed(outcome: _Outcome) -> _Completion:
+    """The completed call, or raise the error that ends the run."""
+    if isinstance(outcome, BaseException):
+        raise outcome
+    return outcome
+
+
 _SignalledError = (
     ApprovalRequired | CallDeferred | ToolRetryError | ToolFailedError | ModelRetry | ToolFailed | ValidationError
 )
@@ -436,11 +443,12 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
             # A pause ends the run without another model request, so no later step would take a result that
             # arrives after it: wait for every live task here. The end-of-run drain records their results
             # after a deferred-tool pause, and leaves them queued at a `PendingModelResponse` pause.
-            arrived = list(self._arrived())
+            # An error ends the run at once, so the run's task group cancels the tasks still live.
+            arrived = [_completed(outcome) for outcome in self._arrived()]
             while self._live:
-                arrived.append(await self._outcomes.receive())
+                arrived.append(_completed(await self._outcomes.receive()))
             # A task sends its outcome before it stops counting as live, so several can still be buffered here.
-            arrived.extend(self._arrived())
+            arrived.extend(_completed(outcome) for outcome in self._arrived())
             self._requeue_in_dispatch_order(ctx, arrived)
             # No later node will settle them, so a retry that exhausts its budget ends the run here.
             self._settle(ctx)
@@ -470,20 +478,16 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         if (enqueue_id := ctx.enqueue(*completion.content)) is not None:
             self._queued[enqueue_id] = completion
 
-    def _requeue_in_dispatch_order(self, ctx: RunContext[AgentDepsT], arrived: list[_Outcome]) -> None:
+    def _requeue_in_dispatch_order(self, ctx: RunContext[AgentDepsT], arrived: list[_Completion]) -> None:
         """Queue the results no request has carried yet in the order their calls were dispatched.
 
         They arrive in whatever order the tasks finish, but the request recorded at a pause must come out the same
         when a durable engine replays the run.
         """
-        for outcome in arrived:
-            if isinstance(outcome, BaseException):
-                raise outcome
         taken_back = [completion for enqueue_id, completion in self._queued.items() if ctx.dequeue(enqueue_id)]
         self._queued.clear()
-        completions = [outcome for outcome in arrived if isinstance(outcome, _Completion)]
-        self._unsettled.extend(completions)
-        for completion in sorted([*taken_back, *completions], key=lambda completion: completion.dispatched):
+        self._unsettled.extend(arrived)
+        for completion in sorted([*taken_back, *arrived], key=lambda completion: completion.dispatched):
             self._enqueue(ctx, completion)
 
     def _settle(self, ctx: RunContext[AgentDepsT]) -> None:

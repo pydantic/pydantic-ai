@@ -2544,6 +2544,18 @@ async def test_content_recorded_when_run_stream_finds_a_deferred_result_reaches_
     assert len(enqueue_ids) == 1
     assert listener.seen == enqueue_ids
     assert streamed == enqueue_ids
+    # The streamed result's history carries the recorded content, after the step's results, marked as the pause.
+    history = result.all_messages()
+    assert [type(message).__name__ for message in history] == [
+        'ModelRequest',
+        'ModelResponse',
+        'ModelRequest',
+        'ModelRequest',
+    ]
+    recorded = history[-1]
+    assert isinstance(recorded, ModelRequest)
+    assert recorded.metadata == {'__pydantic_ai__': {'deferred_pause': True}}
+    assert [part.content for part in recorded.parts if isinstance(part, UserPromptPart)] == ['noted at the pause']
 
 
 async def test_interrupted_request_queued_at_a_deferred_pause_stays_queued():
