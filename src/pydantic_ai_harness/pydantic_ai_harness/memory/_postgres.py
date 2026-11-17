@@ -91,11 +91,30 @@ class PostgresMemoryStore:
             yield connection
 
     async def _ensure_schema(self) -> None:
+        """Create or upgrade the schema once, unless it is current.
+
+        Skipped when the tables, the sequence and the upgraded columns all exist, so a role without
+        `CREATE` on the schema or ownership of the tables can use them.
+        """
         if self._schema_ready:
             return
         async with self._schema_lock:
             if self._schema_ready:
                 return
+            async with self._connection() as connection:
+                current = await connection.fetchval(
+                    'SELECT to_regclass($2) IS NOT NULL AND to_regclass($3) IS NOT NULL '
+                    'AND to_regclass($4) IS NOT NULL AND (SELECT count(*) FROM pg_attribute '
+                    'WHERE attrelid = to_regclass($1) AND NOT attisdropped '
+                    "AND attname IN ('version', 'last_operation_id', 'write_metadata')) = 3",
+                    self._table,
+                    self._operations_table,
+                    self._version_sequence,
+                    self._metadata_table,
+                )
+                if current:
+                    self._schema_ready = True
+                    return
             async with self._connection() as connection, connection.transaction():
                 await connection.fetchval('SELECT pg_advisory_xact_lock(hashtext($1))', self._metadata_table)
                 await connection.execute(
