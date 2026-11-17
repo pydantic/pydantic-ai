@@ -289,7 +289,10 @@ contain a literal substring and returns them with their 1-based line numbers and
 each side, in `grep` format: `12:` marks a match, `11-` a context line, and `--` separates groups.
 Context windows that overlap or touch merge into one group. `context` is clamped to 10 lines and
 `max_matches` to 200; when more matches remain, the header says how many and the `offset` to
-continue from. The model can then page around a match with `read_tool_result`.
+continue from. The model can then page around a match with `read_tool_result`. When `FileSystem`'s
+`read_file` replaces it, the search's hints name `read_file` instead. `read_file` has no byte mode,
+so the rest of a cut line can't be read there, and it may count lines differently for payloads with
+rare line breaks such as `\r`, `\f` or U+2028.
 
 `read_tool_result(..., unit='bytes')` slices the raw stored bytes instead of lines, for output
 without useful line breaks such as minified JSON. `offset` and `limit` count bytes (`limit` is
@@ -303,9 +306,9 @@ the model to retry.
 Both tools cap their output at 50,000 characters. They stop before the line that would cross the
 cap, and the header gives the `offset` of the next line (a read) or the next match (a search). A
 search drops leading context rather than its first match, so every page makes progress, and its
-header lists any context it left out with the line `offset` and `limit` to read it. A single
-line longer than the cap is cut, and the header gives the byte offset its rest starts at, to read
-with `unit='bytes'`.
+header lists any context it left out as a call to the reader that reads it. A single line longer
+than the cap is cut, and the header gives the byte offset its rest starts at, to read with
+`unit='bytes'`.
 
 Both tools are recognized by kind (`READ_TOOL_RESULT_KIND`, `GREP_TOOL_RESULT_KIND`), not name, and
 their returns are exempt from reduction. They emit no spans of their own: core's tool spans cover

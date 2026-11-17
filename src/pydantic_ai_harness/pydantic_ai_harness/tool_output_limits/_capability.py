@@ -348,7 +348,8 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 max_matches: Maximum number of matches to return (>= 1; clamped to a built-in cap).
                 offset: Number of matches to skip, to continue a previous search. Must be >= 0.
             """
-            return await _grep(self._store_for(ctx).read, handle, pattern, context, max_matches, offset)
+            read = self._store_for(ctx).read
+            return await _grep(read, handle, pattern, context, max_matches, offset, _reader(ctx, handle))
 
         # Only the reader steps aside: `read_file` cannot search, and `FileSystem` may offer no search tool.
         prepare = step_aside_for_read_file if self._spills_to_run_workspace else None
@@ -1024,16 +1025,45 @@ def _line_start(text: str, index: int) -> int:
     return _byte_len(text[:position])
 
 
-def _capped(text: str, page: _Page, more: str) -> str:
+@dataclass(frozen=True)
+class _Reader:
+    """The tool a capped page points the model to for what it left out.
+
+    Without a `name`, the hints are arguments of the `read_tool_result` call that produced the page.
+    """
+
+    handle: str
+    name: str | None = None
+    handle_arg: str = 'handle'
+    by_bytes: bool = True
+
+    def _call(self, args: str) -> str:
+        return f'{self.name}({self.handle_arg}={self.handle!r}, {args})' if self.name else args
+
+    def omitted(self, start: int, end: int) -> str:
+        return f'context lines {start + 1}-{end + 1} omitted ({self._call(f"offset={start}, limit={end - start + 1}")})'
+
+    def cut(self, offset: int) -> str:
+        if not self.by_bytes:
+            return f'the rest of the cut line, from byte {offset}, cannot be read with {self.name}'
+        args = f"unit='bytes', offset={offset}, limit={_MAX_READ_CHARS}"
+        return f'the cut line continues at {self._call(args)}'
+
+
+def _reader(ctx: RunContext[Any], handle: str) -> _Reader:
+    """The reader `grep_tool_result` names, as it is called in this run step."""
+    name = ctx.tool_name_for_kind(READ_TOOL_RESULT_KIND)
+    if name is None and (file_reader := ctx.tool_name_for_kind(READ_FILE_KIND)) is not None:
+        return _Reader(handle, file_reader, 'path', by_bytes=False)
+    return _Reader(handle, name or READ_TOOL_NAME)
+
+
+def _capped(text: str, page: _Page, more: str, reader: _Reader) -> str:
     """The header note for output stopped at the cap, saying what was left out and where it continues."""
-    notes = [
-        f'context lines {start + 1}-{end + 1} omitted (line offset={start}, limit={end - start + 1})'
-        for start, end in page.omitted
-    ]
+    notes = [reader.omitted(start, end) for start, end in page.omitted]
     if page.cut is not None:
         index, shown_bytes = page.cut
-        offset = _line_start(text, index) + shown_bytes
-        notes.append(f"the cut line continues at unit='bytes', offset={offset}, limit={_MAX_READ_CHARS}")
+        notes.append(reader.cut(_line_start(text, index) + shown_bytes))
     if more:
         notes.append(more)
     return f', output capped at {_MAX_READ_CHARS:,} chars; {"; ".join(notes)}' if notes else ''
@@ -1084,7 +1114,7 @@ async def _read_slice(
 
     page = _fill(('', lines[index], index, True) for index in window)
     more = f'the next line is at offset={first + page.shown}, from_end=False' if page.shown < len(window) else ''
-    header = f'[handle {handle!r}: {total:,} matching line(s); showing {page.shown}{_capped(text, page, more)}]'
+    header = f'[handle {handle!r}: {total:,} matching line(s); showing {page.shown}{_capped(text, page, more, _Reader(handle))}]'
     return '\n'.join([header, *page.lines])
 
 
@@ -1126,11 +1156,13 @@ async def _grep(
     context: int,
     max_matches: int,
     offset: int,
+    reader: _Reader,
 ) -> str:
     """Find literal `pattern` in a spilled payload for `grep_tool_result`, with 1-based line numbers.
 
     Context windows that overlap or touch merge into one group. Matches, context, and the joined
-    output are all capped, so one call can never return an unbounded amount of text.
+    output are all capped, so one call can never return an unbounded amount of text. What the cap
+    leaves out is described as a call to `reader`.
     """
     if not pattern:
         raise ModelRetry('`pattern` must not be empty.')
@@ -1154,6 +1186,6 @@ async def _grep(
     filled = _fill(_grep_lines(lines, page, context))
     more = len(matches) - offset - filled.shown
     remaining = f', {more:,} more; continue with offset={offset + filled.shown}' if more > 0 else ''
-    capped = _capped(text, filled, '')
+    capped = _capped(text, filled, '', reader)
     header = f'[handle {handle!r}: {len(matches):,} matching line(s); showing {filled.shown}{remaining}{capped}]'
     return '\n'.join([header, *filled.lines])

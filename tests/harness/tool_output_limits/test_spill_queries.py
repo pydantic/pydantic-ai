@@ -30,6 +30,7 @@ async def _query(
 ) -> str:
     """Spill `payload`, call `tool_name` on its handle with `args`, and return what the model got back."""
     offered: dict[str, str | None] = {}
+    called: list[str] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         offered.update({tool.name: tool.tool_kind for tool in info.function_tools})
@@ -40,6 +41,7 @@ async def _query(
         if spilled := [part for part in parts if isinstance(part, ToolReturnPart)]:
             assert spilled[0].metadata is not None
             stored = handle if handle is not None else spilled[0].metadata['overflow_handle']
+            called.append(stored)
             return ModelResponse(parts=[ToolCallPart(tool_name, {'handle': stored, **args})])
         return ModelResponse(parts=[ToolCallPart('big_tool', {})])
 
@@ -55,7 +57,7 @@ async def _query(
     result = await agent.run('go')
     assert offered[READ_TOOL_NAME] == READ_TOOL_RESULT_KIND.id
     assert offered[GREP_TOOL_NAME] == GREP_TOOL_RESULT_KIND.id
-    return result.output.replace(str(tmp_path), '<tmp>')
+    return result.output.replace(f'handle={called[0]!r}', "handle='<h>'")
 
 
 class TestGrepToolResult:
@@ -108,8 +110,8 @@ class TestGrepToolResult:
         header, body = out.split('\n', 1)
         assert header.endswith(
             ': 1 matching line(s); showing 1, output capped at 50,000 chars; '
-            'context lines 1-1 omitted (line offset=0, limit=1); context lines 3-3 omitted (line offset=2, limit=1); '
-            "the cut line continues at unit='bytes', offset=50001, limit=50000]"
+            "context lines 1-1 omitted (read_tool_result(handle='<h>', offset=0, limit=1)); context lines 3-3 omitted (read_tool_result(handle='<h>', offset=2, limit=1)); "
+            "the cut line continues at read_tool_result(handle='<h>', unit='bytes', offset=50001, limit=50000)]"
         )
         assert len(body) == 50_000 and body.startswith('2:x')
 
@@ -119,14 +121,14 @@ class TestGrepToolResult:
         header, body = out.split('\n', 1)
         assert header.endswith(
             ': 1 matching line(s); showing 1, output capped at 50,000 chars; '
-            'context lines 1-2 omitted (line offset=0, limit=2)]'
+            "context lines 1-2 omitted (read_tool_result(handle='<h>', offset=0, limit=2))]"
         )
         assert body.startswith('3:hit ') and body.endswith('\n4-after')
         out = await _query(
             tmp_path, '\n'.join(['a' * 30_000, 'hit ' + 'c' * 30_000]), GREP_TOOL_NAME, {'pattern': 'hit'}
         )
         header, body = out.split('\n', 1)
-        assert header.endswith('context lines 1-1 omitted (line offset=0, limit=1)]')
+        assert header.endswith("context lines 1-1 omitted (read_tool_result(handle='<h>', offset=0, limit=1))]")
         assert body == '2:hit ' + 'c' * 30_000
 
     async def test_long_context_after_the_last_match_is_reported(self, tmp_path: Path) -> None:
@@ -135,7 +137,7 @@ class TestGrepToolResult:
         header, body = out.split('\n', 1)
         assert header.endswith(
             ': 1 matching line(s); showing 1, output capped at 50,000 chars; '
-            'context lines 2-3 omitted (line offset=1, limit=2)]'
+            "context lines 2-3 omitted (read_tool_result(handle='<h>', offset=1, limit=2))]"
         )
         assert body == '1:hit ' + 'a' * 30_000
 
@@ -144,7 +146,7 @@ class TestGrepToolResult:
         out = await _query(tmp_path, payload, GREP_TOOL_NAME, {'pattern': 'hit', 'context': 1})
         assert out.split('\n', 1)[0].endswith(
             ': 2 matching line(s); showing 1, 1 more; continue with offset=1, output capped at 50,000 chars; '
-            'context lines 2-2 omitted (line offset=1, limit=1)]'
+            "context lines 2-2 omitted (read_tool_result(handle='<h>', offset=1, limit=1))]"
         )
 
     async def test_cap_leaves_the_next_groups_context_to_the_next_page(self, tmp_path: Path) -> None:
