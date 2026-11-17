@@ -109,7 +109,7 @@ class DelegationSnapshot:
     latest_text: str | None
     """The child's latest text, cut at `MAX_EVENT_TEXT_CHARS`. It is never from the response that ends the run."""
     pending_question: str | None
-    """The question the task is waiting on an answer to, if any."""
+    """The question the task is waiting on an answer to, if any, cut at `MAX_EVENT_TEXT_CHARS`."""
 
 
 @dataclass(kw_only=True)
@@ -571,7 +571,7 @@ class DelegationTasks:
                 for call in calls[-RECENT_TOOL_CALLS:]
             ],
             latest_text=bounded_text(texts[-1])[0] if texts else None,
-            pending_question=record.pending_question,
+            pending_question=None if record.pending_question is None else bounded_text(record.pending_question)[0],
         )
 
     async def save(self, record: DelegationTask) -> None:

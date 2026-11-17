@@ -800,7 +800,7 @@ class TestSubAgentsTaskControl:
             agent_name='researcher',
             prompt='Go.',
             conversation_id='c',
-            pending_question='Which branch?',
+            pending_question='?' * 5000,
             run_id='current',
             messages=[
                 ModelResponse(parts=[TextPart('earlier run')], usage=RequestUsage(input_tokens=99), run_id='earlier'),
@@ -825,7 +825,7 @@ class TestSubAgentsTaskControl:
         assert [call.tool_name for call in snapshot.recent_tool_calls] == [f'tool{i}' for i in range(2, 7)]
         assert snapshot.recent_tool_calls[0].args == f'{{"arg":"{"x" * 72}...'
         assert snapshot.latest_text == 'y' * MAX_EVENT_TEXT_CHARS
-        assert snapshot.pending_question == 'Which branch?'
+        assert snapshot.pending_question == '?' * MAX_EVENT_TEXT_CHARS
         assert snapshot.status == 'running'
 
     async def test_list_tasks_is_capped(self, monkeypatch: pytest.MonkeyPatch) -> None:

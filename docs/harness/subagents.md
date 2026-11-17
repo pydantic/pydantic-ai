@@ -519,13 +519,14 @@ back. To copy a settled task with its history, use
 `replace(task, messages=owner.history(task.id))`.
 `snapshot(task_id)` returns a `DelegationSnapshot` of a running task, read from its live
 history without waiting on it: status, `elapsed_seconds`, the `usage` of its current run's model
-responses, its `recent_tool_calls` as `DelegationToolCall`s, its `latest_text` cut at `MAX_EVENT_TEXT_CHARS`, and its
-`pending_question`. The response that streamed the child's final result is left out, so a snapshot
-doesn't show a result before `TaskCompletedEvent` listeners process it. A host can render a task
-list or status line from it, for example on each `DelegationTaskEvent`. `usage` is `None`, with no
-tool calls or text, when the owner doesn't see the run's history as it streams: before the child's
-first model request, for a remote task (its history stays on its worker) or a durable one, and once
-the task settles (its history is in its file). `check_task` gives the model the same view.
+responses, its `recent_tool_calls` as `DelegationToolCall`s, and its `latest_text` and
+`pending_question`, both cut at `MAX_EVENT_TEXT_CHARS`. The child's final result is left out, so
+a snapshot doesn't show a result before `TaskCompletedEvent` listeners process it. A host can
+render a task list or status line from it, for example on each `DelegationTaskEvent`. `usage` is
+`None`, with no tool calls or text, when the owner doesn't see the run's history as it streams:
+before the child's first model request, for a remote task (its history stays on its worker) or a
+durable one, and once the task settles (its history is in its file). `check_task` gives the model
+the same view.
 Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
 child's latest frontier. Loading an interrupted record never executes its tools.
 Inspect possible partial effects before an explicit resume. A resume closes out tool
