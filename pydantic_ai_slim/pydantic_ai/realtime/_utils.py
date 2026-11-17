@@ -300,8 +300,8 @@ async def _seed_image_url(item: ImageUrl, *, provider_name: str, supports_images
     image = BinaryContent(data=downloaded['data'], media_type=downloaded['data_type'])
     if not image.is_image:
         raise UserError(
-            f'`ImageUrl` resolved to unsupported media type {image.media_type!r} in a '
-            f'{provider_name} realtime session. Use a URL that returns an image, or remove it.'
+            f'`ImageUrl` resolved to media type {image.media_type!r}, which cannot be sent to {provider_name} '
+            'in a realtime session. Use a URL that returns an image, or remove it.'
         )
     return image
 
@@ -380,8 +380,8 @@ def seed_pcm_audio(*, audio: BinaryContent, provider_name: str, sample_rate: int
             compression = wav.getcomptype()
             if source_rate != sample_rate:
                 raise UserError(
-                    f'Cannot seed retained audio recorded at {source_rate} Hz into a {provider_name} realtime session '
-                    f'expecting {sample_rate} Hz. Resample it before passing `message_history`.'
+                    f'Cannot seed retained audio recorded at {source_rate} Hz into {provider_name} realtime history: '
+                    f'expected {sample_rate} Hz. Resample it before passing `message_history`.'
                 )
             if channels != 1 or sample_width != 2 or compression != 'NONE':
                 raise UserError(

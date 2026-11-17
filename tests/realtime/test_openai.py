@@ -2310,7 +2310,7 @@ async def test_connect_seeds_retained_user_audio(monkeypatch: pytest.MonkeyPatch
         (
             BinaryContent(data=_wav_bytes(b'pcm-audio!', 16000), media_type='audio/wav'),
             snapshot(
-                'Cannot seed retained audio recorded at 16000 Hz into a openai realtime session expecting 24000 Hz. Resample it before passing `message_history`.'
+                'Cannot seed retained audio recorded at 16000 Hz into openai realtime history: expected 24000 Hz. Resample it before passing `message_history`.'
             ),
         ),
         (
@@ -2433,7 +2433,7 @@ async def test_connect_rejects_image_url_returning_non_image(monkeypatch: pytest
         async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
             pass  # pragma: no cover
     assert str(exc_info.value) == snapshot(
-        "`ImageUrl` resolved to unsupported media type 'application/pdf' in a openai realtime session. Use a URL that returns an image, or remove it."
+        "`ImageUrl` resolved to media type 'application/pdf', which cannot be sent to openai in a realtime session. Use a URL that returns an image, or remove it."
     )
 
 
