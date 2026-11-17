@@ -17,7 +17,7 @@ from typing import Annotated, Any, Literal, cast
 
 import pytest
 from dirty_equals import IsJson, IsPartialDict
-from pydantic import BaseModel, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, Json, TypeAdapter, ValidationError
 
 from pydantic_ai import (
     AgentRunResultEvent,
@@ -10216,6 +10216,78 @@ class Target(BaseModel):
     path: str
     retries: int
     token: str = 'server-token'
+
+
+class Command(BaseModel):
+    command: dict[str, str]
+
+
+@pytestmark_interrupts
+async def test_run_finished_interrupt_message_for_an_object_field_named_like_its_parameter() -> None:
+    """A single model parameter whose object-valued field shares its name is read as unwrapped, as validation reads it.
+
+    `{"command": {...}}` is then the model's `command` field, not the model wrapped under its parameter's name.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='execute', json_args='{"command": {"action": "delete", "path": "/srv/data"}}')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def execute(command: Command) -> str:  # pragma: no cover
+        # Body never runs: the test asserts the pending approval's interrupt.
+        return command.command['action']
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='delete /srv/data')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    interrupt = run_finished['outcome']['interrupts'][0]
+    assert interrupt['message'] == snapshot('Approve execute({"command":{"action":"delete","path":"/srv/data"}})?')
+
+
+@pytestmark_interrupts
+async def test_run_finished_interrupt_message_keeps_the_model_value_when_validation_changes_its_shape() -> None:
+    """An argument whose shape validation changed shows the model's value, so no default or added item goes out.
+
+    A hook extends the `paths` list, and `target` arrives as a JSON string that validates to a model with a default.
+    """
+
+    class AddPath(AbstractCapability[Any]):
+        async def after_tool_validate(
+            self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+        ) -> dict[str, Any]:
+            return {**args, 'paths': [*args['paths'], '/srv/secret']}
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(
+                name='sync', json_args='{"paths": ["a"], "target": "{\\"path\\": \\".env\\", \\"retries\\": 2}"}'
+            )
+        }
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[AddPath()],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def sync(paths: list[str], target: Json[Target]) -> str:  # pragma: no cover
+        # Body never runs: the test asserts the pending approval's interrupt.
+        return target.path
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='sync')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    interrupt = run_finished['outcome']['interrupts'][0]
+    assert interrupt['message'] == snapshot(
+        'Approve sync({"paths":["a"],"target":"{\\"path\\": \\".env\\", \\"retries\\": 2}"})?'
+    )
 
 
 @pytestmark_interrupts

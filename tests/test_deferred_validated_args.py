@@ -1,4 +1,9 @@
-"""`DeferredToolRequests.validated_args`: whoever resolves a deferred call sees the arguments its tool will receive."""
+"""`DeferredToolRequests.validated_args`: whoever resolves a deferred call sees the arguments its tool will receive.
+
+These tests use `FunctionModel`, not recordings: each case needs the model to send arguments that validation
+changes in one specific way (`'false'` for a `bool`, an alias beside its field name, an unnormalized URL), which
+a real model doesn't produce reliably, and nothing here depends on a provider.
+"""
 
 from __future__ import annotations
 
@@ -247,6 +252,46 @@ async def test_call_deferred_again_after_inline_approval_carries_validated_args(
             validated_args={'un1': {'x': 2}, 're1': {'x': 1}},
         )
     )
+
+
+class Removal(BaseModel):
+    path: str
+    dry_run: bool = Field(exclude=True)
+
+
+async def test_validated_args_hold_defaults_and_follow_serializer_exclusions():
+    """`validated_args` holds each parameter's default, and leaves out a field its model excludes from serialization.
+
+    The tool receives that excluded field all the same.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart('remove', {'removal': {'path': '.env', 'dry_run': True}}, tool_call_id='call')]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def remove(removal: Removal, backup_dir: str = '/srv/backups') -> bool:
+        return removal.dry_run
+
+    result = await agent.run('go')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert result.output.validated_args == snapshot(
+        {'call': {'removal': {'path': '.env'}, 'backup_dir': '/srv/backups'}}
+    )
+
+    resumed = await agent.run(
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={'call': ToolApproved()}),
+    )
+    tool_return = next(
+        part for message in resumed.new_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+    )
+    assert tool_return.content is True
 
 
 async def test_bytes_are_stored_as_base64():
