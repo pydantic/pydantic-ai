@@ -559,16 +559,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     def _handle_key(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '') -> str:
         """Build a per-run, per-call, per-retry key so concurrent and retried calls never clash.
 
-        `suffix` keeps a return's `return_value` and `content` spills on distinct handles.
-
-        A `tool_call_id` is only unique within one response, and a provider that numbers calls per
-        response (`call_0`, then `call_0` again) reuses one later in the same run. The first call to
-        spill a name keeps the documented `run_id/tool_call_id.retry` handle; a later call that would
-        land on the same name is parked one level down at `run_id/<step>/tool_call_id.retry`, so the
-        two spills stay apart while every other handle keeps its old shape. The step comes from the
-        run context and the names come from this instance, not from the message history, so a
-        capability that rewrites `ctx.messages` between the two responses (a compaction, say) cannot
-        make two different calls derive the same key.
+        `suffix` keeps a return's `return_value` and `content` spills on distinct handles. A later
+        step reusing a name already spilled this run (see `_spilled_calls`) gets
+        `run_id/<step>/tool_call_id.retry` instead of the plain `run_id/tool_call_id.retry`.
         """
         run_id = ctx.run_id or 'run'
         name = f'{call.tool_call_id or "call"}.{ctx.retry}{suffix}'
