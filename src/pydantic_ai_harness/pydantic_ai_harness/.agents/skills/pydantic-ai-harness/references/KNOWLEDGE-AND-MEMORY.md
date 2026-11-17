@@ -354,10 +354,12 @@ from pydantic_ai_harness import PydanticAIDocs
 agent = Agent('test', capabilities=[PydanticAIDocs()])
 ```
 
-Parameters: `local_docs_path: Path | None = None`, `cache: bool = True` (memoize per run).
+Parameters: `local_docs_path: Path | None = None`, `cache: bool = True` (memoize per run),
+keyword-only `remote_ref: str | None = None` (git ref to fetch from; `None` is the installed
+`pydantic_ai` release's tag, `main` for a dev build).
 Resolution per call: `{local_docs_path}/{topic}.md` in the run workspace (falling back to the
 `PYDANTIC_AI_HARNESS_DOCS_PATH` env var), then
-`https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs/{topic}.md`, else an error.
+`https://raw.githubusercontent.com/pydantic/pydantic-ai/{remote_ref}/docs/{topic}.md`, else an error.
 
 Gotchas: the local path is read through the run workspace only, with no `workspace=` override (in
 a sandbox the checkout must be in the sandbox); with a local path set and no workspace, the run fails at start. With no
