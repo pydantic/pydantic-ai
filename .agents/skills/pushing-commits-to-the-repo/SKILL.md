@@ -212,7 +212,8 @@ A PR labelled `test-suite` or `github-actions` takes `chore`, never `bug`; `.git
 Add existing topic labels for every subject materially covered by the final title, body, and diff.
 Choose the `area:` and `provider:` topic labels this way:
 
-- Apply one or two `area:` labels. Choose the subsystem whose code changes, not the API a reporter called.
+- Apply one or two `area:` labels when the change touches a subsystem in the catalog. Repository infrastructure (CI, tests, dependencies, contributor docs and skills) takes none.
+  Choose the subsystem whose code changes, not the API a reporter called.
   A Harness capability built on a core concept takes that concept's area.
   An engine label (`area:temporal`, `area:dbos`, `area:prefect`, `area:absurd` or `area:pgtask`) also takes `area:durable-exec`, which does not count toward the two.
   A change labelled `pkg:evals`, `pkg:graph`, `pkg:clai2` or `pkg:clai` takes no `area:` label: its package label is its segment.
