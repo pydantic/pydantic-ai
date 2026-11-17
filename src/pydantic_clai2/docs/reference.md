@@ -2881,6 +2881,10 @@ out. OpenSandbox's proxy is meant for sandboxes that reach only the hosts it all
 a `gh` login reaches only `github.com`, `api.github.com`, and `uploads.github.com`: it can't install
 packages or download release assets, archives, or Git LFS files. One made without a `gh` login keeps
 your server's network policy.
+Whether a server started in the sandbox can be reached from outside is also up to your server:
+`/sandbox` does not turn on OpenSandbox's Secure Access, which needs a Kubernetes ingress gateway and
+which Docker deployments reject, so on a server whose ingress is reachable, anything listening in the
+sandbox answers without a token.
 
 `daytona` keeps the token in a `CLAI_GITHUB_...` secret of your Daytona organization, which
 `/sandbox delete` deletes with the sandbox. A sandbox deleted outside CLAI, in Daytona's dashboard or CLI
