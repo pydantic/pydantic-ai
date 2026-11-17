@@ -405,7 +405,7 @@ async def test_message_history_after_submission():
     assert (tool_return.tool_call_id, tool_return.content) == ('call-1', {'status': 'submitted'})
 
 
-async def test_rejected_output_tool_submissions_run_out_of_the_tool_retries():
+async def test_rejected_output_tool_submissions_run_out_of_output_retries():
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('assemble', {}, tool_call_id=f'call-{len(messages)}')])
 

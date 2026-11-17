@@ -1,0 +1,86 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://router.huggingface.co/groq/openai/v1/chat/completions
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "145"
+      content-type:
+      - application/json
+      host:
+      - router.huggingface.co
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: What is 6 times 7? Reply with just the number.
+        model: openai/gpt-oss-120b
+        tools: []
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        X-Repo-Commit,X-HF-Warning,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash,RateLimit,RateLimit-Policy
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      cross-origin-opener-policy:
+      - same-origin
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=31536000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-e8703237-1cff-4156-a873-2d1437e7a79b
+        object: chat.completion
+        created: 1794927649
+        model: openai/gpt-oss-120b
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: "42"
+            reasoning: |-
+              The user asks: "What is 6 times 7? Reply with just the number."
+
+              We should comply: 42. Provide just the number.
+          logprobs: null
+          finish_reason: stop
+        usage:
+          queue_time: 0.419456028
+          prompt_tokens: 85
+          prompt_time: 0.013890895
+          completion_tokens: 42
+          completion_time: 0.088098721
+          total_tokens: 127
+          total_time: 0.101989616
+          completion_tokens_details:
+            reasoning_tokens: 32
+        usage_breakdown: null
+        system_fingerprint: fp_76082d2bd0
+        x_groq:
+          id: req_01m7n0cr78eana4j0a6ytanbyh
+          seed: 648983179
+        service_tier: on_demand
+  recorded_at: 2026-11-17T15:00:49.513252+00:00
