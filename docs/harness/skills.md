@@ -309,7 +309,7 @@ placeholders as written.
 To let the model read a loaded skill's files without giving it general file
 access, pass `read_files=True`:
 
-```python {test="skip"}
+```python
 from pydantic_ai_harness import Skills
 
 skills = Skills('.agents/skills', read_files=True)
@@ -321,10 +321,10 @@ skill came from, including a `workspace=` backend, so it also works for
 [skills shipped with your application](#ship-skills-with-your-application).
 The tool refuses a skill the model has not loaded with `load_capability`, a
 path that leads outside the skill's directory through `..` or a symlink, and a
-file that is not UTF-8 text. A skill with `disable-model-invocation: true` needs
-no load, since only a person can invoke it, through a host that sends
+file that is not UTF-8 text. It reads only skills the model can load, so not
+one with `disable-model-invocation: true`, even when a host sends its
 `render()` as a prompt; a skill the model may load that a host renders this way
-is still loaded once before its files are read. The tool reads nothing from a
+is read once the model loads it. The tool reads nothing from a
 workspace whose backend implements neither `SupportsRealpath` nor
 `SupportsCommands`, since it cannot resolve symlinks. When two `Skills` combine, only the libraries of
 one with `read_files=True` are readable. With a `scanner`, each file is

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, get_args, overload
 
 from pydantic_ai._utils import replace_no_init
-from pydantic_ai.capabilities import AbstractCapability, CombinedCapability
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Toolset
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
@@ -55,19 +55,6 @@ class _Entry:
     skill: SkillDefinition
     workspace: Workspace
     source: _SkillSource
-
-
-class _SkillFiles(AbstractCapability[AgentDepsT]):
-    """The `read_skill_file` tool, offered for a run alongside its skills.
-
-    The toolset is the one `Skills` built at construction, so a durable engine finds the toolset it registered.
-    """
-
-    def __init__(self, toolset: FunctionToolset[AgentDepsT]) -> None:
-        self.toolset = toolset
-
-    def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
-        return self.toolset
 
 
 class _Skill(AbstractCapability[AgentDepsT]):
@@ -218,8 +205,7 @@ class Skills(AbstractCapability[AgentDepsT]):
                 a warning, as a `SkippedSkill` whose `reason` is `'flagged'`. Omit to load skills unscanned.
                 With `read_files`, it also scans each file the model reads, and withholds a flagged one.
             read_files: Give the model a `read_skill_file` tool that reads a UTF-8 text file in the
-                directory of a skill it has loaded, or of a skill with `disable-model-invocation: true`,
-                which a person invokes, from the workspace the skill was read from. It
+                directory of a skill it has loaded, from the workspace the skill was read from. It
                 works without file tools and for a `workspace=` library, and does not reach files
                 outside the skill's directory, through `..` or a symlink. A workspace whose backend
                 implements neither `SupportsRealpath` nor `SupportsCommands` cannot resolve symlinks,
@@ -369,10 +355,9 @@ class Skills(AbstractCapability[AgentDepsT]):
         except ValueError as error:
             raise ToolFailed(f'The skill libraries cannot be read: {error}') from None
         entry = entries.get(skill)
-        if entry is None or not entry.source.read_files:
+        if entry is None or not entry.source.read_files or not entry.skill.model_invocable:
             raise ModelRetry(f'The files of skill {skill!r} cannot be read with this tool.')
-        # A skill the model may not load reaches it only when a person invokes it through the host.
-        if entry.skill.model_invocable and skill not in ctx.loaded_capability_ids:
+        if skill not in ctx.loaded_capability_ids:
             raise ModelRetry(f'Load the skill {skill!r} with `load_capability` before reading its files.')
         workspace, directory = entry.workspace, entry.skill.directory
         if not isinstance(innermost_backend(workspace), (SupportsRealpath, SupportsCommands)):
@@ -400,14 +385,14 @@ class Skills(AbstractCapability[AgentDepsT]):
         """Read the selected skills, from each configuration's `workspace=` or else the run's workspace.
 
         Returns one deferred capability per skill the model may load, with the `read_skill_file` tool when
-        `read_files` is set; without any skills, it adds no instructions or tools. Emits a `UserWarning` for each skipped `SKILL.md` or
+        one of them has `read_files` set; without any skills, it adds no instructions or tools. Emits a `UserWarning` for each skipped `SKILL.md` or
         library path, an overlong description, or unsupported frontmatter. Raises `UserError` when a configuration without
         `workspace=` meets a run without a workspace.
         """
         if any(source.workspace is None for source in self._sources):
             require_workspace(ctx.workspace, 'Skills', ctx.messages)
-        catalog = await self._load(ctx.workspace)
-        for skipped in catalog.skipped:
+        entries, skipped_entries = await self._read(ctx.workspace)
+        for skipped in skipped_entries:
             if skipped.scan is not None:
                 record_flagged(
                     ctx.tracer,
@@ -416,13 +401,14 @@ class Skills(AbstractCapability[AgentDepsT]):
                     action='skipped',
                     include_content=ctx.trace_include_content,
                 )
-        for message in (*(skipped.message for skipped in catalog.skipped), *self._advice(catalog.skills)):
+        advice = self._advice(tuple(entry.skill for entry in entries.values()))
+        for message in (*(skipped.message for skipped in skipped_entries), *advice):
             warnings.warn(message, UserWarning, stacklevel=2)
-        offered: list[AbstractCapability[AgentDepsT]] = [
-            _Skill[AgentDepsT](skill) for skill in catalog.skills if skill.model_invocable
-        ]
-        if catalog.skills and self._toolset is not None:
-            offered.append(_SkillFiles(self._toolset))
+        invocable = [entry for entry in entries.values() if entry.skill.model_invocable]
+        offered: list[AbstractCapability[AgentDepsT]] = [_Skill[AgentDepsT](entry.skill) for entry in invocable]
+        if self._toolset is not None and any(entry.source.read_files for entry in invocable):
+            # The toolset built at construction, so a durable engine finds the one it registered.
+            offered.append(Toolset(self._toolset))
         return CombinedCapability(offered)
 
     async def load(self, workspace: WorkspaceBackend | None = None) -> SkillCatalog:

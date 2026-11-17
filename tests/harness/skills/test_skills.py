@@ -1137,6 +1137,14 @@ class TestSkillFiles:
 
         assert (run.instructions, run.tools) == (None, [])
 
+    async def test_no_readable_skills_offer_no_tool(self, tmp_path: Path) -> None:
+        _write_guide(tmp_path / 'skills')
+        (tmp_path / 'empty').mkdir()
+
+        run = await _run(_combined(Skills('skills'), Skills('empty', read_files=True)), tmp_path)
+
+        assert run.tools == ['load_capability']
+
     async def test_a_loaded_skill_s_files_are_read(self, tmp_path: Path) -> None:
         _write_guide(tmp_path / 'skills')
         directory = tmp_path.resolve() / 'skills' / 'guide'
@@ -1158,8 +1166,9 @@ class TestSkillFiles:
 
         assert results == [IsStr(regex=r".*Load the skill 'guide' with `load_capability` before reading its files.*")]
 
-    async def test_a_skill_only_a_person_invokes_needs_no_load(self, tmp_path: Path) -> None:
-        # A host renders it as a prompt; the model can't load it, so its files must be readable without.
+    async def test_a_skill_the_model_cannot_load_is_not_read(self, tmp_path: Path) -> None:
+        # Hidden from the catalog, so the model can't load it; its name must not open its files.
+        _write_guide(tmp_path / 'skills')
         _write_skill(
             tmp_path / 'skills',
             'manual',
@@ -1167,9 +1176,9 @@ class TestSkillFiles:
             files={'notes.md': 'Manual notes.'},
         )
 
-        results = await _read(Skills('skills', read_files=True), tmp_path, [('manual', 'notes.md')], load=None)
+        results = await _read(Skills('skills', read_files=True), tmp_path, [('manual', 'notes.md')])
 
-        assert results == ['Manual notes.']
+        assert results == [IsStr(regex=r".*The files of skill 'manual' cannot be read with this tool.*")]
 
     async def test_files_outside_the_skill_directory_are_refused(self, tmp_path: Path) -> None:
         _write_guide(tmp_path / 'skills')
