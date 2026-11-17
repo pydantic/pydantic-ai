@@ -1617,7 +1617,7 @@ class TestDaytona:
 
 
 @pytest.fixture
-def fake_modal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 'Iterator[FakeModal]':
+async def fake_modal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 'AsyncIterator[FakeModal]':
     """The harness's Modal fake as `modal`, whose commands run here."""
     from tests.harness.modal_sandbox.fake_modal import FakeModal
 
@@ -1627,7 +1627,7 @@ def fake_modal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 'Iterator[Fak
     monkeypatch.setitem(sys.modules, 'modal', control.module)
     yield control
     for made in control.sandboxes:
-        made.terminate()
+        await made.terminate.aio()
 
 
 @pytest.mark.skipif(find_spec('modal') is None, reason='modal not installed')
