@@ -125,6 +125,7 @@ orchestrator = Agent(
 | `max_calls` | The maximum number of delegations to this sub-agent per parent run. Once reached, further delegations return a soft budget-exhausted message without running the child. Counts are scoped to one `Agent.run` (a `run_id`) and cleared when it ends, so each parent run and each level of a nested tree budgets independently. |
 | `on_failure` | A steering message returned to the parent for any soft degradation of this delegate, in place of the built-in default. Setting it also makes child failures soft (see below). |
 | `contain_errors` | Whether an unexpected crash in this delegate is caught and returned to the parent as a bounded `ModelRetry` instead of aborting the parent run (see below). Unset inherits the `SubAgents(contain_errors=...)` default (off). |
+| `keep_partial_output` | Whether a child stopped by `timeout_seconds` or its own `usage_limits` passes on its last text response to the parent (see below). Off by default. |
 
 ## Per-delegation model selection
 
@@ -212,6 +213,8 @@ change where disk agent definitions are discovered: `SubAgents.workspace` contro
 
 A *soft outcome* returns a steering message to the parent as a normal tool result, so its model reads the message and decides what to do next (rather than immediately re-delegating, which a `ModelRetry` invites). A timeout, a reached `usage_limits` budget, and an exhausted `max_calls` budget are always soft. When `on_failure` is set, the message it carries replaces the built-in default for these outcomes.
 
+With `keep_partial_output=True`, a delegation stopped by its timeout or its own usage budget also hands the parent the child's last text response, so the work the child did before it stopped reaches the parent. It follows the steering message (or `on_failure`), framed as `<partial_output>...</partial_output>`, and the outcome stays `timeout` or `budget`. `DelegationFinishedEvent.output` carries the same text, bounded like any other output. The text has not passed the child's output validation. It is the last thing the child said, not an answer it approved, and can be text the child's output validator or `OutputGuardrail` rejected, so leave this off for a child whose guardrails keep content from its parent. Text from a response the child answered with a retry is skipped, as is a final response the run stopped before acting on, or one with an output tool call the stop cut off before its verdict. A child with no such text returns the steering message alone.
+
 A sub-agent run that ends with `DeferredToolRequests` (its `output_type` includes it and a tool needed approval or was deferred) is a soft outcome too. The parent cannot approve the child's tool calls or resume its run, and delegating the same task again would most likely stop the same way, so instead of returning the marker as output the delegation returns a steering message naming the sub-agent and why it stopped, or the `on_failure` message when that is set. A sub-agent that resolves its own deferred calls, for example with [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/), never ends this way and returns its output as usual. A run that ends with `PendingModelResponse` (its `output_type` includes it and a model request was left waiting on the provider, for example in a batch) returns a steering message the same way, including on a remote worker, and the request is cancelled, since nobody will check on it later. Cancelling is best effort, and a [batch](https://pydantic.dev/docs/ai/core-concepts/batch/) is only cancelled once no other request in it is still waiting.
 
 A sub-agent run that fails with a *soft model error* (`ModelRetry`, `UnexpectedModelBehavior`, e.g. it exhausted its own retries) is, by default, converted into a `ModelRetry` for the parent -- so the parent's model sees `Sub-agent '<name>' failed: ...` and can react by re-delegating. The delegate tool defaults to `tool_retries=2`, so the parent aborts only after that many consecutive delegate failures; the counter resets after any successful delegation. Raise `tool_retries` to tolerate a flakier sub-agent, or set `None` to inherit the parent agent's default tool retries. Set `on_failure` for a delegate to make its failures soft instead: the child error returns the `on_failure` message as a normal tool result.
@@ -294,6 +297,7 @@ orchestrator = Agent(
 |---|---|
 | `delegate_task(agent_name, task, background=False, resume=None)` | Start a task, or resume a finished one with its task ID. `background=True` returns a receipt right away. |
 | `list_tasks()` | The tasks this run started and the tasks they started, with status and IDs (the 50 most relevant). |
+| `check_task(task_id)` | What one of those tasks is doing now, without waiting for it: its elapsed time, the model requests, last five tool calls and latest text of its current run, and any question it waits on. A finished task shows only its outcome. |
 | `message_task(task_id, message)` | Steer a running task; it reads the message, as sent, at its next model request. A task's instructions tell it its delegating agent may send it messages. |
 | `answer_task(task_id, answer)` | Answer the question a task is waiting on. |
 | `cancel_task(task_id, force=False)` | Stop a task before its next model request, or right away with `force=True`, together with the tasks it started. |
@@ -304,7 +308,7 @@ orchestrator = Agent(
 - **Who controls a task.** Only the run that started a task can message, answer, or resume it. Any run above it can cancel it.
 - **Each run gets an owner.** When no `DelegationTasks` is bound, `SubAgents` opens one for the run and cancels the tasks still running when the run ends. Delegations then follow the owner's rules in [Managed delegation sessions](#managed-delegation-sessions), including how a delegate's `usage_limits` apply. Another agent's run that one of the run's tools starts is not a task, and doesn't share the owner. Bind your own owner to keep tasks across runs, persist them, and observe them.
 - Only one `SubAgents` on an agent can set `task_control`. The deprecated wrapper agents, such as `TemporalAgent`, give a run no durability capability, so the checks below can't catch them; don't use task control or `dynamic_agents` with them.
-- On Temporal and DBOS, task control keeps the tasks in the workflow and runs each in a durable unit of its own, so recovery replays a background task's events and reuses its result. On replay, a task sent to the background on request can get its `TaskBackgroundedEvent` after it settles. A durable task can't ask questions, take messages, or be resumed, `cancel_task` stops it right away, and its report reaches the model when the run would otherwise end, not at its next request. On DBOS, a replayed `list_tasks` can show a task's status as of a different moment. Under durable execution, these raise a `UserError`:
+- On Temporal and DBOS, task control keeps the tasks in the workflow and runs each in a durable unit of its own, so recovery replays a background task's events and reuses its result. On replay, a task sent to the background on request can get its `TaskBackgroundedEvent` after it settles. A durable task can't ask questions, take messages, or be resumed, `cancel_task` stops it right away, and its report reaches the model when the run would otherwise end, not at its next request. On DBOS, a replayed `list_tasks` can show a task's status as of a different moment. A durable task's history is not updated while it runs, so `check_task` shows only its status and elapsed time. Under durable execution, these raise a `UserError`:
     - task control with `include_self`, `remote_agents` or `forward_events`
     - task control with `auto_background_after` or `max_running_tasks` outside Temporal
     - task control or `dynamic_agents` on another durable engine, or within a bound `DelegationTasks` owner
@@ -509,6 +513,16 @@ with its history, and after that the task in `records` has empty `messages`.
 thread, as `anyio.to_thread.run_sync(owner.history, task_id)`), and a resume loads it
 back. To copy a settled task with its history, use
 `replace(task, messages=owner.history(task.id))`.
+`snapshot(task_id)` returns a `DelegationSnapshot` of a running task, read from its live
+history without waiting on it: status, `elapsed_seconds`, the `usage` of its current run's model
+responses, its `recent_tool_calls` as `DelegationToolCall`s, and its `latest_text` and
+`pending_question`, both cut at `MAX_EVENT_TEXT_CHARS`. The child's final result is left out, so
+a snapshot doesn't show a result before `TaskCompletedEvent` listeners process it. A host can
+render a task list or status line from it, for example on each `DelegationTaskEvent`. `usage` is
+`None`, with no tool calls or text, when the owner doesn't see the run's history as it streams:
+before the child's first model request, for a remote task (its history stays on its worker) or a
+durable one, and once the task settles (its history is in its file). `check_task` gives the model
+the same view.
 Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
 child's latest frontier. Loading an interrupted record never executes its tools.
 Inspect possible partial effects before an explicit resume. A resume closes out tool
@@ -754,6 +768,7 @@ SubAgent(
     contain_errors=None,   # contain an unexpected crash as a bounded retry; None inherits the SubAgents default
     resumable=True,        # whether a finished task can be resumed, with a task owner
     can_ask_questions=True,  # give the sub-agent `ask_parent`, with task_control
+    keep_partial_output=False,  # pass on the child's last text when its timeout or usage budget stops it
 )
 ```
 
