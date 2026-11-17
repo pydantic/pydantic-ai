@@ -652,14 +652,14 @@ class TestInputGuardrailRedaction:
             return True
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            results = [
-                item.content
+            # The whole framed result, not only its opening tag, so the test proves the tool's output reaches the model.
+            texts = [
+                ''.join(item.content for item in part.content if isinstance(item, TextContent))
                 for message in messages
                 for part in message.parts
                 if isinstance(part, UserPromptPart) and isinstance(part.content, list)
-                for item in part.content
-                if isinstance(item, TextContent) and item.content.startswith('<tool_result')
             ]
+            results = [text for text in texts if text.startswith('<tool_result')]
             if results:
                 sent.append(results[-1])
                 return ModelResponse(parts=[TextPart('done')])
@@ -682,7 +682,7 @@ class TestInputGuardrailRedaction:
         assert resumed.output == 'done'
         # The run has no prompt of its own, so the guard screens the latest one in history, as after a task report.
         assert guard_calls == ['go', 'go']
-        assert sent == ['<tool_result tool_name="lookup" tool_call_id="tool-1">'] * 2
+        assert sent == ['<tool_result tool_name="lookup" tool_call_id="tool-1">answer</tool_result>'] * 2
 
     async def test_replace_with_non_str_is_a_usage_error(self):
         agent = Agent(

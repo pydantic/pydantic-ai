@@ -200,6 +200,7 @@ _CAPABILITY_PAGE_META = {
     'planning.md': ('planning', 'Planning'),
     'system-reminders.md': ('system_reminders', 'System Reminders'),
     'detect-loops.md': ('detect_loops', 'Detect Loops'),
+    'tool-budgets.md': ('tool_budgets', 'Tool Budgets'),
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
     'refine-output.md': ('refine_output', 'Refine Output'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
@@ -520,11 +521,24 @@ _PROBLEM_TO_SKILL_ROUTE = (
 )
 
 
+def _section(surface: str, heading: str) -> str:
+    """The text of the section under `heading` on one surface, up to the next `##` heading."""
+    text = (_ROOT / surface).read_text(encoding='utf-8')
+    return text.split(f'\n{heading}\n', 1)[1].split('\n## ', 1)[0]
+
+
+def _section_table_rows(surface: str, heading: str) -> list[str]:
+    """The table rows, header included, of the section under `heading` on one surface."""
+    return [line for line in _section(surface, heading).splitlines() if line.startswith('| ')]
+
+
+def _without_link_targets(rows: list[str]) -> list[str]:
+    return [re.sub(r'\]\([^)\s]+\)', ']', row) for row in rows]
+
+
 def _problem_to_capability_rows(surface: str) -> list[str]:
     """The data rows of the curated problem-first table on one capability index surface."""
-    text = (_ROOT / surface).read_text(encoding='utf-8')
-    section = text.split(_PROBLEM_TO_CAPABILITY_HEADING, 1)[1].split('\n## ', 1)[0]
-    lines = [line for line in section.splitlines() if line.startswith('| ')]
+    lines = _section_table_rows(surface, _PROBLEM_TO_CAPABILITY_HEADING)
     return [line for line in lines if not line.startswith('| If your problem')]
 
 
@@ -540,11 +554,37 @@ def test_problem_to_capability_links_resolve(surface: str) -> None:
 
 def test_problem_to_capability_rows_match_across_surfaces() -> None:
     """The README and the docs index carry the same problem-first rows; only link targets differ."""
+    docs, readme = (_without_link_targets(_problem_to_capability_rows(s)) for s in _PROBLEM_TO_CAPABILITY_SURFACES)
+    assert readme == docs
+
+
+_PACKAGES_HEADING = '## Pydantic AI, the Harness, and CLAI'
+_PACKAGES_SURFACES = ('../../docs/harness/index.md', 'README.md', '../pydantic_clai2/README.md')
+
+
+@pytest.mark.parametrize('surface', _PACKAGES_SURFACES[1:])
+def test_package_comparison_matches_across_surfaces(surface: str) -> None:
+    """The Harness docs index and the Harness and CLAI READMEs compare the three packages the same way."""
+    canonical = _without_link_targets(_section_table_rows(_PACKAGES_SURFACES[0], _PACKAGES_HEADING))
+    assert [row.split(' | ', 1)[0] for row in canonical[1:]] == [
+        '| [Pydantic AI] (`pydantic-ai`)',
+        '| [Pydantic AI Harness] (`pydantic-ai-harness`)',
+        '| [CLAI] (`pydantic-clai2`)',
+    ]
+    assert _without_link_targets(_section_table_rows(surface, _PACKAGES_HEADING)) == canonical
+
+
+_VERSION_POLICY_HEADING = '## Version policy'
+
+
+def test_version_policy_matches_across_surfaces() -> None:
+    """The README and the docs index state the same version policy, including what stays stable after 1.0."""
     docs, readme = (
-        [re.sub(r'\]\([^)\s]+\)', ']', row) for row in _problem_to_capability_rows(surface)]
-        for surface in _PROBLEM_TO_CAPABILITY_SURFACES
+        _without_link_targets(_section(surface, _VERSION_POLICY_HEADING).splitlines())
+        for surface in ('../../docs/harness/index.md', 'README.md')
     )
     assert readme == docs
+    assert '### After 1.0' in docs
 
 
 def test_packaged_skill_routes_problem_index_needs() -> None:

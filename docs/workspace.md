@@ -313,6 +313,10 @@ A capability checks authority when it reads a file, so a change applies from the
 already added to a conversation stays in that history, so start a new conversation after lowering a
 workspace's authority.
 
+Pydantic AI Harness's workspace capabilities, such as [`E2BSandbox`](harness/e2b-sandbox.md), [`DockerContainer`](harness/docker-container.md) and [`SSHWorkspace`](harness/ssh-workspace.md), take the
+same `authority` and `path_authority` arguments, for a sandbox, container or host filled with files the operator didn't write.
+Their paths are paths on the sandbox, container or host, so `~` isn't expanded.
+
 For a single run, wrap its workspace in `AuthorityWorkspace(workspace, authority=...)` and pass it as
 `workspace=`, as with `ReadOnlyWorkspace`. A wrapper only lowers the authority: with several, the
 lowest wins.
@@ -451,7 +455,9 @@ changes. Only where the run starts differs: a Temporal workflow class on a worke
 Tools use `ctx.workspace` as they would in a plain run. On Temporal, a tool that must run
 its orchestration in the workflow (for example, to approve a file change before writing) can
 set `metadata={'temporal': False}` on its tool definition; workspace calls it makes still run as
-activities.
+activities. [Azure Durable Task](harness/azure-durable-task.md) and [Render Workflows](harness/render-workflows.md)
+take `metadata={'azure_durable_task': False}` and `metadata={'render_workflows': False}`; the harness
+`FileSystem` write tools set all three.
 
 - Inside a workflow or flow, a run creates or attaches its environment when it starts, even if no
   tool uses it; retries, replays and recovery reattach to that same environment. Plain runs stay
@@ -503,6 +509,12 @@ DBOS and Prefect. Attach them next to the workspace and the durability capabilit
 `capabilities=[LocalWorkspace('.'), Coder(), TemporalDurability()]`. A later run that continues the
 conversation from `message_history`, in a new workflow or flow, works in the
 [same environment](#continuing-in-the-same-workspace).
+
+`FileSystem` and the `Shell` tool named `shell` also work under [Azure Durable Task](harness/azure-durable-task.md)
+and [Render Workflows](harness/render-workflows.md). There, the `FileSystem` write tools run in the
+orchestrator or parent task, so file-change requests reach listeners live. On Azure, events from the
+other tools are dropped, and listeners run in orchestrator code, so they re-run on every replay and
+can't do I/O; on Render, those events are carried back to the run.
 
 | Feature | Temporal | DBOS | Prefect |
 |---|---|---|---|

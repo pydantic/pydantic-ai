@@ -22,10 +22,12 @@ from pydantic_ai.messages import (
     InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelSource,
     OperatorSource,
     OperatorText,
+    SystemPromptPart,
     TextContent,
     TextPart,
     UserPromptPart,
@@ -68,10 +70,11 @@ else:
 
 
 _REMINDER_ORIGIN = 'pydantic-ai-harness.system_reminders.reminder.v1'
-"""The `origin` in the `metadata` of the parts an earlier version enqueued for a `GeneratedReminder` firing.
+"""The `origin` in the `metadata` of the parts an earlier version enqueued for some reminder firings.
 
-A `SystemPromptPart` note and a `TextContent` with the generated text. Still recognized in a saved history; a firing
-is now a `GeneratedReminderPart`.
+For a `GeneratedReminder`, a `SystemPromptPart` note and a `TextContent` with the generated text; for a
+`skip_unchanged` reminder, a `SystemPromptPart` with its text. Still recognized in a saved history; a firing is now a
+`GeneratedReminderPart` or a `ReminderPart`.
 """
 
 _Scope: TypeAlias = Literal['conversation', 'request']
@@ -221,9 +224,19 @@ class Reminder(Generic[AgentDepsT]):
     instructions.
     """
 
+    skip_unchanged: bool = False
+    """Skip a firing while a lasting copy of this exact text is still in the history the model sees.
+
+    Requires `scope='conversation'`. The reminder is recorded again once compaction drops its copy or its text
+    changes, so the history holds one copy per distinct text instead of one per firing, across runs too.
+    List a `ProcessHistory` or compaction capability that drops messages before `SystemReminders`.
+    """
+
     def __post_init__(self) -> None:
         if self.interval < 1:
             raise ValueError(f'interval must be >= 1, got {self.interval}')
+        if self.skip_unchanged and self.scope != 'conversation':
+            raise ValueError("`skip_unchanged` requires `scope='conversation'`")
         if self.first_after is not None and self.first_after < 1:
             raise ValueError(f'first_after must be >= 1, got {self.first_after}')
         if self.max_fires is not None and self.max_fires < 1:
@@ -399,7 +412,9 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         """
         eligible: list[tuple[int, _StaticText]] = []
         pending: dict[int, int] = {}
-        for reminder in tuple(self.reminders):
+        reminders = tuple(self.reminders)
+        recorded = _lasting_reminder_texts(ctx.messages, reminders)
+        for reminder in reminders:
             if not _should_fire(reminder, self._request_count):
                 continue
             if reminder.trigger is not None and not reminder.trigger(ctx):
@@ -413,8 +428,13 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
                 and self._fire_counts.get(key, 0) + pending.get(key, 0) >= reminder.max_fires
             ):
                 continue
+            text = _render_content(reminder)
+            if reminder.skip_unchanged:
+                if text in recorded:
+                    continue
+                recorded.add(text)
             pending[key] = pending.get(key, 0) + 1
-            eligible.append((key, _StaticText(_render_content(reminder), reminder.scope)))
+            eligible.append((key, _StaticText(text, reminder.scope, reminder.skip_unchanged)))
         return eligible
 
     async def _collect_dynamic(self, ctx: RunContext[AgentDepsT]) -> list[str | GeneratedReminder]:
@@ -672,6 +692,7 @@ class _StaticText:
 
     text: str
     scope: _Scope
+    skip_unchanged: bool
 
     def __str__(self) -> str:
         return self.text
@@ -721,6 +742,11 @@ def _reminder_parts(
             plain.clear()
 
     for text in texts:
+        if isinstance(text, _StaticText) and text.skip_unchanged:
+            # A part of its own, so a later firing finds this exact text in history and skips it.
+            flush_plain()
+            parts.append(ReminderPart(content=OperatorText(text.text), source=OperatorSource(), scope=text.scope))
+            continue
         if isinstance(text, GeneratedReminder):
             flush_plain()
             parts.append(_generated_reminder_part(text))
@@ -752,6 +778,28 @@ def _is_reminder_data(part: UserPromptPart) -> bool:
             and item.metadata.get('origin') == _REMINDER_ORIGIN
             for item in content
         )
+    )
+
+
+def _lasting_reminder_texts(messages: Sequence[ModelMessage], reminders: Sequence[Reminder[AgentDepsT]]) -> set[str]:
+    """The contents of the lasting reminder prompts in the history the model sees, if any of `reminders` needs them."""
+    if not any(reminder.skip_unchanged for reminder in reminders):
+        return set()
+    return {
+        str(part.content)
+        for message in post_compaction_window(messages)
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if (isinstance(part, ReminderPart) or _is_legacy_reminder_prompt(part)) and part.scope == 'conversation'
+    }
+
+
+def _is_legacy_reminder_prompt(part: ModelRequestPart) -> TypeGuard[SystemPromptPart]:
+    """A `skip_unchanged` reminder as an earlier version enqueued it, before `ReminderPart`."""
+    return (
+        isinstance(part, SystemPromptPart)
+        and is_str_dict(part.metadata)
+        and part.metadata.get('origin') == _REMINDER_ORIGIN
     )
 
 

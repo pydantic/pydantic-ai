@@ -184,6 +184,7 @@ try:
     from anthropic import (
         DEFAULT_TIMEOUT,
         NOT_GIVEN,
+        APIConnectionError,
         APIStatusError,
         AsyncAnthropicAWS,
         AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
@@ -304,7 +305,7 @@ try:
         without_unanswered_tool_calls,
     )
     from ._containers import is_tool_result_only
-    from ._errors import is_expired_container_error, map_api_errors
+    from ._errors import is_expired_container_error, map_api_errors, status_and_body
     from ._message_passes import (
         anchor_system_messages,
         drop_unpaired_native_tool_calls,
@@ -1722,9 +1723,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await create(prepared.container, initial_thinking, initial_betas, initial_thinking_override)
-            except APIStatusError as error:
+            except (APIStatusError, APIConnectionError) as error:
+                # `status_and_body` also reads a status a retrying transport gave up on, which `anthropic` wraps in
+                # `APIConnectionError`, so the recoveries below run for it as for the SDK's own error.
+                response = status_and_body(error)
                 if (
-                    is_expired_container_error(error)
+                    response is not None
+                    and is_expired_container_error(*response)
                     and prepared.container_from_history
                     and any(
                         is_str_dict(block) and block['type'] == 'container_upload'
@@ -1734,13 +1739,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 ):
                     try:
                         return await create(None, initial_thinking, initial_betas, initial_thinking_override)
-                    except APIStatusError as fallback_error:
+                    except (APIStatusError, APIConnectionError) as fallback_error:
                         # Classify what the fallback hit, not the 500 that caused it, so a stale
                         # thinking block rejected only on this attempt still reaches the retry
                         # below. The history-resolved container is gone, so it stays dropped there.
-                        error = fallback_error
+                        error, response = fallback_error, status_and_body(fallback_error)
                         retry_container = None
-                if not is_stale_thinking_block_error(anthropic_profile, prepared.initial_effective_thinking, error):
+                if response is None or not is_stale_thinking_block_error(
+                    anthropic_profile, prepared.initial_effective_thinking, *response
+                ):
                     raise error
 
             result = await create(
@@ -2431,8 +2438,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await count(initial_thinking, initial_betas, initial_thinking_override)
-            except APIStatusError as error:
-                if not is_stale_thinking_block_error(anthropic_profile, initial_effective_thinking, error):
+            except (APIStatusError, APIConnectionError) as error:
+                # As in `_messages_create`, a status a retrying transport gave up on is recovered from too.
+                if (response := status_and_body(error)) is None or not is_stale_thinking_block_error(
+                    anthropic_profile, initial_effective_thinking, *response
+                ):
                     raise
 
             result = await count(
