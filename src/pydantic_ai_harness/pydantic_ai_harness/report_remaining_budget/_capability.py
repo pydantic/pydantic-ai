@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, SystemPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness.spend_limits import BudgetStatus, SpendLimits
+from pydantic_ai_harness.spend_limits import BudgetStatus, SpendLimits, Window
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
-_WINDOW_LABELS = {
+_WINDOW_LABELS: dict[Window, str] = {
     'run': 'spend limit for this run',
     'conversation': 'this conversation',
     'day': 'today',
