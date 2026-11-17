@@ -226,8 +226,8 @@ def _instructions_text(messages: Sequence[ModelMessage]) -> list[str]:
     return []
 
 
-_CJK = re.compile(r'[\u1100-\u11ff\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]')
-"""Hangul, CJK and kana code points: about one token each."""
+_LATIN_OR_CYRILLIC = re.compile(r'[\u0080-\u024f\u0400-\u04ff]')
+"""Accented Latin and Cyrillic letters, which tokenize denser than other non-ASCII text."""
 
 _ASTRAL = re.compile(r'[\U00010000-\U0010ffff]')
 """Code points outside the BMP (emoji, CJK Extension B and later): about three tokens each."""
@@ -242,11 +242,15 @@ That rules out paths and identifiers, and leaves lowercase hex (hashes, UUIDs) a
 def _dense_surcharge(text: str) -> float:
     """Tokens *text* costs beyond `CHARS_PER_TOKEN`, for content that tokenizes denser than English prose.
 
-    Rates are set at or above cl100k_base counts: an overcount compacts a little early, an undercount
-    sends a request the provider rejects.
+    Rates are set at or above cl100k_base counts for Latin, Cyrillic, Greek, Arabic, CJK, base64 and
+    JSON: an overcount compacts a little early, an undercount sends a request the provider rejects.
+    cl100k_base spends more than the one-token rate on Hebrew and Thai (up to ~1.15 tokens per
+    character), Indic scripts (1.3 to 1.5), Georgian, Armenian and Myanmar (~2) and Ethiopic (~2.3,
+    on o200k_base too). o200k_base spends under 0.5 on most of these, so charging cl100k_base's rate
+    would overcount newer tokenizers several times over; a `tokenizer` measures them exactly.
 
-    - Hangul, CJK and kana cost a token each, code points outside the BMP three, and other non-ASCII
-      text 1.5 characters per token (Cyrillic measures ~1.9).
+    - Accented Latin and Cyrillic cost 1.5 characters per token (Cyrillic measures ~2), code points
+      outside the BMP three tokens each, and other non-ASCII characters a token each.
     - Encoded runs cost 1.25 characters per token (random base64 measures ~1.4).
     - Of the rest, the baseline covers a 12% share of JSON punctuation and an 8% share of digits, which
       prose and code stay under; each one beyond that costs ~1.25 and 0.5 tokens. Charging the surplus
@@ -257,7 +261,7 @@ def _dense_surcharge(text: str) -> float:
     baseline = 1 / CHARS_PER_TOKEN
     ascii_chars = len(text) if text.isascii() else len(text.encode('ascii', 'ignore'))
     non_ascii = len(text) - ascii_chars
-    cjk = len(text) - len(_CJK.sub('', text)) if non_ascii else 0
+    latin_or_cyrillic = len(text) - len(_LATIN_OR_CYRILLIC.sub('', text)) if non_ascii else 0
     astral = len(text) - len(_ASTRAL.sub('', text)) if non_ascii else 0
     runs = [
         run
@@ -266,9 +270,9 @@ def _dense_surcharge(text: str) -> float:
     ]
     encoded = sum(map(len, runs))
     surcharge = (
-        cjk * (1 - baseline)
+        latin_or_cyrillic * (1 / 1.5 - baseline)
         + astral * (3 - baseline)
-        + (non_ascii - cjk - astral) * (1 / 1.5 - baseline)
+        + (non_ascii - latin_or_cyrillic - astral) * (1 - baseline)
         + encoded * (1 / 1.25 - baseline)
     )
     if len(text) < 32:

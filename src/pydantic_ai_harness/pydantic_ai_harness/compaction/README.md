@@ -59,21 +59,25 @@ Token counts anchor on the provider-reported usage of the most recent model resp
 available: its `input_tokens` measured the whole request that produced it (instructions, tool
 definitions, every prior message), so only the messages added since are estimated. The estimate for
 those, and the fallback when no response carries usage yet, is the text estimate: ~4 characters per
-token for English-like prose, one token per CJK character, three per character outside the Basic
-Multilingual Plane (most emoji, CJK Extension B), ~1.5 characters per token for other non-ASCII text
-and ~1.25 for base64-like runs (24+ characters mixing digits and both cases), and about 1.25 tokens
-per `{}[],:"` character and half a token per digit beyond the share prose and code carry, which is
-what makes compact JSON dense. Dense content is deliberately estimated high, since an undercount can
-send a request over the context window. The same estimate measures `keep_tokens`, `max_part_tokens`,
-`ToolOutputLimits(over_tokens=True)` bands and the `compaction.tokens_*` span attributes. Pass a
-`tokenizer` callable (e.g. `tiktoken`) to measure with a real tokenizer instead. Instruction
-replacement and withdrawal records contribute their full rendered system text to token estimates.
-Superseded updates before a new instruction baseline are excluded. Newly revealed tool schemas that
-are pending in the request are conservatively estimated by the implementation.
-`DeduplicateFileReads` runs on every request when no trigger is set (it is cheap and near-lossless).
-`TieredCompaction` triggers and stops on a single `target_tokens` / `target_fraction` budget.
-`ClampOversizedMessages` triggers per *part* (`max_part_tokens` / `max_part_chars`), not on the
-whole history -- the failure it targets is one oversized part, not a large total.
+token for English-like prose, one token per non-ASCII character, except ~1.5 characters per token
+for accented Latin and Cyrillic and three tokens per character outside the Basic Multilingual Plane
+(most emoji, CJK Extension B), ~1.25 characters per token for base64-like runs (24+ characters
+mixing digits and both cases), and about 1.25 tokens per `{}[],:"` character and half a token per
+digit beyond the share prose and code carry, which is what makes compact JSON dense. Dense content
+is deliberately estimated high, since an undercount can send a request over the context window;
+measured against OpenAI's cl100k_base tokenizer, that holds for Latin, Cyrillic, Greek, Arabic, CJK,
+base64 and JSON. cl100k_base spends more on Hebrew and Thai (up to ~1.15 tokens per character),
+Indic scripts (1.3 to 1.5), Georgian, Armenian and Myanmar (~2) and Ethiopic (~2.3). The same
+estimate measures `keep_tokens`, `max_part_tokens`, `ToolOutputLimits(over_tokens=True)` bands and
+the `compaction.tokens_*` span attributes. Pass a `tokenizer` callable (e.g. `tiktoken`) to measure
+with a real tokenizer instead. Instruction replacement and withdrawal records contribute their full
+rendered system text to token estimates. Superseded updates before a new instruction baseline are
+excluded. Newly revealed tool schemas that are pending in the request are conservatively estimated
+by the implementation. `DeduplicateFileReads` runs on every request when no trigger is set (it is
+cheap and near-lossless). `TieredCompaction` triggers and stops on a single `target_tokens` /
+`target_fraction` budget. `ClampOversizedMessages` triggers per *part* (`max_part_tokens` /
+`max_part_chars`), not on the whole history -- the failure it targets is one oversized part, not a
+large total.
 
 ### What counts toward `keep_tokens`
 
@@ -830,7 +834,7 @@ to keep span cardinality low. Attributes:
 
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is
 harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the
-same heuristic as the triggers.
+text estimate described under Triggers.
 Raw message content is not recorded.
 
 `SummarizingCompaction` runs its summarizer as a nested `Agent` named `summarizing_compaction`,

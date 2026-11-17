@@ -348,6 +348,10 @@ class TestEstimateTokenCount:
             pytest.param(str([[i, i * 2.5, -i] for i in range(100)]).replace(' ', ''), 842, id='number-array'),
             # cl100k_base: 801 tokens.
             pytest.param('Привет, как дела? ' * 100, 991, id='cyrillic'),
+            # cl100k_base: 621 tokens.
+            pytest.param('Αυτή είναι μια δοκιμαστική πρόταση. ' * 20, 630, id='greek'),
+            # cl100k_base: 581 tokens.
+            pytest.param('هذه جملة اختبار مكتوبة باللغة العربية. ' * 20, 675, id='arabic'),
             # cl100k_base: 800 tokens.
             pytest.param('日本語のテキスト' * 100, 800, id='cjk'),
             # cl100k_base: 900 tokens.
