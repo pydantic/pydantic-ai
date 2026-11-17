@@ -570,9 +570,9 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 With adaptive thinking, Claude answers a forced tool choice with only the tool call and no thinking, so Pydantic AI
 only sends one you asked for explicitly: forcing it inferred itself falls back to `'auto'` while the request thinks.
 
-The model classes built on `OpenAIChatModel` — Cerebras, Crusoe, GitHub Copilot, Ollama, OpenRouter, Snowflake, Z.AI and Bedrock Mantle Chat — follow the OpenAI row unless the model profile restricts forcing. Ollama ignores `tool_choice`, and OpenRouter has [separate rules for Anthropic models](models/openrouter.md#forced-tool-choice).
+The model classes built on `OpenAIChatModel` — Cerebras, Crusoe, GitHub Copilot, Ollama, OpenRouter, Snowflake, Z.AI and Bedrock Mantle Chat — follow the OpenAI row unless the model profile restricts forcing. Ollama ignores `tool_choice`, and OpenRouter has [separate rules for Anthropic models and Qwen3.8 Flash](models/openrouter.md#forced-tool-choice).
 
-Whether a model can be forced to call a tool is a property of the model, set on its [profile](models/overview.md) by [`supports_forced_tool_choice`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice] and [`supports_forced_tool_choice_with_thinking`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice_with_thinking], so it applies on every provider that serves the model: Claude Opus 5.5 rejects forcing on OpenRouter just as it does on the Anthropic API. Where forcing isn't available, an explicit `'required'` or list of tools raises a [`UserError`][pydantic_ai.exceptions.UserError], while forcing that Pydantic AI inferred itself, for example from an [output tool](output.md#tool-output), falls back to `'auto'`. On OpenRouter, explicitly requested thinking on an Anthropic model makes forcing unavailable, since OpenRouter would otherwise silently drop the reasoning. Thinking enabled by default alone does not add that restriction; the model's own forcing limits still apply.
+Whether a model can be forced to call a tool is a property of the model, set on its [profile](models/overview.md) by [`supports_forced_tool_choice`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice] and [`supports_forced_tool_choice_with_thinking`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice_with_thinking], so it applies on every provider that serves the model: Claude Opus 5.5 rejects forcing on OpenRouter just as it does on the Anthropic API. Where forcing isn't available, an explicit `'required'` or list of tools raises a [`UserError`][pydantic_ai.exceptions.UserError], while forcing that Pydantic AI inferred itself, for example from an [output tool](output.md#tool-output), falls back to `'auto'`. On OpenRouter, explicitly requested thinking on an Anthropic model makes forcing unavailable, since OpenRouter would otherwise silently drop the reasoning. Thinking enabled by default alone does not add that restriction; the model's own forcing limits still apply. On OpenRouter routes other than Anthropic's that return a 400 for forcing while the model reasons, such as Qwen3.8 Flash, the error is a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError], which [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on.
 
 ### Prompt caching implications {#tool-choice-caching}
 
@@ -907,7 +907,25 @@ Reach for it when:
 
 Skip it when you have a small, hot toolset where every tool is used most turns — deferring everything would just add a discovery round-trip for no benefit. As a rule of thumb, keep your handful of most-used tools eagerly loaded; defer the long tail.
 
-To opt in, set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Tool] / [`@agent.tool`][pydantic_ai.agent.Agent.tool] / [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] registrations, or use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] on a whole toolset (including [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) — pass a list of tool names to hide specific ones, or `None` to hide all.
+To opt in, choose which tools are searchable in one place with [`ToolSearch(tools=...)`][pydantic_ai.capabilities.ToolSearch.tools], which takes `'all'`, a list of tool names, a metadata dict, or a callable (see [`ToolSelector`][pydantic_ai.tools.ToolSelector]):
+
+```python {title="tool_search_select.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ToolSearch
+
+# Every tool is searchable.
+agent = Agent('{{ anthropic:medium }}', capabilities=[ToolSearch(tools='all')])
+
+# Only these tools are searchable; the rest stay visible.
+agent = Agent('{{ anthropic:medium }}', capabilities=[ToolSearch(tools=['crm_lookup', 'crm_update'])])
+
+# Tools whose metadata contains `{'searchable': True}` are searchable.
+agent = Agent('{{ anthropic:medium }}', capabilities=[ToolSearch(tools={'searchable': True})])
+```
+
+Output tools and the framework's own `search_tools` and `load_capability` tools are never made searchable. A bare `ToolSearch()` defers nothing: it only configures how search runs.
+
+You can also set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Tool] / [`@agent.tool`][pydantic_ai.agent.Agent.tool] / [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] registrations, or use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] on a whole toolset (including [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) — pass a list of tool names to hide specific ones, or `None` to hide all. These add up: a tool is deferred if any of them selects it.
 
 Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability:
 

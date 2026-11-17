@@ -513,7 +513,7 @@ pip install "pydantic-ai-harness[mongodb]"
 ### What `PostgresStepStore` creates on first use
 
 The store creates its schema on the first operation of each store instance,
-reads included: the five tables listed under [Backends](#backends), indexes on
+reads included: the six tables listed under [Backends](#backends), indexes on
 `conversation_id` and `parent_run_id` on `{table}_runs`, `(run_id, seq)`
 indexes on `{table}_events` and `{table}_snapshots`, and a unique index on
 `(run_id, idempotency_key)` on `{table}_events` that covers only rows whose
@@ -527,7 +527,8 @@ store at an existing database:
 - The statements are skipped when all of the store's tables already exist, so
   only the call that creates them needs `CREATE` on the schema. After that, a
   role granted `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the tables is
-  enough. A role without `CREATE` on a database missing a table fails on the
+  enough, plus `SELECT` and `INSERT` on `{table}_media` unless you pass
+  `media_store=None`. A role without `CREATE` on a database missing a table fails on the
   first operation, not at construction.
 - Processes that start together wait on the advisory lock instead of colliding
   in the catalog, which `CREATE TABLE IF NOT EXISTS` alone does not rule out.

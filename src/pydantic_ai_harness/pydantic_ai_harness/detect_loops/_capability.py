@@ -21,15 +21,17 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Wra
 from pydantic_ai.exceptions import AgentRunError, ModelRetry
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
     ModelResponsePartDelta,
+    OperatorSource,
+    OperatorText,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    SystemPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -47,11 +49,12 @@ from pydantic_ai_harness.detect_loops._detectors import (
     StreamChannel,
     StreamSample,
 )
+from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
-__all__ = ['DetectLoops', 'DetectedLoop', 'LoopDetectedError', 'LoopHandler', 'LoopPattern']
+__all__ = ['DetectLoops', 'DetectedLoop', 'LoopDetectedError', 'LoopHandler', 'LoopNudgePart', 'LoopPattern']
 
 LoopPattern: TypeAlias = Literal[
     'repeated_call',
@@ -85,9 +88,6 @@ _IN_RESPONSE_PATTERNS: dict[StreamChannel, LoopPattern] = {
     'text': 'repeated_stream_text',
     'tool_args': 'repeated_tool_args',
 }
-
-_NUDGE_ORIGIN = 'pydantic-ai-harness.detect_loops.nudge.v1'
-"""The `origin` in the `metadata` of the `SystemPromptPart` a nudge is delivered as."""
 
 _UNSAFE_NAME_CHARACTERS = re.compile(r'[^A-Za-z0-9_]')
 
@@ -151,6 +151,21 @@ class LoopDetectedError(AgentRunError):
     def __init__(self, loop: DetectedLoop) -> None:
         self.loop = loop
         super().__init__(loop.message)
+
+
+@dataclass(kw_only=True)
+class LoopNudgePart(InstructionCapabilityPart, namespace='detect_loops', name='nudge'):
+    """The nudge `DetectLoops(action='nudge')` adds to the conversation when it detects a loop.
+
+    Its `content` is the loop's `message`, in the application's voice. Find nudges in history by this type.
+    """
+
+    pattern: LoopPattern
+    """Which kind of loop it is. Never sent to the model."""
+
+    tool_names: tuple[str, ...] = ()
+    """The real names of the tools involved, which the message spells with only letters, digits and `_`. Never
+    sent to the model."""
 
 
 LoopHandler: TypeAlias = Callable[[RunContext[AgentDepsT], DetectedLoop], Awaitable[None] | None]
@@ -248,7 +263,7 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     response is reported before any of them run. A response that isn't streamed gets the same checks when
     it arrives.
 
-    On detection, `action` runs: `'nudge'` (the default) adds a system prompt to the conversation, from
+    On detection, `action` runs: `'nudge'` (the default) adds a `LoopNudgePart` to the conversation, from
     the current request on, asking the model to change its approach, and for a loop within a response
     also stops the stream and makes the request again; `'error'` raises `LoopDetectedError`; and a
     `LoopHandler` is called with the `DetectedLoop`. The calls or text that formed the loop are then not
@@ -303,7 +318,7 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     action: Literal['nudge', 'error'] | LoopHandler[AgentDepsT] = 'nudge'
     """What to do when a loop is detected.
 
-    - `'nudge'`: enqueue a system prompt telling the model which loop it is in and asking it to change
+    - `'nudge'`: enqueue a `LoopNudgePart` telling the model which loop it is in and asking it to change
       its approach. It joins the current request and keeps the default conversation scope, so it keeps
       applying on later requests instead of being shown once. For a loop within a response, the stream
       is also stopped and the request made again through a `ModelRetry`, and the nudge is request-scoped,
@@ -456,15 +471,19 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         # A `ScopedTask` takes the cancellation that stops it as a cancel of its own scope, so the agent's shielded
         # teardown of the model stream inside it finishes.
         request = ScopedTask(run_request())
-        stopped_by: list[Exception] = []
+        errors: list[Exception] = []
 
         async def act_on_loops(stop: anyio.CancelScope) -> None:
             while True:
                 await check.detected.wait()
+                # Stopping the request would cancel a parallel input guard that hasn't decided, and the retry
+                # isn't screened again, so the verdict comes first. A guard that didn't allow ends the request.
+                if not await input_guardrails_allow(ctx):
+                    return
                 try:
                     await self._act(ctx, check.take(), in_response=True)
                 except Exception as error:
-                    stopped_by.append(error)
+                    errors.append(error)
                     stop.cancel()
                     return
                 self._reported_in_stream = True
@@ -474,13 +493,17 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         try:
             async with anyio.create_task_group() as tasks:
                 tasks.start_soon(act_on_loops, tasks.cancel_scope)
-                response = await request.result()
+                # Raised outside the task group, which would wrap it in an `ExceptionGroup`.
+                try:
+                    response = await request.result()
+                except Exception as error:
+                    errors.append(error)
                 tasks.cancel_scope.cancel()
         finally:
             # Only now that the request has stopped, and with it the agent's pull of the stream, is the stream released.
             check.release(stopped=True)
-        if stopped_by:
-            raise stopped_by[0]
+        if errors:
+            raise errors[0]
         assert response is not None
         return response
 
@@ -537,9 +560,10 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         part = check.parts[index]
         loops: list[DetectedLoop] = []
         every = self.stream_check_every
-        while text:
-            split = every - part.unchecked
-            piece, text = text[:split], text[split:]
+        start = 0
+        while start < len(text):
+            piece = text[start : start + every - part.unchecked]
+            start += len(piece)
             part.text = (part.text + piece)[-part.keep :]
             part.total += len(piece)
             part.unchecked += len(piece)
@@ -709,19 +733,27 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         self._trace(ctx, loop)
         action = self.action
         if not isinstance(action, str):
-            result = action(ctx, loop)
+            # The handler is the application's code, not this capability's, so what it enqueues is the application's:
+            # neither attributed to this capability nor warned about as hand-built capability speech.
+            result = action(replace(ctx, _capability=None), loop)
             if inspect.isawaitable(result):
                 await result
         elif action == 'error':
             raise LoopDetectedError(loop)
         else:
-            metadata = {'origin': _NUDGE_ORIGIN, 'pattern': loop.pattern, 'tool_names': list(loop.tool_names)}
+            nudge = LoopNudgePart(
+                # The capability's own wording, with tool names reduced to letters, digits and `_`.
+                content=OperatorText(loop.message),
+                source=OperatorSource(),
+                pattern=loop.pattern,
+                tool_names=loop.tool_names,
+                scope='request' if in_response else 'conversation',
+            )
+            ctx.enqueue(nudge)
             if not in_response:
-                ctx.enqueue(SystemPromptPart(loop.message, metadata=metadata))
                 return
             # Rejecting the response makes the request again, and the nudge joins that request only: the response
             # that looped is gone, so the loop doesn't build up in history the way a loop across responses does.
-            ctx.enqueue(SystemPromptPart(loop.message, metadata=metadata, scope='request'))
             raise ModelRetry(_REJECTED)
 
     def _trace(self, ctx: RunContext[AgentDepsT], loop: DetectedLoop) -> None:
