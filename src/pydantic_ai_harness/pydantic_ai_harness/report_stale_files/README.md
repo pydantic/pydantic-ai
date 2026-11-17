@@ -32,7 +32,8 @@ agent = Agent(
   The model's own writes and edits refresh the record, so they are not reported.
 - Before each model request, it reads the recorded files through the run's workspace (`ctx.workspace`), so it works
   the same on a local directory, a remote sandbox, or a filesystem-only workspace. A file whose bytes no longer
-  match its record is named in a request-scoped system prompt:
+  match its record is named in a request-scoped `StaleFilesPart`, a
+  [capability part](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts):
 
   ```text
   These files changed in the workspace after you last read them, so what you saw of them is out of date. Read them again before relying on them or editing them:
@@ -47,6 +48,12 @@ agent = Agent(
 - The notice is request-scoped: the model sees it for the request it is sent with, and it stays in the message
   history without moving the cached prefix (see
   [request-scoped system prompts](https://pydantic.dev/docs/ai/core-concepts/message-history/#request-scoped-system-prompts)).
+- The paths are named by whoever can write to the workspace, so the notice has the
+  [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority) of the workspace's files:
+  in the application's voice by default, and framed as data for a workspace with less, such as
+  `LocalWorkspace('.', authority='none')`. A path that looks like a framework frame, such as one holding `<system>`,
+  is counted rather than named. Find notices in history with `isinstance(part, StaleFilesPart)`; its `changed` and
+  `deleted` fields hold the paths.
 
 ## Options
 
@@ -66,9 +73,6 @@ file is also a round trip, so lower `max_tracked_files` if requests slow down.
   with and keyed by the run's `conversation_id`, so a run continued from an earlier run's `message_history` is told
   about changes made between the runs. A conversation continued through another instance, process, or worker
   starts with no records. An instance keeps the 1,024 most recently used conversations.
-- **Paths are named only when they are plain.** The notice is in system voice, so a path is named only when it
-  holds letters, digits and `._/:@+-`, up to 200 characters. Other paths, such as one with a space, are counted
-  with the rest.
 - **It sees only files reported through the events.** A file the model read with a shell command is not recorded.
 - **A check doesn't follow a link out of the file tool's root.** A recorded file that now resolves outside the root
   of the tool that read it, such as one replaced by a symlink, is skipped rather than read.
@@ -77,5 +81,4 @@ file is also a round trip, so lower `max_tracked_files` if requests slow down.
 
 ## Telemetry
 
-`ReportStaleFiles` emits no spans of its own. Each notice is a system prompt in the request it is sent with, so it
-appears in the model request span that Pydantic AI's instrumentation records.
+`ReportStaleFiles` emits no spans of its own. Each notice is part of the request it is sent with, so it appears in the model request span that Pydantic AI's instrumentation records.

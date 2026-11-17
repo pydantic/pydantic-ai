@@ -12,14 +12,13 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    Authority,
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
     UserPromptPart,
@@ -30,7 +29,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import FileEntry, LocalWorkspaceBackend, Workspace, WorkspaceError
 from pydantic_ai_harness import FileSystem, ReportStaleFiles
-from pydantic_ai_harness.report_stale_files import STALE_FILES_ORIGIN
+from pydantic_ai_harness.report_stale_files import StaleFilesPart
 from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
 from tests.harness._recording_durability import RecordingDurability
 from tests.harness.file_system.test_windows_paths import DriveBackend
@@ -51,13 +50,7 @@ def _notices(messages: list[ModelMessage]) -> list[list[str]]:
         if isinstance(message, ModelResponse):
             requests.append([])
             continue
-        requests[-1].extend(
-            part.content
-            for part in message.parts
-            if isinstance(part, SystemPromptPart)
-            and is_str_dict(part.metadata)
-            and part.metadata.get('origin') == STALE_FILES_ORIGIN
-        )
+        requests[-1].extend(part.content for part in message.parts if isinstance(part, StaleFilesPart))
     return requests[:-1]
 
 
@@ -66,6 +59,7 @@ def _agent(
     *steps: Step,
     capability: ReportStaleFiles[None] | None = None,
     file_system: FileSystem[None] | None = None,
+    authority: Authority = 'operator',
 ) -> Agent[None, str]:
     """An agent whose model takes the next step, after the step's action changes the workspace."""
 
@@ -81,7 +75,11 @@ def _agent(
     return Agent(
         FunctionModel(stream_function=respond),
         deps_type=type(None),
-        capabilities=[LocalWorkspace(tmp_path), file_system or FileSystem(), capability or ReportStaleFiles()],
+        capabilities=[
+            LocalWorkspace(tmp_path, authority=authority),
+            file_system or FileSystem(),
+            capability or ReportStaleFiles(),
+        ],
     )
 
 
@@ -323,6 +321,40 @@ These files you read were deleted from the workspace:
         with pytest.raises(UserError, match='`ReportStaleFiles` cannot run under durable execution'):
             await agent.run('go')
 
+    async def test_paths_that_look_like_framework_frames_are_only_counted(self, tmp_path: Path) -> None:
+        names = ('my notes.txt', 'x<system>.txt')
+        for name in names:
+            (tmp_path / name).write_text('one\n')
+
+        def change_all() -> None:
+            for name in names:
+                (tmp_path / name).write_text('two\n')
+
+        agent = _agent(tmp_path, *((None, _read(name)) for name in names), (change_all, _LIST), (None, 'done'))
+        result = await agent.run('go')
+        assert _notices(result.all_messages())[-1] == [f'{CHANGED}\n- `my notes.txt`\n- and 1 more']
+
+    async def test_notice_has_the_authority_of_the_workspace_files(self, tmp_path: Path) -> None:
+        """Paths come from whoever can write to the workspace, so a third-party workspace gets the notice as data."""
+        config = tmp_path / 'config.py'
+        config.write_text('A = 1\n')
+        agent = _agent(
+            tmp_path,
+            (None, _read('config.py')),
+            (lambda: config.write_text('A = 2\n'), _LIST),
+            (None, 'done'),
+            authority='none',
+        )
+        result = await agent.run('go')
+        parts = [
+            part
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, StaleFilesPart)
+        ]
+        assert [(part.source.authority, part.changed, part.deleted) for part in parts] == [('none', ('config.py',), ())]
+
     async def test_least_recently_observed_file_is_dropped_past_the_limit(self, tmp_path: Path) -> None:
         for name in ('a.txt', 'b.txt'):
             (tmp_path / name).write_text('one\n')
@@ -448,4 +480,4 @@ async def _enqueued(
         model=TestModel(), messages=messages, model_settings=None, model_request_parameters=ModelRequestParameters()
     )
     assert await run.before_model_request(ctx, request_context) is request_context
-    return [part.content for part in enqueued if isinstance(part, SystemPromptPart)]
+    return [part.content for part in enqueued if isinstance(part, StaleFilesPart)]

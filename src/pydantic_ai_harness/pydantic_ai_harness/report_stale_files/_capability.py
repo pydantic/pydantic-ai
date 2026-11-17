@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import re
 from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
+from pydantic_ai._framing import resembles_frame
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelRequest, SystemPromptPart
+from pydantic_ai.messages import InstructionCapabilityPart, ModelRequest, OperatorText, WorkspaceSource
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import Workspace, WorkspaceError, WorkspacePaths
 from pydantic_ai_harness._durable import in_durable_context
@@ -19,20 +19,32 @@ from pydantic_ai_harness.file_system._content import bytes_hash
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
-STALE_FILES_ORIGIN = 'pydantic-ai-harness.report_stale_files.notice.v1'
-"""The `origin` in the `metadata` of the request-scoped `SystemPromptPart` a notice is sent as."""
-
 _CHANGED = (
     'These files changed in the workspace after you last read them, so what you saw of them is out of date. '
     'Read them again before relying on them or editing them:'
 )
 _DELETED = 'These files you read were deleted from the workspace:'
 
-_SHOWN_PATH = re.compile(r'[A-Za-z0-9._/:@+-]{1,200}')
-"""Paths a notice names. The notice is in system voice, so a path with other characters is only counted."""
+_AUTHORITIES = ('none', 'user', 'operator')
+"""Authorities from least to most."""
 
 _CONVERSATIONS_KEPT = 1024
 """How many conversations' observations an instance keeps, most recently used first."""
+
+
+@dataclass(kw_only=True)
+class StaleFilesPart(InstructionCapabilityPart, namespace='report_stale_files', name='stale_files'):
+    """The request-scoped notice `ReportStaleFiles` enqueues, naming files that changed or were deleted.
+
+    Its source is the workspace the files are in, so a workspace with less than `'operator'` authority gets the
+    notice as data rather than in the application's voice. Find notices in history by this type.
+    """
+
+    changed: tuple[str, ...] = ()
+    """The changed files, as the notice names them. Never sent to the model as a field."""
+
+    deleted: tuple[str, ...] = ()
+    """The deleted files, as the notice names them. Never sent to the model as a field."""
 
 
 @dataclass(frozen=True)
@@ -52,7 +64,7 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
 
     It records the content hash of every file a `FileSystem` tool reads or writes, from `FileReadEvent` and
     `FileWrittenEvent`. Before each model request it reads the recorded files through the run's workspace,
-    and when one no longer matches, it sends a request-scoped system prompt naming it. A changed file is
+    and when one no longer matches, it enqueues a request-scoped `StaleFilesPart` naming it. A changed file is
     named on every request until the model reads it again; a deleted file is named once. A file that can't
     be read for another reason, such as a permission error or a workspace failure, or that doesn't fit in
     `max_checked_bytes`, is skipped and checked again on the next request.
@@ -144,15 +156,22 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
             elif state == 'changed':
                 changed.append(path)
         if changed or deleted:
-            working_dir = await ctx.workspace.working_dir()
-            paths = ctx.workspace.paths
-            notice = _render(
-                [_shown(path, working_dir, paths) for path in changed],
-                [_shown(path, working_dir, paths) for path in deleted],
-                self.max_reported_files,
-            )
-            ctx.enqueue(SystemPromptPart(notice, scope='request', metadata={'origin': STALE_FILES_ORIGIN}))
+            ctx.enqueue(await self._notice(ctx.workspace, changed, deleted))
         return request_context
+
+    async def _notice(self, workspace: Workspace, changed: list[str], deleted: list[str]) -> StaleFilesPart:
+        """A notice naming the files, whose source is the least trusted of their workspace sources."""
+        sources = [await WorkspaceSource.from_workspace(workspace, path) for path in (*changed, *deleted)]
+        working_dir = await workspace.working_dir()
+        shown_changed = tuple(_shown(path, working_dir, workspace.paths) for path in changed)
+        shown_deleted = tuple(_shown(path, working_dir, workspace.paths) for path in deleted)
+        return StaleFilesPart(
+            content=OperatorText(_render(shown_changed, shown_deleted, self.max_reported_files)),
+            source=min(sources, key=lambda source: _AUTHORITIES.index(source.authority)),
+            scope='request',
+            changed=shown_changed,
+            deleted=shown_deleted,
+        )
 
 
 async def _state(
@@ -189,12 +208,13 @@ def _shown(path: str, working_dir: str, paths: WorkspacePaths) -> str:
     return path.replace(paths.sep, '/')
 
 
-def _render(changed: list[str], deleted: list[str], limit: int) -> str:
+def _render(changed: tuple[str, ...], deleted: tuple[str, ...], limit: int) -> str:
     sections: list[str] = []
     for heading, paths in ((_CHANGED, changed), (_DELETED, deleted)):
         if not paths:
             continue
-        shown = [path for path in paths if _SHOWN_PATH.fullmatch(path)][:limit]
+        # A path that looks like a framework frame can't go in the application's voice, so it's only counted.
+        shown = [path for path in paths if not resembles_frame(path)][:limit]
         limit -= len(shown)
         lines = [heading, *(f'- `{path}`' for path in shown)]
         if hidden := len(paths) - len(shown):

@@ -647,7 +647,8 @@ before each run: a changed file is capped at `changed` in `authority_of` until i
 Tells the model when a file a `FileSystem` tool read or wrote has since changed or been deleted in the
 workspace, by someone else (a user, another agent, a build step). It records each file's content hash from
 `FileReadEvent` / `FileWrittenEvent` and, before each model request, reads the recorded files through
-`ctx.workspace`; a mismatch is named in a request-scoped system prompt, on every request until the model
+`ctx.workspace`; a mismatch is named in a request-scoped `StaleFilesPart` (`.report_stale_files`, with the
+workspace's authority), on every request until the model
 reads the file again (a deleted file once). The model's own writes and edits refresh the record. Records are
 per conversation, in memory on the instance, so a continued run hears about changes made between runs.
 
