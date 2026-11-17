@@ -109,11 +109,15 @@ class RealpathOnceBackend(LocalWorkspaceBackend):
         return await super().realpath(path)
 
 
-class UnsizedBackend(LocalWorkspaceBackend):
-    """A local workspace whose `stat` doesn't report sizes."""
+class SizeBackend(LocalWorkspaceBackend):
+    """A local workspace whose `stat` reports `size` for every file, as a backend that can't measure it might."""
+
+    def __init__(self, *, working_dir: Path, size: int | None) -> None:
+        super().__init__(working_dir=working_dir)
+        self.size = size
 
     async def stat(self, path: str) -> FileEntry:
-        return replace(await super().stat(path), size=None)
+        return replace(await super().stat(path), size=self.size)
 
 
 def _read(path: str) -> ToolCallPart:
@@ -266,19 +270,28 @@ class TestReportStaleFiles:
         result = await agent.run('go')
         assert _notices(result.all_messages())[-1] == [f'{CHANGED}\n- `newer.txt`\n- `older.txt`']
 
-    async def test_file_that_reads_past_the_byte_budget_is_not_hashed(self, tmp_path: Path) -> None:
-        """A backend that can't tell a file's size up front, as the shell fallback can't, still keeps to the budget."""
+    async def test_file_of_unknown_size_is_not_read(self, tmp_path: Path) -> None:
+        """Without a size up front, the read couldn't be kept to the budget."""
+        target = tmp_path / 'data.txt'
+        target.write_text('one\n')
+        agent = _agent(tmp_path, (None, _read('data.txt')), (lambda: target.write_text('two\n'), _LIST), (None, 'done'))
+        result = await agent.run('go', workspace=SizeBackend(working_dir=tmp_path, size=None))
+        assert _notices(result.all_messages()) == [[], [], []]
+
+    async def test_file_that_reads_past_the_byte_budget_is_dropped(self, tmp_path: Path) -> None:
+        """A file that grew past the budget after its `stat` isn't hashed, and isn't read again on later requests."""
         target = tmp_path / 'data.txt'
         target.write_text('one\n')
         agent = _agent(
             tmp_path,
             (None, _read('data.txt')),
             (lambda: target.write_text('grown well past the budget\n'), _LIST),
+            (lambda: target.write_text('two\n'), _LIST),
             (None, 'done'),
             capability=ReportStaleFiles(max_checked_bytes=10),
         )
-        result = await agent.run('go', workspace=UnsizedBackend(working_dir=tmp_path))
-        assert _notices(result.all_messages()) == [[], [], []]
+        result = await agent.run('go', workspace=SizeBackend(working_dir=tmp_path, size=1))
+        assert _notices(result.all_messages()) == [[], [], [], []]
 
     async def test_one_notice_names_changed_then_deleted_files_within_one_budget(self, tmp_path: Path) -> None:
         for name in ('changed.txt', 'deleted.txt', 'gone.txt'):

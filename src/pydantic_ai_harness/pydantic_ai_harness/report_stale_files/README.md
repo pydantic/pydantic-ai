@@ -42,7 +42,8 @@ agent = Agent(
 
 - A changed file is named on every request until the model reads it again. A deleted file is named once, then
   forgotten. A file that can't be read for another reason, such as a permission error or a workspace failure, is
-  skipped and checked again on the next request.
+  skipped and checked again on the next request. A file whose size the workspace doesn't report is not read, and
+  one that grew past `max_checked_bytes` between its `stat` and its read is forgotten until the model reads it again.
 - Paths are named the way the file tools take them: relative to the workspace's working directory, or absolute
   when outside it. The most recently read or written file comes first.
 - The notice is request-scoped: the model sees it for the request it is sent with, and it stays in the message

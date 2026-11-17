@@ -34,7 +34,7 @@ agent = Agent(
     - `src/config.py`
     ```
 
-- A changed file is named on every request until the model reads it again. A deleted file is named once, then forgotten. A file that can't be read for another reason, such as a permission error or a workspace failure, is skipped and checked again on the next request.
+- A changed file is named on every request until the model reads it again. A deleted file is named once, then forgotten. A file that can't be read for another reason, such as a permission error or a workspace failure, is skipped and checked again on the next request. A file whose size the workspace doesn't report is not read, and one that grew past `max_checked_bytes` between its `stat` and its read is forgotten until the model reads it again.
 - Paths are named the way the file tools take them: relative to the workspace's working directory, or absolute when outside it. The most recently read or written file comes first.
 - The notice is request-scoped: the model sees it for the request it is sent with, and it stays in the message history without moving the cached prefix (see [request-scoped system prompts](../message-history.md#request-scoped-system-prompts)).
 - The paths are named by whoever can write to the workspace, so the notice has the [authority](../workspace.md#workspace-authority) of the workspace's files: in the application's voice by default, and framed as data for a workspace with less, such as `LocalWorkspace('.', authority='none')`. A path that looks like a framework frame, such as one holding `<system>`, is counted rather than named. Find notices in history with `isinstance(part, StaleFilesPart)`; its `changed` and `deleted` fields hold the paths.
