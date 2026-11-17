@@ -246,6 +246,19 @@ async def test_failed_create_lets_a_later_operation_create(
     assert backend.ref == WorkspaceRef(provider='render', id='sb-1')
 
 
+async def test_failed_create_before_render_answers_keeps_the_key_out_of_the_message(
+    workspace_harness: WorkspaceHarness,
+) -> None:
+    # The SDK wraps a transport failure, whose text can quote the `Authorization` header, with it as the cause.
+    error = ClientError("create sandbox failed: Illegal header value b'Bearer rnd_secret\\n'")
+    error.__cause__ = ValueError('illegal header')
+    workspace_harness.create_error = error
+    with pytest.raises(WorkspaceUnavailableError) as caught:
+        await workspace_harness.backend().working_dir()
+    assert str(caught.value) == 'Could not create a Render sandbox'
+    assert caught.value.__cause__ is error
+
+
 async def test_interrupted_stream_on_a_stopped_sandbox_is_unavailable(workspace_harness: WorkspaceHarness) -> None:
     backend = workspace_harness.backend()
     await backend.working_dir()
