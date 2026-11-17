@@ -698,12 +698,28 @@ Pydantic AI supports sampling as both a client and server. See the [server](./se
     default modern session has no back-channel for them — the server's call fails with
     `NoBackChannelError`. A legacy session still has one, but `MCPToolset` can only negotiate it
     through a pre-built client, which rules out the `sampling_model` and `elicitation_handler`
-    shortcuts below:
+    shortcuts below. The client then needs its own FastMCP sampling handler, written by you, which
+    calls your model:
 
-    ```python {title="legacy_session.py" test="skip" lint="skip"}
+    ```python {title="legacy_session.py" test="skip"}
     from fastmcp.client import Client
+    from fastmcp.client.transports import StdioTransport
+    from mcp.types import CreateMessageRequestParams, SamplingMessage
 
-    client = Client(transport, mode='legacy', sampling_handler=sampling_handler)
+    from pydantic_ai.mcp import MCPToolset
+
+
+    async def sampling_handler(
+        messages: list[SamplingMessage], params: CreateMessageRequestParams, context: object
+    ) -> str:
+        return 'The reply from your model.'
+
+
+    client = Client(
+        StdioTransport(command='python', args=['mcp_server.py']),
+        mode='legacy',
+        sampling_handler=sampling_handler,
+    )
     toolset = MCPToolset(client)
     ```
 
