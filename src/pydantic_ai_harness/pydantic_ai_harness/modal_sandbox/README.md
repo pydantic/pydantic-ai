@@ -6,7 +6,27 @@ Run your agent's commands and file edits in an isolated [Modal](https://modal.co
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. ModalSandbox's get_workspace hook gives the run a Modal cloud sandbox as ctx.workspace, so each command and file operation goes over the Modal API, authenticated with your Modal token, and runs in the sandbox as root; output comes back to the tool. The first use creates the sandbox, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) terminates it. The sandbox also ends when sandbox_timeout, at most 24 hours, or an idle_timeout runs out; a later run with its ref then raises WorkspaceUnavailableError.](https://pydantic.dev/docs/ai/img/harness/modal-sandbox.svg)
+```mermaid
+flowchart TB
+    accTitle: Modal Sandbox: your agent's commands run in a Modal cloud sandbox
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools. Their ctx.workspace is a Modal cloud sandbox from ModalSandbox's get_workspace hook, reached over the Modal API with your Modal token and running until destroy(ref) or a timeout. A later run reattaches with the WorkspaceRef in the message history, and a ref to an ended sandbox gives WorkspaceUnavailableError.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        ref["WorkspaceRef<br/>in the message history,<br/>result.workspace.ref"]
+        modal["ModalSandbox()<br/>get_workspace hook"]:::capability
+    end
+    sandbox["Modal cloud sandbox<br/>runs until destroy(ref)<br/>or a timeout"]:::external
+    gone["WorkspaceUnavailableError"]:::blocked
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| modal
+    ref -.->|"a later run reattaches"| modal
+    modal <-->|"Modal API,<br/>your Modal token"| sandbox
+    modal -.-x|"ref to an<br/>ended sandbox"| gone
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Install
 
@@ -63,11 +83,11 @@ The follow-up run finds the sandbox in the message history and works in it, so t
 
 ## Choose the tools
 
-For a narrower agent, use [`Shell`](../shell/) and [`FileSystem`](../filesystem/) instead of `Coder`, or write your own tool that runs in the sandbox:
+For a narrower agent, use [`Shell`](../shell/) and [`FileSystem`](../file_system/) instead of `Coder`, or write your own tool that runs in the sandbox:
 
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.modal_sandbox import ModalSandbox
 from pydantic_ai_harness.shell import Shell
 

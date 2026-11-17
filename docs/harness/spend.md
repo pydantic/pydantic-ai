@@ -7,7 +7,26 @@ description: "Set daily, monthly, or per-tenant USD and token budgets for a Pyda
 
 Track what an agent costs, and stop it when a budget is gone.
 
-![SpendLimits checks budgets around each model request. Before a request, before_model_request reads every budget window from the spend store and lets the request through while all are under their ceilings. After the response, wrap_model_request prices it and adds the cost to each window. When a later request finds the day window spent, SpendLimitExceeded is raised and the request is not sent. The store can be in memory, Redis or PostgreSQL, so several workers can share one counter.](../img/harness/spend.svg)
+```mermaid
+flowchart TB
+    accTitle: Spend: budgets that outlast one run
+    accDescr: On each model request of an agent run, SpendLimits before_model_request reads every window from the spend store (in memory, Redis or PostgreSQL). With all under ceiling the request goes to the model, and with a window spent it is not sent and ends in SpendLimitExceeded. SpendLimits wrap_model_request takes the model's response and adds its price to each window in the store.
+    run["agent run"]
+    before["SpendLimits()<br/>before_model_request"]:::capability
+    model(["model"])
+    refused["SpendLimitExceeded<br/>request is not sent"]:::blocked
+    wrap["SpendLimits()<br/>wrap_model_request"]:::capability
+    store[("spend store<br/>in memory, Redis<br/>or PostgreSQL")]:::external
+    run -->|"each model request"| before
+    before -->|"all under ceiling"| model
+    before -.-x|"a window is spent"| refused
+    model -->|"response"| wrap
+    before <-->|"reads every window"| store
+    wrap -->|"adds its price<br/>to each window"| store
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -26,7 +45,7 @@ from decimal import Decimal
 
 from pydantic_ai import Agent
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget
+from pydantic_ai_harness.spend_limits import Budget
 
 agent = Agent(
     '{{ openai:medium }}',
@@ -44,7 +63,7 @@ A budget is a ceiling, a period, and optionally a partition. They compose, so se
 from decimal import Decimal
 
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget
+from pydantic_ai_harness.spend_limits import Budget
 
 SpendLimits(
     budgets=[
@@ -75,7 +94,7 @@ A budget with no ceiling is a counter. It accumulates and reports and never refu
 
 ```python
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget
+from pydantic_ai_harness.spend_limits import Budget
 
 SpendLimits(budgets=[Budget(window='month', scope=lambda ctx: ctx.deps.tenant_id, name='chargeback')])
 ```
@@ -93,7 +112,7 @@ from decimal import Decimal
 
 from pydantic_ai import Agent
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget, SpendRecordedEvent
+from pydantic_ai_harness.spend_limits import Budget, SpendRecordedEvent
 
 limits = SpendLimits(budgets=[Budget(usd=Decimal('100'))])
 agent = Agent('{{ anthropic:medium }}', capabilities=[limits])
@@ -139,7 +158,7 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import RunContext
 
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget
+from pydantic_ai_harness.spend_limits import Budget
 
 limits = SpendLimits[None](budgets=[Budget(usd=Decimal('100'), warn_at=0.8)])
 approvals: asyncio.Queue[bool] = asyncio.Queue()
@@ -173,7 +192,7 @@ from decimal import Decimal
 from pydantic_ai import Agent, capture_run_messages
 
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget, SpendLimitExceeded
+from pydantic_ai_harness.spend_limits import Budget, SpendLimitExceeded
 
 limits = SpendLimits[None](budgets=[Budget(usd=Decimal('1'), name='daily')])
 agent = Agent('{{ openai:medium }}', deps_type=type(None), capabilities=[limits])
@@ -202,7 +221,7 @@ from decimal import Decimal
 from redis.asyncio import Redis
 
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget, RedisSpendStore
+from pydantic_ai_harness.spend_limits import Budget, RedisSpendStore
 
 store = RedisSpendStore(Redis.from_url('redis://localhost'))
 limits = SpendLimits(budgets=[Budget(usd=Decimal('100'), window='day')], store=store)
@@ -238,7 +257,7 @@ from decimal import Decimal
 import asyncpg
 
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget, PostgresSpendStore
+from pydantic_ai_harness.spend_limits import Budget, PostgresSpendStore
 
 
 async def build_limits() -> tuple[SpendLimits[None], asyncpg.Pool]:
@@ -354,34 +373,34 @@ A refusal emits a `spend budget exhausted` span with `spend.budget` and `spend.w
 
 The fields above are what `SpendLimits.from_spec` names in its signature, which is also what Pydantic AI reads to generate the spec's JSON schema -- so an editor following the `$schema` line completes and validates them. `BudgetSpec` is the entry shape, exported for anyone building a spec in code.
 
-Source: [`pydantic_ai_harness/spend/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/spend/).
+Source: [`pydantic_ai_harness/spend_limits/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/spend_limits/).
 
 ## API reference
 
-::: pydantic_ai_harness.spend.SpendLimits
+::: pydantic_ai_harness.spend_limits.SpendLimits
 
-::: pydantic_ai_harness.spend.Budget
+::: pydantic_ai_harness.spend_limits.Budget
 
-::: pydantic_ai_harness.spend.SpendSnapshot
+::: pydantic_ai_harness.spend_limits.SpendSnapshot
 
-::: pydantic_ai_harness.spend.BudgetStatus
+::: pydantic_ai_harness.spend_limits.BudgetStatus
 
-::: pydantic_ai_harness.spend.Spent
+::: pydantic_ai_harness.spend_limits.Spent
 
-::: pydantic_ai_harness.spend.BatchSpendStore
+::: pydantic_ai_harness.spend_limits.BatchSpendStore
 
-::: pydantic_ai_harness.spend.SpendEntry
+::: pydantic_ai_harness.spend_limits.SpendEntry
 
-::: pydantic_ai_harness.spend.SpendStore
+::: pydantic_ai_harness.spend_limits.SpendStore
 
-::: pydantic_ai_harness.spend.InMemorySpendStore
+::: pydantic_ai_harness.spend_limits.InMemorySpendStore
 
-::: pydantic_ai_harness.spend.RedisSpendStore
+::: pydantic_ai_harness.spend_limits.RedisSpendStore
 
-::: pydantic_ai_harness.spend.PostgresSpendStore
+::: pydantic_ai_harness.spend_limits.PostgresSpendStore
 
-::: pydantic_ai_harness.spend.SpendLimitExceeded
+::: pydantic_ai_harness.spend_limits.SpendLimitExceeded
 
-::: pydantic_ai_harness.spend.UnpricedModelError
+::: pydantic_ai_harness.spend_limits.UnpricedModelError
 
-::: pydantic_ai_harness.spend.UnpricedModelWarning
+::: pydantic_ai_harness.spend_limits.UnpricedModelWarning

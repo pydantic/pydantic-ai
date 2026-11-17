@@ -30,7 +30,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
 | Counter instruction fade in long runs, cache-safe | `SystemReminders` |
 | Have a second model review the run and steer it when it drifts | `TrajectoryJudge` |
-| Interrupt an agent that keeps repeating the same tool call, result, or response | `DetectLoops` |
+| Interrupt an agent that keeps repeating the same tool call, result, or response, or repeats itself within a streaming response | `DetectLoops` |
 | Have the agent review and revise its answer before the run ends | `RefineOutput` |
 
 ## RepairToolArguments
@@ -454,7 +454,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget, SpendLimitExceeded
+from pydantic_ai_harness.spend_limits import Budget, SpendLimitExceeded
 
 limits = SpendLimits(budgets=[Budget(tokens=1, window='total')])
 agent = Agent(TestModel(), capabilities=[limits])
@@ -473,7 +473,7 @@ from decimal import Decimal
 from redis.asyncio import Redis
 
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget, RedisSpendStore
+from pydantic_ai_harness.spend_limits import Budget, RedisSpendStore
 
 limits = SpendLimits(
     budgets=[
@@ -585,7 +585,7 @@ print(agent.run_sync('Set up storage').output)
   `pydantic_ai_harness.ask_user`) first.
 - Each question is a deferred call marked `kind='question'` (`requests.kind(id) == 'question'`); `AskUser`
   answers its own in `handle_deferred_tool_calls`, after the step's other tool calls finish, one question
-  at a time, through core `wait_for_external_event` like `RequestInput`: in process by default, journaled
+  at a time, through core `wait_for_external_event` like a token-taking `HandleDeferredToolCalls` handler: in process by default, journaled
   and suspended on AWS Lambda durable functions; on Temporal/DBOS/Prefect the engine refuses it with `UserError`
   (an unrecorded wait could diverge from the journal on replay). Works under `run_stream()` too: the
   tool body defers, so streaming doesn't stop on the call.
@@ -598,8 +598,8 @@ print(agent.run_sync('Set up storage').output)
   A thread cannot be cancelled: wrap blocking work in `anyio.to_thread.run_sync(..., abandon_on_cancel=True)`,
   and read terminal input with an async prompt library, not `input()` in a thread.
 - Custom text has no length cap, so bound client input.
-- With `RequestInput` on the same agent, `AskUser` answers its questions first; with `answerer=None`,
-  `RequestInput`'s `ask` gets the question and answers it with `ask_user_result` in `calls`.
+- With a `HandleDeferredToolCalls` on the same agent, `AskUser` answers its questions first; with
+  `answerer=None`, the handler gets the question and answers it with `ask_user_result` in `calls`.
 - `answerer=None` defers every call: the run ends with `DeferredToolRequests` (add it to
   `output_type`). Rebuild each request with `AskUserRequest.from_tool_call(call)`, then resume with
   `DeferredToolResults(calls={call.tool_call_id: ask_user_result(request, response)})`.
@@ -764,8 +764,31 @@ except LoopDetectedError as error:
   `message_history` from earlier runs starts at zero. Hooks run in workflow code under Temporal,
   DBOS, and Prefect, so replay reaches the same decisions; keep a handler free of I/O.
 - Agents that poll on purpose trip `repeated_result` after 3 identical statuses: raise or disable it.
+- Also checks each response on its own, as it streams: `stream_detector` (default
+  `RepetitionDetector()`: a passage of `min_period=20` to `max_period=2000` chars with
+  `min_distinct_chars=8`, repeated `min_repeats=8` times covering `min_chars=2000`, so grids, table
+  rules and a few dozen identical rows don't count) runs every `stream_check_every=256` chars and at
+  each part's end over `stream_channels=('thinking', 'text', 'tool_args')`, giving
+  `repeated_thinking`, `repeated_stream_text`, `repeated_tool_args`; `repeated_parallel_call` is the
+  same call `repeated_parallel_call_threshold=5` times in one response, reported before any runs. A
+  response that isn't streamed gets the same checks on arrival; `DetectLoops` never makes a run
+  stream.
+- Within a response, `'nudge'` also stops the stream and retries via `ModelRetry`, with the nudge
+  request-scoped (counts against output retries; a stopped stream is dropped from history and its
+  tokens aren't in run usage). A handler that returns lets the response continue; it can raise `ModelRetry` to retry. Under
+  `run_stream()`, a loop found once output (text or an output tool call) has started streaming
+  can't be retried and ends the run with `UnexpectedModelBehavior`. `UsageLimits` don't see
+  stopped streams.
+- `LoopJudge(model=...)` asks a small, fast "System 1" model (not a reasoning model) on heuristic
+  suspicion, plus every `every` chars if set; failure or `timeout=5.0` falls back to the heuristic.
+  It's never asked in durable workflow code (Temporal, DBOS, Prefect), where only the heuristic runs
+  on the whole response. A custom `LoopDetector` runs in workflow code too, so keep it deterministic
+  and free of I/O. Subclass `LoopDetector` (`async detect(ctx, sample: StreamSample) ->
+  Repetition | None`) for your own methodology.
 - Emits a `loop detected` span (`detect_loops.pattern`, `.action`, `.count`, `.window`,
-  `.tool_names`; `.fingerprints` only with `trace_include_content`); no arguments or results.
+  `.tool_names`; `.fingerprints` and `.passage` only with `trace_include_content`); no
+  arguments or results otherwise. A failed judge emits `loop judge failed`
+  (`error.type`). A `model=` judge isn't instrumented; its usage is added to the run's.
 
 ## RefineOutput
 
