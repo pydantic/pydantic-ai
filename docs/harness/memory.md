@@ -159,6 +159,8 @@ async def build_memory() -> tuple[Memory[None], asyncpg.Pool]:
 
 Call `build_memory` during application startup and close the returned pool during shutdown. The store does not manage it.
 
+When the store creates its table, it also creates an index on `path COLLATE "C"`, the binary collation its prefix filters compare in, so listing and searching a scope reads only that scope's rows under any database collation. A table created by an earlier release does not get it automatically, because building an index blocks writes to the table until it finishes. Create it without blocking writes with `CREATE INDEX CONCURRENTLY {table}_path_idx ON {table} (path COLLATE "C")`.
+
 ## Namespaces
 
 Use a namespace resolver when one `Agent` serves multiple users. It runs once per run from your typed dependencies, and its result is hidden from the model-facing tool schema.
@@ -290,7 +292,7 @@ agent = Agent(
 
 The bundled stores implement `SearchableMemoryStore`. A store counts as searchable when it has a `search` method, so a custom store's `search` must take the arguments `SearchableMemoryStore.search` declares. For a custom store that implements only `MemoryStore`, `search_memory` requests at most `max_search_files + 1` paths, scans at most `max_search_files`, and performs bounded reads. Lexical scoring uses only each scope-relative filename and its bounded content; tenant namespaces and agent names never affect relevance. Implement the optional search protocol for an indexed or semantic backend while preserving the same tenant boundary and result limits. Semantic ranking is not built in.
 
-The bundled stores search only the files directly in the run's scope and skip a deeper scope nested under it, such as namespace `acme/main` under namespace `acme`. The fallback scan for a custom store skips them too, but they still count toward the `max_search_files + 1` paths it requests.
+The bundled stores search and list only the files directly in the run's scope and skip a deeper scope nested under it, such as namespace `acme/main` under namespace `acme`, so its files do not fill the injected file list or a search's file limit. They implement `ChildListingMemoryStore`, whose `list_child_paths` returns only the paths with no `/` after the prefix. A custom store opts in by implementing it, and `Memory` then uses it for the injected file list and the fallback scan. Without it, both use `list_paths`, so a nested scope's files count toward the paths they request. A subclass of a bundled store that overrides `list_paths` should override `list_child_paths` as well.
 
 Scoring runs on the event loop and yields after each file, so a scan near the limits slows that search without stalling other runs in the process.
 

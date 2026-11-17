@@ -297,6 +297,7 @@ orchestrator = Agent(
 |---|---|
 | `delegate_task(agent_name, task, background=False, resume=None)` | Start a task, or resume a finished one with its task ID. `background=True` returns a receipt right away. |
 | `list_tasks()` | The tasks this run started and the tasks they started, with status and IDs (the 50 most relevant). |
+| `check_task(task_id)` | What one of those tasks is doing now, without waiting for it: its elapsed time, the model requests, last five tool calls and latest text of its current run, and any question it waits on. A finished task shows only its outcome. |
 | `message_task(task_id, message)` | Steer a running task; it reads the message, as sent, at its next model request. A task's instructions tell it its delegating agent may send it messages. |
 | `answer_task(task_id, answer)` | Answer the question a task is waiting on. |
 | `cancel_task(task_id, force=False)` | Stop a task before its next model request, or right away with `force=True`, together with the tasks it started. |
@@ -307,7 +308,7 @@ orchestrator = Agent(
 - **Who controls a task.** Only the run that started a task can message, answer, or resume it. Any run above it can cancel it.
 - **Each run gets an owner.** When no `DelegationTasks` is bound, `SubAgents` opens one for the run and cancels the tasks still running when the run ends. Delegations then follow the owner's rules in [Managed delegation sessions](#managed-delegation-sessions), including how a delegate's `usage_limits` apply. Another agent's run that one of the run's tools starts is not a task, and doesn't share the owner. Bind your own owner to keep tasks across runs, persist them, and observe them.
 - Only one `SubAgents` on an agent can set `task_control`. The deprecated wrapper agents, such as `TemporalAgent`, give a run no durability capability, so the checks below can't catch them; don't use task control or `dynamic_agents` with them.
-- On Temporal and DBOS, task control keeps the tasks in the workflow and runs each in a durable unit of its own, so recovery replays a background task's events and reuses its result. On replay, a task sent to the background on request can get its `TaskBackgroundedEvent` after it settles. A durable task can't ask questions, take messages, or be resumed, `cancel_task` stops it right away, and its report reaches the model when the run would otherwise end, not at its next request. On DBOS, a replayed `list_tasks` can show a task's status as of a different moment. Under durable execution, these raise a `UserError`:
+- On Temporal and DBOS, task control keeps the tasks in the workflow and runs each in a durable unit of its own, so recovery replays a background task's events and reuses its result. On replay, a task sent to the background on request can get its `TaskBackgroundedEvent` after it settles. A durable task can't ask questions, take messages, or be resumed, `cancel_task` stops it right away, and its report reaches the model when the run would otherwise end, not at its next request. On DBOS, a replayed `list_tasks` can show a task's status as of a different moment. A durable task's history is not updated while it runs, so `check_task` shows only its status and elapsed time. Under durable execution, these raise a `UserError`:
     - task control with `include_self`, `remote_agents` or `forward_events`
     - task control with `auto_background_after` or `max_running_tasks` outside Temporal
     - task control or `dynamic_agents` on another durable engine, or within a bound `DelegationTasks` owner
@@ -514,6 +515,16 @@ with its history, and after that the task in `records` has empty `messages`.
 thread, as `anyio.to_thread.run_sync(owner.history, task_id)`), and a resume loads it
 back. To copy a settled task with its history, use
 `replace(task, messages=owner.history(task.id))`.
+`snapshot(task_id)` returns a `DelegationSnapshot` of a running task, read from its live
+history without waiting on it: status, `elapsed_seconds`, the `usage` of its current run's model
+responses, its `recent_tool_calls` as `DelegationToolCall`s, and its `latest_text` and
+`pending_question`, both cut at `MAX_EVENT_TEXT_CHARS`. The child's final result is left out, so
+a snapshot doesn't show a result before `TaskCompletedEvent` listeners process it. A host can
+render a task list or status line from it, for example on each `DelegationTaskEvent`. `usage` is
+`None`, with no tool calls or text, when the owner doesn't see the run's history as it streams:
+before the child's first model request, for a remote task (its history stays on its worker) or a
+durable one, and once the task settles (its history is in its file). `check_task` gives the model
+the same view.
 Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
 child's latest frontier. Loading an interrupted record never executes its tools.
 Inspect possible partial effects before an explicit resume. A resume closes out tool

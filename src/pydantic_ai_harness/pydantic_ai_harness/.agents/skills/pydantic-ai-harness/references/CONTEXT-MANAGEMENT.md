@@ -19,6 +19,7 @@ tool-return pairs intact, and their edits persist into the run's message history
 | Some old tool results are still needed verbatim, others are dead weight | `RelevanceCompaction` (a judge model ranks each older step) |
 | Summarization can fail (API error) and the run must survive | `FallbackCompaction` |
 | The model knows when a phase of work ends and should compact then | `CompactOnRequest` |
+| A fresh tool result is junk the model should stop re-reading | `PruneToolResults` |
 | One runaway response or tool-call arg blows the cap | `ClampOversizedMessages` |
 | Model should wrap up rather than have history rewritten | `WarnNearLimits` |
 | UI needs a live "context: 73%" gauge | `ReportContextUsage` |
@@ -52,7 +53,8 @@ agent without a reason: both rewrite history.
   only when the window cannot be resolved. `TestModel` never resolves, so `max_fraction=0.9` means
   a 180,000-token trigger in tests: set `context_window=` there.
 - Token counts anchor on the last response's provider usage, then estimate the suffix with
-  `tokenizer=` or ~4 chars per token.
+  `tokenizer=` or a text estimate: ~4 chars per token for prose, more for non-ASCII text, base64
+  and compact JSON.
 - `keep_tokens=` is measured per message with provider usage too (`estimate_message_tokens`):
   responses count their `output_tokens`, including thinking returned without text.
 - A positive `keep_tokens` is a minimum, not a cap: `SlidingWindowCompaction` and
@@ -244,6 +246,16 @@ agent = Agent(
 )
 ```
 
+### `PruneToolResults`
+
+`PruneToolResults(placeholder='[tool result pruned]')`: adds a `prune_tool_result(tool_call_id, summary)`
+tool. Once a call is accepted, the named result's content becomes `placeholder` plus the summary,
+persisted in history. Only results the latest response answered can be pruned; an unknown or older
+ID, a typed result `ClearToolResults` also keeps, or a summary not shorter than the result is
+refused in the tool return. Token triggers and `ReportContextUsage` anchor on the latest response's
+usage, which still counts the result until the next response. The span gets
+`compaction.model_requested`.
+
 ## Observe instead of edit: WarnNearLimits and ReportContextUsage
 
 `WarnNearLimits(max_iterations=None, max_context_tokens=None, max_total_tokens=None, warn_on=None, warning_threshold=0.7, critical_remaining_iterations=3, *, max_context_fraction=None)`
@@ -307,7 +319,7 @@ capability to see post-compaction usage, before it to see what triggered compact
 - `await compact_now(strategy, history, model=..., focus=..., conversation_id=...)` (plus `deps=` for typed deps) runs a
   strategy between runs (for a `/compact` command). It applies no trigger of its own.
 
-Every rewrite (clear, dedupe, clamp, summarize) busts the provider prompt cache from the edit
+Every rewrite (clear, prune, dedupe, clamp, summarize) busts the provider prompt cache from the edit
 point onward.
 
 ## ToolOutputLimits

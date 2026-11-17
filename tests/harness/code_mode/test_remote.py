@@ -24,6 +24,7 @@ from pydantic_monty import (
     AsyncMontySession,
     AsyncSnapshot,
     ExternalSettledResult,
+    MontyError,
     MontyRefusedError,
     MountDir,
 )
@@ -167,7 +168,7 @@ async def test_dial_failure_reaches_caller() -> None:
     """Dial errors reach the caller unchanged, without adding a credential-bearing model retry."""
     agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox='http://alice:hunter2@127.0.0.1:1')])
 
-    with capture_run_messages() as messages, pytest.raises(RuntimeError):
+    with capture_run_messages() as messages, pytest.raises((RuntimeError, MontyError)):
         await agent.run('dial a dead worker')
     assert _retries(messages) == []
     assert 'hunter2' not in str(messages)
