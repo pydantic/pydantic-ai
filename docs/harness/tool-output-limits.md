@@ -292,11 +292,11 @@ multi-byte UTF-8 character cut at either edge of the slice, and any byte of a bi
 not UTF-8, renders as U+FFFD. `pattern` filters lines, so combining it with `unit='bytes'` asks
 the model to retry.
 
-Both tools cap their output at 50,000 characters. A search stops before the line that would cross
-the cap, so the continuation `offset` in its header picks up at the first match it did not show.
-When a line read crosses the cap, or a single line is longer than it, the header says how many
-characters were omitted and how to get them: read fewer lines, or read the long line with
-`unit='bytes'`.
+Both tools cap their output at 50,000 characters. They stop before the line that would cross the
+cap, and the header gives the `offset` of the next line (a read) or the next match (a search). A
+search drops leading context rather than its first match, so every page makes progress. A single
+line longer than the cap is cut, and the header gives the byte offset its rest starts at, to read
+with `unit='bytes'`.
 
 Both tools are recognized by kind (`READ_TOOL_RESULT_KIND`, `GREP_TOOL_RESULT_KIND`), not name, and
 their returns are exempt from reduction. They emit no spans of their own: core's tool spans cover

@@ -101,12 +101,24 @@ class TestGrepToolResult:
             ': 300 matching line(s); showing 200, 100 more; continue with offset=200]'
         )
 
-    async def test_long_line_cut_by_the_cap_names_what_was_omitted(self, tmp_path: Path) -> None:
-        out = await _query(tmp_path, 'x' * 60_000, GREP_TOOL_NAME, {'pattern': 'x'})
-        assert out.split('\n', 1)[0].endswith(
-            ': 1 matching line(s); showing 1, output capped at 50,000 chars with 10,002 omitted; '
-            "read the rest of a long line with read_tool_result's unit='bytes']"
+    async def test_long_match_cut_by_the_cap_gives_its_byte_offset(self, tmp_path: Path) -> None:
+        out = await _query(tmp_path, 'é\n' + 'x' * 60_000, GREP_TOOL_NAME, {'pattern': 'x'})
+        header, body = out.split('\n', 1)
+        assert header.endswith(
+            ": 1 matching line(s); showing 1, output capped at 50,000 chars; the cut line continues at unit='bytes', offset=50001]"
         )
+        assert len(body) == 50_000 and body.startswith('2:x')
+
+    async def test_long_context_before_the_first_match_is_dropped(self, tmp_path: Path) -> None:
+        payload = '\n'.join(['a' * 30_000, 'b' * 30_000, 'hit ' + 'c' * 30_000, 'after'])
+        out = await _query(tmp_path, payload, GREP_TOOL_NAME, {'pattern': 'hit'})
+        header, body = out.split('\n', 1)
+        assert header.endswith(': 1 matching line(s); showing 1]')
+        assert body.startswith('3:hit ') and body.endswith('\n4-after')
+        out = await _query(
+            tmp_path, '\n'.join(['a' * 30_000, 'hit ' + 'c' * 30_000]), GREP_TOOL_NAME, {'pattern': 'hit'}
+        )
+        assert out.split('\n', 1)[1] == '2:hit ' + 'c' * 30_000
 
     async def test_cap_stops_at_whole_lines_and_continues_from_there(self, tmp_path: Path) -> None:
         payload = '\n'.join(f'hit {i} ' + 'x' * 5_000 for i in range(25))
@@ -182,9 +194,25 @@ class TestReadToolResultBytes:
         out = await _query(tmp_path, _LOG, READ_TOOL_NAME, {'unit': 'bytes', 'pattern': 'ERROR'})
         assert out == "retry: `pattern` filters lines, so it cannot be combined with `unit='bytes'`."
 
-    async def test_capped_line_read_names_the_recovery(self, tmp_path: Path) -> None:
-        out = await _query(tmp_path, 'x' * 60_000, READ_TOOL_NAME, {})
-        assert out.split('\n', 1)[0].endswith(
-            ': 1 matching line(s); showing 1, output capped at 50,000 chars with 10,000 omitted; '
-            "read fewer lines, or long lines with unit='bytes']"
+
+class TestReadToolResultCap:
+    async def test_cut_line_continues_at_the_reported_byte_offset(self, tmp_path: Path) -> None:
+        payload = 'short\r\n' + 'x' * 50_000 + 'TAIL\nnext'
+        out = await _query(tmp_path, payload, READ_TOOL_NAME, {'offset': 1})
+        header, body = out.split('\n', 1)
+        assert header.endswith(
+            ": 3 matching line(s); showing 1, output capped at 50,000 chars; the cut line continues at unit='bytes', "
+            'offset=50007; the next line is at offset=2, from_end=False]'
         )
+        assert body == 'x' * 50_000
+        rest = await _query(tmp_path, payload, READ_TOOL_NAME, {'unit': 'bytes', 'offset': 50_007, 'limit': 4})
+        assert rest.endswith(': bytes 50007-50011 of 50016 (end exclusive)]\nTAIL')
+
+    async def test_stops_before_a_line_that_would_cross_the_cap(self, tmp_path: Path) -> None:
+        payload = '\n'.join(['a' * 30_000, 'b' * 30_000, 'c'])
+        out = await _query(tmp_path, payload, READ_TOOL_NAME, {'limit': 3, 'from_end': True})
+        header, body = out.split('\n', 1)
+        assert header.endswith(
+            ': 3 matching line(s); showing 1, output capped at 50,000 chars; the next line is at offset=1, from_end=False]'
+        )
+        assert body == 'a' * 30_000
