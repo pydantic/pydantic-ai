@@ -8,6 +8,7 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Annotated, Any, get_args, overload
+from weakref import WeakValueDictionary
 
 from pydantic import Field
 
@@ -38,7 +39,7 @@ from pydantic_ai_harness.skills._loader import (
     same_skill,
     skip_duplicate_name,
 )
-from pydantic_ai_harness.skills._toolset import UntrustedSkillsToolset
+from pydantic_ai_harness.skills._toolset import UntrustedSkills, UntrustedSkillsToolset
 
 _MAX_DESCRIPTION_LENGTH = 1024
 _MAX_READ_CHARS = 50_000
@@ -172,6 +173,12 @@ class Skills(AbstractCapability[AgentDepsT]):
     _offers_untrusted: bool | None = field(default=None, init=False, repr=False, compare=False)
     """Whether this run's copy offers skills below `'operator'` authority; `None` outside a run."""
 
+    _lowered_names: frozenset[str] | None = field(default=None, init=False, repr=False, compare=False)
+    """The skills below `'operator'` authority this run's copy offers, as `for_run` found them; `None` outside a run."""
+
+    _runs: WeakValueDictionary[str, Skills[AgentDepsT]] = field(init=False, repr=False, compare=False)
+    """Each live run's copy by run ID, shared with the copies, so the shared toolset finds the run's lowered names."""
+
     @overload
     def __init__(  # pragma: no cover - overload is enforced by static type checking
         self,
@@ -281,6 +288,7 @@ class Skills(AbstractCapability[AgentDepsT]):
             ),
         )
         self._toolset = self._build_toolset()
+        self._runs = WeakValueDictionary()
 
     @classmethod
     def from_spec(
@@ -441,9 +449,11 @@ class Skills(AbstractCapability[AgentDepsT]):
             require_workspace(ctx.workspace, 'Skills', ctx.messages)
         entries, skipped = await self._read(ctx.workspace)
         self._report_skipped(ctx, entries, skipped)
-        return self._offer(entries, await _lowered(entries))
+        return self._offer(entries, await _lowered(entries), ctx.run_id)
 
-    def _offer(self, entries: dict[str, _Entry], lowered: frozenset[str]) -> AbstractCapability[AgentDepsT]:
+    def _offer(
+        self, entries: dict[str, _Entry], lowered: frozenset[str], run_id: str | None
+    ) -> AbstractCapability[AgentDepsT]:
         """One deferred capability per `'operator'` skill, plus this capability's run copy for the `lowered` ones."""
         invocable = [entry for entry in entries.values() if entry.skill.model_invocable]
         trusted = [entry for entry in invocable if entry.skill.name not in lowered]
@@ -455,6 +465,9 @@ class Skills(AbstractCapability[AgentDepsT]):
             return CombinedCapability(offered)
         run = replace_no_init(self)
         run._offers_untrusted = True
+        run._lowered_names = frozenset(entry.skill.name for entry in invocable if entry.skill.name in lowered)
+        if run_id is not None:
+            self._runs[run_id] = run
         if any(entry.skill.name == self.id for entry in trusted):
             # An `'operator'` skill can be named like this capability's id; without one, the copy doesn't clash with it.
             run.id = None
@@ -489,12 +502,28 @@ class Skills(AbstractCapability[AgentDepsT]):
         """Point at `list_skills` in a run that has skills below `'operator'` authority."""
         return _UNTRUSTED_SKILLS_NOTE if self._offers_untrusted else None
 
-    async def _untrusted_skills(self, ctx: RunContext[AgentDepsT]) -> list[SkillDefinition]:
-        """The lowered skills, read again for a `list_skills` or `load_skill` call, reporting skips as `for_run` does."""
-        entries, skipped = await self._read(ctx.workspace)
-        self._report_skipped(ctx, entries, skipped)
+    async def _untrusted_skills(self, ctx: RunContext[AgentDepsT]) -> UntrustedSkills:
+        """The lowered skills, read again for a `list_skills` or `load_skill` call, and what that read skipped.
+
+        Only the skills `for_run` found below `'operator'` are read again. `for_run` already warned about skips, so
+        this reports them to the model instead: a warning per tool call would repeat, and turn into an error where
+        warnings are errors. Where the run's copy isn't reachable, such as in a durable engine's activity, every
+        library is read, and only the skills still below `'operator'` are offered.
+        """
+        entries, skipped = await self._read(ctx.workspace, only=self._run_lowered_names(ctx))
         lowered = await _lowered(entries)
-        return [entry.skill for name, entry in entries.items() if name in lowered and entry.skill.model_invocable]
+        return UntrustedSkills(
+            skills=[entry.skill for name, entry in entries.items() if name in lowered and entry.skill.model_invocable],
+            skipped=[entry.message for entry in skipped],
+        )
+
+    def _run_lowered_names(self, ctx: RunContext[AgentDepsT]) -> frozenset[str] | None:
+        """The lowered skill names this run's copy of this capability found at the start of the run, if it's here."""
+        if self._lowered_names is not None:
+            return self._lowered_names
+        # The shared toolset calls the instance that built it, which keeps each live run's copy.
+        run = self._runs.get(ctx.run_id) if ctx.run_id is not None else None
+        return None if run is None else run._lowered_names
 
     def _report_skipped(
         self, ctx: RunContext[AgentDepsT], entries: dict[str, _Entry], skipped: tuple[SkippedSkill, ...]
@@ -517,7 +546,10 @@ class Skills(AbstractCapability[AgentDepsT]):
         entries, skipped = await self._read(run_workspace)
         return SkillCatalog(skills=tuple(entry.skill for entry in entries.values()), skipped=skipped)
 
-    async def _read(self, run_workspace: Workspace | None) -> tuple[dict[str, _Entry], tuple[SkippedSkill, ...]]:
+    async def _read(
+        self, run_workspace: Workspace | None, *, only: frozenset[str] | None = None
+    ) -> tuple[dict[str, _Entry], tuple[SkippedSkill, ...]]:
+        """The selected skills by name, and what was skipped; with `only`, just those of the selected skills."""
         # Where each name's first `SKILL.md` is, whether it was kept or flagged.
         claimed: dict[str, tuple[Workspace, str]] = {}
         by_name: dict[str, _Entry] = {}
@@ -528,11 +560,12 @@ class Skills(AbstractCapability[AgentDepsT]):
             skills, skipped = await load_skill_libraries(
                 workspace,
                 source.directories,
-                include=source.include,
+                include=_selection(source.include, only),
                 exclude=source.exclude,
                 missing_directories=source.missing_directories,
                 duplicate_names=source.duplicate_names,
-                unknown_names=source.unknown_names,
+                # A name read again need not be in every library.
+                unknown_names=source.unknown_names if only is None else 'skip',
             )
             messages.extend(skipped)
             for skill in skills:
@@ -636,6 +669,13 @@ def _flagged(scanner: ArtifactScanner | None, skill: SkillDefinition) -> Skipped
         message=f'Skipping {skill.path}: an artifact scan flagged it ({scan.summary()}).',
         scan=scan,
     )
+
+
+def _selection(include: frozenset[str] | None, only: frozenset[str] | None) -> frozenset[str] | None:
+    """The names a configuration selects, narrowed to `only` when that's given."""
+    if only is None:
+        return include
+    return only if include is None else include & only
 
 
 async def _lowered(entries: dict[str, _Entry]) -> frozenset[str]:

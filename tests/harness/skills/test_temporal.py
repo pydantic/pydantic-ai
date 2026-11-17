@@ -212,7 +212,7 @@ async def test_untrusted_skills_tools_run_as_activities(client: Client) -> None:
 
     directory = (WORK / 'skills' / 'reviewer').resolve()
     assert output == (
-        "{'reviewer': 'Review changes.'}\n---\n"
+        "{'skills': {'reviewer': 'Review changes.'}}\n---\n"
         f'# Skill: reviewer\n\nSkill directory: `{directory}`. Relative paths in this skill resolve against it.'
         '\n\nCheck the tests.'
     )
