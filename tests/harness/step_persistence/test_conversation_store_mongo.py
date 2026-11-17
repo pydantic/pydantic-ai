@@ -79,6 +79,18 @@ def test_needs_exactly_one_of_client_or_db_url_and_a_database(monkeypatch: pytes
         MongoConversationStore(client=_mock_client(monkeypatch))
 
 
+async def test_a_store_leaves_a_client_it_was_given_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _mock_client(monkeypatch)
+    store = MongoConversationStore(client=client, database='t', media_store=None)
+    await store.aclose()
+
+    # The caller still owns the client, so another store can keep using it.
+    other = MongoConversationStore(client=client, database='t', media_store=None)
+    conversation = Conversation()
+    await other.save(conversation)
+    assert await other.load(conversation.conversation_id) == conversation
+
+
 async def test_a_store_closes_only_the_client_it_created() -> None:
     # Building a client touches the filesystem; users build stores outside the event loop.
     store = await anyio.to_thread.run_sync(

@@ -10,7 +10,6 @@ import dataclasses
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 import anyio
 import pytest
@@ -209,8 +208,8 @@ class ConversationStoreContract:
             )
             await store.write_record(record, expected_revision=None)
 
-        async def listed(**kwargs: Any) -> list[str]:
-            return [record.conversation_id for record in await store.list_conversations(**kwargs)]
+        async def listed(*, scope: str | None = None, limit: int | None = None) -> list[str]:
+            return [record.conversation_id for record in await store.list_conversations(scope=scope, limit=limit)]
 
         assert await listed() == ['d', 'c', 'b', 'a']
         assert await listed(scope='user-1') == ['d', 'c', 'a']
@@ -326,7 +325,7 @@ class ConversationStoreContract:
         messages = [_prompt('one'), ModelResponse(parts=[TextPart('two')]), _prompt('three')]
         record = await _saved(backend.store, Conversation(messages=messages))
 
-        async def last(limit: int | None) -> list[Any]:
+        async def last(limit: int | None) -> list[ModelMessage]:
             return [entry.message for entry in await backend.store.read_history(record.head_id, limit=limit)]
 
         assert await last(None) == messages
