@@ -138,6 +138,7 @@ RUNNABLE_HARNESS_PAGES = frozenset(
         'detect-loops.md',
         'memory.md',
         'permissions.md',
+        'tool-budgets.md',
     }
 )
 """`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""

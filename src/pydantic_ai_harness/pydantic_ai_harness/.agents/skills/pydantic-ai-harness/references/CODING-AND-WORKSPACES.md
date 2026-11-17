@@ -14,7 +14,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | General coding agent: investigate, edit, test, delegate | `Coder()` + a workspace |
 | Narrower agent: file tools and/or commands with policy (allowlists, patterns, read-only) | `FileSystem()` and/or `Shell()` + a workspace |
 | Files and commands start in a specific directory | `LocalWorkspace('./repo')`, or `working_dir=` on a sandbox |
-| Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `RenderSandbox()` / `SpritesSandbox()` / `DaytonaSandbox()` / `BoxdSandbox()`; tool capabilities stay the same |
+| Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `RenderSandbox()` / `SpritesSandbox()` / `DaytonaSandbox()` / `BoxdSandbox()`; tool capabilities stay the same. For a repo the operator didn't write, add `authority='none'` (every sandbox and `SSHWorkspace` takes `authority` and `path_authority`, like `LocalWorkspace`) |
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | A disposable environment on this machine with Docker or Podman, not a security boundary | `DockerContainer(image='python:3.13-slim')`: a local container on your kernel |
@@ -633,6 +633,11 @@ applies to its subtree, the deeper file wins, and the user's direct instructions
 inlined notes still in history, so a compaction frees room: a file that would go past it becomes a pointer;
 `None` removes the cap. It doesn't apply with
 `nested_inject='pointer'`.
+
+To pin files a user accepted (instruction files, `SKILL.md`, sub-agent definitions), record
+`file_digest(workspace, path)` at acceptance and pass the digests to
+`await pin_accepted_files(workspace, accepted, changed='none')` (both from `pydantic_ai_harness.repo_context`)
+before each run: a changed file is capped at `changed` in `authority_of` until its new digest is recorded.
 
 ## Macroscope
 

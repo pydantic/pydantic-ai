@@ -346,8 +346,9 @@ security does not come from per-instance isolation:
   foreign-owned root raises `PermissionError`; for a write, the band's `then` fallback runs.
   Windows has no uid, so it uses the unsuffixed `pyai_harness_overflow` root and skips the
   ownership check.
-- `read` resolves the target and rejects any path that escapes the root. Handle segments are
-  sanitized so a crafted handle cannot traverse out.
+- `read` and `write` resolve the target, following symlinks, and reject any path that escapes
+  the root. `write` checks before it creates a directory, and a refused write runs the band's
+  `then` fallback. Handle segments are sanitized so a crafted handle cannot traverse out.
 
 Set `cleanup_after` to delete spills older than that age.
 
