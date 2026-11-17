@@ -234,7 +234,12 @@ def _ws_cassette(
     cassette = RealtimeCassette.load(path) if plan == 'replay' else RealtimeCassette()
     try:
         hold_open = request.node.get_closest_marker('realtime_ws_hold_open') is not None  # pyright: ignore[reportUnknownMemberType]
-        with patched_ws_connect(provider, cassette, plan, hold_open=hold_open):
+        unsent_heartbeat = request.node.get_closest_marker('realtime_ws_unsent_heartbeat')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if isinstance(unsent_heartbeat, pytest.Mark):
+            assert unsent_heartbeat.kwargs.get('reason'), '`realtime_ws_unsent_heartbeat` requires `reason=...`'
+        with patched_ws_connect(
+            provider, cassette, plan, hold_open=hold_open, unsent_heartbeat=unsent_heartbeat is not None
+        ):
             yield cassette
     finally:
         # Persist recorded frames even if later assertions fail, so cassettes can be recorded first

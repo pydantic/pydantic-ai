@@ -348,7 +348,8 @@ class ModelProfile(TypedDict, total=False):
 
     DeepSeek's V4 models, for example, only accept forcing while thinking is off. When False and the request
     thinks, a forced tool choice is handled as if `supports_forced_tool_choice` were False. Whether the request
-    thinks accounts for `thinking_enabled_by_default`.
+    thinks accounts for `thinking_enabled_by_default`. On OpenRouter routes other than Anthropic's, which return a
+    400 for it, an explicit forcing raises a `ModelRequestRejectedError` instead of a `UserError`.
     """
 
     forced_tool_choice_disables_thinking: bool
@@ -453,6 +454,18 @@ class ModelProfile(TypedDict, total=False):
     Supported by [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and
     [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], and set by the
     [Bedrock Mantle](../models/bedrock.md) provider for the GPT-5 models it serves on the Responses API.
+    """
+
+    rejects_unpaired_tool_calls: bool
+    """Whether the API rejects a tool call that has no result, or a tool result that names no call. Default: `False`.
+
+    When set, `Model.prepare_messages` pairs the history it translates from another provider's native tool search: a
+    translated `search_tools` result whose ID names no call takes the ID of the oldest call in its response still
+    waiting for one, and a translated call that has no result gets a synthesized interrupted result. It doesn't touch
+    other unanswered tool calls, which the repair every agent run makes already handles. Set by
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], and by
+    [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] for the `AsyncAnthropic` client. See
+    [Configuring `ToolSearch`](../tools-advanced.md#configuring-toolsearch).
     """
 
     tool_deferral_mode: ToolDeferralMode | None

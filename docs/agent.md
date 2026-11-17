@@ -1160,9 +1160,22 @@ A run that reaches its `request_limit` raises instead of returning output, even 
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, RunContext, SystemPromptPart, ToolDefinition, UsageLimits
+from pydantic_ai import (
+    Agent,
+    InstructionCapabilityPart,
+    OperatorSource,
+    OperatorText,
+    RunContext,
+    ToolDefinition,
+    UsageLimits,
+)
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
+
+
+@dataclass(kw_only=True)
+class WrapUpPart(InstructionCapabilityPart, namespace='wrap_up'):
+    pass
 
 
 def requests_left(ctx: RunContext[Any]) -> int | None:
@@ -1182,9 +1195,12 @@ class WrapUpNearRequestLimit(AbstractCapability[Any]):
         left = requests_left(ctx)
         if left is not None and left <= self.warn_at:
             ctx.enqueue(  # (2)!
-                SystemPromptPart(
-                    f'{left} model request(s) left in this run: '
-                    'produce your final output now, using what you have.',
+                WrapUpPart(
+                    content=OperatorText(
+                        f'{left} model request(s) left in this run: '
+                        'produce your final output now, using what you have.'
+                    ),
+                    source=OperatorSource(),
                     scope='request',
                 )
             )
@@ -1214,7 +1230,7 @@ async def main():
 ```
 
 1. A request is counted when its response arrives, so `ctx.usage.requests` doesn't include the request being prepared, and `left` is `1` on the last request the limit allows. With no `usage_limits`, a run gets the default [`UsageLimits`][pydantic_ai.usage.UsageLimits], whose `request_limit` is 50.
-2. A [request-scoped prompt](message-history.md#request-scoped-system-prompts) is shown to the model with this request only, so each request sees the current count and the prompt cache survives the changing text.
+2. A [capability part](capabilities/custom.md#capability-parts) in the system voice, [request-scoped](message-history.md#request-scoped-system-prompts): it's shown to the model with this request only, so each request sees the current count and the prompt cache survives the changing text.
 3. [`prepare_tools`](capabilities/custom.md#tool-preparation) receives function tools only. Output tools stay available, so an agent with a structured `output_type` can still call its output tool, and one with text output answers in text.
 
 If the model's last output fails validation, no request is left for the retry and the run still raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded].
@@ -1240,7 +1256,7 @@ except UsageLimitExceeded as e:
     """
 ```
 
-By default the limit is checked against the provider-reported input tokens after the response, so the oversized request is still sent and billed (matching `input_tokens_limit`). Set `count_tokens_before_request=True` to run a token-counting pass and enforce the limit before the request is sent.
+By default the limit is checked against the provider-reported input tokens after the response, so the oversized request is still sent and billed (matching `input_tokens_limit`). Set `count_tokens_before_request=True` to run a token-counting pass and enforce the limit before the request is sent. Under [durable execution](durable_execution/overview.md), the count runs in a durable unit of its own ahead of the request, so a recovered run reuses the recorded count instead of counting again.
 
 ##### Capping run cost
 

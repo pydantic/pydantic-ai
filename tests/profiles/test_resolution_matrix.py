@@ -79,7 +79,11 @@ with try_import() as google_imports:
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as groq_imports:
-    from pydantic_ai.providers.groq import GroqProvider
+    from pydantic_ai.providers.groq import (
+        GroqProvider,
+        _GroqQwenBestEffortOutputJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+        _GroqQwenStrictOutputJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    )
 
 with try_import() as huggingface_imports:
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
@@ -178,6 +182,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_supports_encrypted_reasoning_content': False,
     'openai_supports_reasoning': False,
     'openai_supports_reasoning_effort_none': False,
+    'openai_chat_function_tools_require_reasoning_off': False,
     'openai_supports_minimal_reasoning_effort': True,
     'openai_responses_supports_reasoning_mode': False,
     'openai_responses_supports_reasoning_context': False,
@@ -410,6 +415,7 @@ def test_openai_gpt_5_4():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'rejects_unpaired_tool_calls': True,
         }
     )
 
@@ -468,6 +474,7 @@ def test_openai_gpt_5_6():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'rejects_unpaired_tool_calls': True,
         }
     )
 
@@ -516,6 +523,8 @@ def test_openai_gpt_6_astra():
             'supports_mid_conversation_effort': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'openai_chat_function_tools_require_reasoning_off': True,
+            'rejects_unpaired_tool_calls': True,
         }
     )
 
@@ -528,13 +537,18 @@ def test_openai_gpt_6_astra():
 def test_openai_gpt_6_sol_luna(model_name: str):
     """Pin GPT-6 Sol/Luna capabilities for base names and future dated snapshots.
 
-    They match GPT-5.6 Sol, plus the GPT-6 `configuration_update` item that changes effort mid-conversation.
+    They match GPT-5.6 Sol, plus the GPT-6 `configuration_update` item that changes effort mid-conversation and the
+    flag for Chat Completions rejecting tools while reasoning is on.
     """
 
     profile = OpenAIProvider.model_profile(model_name)
     gpt_5_6 = _normalize(OpenAIProvider.model_profile('gpt-5.6-sol'))
     assert gpt_5_6 is not None
-    assert _normalize(profile) == {**gpt_5_6, 'supports_mid_conversation_effort': True}
+    assert _normalize(profile) == {
+        **gpt_5_6,
+        'supports_mid_conversation_effort': True,
+        'openai_chat_function_tools_require_reasoning_off': True,
+    }
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -668,6 +682,7 @@ def test_openai_gpt_4o():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'rejects_unpaired_tool_calls': True,
         }
     )
 
@@ -701,6 +716,7 @@ def test_openai_o3_mini():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'rejects_unpaired_tool_calls': True,
         }
     )
 
@@ -744,6 +760,7 @@ def test_openai_codex_gpt_5_6():
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
             'tool_deferral_mode': 'with_tool_search',
+            'rejects_unpaired_tool_calls': True,
         }
     )
 
@@ -2393,7 +2410,9 @@ def test_groq_moonshotai_kimi():
 
 @pytest.mark.skipif(not groq_imports(), reason='groq not installed')
 def test_groq_meta_llama4_maverick():
-    """Special-cased Llama 4 Maverick gets `supports_json_object_output=True` overlay."""
+    """Unprefixed Llama 4 Maverick resolves through the generic Meta profile, not the `meta-llama/` overlay.
+
+    JSON mode is provider-wide."""
     profile = GroqProvider.model_profile('llama-4-maverick-17b-128e-instruct')
     assert _normalize(profile) == snapshot(
         {
@@ -2404,13 +2423,16 @@ def test_groq_meta_llama4_maverick():
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'may_tokenize_special_tokens_in_content': True,
+            'supports_json_object_output': True,
         }
     )
 
 
 @pytest.mark.skipif(not groq_imports(), reason='groq not installed')
 def test_groq_meta_llama3_no_overlay():
-    """Older Llama models don't get the structured-output overlay."""
+    """Older Llama models don't get the structured-output overlay.
+
+    JSON mode is provider-wide."""
     profile = GroqProvider.model_profile('llama-3.3-70b-versatile')
     assert _normalize(profile) == snapshot(
         {
@@ -2419,6 +2441,7 @@ def test_groq_meta_llama3_no_overlay():
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'may_tokenize_special_tokens_in_content': True,
+            'supports_json_object_output': True,
         }
     )
 
@@ -2435,6 +2458,7 @@ def test_groq_deepseek():
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
             'may_tokenize_special_tokens_in_content': True,
+            'supports_json_object_output': True,
         }
     )
 
@@ -2458,6 +2482,80 @@ def test_groq_gpt_oss():
             'default_framing_announcement': 'always',
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_qwen3_8():
+    """Groq serves strict JSON-schema output on qwen3.8, whose output object gets gpt-oss's strict schema
+    transformer, and its reasoning can be turned off."""
+    profile = GroqProvider.model_profile('qwen/qwen3.8-27b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': _GroqQwenStrictOutputJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'groq_supports_reasoning_disable': True,
+            'groq_supports_graded_reasoning_effort': False,
+            'supports_json_object_output': True,
+            'supports_json_schema_output': True,
+            'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_qwen3_6():
+    """Groq serves best-effort JSON-schema output on qwen3.6, which its structured-outputs docs don't list for strict mode."""
+    profile = GroqProvider.model_profile('qwen/qwen3.6-27b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': _GroqQwenBestEffortOutputJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'groq_supports_reasoning_disable': True,
+            'groq_supports_graded_reasoning_effort': False,
+            'supports_json_object_output': True,
+            'supports_json_schema_output': True,
+            'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_muse_spark_open():
+    """No family route; the Groq profile alone flags always-on reasoning and JSON-schema output."""
+    profile = GroqProvider.model_profile('meta-models/muse-spark-open')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': False,
+            'supports_json_object_output': True,
+            'supports_json_schema_output': True,
+            'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_minimax_m2_7():
+    """No family route; the Groq profile alone flags always-on reasoning and JSON mode, not JSON-schema output."""
+    profile = GroqProvider.model_profile('minimaxai/minimax-m2.7')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': False,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
             'may_tokenize_special_tokens_in_content': True,
         }
     )
@@ -2833,6 +2931,112 @@ def test_fireworks_gemma():
     )
 
 
+@pytest.mark.skipif(
+    not (openai_imports() and google_imports() and bedrock_imports() and huggingface_imports()),
+    reason='openai, google, bedrock or huggingface extras not installed',
+)
+def test_gemma_4_thinking_across_routes():
+    """Gemma 4's thinking flags on the Gemini API, the hosts issue #12067 names, Together and Fireworks.
+
+    The routes that map the Google family take its flags; Cerebras, Vercel and SambaNova don't map it and stay
+    unchanged.
+    """
+    profiles = {
+        'google': GoogleProvider.model_profile('gemma-4-31b-it'),
+        'ollama': OllamaProvider.model_profile('gemma4:31b'),
+        'huggingface': HuggingFaceProvider.model_profile('google/gemma-4-26B-A4B-it'),
+        'bedrock': BedrockProvider.model_profile('google.gemma-4-31b'),
+        'openai-compatible': OpenAICompatibleProvider.model_profile('google/gemma-4-31B-it'),
+        'vllm': VLLMProvider.model_profile('google/gemma-4-26B-A4B-it'),
+        'together': TogetherProvider.model_profile('google/gemma-4-31B-it'),
+        'fireworks': FireworksProvider.model_profile('accounts/fireworks/models/gemma-4-31b-it'),
+        'openrouter': OpenRouterProvider.model_profile('google/gemma-4-31b-it'),
+        'cerebras': CerebrasProvider.model_profile('gemma-4-31b'),
+        'vercel': VercelProvider.model_profile('google/gemma-4-31b-it'),
+        'sambanova': SambaNovaProvider.model_profile('gemma-4-31B-it'),
+    }
+    keys = (
+        'supports_thinking',
+        'thinking_always_enabled',
+        'google_supports_thinking_level',
+        'google_thinking_levels',
+        'google_supports_strict_tool_definition',
+    )
+    assert {
+        route: {key: profile.get(key) for key in keys if key in profile}
+        for route, profile in profiles.items()
+        if profile is not None
+    } == snapshot(
+        {
+            'google': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_thinking_levels': frozenset({'HIGH', 'MINIMAL'}),
+                'google_supports_strict_tool_definition': False,
+            },
+            'ollama': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_supports_strict_tool_definition': False,
+            },
+            'huggingface': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_thinking_levels': frozenset({'HIGH', 'MINIMAL'}),
+                'google_supports_strict_tool_definition': False,
+            },
+            'bedrock': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_thinking_levels': frozenset({'HIGH', 'MINIMAL'}),
+                'google_supports_strict_tool_definition': False,
+            },
+            'openai-compatible': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_thinking_levels': frozenset({'HIGH', 'MINIMAL'}),
+                'google_supports_strict_tool_definition': False,
+            },
+            'vllm': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_thinking_levels': frozenset({'HIGH', 'MINIMAL'}),
+                'google_supports_strict_tool_definition': False,
+            },
+            'together': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_thinking_levels': frozenset({'HIGH', 'MINIMAL'}),
+                'google_supports_strict_tool_definition': False,
+            },
+            'fireworks': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_thinking_levels': frozenset({'HIGH', 'MINIMAL'}),
+                'google_supports_strict_tool_definition': False,
+            },
+            'openrouter': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_thinking_levels': frozenset({'HIGH', 'MINIMAL'}),
+                'google_supports_strict_tool_definition': False,
+            },
+            'cerebras': {'supports_thinking': False, 'thinking_always_enabled': False},
+            'vercel': {},
+            'sambanova': {},
+        }
+    )
+
+
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_together_qwen():
     profile = TogetherProvider.model_profile('Qwen/Qwen2.5-72B-Instruct-Turbo')
@@ -3058,6 +3262,21 @@ def test_openai_compatible_vendor_family(model_name: str, expected: dict[str, An
     profile = OpenAICompatibleProvider.model_profile(model_name)
     assert _normalize(profile) == expected
     assert LiteLLMProvider.model_profile(model_name) == profile
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openai_compatible_groq_route_keeps_json_mode_unset():
+    """The `groq/` vendor route resolves `groq_model_profile`, but Groq's JSON mode for every model is set on
+    `GroqProvider` alone, so this route doesn't gain `supports_json_object_output`."""
+    profile = OpenAICompatibleProvider.model_profile('groq/llama-3.3-70b-versatile')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': False,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')

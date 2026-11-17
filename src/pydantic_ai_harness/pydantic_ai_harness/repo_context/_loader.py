@@ -179,9 +179,13 @@ def render_context_file(file: ContextFile, *, label: str) -> str:
     return f'<context-file path="{html.escape(label)}">\n{content}\n</context-file>'
 
 
-def render_context_file_path(label: str) -> str:
-    """Name a file without its contents, as an empty `<context-file>` tag with the label attribute-escaped."""
-    return f'<context-file path="{html.escape(label)}" />'
+def context_file_part_content(file: ContextFile) -> str:
+    """A nested file's text as a `ContextFilePart` holds it: as written, without trailing line terminators.
+
+    Pydantic AI sends a data part's content byte for byte: text in it that opens or closes the `<context_file>` frame, or
+    looks like one of the application's frames, gets a note saying the file's author wrote it.
+    """
+    return file.content.rstrip('\r\n')
 
 
 def render_context_files(files: Sequence[ContextFile], *, relative_to: Path) -> str:

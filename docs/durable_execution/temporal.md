@@ -273,7 +273,8 @@ listeners as they happen. Other tools run in activities and their events are not
 `CommandOutputEvent` and `CommandFinishedEvent` from `shell`
 ([#7971](https://github.com/pydantic/pydantic-ai/issues/7971)). The tools still work and return their
 results. When Temporal replays a workflow, approval listeners run again, so make their external effects
-idempotent.
+idempotent. Keep the write tools in the workflow: one moved into an activity, for example with
+`SetToolMetadata(temporal=...)`, raises `UserError` rather than writing without asking listeners.
 
 **Delegation.** `Coder`'s delegate, `self`, runs in the workflow, so the child's model requests and tools
 become activities of the same agent. A `SubAgents` whose only delegate is `self` does the same, also with a
@@ -650,6 +651,10 @@ A run's [`timeout=`](../timeouts.md#bounding-a-whole-run) works inside a workflo
 [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline] is serialized into activities, so an agent run by a tool inside an activity inherits the deadline too. The deprecated `TemporalAgent` rejects `timeout=`.
 
 The deadline bounds the agent run, not the workflow: a workflow's `execution_timeout` would end it without recording the run's history, so keep using it only as a backstop.
+
+### Counting Tokens Before a Request
+
+With [`count_tokens_before_request=True`](../agent.md#usage-limits), the token count calls the provider in an `agent__{name}__model_count_tokens` activity ahead of each model request activity, configured like the model request activities. A model that can't count raises `NotImplementedError`, and a request it can't count raises [`UserError`][pydantic_ai.exceptions.UserError], in workflow code, without the activity being retried. Any other error from the count, a subclass of `UserError` included, fails the activity as it would fail a model request activity. A history recorded by an earlier version, which counted in workflow code, replays the same way: a `workflow.patched()` marker tells the two apart.
 
 ### Suspended Turns and Background Mode
 
@@ -1029,7 +1034,7 @@ with a `UserError`.
 
 ## Activity Retries
 
-On top of the automatic retries for request failures that Temporal will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, with improper `Retry-After` handling.
+On top of the automatic retries for request failures that Temporal will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, and a retry inside the activity waits out the provider's `Retry-After` there, holding the worker, rather than as Temporal's retry delay described below.
 
 When using Temporal, it's recommended to not use [transport retries](../retries.md#transport-retries) and to turn off your provider API client's own retry logic, by setting [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0`, so the engine is the [one retry owner](../retries.md#choosing-one-retry-owner).
 

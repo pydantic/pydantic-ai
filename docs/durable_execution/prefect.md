@@ -303,6 +303,10 @@ A run's [`timeout=`](../timeouts.md#bounding-a-whole-run) works inside a flow. T
 
 The deadline bounds the agent run, not the flow. To bound the whole flow as well, set Prefect's own `timeout_seconds` on the flow.
 
+### Counting Tokens Before a Request
+
+With [`count_tokens_before_request=True`](../agent.md#usage-limits), the token count runs in its own task ahead of each model request task, configured by `model_task_config`. It's keyed on the same inputs as the model request, so a retried flow run loads the recorded count instead of calling the provider again.
+
 ### Suspended Turns and Background Mode
 
 When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request task. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first task. Size `timeout_seconds` in [Task Configuration](#task-configuration) for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation task. Prefect has no durable sleep, so the wait between polls is a plain sleep in flow code that a retried flow run sleeps again. [Batched requests](../batch.md#durable-execution) work the same way: submitting a request and each check on its batch are separate tasks.
@@ -378,6 +382,8 @@ Pydantic AI and provider API clients have their own retry logic. When using Pref
 * Rely on Prefect's task-level retry configuration for consistency
 
 This prevents requests from being retried multiple times at different layers. The layers *multiply*: see [Retry multiplication](../retries.md#retry-multiplication) for the arithmetic.
+
+Prefect doesn't wait the delay a model error asks for in its [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] (read from a provider's `Retry-After` header, for example), unlike [Temporal](temporal.md#activity-retries) and [DBOS](dbos.md#step-retries). A task's retry delay comes from its `retry_delay_seconds`, and Prefect has no way to set it for one failure, nor a durable timer to wait it with: a task waiting to retry sleeps in the flow's process. So a model request task is retried after `retry_delay_seconds` whatever the provider asked for. Size `retry_delay_seconds` for your provider's rate limits, or give the model request task no retries and let a [fallback model](../capabilities/model-fallback.md) take over.
 
 ## Run and Conversation IDs
 

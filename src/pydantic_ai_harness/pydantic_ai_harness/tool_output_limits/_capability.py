@@ -29,7 +29,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelect
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
 from pydantic_ai_harness._models import is_request_response_model
-from pydantic_ai_harness._typeguards import is_mapping, is_object_list
+from pydantic_ai_harness._typeguards import is_mapping, is_object_list, is_object_list_or_tuple
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
 from pydantic_ai_harness.file_system import READ_FILE_KIND
@@ -180,7 +180,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     """Measure band thresholds in estimated tokens instead of characters."""
 
     tokenizer: Callable[[str], int] | None = None
-    """Optional `(str) -> int` tokenizer for `over_tokens`. Defaults to a ~4-char heuristic."""
+    """Optional `(str) -> int` tokenizer for `over_tokens`. Defaults to the compaction text estimate."""
 
     store: OverflowStore | WorkspaceOverflowStore | None = None
     """Backend for spilled payloads.
@@ -212,6 +212,15 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     _bands: list[Band] = field(init=False, repr=False)
     _per_tool: dict[str, list[Band]] = field(init=False, repr=False)
     _toolset: AgentToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
+    _spilled_calls: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False, compare=False)
+    """Spill name -> the run step that first wrote it, on the per-run instance `for_run` returns.
+
+    A `tool_call_id` is only unique within one response, so a later response can reuse one. The step
+    of a name's first spill is what tells the two apart: the call that wrote it first keeps the
+    documented `run_id/tool_call_id.retry` handle, and a later call that would land on the same name
+    is parked one level down. Kept on the instance rather than read off the history, which a
+    capability such as a compaction may rewrite mid-run.
+    """
 
     def __post_init__(self) -> None:
         self._store = self.store if self.store is not None else WorkspaceOverflowStore()
@@ -260,6 +269,14 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 "to this run. Attach one, such as `LocalWorkspace('.')`, or pass `store=LocalFileOverflowStore()` "
                 'to keep spills on this machine.'
             )
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> ToolOutputLimits[AgentDepsT]:
+        """Return a copy with no spill names recorded, so runs don't share them.
+
+        A shallow copy rather than `replace`, which would rebuild the toolset that `get_toolset`
+        builds once for durable execution.
+        """
+        return replace_no_init(self, _spilled_calls={})
 
     @property
     def _spills_to_run_workspace(self) -> bool:
@@ -539,6 +556,20 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return None, None
         return await self._apply(ctx, call, then, unit)
 
+    def _handle_key(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '') -> str:
+        """Build a per-run, per-call, per-retry key so concurrent and retried calls never clash.
+
+        `suffix` keeps a return's `return_value` and `content` spills on distinct handles. A later
+        step reusing a name already spilled this run (see `_spilled_calls`) gets
+        `run_id/<step>/tool_call_id.retry` instead of the plain `run_id/tool_call_id.retry`.
+        """
+        run_id = ctx.run_id or 'run'
+        name = f'{call.tool_call_id or "call"}.{ctx.retry}{suffix}'
+        first_step = self._spilled_calls.setdefault(name, ctx.run_step)
+        if first_step == ctx.run_step:
+            return f'{run_id}/{name}'
+        return f'{run_id}/{ctx.run_step}/{name}'
+
     async def _spill(
         self,
         ctx: RunContext[AgentDepsT],
@@ -546,7 +577,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         action: Spill,
         unit: _Unit,
     ) -> tuple[str | None, str | None]:
-        key = _handle_key(ctx, call, unit.suffix)
+        key = self._handle_key(ctx, call, unit.suffix)
         # Text crosses the durable boundary as is; only binary needs base64 to travel as JSON.
         if unit.binary:
             payload = base64.b64encode(unit.data).decode('ascii')
@@ -739,34 +770,51 @@ def _log_fallback(operation: str, tool_name: str, fallback: str, exc: Exception)
     )
 
 
-def _handle_key(ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '') -> str:
-    """Build a per-run, per-call, per-retry key so concurrent and retried calls never clash.
-
-    `suffix` keeps a return's `return_value` and `content` spills on distinct handles.
-    """
-    run_id = ctx.run_id or 'run'
-    call_id = call.tool_call_id or 'call'
-    return f'{run_id}/{call_id}.{ctx.retry}{suffix}'
-
-
 def _with_handles(
     existing: object,
     value_handle: str | None,
     value_bytes: int,
     content_handle: str | None = None,
-) -> dict[str, object]:
-    """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens)."""
-    base: dict[str, object] = {}
-    if is_mapping(existing):
-        base.update({str(key): existing[key] for key in existing})
-    elif existing is not None:
-        base['original_metadata'] = existing
+) -> object:
+    """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens).
+
+    A list or tuple stays a list, with the handles appended as one dict item: that is the
+    shape the AG-UI and Vercel AI adapters read UI events and chunks from, and both skip
+    items that are not events, so wrapping it in a dict would silently drop them. A single
+    event or chunk becomes a one item list for the same reason.
+    """
+    handles: dict[str, object] = {}
     if value_handle is not None:
-        base['overflow_handle'] = value_handle
-        base['overflow_bytes'] = value_bytes
+        handles['overflow_handle'] = value_handle
+        handles['overflow_bytes'] = value_bytes
     if content_handle is not None:
-        base['overflow_content_handle'] = content_handle
-    return base
+        handles['overflow_content_handle'] = content_handle
+
+    if is_mapping(existing):
+        return {**{str(key): existing[key] for key in existing}, **handles}
+    if is_object_list_or_tuple(existing):
+        return [*existing, handles]
+    if _is_ui_event(existing):
+        return [existing, handles]
+    if existing is not None:
+        return {'original_metadata': existing, **handles}
+    return handles
+
+
+def _is_ui_event(value: object) -> bool:
+    """Whether `value` is a single AG-UI event or Vercel AI data chunk the UI adapters pass through."""
+    try:
+        from ag_ui.core import BaseEvent
+    except ImportError:
+        pass
+    else:
+        if isinstance(value, BaseEvent):
+            return True
+    try:
+        from pydantic_ai.ui.vercel_ai._utils import DATA_CHUNK_TYPES
+    except ImportError:  # pragma: no cover
+        return False
+    return isinstance(value, DATA_CHUNK_TYPES)
 
 
 def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool, read_hint: str) -> str:

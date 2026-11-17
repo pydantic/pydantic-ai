@@ -16,7 +16,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, Self, assert_never, cast, overload
 
 import anyio
-from httpx2 import URL as HTTPX2URL, Timeout as HTTPX2Timeout
+from httpx2 import URL as HTTPX2URL, HTTPStatusError, Timeout as HTTPX2Timeout
 from openai import (
     NOT_GIVEN,
     APIConnectionError,
@@ -169,6 +169,7 @@ from ._errors import (
     map_api_errors,
     map_connection_error,
     map_status_error,
+    map_transport_status_error,
     response_error,
     response_error_type,
     status_error,
@@ -309,6 +310,7 @@ class _ResponsesCreateParams(TypedDict):
     top_logprobs: int | Omit
     store: bool | Omit | None
     user: str | Omit
+    safety_identifier: str | Omit
     include: list[responses.ResponseIncludable] | Omit
     prompt_cache_key: str | Omit
     prompt_cache_retention: Literal['in_memory', '24h'] | Omit
@@ -858,6 +860,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             raise
         except APIConnectionError as e:  # pragma: lax no cover
             raise map_connection_error(e, self.model_name) from e
+        except HTTPStatusError as e:
+            # A status a retrying transport gave up on arrives as `httpx2.HTTPStatusError` instead. As on
+            # `responses.create`, it isn't checked for an Azure content filter: it stays a `ModelHTTPError`, so
+            # fallback moves on to the next model, see https://github.com/pydantic/pydantic-ai/pull/11934.
+            raise map_transport_status_error(e, self.model_name, self._provider.model_id_namespace) from e
 
     async def request(
         self,
@@ -1787,6 +1794,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     extra_body=model_settings.get('extra_body'),
                 )
             except APIStatusError as e:
+                # A status a retrying transport gave up on arrives as `httpx2.HTTPStatusError` instead, which isn't
+                # checked here: it stays a `ModelHTTPError`, so fallback moves on to the next model, see
+                # https://github.com/pydantic/pydantic-ai/pull/11934.
                 if model_response := check_azure_content_filter(e, self.client, self.system, self.model_name):
                     return model_response
                 raise
@@ -1978,6 +1988,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
             store=store,
             user=model_settings.get('openai_user', OMIT),
+            safety_identifier=model_settings.get('openai_safety_identifier', OMIT),
             include=include or OMIT,
             prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
             prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
@@ -2093,6 +2104,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # A retrieve is only issued to resume a persisted suspended job, so a 404 means that job is
                 # gone (past the provider's retention window). Surface a clear typed error instead of a
                 # generic HTTP error; other statuses fall through to `map_api_errors`.
+                # A 404 a retrying transport gave up on arrives as `httpx2.HTTPStatusError` instead, which isn't
+                # checked here: it stays a `ModelHTTPError`, so fallback moves on to the next model, see
+                # https://github.com/pydantic/pydantic-ai/pull/11934.
                 if e.status_code == 404:
                     raise SuspendedResponseExpired(
                         f'The suspended response {response_id!r} could not be resumed because its server-side '

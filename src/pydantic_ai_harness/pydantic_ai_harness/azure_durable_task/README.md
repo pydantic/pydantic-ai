@@ -114,6 +114,9 @@ completed results from history. This shapes how you write agents for it:
   capability's `@durable_operation` method.
 - **Names are persisted.** Activity names come from the agent's `name`, toolset IDs and tool names.
   Don't rename them while orchestrations that use them are still running.
+- **Token counts are activities.** With `count_tokens_before_request=True`, the count ahead of each
+  model request runs as an activity. Earlier versions counted in orchestrator code, so let
+  orchestrations that set it finish before you upgrade.
 - **Replay cost grows with run length.** Each replay re-runs the agent up to its latest step, so
   orchestrator CPU grows with the square of the number of model and tool steps. Keep very long
   conversations in separate orchestrations.
@@ -268,7 +271,9 @@ are agent control flow, not activity failures. `UserError` and serialization fai
 `resolve_tool_options(operation_id, tool, tool_name)` sets a policy per tool: return a `RetryPolicy`,
 `None` to keep `tool_options`, or `False` to run a function tool inline in the orchestrator. A function
 tool can also opt out with `metadata={'azure_durable_task': False}`. Inline tools must be deterministic
-and do no I/O. MCP and dynamic tools always run as activities.
+and do no I/O outside `ctx.workspace`, whose calls still run as activities. The harness `FileSystem`
+write tools opt out this way, so their file-change requests reach listeners in the orchestrator. MCP
+and dynamic tools always run as activities.
 
 `name=` sets the activity name prefix (the agent's `name` by default), `models=` registers extra models
 by ID for `agent.run(model=...)`, and `event_stream_handler=` runs a handler as activities.
