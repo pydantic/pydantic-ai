@@ -1182,7 +1182,9 @@ class TestSkillFiles:
 
     async def test_a_file_over_the_size_limit_fails_the_call(self, tmp_path: Path) -> None:
         _write_guide(tmp_path / 'skills')
-        (tmp_path / 'skills' / 'guide' / 'huge.txt').write_bytes(b'a' * (10 * 1024 * 1024 + 1))
+        # Sparse: the size is checked before anything is read, so no 10 MiB is written.
+        with (tmp_path / 'skills' / 'guide' / 'huge.txt').open('wb') as huge:
+            huge.truncate(10 * 1024 * 1024 + 1)
 
         results = await _read(Skills('skills', read_files=True), tmp_path, [('guide', 'huge.txt')])
 

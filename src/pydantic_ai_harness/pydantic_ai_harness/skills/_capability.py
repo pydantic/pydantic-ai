@@ -93,8 +93,8 @@ class Skills(AbstractCapability[AgentDepsT]):
 
     Each selected immediate child containing `SKILL.md` becomes a deferred capability named after
     the skill: the model sees its name, description and `when_to_use`, and loads its Markdown body, with the
-    skill's directory in the run's workspace, with `load_capability`. Bundled files are not loaded
-    or executed. Descriptions longer than the Agent Skills limit are preserved and emit a warning.
+    skill's directory in the run's workspace, with `load_capability`. Bundled files are not executed,
+    and are read only with `read_files=True`. Descriptions longer than the Agent Skills limit are preserved and emit a warning.
     A skill found twice, through a symlink or as a byte-identical `SKILL.md`, counts once. A skill
     whose frontmatter has `disable-model-invocation: true` is left out of the model's catalog.
 
@@ -390,9 +390,10 @@ class Skills(AbstractCapability[AgentDepsT]):
         """Read the selected skills, from each configuration's `workspace=` or else the run's workspace.
 
         Returns one deferred capability per skill the model may load, with the `read_skill_file` tool when
-        one of them has `read_files` set; without any skills, it adds no instructions or tools. Emits a `UserWarning` for each skipped `SKILL.md` or
-        library path, an overlong description, or unsupported frontmatter. Raises `UserError` when a configuration without
-        `workspace=` meets a run without a workspace.
+        one of them has `read_files` set; without any skills, it adds no instructions or tools. Emits a
+        `UserWarning` for each skipped `SKILL.md` or library path, an overlong description, or unsupported
+        frontmatter. Raises `UserError` when a configuration without `workspace=` meets a run without a
+        workspace.
         """
         if any(source.workspace is None for source in self._sources):
             require_workspace(ctx.workspace, 'Skills', ctx.messages)
