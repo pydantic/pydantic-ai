@@ -280,7 +280,7 @@ Gotchas:
   empty page become `ModelRetry`; 401/402/403 stop the run. For tests, pass `client=` a fake
   satisfying the exported `FirecrawlClient` protocol.
 - Results outside `include_domains`/`exclude_domains` are dropped client-side too. `get_page` refuses
-  non-`http(s)` URLs, `localhost`, and private/loopback IP literals (shorthand IPv4 forms included) but resolves no hostnames, so a self-hosted
+  non-`http(s)` URLs, `localhost`, and private, loopback, link-local, and cloud metadata IP literals (shorthand IPv4 forms included) but resolves no hostnames, so a self-hosted
   scraper still needs its own egress rules.
 - `HttpFirecrawlClient(http_client=...)` sends every request through your `httpx2.AsyncClient`; you
   close it. Each request has a 90-second deadline.
