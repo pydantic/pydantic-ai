@@ -136,7 +136,12 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
     @on_event(FileReadEvent, FileWrittenEvent)
     async def _observe(self, ctx: RunContext[AgentDepsT], event: FileReadEvent | FileWrittenEvent) -> None:
         path = await ctx.workspace.resolve(event.path, base=event.root_dir)
-        realpath = await ctx.workspace.realpath(path)
+        try:
+            realpath = await ctx.workspace.realpath(path)
+        except (OSError, WorkspaceError):
+            # Untracked until it's read again, rather than failing the tool call that read it.
+            self._observations.pop(path, None)
+            return
         self._observations[path] = _Observation(event.content_hash, realpath, ctx.workspace.ref)
         self._observations.move_to_end(path)
         while len(self._observations) > self.max_tracked_files:
@@ -158,6 +163,8 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
                 continue
             state, read = await _state(ctx.workspace, path, observation, budget)
             budget -= read
+            if budget <= 0:
+                break
             if state == 'deleted':
                 self._observations.pop(path, None)
                 deleted.append(path)

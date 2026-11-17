@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -93,6 +94,19 @@ class FlakyBackend(LocalWorkspaceBackend):
         if self.failing:
             raise WorkspaceError('The workspace is unavailable.')
         return await super().read_bytes(path)
+
+
+class RealpathOnceBackend(LocalWorkspaceBackend):
+    """A local workspace that fails to resolve `data.txt` the second time it's asked, after `FileSystem` resolved it."""
+
+    calls = 0
+
+    async def realpath(self, path: str) -> str:
+        if path.endswith('data.txt'):
+            self.calls += 1
+            if self.calls == 2:
+                raise WorkspaceError('The workspace is unavailable.')
+        return await super().realpath(path)
 
 
 class UnsizedBackend(LocalWorkspaceBackend):
@@ -386,6 +400,22 @@ These files you read or wrote were deleted from the workspace:
             if isinstance(part, StaleFilesPart)
         ]
         assert [(part.source.authority, part.changed, part.deleted) for part in parts] == [('none', ('config.py',), ())]
+
+    async def test_file_the_workspace_fails_to_resolve_after_a_read_is_not_tracked(self, tmp_path: Path) -> None:
+        """The read still succeeds; the file just isn't checked until it's read again."""
+        target = tmp_path / 'data.txt'
+        target.write_text('one\n')
+        agent = _agent(tmp_path, (None, _read('data.txt')), (lambda: target.write_text('two\n'), _LIST), (None, 'done'))
+        result = await agent.run('go', workspace=RealpathOnceBackend(working_dir=tmp_path))
+        assert _notices(result.all_messages()) == [[], [], []]
+        returns = [
+            part.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        assert 'one' in str(returns[0])
 
     async def test_least_recently_observed_file_is_dropped_past_the_limit(self, tmp_path: Path) -> None:
         for name in ('a.txt', 'b.txt'):
