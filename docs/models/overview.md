@@ -313,7 +313,7 @@ raise that as a model error too, before the agent sees the response, so it's han
 
 | Exception | Raised when |
 |---|---|
-| [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] | The provider sent no response, e.g. a stream that ended before its first event, or a completion without choices. Often a transient glitch, so sending the request again may help. |
+| [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] | The provider sent no response, e.g. a stream that ended before its first event, or a completion without choices. Often a transient glitch, so sending the request again may help. [`RetryOnModelErrors`](../capabilities/retry-on-model-errors.md) doesn't retry it by default; pass `retry_on=(*TRANSIENT_MODEL_ERRORS, ModelEmptyResponseError)` to include it. |
 | [`ModelInvalidResponseError`][pydantic_ai.exceptions.ModelInvalidResponseError] | The response couldn't be read, e.g. a completion that doesn't match the API's schema. Sending the same request again often gets the same response. |
 
 Both are also an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which these responses
