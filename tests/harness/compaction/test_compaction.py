@@ -309,6 +309,8 @@ def _retry_history() -> list[ModelMessage]:
 
 
 class TestEstimateTokenCount:
+    """Not VCR tests: the estimate is a pure function of message text, pinned against cl100k_base counts recorded inline."""
+
     def test_empty(self):
         assert estimate_token_count([]) == 0
 

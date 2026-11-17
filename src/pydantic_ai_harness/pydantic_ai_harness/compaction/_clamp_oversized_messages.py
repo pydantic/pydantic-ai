@@ -103,7 +103,8 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
     """Optional tokenizer for accurate token counting.
 
     A callable that returns the token count for a given string.
-    When `None`, uses the built-in text estimate, which counts dense text such as non-ASCII scripts, base64 and compact JSON higher than prose.
+    When `None`, uses the built-in text estimate, which counts dense text such as non-ASCII
+    scripts, base64 and compact JSON higher than prose.
     """
 
     def __post_init__(self) -> None:
