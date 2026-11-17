@@ -177,8 +177,10 @@ class LocalFileOverflowStore:
     see them.
 
     The handle equals the key: a relative `run_id/tool_call_id.retry` path under
-    `base_dir`. The root is stable on purpose -- a later agent or run by the same user can
-    read a spill a previous run produced, so the store is not isolated per instance.
+    `base_dir`, with a `run_step/` segment before the file name when a later response in the run
+    reuses a `tool_call_id` an earlier response in the run already spilled. The root is stable on purpose -- a
+    later agent or run by the same user can read a spill a previous run produced, so the store is
+    not isolated per instance.
 
     Security comes from three mechanisms: the default root is per user
     (`pyai_harness_overflow-<euid>` under the system temp dir); the root itself cannot be a

@@ -2145,7 +2145,7 @@ arriving during a turn use that run's queue; completed reports are not replayed.
 Nested children join their descendants and receive their reports before settling.
 
 The model also manages its tasks: `list_tasks` lists them, `check_task` shows what a
-running one is doing, `message_task` steers a running one, and `cancel_task` stops
+running one is doing, `message_task` steers a running one or resumes a finished one, and `cancel_task` stops
 one. A child that needs a decision calls `ask_parent` and waits; the question shows
 as a `?` task row, and the parent answers it with `answer_task`. Like a report, a
 question continues an idle parent without a user prompt, and one queued on a turn
