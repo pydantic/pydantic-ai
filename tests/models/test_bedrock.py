@@ -59,6 +59,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UnsupportedSettingWarning,
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
@@ -9612,6 +9613,53 @@ def test_bedrock_xai_grok_drops_sampling_settings(bedrock_provider: BedrockProvi
         f"Sampling parameters ['temperature', 'top_p', 'top_k'] are not supported by "
         f"'{model_name}'. These settings will be ignored."
     ]
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'sends_stop_sequences'),
+    [
+        ('us.anthropic.claude-sonnet-5-5', True),
+        ('us.amazon.nova-micro-v1:0', True),
+        ('us.meta.llama3-3-70b-instruct-v1:0', True),
+        ('us.deepseek.r1-v1:0', True),
+        ('mistral.mistral-large-2402-v1:0', True),
+        ('us.writer.palmyra-x5-v1:0', True),
+        ('us.openai.gpt-6.1-sol', False),
+        ('openai.gpt-oss-120b-1:0', False),
+        ('us.xai.grok-4.7', False),
+        ('qwen.qwen3-32b-v1:0', False),
+        ('google.gemma-3-27b-it', False),
+        ('zai.glm-5', False),
+        ('moonshotai.kimi-k2.5', False),
+        ('minimax.minimax-m2.5', False),
+        ('nvidia.nemotron-super-3-120b', False),
+        ('deepseek.v3.2', False),
+        ('mistral.mistral-large-3-675b-instruct', False),
+        ('writer.palmyra-vision-7b', False),
+    ],
+)
+def test_bedrock_drops_stop_sequences_where_converse_rejects_them(
+    bedrock_provider: BedrockProvider, model_name: str, sends_stop_sequences: bool, recwarn: pytest.WarningsRecorder
+):
+    """Converse answers `stopSequences` with a 400 on the models with `bedrock_supports_stop_sequences=False`.
+
+    "This model doesn't support the stopSequences field. Remove stopSequences and try again." Those models drop it
+    with an `UnsupportedSettingWarning`, like `OpenAIResponsesModel`, and the others still send it.
+    Not a VCR test, like `test_bedrock_xai_grok_drops_sampling_settings`: the setting is dropped before any request.
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    settings = BedrockModelSettings(max_tokens=64, stop_sequences=['5'])
+
+    prepared, _ = model.prepare_request(settings, ModelRequestParameters())
+
+    warned = [str(w.message) for w in recwarn if issubclass(w.category, UnsupportedSettingWarning)]
+    if sends_stop_sequences:
+        assert (prepared, warned) == (settings, [])
+    else:
+        assert (prepared, warned) == (
+            {'max_tokens': 64},
+            [f'The `stop_sequences` setting is not supported by model {model.model_id!r} and will be ignored.'],
+        )
 
 
 class _CountTokensCapturingClient:
