@@ -29,7 +29,7 @@ LimitName: TypeAlias = Literal[
 """The [`UsageLimits`][pydantic_ai.usage.UsageLimits] field that made a request the run's last."""
 
 DEFAULT_WRAP_UP_PROMPT = (
-    'A run limit has been reached, so this is your last response and tools are unavailable. '
+    "This run's budget allows only this one last response, and tools are unavailable. "
     'Give your final answer now with what you have, and say what is left unfinished.'
 )
 """What `WrapUpAtLimits` tells the model on the final request, unless `prompt` is set."""

@@ -63,7 +63,7 @@ The final prompt is a `SystemPromptPart` whose `metadata` holds `'origin': 'pyda
 
 ```python
 from pydantic_ai import AgentRunResult
-from pydantic_ai_harness.wrap_up_at_limits import wrapped_up_by
+from pydantic_ai_harness import wrapped_up_by
 
 
 def report(result: AgentRunResult[str]) -> str:
