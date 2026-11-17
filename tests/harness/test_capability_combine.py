@@ -62,6 +62,7 @@ from pydantic_ai_harness import (
     Coder,
     CompactOnRequest,
     Planning,
+    PruneToolResults,
     RelevanceCompaction,
     Researcher,
     SlidingWindowCompaction,
@@ -196,6 +197,10 @@ def _check_compact_on_request(merged: Any) -> None:
     assert merged.max_per_run == 2
 
 
+def _check_prune_tool_results(merged: PruneToolResults[None]) -> None:
+    assert merged.placeholder == '[second]'
+
+
 def _check_tool_output_limits(merged: Any) -> None:
     assert merged.strip_ansi is True
 
@@ -278,6 +283,11 @@ COMBINE_POLICY: dict[str, Policy] = {
             CompactOnRequest[Any](SlidingWindowCompaction[Any](max_messages=1), max_per_run=2),
         ),
         _check_compact_on_request,
+    ),
+    'PruneToolResults': Combines(
+        'one `prune_tool_result` tool per agent',
+        lambda: (PruneToolResults[None](placeholder='[first]'), PruneToolResults[None](placeholder='[second]')),
+        _check_prune_tool_results,
     ),
     'ToolOutputLimits': Combines(
         'one output-limit policy; `tool_filter`/`per_tool` are how one instance varies by tool',
