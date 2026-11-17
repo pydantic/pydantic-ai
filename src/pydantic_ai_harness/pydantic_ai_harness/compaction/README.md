@@ -58,11 +58,22 @@ Every size-based strategy triggers on `max_messages`, `max_tokens` (estimated), 
 Token counts anchor on the provider-reported usage of the most recent model response when one is
 available: its `input_tokens` measured the whole request that produced it (instructions, tool
 definitions, every prior message), so only the messages added since are estimated. The estimate for
-those, and the fallback when no response carries usage yet, is a ~4-chars-per-token heuristic; pass
-a `tokenizer` callable (e.g. `tiktoken`) to sharpen it. The anchor corrects the heuristic's
-undercount on token-dense content: minified JSON or base64 tokenizes at ~1-2 chars per token, enough
-that, without the anchor, a history could exceed the context window before any trigger fires. Instruction replacement and withdrawal records contribute their full rendered system text to token estimates. Superseded updates before a new instruction baseline are excluded. Newly revealed tool schemas that are pending in the request are conservatively
-estimated by the implementation. `DeduplicateFileReads` runs on every request when no trigger is set (it is
+those, and the fallback when no response carries usage yet, is the text estimate: ~4 characters per
+token for English-like prose, one token per non-ASCII character, except ~1.5 characters per token
+for accented Latin and Cyrillic and three tokens per character outside the Basic Multilingual Plane
+(most emoji, CJK Extension B), ~1.25 characters per token for base64-like runs (24+ characters
+mixing digits and both cases), and about 1.25 tokens per `{}[],:"` character and half a token per
+digit beyond the share prose and code carry, which is what makes compact JSON dense. Dense content
+is deliberately estimated high, since an undercount can send a request over the context window;
+measured against OpenAI's cl100k_base tokenizer, that holds for Latin, Cyrillic, Greek, Arabic, CJK,
+base64 and JSON. cl100k_base spends more on Hebrew and Thai (up to ~1.15 tokens per character),
+Indic scripts (1.3 to 1.5), Georgian, Armenian and Myanmar (~2) and Ethiopic (~2.3). The same
+estimate measures `keep_tokens`, `max_part_tokens`, `ToolOutputLimits(over_tokens=True)` bands and
+the `compaction.tokens_*` span attributes. Pass a `tokenizer` callable (e.g. `tiktoken`) to measure
+with a real tokenizer instead. Instruction replacement and withdrawal records contribute their full
+rendered system text to token estimates. Superseded updates before a new instruction baseline are
+excluded. Newly revealed tool schemas that are pending in the request are conservatively estimated
+by the implementation. `DeduplicateFileReads` runs on every request when no trigger is set (it is
 cheap and near-lossless). `TieredCompaction` triggers and stops on a single `target_tokens` /
 `target_fraction` budget. `ClampOversizedMessages` triggers per *part* (`max_part_tokens` /
 `max_part_chars`), not on the whole history -- the failure it targets is one oversized part, not a
@@ -81,8 +92,8 @@ of an [Anthropic response that reports its passes](https://pydantic.dev/docs/ai/
 That last pass also read the response's own earlier passes, so the difference credits them to the
 messages before it, and the tail measures high. Before the first such response, after the last, and
 where the history did not grow between two of them (as across an earlier compaction), `tokenizer` or the
-~4-characters-per-token heuristic applies. Instructions are not part of the tail. A history with no
-provider usage is measured with the heuristic as before.
+text estimate (see Triggers) applies. Instructions are not part of the tail. A history with no
+provider usage is measured with the text estimate.
 
 **If you set `keep_tokens`, re-check it.** It used to be measured with the heuristic alone, which
 on a thinking-heavy history can see a third of the real tokens or less, so the same budget kept
@@ -202,8 +213,8 @@ after the anchor (and for whole histories with no reported usage), the estimator
 that is sent: prompts, system prompts, tool calls and their results, retry prompts,
 extended-thinking blocks, provider-side tool results, and the instructions, once. When the
 instructions changed since the anchor, the new set replaces the old one in the estimate rather than
-adding to it, since a request sends only one. That estimated portion is a ~4-characters-per-token
-approximation, not a tokenizer; pass `tokenizer=` to any strategy to measure with the real one.
+adding to it, since a request sends only one. That estimated portion is the text estimate described
+under Triggers, not a tokenizer; pass `tokenizer=` to any strategy to measure with the real one.
 `FilePart` and the files a provider-side tool returns are not counted there -- their payload is
 binary, and its length in characters would mean nothing. For the same reason a file inside a tool
 return counts as the `See file <identifier>.` reference a text-only tool result carries in its place. Newly revealed tool schemas pending in the current request are conservatively estimated
@@ -252,7 +263,7 @@ history after same-cycle compaction, or before it to see what triggered the comp
 
 `used_tokens` follows the accounting above: provider usage anchors include instructions, tool
 definitions, and `FilePart` payloads from the anchored request. The suffix after the anchor, or a
-history with no anchor, uses `tokenizer` or a ~4-characters-per-token heuristic and cannot see
+history with no anchor, uses `tokenizer` or the text estimate (see Triggers) and cannot see
 `FilePart` payloads. Pending newly revealed tool schemas are conservatively estimated by the
 implementation.
 
@@ -755,7 +766,7 @@ pinned parts and receipts are kept as they are. When the summarized span is shor
 long, the result can be larger than the history it replaces. Automatic compaction is there to make
 the request smaller, so when `SummarizingCompaction` runs on its own trigger, the compacted history is
 kept only when it is estimated smaller than the original, using the `tokenizer` of the capability
-whose trigger fired (`FallbackCompaction`'s inside a chain), or the ~4-characters-per-token estimate
+whose trigger fired (`FallbackCompaction`'s inside a chain), or the text estimate
 without one. Otherwise the request goes out with the history unchanged, any receipt the attempt
 wrote is dropped, and a `compact_messages` span with `compaction.skipped` set to `not_smaller`
 records the attempt and its estimated size. The summary call's usage still counts, and while the
@@ -826,7 +837,7 @@ to keep span cardinality low. Attributes:
 
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is
 harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the
-~4-chars-per-token heuristic.
+text estimate described under Triggers.
 Raw message content is not recorded.
 
 `SummarizingCompaction` runs its summarizer as a nested `Agent` named `summarizing_compaction`,
