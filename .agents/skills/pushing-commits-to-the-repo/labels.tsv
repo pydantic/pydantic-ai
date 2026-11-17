@@ -24,7 +24,7 @@ area:mcp	The MCP client: MCPToolset, transports, sampling, elicitation, resource
 area:media	Media in messages: BinaryContent, FileUrl, UploadedFile, media in tool returns, media stores.
 area:memory	Harness memory: memory stores, conversation search, skills, repo context.
 area:messages	Message parts and history: serialization, replay, processors, cross-model mapping, citations.
-area:models	Shared model and provider layer: infer_model, profiles, ModelSettings, fallback, batch, HTTP client.
+area:models	Model layer: adapter request/response mapping, infer_model, profiles, settings, fallback, HTTP.
 area:native-tools	Provider-native tools (web search, code execution, file search, MCP connector) and NativeOrLocal.
 area:output	Output modes, output validation, and output tools.
 area:packaging	Extras, dependency pins, wheels, and version constraints.
