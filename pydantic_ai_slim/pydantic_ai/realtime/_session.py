@@ -3468,8 +3468,8 @@ class RealtimeSession:
     def _stream_ends(self) -> bool:
         """Whether the event stream ends as the queue changes.
 
-        A pump error, or a finished pump with nothing left to deliver, marks the stream exhausted. A pump error not
-        delivered yet is raised.
+        A pump error marks the stream exhausted, and is raised if it wasn't delivered yet. A finished pump with no
+        background tool running and nothing queued marks it exhausted too, and ends the stream.
         """
         # A pump error takes priority over stuck background tools. Their cancellation and
         # drain belong to `__aexit__`, which runs as this exception leaves the owner block.
