@@ -37,7 +37,7 @@ from pydantic_monty import MontyRefusedError, MountDir
 
 try:
     from temporalio import workflow
-    from temporalio.client import Client, WorkflowExecutionStatus, WorkflowFailureError
+    from temporalio.client import Client, WorkflowExecutionStatus, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.testing import WorkflowEnvironment
@@ -201,7 +201,7 @@ code_mode_agent = Agent(
 _request_id: contextvars.ContextVar[str] = contextvars.ContextVar('request_id', default='unset')
 
 
-# Only the skipped relay test runs Code Mode with this `os_access` (#8824).
+# Only the skipped relay test calls this `os_access` (#8824).
 def _workflow_os(
     *, name: str, args: tuple[object, ...], kwargs: dict[str, object], **_: object
 ) -> object:  # pragma: lax no cover
@@ -272,12 +272,12 @@ def double(n: int) -> int:
     return n * 2
 
 
-def echo(value: Any) -> Any:
+def echo(value: object) -> object:
     """Return `value`."""
     return value
 
 
-def blob() -> dict[str, Any]:
+def blob() -> dict[str, object]:
     """Return values plain JSON does not carry: bytes that are not UTF-8, nested too."""
     return {
         'raw': b'\xff\x00',
@@ -442,6 +442,19 @@ workflow_side_code_mode_agents = {
                 id='code',
                 monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
                 mount=MountDir(virtual_path='/tests', host_path=str(Path(__file__).parent)),
+            ),
+            TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        ],
+    ),
+    'os_access': Agent(
+        FunctionModel(_code_mode_model),
+        name='code_mode_temporal_os_access_agent',
+        toolsets=[FunctionToolset(tools=[add], id='math')],
+        capabilities=[
+            CodeMode(
+                id='code',
+                monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
+                os_access=_workflow_os,
             ),
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
         ],
@@ -801,7 +814,7 @@ async def test_code_mode_runs_remotely_in_temporal_workflow(client: Client) -> N
     assert replay_result.replay_failure is None
 
 
-def _activity_types(history: Any) -> list[str]:
+def _activity_types(history: WorkflowHistory) -> list[str]:
     """The activities a workflow scheduled, by the last part of their name (`monty_turn`, `call_tool`)."""
     return [
         event.activity_task_scheduled_event_attributes.activity_type.name.rpartition('__')[2]
@@ -892,9 +905,10 @@ async def test_remote_turns_fall_back_without_stored_sessions(client: Client) ->
     assert _activity_types(history) == ['model_request', 'monty_turn', 'call_tool', 'model_request', 'model_request']
 
 
-@pytest.mark.parametrize('reason', ['overlay', 'no_id'])
+@pytest.mark.parametrize('reason', ['overlay', 'os_access', 'no_id'])
 async def test_remote_turns_stay_in_the_workflow(client: Client, reason: str) -> None:
-    """An `'overlay'` mount (the default mode) or a `CodeMode` without `id` keeps every turn in the workflow."""
+    """An `'overlay'` mount (the default mode), `os_access`, or a `CodeMode` without `id` keeps every turn in the
+    workflow."""
     workflow_id = f'test_code_mode_temporal_workflow_side_{reason}'
     async with Worker(
         client,

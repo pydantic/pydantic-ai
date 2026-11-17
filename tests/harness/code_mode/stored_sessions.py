@@ -12,9 +12,17 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any
 
-from pydantic_monty import AsyncMonty, AsyncMontySession, AsyncSnapshot
+from pydantic_monty import (
+    AsyncMonty,
+    AsyncMontySession,
+    AsyncSnapshot,
+    MountDir,
+    OsHandler,
+    OSPolicy,
+    PrintCallback,
+    ResourceLimits,
+)
 
 
 @dataclass
@@ -53,14 +61,30 @@ class StoredSession:
     async def load_session(self, state: bytes) -> None:
         await self.session.load_session(SERVER.load(state))
 
-    async def load_snapshot(self, state: bytes, **kwargs: Any) -> AsyncSnapshot:
-        return await self.session.load_snapshot(SERVER.load(state), **kwargs)
+    async def load_snapshot(
+        self,
+        state: bytes,
+        *,
+        mount: MountDir | list[MountDir] | None = None,
+        print_callback: PrintCallback | None = None,
+    ) -> AsyncSnapshot:
+        return await self.session.load_snapshot(SERVER.load(state), mount=mount, print_callback=print_callback)
 
-    async def feed_start(self, code: str, **kwargs: Any) -> Any:
+    async def feed_start(
+        self,
+        code: str,
+        *,
+        print_callback: PrintCallback | None = None,
+        mount: MountDir | list[MountDir] | None = None,
+        os: OsHandler | None = None,
+        skip_type_check: bool = False,
+    ) -> AsyncSnapshot:
         if (error := SERVER.drops_next_feed) is not None:
             SERVER.drops_next_feed = None
             raise error
-        return await self.session.feed_start(code, **kwargs)
+        return await self.session.feed_start(
+            code, print_callback=print_callback, mount=mount, os=os, skip_type_check=skip_type_check
+        )
 
 
 @dataclass
@@ -75,11 +99,21 @@ class StoredSessionPool:
         await self._pool.__aenter__()
         return self
 
-    async def __aexit__(self, *args: Any) -> None:
+    async def __aexit__(self, *args: object) -> None:
         await self._pool.__aexit__(*args)
 
     @asynccontextmanager
-    async def checkout(self, *, ephemeral: bool | None = None, **kwargs: Any) -> AsyncGenerator[StoredSession]:
-        async with self._pool.checkout(**kwargs) as session:
+    async def checkout(
+        self,
+        *,
+        limits: ResourceLimits | None = None,
+        type_check: bool = False,
+        type_check_stubs: str | None = None,
+        os_policy: OSPolicy | None = None,
+        ephemeral: bool | None = None,
+    ) -> AsyncGenerator[StoredSession]:
+        async with self._pool.checkout(
+            limits=limits, type_check=type_check, type_check_stubs=type_check_stubs, os_policy=os_policy
+        ) as session:
             # As on a storing server, an ephemeral session is never stored.
             yield StoredSession(session, self.stores and SERVER.stores and ephemeral is not True)
