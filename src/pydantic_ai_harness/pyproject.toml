@@ -81,6 +81,7 @@ daytona = ["daytona>=0.226.1,<1"]
 smol = ["smolmachines>=1.22.2,<2 ; (sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64'))"]
 # BoxLite ships its VM engine in platform wheels and has no sdist, so it installs only where a wheel exists.
 boxlite = ["boxlite>=0.10.7,<0.11 ; python_full_version < '3.15' and ((sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')))"]
+# `jsonschema` is for `WorkflowAgent(allow_output_schema=True)`; installed here so opting in needs no second install.
 dynamic-workflow = ["pydantic-ai-slim[jsonschema]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}", "pydantic-monty>=1.5.0,<2"]
 # The SDK breaks across minors, so cap per minor.
 acp = ["agent-client-protocol>=0.11,<0.12"]
