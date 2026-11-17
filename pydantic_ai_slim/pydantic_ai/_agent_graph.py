@@ -3548,9 +3548,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self._recorded_for_other_model = True
         if resolve_instructions:
             # Explicitly none rather than unset: unset parts make the model fall back to the instructions recorded
-            # on the request it's sent, which may be the step model's.
+            # on the request it's sent, which may be the step model's. A copy, like `restore` makes, so a hook editing
+            # them in place for one attempt doesn't change the next attempt's.
             request_context.model_request_parameters = replace(
-                request_context.model_request_parameters, instruction_parts=recording.sent or []
+                request_context.model_request_parameters, instruction_parts=_copy_container(recording.sent or [])
             )
 
     async def _prepare_attempt(

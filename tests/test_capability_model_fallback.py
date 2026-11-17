@@ -3531,3 +3531,50 @@ async def test_a_model_without_instructions_is_not_sent_the_step_models_recorded
     assert result.output == 'backup'
     assert sent[-1] == ('backup', None)
     assert _recorded_instructions(result.all_messages())[-1] is None
+
+
+async def test_instruction_parts_a_prepare_hook_edits_in_place_stay_with_their_attempt():
+    """A `prepare_model_request` hook editing the instruction parts in place doesn't change the next attempt's."""
+
+    @dataclass
+    class TagAttempt(AbstractCapability[Any]):
+        async def prepare_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            parts = request_context.model_request_parameters.instruction_parts
+            assert parts is not None
+            parts.append(_messages.InstructionPart(f'Attempt {request_context.attempt}.'))
+            return request_context
+
+    sent: list[tuple[str, str | None, float | None]] = []
+
+    def instructions(ctx: RunContext[Any]) -> str:
+        return 'You are the primary.' if ctx.model.model_name == 'primary' else 'You are a fallback.'
+
+    agent = _with_noop(
+        Agent(
+            _sent('primary', sent, fails=True),
+            instructions=instructions,
+            capabilities=[TagAttempt(), ModelFallback(_sent('b', sent, fails=True), _sent('c', sent))],
+        )
+    )
+    assert (await agent.run('x')).output == 'c'
+    assert [instructions for _, instructions, _ in sent[:3]] == snapshot(
+        [
+            """\
+You are the primary.
+
+Attempt 1.\
+""",
+            """\
+You are a fallback.
+
+Attempt 2.\
+""",
+            """\
+You are a fallback.
+
+Attempt 3.\
+""",
+        ]
+    )
