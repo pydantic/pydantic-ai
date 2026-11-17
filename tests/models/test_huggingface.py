@@ -60,6 +60,7 @@ with try_import() as imports_successful:
         ChatCompletionOutput,
         ChatCompletionOutputComplete,
         ChatCompletionOutputFunctionDefinition,
+        ChatCompletionOutputLogprobs,
         ChatCompletionOutputMessage,
         ChatCompletionOutputToolCall,
         ChatCompletionOutputUsage,
@@ -160,9 +161,12 @@ def get_mock_chat_completion_kwargs(hf_client: AsyncInferenceClient) -> list[dic
 
 
 def completion_message(
-    message: ChatCompletionInputMessage | ChatCompletionOutputMessage, *, usage: ChatCompletionOutputUsage | None = None
+    message: ChatCompletionInputMessage | ChatCompletionOutputMessage,
+    *,
+    usage: ChatCompletionOutputUsage | None = None,
+    logprobs: ChatCompletionOutputLogprobs | None = None,
 ) -> ChatCompletionOutput:
-    choices = [ChatCompletionOutputComplete(finish_reason='stop', index=0, message=message)]  # pyright: ignore[reportArgumentType]
+    choices = [ChatCompletionOutputComplete(finish_reason='stop', index=0, message=message, logprobs=logprobs)]  # pyright: ignore[reportArgumentType]
     return ChatCompletionOutput.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
             'id': '123',
