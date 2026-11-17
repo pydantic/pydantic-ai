@@ -648,9 +648,9 @@ Tells the model when a file a `FileSystem` tool read or wrote has since changed 
 workspace, by someone else (a user, another agent, a build step). It records each file's content hash from
 `FileReadEvent` / `FileWrittenEvent` and, before each model request, reads the recorded files through
 `ctx.workspace`; a mismatch is named in a request-scoped `StaleFilesPart` (`.report_stale_files`, with the
-workspace's authority), on every request until the model
-reads the file again (a deleted file once). The model's own writes and edits refresh the record. Records are
-per conversation, in memory on the instance, so a continued run hears about changes made between runs.
+workspace's authority), on every request until the model reads the file again (a deleted file once). The model's
+own writes and edits refresh the record. Records are per conversation and workspace, in memory on the instance, so
+a continued run hears about changes made between runs.
 
 ```python
 from pydantic_ai_harness import FileSystem, ReportStaleFiles
@@ -658,10 +658,9 @@ from pydantic_ai_harness import FileSystem, ReportStaleFiles
 capabilities = [FileSystem(), ReportStaleFiles(max_tracked_files=100, max_reported_files=20, max_checked_bytes=8 << 20)]
 ```
 
-Each check reads every recorded file in full, most recent first, up to `max_checked_bytes` per request; lower
-`max_tracked_files` on a slow remote workspace. Each recorded file costs a `realpath`, a `stat` and a read per request, sequentially; a file whose real
-path changed since it was read is skipped.
-Not supported under durable execution: the run fails at its start.
+Before every request, each recorded file costs a sequential `realpath`, `stat` and read, most recent first, up to
+`max_checked_bytes`; lower `max_tracked_files` on a slow remote workspace. A file whose real path changed since it
+was read is skipped. Not supported under durable execution: the run fails at its start.
 
 ## Macroscope
 

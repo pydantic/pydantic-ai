@@ -37,6 +37,7 @@ from tests.harness.file_system.test_windows_paths import DriveBackend
 Step = tuple[Callable[[], object] | None, ToolCallPart | str]
 """What happens in the workspace while the model answers a request, and the model's answer."""
 
+DELETED = 'These files you read were deleted from the workspace:'
 CHANGED = (
     'These files changed in the workspace after you last read them, so what you saw of them is out of date. '
     'Read them again before relying on them or editing them:'
@@ -315,6 +316,17 @@ These files you read were deleted from the workspace:
         agent = _agent(project, (None, _read('data.txt')), (link_out, _LIST), (None, 'done'))
         result = await agent.run('go')
         assert _notices(result.all_messages()) == [[], [], []]
+
+    @pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
+    async def test_deleted_link_read_through_is_reported_once(self, tmp_path: Path) -> None:
+        (tmp_path / 'target.txt').write_text('one\n')
+        link = tmp_path / 'link.txt'
+        link.symlink_to(tmp_path / 'target.txt')
+        agent = _agent(
+            tmp_path, (None, _read('link.txt')), (lambda: link.unlink(), _LIST), (None, _LIST), (None, 'done')
+        )
+        result = await agent.run('go')
+        assert _notices(result.all_messages()) == [[], [], [f'{DELETED}\n- `link.txt`'], []]
 
     async def test_file_replaced_by_a_link_to_a_denied_file_is_not_read(self, tmp_path: Path) -> None:
         """A link inside the root to a file the file tools deny isn't followed to check the file either."""

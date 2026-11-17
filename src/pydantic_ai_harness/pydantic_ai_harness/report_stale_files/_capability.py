@@ -191,9 +191,9 @@ async def _state(
     to a file the file tools would refuse to read.
     """
     try:
+        entry = await workspace.stat(path)
         if await workspace.realpath(path) != observation.realpath:
             return 'unknown', 0
-        entry = await workspace.stat(path)
         if entry.is_dir or (entry.size is not None and entry.size > budget):
             return 'unknown', 0
         content = await workspace.read_bytes(path)
