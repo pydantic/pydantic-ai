@@ -237,6 +237,7 @@ class TestPydanticAIDocsToolset:
     async def test_fetches_from_the_installed_release_tag(
         self, version: str, ref: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Not a VCR test: the URL depends on the patched installed version, so a fake client records it."""
         monkeypatch.setattr(pydantic_ai, '__version__', version)
         requested = _install_fake_httpx(monkeypatch, text='# remote')
         toolset = PydanticAIDocsToolset[object](local_docs_path=None, cache=None)
@@ -376,6 +377,7 @@ class TestThroughAgent:
         assert returns == ['# Capabilities doc']
 
     async def test_remote_ref_overrides_the_installed_release(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Not a VCR test: the assertion is the requested URL, which a fake client records without network."""
         monkeypatch.setattr(pydantic_ai, '__version__', '2.69.0')
         monkeypatch.delenv('PYDANTIC_AI_HARNESS_DOCS_PATH', raising=False)
         requested = _install_fake_httpx(monkeypatch, text='# remote')
