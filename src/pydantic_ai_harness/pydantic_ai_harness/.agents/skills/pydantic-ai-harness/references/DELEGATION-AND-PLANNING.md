@@ -172,6 +172,10 @@ Gotchas:
   child left pending (e.g. in a `BatchModelRequests` batch) is cancelled first, best effort, on a
   remote `SubAgentWorker` too; a batch is only cancelled once no other request in it still waits. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
   crashes abort the parent unless `contain_errors=True`.
+- `SubAgent(keep_partial_output=True)` appends the child's last text response, framed as
+  `<partial_output>`, to the steering message when its timeout or own usage budget stops it. The text
+  has not passed output validation and can be text the child rejected; leave it off for a child whose
+  guardrails keep content from its parent.
 - A locally run child inheriting `count_tokens_before_request=True` from the run's limits that
   raises `NotImplementedError` before a request is counted in its `usage` (such as a model with no
   `count_tokens`) is started once more without it (under a new run ID when recorded as a task). A
@@ -339,6 +343,8 @@ All parameters are keyword-only: `agents` (required), `tool_name='run_workflow'`
 `run_workflow` calls), `max_retries=3`, `forward_usage=True`, `inherit_model=False` (children keep their own
 models; `True` makes them follow the parent run's resolved model, e.g. after a per-run model override), `sub_agent_usage_limits=None` (applied to each child run),
 `resource_limits=None` (backstop 256 MB, no time cap; dict merges, `'unlimited'` disables),
+`call_scheduler=None` (a `(RunContext) -> WorkflowCallScheduler` factory, called once per `run_workflow`
+call, for integrations that decide when sub-agent calls start; not called under `DBOSDurability`),
 `id`/`description`/`defer_loading`.
 
 Gotchas:
@@ -360,6 +366,10 @@ Gotchas:
 - Children do not inherit the parent's workspace: give each its own workspace capability. Children
   gathered in parallel on one checkout can overwrite each other's edits.
 - `defer_loading=True` requires a stable `id`. `workflow.reveal(agent)` adds a sub-agent mid-run.
+- A `WorkflowCallScheduler` gets each call as a `WorkflowCall` (`agent_name`, `start`) and must release
+  held calls in `flush`. Under `AWSLambdaDurability` a released call has to await `call.start()`
+  without suspending first (no semaphore or other await before it), or it
+  misses the `parallel` batch and the script hangs.
 - Not agent-spec serializable.
 
 ## Advisor
@@ -384,13 +394,16 @@ agent = Agent('test', capabilities=[Advisor('anthropic:claude-opus-5-5', max_use
 typed = Agent('test', capabilities=[Advisor('openai:gpt-5.6-sol', output_type=Decision)])
 ```
 
-`Advisor(model, *, mode='auto', output_type=str, max_uses=None, max_tokens=None, caching=None,
-forward_history=False)`. `mode`: `'auto'`, `'native'` (provider tool; history gets provider-native
-parts), or `'local'` (always the `advisor` function tool; history gets a `ToolCallPart` and
-`ToolReturnPart`).
+`Advisor(model, *, native=True, local=True, output_type=str, max_uses=None, max_tokens=None,
+caching=None, forward_history=False, id=None, defer_loading=False, description=None)`. By
+default it uses the provider tool where it applies (history gets provider-native parts) and the
+`advisor` function tool otherwise (history gets a `ToolCallPart` and `ToolReturnPart`). `local=False`
+requires the provider tool; `native=False` always uses the function tool. `mode=` is deprecated.
+
+<!-- TODO(harness 1.0, #12997): remove the `mode=` deprecation sentence above. -->
 
 The executor decides when to consult. To require a consultation before a verdict, use
-`mode='local'` and check this run's history in an output validator:
+`native=False` and check this run's history in an output validator:
 
 ```python {test="skip" lint="skip"}
 @agent.output_validator
@@ -404,8 +417,8 @@ def advised(ctx: RunContext[None], output: str) -> str:
 Gotchas:
 
 - Raise at construction: `max_uses < 1`, `max_tokens < 1024`, a non-`str` `output_type` with
-  `mode='native'`, `mode='native'` without an `anthropic:`/`openrouter:` string, OpenRouter native
-  with `max_uses`. `mode='native'` with an executor on a different provider raises `UserError` at run time.
+  `local=False`, `local=False` without an `anthropic:`/`openrouter:` string, OpenRouter native
+  with `max_uses`. `local=False` with an executor on a different provider raises `UserError` at run time.
 - A `Model` instance, a non-default `output_type`, or `max_uses` on OpenRouter select local execution.
 - `max_uses` can be a callable `(ctx) -> int`, resolved per executor request, for a budget across runs
   kept in `deps`. Below 1, the native tool is omitted and the local tool returns its limit message.
@@ -416,10 +429,11 @@ Gotchas:
   `count_tokens` and retried once without the up-front count (limits checked after the response) on any
   pre-request `NotImplementedError`, unless a request was counted in the shared `usage` since the
   consultation started, in which case the error propagates.
-- An agent has one advisor (tool name `advisor`): two `Advisor`s merge, a `None` option taking the
-  other instance's value, two list `output_type`s combining, and any other option the later one's.
+- Two `Advisor`s with the same `id` merge, a `None` option taking the other instance's value, two
+  list `output_type`s combining, and any other option the later one's. With different `id`s, their
+  built `advisor` tools conflict.
 - Durable runs: DBOS records each local consultation under the default `id` (`advisor`; keep it stable once
-  deployed). Under Temporal and Prefect use `mode='native'`: their activity- or task-local usage doesn't merge
+  deployed). Under Temporal and Prefect use `local=False`: their activity- or task-local usage doesn't merge
   back into the run, so local execution is unsupported there.
 
 ## BackgroundTools

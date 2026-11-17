@@ -180,7 +180,7 @@ TrajectoryJudge(
 
 ## Composition
 
-- [System Reminders](system-reminders.md) is the rule-based sibling: cadence or condition-triggered reminders with no extra model call. Reach for it first; a trajectory judge earns its cost when the condition requires actually understanding the trajectory.
+- [System Reminders](system-reminders.md) is the rule-based sibling: cadence or condition-triggered reminders with no extra model call. Reach for it first; a trajectory judge earns its cost when the condition requires actually understanding the trajectory. Its `LLMReminder` also has a second model read the run, but adds a nudge on every firing rather than only when the run drifts: see [`LLMReminder` or `TrajectoryJudge`](system-reminders.md#llmreminder-or-trajectoryjudge).
 - [Guardrails](guardrails.md) remain the enforcement boundary for inputs, tool calls, and outputs. A judge observes and steers; it does not block or rewrite anything.
 
 ## Not spec-serializable
