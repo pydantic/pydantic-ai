@@ -21,8 +21,9 @@ from pydantic_graph import End
 
 DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS = (
     'You edited code, but no verification has passed since your last edit. Run the relevant tests, lint, '
-    'type checks, or build now. If verification cannot run, explain the concrete blocker instead of claiming '
-    'the work is verified.'
+    'type checks, or build now, each as its own foreground command whose output is not piped or followed by '
+    'another command, so its exit status shows whether it passed. If verification cannot run, explain the '
+    'concrete blocker instead of claiming the work is verified.'
 )
 """What `RequireVerification` tells the agent each time it sends the run back, unless `instructions` is set."""
 
@@ -58,7 +59,15 @@ _SHORT_CIRCUIT = re.compile(r'(?<![\w-])(?:exit|exec|return)\b')
 _FD_DUPLICATION = re.compile(r'(?<!\d)\d*[<>]&(?:\d+|-)')
 _SINGLE_QUOTED = re.compile(r"'[^']*'")
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
-_FAILED = ('[exit code:', '[Command timed out', '[File-size limit exceeded', '[Command failed with max_file_bytes')
+_FAILED = (
+    '[exit code:',
+    '[Command timed out',
+    '[File-size limit exceeded',
+    '[Command failed with max_file_bytes',
+    '[exited with code',
+    '[terminated by signal',
+)
+"""The last line of a failed command's result from `Shell`'s tools and ACP's `run_command`."""
 _RUNNING = ('Status: ', 'ID: ')
 
 
@@ -225,7 +234,10 @@ def _command(tool_def: ToolDefinition, args: ValidatedToolArgs) -> str | None:
 
 
 def _passed(result: object) -> bool | None:
-    """Whether a `Shell` tool's result reports a command that passed; `None` while it is still running."""
+    """Whether a shell tool's result reports a command that passed; `None` while it is still running.
+
+    Read in the formats of `Shell`'s tools and ACP's `run_command`: any other last line is a pass.
+    """
     if not isinstance(result, str):
         return None
     last = result.rstrip().rpartition('\n')[2]

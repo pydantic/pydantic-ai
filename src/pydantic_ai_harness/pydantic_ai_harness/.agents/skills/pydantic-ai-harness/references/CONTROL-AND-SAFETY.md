@@ -922,8 +922,8 @@ agent = Agent('test', capabilities=[FileSystem(), Shell(), RequireVerification()
   `Shell`'s do. A check is an `&&`-joined step of the last `;`/newline statement that starts with a
   `verification_commands` match (`cd pkg; pytest` counts, `pytest; echo done` does not). `|`, `||`,
   background `&`, command substitution, and `exit`/`exec`/`return` disqualify it; `2>&1` and single-quoted
-  text are ignored. Pass/fail is read from `Shell`'s `[exit code: N]`/timeout/file-limit trailer or the
-  `shell` tool's `exit_code`; a background or still-running command never counts and clears that
+  text are ignored. Pass/fail is read from `Shell`'s `[exit code: N]`/timeout/file-limit trailer, the `shell`
+  tool's `exit_code`, or ACP's `[exited with code N]`/`[terminated by signal S]` (other formats pass); a background or still-running command never counts and clears that
   command's earlier result. A check that an edit in a parallel call of the same response overtook
   records nothing. `edit_commands` match outside quotes (defaults include formatters, `--fix`, `sed -i`,
   `git checkout`/`stash`/..., `mv`/`cp`/`rm`, `sh -c`, and `>` except `->`, `>&`, `/dev/null`).

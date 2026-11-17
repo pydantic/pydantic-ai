@@ -258,6 +258,8 @@ class TestRequireVerification:
             '[stdout]\npartial\n[Command timed out after 30s]',
             '[stdout]\nwrote\n[exit code: 153]\n[File-size limit exceeded: max_file_bytes=10. Reduce file output before retrying.]',
             '[exit code: 1]\n[Command failed with max_file_bytes=10; file writes may have reached the per-file limit.]',
+            'FAILED test_app.py\n[exited with code 1]',
+            'partial\n[output truncated]\n[terminated by signal SIGKILL]',
             'PID: 7 (supervisor)\nOutput: /tmp/o\nStatus: /tmp/s\n{"pid": 7, "exit_code": 1}',
         ],
     )
@@ -373,6 +375,17 @@ class TestRequireVerification:
 
         assert result.output == 'Revised.'
         assert len(events) == 1
+
+    async def test_a_piped_check_is_retried_unpiped_after_the_instructions(self, tmp_path: Path) -> None:
+        agent = _agent(
+            tmp_path, _write(), _run('uv run pytest 2>&1 | tail -30'), 'Done.', _run('uv run pytest'), 'Verified.'
+        )
+
+        result = await agent.run('Fix the bug')
+
+        assert result.output == 'Verified.'
+        [(instructions, _)] = _redirects(result.new_messages())
+        assert 'not piped' in instructions
 
     async def test_attempts_are_bounded_and_the_unverified_end_is_reported(self, tmp_path: Path) -> None:
         events, hooks = _unverified()

@@ -32,7 +32,7 @@ Each edit makes every earlier check result stale. When the run would end after a
 | Field | Default | Meaning |
 |---|---|---|
 | `max_attempts` | `2` | How many times per run the agent is sent back to verify |
-| `instructions` | `DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS` | What the agent is told each time it is sent back |
+| `instructions` | `DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS` | What the agent is told each time it is sent back, including how to run a check so it counts |
 | `verification_commands` | `DEFAULT_VERIFICATION_COMMANDS` | Regular expressions for the commands that count as checks |
 | `edit_commands` | `DEFAULT_EDIT_COMMANDS` | Regular expressions for the commands that count as edits |
 | `exempt_paths` | `('*.md', '*.mdx', '*.rst')` | Glob patterns for the files whose edits need no check |
@@ -52,7 +52,7 @@ RequireVerification(
 - A command is read from the argument a tool's metadata names with `code_arg_name`, on tools whose metadata sets `code_arg_language='shell'`, as `Shell`'s `run_command` and `shell` tools do.
 - A command's exit status is that of its last `;`- or newline-separated statement, so a command counts as a check when one of the `&&`-joined steps of that statement starts with a match for a `verification_commands` pattern, after any leading `NAME=value` assignments. `cd pkg; pytest` counts, and `pytest; echo done` does not. A statement with `|`, `||`, a background `&`, or a command substitution does not count, and neither does a command with `exit`, `exec`, or `return`, because the exit status can then hide a failed check. File-descriptor duplications such as `2>&1`, and text in single quotes, are ignored for this.
 - A command counts as an edit when an `edit_commands` pattern matches anywhere in it outside quoted strings. The default `>` pattern skips `->`, `>&`, and redirections to `/dev/null`. An edit command is not also a check, so `ruff check --fix` makes earlier checks stale and leaves the run with none.
-- A check passed when `run_command` reports no `[exit code: N]`, timeout, or file-size limit notice, or when the `shell` tool reports an `exit_code` of `0`. A command started with `start_command` or the `shell` tool's background mode, or still running when the `shell` tool returns, never counts as a check, even after it finishes, and clears the result of an earlier run of the same command. Run checks in the foreground.
+- A check passed when `run_command` reports no `[exit code: N]`, timeout, or file-size limit notice, or when the `shell` tool reports an `exit_code` of `0`. Results are read in the formats of `Shell`'s tools and of ACP's `run_command`, which reports `[exited with code N]` or `[terminated by signal S]`. A custom shell tool must end a failed command's result with one of these lines, or its failures count as passes. A command started with `start_command` or the `shell` tool's background mode, or still running when the `shell` tool returns, never counts as a check, even after it finishes, and clears the result of an earlier run of the same command. Run checks in the foreground.
 - Calls from one model response run in parallel. A check that started before an edit in another call finished records no result, as it may have checked the code from before the edit.
 - Commands outside `edit_commands` are not edits. Extend it with the commands your agent uses to change files, such as a code generator.
 
