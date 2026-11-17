@@ -36,6 +36,7 @@ from ..tools import (
     ToolParams,
     ToolPrepareFunc,
     _listing_tools_before_tool_instance_defaults,  # pyright: ignore[reportPrivateUsage]
+    _SharedToolValues,  # pyright: ignore[reportPrivateUsage]
 )
 from .abstract import AbstractToolset, ToolsetTool
 
@@ -738,7 +739,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         added.sequential = sequential
         added.requires_approval = requires_approval
         assert added._shared_values is not None  # pyright: ignore[reportPrivateUsage]
-        added._shared_values.requires_approval = requires_approval  # pyright: ignore[reportPrivateUsage]
+        added._shared_values.values.requires_approval = requires_approval  # pyright: ignore[reportPrivateUsage]
         added._assigned_values = added._own_values()  # pyright: ignore[reportPrivateUsage]
         added.defer_loading = defer_loading
         added._sequential_from_toolset = False  # pyright: ignore[reportPrivateUsage]
@@ -786,15 +787,28 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
         Every copy shares the record, as every holder shared the `Tool`.
         """
-        shared = tool._shared_values  # pyright: ignore[reportPrivateUsage]
-        if shared is None:
-            shared = tool._own_values()  # pyright: ignore[reportPrivateUsage]
-            tool._shared_values = shared  # pyright: ignore[reportPrivateUsage]
-        if shared.max_retries is None:
-            shared.max_retries = self.max_retries
-        shared.requires_approval = shared.requires_approval or self.requires_approval
+        own = tool._own_values()  # pyright: ignore[reportPrivateUsage]
+        record = tool._shared_values  # pyright: ignore[reportPrivateUsage]
+        if record is None:
+            record = _SharedToolValues(tool._own_values(), own)  # pyright: ignore[reportPrivateUsage]
+            tool._shared_values = record  # pyright: ignore[reportPrivateUsage]
+        # A value set on the `Tool` since a toolset last added it, or on a copy since its toolset set it, reached
+        # every holder.
+        since = tool._assigned_values or record.last_added  # pyright: ignore[reportPrivateUsage]
+        values = record.values
+        if own.max_retries != since.max_retries:
+            values.max_retries = own.max_retries
+        if own.requires_approval != since.requires_approval:
+            values.requires_approval = own.requires_approval
+        if own.metadata != since.metadata:
+            values.metadata = own.metadata
+        if tool._assigned_values is None:  # pyright: ignore[reportPrivateUsage]
+            record.last_added = own
+        if values.max_retries is None:
+            values.max_retries = self.max_retries
+        values.requires_approval = values.requires_approval or self.requires_approval
         if self.metadata is not None:
-            shared.metadata = self.metadata | (shared.metadata or {})
+            values.metadata = self.metadata | (values.metadata or {})
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[InstructionPart] | None:
         if not self._instructions:

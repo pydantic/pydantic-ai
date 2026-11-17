@@ -2244,6 +2244,9 @@ def test_function_toolset_defaults_stay_off_a_shared_tool():
     assert values(tool) == (None, None, None, False, None, False, False)
     assert values(toolset.tools['my_tool']) == (5, True, True, True, {'k': 'v'}, True, True)
     assert values(other.tools['my_tool']) == (2, False, False, False, None, False, False)
+    # A toolset's copy added to another toolset keeps what the first toolset set on it.
+    added_again = FunctionToolset([toolset.tools['my_tool']]).tools['my_tool']
+    assert values(added_again) == (5, True, True, True, {'k': 'v'}, True, True)
     stored = toolset.add_function(added, sequential=False)
     assert stored is toolset.tools['added']
     assert values(stored) == (5, True, True, True, {'k': 'v'}, False, True)

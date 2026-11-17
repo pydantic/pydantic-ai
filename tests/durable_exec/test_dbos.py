@@ -7278,30 +7278,41 @@ _shared_tools = {
     'requires_approval': Tool(first_once, name='first'),
     'max_retries': Tool(first_after_two_retries, name='first'),
     'metadata': Tool(first_once, name='first'),
+    'approval_set_between_adds': Tool(first_once, name='first'),
+    'retries_set_between_adds': Tool(first_after_two_retries, name='first'),
+    'metadata_set_between_adds': Tool(first_once, name='first'),
 }
 # Each applies its default to its own copy of the shared `Tool`, which the agents hold through a toolset without it.
 _shared_tool_defaults_toolsets = [
     FunctionToolset([_shared_tools['requires_approval']], requires_approval=True),
     FunctionToolset([_shared_tools['max_retries']], max_retries=2),
     FunctionToolset([_shared_tools['metadata']], metadata={'dbos': {'child_workflow': {}}}),
+    FunctionToolset([_shared_tools['approval_set_between_adds']]),
+    FunctionToolset([_shared_tools['retries_set_between_adds']]),
+    FunctionToolset([_shared_tools['metadata_set_between_adds']]),
 ]
+# Set after one toolset added the `Tool` and before the agent's did: it reached every holder back when they held the
+# `Tool` itself.
+_shared_tools['approval_set_between_adds'].requires_approval = True
+_shared_tools['retries_set_between_adds'].max_retries = 2
+_shared_tools['metadata_set_between_adds'].metadata = {'dbos': {'child_workflow': {}}}
 _shared_tool_defaults_agents = {
-    field: Agent(
+    case: Agent(
         FunctionModel(_call_both_tools_and_retries),
-        name=f'shared_{field}_tool_instance',
+        name=f'shared_{case}_tool_instance',
         deps_type=type(None),
         output_type=[str, DeferredToolRequests],
         toolsets=[FunctionToolset([tool, Tool(second)], id='tools')],
         capabilities=[DBOSDurability()],
     )
-    for field, tool in _shared_tools.items()
+    for case, tool in _shared_tools.items()
 }
 shared_tool_defaults_crash_armed = threading.Event()
 
 
 @DBOS.workflow()
-async def shared_tool_defaults_workflow(field: str) -> str:
-    output = (await _shared_tool_defaults_agents[field].run('Call both tools.')).output
+async def shared_tool_defaults_workflow(case: str) -> str:
+    output = (await _shared_tool_defaults_agents[case].run('Call both tools.')).output
     if shared_tool_defaults_crash_armed.is_set():
         shared_tool_defaults_crash_armed.clear()
         raise _ProcessCrash
@@ -7312,7 +7323,7 @@ _both_calls = ['__model.request', 'first_step_one', 'second_step', '__model.requ
 
 
 @pytest.mark.parametrize(
-    ('field', 'unpatched_run', 'patched_run'),
+    ('case', 'unpatched_run', 'patched_run'),
     [
         (
             'requires_approval',
@@ -7348,12 +7359,65 @@ _both_calls = ['__model.request', 'first_step_one', 'second_step', '__model.requ
             ),
             ('done', [_patch_step, *_both_calls]),
         ),
+        (
+            'approval_set_between_adds',
+            ('deferred', ['__model.request', 'second_step']),
+            ('deferred', ['__model.request', 'second_step']),
+        ),
+        (
+            'retries_set_between_adds',
+            (
+                'done',
+                [
+                    '__model.request',
+                    'second_step',
+                    '__model.request',
+                    '__model.request',
+                    'first_step_one',
+                    '__model.request',
+                ],
+            ),
+            (
+                'done',
+                [
+                    '__model.request',
+                    'second_step',
+                    '__model.request',
+                    '__model.request',
+                    'first_step_one',
+                    '__model.request',
+                ],
+            ),
+        ),
+        (
+            'metadata_set_between_adds',
+            (
+                'done',
+                [
+                    '__model.request',
+                    'shared_metadata_set_between_adds_tool_instance__function_toolset__tools.call_tool__child_workflow',
+                    'DBOS.getResult',
+                    'second_step',
+                    '__model.request',
+                ],
+            ),
+            (
+                'done',
+                [
+                    '__model.request',
+                    'shared_metadata_set_between_adds_tool_instance__function_toolset__tools.call_tool__child_workflow',
+                    'DBOS.getResult',
+                    'second_step',
+                    '__model.request',
+                ],
+            ),
+        ),
     ],
 )
 async def test_dbos_shared_tool_defaults_recover(
     dbos: DBOS,
     monkeypatch: pytest.MonkeyPatch,
-    field: str,
+    case: str,
     unpatched_run: tuple[str, list[str]],
     patched_run: tuple[str, list[str]],
 ) -> None:
@@ -7362,7 +7426,8 @@ async def test_dbos_shared_tool_defaults_recover(
     Without the patch marker, the agent lists the `Tool` with the `requires_approval`, `max_retries` and `metadata`
     another toolset holding it set, as released versions did: the call waits for approval, gets that toolset's two
     retries, or runs in a child workflow. A new workflow lists the agent's own values. Faking `DBOS.patch_async`
-    stands in for the code before the upgrade, which never called it.
+    stands in for the code before the upgrade, which never called it. A value set on the `Tool` between two toolsets
+    adding it is listed in both.
 
     Not a VCR test: it pins the steps DBOS records and replays; the model is a `FunctionModel`.
     """
@@ -7373,10 +7438,10 @@ async def test_dbos_shared_tool_defaults_recover(
 
     async def start() -> tuple[str, bool]:
         """Start the workflow; return its ID and whether it crashed after the run rather than failing in it."""
-        workflow_id = f'shared-tool-defaults-{field}-{uuid.uuid4()}'
+        workflow_id = f'shared-tool-defaults-{case}-{uuid.uuid4()}'
         shared_tool_defaults_crash_armed.set()
         with SetWorkflowID(workflow_id), pytest.raises((_ProcessCrash, UnexpectedModelBehavior)) as exc_info:
-            await shared_tool_defaults_workflow(field)
+            await shared_tool_defaults_workflow(case)
         shared_tool_defaults_crash_armed.clear()
         return workflow_id, isinstance(exc_info.value, _ProcessCrash)
 

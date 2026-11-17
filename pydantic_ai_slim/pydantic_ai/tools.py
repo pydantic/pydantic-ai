@@ -357,6 +357,15 @@ class _DefaultedToolValues:
     metadata: dict[str, Any] | None
 
 
+@dataclass
+class _SharedToolValues:
+    """The values every `FunctionToolset` holding a `Tool` wrote onto it, back when it wrote onto the `Tool` itself."""
+
+    values: _DefaultedToolValues
+    last_added: _DefaultedToolValues
+    """The `Tool`'s own values when a toolset last added it. A value set on the `Tool` since then reached every holder."""
+
+
 def _validate_max_retries(max_retries: int | None) -> None:
     if max_retries is not None and max_retries < 0:
         raise UserError(f'max_retries must be >= 0, got {max_retries}')
@@ -404,7 +413,7 @@ class Tool(Generic[ToolAgentDepsT]):
     # the `Tool` and every toolset's copy of it; `_assigned_values` holds what this copy's toolset set on it. Temporal
     # and DBOS list the copy the old way for workflows started before toolsets stored copies. Not `__init__` fields,
     # so a dataclass subclass adding a required field stays valid.
-    _shared_values: _DefaultedToolValues | None = field(default=None, init=False, repr=False, compare=False)
+    _shared_values: _SharedToolValues | None = field(default=None, init=False, repr=False, compare=False)
     _assigned_values: _DefaultedToolValues | None = field(default=None, init=False, repr=False, compare=False)
 
     def __init__(
@@ -622,9 +631,9 @@ class Tool(Generic[ToolAgentDepsT]):
         That's what every toolset holding the `Tool` wrote onto it, except a value changed since this copy's toolset
         set it, which reached every holder then too.
         """
-        shared, assigned = self._shared_values, self._assigned_values
-        if shared is None or assigned is None:
-            return self._own_values()
+        own = self._own_values()
+        shared = own if self._shared_values is None else self._shared_values.values
+        assigned = self._assigned_values or own
         return _DefaultedToolValues(
             shared.max_retries if self.max_retries == assigned.max_retries else self.max_retries,
             shared.requires_approval

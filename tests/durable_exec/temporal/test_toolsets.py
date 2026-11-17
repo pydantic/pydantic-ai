@@ -2543,13 +2543,24 @@ _shared_tools = {
     'max_retries': Tool(first_after_two_retries, name='first'),
     'metadata': Tool(first_in_workflow, name='first'),
     'approval_set_on_copy': Tool(first_in_workflow, name='first'),
+    'approval_set_between_adds': Tool(first_in_workflow, name='first'),
+    'retries_set_between_adds': Tool(first_after_two_retries, name='first'),
+    'metadata_set_between_adds': Tool(first_in_workflow, name='first'),
 }
 # Each applies its default to its own copy of the shared `Tool`, which the agents hold through a toolset without it.
 _shared_tool_defaults_toolsets = [
     FunctionToolset([_shared_tools['requires_approval']], requires_approval=True),
     FunctionToolset([_shared_tools['max_retries']], max_retries=2),
     FunctionToolset([_shared_tools['metadata']], metadata={'temporal': False}),
+    FunctionToolset([_shared_tools['approval_set_between_adds']]),
+    FunctionToolset([_shared_tools['retries_set_between_adds']]),
+    FunctionToolset([_shared_tools['metadata_set_between_adds']]),
 ]
+# Set after one toolset added the `Tool` and before the agent's did: it reached every holder back when they held the
+# `Tool` itself.
+_shared_tools['approval_set_between_adds'].requires_approval = True
+_shared_tools['retries_set_between_adds'].max_retries = 2
+_shared_tools['metadata_set_between_adds'].metadata = {'temporal': False}
 _shared_tool_defaults_agent_toolsets = {
     case: FunctionToolset([tool, Tool(second)], id='tools') for case, tool in _shared_tools.items()
 }
@@ -2603,6 +2614,21 @@ _both_calls = ['model_request', 'call_tool', 'call_tool', 'model_request']
             ('deferred', ['model_request', 'call_tool']),
             ('deferred', ['model_request', 'call_tool']),
         ),
+        (
+            'approval_set_between_adds',
+            ('deferred', ['model_request', 'call_tool']),
+            ('deferred', ['model_request', 'call_tool']),
+        ),
+        (
+            'retries_set_between_adds',
+            ('done', [*_both_calls, 'call_tool', 'model_request', 'call_tool', 'model_request']),
+            ('done', [*_both_calls, 'call_tool', 'model_request', 'call_tool', 'model_request']),
+        ),
+        (
+            'metadata_set_between_adds',
+            ('done', ['model_request', 'call_tool', 'model_request']),
+            ('done', ['model_request', 'call_tool', 'model_request']),
+        ),
     ],
 )
 async def test_shared_tool_defaults_replay(
@@ -2617,7 +2643,8 @@ async def test_shared_tool_defaults_replay(
     Without the patch marker, the agent lists the `Tool` with the `requires_approval`, `max_retries` and `metadata`
     another toolset holding it set, as released versions did: the call waits for approval, gets that toolset's two
     retries, or runs in the workflow. A new run lists the agent's own values. A value set on the agent's copy is
-    listed in both. Unsandboxed, so `workflow.patched` can be faked for the original run.
+    listed in both, as is a value set on the `Tool` between two toolsets adding it. Unsandboxed, so `workflow.patched`
+    can be faked for the original run.
     """
 
     async def run_workflow() -> tuple[tuple[str, list[str]], WorkflowHistory]:
