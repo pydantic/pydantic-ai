@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Literal
 
@@ -33,7 +33,6 @@ from pydantic_ai_harness.sub_agents import (
     SubAgentToolset,
     TaskControl,
 )
-from pydantic_ai_harness.sub_agents._toolset import _with_parent_authority  # pyright: ignore[reportPrivateUsage]
 
 from ..file_system.test_windows_paths import DriveBackend
 
@@ -151,14 +150,20 @@ async def test_a_windows_parent_caps_a_delegate_in_a_lowered_directory(tmp_path:
     parent = AuthorityWorkspace(
         Workspace(DriveBackend(tmp_path)), authority='operator', path_authority={'vendor': 'none'}
     )
-    directory = await parent.resolve('vendor\\lib')
     assert await parent.authority_of('vendor\\lib\\AGENTS.md') == 'none'
-    delegate = await _with_parent_authority(parent, Workspace(DriveBackend(tmp_path)), directory)
-    assert delegate.authority == 'none'
+    # The fake drive's workspace is always at `C:\\project`, so the resolver can't root it at the directory: the
+    # levels the child sees come from the cap alone.
+    child = Workspace(DriveBackend(tmp_path))
+    await _assert_delegate_levels(parent, 'vendor\\lib', 'none', resolve_backend=lambda directory: child)
 
 
 async def _assert_delegate_levels(
-    workspace: Workspace, directory: str, expected: Authority, *, resolver_authority: Authority = 'operator'
+    workspace: Workspace,
+    directory: str,
+    expected: Authority,
+    *,
+    resolver_authority: Authority = 'operator',
+    resolve_backend: Callable[[str], Workspace] = lambda directory: Workspace(LocalWorkspaceBackend(directory)),
 ) -> None:
     child: Agent[object, str] = Agent(TestModel(call_tools=['inspect']), name='worker')
     levels: list[Authority] = []
@@ -170,7 +175,7 @@ async def _assert_delegate_levels(
         return 'inspected'
 
     async def resolve(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
-        resolved = Workspace(LocalWorkspaceBackend(await ctx.workspace.resolve(request.directory)))
+        resolved = resolve_backend(await ctx.workspace.resolve(request.directory))
         return AuthorityWorkspace(resolved, authority=resolver_authority)
 
     toolset = SubAgents[object](agents=[SubAgent(child)], workspace_resolver=resolve).get_toolset()
