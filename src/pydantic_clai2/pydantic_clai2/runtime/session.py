@@ -190,7 +190,7 @@ def _overrides_get_workspace(
         return leaf.supplies(messages)
     if isinstance(leaf, DynamicCapability):
         # A capability function's capability, and so its workspace, is known only once the run starts.
-        return include_dynamic
+        return include_dynamic and not isinstance(leaf, WorkspacelessCapability)
     return type(leaf).get_workspace is not AbstractCapability.get_workspace
 
 
@@ -205,6 +205,15 @@ class ConversationWorkspace(AbstractCapability[DepsT]):
     def supplies(self, messages: Sequence[ModelMessage]) -> bool:
         """Whether the workspace of a run continuing `messages` comes from this capability."""
         return False
+
+
+class WorkspacelessCapability(DynamicCapability[DepsT]):
+    """A capability function that never supplies the run's workspace.
+
+    CLAI attaches the session's directory up front, beside it, rather than deferring to what the
+    function returns, and a run whose function does return a workspace fails. A plain capability
+    function works too: core asks the workspace it supplies before any `for_run`.
+    """
 
 
 @dataclass

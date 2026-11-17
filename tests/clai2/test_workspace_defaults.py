@@ -14,6 +14,7 @@ from pydantic_ai.capabilities import (
     CombinedCapability,
     DynamicCapability,
     LocalWorkspace,
+    WindowsWorkspace,
 )
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -23,6 +24,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.skills import Skills
 from pydantic_clai2 import Session
 from pydantic_clai2.app import create_stock_agent
+from pydantic_clai2.runtime.session import WorkspacelessCapability, local_workspace
 
 
 @pytest.mark.parametrize('stock', [False, True])
@@ -145,3 +147,15 @@ async def test_wrapped_dynamic_plugin_gets_the_local_default(tmp_path: Path) -> 
     )
     result = await Session(agent, deps=None, workspace=tmp_path).prompt('go')
     assert result.response.workspace_ref == WorkspaceRef(provider='local', id=str(tmp_path.resolve()))
+
+
+def test_a_workspaceless_capability_keeps_the_session_directory_up_front(tmp_path: Path) -> None:
+    def no_workspace(ctx: RunContext[None]) -> None:
+        return None  # pragma: no cover
+
+    plain = local_workspace([DynamicCapability[None](no_workspace)], tmp_path)
+    workspaceless = local_workspace([WorkspacelessCapability[None](no_workspace)], tmp_path)
+
+    # A plain function might supply the workspace, so the session directory defers to it.
+    assert isinstance(plain, DynamicCapability)
+    assert isinstance(workspaceless, LocalWorkspace | WindowsWorkspace)
