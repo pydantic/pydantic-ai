@@ -3006,7 +3006,7 @@ _SKIPS_IGNORING = (ModelAPIError, UnsupportedSettingWarning)
 
 def _skipping_agent(
     owner: str, primary: Model, backup: Model, fallback_on: FallbackOn = _SKIPS_IGNORING
-) -> Agent[Any, str]:
+) -> Agent[None, str]:
     if owner == 'ModelFallback':
         return Agent(primary, capabilities=[ModelFallback(backup, fallback_on=fallback_on)])
     return Agent(FallbackModel(primary, backup, fallback_on=fallback_on))
