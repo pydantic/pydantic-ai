@@ -169,7 +169,7 @@ def _check_skills(merged: Any) -> None:
     assert [source.directories for source in merged._sources] == [('first',), ('second',)]
 
 
-def _check_model_router(merged: Any) -> None:
+def _check_model_router(merged: ModelRouter[object]) -> None:
     assert (list(merged.choices), merged.default) == (['fast', 'capable'], 'capable')
 
 
@@ -241,13 +241,13 @@ COMBINE_POLICY: dict[str, Policy] = {
     'ModelRouter': Combines(
         'only the last model contribution selects, so two routers become one whose menu has both sets of choices',
         lambda: (
-            ModelRouter[Any](
+            ModelRouter[object](
                 choices={'fast': ModelChoice('test', 'Use for lookups.')},
                 router_model='test',
                 default='fast',
                 mode='per_step',
             ),
-            ModelRouter[Any](
+            ModelRouter[object](
                 choices={'capable': ModelChoice('test', 'Use for hard work.')}, router_model='test', default='capable'
             ),
         ),
