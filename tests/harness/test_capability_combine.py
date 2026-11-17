@@ -206,7 +206,7 @@ def _check_tool_output_limits(merged: Any) -> None:
     assert merged.strip_ansi is True
 
 
-def _check_tool_bridge(merged: Any) -> None:
+def _check_tool_bridge(merged: ToolBridge[None]) -> None:
     assert merged.max_results == 5
 
 

@@ -23,7 +23,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[ToolBridge()])
 
 `tool_call` takes the arguments as a JSON object string rather than a nested object, because some models send nested free-form objects as `null`. An empty string is read as `{}`.
 
-A tool added, removed or changed mid-run changes what `tool_search` finds, not the tool definitions sent to the provider. A tool reached through the bridge is validated and run through the same path as a direct call: argument validation, tool hooks, `ModelRetry`, approval and usage limits apply to it as to any tool, and an unknown name or invalid arguments ask the model to retry. Both `tool_call` and the bridged tool count as tool calls in the run's usage.
+A tool added, removed or changed mid-run changes what `tool_search` finds, not the tool definitions sent to the provider. A tool reached through the bridge is validated and run through the same path as a direct call: argument validation, tool hooks, `ModelRetry`, approval and usage limits apply to it as to any tool, and an unknown name or invalid arguments ask the model to retry. Both `tool_call` and the bridged tool count as tool calls, and `tool_calls_limit` is checked for both before the bridged tool runs.
 
 ## Options
 
@@ -36,7 +36,7 @@ A tool added, removed or changed mid-run changes what `tool_search` finds, not t
 
 These tools are never bridged, so they reach the model as usual:
 
-- Tools that need approval or run outside the agent (`requires_approval=True`, external tools), so approval requests name the real tool. A bridged tool that raises `ApprovalRequired` itself is deferred as its `tool_call` call, and runs once that call is approved.
+- Tools that need approval or run outside the agent (`requires_approval=True`, external tools), so approval requests name the real tool. A bridged tool that raises `ApprovalRequired` itself is deferred as its `tool_call` call, and runs once that call is approved; a denial is recorded as the `tool_call` call's denied outcome.
 - Framework control tools, such as tool search and `load_capability`.
 - Local fallbacks for a provider-native tool (`unless_native`), so the model can drop them when the provider runs the tool natively.
 

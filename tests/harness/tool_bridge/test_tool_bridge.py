@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -9,7 +8,8 @@ from logfire.testing import CaptureLogfire
 
 from pydantic_ai import Agent, FunctionToolset, RunContext, Tool, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ToolSearch
-from pydantic_ai.exceptions import ApprovalRequired, UserError
+from pydantic_ai.capabilities.abstract import ValidatedToolArgs
+from pydantic_ai.exceptions import ApprovalRequired, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -20,8 +20,11 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
+from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import ToolBridge
+from pydantic_ai_harness.tool_bridge import ToolBridgeToolset
 
 
 def _get_weather(city: str) -> str:
@@ -47,13 +50,17 @@ def _scripted(calls: Sequence[ToolCallPart | None], seen: list[list[str]] | None
     return FunctionModel(respond)
 
 
-def _call(tool_name: str, /, **args: Any) -> ToolCallPart:
+def _call(tool_name: str, /, **args: object) -> ToolCallPart:
     return ToolCallPart(tool_name, args)
 
 
-def _returns(messages: list[ModelMessage]) -> list[Any]:
+def _returns(messages: list[ModelMessage]) -> list[object]:
+    return [part.content for part in _return_parts(messages)]
+
+
+def _return_parts(messages: list[ModelMessage]) -> list[ToolReturnPart]:
     return [
-        part.content
+        part
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
@@ -103,7 +110,7 @@ class TestToolBridge:
         agent = Agent(model, capabilities=[ToolBridge()])
 
         @agent.toolset
-        def growing(ctx: RunContext[Any]) -> FunctionToolset[Any]:
+        def growing(ctx: RunContext[object]) -> FunctionToolset[object]:
             return FunctionToolset([_get_weather] if ctx.run_step <= 1 else [_get_weather, _get_time])
 
         result = await agent.run('time?')
@@ -143,7 +150,7 @@ class TestToolBridge:
             [
                 "No tool named 'nope' is available through `tool_call`. Use `tool_search` to find one.",
                 "Invalid arguments for tool '_get_weather': [{'type': 'missing', 'loc': ('city',), 'msg': 'Field required', 'input': {'town': 'Paris'}}, {'type': 'extra_forbidden', 'loc': ('town',), 'msg': 'Extra inputs are not permitted', 'input': 'Paris'}]",
-                "Invalid arguments for tool '_get_weather': [{'type': 'json_invalid', 'loc': (), 'msg': 'Invalid JSON: expected ident at line 1 column 2', 'input': 'not json', 'ctx': {'error': 'expected ident at line 1 column 2'}}]",
+                "Invalid arguments for tool '_get_weather': [{'type': 'json_invalid', 'loc': (), 'msg': 'Invalid JSON: expected ident at line 1 column 2', 'input': 'not json'}]",
             ]
         )
 
@@ -162,7 +169,7 @@ class TestToolBridge:
 
     async def test_custom_search_and_max_results(self):
         async def everything(
-            ctx: RunContext[Any], queries: Sequence[str], tools: Sequence[ToolDefinition]
+            ctx: RunContext[object], queries: Sequence[str], tools: Sequence[ToolDefinition]
         ) -> list[str]:
             return ['missing', *(tool.name for tool in tools)]
 
@@ -189,10 +196,10 @@ class TestToolBridge:
     async def test_hooks_see_the_bridged_tool(self):
         executed: list[str] = []
 
-        class Record(AbstractCapability[Any]):
+        class Record(AbstractCapability[object]):
             async def before_tool_execute(
-                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
-            ) -> dict[str, Any]:
+                self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+            ) -> ValidatedToolArgs:
                 executed.append(call.tool_name)
                 return args
 
@@ -254,7 +261,7 @@ class TestToolBridge:
             """Delete a file."""
             raise ApprovalRequired
 
-        def deny(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        def deny(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
             return requests.build_results(approvals={call.tool_call_id: False for call in requests.approvals})
 
         model = _scripted([_call('tool_call', name='delete_file', args_json='{"path": "a.txt"}')])
@@ -262,7 +269,10 @@ class TestToolBridge:
 
         result = await agent.run('delete a.txt')
 
-        assert _returns(result.all_messages()) == snapshot(['The tool call was denied.'])
+        [denied] = _return_parts(result.all_messages())
+        assert (denied.tool_name, denied.outcome, denied.content) == snapshot(
+            ('tool_call', 'denied', 'The tool call was denied.')
+        )
 
     async def test_deferred_loading_tools_are_bridged(self):
         seen: list[list[str]] = []
@@ -281,8 +291,8 @@ class TestToolBridge:
         assert _returns(result.all_messages())[-1] == 'Sunny in Oslo'
 
     async def test_capability_tools_are_bridged(self):
-        class Weather(AbstractCapability[Any]):
-            def get_toolset(self) -> FunctionToolset[Any]:
+        class Weather(AbstractCapability[object]):
+            def get_toolset(self) -> FunctionToolset[object]:
                 return FunctionToolset([_get_weather])
 
         seen: list[list[str]] = []
@@ -293,3 +303,21 @@ class TestToolBridge:
 
         assert seen[0] == ['tool_search', 'tool_describe', 'tool_call']
         assert _returns(result.all_messages()) == ['Sunny in Lima']
+
+    async def test_bridged_call_counts_toward_tool_calls_limit(self):
+        model = _scripted([_call('tool_call', name='_get_weather', args_json='{"city": "Oslo"}')])
+        agent = Agent(model, tools=[_get_weather], capabilities=[ToolBridge()])
+
+        with pytest.raises(UsageLimitExceeded, match='tool_calls_limit'):
+            await agent.run('weather?', usage_limits=UsageLimits(tool_calls_limit=1))
+
+        result = await agent.run('weather?', usage_limits=UsageLimits(tool_calls_limit=2))
+        assert result.usage.tool_calls == 2
+
+    async def test_toolset_needs_the_tool_manager(self):
+        toolset = ToolBridgeToolset[None](FunctionToolset([_get_weather]))
+        ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+        tools = await toolset.get_tools(ctx)
+
+        with pytest.raises(UserError, match="needs the run's tool manager"):
+            await toolset.call_tool('tool_call', {'name': '_get_weather', 'args_json': '{}'}, ctx, tools['tool_call'])

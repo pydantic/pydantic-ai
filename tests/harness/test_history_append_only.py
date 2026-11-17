@@ -180,7 +180,7 @@ def _run_look_up(topic: str) -> tuple[str, dict[str, Any]]:
     return 'run_code', {'code': f'await look_up(topic={topic!r})'}
 
 
-def _bridge_look_up(topic: str) -> tuple[str, dict[str, Any]]:
+def _bridge_look_up(topic: str) -> tuple[str, dict[str, str]]:
     return 'tool_call', {'name': 'look_up', 'args_json': f'{{"topic": "{topic}"}}'}
 
 

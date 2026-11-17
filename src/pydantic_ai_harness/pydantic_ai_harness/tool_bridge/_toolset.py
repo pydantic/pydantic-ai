@@ -14,11 +14,11 @@ from pydantic_ai.capabilities import ToolSearchFunc
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDenied, ToolSelector, matches_tool_selector
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import WrapperToolset
 from pydantic_ai.toolsets._tool_search import keywords_search_fn
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
-from pydantic_ai_harness._code_tools import FRAMEWORK_CONTROL_TOOL_KINDS
+from pydantic_ai_harness._code_tools import FRAMEWORK_CONTROL_TOOL_KINDS, reserve_nested_tool_call
 
 SEARCH_TOOL_NAME = 'tool_search'
 DESCRIBE_TOOL_NAME = 'tool_describe'
@@ -172,15 +172,17 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
     ) -> Any:
         """Run a bridged tool through a nested `ToolManager`, so its validation and hooks apply as to a direct call."""
         parent = ctx.tool_manager
-        manager = ToolManager(
-            toolset=self.wrapped,
-            root_capability=parent.root_capability if parent is not None else None,
-            ctx=ctx,
-            tools=bridged,
-        )
+        if parent is None:
+            raise UserError(
+                "`ToolBridgeToolset` needs the run's tool manager, so bridged calls run through tool hooks."
+            )
+        manager = ToolManager(toolset=self.wrapped, root_capability=parent.root_capability, ctx=ctx, tools=bridged)
         call = ToolCallPart(tool_name=name, args=args_json or '{}')
+        reserved = reserve_nested_tool_call(ctx)
         try:
-            result = await manager.handle_call(call, approved=ctx.tool_call_approved, wrap_validation_errors=False)
+            return await manager.handle_call(call, approved=ctx.tool_call_approved, wrap_validation_errors=False)
         except ValidationError as exc:
-            raise ModelRetry(f'Invalid arguments for tool {name!r}: {exc.errors(include_url=False)}') from exc
-        return result.message if isinstance(result, ToolDenied) else result
+            errors = exc.errors(include_url=False, include_context=False)
+            raise ModelRetry(f'Invalid arguments for tool {name!r}: {errors}') from exc
+        finally:
+            ctx.usage.tool_calls -= reserved
