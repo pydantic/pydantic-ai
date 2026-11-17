@@ -163,6 +163,9 @@ with the model's writes.
   `max_search_result_chars=4_000`, `max_search_files=1_000`. Queries are capped at 1,000 characters
   and 32 unique terms. No semantic ranking is built in; implement `SearchableMemoryStore.search`
   for an indexed backend.
+- A nested scope (namespace `acme/main` under `acme`) is skipped by search and the injected file
+  list. A custom store implements `ChildListingMemoryStore.list_child_paths` so its files do not
+  use up those listing limits.
 - Other options: `agent_name='main'` (storage segment, never shown to the model), `heading=''`
   (labels the guidance and injected block), `guidance=None` (replace the default usage text).
 

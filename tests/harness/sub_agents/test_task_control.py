@@ -27,8 +27,15 @@ from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai.exceptions import ApprovalRequired, UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, PrefixTools, on_event
+from pydantic_ai.capabilities.abstract import ValidatedToolArgs
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    SkipToolExecution,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.messages import (
     CapabilityEvent,
     FinalResultEvent,
@@ -48,7 +55,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend
 from pydantic_ai_harness.sub_agents import (
@@ -569,6 +576,163 @@ class TestSubAgentsTaskControl:
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         assert 'cannot resume; it is one-shot' in result.output
+
+    async def test_a_message_to_a_finished_task_resumes_it(self) -> None:
+        recorder = Recorder()
+        seen: list[int] = []
+
+        def respond(messages: list[ModelMessage]) -> ModelResponse:
+            seen.append(len(messages))
+            return text(f'answer {len(seen)}')
+
+        def follow_up(messages: list[ModelMessage]) -> ModelResponse:
+            return call('message_task', task_id=task_id_in(tool_returns(messages)[-1]), message='And then?')
+
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='First.'), follow_up, echo_last_return),
+            capabilities=[controlled(researcher(Agent(scripted(respond, respond)))), recorder],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert result.output.endswith('(ok):\nanswer 2')
+        assert seen == [1, 3]
+        [resumed] = recorder.of(TaskResumedEvent)
+        assert (resumed.task_id, resumed.prompt) == (recorder.of(TaskAssignedEvent)[0].task_id, 'And then?')
+
+    async def test_a_message_to_a_finished_background_task_resumes_it_in_the_background(self) -> None:
+        recorder = Recorder()
+
+        def follow_up(messages: list[ModelMessage]) -> ModelResponse:
+            return call('message_task', task_id=task_id_in(tool_returns(messages)[0]), message='Again.')
+
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='First.', background=True),
+                text('Waiting.'),
+                follow_up,
+                text('Waiting.'),
+                text('Done.'),
+            ),
+            capabilities=[controlled(), recorder],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert 'is running in the background' in tool_returns(result.all_messages())[-1]
+        assert len(task_texts(result.all_messages())) == 2
+        [resumed] = recorder.of(TaskResumedEvent)
+        assert resumed.task_id == recorder.of(TaskAssignedEvent)[0].task_id
+
+    @pytest.mark.parametrize(
+        ('hold', 'handled', 'expected'),
+        [
+            (SkipToolExecution('Resuming is off.'), False, 'Resuming is off.'),
+            (ApprovalRequired(), False, "needs approval. Call `delegate_task` with `agent_name='researcher'`"),
+            (ApprovalRequired(), True, 'was not resumed: Not now.'),
+        ],
+    )
+    async def test_a_resume_by_message_goes_through_the_delegate_tools_hooks_and_approvals(
+        self, hold: Exception, handled: bool, expected: str
+    ) -> None:
+        recorder = Recorder()
+
+        class HoldResumes(AbstractCapability[object]):
+            async def before_tool_execute(
+                self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+            ) -> ValidatedToolArgs:
+                if tool_def.name == 'delegate_task' and args.get('resume') and not ctx.tool_call_approved:
+                    raise hold
+                return args
+
+        def deny(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
+            return DeferredToolResults(
+                approvals={call.tool_call_id: ToolDenied('Not now.') for call in requests.approvals}
+            )
+
+        def follow_up(messages: list[ModelMessage]) -> ModelResponse:
+            return call('message_task', task_id=task_id_in(tool_returns(messages)[-1]), message='And then?')
+
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='First.'), follow_up, echo_last_return),
+            capabilities=[
+                controlled(),
+                HoldResumes(),
+                recorder,
+                *([HandleDeferredToolCalls[object](handler=deny)] if handled else []),
+            ],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert expected in result.output
+        assert not recorder.of(TaskResumedEvent)
+
+    async def test_a_message_to_a_finished_one_shot_task_says_it_cannot_resume(self) -> None:
+        def follow_up(messages: list[ModelMessage]) -> ModelResponse:
+            return call('message_task', task_id=task_id_in(tool_returns(messages)[-1]), message='And then?')
+
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='First.'), follow_up, echo_last_return),
+            capabilities=[controlled(researcher(resumable=False))],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert 'cannot resume; it is one-shot' in result.output
+
+    async def test_a_resume_by_message_counts_against_tool_calls_limit(self) -> None:
+        recorder = Recorder()
+
+        def follow_up(messages: list[ModelMessage]) -> ModelResponse:
+            return call('message_task', task_id=task_id_in(tool_returns(messages)[-1]), message='And then?')
+
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='First.'), follow_up, echo_last_return),
+            capabilities=[controlled(), recorder],
+        )
+        with anyio.fail_after(WAIT), pytest.raises(UsageLimitExceeded, match='tool_calls_limit of 2'):
+            await parent.run('Go.', usage_limits=UsageLimits(tool_calls_limit=2))
+        assert not recorder.of(TaskResumedEvent)
+
+    @pytest.mark.parametrize('tool_name', ['delegate_task', 'task'])
+    @pytest.mark.parametrize('prefix', ['', 'ns_'])
+    async def test_a_resume_by_message_finds_the_delegate_tool_by_its_exposed_name(
+        self, tool_name: str, prefix: str
+    ) -> None:
+        seen: list[int] = []
+
+        def respond(messages: list[ModelMessage]) -> ModelResponse:
+            seen.append(len(messages))
+            return text(f'answer {len(seen)}')
+
+        def follow_up(messages: list[ModelMessage]) -> ModelResponse:
+            return call(f'{prefix}message_task', task_id=task_id_in(tool_returns(messages)[-1]), message='And then?')
+
+        sub_agents = controlled(researcher(Agent(scripted(respond, respond))), tool_name=tool_name)
+        parent = Agent(
+            scripted(call(f'{prefix}{tool_name}', agent_name='researcher', task='First.'), follow_up, echo_last_return),
+            capabilities=[PrefixTools(wrapped=sub_agents, prefix=prefix[:-1]) if prefix else sub_agents],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert result.output.endswith('(ok):\nanswer 2')
+        assert seen == [1, 3]
+
+    @pytest.mark.moves_cache_prefix(reason='hides the delegate tool after the first step')
+    async def test_a_resume_by_message_without_the_delegate_tool_asks_for_a_delegate_call(self) -> None:
+        class HideDelegateAfterFirstStep(AbstractCapability[object]):
+            async def prepare_tools(
+                self, ctx: RunContext[object], tool_defs: list[ToolDefinition]
+            ) -> list[ToolDefinition]:
+                return [tool_def for tool_def in tool_defs if ctx.run_step < 2 or tool_def.name != 'delegate_task']
+
+        def follow_up(messages: list[ModelMessage]) -> ModelResponse:
+            return call('message_task', task_id=task_id_in(tool_returns(messages)[-1]), message='And then?')
+
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='First.'), follow_up, echo_last_return),
+            capabilities=[controlled(), HideDelegateAfterFirstStep()],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert "call the delegate tool with `agent_name='researcher'`" in result.output
 
     async def test_list_tasks_shows_each_task_once_with_its_status(self) -> None:
         gate = Gate()
@@ -1097,7 +1261,6 @@ class TestSubAgentsTaskControl:
             task_id = task_id_in(tool_returns(messages)[-1])
             return ModelResponse(
                 parts=[
-                    ToolCallPart('message_task', {'task_id': task_id, 'message': 'hi'}),
                     ToolCallPart('answer_task', {'task_id': task_id, 'answer': 'x'}),
                     ToolCallPart('cancel_task', {'task_id': task_id}),
                     ToolCallPart('cancel_task', {'task_id': 'unknown'}),
@@ -1111,10 +1274,9 @@ class TestSubAgentsTaskControl:
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         returns = tool_returns(result.all_messages())[1:]
-        assert 'has finished (ok), and messages only reach running tasks' in returns[0]
-        assert 'is not waiting for an answer' in returns[1]
-        assert returns[2].endswith('already finished (ok); there is nothing to cancel.')
-        assert "Unknown task 'unknown'" in returns[3]
+        assert 'is not waiting for an answer' in returns[0]
+        assert returns[1].endswith('already finished (ok); there is nothing to cancel.')
+        assert "Unknown task 'unknown'" in returns[2]
 
     async def test_listing_passes_a_parent_whose_saved_file_was_damaged(self, tmp_path: Path) -> None:
         """A loaded task whose parent's file was skipped as damaged does not break the walk up its ancestry."""
