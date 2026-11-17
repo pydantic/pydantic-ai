@@ -229,7 +229,9 @@ review-thread trigger, so resolving an optional finding's thread updates the sta
 `PR Review Gates`, which also runs on PR Bots completion. The latter covers writes by `GITHUB_TOKEN`,
 which cannot trigger the observer. Do not add a `pull_request_target` trigger to `PR Review Gates`:
 GitHub blocks that event by default in public repositories (#12961). The publisher binds each
-wake-up to the unique open PR GitHub reports for its exact head SHA and repository. It ignores
+wake-up to the unique open PR GitHub reports for its exact head SHA and repository. A review or
+inline-comment run reports the base repository as its head repository, even for a fork PR, so that
+wake-up binds to the unique open PR at its exact head SHA and branch, from any repository. It ignores
 titles and artifacts, and a stale or ambiguous event cannot write statuses to another head. Fork
 observers may need contributor approval.
 
