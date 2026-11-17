@@ -358,6 +358,8 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
 
         items: list[ModelResponsePart] = []
 
+        if reasoning := choice.message.reasoning:
+            items.append(ThinkingPart(reasoning))
         if content:
             items.extend(
                 split_content_into_text_and_thinking(content, self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS))
@@ -676,6 +678,9 @@ class HuggingFaceStreamedResponse(StreamedResponse):
             # Each chunk carries only its own tokens' logprobs, so collect them and publish the full list
             # once the stream ends, matching what the non-streamed path returns for the same request.
             self._logprobs.extend(_map_logprobs(choice.logprobs))
+
+        if reasoning := choice.delta.reasoning:
+            yield from self._parts_manager.handle_thinking_delta(vendor_part_id='reasoning', content=reasoning)
 
         # Handle the text part of the response
         content = choice.delta.content

@@ -79,7 +79,11 @@ with try_import() as google_imports:
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as groq_imports:
-    from pydantic_ai.providers.groq import GroqProvider
+    from pydantic_ai.providers.groq import (
+        GroqProvider,
+        _GroqQwenBestEffortOutputJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+        _GroqQwenStrictOutputJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    )
 
 with try_import() as huggingface_imports:
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
@@ -219,6 +223,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'bedrock_supports_tool_caching': False,
     'bedrock_supported_media_kinds_in_tool_returns': frozenset({'image'}),
     'bedrock_thinking_variant': None,
+    'bedrock_supports_stop_sequences': True,
 }
 
 
@@ -242,6 +247,7 @@ def test_anthropic_claude_sonnet_4_6():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
@@ -281,6 +287,7 @@ def test_anthropic_claude_opus_4_7():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
@@ -324,6 +331,7 @@ def test_anthropic_claude_haiku_4_5():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
@@ -358,6 +366,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'supports_thinking': True,
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
@@ -402,6 +411,7 @@ def test_openai_gpt_5_4():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_max_reasoning_effort': False,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_supports_phase': True,
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
@@ -458,6 +468,7 @@ def test_openai_gpt_5_6():
             'tool_addition_mode': 'with_definitions',
             'openai_supports_phase': True,
             'openai_responses_tool_choice_accepts_additional_tools': True,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_responses_supports_max_reasoning_effort': True,
             'openai_supports_prompt_cache_breakpoints': True,
             'tool_deferral_mode': 'with_tool_search',
@@ -506,6 +517,7 @@ def test_openai_gpt_6_astra():
             'openai_supports_phase': True,
             'openai_responses_tool_choice_accepts_additional_tools': True,
             'openai_responses_supports_max_reasoning_effort': True,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_supports_prompt_cache_breakpoints': True,
             'openai_reasoning_efforts': frozenset({'high', 'low', 'max', 'medium', 'xhigh'}),
             'tool_deferral_mode': 'with_tool_search',
@@ -598,6 +610,33 @@ def test_openrouter_gpt_6_1_sol(model_name: str):
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['gpt-6.2-sol', 'gpt-6.2-astra'])
+def test_openai_gpt_6_2(model_name: str):
+    """GPT-6.2 Sol and Astra resolve GPT-6 Astra's capabilities: neither accepts `effort='none'`."""
+
+    profile = OpenAIProvider.model_profile(model_name)
+    assert _normalize(profile) == _normalize(OpenAIProvider.model_profile('gpt-6-astra'))
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'model_name', ['openai/gpt-6.2-sol', 'openai/gpt-6.2-sol-pro', 'openai/gpt-6.2-astra', 'openai/gpt-6.2-astra-pro']
+)
+def test_openrouter_gpt_6_2(model_name: str):
+    """OpenRouter's published GPT-6.2 routes retain the OpenAI reasoning capabilities.
+
+    OpenRouter accepted a mid-conversation `configuration_update` on both non-pro routes (probed live 2026-11-17).
+    """
+
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('thinking_always_enabled') is True
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+    assert profile.get('openai_responses_supports_reasoning_context') is True
+    assert profile.get('supports_mid_conversation_effort') is not model_name.endswith('-pro')
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra'])
 def test_openai_gpt_5_6_reasoning_mode(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
@@ -667,6 +706,7 @@ def test_openai_gpt_4o():
             'json_schema_transformer': _OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'openai_responses_supports_max_reasoning_effort': False,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -703,6 +743,7 @@ def test_openai_o3_mini():
             'openai_supports_minimal_reasoning_effort': False,
             'openai_responses_supports_max_reasoning_effort': False,
             'openai_supports_reasoning': True,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
@@ -739,6 +780,7 @@ def test_openai_codex_gpt_5_6():
             'openai_supports_phase': True,
             'openai_supports_minimal_reasoning_effort': False,
             'openai_responses_tool_choice_accepts_additional_tools': True,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_responses_supports_max_reasoning_effort': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -784,6 +826,18 @@ def test_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
         }
     )
 
@@ -802,6 +856,21 @@ def test_google_gemini_2_5_flash():
             'google_supports_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': True,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
+            'supported_document_media_types': frozenset(
+                {'application/pdf', 'text/csv', 'text/html', 'text/markdown', 'text/plain'}
+            ),
         }
     )
 
@@ -820,6 +889,21 @@ def test_google_gemini_2_5_flash_image():
             'supports_video_input': False,
             'google_supports_thinking_level': False,
             'google_web_search_billed_per_prompt': True,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
+            'supported_document_media_types': frozenset(
+                {'application/pdf', 'text/csv', 'text/html', 'text/markdown', 'text/plain'}
+            ),
         }
     )
 
@@ -862,6 +946,18 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'supports_thinking': True,
             'google_web_search_billed_per_prompt': False,
             'supports_tool_return_schema': True,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
         }
     )
 
@@ -870,7 +966,14 @@ def test_google_gemini_3_7_flash_thinking_levels():
 def test_xai_grok_4():
     profile = XaiProvider.model_profile('grok-4')
     assert _normalize(profile) == snapshot(
-        {'supports_json_schema_output': True, 'supports_json_object_output': True, 'grok_supports_builtin_tools': True}
+        {
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'grok_supports_builtin_tools': True,
+        }
     )
 
 
@@ -879,6 +982,9 @@ def test_xai_grok_3_mini():
     profile = XaiProvider.model_profile('grok-3-mini')
     assert _normalize(profile) == snapshot(
         {
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
@@ -894,6 +1000,9 @@ def test_xai_grok_4_7():
     profile = XaiProvider.model_profile('grok-4.7')
     assert _normalize(profile) == snapshot(
         {
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
@@ -909,7 +1018,12 @@ def test_xai_grok_4_7():
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
 def test_mistral_mistral_large():
     profile = MistralProvider.model_profile('mistral-large-latest')
-    assert _normalize(profile) == snapshot({'tool_call_id_length': 9, 'supports_inline_system_prompts': True})
+    assert _normalize(profile) == snapshot(
+        {
+            'tool_call_id_length': 9,
+            'supports_inline_system_prompts': True,
+        }
+    )
 
 
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
@@ -917,7 +1031,11 @@ def test_mistral_small_latest():
     """Small 4 / Medium 3.5 advertise adjustable (opt-in) reasoning, unlike always-on magistral."""
     profile = MistralProvider.model_profile('mistral-small-latest')
     assert _normalize(profile) == snapshot(
-        {'tool_call_id_length': 9, 'supports_thinking': True, 'supports_inline_system_prompts': True}
+        {
+            'tool_call_id_length': 9,
+            'supports_thinking': True,
+            'supports_inline_system_prompts': True,
+        }
     )
 
 
@@ -1105,7 +1223,10 @@ def test_mistral_zai_glm_5_3_flash_inline_defs():
     assert _normalize(MistralProvider.model_profile('zai-glm-5-3')) == expected
     assert _normalize(MistralProvider.model_profile('zai-glm-5-3-flash')) == expected
     assert _normalize(MistralProvider.model_profile('zai-glm-5-30')) == snapshot(
-        {'tool_call_id_length': 9, 'supports_inline_system_prompts': True}
+        {
+            'tool_call_id_length': 9,
+            'supports_inline_system_prompts': True,
+        }
     )
 
 
@@ -1195,6 +1316,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_tool_choice_none_variant': 'anthropic',
             'bedrock_document_cache_point_variant': 'anthropic',
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'bedrock_send_back_thinking_parts': True,
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
@@ -1278,6 +1400,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_tool_choice_none_variant': 'anthropic',
             'bedrock_document_cache_point_variant': 'anthropic',
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'bedrock_supports_tool_caching': True,
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
@@ -1324,6 +1447,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_tool_choice_none_variant': 'anthropic',
             'bedrock_document_cache_point_variant': 'anthropic',
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'bedrock_supports_tool_caching': True,
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
@@ -1473,6 +1597,7 @@ def test_bedrock_openai():
         {
             'json_schema_transformer': _GptOssInlineDefsJsonSchemaTransformer,
             'supports_thinking': True,
+            'bedrock_supports_stop_sequences': False,
             'bedrock_thinking_variant': 'openai',
             'thinking_always_enabled': True,
             'default_framing_announcement': 'always',
@@ -1491,6 +1616,7 @@ def test_bedrock_qwen_qwq():
             'supported_native_tools': frozenset(),
             'bedrock_supports_leading_assistant_message': True,
             'supports_thinking': True,
+            'bedrock_supports_stop_sequences': False,
             'bedrock_thinking_variant': 'qwen',
             'bedrock_supports_strict_tool_definition': False,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset(),
@@ -1509,6 +1635,7 @@ def test_bedrock_zai_glm():
             'zai_supports_reasoning_effort': False,
             'supported_native_tools': frozenset(),
             'bedrock_supports_tool_choice': True,
+            'bedrock_supports_stop_sequences': False,
             'bedrock_supports_leading_assistant_message': True,
             'json_schema_transformer': _BedrockJsonSchemaTransformerWithoutContains,
             'supports_json_schema_output': True,
@@ -1532,6 +1659,7 @@ def test_bedrock_zai_glm_5_3():
             'supported_native_tools': frozenset(),
             'json_schema_transformer': _BedrockGlm53JsonSchemaTransformer,
             'bedrock_supports_tool_choice': True,
+            'bedrock_supports_stop_sequences': False,
             'bedrock_supports_leading_assistant_message': True,
             'supports_json_schema_output': True,
             'bedrock_supports_strict_tool_definition': True,
@@ -1553,6 +1681,7 @@ def test_bedrock_minimax():
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'supported_native_tools': frozenset(),
+            'bedrock_supports_stop_sequences': False,
             'supports_json_schema_output': True,
             'bedrock_supports_strict_tool_definition': True,
             'supports_video_input': False,
@@ -1562,6 +1691,7 @@ def test_bedrock_minimax():
     assert _normalize(BedrockProvider.model_profile('minimax.minimax-m3.5')) == snapshot(
         {
             'supported_native_tools': frozenset(),
+            'bedrock_supports_stop_sequences': False,
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': False,
             'supports_video_input': False,
@@ -1577,6 +1707,7 @@ def test_bedrock_deepseek_v3_2():
         {
             'supports_thinking': True,
             'bedrock_thinking_variant': 'deepseek',
+            'bedrock_supports_stop_sequences': False,
             'supported_native_tools': frozenset(),
             'supports_video_input': False,
         }
@@ -1593,6 +1724,7 @@ def test_bedrock_moonshotai_kimi():
             'supports_thinking': True,
             'supported_native_tools': frozenset(),
             'bedrock_supports_tool_choice': True,
+            'bedrock_supports_stop_sequences': False,
             'bedrock_supports_leading_assistant_message': True,
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'supports_json_schema_output': True,
@@ -1633,6 +1765,9 @@ def test_bedrock_xai_grok(region: str):
     assert profiles == snapshot(
         {
             '4.6': {
+                'supported_image_media_types': frozenset(
+                    {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+                ),
                 'supports_thinking': True,
                 'thinking_always_enabled': True,
                 'grok_supports_builtin_tools': True,
@@ -1642,9 +1777,13 @@ def test_bedrock_xai_grok(region: str):
                 'bedrock_supports_tool_choice': True,
                 'bedrock_thinking_variant': 'xai',
                 'bedrock_disallows_sampling_settings': True,
+                'bedrock_supports_stop_sequences': False,
                 'supports_video_input': False,
             },
             '4.7': {
+                'supported_image_media_types': frozenset(
+                    {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+                ),
                 'supports_thinking': True,
                 'thinking_always_enabled': True,
                 'grok_supports_builtin_tools': True,
@@ -1655,6 +1794,7 @@ def test_bedrock_xai_grok(region: str):
                 'bedrock_supports_tool_choice': True,
                 'bedrock_thinking_variant': 'xai',
                 'bedrock_disallows_sampling_settings': True,
+                'bedrock_supports_stop_sequences': False,
                 'supports_video_input': False,
             },
         }
@@ -1681,6 +1821,8 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
+            'supports_video_input': False,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
@@ -1728,6 +1870,7 @@ def test_openrouter_openai_gpt_5_4():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supports_video_input': False,
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
@@ -1782,6 +1925,18 @@ def test_openrouter_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -1831,6 +1986,18 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'openai_chat_supports_max_completion_tokens': False,
             'google_web_search_billed_per_prompt': False,
             'openai_chat_supports_web_search': True,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
             'openrouter_lowest_reasoning_effort': 'minimal',
             'openai_chat_thinking_field': 'reasoning',
             'openrouter_max_cache_points': None,
@@ -1858,6 +2025,10 @@ def test_openrouter_x_ai_grok_4_7():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
+            'supports_video_input': False,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
@@ -1891,6 +2062,7 @@ def test_openrouter_mistral_large():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_video_input': False,
             'tool_call_id_length': 9,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -1919,6 +2091,7 @@ def test_openrouter_zai_glm_5_3():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': False,
             'thinking_always_enabled': True,
             'openrouter_lowest_reasoning_effort': 'minimal',
             'supports_thinking': True,
@@ -1947,6 +2120,10 @@ def test_openrouter_xai_grok_4():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
+            'supports_video_input': False,
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_thinking': True,
@@ -1983,6 +2160,7 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
@@ -2054,6 +2232,18 @@ def test_github_copilot_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
             'openai_chat_supports_max_completion_tokens': True,
             'openai_chat_thinking_field': 'reasoning_text',
         }
@@ -2066,6 +2256,9 @@ def test_github_copilot_xai_grok_4_5():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
@@ -2127,6 +2320,7 @@ def test_openrouter_qwen():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': False,
             'ignore_streamed_leading_whitespace': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -2154,6 +2348,7 @@ def test_openrouter_deepseek():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_video_input': False,
             'supports_thinking': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -2180,6 +2375,7 @@ def test_openrouter_meta_llama():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': False,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -2206,6 +2402,7 @@ def test_openrouter_moonshotai():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_video_input': False,
             'ignore_streamed_leading_whitespace': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -2235,6 +2432,7 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_video_input': False,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -2371,6 +2569,9 @@ def test_azure_grok_prefix():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_object_output': True,
             'json_schema_transformer': _AzureGrokJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
@@ -2406,7 +2607,9 @@ def test_groq_moonshotai_kimi():
 
 @pytest.mark.skipif(not groq_imports(), reason='groq not installed')
 def test_groq_meta_llama4_maverick():
-    """Special-cased Llama 4 Maverick gets `supports_json_object_output=True` overlay."""
+    """Unprefixed Llama 4 Maverick resolves through the generic Meta profile, not the `meta-llama/` overlay.
+
+    JSON mode is provider-wide."""
     profile = GroqProvider.model_profile('llama-4-maverick-17b-128e-instruct')
     assert _normalize(profile) == snapshot(
         {
@@ -2417,13 +2620,16 @@ def test_groq_meta_llama4_maverick():
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'may_tokenize_special_tokens_in_content': True,
+            'supports_json_object_output': True,
         }
     )
 
 
 @pytest.mark.skipif(not groq_imports(), reason='groq not installed')
 def test_groq_meta_llama3_no_overlay():
-    """Older Llama models don't get the structured-output overlay."""
+    """Older Llama models don't get the structured-output overlay.
+
+    JSON mode is provider-wide."""
     profile = GroqProvider.model_profile('llama-3.3-70b-versatile')
     assert _normalize(profile) == snapshot(
         {
@@ -2432,6 +2638,7 @@ def test_groq_meta_llama3_no_overlay():
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'may_tokenize_special_tokens_in_content': True,
+            'supports_json_object_output': True,
         }
     )
 
@@ -2448,6 +2655,7 @@ def test_groq_deepseek():
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
             'may_tokenize_special_tokens_in_content': True,
+            'supports_json_object_output': True,
         }
     )
 
@@ -2476,6 +2684,80 @@ def test_groq_gpt_oss():
     )
 
 
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_qwen3_8():
+    """Groq serves strict JSON-schema output on qwen3.8, whose output object gets gpt-oss's strict schema
+    transformer, and its reasoning can be turned off."""
+    profile = GroqProvider.model_profile('qwen/qwen3.8-27b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': _GroqQwenStrictOutputJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'groq_supports_reasoning_disable': True,
+            'groq_supports_graded_reasoning_effort': False,
+            'supports_json_object_output': True,
+            'supports_json_schema_output': True,
+            'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_qwen3_6():
+    """Groq serves best-effort JSON-schema output on qwen3.6, which its structured-outputs docs don't list for strict mode."""
+    profile = GroqProvider.model_profile('qwen/qwen3.6-27b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': _GroqQwenBestEffortOutputJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'groq_supports_reasoning_disable': True,
+            'groq_supports_graded_reasoning_effort': False,
+            'supports_json_object_output': True,
+            'supports_json_schema_output': True,
+            'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_muse_spark_open():
+    """No family route; the Groq profile alone flags always-on reasoning and JSON-schema output."""
+    profile = GroqProvider.model_profile('meta-models/muse-spark-open')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': False,
+            'supports_json_object_output': True,
+            'supports_json_schema_output': True,
+            'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_minimax_m2_7():
+    """No family route; the Groq profile alone flags always-on reasoning and JSON mode, not JSON-schema output."""
+    profile = GroqProvider.model_profile('minimaxai/minimax-m2.7')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': False,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
 # =============================================================================
 # xAI (native, single-layer post-M4)
 # =============================================================================
@@ -2486,6 +2768,9 @@ def test_xai_provider_grok_4():
     profile = XaiProvider.model_profile('grok-4')
     assert _normalize(profile) == snapshot(
         {
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'grok_supports_builtin_tools': True,
@@ -2498,6 +2783,9 @@ def test_xai_provider_grok_3_mini():
     profile = XaiProvider.model_profile('grok-3-mini')
     assert _normalize(profile) == snapshot(
         {
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
@@ -3104,6 +3392,9 @@ def test_together_qwen():
             snapshot(
                 {
                     'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supported_image_media_types': frozenset(
+                        {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+                    ),
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
                     'supports_thinking': True,
@@ -3177,6 +3468,21 @@ def test_openai_compatible_vendor_family(model_name: str, expected: dict[str, An
     profile = OpenAICompatibleProvider.model_profile(model_name)
     assert _normalize(profile) == expected
     assert LiteLLMProvider.model_profile(model_name) == profile
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openai_compatible_groq_route_keeps_json_mode_unset():
+    """The `groq/` vendor route resolves `groq_model_profile`, but Groq's JSON mode for every model is set on
+    `GroqProvider` alone, so this route doesn't gain `supports_json_object_output`."""
+    profile = OpenAICompatibleProvider.model_profile('groq/llama-3.3-70b-versatile')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': False,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -3324,6 +3630,7 @@ def test_anthropic_unknown_model_returns_some_profile():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'supports_thinking': True,
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
@@ -3430,6 +3737,9 @@ def test_github_xai_grok():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
@@ -3490,6 +3800,7 @@ def test_vercel_anthropic_claude_sonnet():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'mimics_assistant_message_formatting': True,
             'supports_thinking': True,
@@ -3544,7 +3855,7 @@ def test_vercel_openai_gpt():
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_vercel_vertex_gemini():
-    """Vercel routes `vertex/...` through `google_model_profile`."""
+    """Vercel routes `vertex/...` through `google_cloud_model_profile`, which adds the TIFF images Vertex AI reads."""
 
     profile = VercelProvider.model_profile('vertex/gemini-3.0-pro')
     assert _normalize(profile) == snapshot(
@@ -3567,6 +3878,19 @@ def test_vercel_vertex_gemini():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/tiff',
+                    'image/webp',
+                }
+            ),
             'may_tokenize_special_tokens_in_content': False,
         }
     )
@@ -3578,6 +3902,9 @@ def test_vercel_xai_grok():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
@@ -3621,6 +3948,7 @@ def test_heroku_returns_openai_transformer():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,

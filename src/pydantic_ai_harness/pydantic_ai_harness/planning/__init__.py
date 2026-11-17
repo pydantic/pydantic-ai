@@ -1,6 +1,6 @@
 """Planning capability: model-owned task planning, with the plan returned in the plan tools' results."""
 
-from pydantic_ai_harness.planning._capability import Planning
+from pydantic_ai_harness.planning._capability import Planning, PlanReminderPart
 from pydantic_ai_harness.planning._events import (
     PLANNING_EVENTS,
     EventCallback,
@@ -30,6 +30,7 @@ __all__ = [
     'PlanEventEmitter',
     'PlanEventType',
     'PlanItem',
+    'PlanReminderPart',
     'PlanStatusUpdate',
     'PlanStatusChangedEvent',
     'PlanStore',
