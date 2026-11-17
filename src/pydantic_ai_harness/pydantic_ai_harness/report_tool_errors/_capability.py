@@ -55,7 +55,7 @@ class ToolErrorInfo:
     """Name of the tool the model called."""
 
     args: Mapping[str, Any]
-    """Validated arguments the tool was called with."""
+    """Validated arguments the tool was called with, as a copy."""
 
     tool_call_id: str
     """Identifier of this call, for correlating with the run's messages."""
@@ -115,5 +115,5 @@ class _ReportErrorsToolset(WrapperToolset[AgentDepsT]):
             if _is_durable_failure(error):
                 raise
             assert ctx.tool_call_id is not None
-            info = ToolErrorInfo(name=name, args=tool_args, tool_call_id=ctx.tool_call_id, error=error)
+            info = ToolErrorInfo(name=name, args=dict(tool_args), tool_call_id=ctx.tool_call_id, error=error)
             raise ToolFailed(self.report.format_error(ctx, info)) from error
