@@ -460,8 +460,8 @@ Gotchas:
 - Delegates are only checked when `Permissions` reaches them: pass it in `SubAgents(shared_capabilities=[...])`.
 - `ask_commands` patterns and `rules` are a convenience, not a sandbox: use a sandbox workspace when the agent
   must not reach something. An allow rule trusts everything after its words (`find` allows `find . -delete`).
-- Commands with `$`, backticks, quoted operators, subshells, here-documents, or line breaks, and every command on a `'windows'`
-  workspace, cannot be split: no rule allows them, and when ask or deny command rules apply they ask unless a deny
+- Commands with `$`, backticks, quoted operators, brace expansion, globbed command names, subshells, here-documents, or line breaks, and every command on a `'windows'`
+  workspace, cannot be split: no `command` rule allows them, and when ask or deny command rules apply they ask unless a deny
   rule matches.
 
 ## SpendLimits

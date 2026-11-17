@@ -27,6 +27,7 @@ _OPERATOR_CHARS = frozenset('();<>|&')
 _UNSPLITTABLE = ('$', '`', '<(', '>(', '\n')
 _LOOSE_SPLIT = re.compile(r'[\s;&|()<>`${}]+')
 _UNSPLITTABLE_OPERATOR = re.compile(r'[()]|<<|;;')
+_GLOB = re.compile(r'[*?\[]')
 _HARMLESS_REDIRECTS = frozenset({('>', '/dev/null'), *(('>&', str(fd)) for fd in range(10))})
 
 
@@ -97,8 +98,8 @@ def _words(command: str) -> list[str]:
         return []
 
 
-def _quotes_an_operator(command: str) -> bool:
-    """Whether `command` quotes or escapes an operator character, which `shlex` would not tell apart from a real one."""
+def _hides_words(command: str) -> bool:
+    """Whether `command` quotes or escapes an operator, or uses brace expansion, which `shlex` cannot follow."""
     quote = ''
     escaped = False
     for char in command:
@@ -115,12 +116,14 @@ def _quotes_an_operator(command: str) -> bool:
                 return True
         elif char in '\'"':
             quote = char
+        elif char == '{':
+            return True
     return False
 
 
 def _tokens(command: str) -> list[str] | None:
     """`command`'s words and operators, or `None` when it has syntax the lexer cannot follow."""
-    if any(marker in command for marker in _UNSPLITTABLE) or _quotes_an_operator(command):
+    if any(marker in command for marker in _UNSPLITTABLE) or _hides_words(command):
         return None
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
@@ -217,7 +220,8 @@ def _command_rule(
     rules: Sequence[PermissionRule[Any]], command: str, segments: list[_Segment] | None
 ) -> PermissionRule[Any] | None:
     """The rule deciding a shell command: the strictest any simple command matches, `'allow'` only if all do."""
-    if segments is None:
+    if segments is None or any(_GLOB.search(segment.words[0]) for segment in segments if segment.words):
+        # A pattern in a command name, such as `/bin/r[m]`, is expanded by the shell into the program run.
         return _unsplittable_rule(rules, command)
     parsed = [_CommandRule(rule, words := _words(rule.command or ''), _loose(words)) for rule in rules]
     deciders = [_segment_rule(parsed, segment) for segment in segments]
@@ -258,11 +262,8 @@ def decide(
     ]
     found = [rule for rule in applicable if rule.command is None]
     command_rules = [rule for rule in applicable if rule.command is not None]
-    if command is None or not (command_rules or any(rule.verdict == 'allow' for rule in found)):
-        return _strictest(found)
-    segments = _segments(command) if posix else None
-    decided = _command_rule(command_rules, command, segments)
-    rule = _strictest([*found, decided] if decided is not None else found)
-    if segments is None and rule is not None and rule.verdict == 'allow':
-        return None
-    return rule
+    if command is not None and command_rules:
+        decided = _command_rule(command_rules, command, _segments(command) if posix else None)
+        if decided is not None:
+            found.append(decided)
+    return _strictest(found)

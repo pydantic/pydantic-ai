@@ -554,6 +554,10 @@ class TestPermissionRules:
             ('echo $(date)', [PermissionRule('deny', command='rm -rf')], 'ask'),
             ('rm$IFS-rf /', [PermissionRule('deny', command='rm -rf')], 'ask'),
             ('X=-rf; rm $X /', [PermissionRule('deny', command='rm -rf')], 'ask'),
+            ('{rm,-rf,build}', [PermissionRule('deny', command='rm -rf')], 'ask'),
+            ('rm -{rf,} build', [PermissionRule('deny', command='rm -rf')], 'ask'),
+            ('/bin/r[m] -rf build', [PermissionRule('deny', command='rm -rf')], 'ask'),
+            ('ls *.py', [PermissionRule('deny', command='rm -rf')], 'allow'),
             ('echo $(date)', [PermissionRule('allow', tools=['run_command'])], 'allow'),
             (
                 'sh -c "rm -rf /; $(x)"',
@@ -576,6 +580,15 @@ class TestPermissionRules:
         result = await agent.run('go', workspace=Workspace(_WindowsBackend()))
 
         assert isinstance(result.output, DeferredToolRequests)
+
+    async def test_a_tool_wide_allow_needs_no_split(self) -> None:
+        """An allow rule without a `command` doesn't look at the command, so it holds even where commands can't be split."""
+        rules = [PermissionRule('allow', tools=['run_command'])]
+        agent = _rules_agent(_calls(('run_command', {'command': 'echo hi'})), rules, 'read-only')
+
+        result = await agent.run('go', workspace=Workspace(_WindowsBackend()))
+
+        assert result.output == 'ran'
 
     async def test_a_quoted_argument_in_a_deny_rule_matches_the_same_command(self) -> None:
         rules = [PermissionRule('deny', command='git commit -m "release build"')]
