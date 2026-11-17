@@ -1,17 +1,28 @@
 AG-UI
-DBOS	DBOS durable execution integration
 HTTP
 MCP
 OpenTelemetry
 Stale
 UI adapters
 a2a
-agentic-workflows	about our own gh aw's -> internal/chore — about our engine -> external/feature/bug
 alibaba
 anthropic
 approved:ci-config	Maintainer approval for changes to CI config (workflows, actions, scripts, pre-commit, Makefile)
 approved:dependencies	Maintainer approval for changes to pyproject.toml or uv.lock
+area:absurd	Absurd durable execution integration (`AbsurdDurability`).
+area:agentic-workflows	about our own gh aw's -> internal/chore — about our engine -> external/feature/bug
+area:codemode	CodeMode: model-written scripts, the tools they call, their limits, and interpreter state.
+area:conversation-store	Stored conversations: `Conversation`, `ConversationStore`, backends, UI adapter `conversation_store`
+area:dbos	DBOS durable execution integration
+area:durable-exec	Durable execution: `durable_exec`, `@durable_operation`, replay, every engine in core or Harness.
+area:gh-aw	GitHub Agentic Workflows integration and engine, including its runner, recorder, and parser.
+area:pgtask	PGTask durable execution integration (`PGTaskDurability`).
+area:prefect	Prefect durable execution integration
+area:sandbox	Isolated execution: sandbox lifecycle, resource limits, containment, and sandbox providers.
+area:step-persistence	Harness `StepPersistence`: step/tool-effect records, run snapshots, step/media stores, run recovery.
+area:temporal	Temporal durable execution integration
 area:ui-adapters
+area:workspaces	Command and file APIs: paths, mounts, working directories, and local or remote workspace access.
 asyncio
 attention-delivered	A delivered channel escalation is waiting for GitHub state cleanup
 attention-escalated	The maintainer attention request is cooling down after escalation
@@ -41,7 +52,6 @@ cluster:extra-headers	Header-name handling in extra_headers (user-agent, anthrop
 cluster:gh-aw	Work stream: gh-aw agentic workflows on the public pydantic-ai engine
 cluster:thinking-profiles	Work stream: model profiles that turn thinking on for model families and gateway routes
 cluster:voice-authority	Work stream: voice and authority of model-visible text across frames and untrusted channels
-codemode	CodeMode: model-written scripts, the tools they call, their limits, and interpreter state.
 cohere
 community contribution
 community snippets
@@ -62,7 +72,6 @@ documentation
 douwebot	reviews the PR that gets labeled and removes the label at the end
 douwebot:review-agent-config	One-head, one-run maintainer request to review protected agent-config changes.
 duplicate	This issue or pull request already exists
-durable exec
 embeddings
 enhancement
 examples
@@ -73,7 +82,6 @@ fix
 flake	A flaky test on main; the issue is the claim on its fix
 gateway
 genai-prices
-gh-aw	GitHub Agentic Workflows integration and engine, including its runner, recorder, and parser.
 github-actions	Pull requests that update GitHub Actions code
 github-copilot	GitHub Copilot provider integration, authentication, and model support.
 google-cloud
@@ -132,7 +140,6 @@ pkg:graph	pydantic-graph (pydantic_graph/)
 pkg:harness	pydantic-ai-harness (src/pydantic_ai_harness)
 pr-review-checks:accepted	Maintainer override: pass PR Review Checks on the current head despite blocking findings
 pr-review-checks:run	Maintainer approval to run PR Review Checks on a PR from an author without write access
-prefect
 probable-spam	Likely spam or package-promotion issue; needs maintainer review before engagement.
 provider-mapping-sweep
 provider-parity
@@ -172,7 +179,6 @@ replay-history	labels items that have to do with replaying stored message histor
 review phase: API
 roundtrip-sweep
 run_stream
-sandbox	Isolated execution: sandbox lifecycle, resource limits, containment, and sandbox providers.
 serialization
 size: L	Large PR (501-1500 weighted lines)
 size: M	Medium PR (101-500 weighted lines)
@@ -186,7 +192,6 @@ state-loss
 streaming
 system prompts
 system-one	System One API provider integration, configuration, and model support.
-temporal
 test-suite	Changes or improvements to the test suite
 thinking
 tools
@@ -206,6 +211,5 @@ vercel-ai
 waiting-on-reporter
 we-owe-you-a-followup	use this label when the pydantic ai team promised to follow up on this
 web-ui
-workspaces	Command and file APIs: paths, mounts, working directories, and local or remote workspace access.
 xai
 z.ai/glm

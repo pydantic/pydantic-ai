@@ -449,7 +449,10 @@ Models with adjustable reasoning (the Mistral Large 4, Small 4, and Medium 3.5 f
 
 Thinking is supported by the `command-a-reasoning-08-2025` model, which thinks by default. The unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting maps to Cohere's [`thinking` parameter](https://docs.cohere.com/docs/reasoning): `thinking=False` turns reasoning off with `type='disabled'`, and an effort level caps it with a `token_budget` (`'minimal'` → 512 tokens, `'low'` → 2048, `'medium'` → 8192, `'high'` → 16384, `'xhigh'` and `'max'` → 31000).
 
+When the model returns a [`tool_plan`](https://docs.cohere.com/docs/tool-use-overview), the plan it writes before its tool calls, [`CohereModel`][pydantic_ai.models.cohere.CohereModel] keeps it as a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] with `provider_details={'tool_plan': True}` and sends it back to Cohere as `tool_plan` beside those tool calls.
+
 ## Hugging Face
 
 Text output inside `<think>` tags is automatically converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
+Reasoning that an Inference Provider returns in the separate `reasoning` field also becomes a `ThinkingPart`, and both kinds are sent back in thinking tags on later requests.
 You can customize the tags using the [`thinking_tags`][pydantic_ai.profiles.ModelProfile.thinking_tags] field on the [model profile](../models/compatible-apis.md#model-profile).
