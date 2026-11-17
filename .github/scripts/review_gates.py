@@ -167,6 +167,11 @@ def review_verdicts(
     verdicts: dict[ReviewGate, Verdict] = {'douwebot': Verdict(), 'github-dir': github_dir_change(github, pull)}
     size = github.size(pull)
     size_labels = {label.name for label in pull.labels if label.name.startswith('size:')}
+    if not size_labels:
+        verdicts['douwebot'].failures.append(
+            f'No size label (computed `{size}`): PR Bots labels a PR whose author has write access, or with `trusted:ci-run`.'
+        )
+        return verdicts
     if size_labels != {size}:
         verdicts['douwebot'].failures.append(
             f'Expected exactly the recomputed `{size}` label; found {sorted(size_labels)!r}.'

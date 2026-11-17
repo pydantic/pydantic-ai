@@ -190,7 +190,10 @@ def main() -> int:
     now = datetime.now(UTC)
     # A `schedule` event's payload names no repository, so ask for its default branch.
     default_branch = _Repository.model_validate_json(_gh(f'repos/{repo}')).default_branch
-    runs = _Runs.model_validate_json(_gh(f'repos/{repo}/actions/workflows/pr-guard.yml/runs?status=success&per_page=1'))
+    # A dispatch from another branch runs that branch's scripts, so only a default-branch sweep anchors the window.
+    runs = _Runs.model_validate_json(
+        _gh(f'repos/{repo}/actions/workflows/pr-guard.yml/runs?status=success&branch={default_branch}&per_page=1')
+    )
     since = sweep_start(runs.workflow_runs[0].run_started_at if runs.workflow_runs else None, now)
     stamp = since.strftime('%Y-%m-%dT%H:%M:%SZ')
     print(f'Reading pull request events since {stamp}.')

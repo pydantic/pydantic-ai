@@ -590,6 +590,14 @@ def test_review_bar_by_size(size: review_gates.Size):
     assert all(not item.failures for item in verdicts(github).values())
 
 
+def test_a_missing_size_label_names_the_activation_label():
+    """PR Bots labels only a trusted PR, so an app PR waiting for `trusted:ci-run` has no size label."""
+    failures = verdicts(ReviewGitHub(labels=[]))['douwebot'].failures
+    assert failures == [
+        'No size label (computed `size: M`): PR Bots labels a PR whose author has write access, or with `trusted:ci-run`.'
+    ]
+
+
 @pytest.mark.parametrize('labels', [[], ['size: S'], ['size: M', 'size: L']])
 def test_size_must_match_exactly_one_recomputed_label(labels: list[str]):
     result = verdicts(ReviewGitHub(labels=labels))

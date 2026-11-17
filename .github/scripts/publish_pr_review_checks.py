@@ -23,7 +23,7 @@ ACCEPTED_LABEL = 'pr-review-checks:accepted'
 MARKER = re.compile(r'\n\n<!-- pr-review-checks run=([1-9][0-9]*) head=([a-f0-9]{40}) -->\Z')
 FINDING_KEY = re.compile(r'<!-- pr-review-checks finding=([0-9a-f]{64}) -->')
 # `.permission` maps maintain and custom roles onto these base levels.
-TRUSTED_PERMISSIONS = frozenset({'admin', 'write'})
+WRITE_PERMISSIONS = frozenset({'admin', 'write'})
 
 Severity = Literal['critical', 'high', 'medium']
 BLOCKING: frozenset[Severity] = frozenset({'critical', 'high'})
@@ -148,18 +148,18 @@ def gate(github: ReviewChecksGitHub, env: Mapping[str, str]) -> bool:
     if action == 'labeled' and label == ACCEPTED_LABEL:
         if ACCEPTED_LABEL not in labels:
             raise GateError(f'`{ACCEPTED_LABEL}` is no longer present.')
-        if env['EVENT_SENDER_TYPE'] != 'User' or github.permission(sender) not in TRUSTED_PERMISSIONS:
+        if env['EVENT_SENDER_TYPE'] != 'User' or github.permission(sender) not in WRITE_PERMISSIONS:
             raise GateError(f'Only a user with write access can apply `{ACCEPTED_LABEL}`.')
         github.status(head, 'success', f'Findings accepted by @{sender} for this head.', url)
         return False
-    author_trusted = _author_trusted(github, pull)
-    if action == 'labeled' and label == RUN_LABEL and author_trusted:
+    author_is_trusted = _author_is_trusted(github, pull)
+    if action == 'labeled' and label == RUN_LABEL and author_is_trusted:
         print(f'The author has write access, so `{RUN_LABEL}` changes nothing.')
         return False
     # An acceptance covers only the status it replaced, so every new status for the head ends it.
     if ACCEPTED_LABEL in labels:
         github.remove_label(ACCEPTED_LABEL)
-    if not author_trusted and not _run_label_trusted(github, labels):
+    if not author_is_trusted and not _run_label_is_trusted(github, labels):
         github.status(head, 'failure', f'Awaiting maintainer: a user with write access adds `{RUN_LABEL}`.', url)
         return False
     github.status(head, 'pending', 'Reviewing this head.', url)
@@ -169,20 +169,20 @@ def gate(github: ReviewChecksGitHub, env: Mapping[str, str]) -> bool:
 def is_trusted(github: ReviewChecksGitHub) -> bool:
     """Whether a user with write access opened the pull request or applied `RUN_LABEL` to it last."""
     pull = github.pull_request()
-    return _author_trusted(github, pull) or _run_label_trusted(github, {label.name for label in pull.labels})
+    return _author_is_trusted(github, pull) or _run_label_is_trusted(github, {label.name for label in pull.labels})
 
 
-def _author_trusted(github: ReviewChecksGitHub, pull: LivePullRequest) -> bool:
+def _author_is_trusted(github: ReviewChecksGitHub, pull: LivePullRequest) -> bool:
     """An app's branch is never trusted on its own: its content can come from outside text."""
-    return pull.user.type == 'User' and github.permission(pull.user.login) in TRUSTED_PERMISSIONS
+    return pull.user.type == 'User' and github.permission(pull.user.login) in WRITE_PERMISSIONS
 
 
-def _run_label_trusted(github: ReviewChecksGitHub, labels: set[str]) -> bool:
+def _run_label_is_trusted(github: ReviewChecksGitHub, labels: set[str]) -> bool:
     """The run label counts only when its latest application came from a user with write access."""
     if RUN_LABEL not in labels:
         return False
     labeler = github.labeler(RUN_LABEL)
-    return labeler is not None and labeler.type == 'User' and github.permission(labeler.login) in TRUSTED_PERMISSIONS
+    return labeler is not None and labeler.type == 'User' and github.permission(labeler.login) in WRITE_PERMISSIONS
 
 
 def load_results(directory: Path, checks: list[str]) -> dict[str, CheckResult]:
