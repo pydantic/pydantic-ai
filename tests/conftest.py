@@ -4,7 +4,6 @@ import ast
 import asyncio
 import dataclasses
 import importlib.util
-import logging
 import os
 import re
 import secrets
@@ -17,7 +16,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from functools import cache
-from importlib.metadata import version
 from pathlib import Path
 from time import monotonic
 from types import ModuleType
@@ -30,7 +28,6 @@ import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from cassetter import Cassette, RecordMode
 from coverage import Coverage
-from packaging.version import Version
 from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
 
@@ -61,6 +58,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.native_tools import NATIVE_TOOL_TYPES, AbstractNativeTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -141,6 +139,11 @@ def pytest_configure(config: pytest.Config) -> None:
         'markers',
         'realtime_ws_hold_open: keep a replay WebSocket open after its last recorded frame',
     )
+    config.addinivalue_line(
+        'markers',
+        'realtime_ws_unsent_heartbeat(reason): a replay may end before its final recorded `pong` or idle-audio frame '
+        'goes out; reason required',
+    )
 
 
 @pytest.hookimpl(trylast=True)
@@ -159,7 +162,6 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
 
 if TYPE_CHECKING:
     from blockbuster import BlockBuster
-    from dbos import DBOSConfig
     from pluggy import Result
 
     from pydantic_ai.providers.bedrock import BedrockProvider
@@ -175,9 +177,6 @@ if TYPE_CHECKING:
     def IsSameStr(*args: Any, **kwargs: Any) -> str: ...
     def IsBytes(*args: Any, **kwargs: Any) -> bytes: ...
     def IsList(*args: T, **kwargs: Any) -> list[T]: ...
-
-    class _DBOS2Config(DBOSConfig, total=False):
-        run_admin_server: bool
 
 else:
     from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsList, IsNow as _IsNow, IsNumeric, IsStr
@@ -457,11 +456,16 @@ def anyio_backend(pytestconfig: pytest.Config) -> str:
 # Each entry should say why the blocking call is acceptable; anything not listed here should be
 # fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
 BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
-    # pytest-examples locates the source line of a captured `print()` with `Path.samefile`, so an
-    # example printing from inside a running event loop trips the detector on the harness's own
-    # `os.stat`. Exempting the capture entry point keeps `os.stat` calls from example and library
-    # code detectable.
+    # pytest-examples finds the caller of a captured `print()` with `inspect.stack()`, which resolves
+    # each frame's file with `os.path.abspath`, and matches it to the example with `Path.samefile`,
+    # which calls `os.stat`. An example printing from inside a running event loop trips the detector
+    # on the harness's own calls. Exempting the capture entry point leaves these calls from example
+    # and library code detectable.
     ('os.stat', 'pytest_examples/run_code.py', '__call__'),
+    ('os.path.abspath', 'pytest_examples/run_code.py', '__call__'),
+    # On Windows, `ntpath.relpath` makes each path absolute with `GetFullPathNameW`, which reads no disk for
+    # the absolute paths the file tools pass it.
+    ('os.path.abspath', 'pydantic_ai_harness/file_system/_toolset.py', '_relative'),
     # The first-run banner asks whether the harness is installed and what version it is, to name it
     # in the banner. That happens once per process, before the first request.
     ('os.stat', 'pydantic_ai/_display.py', '_version_line'),
@@ -508,7 +512,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.BufferedReader.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
     # A local workspace built with a relative `working_dir` resolves it against the current directory
     # once, at construction, which may happen in async code.
-    ('os.getcwd', 'pydantic_ai/workspaces/local.py', '__init__'),
+    ('os.getcwd', 'pydantic_ai/workspaces/_host.py', '__init__'),
     # Prefect's `Task` reads its function's source for display when core builds a task, which the
     # durable workspace tests do while constructing an agent inside a running test.
     ('os.stat', 'prefect/tasks.py', '__init__'),
@@ -522,9 +526,13 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.BufferedReader.read', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
     ('io.BufferedWriter.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
     # Prefect's async `LocalFileSystem.aread_path`/`awrite_path` still touch the disk synchronously; the
-    # durable capability operations persist their results through them.
-    ('os.stat', 'prefect/filesystems.py', ('aread_path', 'awrite_path')),
+    # durable capability operations persist their results through them. Its `_resolve_path` builds each result's
+    # storage path with `Path(basepath).resolve()`. Before Python 3.13 that calls `os.path.abspath` and stats the
+    # result; on Windows, `ntpath.realpath` also reads the current directory, even for an absolute path.
+    ('os.stat', 'prefect/filesystems.py', ('aread_path', 'awrite_path', '_resolve_path')),
     ('os.mkdir', 'prefect/filesystems.py', 'awrite_path'),
+    ('os.path.abspath', 'prefect/filesystems.py', '_resolve_path'),
+    ('os.getcwd', 'prefect/filesystems.py', '_resolve_path'),
     # `posixpath.relpath` calls `abspath`, which BlockBuster flags although it only reads the current directory
     # for a relative path. The harness relativizes absolute workspace paths with it.
     ('os.path.abspath', '<frozen posixpath>', 'relpath'),
@@ -540,7 +548,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ),
     # Capabilities resolve their executables, and clients their package versions, once when they're built.
     *(
-        (func, f'pydantic_ai_harness/docker_sandbox/{module}', constructor)
+        (func, f'pydantic_ai_harness/docker_container/{module}', constructor)
         for func in ('os.stat', 'os.access', 'os.path.abspath')
         for module, constructor in (('_capability.py', '__post_init__'), ('_backend.py', '__init__'))
     ),
@@ -557,9 +565,14 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.path.abspath', 'render/experimental/sandbox/files.py', ('parent_dir', '__init__')),
     ('io.BufferedWriter.write', 'render/experimental/sandbox/files.py', 'write'),
     ('os.remove', 'render/experimental/sandbox/files.py', '__exit__'),
-    ('os.stat', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
-    ('os.listdir', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
-    ('io.TextIOWrapper.read', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    # The harness reads its own package metadata once per process (the lookup is cached) to name its version in
+    # client attribution metadata: the You.com `X-Client-Info` header and the MongoDB connection handshake.
+    ('os.stat', 'pydantic_ai_harness/_version.py', 'harness_version'),
+    ('os.listdir', 'pydantic_ai_harness/_version.py', 'harness_version'),
+    ('io.TextIOWrapper.read', 'pydantic_ai_harness/_version.py', 'harness_version'),
+    # PyMongo checks for `/.dockerenv` with a sync `Path.exists` whenever it builds pool options, including when an
+    # `AsyncMongoClient` opens its topology on the event loop, and offers no way to skip the check.
+    ('os.stat', 'pymongo/pool_options.py', 'get_container_env_info'),
     # Each `browse_web` call builds browser-use's `Agent`, which imports its LLM adapters, reads its prompt
     # templates, and sets up a scratch file system and screenshot directory. The build stays on the event loop
     # because it goes through `BrowserAgentFactory`, which users can replace and which may need the running loop.
@@ -715,8 +728,20 @@ BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
     'tests/harness/boxlite_sandbox/fake_boxlite.py',
     'tests/harness/daytona_sandbox/fake_daytona.py',
     'tests/harness/e2b_sandbox/fake_e2b.py',
+    'tests/harness/kubernetes_sandbox/fake_sandboxd.py',
     'tests/harness/opensandbox_sandbox/fake_opensandbox.py',
     'tests/harness/render_sandbox/workspace_helpers.py',
+)
+
+
+# Third-party functions that do only blocking setup, as (file, function): any blocking call below one
+# is allowed. Exempted whole rather than call by call, so a dependency changing which file call it
+# makes inside does not fail the suite.
+BLOCKBUSTER_LIBRARY_SETUP: tuple[tuple[str, str], ...] = (
+    # The agent-sandbox SDK loads the in-cluster or kubeconfig credentials once per client, on first
+    # use: `kubernetes_asyncio` reads the kubeconfig and writes its embedded certificates to temporary
+    # files synchronously (its exec credential plugins run as asyncio subprocesses and stay covered).
+    ('k8s_agent_sandbox/async_k8s_helper.py', '_ensure_initialized'),
 )
 
 
@@ -752,6 +777,9 @@ def _configure_blockbuster(
         functions = _function_names(path)
         for function in bb.functions.values():
             function.can_block_in(path, functions)
+    for path, setup_function in BLOCKBUSTER_LIBRARY_SETUP:
+        for function in bb.functions.values():
+            function.can_block_in(path, setup_function)
     local_io = [function for name, function in bb.functions.items() if name.startswith(('os.', 'io.', 'sqlite3.'))]
     local_files = [*BLOCKBUSTER_LOCAL_FILES, *((path, _function_names(path)) for path in BLOCKBUSTER_LOCAL_STORES)]
     for filename, functions in local_files:
@@ -804,45 +832,6 @@ def blockbuster(
     bb = _configured_blockbuster(blockbuster_excluded_modules)
     with _activated_blockbuster(bb):
         yield bb
-
-
-def detach_dbos_logging() -> None:
-    """Detach the OTel `LoggingHandler` and `DBOSLogTransformer` filter `DBOS.destroy()` leaves behind.
-
-    DBOS attaches them to the root logger and every registered logger (the filter always, the handler
-    with `enable_otlp=True`) and does not detach them on destroy. Their emit path imports
-    `dbos._context`, which imports `http.server`: fatal inside the Temporal workflow sandbox when a
-    later test in the same process runs a Temporal workflow.
-    TODO(dsfaccini): Drop once DBOS cleans up its handlers on destroy.
-    https://github.com/dbos-inc/dbos-transact-py/issues/871
-    """
-    from dbos import _logger as dbos_logger_module
-    from opentelemetry.sdk._logs import LoggingHandler
-
-    handler_types: tuple[type[logging.Handler], ...] = (LoggingHandler,)
-    # DBOS 2.31+ builds this one instead of the deprecated SDK handler.
-    with suppress(ImportError):
-        from opentelemetry.instrumentation.logging.handler import LoggingHandler as InstrumentationLoggingHandler
-
-        handler_types += (InstrumentationLoggingHandler,)
-
-    for logger in [logging.root, *(logging.getLogger(name) for name in logging.root.manager.loggerDict)]:
-        for handler in [h for h in logger.handlers if isinstance(h, handler_types)]:
-            logger.removeHandler(handler)
-        for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
-            logger.removeFilter(log_filter)
-
-
-def without_admin_server(config: DBOSConfig) -> DBOSConfig:
-    """Set `run_admin_server` to `False` on DBOS 2.x, which otherwise starts an admin server on port 3001.
-
-    DBOS 3.x has neither the admin server nor the key, so there this returns `config` unchanged.
-    Drop it once the `dbos` extra requires 3.0.
-    """
-    if Version(version('dbos')) >= Version('3'):
-        return config
-    dbos_2_config: _DBOS2Config = {**config, 'run_admin_server': False}
-    return dbos_2_config
 
 
 @pytest.fixture
@@ -1020,6 +1009,29 @@ def fresh_cache_mark_store(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prompt-cache marks are kept process-wide per conversation; tests that reuse a fixed conversation
     id (or pin the clock) must not see each other's."""
     monkeypatch.setattr(instrumentation_capability, '_conversation_cache_marks', ConversationCacheMarkStore())
+
+
+@pytest.fixture
+def restore_native_tool_types() -> Iterator[None]:
+    """Restore `NATIVE_TOOL_TYPES` after the test, which defines native tool types that register for the process."""
+    registered = dict(NATIVE_TOOL_TYPES)
+    yield
+    NATIVE_TOOL_TYPES.clear()
+    NATIVE_TOOL_TYPES.update(registered)
+
+
+class _NoSchema:
+    """A type pydantic can't build a schema for."""
+
+
+@pytest.fixture
+def native_tool_type_without_schema(restore_native_tool_types: None) -> None:
+    """Register a native tool type with a field pydantic can't build a schema for, which fails the native tool union."""
+
+    @dataclass(kw_only=True)
+    class NoSchemaTool(AbstractNativeTool):
+        kind: str = 'no_schema'
+        value: _NoSchema = field(default_factory=_NoSchema)
 
 
 try:
@@ -1229,6 +1241,48 @@ def fail_function_model_prefix_violations(
 
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
 _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, JsonValue])
+
+
+def gave_up_on(
+    handler: Callable[[httpx2.Request], httpx2.Response],
+) -> Callable[[httpx2.Request], httpx2.Response]:
+    """A mock transport handler raising what a retrying transport raises once it gave up on `handler`'s response.
+
+    That's the `HTTPStatusError` its `validate_response` raised for the error status, carrying the response, which
+    the provider SDK then never sees.
+    """
+
+    def gave_up(request: httpx2.Request) -> httpx2.Response:
+        response = handler(request)
+        raise httpx2.HTTPStatusError(f'Error status {response.status_code}', request=request, response=response)
+
+    return gave_up
+
+
+def retrying_client(handler: Callable[[httpx2.Request], httpx2.Response]) -> httpx2.AsyncClient:
+    """A client with a retrying transport like the retries guide's: 3 attempts, rejecting every error status.
+
+    Once it gives up, it raises the transport's `HTTPStatusError` rather than return the status to the provider SDK.
+    """
+    # Imported here rather than at module scope: `tenacity` is an optional dependency.
+    from tenacity import retry_if_exception_type, stop_after_attempt, wait_none
+
+    from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
+
+    def validate_response(response: httpx2.Response) -> None:
+        response.raise_for_status()
+
+    transport = AsyncHTTPX2TenacityTransport(
+        config=RetryConfig(
+            retry=retry_if_exception_type(httpx2.HTTPStatusError),
+            wait=wait_none(),
+            stop=stop_after_attempt(3),
+            reraise=True,
+        ),
+        wrapped=httpx2.MockTransport(handler),
+        validate_response=validate_response,
+    )
+    return httpx2.AsyncClient(transport=transport)
 
 
 def decode_request_body(content: bytes, headers: httpx2.Headers) -> bytes:
@@ -1628,6 +1682,11 @@ def crusoe_api_key() -> str:
 @pytest.fixture(scope='session')
 def fireworks_api_key() -> str:
     return os.getenv('FIREWORKS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def deepinfra_api_key() -> str:
+    return os.getenv('DEEPINFRA_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')

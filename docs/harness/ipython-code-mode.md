@@ -14,7 +14,24 @@ description: "Let a local Pydantic AI agent run Python and call its tools from a
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls run_code with Python. The code runs in a separate IPython kernel process with full CPython and any installed package, such as pandas. Each call it makes to an agent tool, here get_sales, goes back to the agent over the Jupyter stdin channel and runs one at a time; the value of the last expression goes back to the model. Variables stay in the kernel for the next run_code call, each call has a 60 second timeout, and the kernel is not a sandbox: the code has the user's files, network and environment variables.](../img/harness/ipython-code-mode.svg)
+```mermaid
+flowchart TB
+    accTitle: IPython Code Mode: run_code in a local IPython kernel
+    accDescr: Inside your agent, the model calls run_code of the IPythonCodeMode capability, which sends Python code to an IPython kernel process and gets the last value back. The kernel has full CPython, keeps state between calls, and calls your tool get_sales one call at a time over the stdin channel. It is not a sandbox and reaches your files, network and environment variables.
+    subgraph agent["Your agent"]
+        model(["model"])
+        mode["IPythonCodeMode()<br/>run_code"]:::capability
+        tool["your tool<br/>get_sales"]
+    end
+    kernel["IPython kernel process<br/>full CPython<br/>state kept between calls"]:::external
+    host["your files, network and<br/>environment variables"]
+    model <-->|"tool call, result"| mode
+    mode <-->|"Python code, last value"| kernel
+    kernel <-->|"one call at a time,<br/>over the stdin channel"| tool
+    kernel -->|"not a sandbox"| host
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Code Mode or IPython Code Mode
 
@@ -91,6 +108,7 @@ Tool names that aren't Python identifiers are renamed for the kernel: an MCP too
 Tools are defined in the kernel as synchronous functions with keyword-only parameters, and listed with their signatures in `run_code`'s description. Each call goes back to the agent over the kernel's Jupyter stdin channel and runs through Pydantic AI like a direct tool call: arguments are validated, capability hooks run, and approval or deferral handlers apply. Calls run one at a time; the kernel waits for each result.
 
 - A call that fails raises `ToolCallError` in the kernel, with the tool's error message. Code can catch it.
+- A sandboxed tool can't take the name of a Python builtin such as `list`, `open` or `print`: it would be defined in the kernel namespace ahead of the builtin, so the model's own `open(...)` would call the tool. `IPythonCodeMode` raises `UserError` for such a name, as `CodeMode` does. Rename the tool, or give a toolset whose names you don't control a prefix with `toolset.prefixed(...)`.
 - `max_tool_calls` (default 100) bounds the calls one `run_code` call makes. A call past it raises `ToolCallError`.
 - Nested calls count toward the run's [`tool_calls_limit`](../agent.md#usage-limits), together with the `run_code` call. A call that would exceed it ends the run with [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded].
 - When a tool returns a [`ToolReturn`](../tools-advanced.md#advanced-tool-returns), the code gets its `return_value`. Its `content` is sent to the model alongside the `run_code` result, in call order.
@@ -117,6 +135,8 @@ Printed output combines `stdout`, `stderr`, and the text of non-image displays, 
 Code that raises returns a model retry with the printed output and the traceback, and counts toward `max_retries` (default 3). The kernel keeps the state the code built before the error.
 
 `timeout` (default 60 seconds) bounds each `run_code` call, not counting time spent in tool calls. Code still running then is interrupted with `KeyboardInterrupt`, the model gets a retry saying so, and the kernel keeps its state. Code that ignores the interrupt for 5 more seconds gets its kernel shut down. If the kernel process exits, for example because the code crashed it or called `os._exit()`, the model gets a retry saying its state is gone. Either way, the next call starts a fresh kernel. Pass `timeout=None` to remove the limit.
+
+On Python 3.14, an interrupt that lands while the code is printing can leave the kernel's output stream locked, because of a CPython bug ([python/cpython#148874](https://github.com/python/cpython/issues/148874)). The code then hangs, so its kernel is shut down 5 seconds later, as for code that ignores the interrupt, and the next call starts a fresh kernel without the state. In code that prints in a tight loop, about 3% of interrupts end this way. Python 3.11 to 3.13 are not affected, and Python 3.15 fixes the bug. To avoid it, run the agent on one of those versions, or pass `IPythonKernel` a [`kernel_name`](#keep-the-kernel-across-runs) whose kernelspec runs on one.
 
 The model can pass `restart: true` with its code to restart the kernel and clear its state first. `input()` returns an empty string.
 

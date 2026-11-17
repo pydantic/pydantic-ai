@@ -1,4 +1,4 @@
-"""Tests for waiting on a decision inside an AWS Lambda durable execution, with `RequestInput`.
+"""Tests for waiting on a decision inside an AWS Lambda durable execution, with a `HandleDeferredToolCalls` handler that takes a resume token.
 
 The run creates a Lambda callback and passes its ID to `ask` in a step. When `ask` answers, the
 step records the answer and the run continues. Otherwise the run suspends on the callback's result. A
@@ -21,7 +21,7 @@ from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import RequestInput
+from pydantic_ai.capabilities import HandleDeferredToolCalls
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.external_events import resolve_external_event, wait_for_external_event
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -73,7 +73,7 @@ class Approvals:
             FunctionModel(model_fn, stream_function=stream_fn),
             name='a',
             deps_type=type(None),
-            capabilities=[AWSLambdaDurability[None](**durability), RequestInput[None](ask, timeout=timeout)],
+            capabilities=[AWSLambdaDurability[None](**durability), HandleDeferredToolCalls[None](ask, timeout=timeout)],
         )
 
         @self.agent.tool_plain(requires_approval=True)
@@ -198,7 +198,7 @@ def test_outside_a_durable_handler_the_same_agent_waits_in_process() -> None:
         FunctionModel(delete_then_report),
         name='a',
         deps_type=type(None),
-        capabilities=[AWSLambdaDurability[None](), RequestInput[None](ask)],
+        capabilities=[AWSLambdaDurability[None](), HandleDeferredToolCalls[None](ask)],
     )
 
     @agent.tool_plain(requires_approval=True)
@@ -233,7 +233,7 @@ def test_waiting_inside_the_ask_step_is_rejected() -> None:
         FunctionModel(delete_then_report),
         name='a',
         deps_type=type(None),
-        capabilities=[AWSLambdaDurability[None](), RequestInput[None](ask)],
+        capabilities=[AWSLambdaDurability[None](), HandleDeferredToolCalls[None](ask)],
     )
 
     @agent.tool_plain(requires_approval=True)
@@ -289,7 +289,7 @@ def test_an_answer_from_ask_is_recorded_and_the_run_continues_without_suspending
         FunctionModel(delete_then_report),
         name='a',
         deps_type=type(None),
-        capabilities=[AWSLambdaDurability[None](), RequestInput[None](ask, timeout=timedelta(minutes=5))],
+        capabilities=[AWSLambdaDurability[None](), HandleDeferredToolCalls[None](ask, timeout=timedelta(minutes=5))],
     )
 
     @agent.tool_plain(requires_approval=True)

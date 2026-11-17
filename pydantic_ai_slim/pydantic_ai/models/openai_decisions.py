@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import dataclasses
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -42,6 +41,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
+    is_multi_modal_content,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.decision import decision_model_profile
@@ -49,6 +49,7 @@ from ..providers import Provider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 from . import (
+    _conversation_summary_text,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
@@ -70,6 +71,7 @@ from .decision import (
     NoulQuestion,
     ScoreAnswer,
     ScoreQuestion,
+    _labelled_tool_return_text,  # pyright: ignore[reportPrivateUsage]
     _probability_bounds,  # pyright: ignore[reportPrivateUsage]
     _score_fits,  # pyright: ignore[reportPrivateUsage]
     _text,  # pyright: ignore[reportPrivateUsage]
@@ -79,6 +81,7 @@ try:
     from openai import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, APITimeoutError, AsyncOpenAI
     from openai.types import Decision
     from openai.types.decision import (
+        Answer,
         AnswerAnswerResourceChoice,
         AnswerAnswerResourcePredicate,
         AnswerAnswerResourceRefusal,
@@ -279,8 +282,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
             decision = Decision.model_validate(data, strict=True)
         except ValueError as e:
             raise UnexpectedModelBehavior('Invalid response from the OpenAI Decisions API', response.text) from e
-        by_name = {answer.name: answer for answer in decision.answers if answer.name is not None}
-        if len(by_name) != len(decision.answers) or by_name.keys() != request.questions.keys():
+        if (by_name := _answers_by_name(decision, request.questions)) is None:
             raise UnexpectedModelBehavior(
                 'Invalid response from the OpenAI Decisions API: answer names do not match the questions', response.text
             )
@@ -317,6 +319,25 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         )
 
 
+def _answers_by_name(decision: Decision, questions: dict[str, DecisionQuestion]) -> dict[str, Answer] | None:
+    """The decision's answers by the question each names, or `None` when they don't name each question once."""
+    by_name = {answer.name: answer for answer in decision.answers if answer.name is not None}
+    if len(by_name) != len(decision.answers) or by_name.keys() != questions.keys():
+        return None
+    return by_name
+
+
+def _tool_call_ids(messages: Sequence[ModelMessage]) -> set[str]:
+    """The IDs of the tool calls in the responses, which a tool output must answer to go as a native item."""
+    return {
+        part.tool_call_id
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart | NativeToolCallPart)
+    }
+
+
 def _state_input(request: DecisionRequest) -> str | list[DecisionInputMessageParam]:
     """A request without a conversation, as its `state` in one user message with each image after its label."""
     text = _text(request.state)
@@ -349,13 +370,7 @@ class _Conversation:
         self._items: list[ResponseInputItemParam] = []
 
     def items(self, messages: Sequence[ModelMessage]) -> str | list[DecisionInputMessageParam]:
-        calls = {
-            part.tool_call_id
-            for message in messages
-            if isinstance(message, ModelResponse)
-            for part in message.parts
-            if isinstance(part, ToolCallPart | NativeToolCallPart)
-        }
+        calls = _tool_call_ids(messages)
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
@@ -389,10 +404,10 @@ class _Conversation:
         """
         output: ResponseFunctionCallOutputItemListParam = []
         if part.outcome in ERROR_OUTCOMES:
-            labelled: list[str] = []
+            labelled: list[object] = []
             images: ResponseFunctionCallOutputItemListParam = []
-            for item in part.content_items(mode='str', wrap_if_error=False):
-                if isinstance(item, str):
+            for item in part.content_items():
+                if not is_multi_modal_content(item):
                     labelled.append(item)
                 else:
                     index, image, detail = self._image()
@@ -401,7 +416,7 @@ class _Conversation:
                     images.append(
                         ResponseInputImageContentParam(type='input_image', image_url=image.data_uri, detail=detail)
                     )
-            text = dataclasses.replace(part, content=labelled).model_response_str()
+            text = _labelled_tool_return_text(part, labelled)
             return [ResponseInputTextContentParam(type='input_text', text=text), *images]
         for item in part.content_items(mode='str'):
             if isinstance(item, str):
@@ -433,17 +448,7 @@ class _Conversation:
         if isinstance(part, SystemPromptPart):
             self._message('system', part.content)
         elif isinstance(part, UserPromptPart):
-            prompt: list[str | MultiModalContent] = []
-            for item in [part.content] if isinstance(part.content, str) else part.content:
-                if isinstance(item, str):
-                    prompt.append(item)
-                elif isinstance(item, TextContent):
-                    prompt.append(item.content)
-                elif isinstance(item, CachePoint):
-                    pass  # A marker for models that cache a prompt prefix; there is nothing in it to send.
-                else:
-                    prompt.append(item)
-            self._user(prompt)
+            self._user_prompt(part)
         elif isinstance(part, ToolReturnPart):
             self._tool_return(part, calls)
         elif isinstance(part, RetryFeedbackPart):
@@ -454,6 +459,8 @@ class _Conversation:
         elif isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
             # A direct `request()` skips `prepare_messages`; send the deprecated part as what it always meant.
             self._request_part(_translate_legacy_retry_part(part), calls)
+        elif isinstance(part, CompactionPart):
+            self._user([_conversation_summary_text(part.content)])
         elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):  # pragma: no cover
             raise _unprojected_instruction_delta_error()
         elif isinstance(part, _UnpreparedPart):  # pragma: no cover
@@ -462,6 +469,19 @@ class _Conversation:
             raise _unconverted_speech_part_error()
         else:
             assert_never(part)
+
+    def _user_prompt(self, part: UserPromptPart) -> None:
+        prompt: list[str | MultiModalContent] = []
+        for item in [part.content] if isinstance(part.content, str) else part.content:
+            if isinstance(item, str):
+                prompt.append(item)
+            elif isinstance(item, TextContent):
+                prompt.append(item.content)
+            elif isinstance(item, CachePoint):
+                pass  # A marker for models that cache a prompt prefix; there is nothing in it to send.
+            else:
+                prompt.append(item)
+        self._user(prompt)
 
     def _tool_return(self, part: BaseToolReturnPart, calls: set[str]) -> None:
         if part.tool_call_id in calls:

@@ -15,10 +15,10 @@ if TYPE_CHECKING:
     from .boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
     from .boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
     from .browser_use import BrowserUse
-    from .bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
+    from .bubblewrap_sandbox import BubblewrappedWorkspace, BubblewrapWorkspace
     from .capability_creation import CapabilityCreation
     from .code_mode import CodeMode
-    from .coder import Coder
+    from .coder import BenchmarkInstructions, Coder
     from .compaction import (
         ClampOversizedMessages,
         ClearToolResults,
@@ -36,11 +36,14 @@ if TYPE_CHECKING:
     from .day_ai import DayAI
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
     from .detect_loops import DetectLoops
-    from .docker_sandbox import DockerSandbox, DockerSandboxBackend
+    from .docker_container import DockerContainer, DockerContainerBackend
+
+    # Deprecated names: the redundant aliases type them for users; at runtime they resolve lazily, with a warning.
+    from .docker_sandbox import DockerSandbox as DockerSandbox, DockerSandboxBackend as DockerSandboxBackend  # pyright: ignore[reportDeprecated]
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
-    from .filesystem import READ_ONLY_TOOL_NAMES, FileSystem
+    from .file_system import READ_ONLY_TOOL_NAMES, FileSystem
     from .grain import Grain
     from .guardrails import (
         GuardrailError,
@@ -55,6 +58,7 @@ if TYPE_CHECKING:
     )
     from .ipython_code_mode import IPythonCodeMode
     from .keenable import KeenableSearch
+    from .kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -62,6 +66,7 @@ if TYPE_CHECKING:
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
     from .opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
     from .ordinal import Ordinal
+    from .peers import Peers
     from .permissions import Permissions
     from .pgtask import PGTaskDurability
     from .pixeltable import Pixeltable
@@ -79,13 +84,14 @@ if TYPE_CHECKING:
     from .skills import Skills
     from .smart_search import SmartSearch
     from .smol_sandbox import SmolSandbox, SmolSandboxBackend
-    from .spend import SpendLimits
+    from .spend_limits import SpendLimits
     from .sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
     from .ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
     from .stackone import StackOne
     from .step_persistence import StepPersistence
-    from .subagents import SubAgent, SubAgents
+    from .sub_agents import SubAgent, SubAgents
     from .system_reminders import SystemReminders
+    from .tool_budgets import ToolBudgets
     from .tool_call_judge import ToolCallJudge
     from .tool_output_limits import ToolOutputLimits
     from .trajectory_judge import TrajectoryJudge
@@ -100,12 +106,13 @@ __all__ = [
     'AskUser',
     'AzureDurableTaskDurability',
     'BackgroundTools',
+    'BenchmarkInstructions',
     'BoxdSandbox',
     'BoxdSandboxBackend',
     'BoxLiteSandbox',
     'BoxLiteSandboxBackend',
     'BrowserUse',
-    'BubblewrapSandbox',
+    'BubblewrappedWorkspace',
     'BubblewrapWorkspace',
     'CapabilityCreation',
     'ClampOversizedMessages',
@@ -121,8 +128,8 @@ __all__ = [
     'DaytonaSandboxBackend',
     'DeduplicateFileReads',
     'DetectLoops',
-    'DockerSandbox',
-    'DockerSandboxBackend',
+    'DockerContainer',
+    'DockerContainerBackend',
     'DynamicWorkflow',
     'E2BSandbox',
     'E2BSandboxBackend',
@@ -139,6 +146,8 @@ __all__ = [
     'InputGuardrail',
     'InputGuardrailFunc',
     'KeenableSearch',
+    'KubernetesSandbox',
+    'KubernetesSandboxBackend',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
@@ -154,6 +163,7 @@ __all__ = [
     'OutputGuardrail',
     'OutputGuardrailFunc',
     'PGTaskDurability',
+    'Peers',
     'Permissions',
     'Pixeltable',
     'Planning',
@@ -188,6 +198,7 @@ __all__ = [
     'SummarizingCompaction',
     'SystemReminders',
     'TieredCompaction',
+    'ToolBudgets',
     'ToolCallJudge',
     'ToolGuardrail',
     'ToolOutputLimits',
@@ -206,12 +217,13 @@ _LAZY_EXPORTS = {
     'AskUser': 'ask_user',
     'AzureDurableTaskDurability': 'azure_durable_task',
     'BackgroundTools': 'background_tools',
+    'BenchmarkInstructions': 'coder',
     'BoxdSandbox': 'boxd_sandbox',
     'BoxdSandboxBackend': 'boxd_sandbox',
     'BoxLiteSandbox': 'boxlite_sandbox',
     'BoxLiteSandboxBackend': 'boxlite_sandbox',
     'BrowserUse': 'browser_use',
-    'BubblewrapSandbox': 'bubblewrap_sandbox',
+    'BubblewrappedWorkspace': 'bubblewrap_sandbox',
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'CapabilityCreation': 'capability_creation',
     'ClampOversizedMessages': 'compaction',
@@ -227,15 +239,15 @@ _LAZY_EXPORTS = {
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS': 'refine_output',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'DetectLoops': 'detect_loops',
-    'DockerSandbox': 'docker_sandbox',
-    'DockerSandboxBackend': 'docker_sandbox',
+    'DockerContainer': 'docker_container',
+    'DockerContainerBackend': 'docker_container',
     'DynamicWorkflow': 'dynamic_workflow',
     'E2BSandbox': 'e2b_sandbox',
     'E2BSandboxBackend': 'e2b_sandbox',
     'ExaAgent': 'exa',
     'ExaSearch': 'exa',
     'FallbackCompaction': 'compaction',
-    'FileSystem': 'filesystem',
+    'FileSystem': 'file_system',
     'Grain': 'grain',
     'GuardrailError': 'guardrails',
     'GuardrailResult': 'guardrails',
@@ -244,6 +256,8 @@ _LAZY_EXPORTS = {
     'InputGuardrailFunc': 'guardrails',
     'IPythonCodeMode': 'ipython_code_mode',
     'KeenableSearch': 'keenable',
+    'KubernetesSandbox': 'kubernetes_sandbox',
+    'KubernetesSandboxBackend': 'kubernetes_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
@@ -258,6 +272,7 @@ _LAZY_EXPORTS = {
     'OutputGuardrail': 'guardrails',
     'OutputGuardrailFunc': 'guardrails',
     'PGTaskDurability': 'pgtask',
+    'Peers': 'peers',
     'Permissions': 'permissions',
     'Pixeltable': 'pixeltable',
     'Planning': 'planning',
@@ -265,7 +280,7 @@ _LAZY_EXPORTS = {
     'PromptInjectionDefender': 'prompt_injection_defender',
     'PydanticAIDocs': 'pydantic_ai_docs',
     'Pylon': 'pylon',
-    'READ_ONLY_TOOL_NAMES': 'filesystem',
+    'READ_ONLY_TOOL_NAMES': 'file_system',
     'RefineOutput': 'refine_output',
     'RelevanceCompaction': 'compaction',
     'RenderSandbox': 'render_sandbox',
@@ -280,18 +295,19 @@ _LAZY_EXPORTS = {
     'SmartSearch': 'smart_search',
     'SmolSandbox': 'smol_sandbox',
     'SmolSandboxBackend': 'smol_sandbox',
-    'SpendLimits': 'spend',
+    'SpendLimits': 'spend_limits',
     'SpritesSandbox': 'sprites_sandbox',
     'SpritesSandboxBackend': 'sprites_sandbox',
     'SSHWorkspace': 'ssh_workspace',
     'SSHWorkspaceBackend': 'ssh_workspace',
     'StackOne': 'stackone',
     'StepPersistence': 'step_persistence',
-    'SubAgent': 'subagents',
-    'SubAgents': 'subagents',
+    'SubAgent': 'sub_agents',
+    'SubAgents': 'sub_agents',
     'SummarizingCompaction': 'compaction',
     'SystemReminders': 'system_reminders',
     'TieredCompaction': 'compaction',
+    'ToolBudgets': 'tool_budgets',
     'ToolCallJudge': 'tool_call_judge',
     'ToolGuardrail': 'guardrails',
     'ToolOutputLimits': 'tool_output_limits',
@@ -300,13 +316,18 @@ _LAZY_EXPORTS = {
     'WarnOnCacheBusts': 'warn_on_cache_busts',
     'YouResearch': 'youdotcom',
     'YouSearch': 'youdotcom',
-    # Pre-rename names; `pydantic_ai_harness.guardrails.__getattr__` emits the
+    # Pre-rename names; the target module's `__getattr__` emits the
     # deprecation warning when these resolve.
+    'BubblewrapSandbox': 'bubblewrap_sandbox',
     'GuardResult': 'guardrails',
     'InputGuard': 'guardrails',
     'InputGuardFunc': 'guardrails',
     'OutputGuard': 'guardrails',
     'OutputGuardFunc': 'guardrails',
+    # Pre-rename names; importing the `pydantic_ai_harness.docker_sandbox` shim emits
+    # the deprecation warning.
+    'DockerSandbox': 'docker_sandbox',
+    'DockerSandboxBackend': 'docker_sandbox',
 }
 
 

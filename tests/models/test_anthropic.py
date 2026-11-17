@@ -4496,12 +4496,7 @@ def test_expired_container_error(status_code: int, error_type: str | None, messa
         if error_type is None
         else {'type': 'error', 'error': {'type': error_type, 'message': message}}
     )
-    error = APIStatusError(
-        'test error',
-        response=httpx2.Response(status_code=status_code, request=httpx2.Request('POST', 'https://example.com/v1')),
-        body=body,
-    )
-    assert is_expired_container_error(error) is expected
+    assert is_expired_container_error(status_code, body) is expected
 
 
 def test_model_connection_error(allow_model_requests: None) -> None:

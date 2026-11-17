@@ -13,7 +13,7 @@ from rich.text import Text
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai_harness.filesystem import FileChangeRequestedEvent, FileSystem
+from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileSystem
 from pydantic_clai2 import Session, StreamRenderer
 
 

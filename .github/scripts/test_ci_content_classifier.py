@@ -469,7 +469,7 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
         ('.agents/skills/review/SKILL.md', 'false'),
         ('.agents/data/catalog.tsv', 'false'),
         ('.claude/skills/review/SKILL.md', 'false'),
-        ('src/pydantic_ai_harness/pydantic_ai_harness/filesystem/_capability.py', 'false'),
+        ('src/pydantic_ai_harness/pydantic_ai_harness/file_system/_capability.py', 'false'),
         ('tests/harness/repo_context/fixtures/AGENTS.md', 'false'),
         ('tests/harness/conftest.py', 'false'),
         ('src/pydantic_clai2/pydantic_clai2/app.py', 'false'),
@@ -512,8 +512,8 @@ def test_benchmark_classifier_skips_filesystem_documentation_pr(tmp_path: Path):
     changed_files = [
         ('THREAT_MODEL.md', ''),
         ('docs/harness/filesystem.md', ''),
-        ('src/pydantic_ai_harness/pydantic_ai_harness/filesystem/README.md', ''),
-        ('src/pydantic_ai_harness/pydantic_ai_harness/filesystem/_capability.py', ''),
+        ('src/pydantic_ai_harness/pydantic_ai_harness/file_system/README.md', ''),
+        ('src/pydantic_ai_harness/pydantic_ai_harness/file_system/_capability.py', ''),
     ]
     outputs = _classify(tmp_path, changed_files, workflow_path=BENCHMARK_WORKFLOW)
 

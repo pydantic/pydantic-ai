@@ -397,7 +397,6 @@ class XaiModel(Model[AsyncClient]):
             'logit_bias',
             'max_retries',
             'presence_penalty',
-            'service_tier',
             'timeout',
             'top_k',
         }
@@ -1133,6 +1132,7 @@ class XaiModel(Model[AsyncClient]):
             canonical_system=self._canonical_system_stamp,
             provider_response_id=response.id,
             finish_reason=_map_finish_reason(response),
+            provider_details=_service_tier_details(response),
         )
 
     def _map_text_output(self, output: chat_pb2.CompletionOutput) -> TextPart:
@@ -1265,6 +1265,9 @@ class XaiStreamedResponse(StreamedResponse):
         # reason arrived, so the guard also preserves the last real value.
         if (finish_reason := _map_finish_reason(response)) is not None:
             self.finish_reason = finish_reason
+
+        if details := _service_tier_details(response):
+            self.provider_details = {**(self.provider_details or {}), **details}
 
     def _collect_reasoning_events(self, chunk: chat_types.Chunk) -> Iterator[ModelResponseStreamEvent]:
         """Collect thinking events from this chunk's output deltas, one thinking part per output.
@@ -1501,11 +1504,23 @@ def _map_json_object() -> chat_pb2.ResponseFormat:
 
 def _map_model_settings(model_settings: XaiModelSettings, unsupported: frozenset[str]) -> dict[str, Any]:
     """Map pydantic_ai ModelSettings to xAI SDK parameters, leaving out the ones the model doesn't support."""
-    return {
+    xai_settings = {
         _XAI_MODEL_SETTINGS_MAPPING[key]: value
         for key, value in model_settings.items()
         if key in _XAI_MODEL_SETTINGS_MAPPING and key not in unsupported
     }
+    # xAI has only a standard and a priority tier: `'auto'` and `'flex'` are omitted.
+    if (service_tier := model_settings.get('service_tier')) in ('default', 'priority'):
+        xai_settings['service_tier'] = service_tier
+    return xai_settings
+
+
+def _service_tier_details(response: chat_types.Response) -> dict[str, str] | None:
+    """The `provider_details` naming the tier xAI served `response` at, or `None` if xAI didn't report one.
+
+    The SDK reads an unset tier as `'default'`, so only a tier set on the proto is recorded.
+    """
+    return {'service_tier': response.service_tier} if response.proto.service_tier else None
 
 
 def _map_tools(tool_defs: dict[str, ToolDefinition]) -> list[chat_types.chat_pb2.Tool]:

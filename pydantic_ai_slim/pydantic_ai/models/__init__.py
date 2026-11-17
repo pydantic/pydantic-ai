@@ -203,6 +203,7 @@ from ._known_model_names import KnownModelName as KnownModelName
 from ._prompt_cache import snap_cache_setting, split_cache_setting
 from ._request_timeout import RequestDeadline
 from ._speech import assistant_speech_text
+from ._tool_call_ids import hashed_tool_call_id, response_tool_call_id_scopes, with_unqualified_tool_call_ids
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -348,6 +349,27 @@ InstructionVisibility = Literal['prefix', 'via_history']
 Resolved per part id into [`ModelRequestParameters.instruction_visibility`][pydantic_ai.models.ModelRequestParameters.instruction_visibility]."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class DeferredCapabilityEntry:
+    """A [deferred capability](../../capabilities/on-demand.md) as this step's catalog lists it.
+
+    See [`ModelRequestParameters.deferred_capabilities`][pydantic_ai.models.ModelRequestParameters.deferred_capabilities].
+    """
+
+    id: str
+    """The id the capability is loaded by."""
+
+    description: str | None = None
+    """What the capability is for, resolved for this step, as the catalog in the instructions states it."""
+
+    active: bool = False
+    """Whether the capability is active on this step: loaded by the model or from code.
+
+    The catalog in the instructions keeps listing a capability once it's active, so the cached prompt doesn't
+    change; this says whether loading it would do anything.
+    """
+
+
 @dataclass(repr=False, kw_only=True)
 class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
@@ -417,6 +439,25 @@ class ModelRequestParameters:
     Used to answer "may this tool be revealed yet?": a tool whose `capability_id` is in this set is
     gated on that capability being loaded, while one whose owner is absent here is gated only on its
     own discovery.
+
+    The same capabilities as [`deferred_capabilities`][pydantic_ai.models.ModelRequestParameters.deferred_capabilities]
+    lists when the run has its catalog, which tool visibility doesn't depend on. Change both together.
+    """
+
+    deferred_capabilities: list[DeferredCapabilityEntry] = field(
+        default_factory=list[DeferredCapabilityEntry], repr=False
+    )
+    """The catalog of [deferred capabilities](../../capabilities/on-demand.md) for this step, in catalog order.
+
+    The same resolution the catalog in the instructions is rendered from, so a callable `description` is called
+    once per step. Empty when the run has no deferred capabilities. Never sent to a model as it is: a language
+    model reads the catalog in the instructions and calls the `load_capability` tool, whose schema doesn't depend
+    on what can be loaded, so the cached prompt doesn't either. A model that builds its own request from these
+    parameters, as a [decision model](../../models/decision.md#on-demand-capabilities) does, reads which
+    capabilities it can load from here.
+
+    Its ids are those in [`deferred_capability_ids`][pydantic_ai.models.ModelRequestParameters.deferred_capability_ids],
+    which tool visibility reads. Change both together.
     """
 
     output_mode: OutputMode = 'text'
@@ -882,8 +923,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     Where the profile's `supports_inline_system_prompts` is `False`, the announcement goes in the system prompt (see
     `_framing_announcement`); elsewhere it's a mid-conversation `SystemPromptPart` in the first request that has a
     frame or a lookalike note. `False` for a model with no provider system field the sentence reliably reaches a model
-    in: the test doubles, which have no wire, and `MCPSamplingModel`, whose client picks the model and gets the system
-    prompt parts joined into one string with no separator.
+    in: the test doubles, which have no wire.
     """
     _relocates_tool_files: ClassVar[bool] = False
     """Whether this adapter moves the files a tool returned onto the user channel, framed as `<pyai:tool_result>`.
@@ -1006,7 +1046,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Submit encoded requests that share a `group` as one batch job.
 
         A failed submission is not retried, because the provider may have created the job before the connection
-        failed: check the provider's jobs before submitting the requests again.
+        failed: check the provider's jobs before submitting the requests again. A retrying transport on the provider's
+        HTTP client does send it again after an error response, unless its `validate_response`
+        [skips batch creates](../../batch.md#retrying-transports).
         """
         raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
 
@@ -1418,6 +1460,33 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if provider is None or response.provider_url is None:
             return True
         return provider.shares_server_state_with(response.provider_url)
+
+    def _restore_response_scoped_tool_call_ids(
+        self, messages: Sequence[ModelMessage], *, previous_response_id: str | None = None
+    ) -> list[ModelMessage]:
+        """Restore the tool call IDs [`tool_call_ids_are_response_scoped`][pydantic_ai.profiles.ModelProfile.tool_call_ids_are_response_scoped] qualified to the ones the provider sent.
+
+        A model whose profile sets the flag calls this before mapping a history onto its API. The calls in a response
+        this model [`accepts_server_state`][pydantic_ai.models.Model.accepts_server_state] from, and the results in the
+        requests that follow it, are restored: another provider or endpoint didn't issue those IDs, so it gets the
+        stored ones, which are unique. `previous_response_id` names the response a request continues on the server,
+        whose results lead `messages` without it. Only the returned copy changes.
+        """
+        if not self.profile.get('tool_call_ids_are_response_scoped', False):
+            return list(messages)
+        restored: list[ModelMessage] = []
+        scopes: tuple[str, ...] = (previous_response_id,) if previous_response_id else ()
+        for message in messages:
+            if isinstance(message, ModelResponse):
+                scopes = (
+                    response_tool_call_id_scopes(message.provider_response_id, message.timestamp)
+                    if self.accepts_server_state(message)
+                    else ()
+                )
+            if scopes:
+                message = with_unqualified_tool_call_ids(message, scopes)
+            restored.append(message)
+        return restored
 
     @property
     def _canonical_system_stamp(self) -> str | None:
@@ -2094,8 +2163,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         from .._tool_search import synthesize_local_tool_search_messages
 
+        untranslated = messages
         messages = synthesize_local_tool_search_messages(
-            messages, keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None
+            messages,
+            keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None,
+            pair_returns=self.profile.get('rejects_unpaired_tool_calls', False),
         )
 
         if not clears_request_scoped_prompts:
@@ -2119,11 +2191,26 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
 
         messages = _order_tool_results_by_call(messages)
+        # After the reorder above, so the returns land where an agent run's repair after this method puts them.
+        messages = self._repair_dangling_translated_tool_search_calls(messages, untranslated)
 
         if tool_call_id_length is not None:
             messages = _fit_tool_call_ids(messages, tool_call_id_length)
 
         return messages
+
+    def _repair_dangling_translated_tool_search_calls(
+        self, messages: list[ModelMessage], untranslated: list[ModelMessage]
+    ) -> list[ModelMessage]:
+        """Answer the tool-search calls translated from `untranslated` that have no return, where the API requires it.
+
+        See `_tool_search.repair_dangling_translated_calls` and the profile's `rejects_unpaired_tool_calls`.
+        """
+        if not self.profile.get('rejects_unpaired_tool_calls', False):
+            return messages
+        from .._tool_search import repair_dangling_translated_calls
+
+        return repair_dangling_translated_calls(messages, untranslated)
 
     def _translate_legacy_tool_reveals(
         self,
@@ -5236,24 +5323,11 @@ def _order_tool_results_by_call(messages: list[ModelMessage]) -> list[ModelMessa
     return new_messages if changed else messages
 
 
-_BASE62_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
-
-
-def _hashed_tool_call_id(tool_call_id: str, length: int) -> str:
-    """The low-order `length` base62 digits of the SHA-256 of `tool_call_id`."""
-    number = int.from_bytes(hashlib.sha256(tool_call_id.encode()).digest())
-    digits: list[str] = []
-    for _ in range(length):
-        number, remainder = divmod(number, 62)
-        digits.append(_BASE62_ALPHABET[remainder])
-    return ''.join(digits)
-
-
 def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelMessage]:
     """Replace the function tool call IDs that aren't exactly `length` ASCII alphanumerics with ones that are.
 
     Implements the profile's `tool_call_id_length`. An ID that already fits is kept, and any other is
-    replaced with `_hashed_tool_call_id` of it, so the same history always renders the same bytes and the
+    replaced with `hashed_tool_call_id` of it, so the same history always renders the same bytes and the
     provider's prompt cache keeps hitting. Every part that names a call is rewritten with the same mapping,
     so a call, its result (a retried one included), and the `<pyai:tool_result>` tags rendered from the result's ID keep
     pairing up.
@@ -5281,11 +5355,11 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
                 "(the profile's `tool_call_id_length`)."
             )
         fits = len(tool_call_id) == length and tool_call_id.isascii() and tool_call_id.isalnum()
-        replacement = tool_call_id if fits else _hashed_tool_call_id(tool_call_id, length)
+        replacement = tool_call_id if fits else hashed_tool_call_id(tool_call_id, length)
         attempt = 0
         while replacement in taken:
             attempt += 1
-            replacement = _hashed_tool_call_id(f'{tool_call_id}#{attempt}', length)
+            replacement = hashed_tool_call_id(f'{tool_call_id}#{attempt}', length)
         replacements[tool_call_id] = replacement
         taken.add(replacement)
         return replacement
@@ -5334,7 +5408,8 @@ the parts every adapter already knows how to map, or drops it. So an adapter mee
 step never ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart` on
 a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
 A deprecated `RetryPromptPart` or a request-side `CompactionPart` never reaches this branch either:
-adapters map their parts through `_sendable_request_parts`, which renders each into user-facing parts.
+adapters map their parts through `_sendable_request_parts`, which renders each into user-facing parts. An adapter
+that maps its parts without it, as `OpenAIDecisionsModel` does, needs an arm of its own for each.
 """
 
 

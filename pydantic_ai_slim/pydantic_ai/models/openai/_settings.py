@@ -99,7 +99,21 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     openai_user: str
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
 
-    See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
+    OpenAI is replacing the `user` field with `safety_identifier`, mapped to
+    [`openai_safety_identifier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_safety_identifier],
+    and `prompt_cache_key`, mapped to
+    [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_key].
+
+    See [OpenAI's safety best practices](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers) for more details.
+    """
+
+    openai_safety_identifier: str
+    """A stable identifier representing the end-user, which can help OpenAI detect users who may be violating its usage policies.
+
+    Supported by both the Chat Completions API and the Responses API. Nothing is sent when it is unset. Hash the
+    end-user's ID, such as their username or email address, so that no identifying information is sent to OpenAI.
+
+    See [OpenAI's safety best practices](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers) for more details.
     """
 
     openai_moderation: Moderation
