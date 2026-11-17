@@ -74,6 +74,8 @@ class FakeSandbox:
     network_policy: dict[str, Any] | None = None
     credential_proxy: dict[str, object] | None = None
     secure_access: bool = False
+    credential_vault: dict[str, Any] | None = None
+    """What the egress sidecar's Credential Vault was created with, values included."""
     state: str = 'Running'
     processes: dict[str, asyncio.subprocess.Process] = field(default_factory=lambda: {})
     streams: list[asyncio.Queue[tuple[str, Any]]] = field(default_factory=lambda: [])
@@ -263,6 +265,21 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
                 if sandbox.state != 'Running':
                     raise httpx.ConnectError('connection refused')
                 return await self._command(sandbox, json.loads(request.content))
+            case ['credential-vault'] if request.method == 'POST':
+                # The egress sidecar's vault, which answers with sanitized metadata only.
+                vault: dict[str, Any] = json.loads(request.content)
+                sandbox.credential_vault = vault
+                return _json(
+                    201,
+                    {
+                        'revision': 1,
+                        'credentials': [
+                            {'name': credential['name'], 'sourceType': 'inline', 'revision': 1}
+                            for credential in vault['credentials']
+                        ],
+                        'bindings': [],
+                    },
+                )
             # A request the backend never makes.
             case _:  # pragma: no cover
                 raise AssertionError(f'unexpected execd request {request.url.path}')

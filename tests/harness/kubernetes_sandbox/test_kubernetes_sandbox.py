@@ -179,6 +179,13 @@ async def test_env_is_layered(cluster: FakeCluster) -> None:
     await backend.aclose()
 
 
+async def test_a_variable_added_to_env_reaches_later_commands(cluster: FakeCluster) -> None:
+    backend = KubernetesSandboxBackend(warm_pool='pool', env={'A': '1'})
+    backend.env['B'] = '2'
+    assert (await backend.run('printf "$A $B"', shell=True)).stdout == '1 2'
+    await backend.aclose()
+
+
 async def test_env_reaches_the_program_unchanged_by_the_launcher(cluster: FakeCluster) -> None:
     """The launcher script runs in the command's environment, so a variable it assigned would replace the caller's."""
     backend = KubernetesSandboxBackend(warm_pool='pool')

@@ -56,7 +56,9 @@ from pydantic_clai2.builtin_plugins.sandbox.providers import (
     boxd as boxd_provider,
     daytona as daytona_provider,
     e2b as e2b_provider,
+    kubernetes as kubernetes_provider,
     modal as modal_provider,
+    opensandbox as opensandbox_provider,
     render as render_provider,
     sprites as sprites_provider,
 )
@@ -90,7 +92,9 @@ if TYPE_CHECKING:
     from tests.harness.boxd_sandbox.fake_boxd import FakeBoxd, FakeClient
     from tests.harness.daytona_sandbox.fake_daytona import FakeDaytona, FakeSandbox as FakeDaytonaSandbox
     from tests.harness.e2b_sandbox.fake_e2b import FakeE2B
+    from tests.harness.kubernetes_sandbox.fake_sandboxd import FakeCluster
     from tests.harness.modal_sandbox.fake_modal import FakeModal
+    from tests.harness.opensandbox_sandbox.fake_opensandbox import FakeOpenSandbox
     from tests.harness.render_sandbox.workspace_helpers import WorkspaceHarness
     from tests.harness.sprites_sandbox.fake_sprites import SpriteTransport
 
@@ -456,9 +460,11 @@ class TestCommand:
             'e2b',
             'boxd',
             'daytona',
+            'opensandbox',
             'modal',
             'render',
             'sprites',
+            'kubernetes',
             'delete',
         ]
 
@@ -1250,6 +1256,10 @@ def not_installed(name: str) -> None:
     return None
 
 
+def installed(name: str) -> str:
+    return f'/usr/bin/{name}'
+
+
 @dataclass
 class CommandOnlyBackend:
     """A sandbox that only runs commands, with no file API, as some providers offer."""
@@ -1725,4 +1735,196 @@ class TestSprites:
         assert len(fake_sprites.created) == 1 and fake_sprites.names == set()
         fake_sprites.create_error = OSError('Sprites is down')
         with pytest.raises(OSError, match='Sprites is down'):
+            await provider.create(github=GITHUB)
+
+
+@pytest.fixture
+async def fake_opensandbox(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 'AsyncIterator[FakeOpenSandbox]':
+    """The harness's OpenSandbox fake server, behind every transport the SDK opens, at the address in `/keys`."""
+    import httpx
+
+    from tests.harness.opensandbox_sandbox.fake_opensandbox import (
+        API_KEY,
+        DOMAIN,
+        FakeOpenSandbox,
+        OwnedTransport,
+        reap,
+    )
+
+    server = FakeOpenSandbox(pid_dir=str(tmp_path / 'pids'))
+
+    def transport(**_: object) -> OwnedTransport:
+        return OwnedTransport(server)
+
+    monkeypatch.setattr(httpx, 'AsyncHTTPTransport', transport)
+    # The fake's commands get only the environment they are sent; a real sandbox has a home of its own.
+    monkeypatch.setattr(opensandbox_provider, 'SANDBOX_ENV', {**SANDBOX_ENV, 'HOME': os.environ['HOME']})
+    monkeypatch.setenv('OPENSANDBOX_DISABLE_METRICS', '1')
+    save_key(name='OPEN_SANDBOX_DOMAIN', value=DOMAIN)
+    save_key(name='OPEN_SANDBOX_API_KEY', value=API_KEY)
+    yield server
+    await reap(server)
+
+
+@pytest.mark.skipif(find_spec('opensandbox') is None, reason='opensandbox not installed')
+class TestOpenSandbox:
+    """OpenSandbox, through the fake server the harness's own OpenSandbox tests use."""
+
+    def test_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv('OPEN_SANDBOX_DOMAIN', raising=False)
+        provider = opensandbox_provider.OpenSandboxProvider()
+        assert provider.missing() == (
+            "Add your OpenSandbox server's address in /keys as OPEN_SANDBOX_DOMAIN, such as localhost:8080, "
+            'and its API key as OPEN_SANDBOX_API_KEY if it needs one.'
+        )
+        monkeypatch.setenv('OPEN_SANDBOX_DOMAIN', 'https://sandbox.example.com')
+        assert provider.missing() is None
+        monkeypatch.setattr(opensandbox_provider, 'find_spec', not_installed)
+        assert provider.missing() == (
+            "OpenSandbox support is not installed. Install CLAI with it: uv tool install 'pydantic-clai2[opensandbox]'."
+        )
+
+    def test_an_https_server_gets_https_commands(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv('OPEN_SANDBOX_DOMAIN', 'https://sandbox.example.com')
+        # Otherwise the SDK would send command requests, keys and all, over plain HTTP.
+        assert opensandbox_provider.OpenSandboxProvider()._connection().protocol == 'https'  # pyright: ignore[reportPrivateUsage]
+
+    async def test_create_reopen_delete(self, fake_opensandbox: 'FakeOpenSandbox', tmp_path: Path) -> None:
+        provider = opensandbox_provider.OpenSandboxProvider(working_dir=str(tmp_path.resolve()))
+        ref, backend = await provider.create(github=GITHUB)
+        made = fake_opensandbox.sandboxes[ref.id]
+        assert ref == backend.ref == WorkspaceRef(provider='opensandbox', id=made.id)
+        # The proxy needs a sandbox that reaches only the hosts it allows.
+        assert made.network_policy == {
+            'defaultAction': 'deny',
+            'egress': [{'action': 'allow', 'target': host} for host in GITHUB_HOSTS],
+        }
+        assert made.credential_proxy == {'enabled': True}
+        assert made.credential_vault == {
+            'credentials': [
+                {'name': 'github-0', 'source': {'value': GITHUB.basic, 'type': 'inline'}},
+                {'name': 'github-1', 'source': {'value': GITHUB.bearer, 'type': 'inline'}},
+            ],
+            'bindings': [
+                {
+                    'name': host.replace('.', '-'),
+                    'match': {'schemes': ['https'], 'hosts': [host]},
+                    'auth': {
+                        'type': 'customHeaders',
+                        'headers': [{'name': 'Authorization', 'credential': credential}],
+                    },
+                }
+                for host, credential in zip(GITHUB_HOSTS, ['github-0', 'github-1', 'github-1'])
+            ],
+        }
+        # The sandbox's `git` and `gh` hold only the stand-in the proxy replaces.
+        stand_in = GitHubCredential(login='Ada', token='placeholder')
+        assert signed_in(Path(os.environ['HOME'])) == {
+            '.config/clai/github-token': ('placeholder', 0o600),
+            '.config/gh/hosts.yml': (
+                f'github.com:\n    oauth_token: {stand_in.token}\n    user: Ada\n    git_protocol: https\n',
+                0o600,
+            ),
+        }
+        reopened = provider.reopen(ref)
+        await provider.set_env(reopened, 'API_KEY', 'sk-1')
+        assert (await reopened.run(['printenv', 'API_KEY'])).stdout == 'sk-1\n'
+        await provider.close(reopened)
+        await provider.close(backend)
+        await provider.delete(ref)
+        assert fake_opensandbox.sandboxes == {}
+        assert fake_opensandbox.opened_transports == fake_opensandbox.closed_transports
+
+        ref, backend = await provider.create(github=None)
+        made = fake_opensandbox.sandboxes[ref.id]
+        # Without a login, the server's own network policy applies.
+        assert (made.network_policy, made.credential_proxy, made.credential_vault) == (None, None, None)
+        await provider.close(backend)
+        await provider.delete(ref)
+
+    async def test_a_failed_create_leaves_nothing_behind(
+        self, fake_opensandbox: 'FakeOpenSandbox', monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(opensandbox_provider, 'SANDBOX_ENV', {**SANDBOX_ENV, 'HOME': 'relative'})
+        provider = opensandbox_provider.OpenSandboxProvider(working_dir=str(tmp_path.resolve()))
+        with pytest.raises(RuntimeError, match='no home folder'):
+            await provider.create(github=GITHUB)
+        assert fake_opensandbox.sandboxes == {}
+        assert fake_opensandbox.opened_transports == fake_opensandbox.closed_transports
+        fake_opensandbox.refuse = (500, 'DOCKER::DOWN')
+        with pytest.raises(Exception, match='DOWN'):
+            await provider.create(github=GITHUB)
+
+
+@pytest.fixture
+async def fake_cluster(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 'AsyncIterator[FakeCluster]':
+    """The harness's fake agent-sandbox cluster, whose claims run commands here, with its warm pool in `/keys`."""
+    from tests.harness.kubernetes_sandbox.fake_sandboxd import FakeCluster
+
+    cluster = FakeCluster(tmp_path / 'cluster')
+    monkeypatch.setattr('pydantic_ai_harness.kubernetes_sandbox._backend.AsyncSandboxClient', cluster.client)
+    save_key(name='CLAI_KUBERNETES_WARM_POOL', value='pool')
+    try:
+        yield cluster
+    finally:
+        await cluster.close()
+
+
+@pytest.mark.skipif(
+    find_spec('k8s_agent_sandbox') is None or find_spec('grpc') is None, reason='k8s-agent-sandbox not installed'
+)
+class TestKubernetes:
+    """Kubernetes, through the fake cluster the harness's own Kubernetes tests use."""
+
+    def test_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv('CLAI_KUBERNETES_WARM_POOL', raising=False)
+        monkeypatch.setattr(kubernetes_provider.shutil, 'which', installed)
+        provider = kubernetes_provider.KubernetesProvider()
+        assert provider.missing() == (
+            'Add the agent-sandbox warm pool to claim sandboxes from in /keys as CLAI_KUBERNETES_WARM_POOL, '
+            "and its namespace as CLAI_KUBERNETES_NAMESPACE if it is not 'default'. "
+            "kubectl's current context names the cluster."
+        )
+        monkeypatch.setenv('CLAI_KUBERNETES_WARM_POOL', 'pool')
+        assert provider.missing() is None
+        monkeypatch.setattr(kubernetes_provider.shutil, 'which', not_installed)
+        assert provider.missing() == 'Install kubectl: CLAI reaches the sandbox pods through kubectl port-forward.'
+        monkeypatch.setattr(kubernetes_provider, 'find_spec', not_installed)
+        assert provider.missing() == (
+            "Kubernetes support is not installed. Install CLAI with it: uv tool install 'pydantic-clai2[kubernetes]'."
+        )
+
+    async def test_create_reopen_delete(self, fake_cluster: 'FakeCluster', monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv('CLAI_KUBERNETES_NAMESPACE', 'sandboxes')
+        provider = kubernetes_provider.KubernetesProvider(working_dir=str(fake_cluster.base / 'checkout'))
+        ref, backend = await provider.create(github=GITHUB)
+        [(namespace, claim)] = fake_cluster.claims
+        assert ref == backend.ref == WorkspaceRef(provider='kubernetes', id=f'{namespace}/{claim}')
+        # No time limit: the claim lives until `/sandbox delete`.
+        assert fake_cluster.created == [
+            ('pool', 'sandboxes', {'shutdown_after_seconds': None, 'sandbox_ready_timeout': 180})
+        ]
+        assert signed_in(Path(os.environ['HOME'])) == SIGNED_IN
+        reopened = provider.reopen(ref)
+        await provider.set_env(reopened, 'API_KEY', 'sk-1')
+        assert (await reopened.run(['printenv', 'API_KEY'])).stdout == 'sk-1\n'
+        await provider.close(reopened)
+        await provider.close(backend)
+        await provider.delete(ref)
+        assert fake_cluster.claims == {}
+        ref, backend = await provider.create(github=None)
+        await provider.close(backend)
+        await provider.delete(ref)
+
+    async def test_a_failed_create_leaves_nothing_behind(
+        self, fake_cluster: 'FakeCluster', monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv('HOME', 'relative')
+        provider = kubernetes_provider.KubernetesProvider(working_dir=str(fake_cluster.base / 'checkout'))
+        with pytest.raises(RuntimeError, match='no home folder'):
+            await provider.create(github=GITHUB)
+        assert fake_cluster.claims == {} and len(fake_cluster.created) == 1
+        assert all(client.closed for client in fake_cluster.clients)
+        fake_cluster.create_error = OSError('the cluster is down')
+        with pytest.raises(OSError, match='the cluster is down'):
             await provider.create(github=GITHUB)

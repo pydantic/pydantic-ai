@@ -289,7 +289,7 @@ The sandbox's isolation is the server's runtime: a Docker container shares the h
 | `secure_access` | Default: `False`. `True` asks the server to make its Kubernetes ingress gateway and proxy require a token for a new sandbox's endpoints; see [Endpoint authentication](#endpoint-authentication). Docker rejects `True`. |
 | `sandbox_timeout` | Seconds a sandbox may go unused before the server deletes it, files included; every operation renews it, and a single command must finish within it. Default: `None`, kept until destroyed. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`; `None` uses the image's own. |
-| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
+| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. Add a variable to an `OpenSandboxBackend`'s `env` to give it to that backend's later commands. |
 
 ## Telemetry
 

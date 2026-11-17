@@ -71,8 +71,8 @@ class SandboxProvider(Protocol):
         """A new, running sandbox whose commands get `SANDBOX_ENV`, and its reference.
 
         With `github`, `git` and `gh` there act as `github.login`. A provider whose proxy can sign requests gets the
-        token for this sandbox only, and the sandbox's `GH_TOKEN` holds a stand-in the proxy replaces; any other
-        writes the token into the sandbox (`give_github_login`). A `create` that raises, or is cancelled, first
+        token for this sandbox only, and the sandbox holds a stand-in the proxy replaces, in `GH_TOKEN` or where
+        `give_github_login` would put the token; any other writes the token into the sandbox (`give_github_login`). A `create` that raises, or is cancelled, first
         deletes whatever it made, as no caller has its reference to delete it later.
         """
         ...

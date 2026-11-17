@@ -259,6 +259,11 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         """`WorkspaceRef(provider='kubernetes', id='<namespace>/<claim>')`, or `None` until a claim is made."""
         return self._ref
 
+    @property
+    def env(self) -> dict[str, str]:
+        """The variables every command gets, under the command's own; add one to give it to later commands."""
+        return self._env
+
     async def working_dir(self) -> str:
         if self._resolved_working_dir is None:
             # sandboxd has no API for its root directory, but commands start there (or in `working_dir`).

@@ -279,6 +279,11 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         """`WorkspaceRef(provider='opensandbox', id=<sandbox id>)`, or `None` before a sandbox has been created."""
         return self._ref
 
+    @property
+    def env(self) -> dict[str, str]:
+        """The variables every command gets, under the command's own; add one to give it to later commands."""
+        return self._env
+
     async def get_sandbox(self) -> Sandbox:
         """The `opensandbox.Sandbox`, for features the workspace API does not cover.
 

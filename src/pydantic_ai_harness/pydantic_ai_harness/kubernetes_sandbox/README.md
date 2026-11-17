@@ -271,7 +271,7 @@ Everything else is set by your cluster, not by this capability: the pod's isolat
 | `connection` | `'port-forward'` (default), `'in-cluster-pod-ip'` or `'in-cluster-service'`; or the SDK's `SandboxdPodTunnelConnectionConfig` or `SandboxdInClusterConnectionConfig`, for other ports and timeouts. |
 | `sandbox_timeout` | Seconds after which a newly claimed sandbox is deleted. Default: `86_400` (24 hours); `None` keeps it until `destroy(ref)`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, sandboxd's root directory. Created on a new claim; on an attached claim it must already exist. |
-| `env` | Environment variables every command gets, on top of the container's own. Default: `None`. |
+| `env` | Environment variables every command gets, on top of the container's own. Default: `None`. Add a variable to a `KubernetesSandboxBackend`'s `env` to give it to that backend's later commands. |
 
 ## Durable execution
 

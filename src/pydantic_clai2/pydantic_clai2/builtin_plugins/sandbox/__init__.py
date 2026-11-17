@@ -282,7 +282,7 @@ class SandboxPlugin(Plugin):
 
 
 _HOW_SIGNED_IN = {
-    False: ' through a proxy outside the sandbox, so GH_TOKEN holds a stand-in the proxy replaces',
+    False: ' through a proxy outside the sandbox, so the sandbox holds only a stand-in for the token, which the proxy replaces',
     True: ', with a token saved in the sandbox, which anything run there can read; leave GH_TOKEN unset',
 }
 """How the instructions say the sandbox is signed in, by `SandboxProvider.token_in_sandbox`."""
