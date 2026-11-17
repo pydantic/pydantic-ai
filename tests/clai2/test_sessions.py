@@ -41,10 +41,10 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, Work
 from pydantic_ai_harness import Coder
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, SqliteStepStore, StepEvent, StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
-    ConversationConflict,
     ConversationSummary,
     GitCheckout,
-    SqliteConversationStore,
+    SessionConflict,
+    SqliteSessionStore,
 )
 from pydantic_clai2 import DEFAULT_PLUGINS, create_agent
 from pydantic_clai2.app import STOCK_PLUGINS, create_stock_agent
@@ -58,7 +58,7 @@ def saved_session(tmp_path: Path) -> Session[None, str]:
     return Session(
         Agent(TestModel(custom_output_text='answer')),
         deps=None,
-        conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'),
+        conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'),
         workspace=tmp_path,
     )
 
@@ -116,10 +116,10 @@ async def test_stale_writer_and_failed_compaction_leave_memory_unchanged(tmp_pat
     await second.resume(first.summary.id)
     previous = second.messages
     await first.prompt('second')
-    with pytest.raises(ConversationConflict):
+    with pytest.raises(SessionConflict):
         await second.prompt('stale')
     assert second.messages == previous
-    with pytest.raises(ConversationConflict):
+    with pytest.raises(SessionConflict):
         await second.commit_messages([])
     assert second.messages == previous
 
@@ -250,7 +250,7 @@ async def test_a_fork_this_process_left_running_is_continued_not_forked_again(tm
 
 
 async def test_failed_fork_save_leaves_session_unchanged(tmp_path: Path) -> None:
-    class FullDisk(SqliteConversationStore):
+    class FullDisk(SqliteSessionStore):
         async def save(self, *, summary: ConversationSummary, messages: Sequence[ModelMessage]) -> ConversationSummary:
             if summary.title.endswith('(fork)'):
                 raise OSError('disk full')
@@ -277,7 +277,7 @@ async def test_cancellation_persists_and_live_session_resumes_as_a_fork(tmp_path
             entered.set()
             await anyio.sleep_forever()
 
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     session = Session(
         Agent(TestModel(), deps_type=type(None), capabilities=[Pause()]),
         deps=None,
@@ -348,7 +348,7 @@ async def test_step_records_another_writer_locks_out_do_not_fail_the_turn(
     session = Session(
         Agent(FunctionModel(stream_function=model), tools=[run_command]),
         deps=None,
-        conversations=SqliteConversationStore(database=database),
+        conversations=SqliteSessionStore(database=database),
         workspace=tmp_path,
     )
     steps = session.step_store
@@ -400,7 +400,7 @@ async def test_cancellation_still_propagates_when_saving_fails(
 ) -> None:
     entered = anyio.Event()
 
-    class BrokenCleanup(SqliteConversationStore):
+    class BrokenCleanup(SqliteSessionStore):
         async def save(self, *, summary: ConversationSummary, messages: Sequence[ModelMessage]) -> ConversationSummary:
             if summary.outcome == 'cancelled':
                 raise OSError('disk full')
@@ -456,7 +456,7 @@ async def test_interrupted_tool_frontier_accepts_followup(tmp_path: Path, *, can
     session = Session(
         agent,
         deps=None,
-        conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'),
+        conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'),
         on_stream_event=interrupt,
     )
     if cancel:
@@ -522,7 +522,7 @@ async def test_resume_from_another_directory_runs_in_this_session_directory(tmp_
             working_dirs.append(await ctx.workspace.working_dir())
 
     agent = Agent(TestModel(custom_output_text='answer'), deps_type=type(None), capabilities=[RecordWorkingDir()])
-    conversations = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    conversations = SqliteSessionStore(database=tmp_path / 'sessions.db')
     original, elsewhere = tmp_path / 'original', tmp_path / 'elsewhere'
     original.mkdir()
     elsewhere.mkdir()
@@ -542,7 +542,7 @@ async def test_a_session_saved_in_a_git_checkout_records_it(tmp_path: Path) -> N
     (linked / 'src').mkdir()
     plain.mkdir()
     agent = Agent(TestModel(custom_output_text='answer'))
-    conversations = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    conversations = SqliteSessionStore(database=tmp_path / 'sessions.db')
     session = Session(agent, deps=None, conversations=conversations, workspace=linked / 'src')
     await session.prompt('first')
     checkout = GitCheckout(
@@ -745,7 +745,7 @@ async def test_stock_agent_delegates_with_plugin_tools_instructions_and_guardrai
         agent,
         deps=None,
         workspace=tmp_path,
-        conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'),
+        conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'),
         plugins=[Coder(repo_context=False), tools, dynamic, hooks, LocalWorkspace(tmp_path)],
     )
     persistence = PluginHost[None](

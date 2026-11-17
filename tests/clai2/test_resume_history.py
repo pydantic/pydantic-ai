@@ -28,7 +28,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2 import chat
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -132,7 +132,7 @@ def saved_prior(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Session[None
     return Session(
         Agent(TestModel(call_tools=[], custom_output_text='saved answer')),
         deps=None,
-        conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'),
+        conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'),
         workspace=tmp_path,
     )
 
@@ -206,7 +206,7 @@ async def test_resumed_tool_calls_replay_in_the_chosen_tool_call_style(
     prior = Session(
         Agent(TestModel(custom_output_text='saved answer'), tools=[ping, pong]),
         deps=None,
-        conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'),
+        conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'),
         workspace=tmp_path,
     )
     await prior.prompt('earlier turn')
