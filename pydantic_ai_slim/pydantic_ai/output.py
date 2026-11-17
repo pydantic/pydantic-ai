@@ -483,6 +483,38 @@ def _is_json_object(value: object) -> TypeGuard[dict[str, Any]]:
     return isinstance(value, dict)
 
 
+def _schema_refs(schema: object) -> list[str]:
+    """The `$ref` and `$dynamicRef` of one (sub)schema."""
+    if not _is_json_object(schema):
+        return []
+    return [ref for key in ('$ref', '$dynamicRef') if isinstance(ref := schema.get(key), str)]
+
+
+def _check_refs_resolve(json_schema: JsonSchemaValue) -> None:
+    """Raise `UserError` for a `$ref` or `$dynamicRef` that doesn't resolve within `json_schema`.
+
+    Done when the `StructuredDict` is built, so such a reference doesn't fail every run instead. Walking
+    subresources visits schema positions only, each from the resource (`$id`) it is in.
+    """
+    from referencing import Registry, Resource
+    from referencing.exceptions import Unresolvable
+    from referencing.jsonschema import DRAFT202012
+
+    registry: Registry[Any] = Registry()
+    root = Resource.from_contents(json_schema, default_specification=DRAFT202012)
+    pending = [(registry.resolver_with_root(root), root)]
+    while pending:
+        resolver, resource = pending.pop()
+        for ref in _schema_refs(resource.contents):
+            try:
+                resolver.lookup(ref)
+            except Unresolvable as e:
+                raise exceptions.UserError(
+                    f'`StructuredDict(validate=True)` only resolves references within the schema, and {ref!r} is not one.'
+                ) from e
+        pending.extend((resolver.in_subresource(subresource), subresource) for subresource in resource.subresources())
+
+
 def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, Any]], dict[str, Any]]:
     """A function that returns a value matching `json_schema` unchanged, and raises a validation error listing why one doesn't.
 
@@ -492,9 +524,7 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
         from jsonschema import Draft202012Validator
         from jsonschema.exceptions import SchemaError
         from jsonschema.validators import validator_for
-        from referencing import Registry, Resource
-        from referencing.exceptions import Unresolvable
-        from referencing.jsonschema import DRAFT202012
+        from referencing import Registry
     except ImportError as e:
         raise exceptions.UserError(
             '`StructuredDict(validate=True)` requires the `jsonschema` package. '
@@ -505,24 +535,9 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
         validator_class.check_schema(json_schema)
     except SchemaError as e:
         raise exceptions.UserError(f'`StructuredDict` got an invalid JSON schema: {e.message}') from e
+    _check_refs_resolve(json_schema)
     # An empty registry resolves references within the schema only, so a remote `$ref` is never fetched.
-    # Resolving each one now turns one that doesn't resolve into a `UserError`, not a failure of every run.
-    # Walking subresources visits schema positions only, from the resource (`$id`) each one is in.
-    registry: Registry[Any] = Registry()
-    root = Resource.from_contents(json_schema, default_specification=DRAFT202012)
-    pending = [(registry.resolver_with_root(root), root)]
-    while pending:
-        resolver, resource = pending.pop()
-        contents: object = resource.contents
-        if _is_json_object(contents) and isinstance(ref := contents.get('$ref'), str):
-            try:
-                resolver.lookup(ref)
-            except Unresolvable as e:
-                raise exceptions.UserError(
-                    f'`StructuredDict(validate=True)` only resolves references within the schema, and {ref!r} is not one.'
-                ) from e
-        pending.extend((resolver.in_subresource(subresource), subresource) for subresource in resource.subresources())
-    schema_validator = validator_class(json_schema, registry=registry)
+    schema_validator = validator_class(json_schema, registry=Registry())
 
     def validate(value: dict[str, Any]) -> dict[str, Any]:
         errors = itertools.islice(

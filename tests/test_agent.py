@@ -3196,9 +3196,20 @@ def test_structured_dict_validate_resolves_local_refs_and_rejects_others(monkeyp
     with pytest.raises(ValidationError, match=re.escape("$.pet.name: 1 is not of type 'string'")):
         data_adapter.validate_python({'pet': {'name': 1}})
 
-    for ref in ['http://127.0.0.1:9/schema.json', '#/$defs/Missing']:
+    for keyword, ref in [
+        ('$ref', 'http://127.0.0.1:9/schema.json'),
+        ('$ref', '#/$defs/Missing'),
+        ('$dynamicRef', '#missing'),
+    ]:
         with pytest.raises(UserError, match=re.escape(f'only resolves references within the schema, and {ref!r}')):
-            StructuredDict({'type': 'object', 'properties': {'a': {'$ref': ref}}}, validate=True)
+            StructuredDict({'type': 'object', 'properties': {'a': {keyword: ref}}}, validate=True)
+
+    TreeDict = StructuredDict(
+        {'$dynamicAnchor': 'node', 'type': 'object', 'properties': {'child': {'$dynamicRef': '#node'}}},
+        validate=True,
+    )
+    with pytest.raises(ValidationError, match=re.escape("$.child: 1 is not of type 'object'")):
+        TypeAdapter(TreeDict).validate_python({'child': 1})
 
 
 @requires_jsonschema
