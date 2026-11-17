@@ -262,6 +262,7 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
         return [(span.attributes or {})['agent_session_id'] for span in opened]
 
     store = SettingsStore(tmp_path / 'config.db')
+    store.set('sessions.naming', True)
     plugins = tuple(
         plugin.model_copy(update={'settings': {'ui_events': ui_events}})
         for plugin in DEFAULT_PLUGINS
