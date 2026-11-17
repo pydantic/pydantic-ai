@@ -12948,12 +12948,15 @@ class _ProviderToolConnection(FakeRealtimeConnection):
     """A provider that asks to approve its own CRM lookup, runs it only once approved, and then answers.
 
     Its reply ends with the request, as one whose model goes on in a reply of its own once the call is decided.
-    With `request_only`, it asks before any output, outside any response.
+    With `request_only`, it asks before any output, outside any response; with `with_metadata=False`, without metadata.
     """
 
-    def __init__(self, *, request_only: bool = False) -> None:
+    def __init__(self, *, request_only: bool = False, with_metadata: bool = True) -> None:
         request = NativeToolApprovalRequest(
-            'mcp_1', tool_name='crm_lookup', args={'email': 'ada@example.com'}, metadata={'server': 'crm'}
+            'mcp_1',
+            tool_name='crm_lookup',
+            args={'email': 'ada@example.com'},
+            metadata={'server': 'crm'} if with_metadata else None,
         )
         super().__init__(
             [request]
@@ -12997,10 +13000,10 @@ class _ProviderToolConnection(FakeRealtimeConnection):
 
 
 async def _run_native_approval(
-    capabilities: list[AbstractCapability[Any]],
+    capabilities: list[AbstractCapability[Any]], conn: _ProviderToolConnection | None = None
 ) -> tuple[_ProviderToolConnection, list[RealtimeEvent], list[ModelMessage]]:
     agent: Agent[None, str] = Agent()
-    conn = _ProviderToolConnection()
+    conn = conn or _ProviderToolConnection()
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model, capabilities=capabilities).session() as session:
         events = [e async for e in session]
@@ -13056,6 +13059,21 @@ async def test_a_provider_tool_call_approved_by_the_handler() -> None:
         SpeechPart,
     ]
     assert [(part.outcome, part.content) for part in _native_returns(messages)] == [('success', 'Ada is a customer.')]
+
+
+async def test_a_provider_tool_call_asked_without_metadata_reaches_the_handler_without_any() -> None:
+    seen: list[DeferredToolRequests] = []
+
+    def approve(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        seen.append(requests)
+        return requests.build_results(approvals={call.tool_call_id: True for call in requests.native_approvals})
+
+    conn, _, _ = await _run_native_approval(
+        [HandleDeferredToolCalls(handler=approve)], _ProviderToolConnection(with_metadata=False)
+    )
+
+    assert [requests.metadata for requests in seen] == [{}]
+    assert conn.sent == [NativeToolApproval('mcp_1', approved=True)]
 
 
 @pytest.mark.parametrize(
