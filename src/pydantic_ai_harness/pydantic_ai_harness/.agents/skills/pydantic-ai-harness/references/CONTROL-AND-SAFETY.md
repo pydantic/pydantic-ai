@@ -16,6 +16,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Stop tool calls failing on trailing commas, single quotes, truncated JSON | `RepairToolArguments()` |
 | Refuse or redact a prompt before it reaches the model | `InputGuardrail(guard=...)` |
 | Block, redact, or retry the final output | `OutputGuardrail(guard=...)` |
+| Screen each streamed text, thinking or tool-call part before the caller sees it | `StreamGuardrail(guard=...)` |
 | Block/rewrite tool arguments, redact tool results, or hide tools | `ToolGuardrail(guard=..., result_guard=..., hidden=[...])` |
 | Mask API keys, tokens, PII in text | `guardrails.detectors.redact_secrets` / `redact_personal_data` in a guard |
 | Get human approval for some tool calls, decided per call | `ToolGuardrail` returning `GuardrailResult.approve()` |
@@ -76,9 +77,9 @@ validation/retry. `Coder` already includes it.
 
 ## Guardrails
 
-`InputGuardrail`, `OutputGuardrail`, `ToolGuardrail`, `GuardrailResult`, `InputBlocked`,
+`InputGuardrail`, `OutputGuardrail`, `StreamGuardrail`, `ToolGuardrail`, `GuardrailResult`, `InputBlocked`,
 `OutputBlocked`, `GuardrailError` are top-level (`from pydantic_ai_harness import ...`);
-`ToolBlocked`, `ToolCallInfo`, `ToolResultInfo`, `detectors` live in `pydantic_ai_harness.guardrails`.
+`ToolBlocked`, `ToolCallInfo`, `ToolResultInfo`, `StreamGuardrailPart`, `detectors` live in `pydantic_ai_harness.guardrails`.
 
 A guard is a sync or async callable taking the value, optionally preceded by `RunContext` (taken
 when a second positional parameter is required, for `*args` with another parameter, or when the
@@ -90,12 +91,12 @@ returns `bool` (`True` = allow) or a `GuardrailResult`: `allow()`, `block(messag
 `numpy.bool_`) is read for truthiness with a `HarnessDeprecationWarning` (a truthy label allows the
 value); return `bool(...)` instead.
 
-| Verdict | `InputGuardrail` | `OutputGuardrail` | `ToolGuardrail.guard` (args) | `ToolGuardrail.result_guard` |
-|---|---|---|---|---|
-| block | skip the model call; message becomes the response | raise `OutputBlocked` | skip tool; message is the tool result | message replaces the result |
-| replace | rewrite the prompt (text prompts, sequential only) | substitute output | run with new args mapping | substitute result |
-| retry | `UserError` | `ModelRetry` to the model (counts output retries) | `ModelRetry` | `ModelRetry` (tool already ran) |
-| approve | `UserError` | `UserError` | defer via `ApprovalRequired` | not valid |
+| Verdict | `InputGuardrail` | `OutputGuardrail` | `StreamGuardrail` | `ToolGuardrail.guard` (args) | `ToolGuardrail.result_guard` |
+|---|---|---|---|---|---|
+| block | skip the model call; message becomes the response | raise `OutputBlocked` | raise `OutputBlocked`, part never released | skip tool; message is the tool result | message replaces the result |
+| replace | rewrite the prompt (text prompts, sequential only) | substitute output | stream a same-type text or thinking part instead (events only); `UserError` for a tool call | run with new args mapping | substitute result |
+| retry | `UserError` | `ModelRetry` to the model (counts output retries) | `UserError` | `ModelRetry` | `ModelRetry` (tool already ran) |
+| approve | `UserError` | `UserError` | `UserError` | defer via `ApprovalRequired` | not valid |
 
 ```python
 from pydantic_ai import Agent
@@ -175,6 +176,15 @@ Key parameters:
   `lambda out: redact_secrets(pydantic_core.to_json(out).decode()).action == 'allow'` blocks on a
   match (and also works on the JSON data a Temporal worker passes); to redact,
   return `GuardrailResult.replace(Model.model_validate_json(verdict.replacement))`.
+- `StreamGuardrail(guard)`: holds each streamed `TextPart`, `ThinkingPart` or `ToolCallPart` until it
+  is complete and passes the whole part to the guard before its events reach `run_stream_events()`,
+  a run's `event_stream_handler` argument or a UI adapter; `ProcessEventStream` and `on_event`
+  see raw events. Adds the part's generation time to its first chunk; a tool call is held until
+  the model response ends.
+  `run_stream()`'s `stream_text()`/`stream_output()` are not screened (a `block` still raises), and
+  the run's history and output are not changed; pair with `OutputGuardrail`/`ToolGuardrail` for
+  those. Makes `run()` stream every request; raises `UserError` under durable execution and in a
+  realtime session.
 - `ToolGuardrail(guard=None, result_guard=None, tools=None, hidden=())`: `tools` restricts both
   guards to those names; `hidden` drops tools from the model's tool list (no tokens; a call
   to one is rejected as an unknown tool). A `tools` name no step offered warns (`UserWarning`) after each successful
