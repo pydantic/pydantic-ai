@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 import anyio
 import httpx
@@ -17,6 +17,7 @@ from pydantic_ai import (
     Agent,
     CachePoint,
     DocumentUrl,
+    FinishReason,
     ImageUrl,
     ModelAPIError,
     ModelHTTPError,
@@ -1807,3 +1808,50 @@ Alternatively, 17*20 is 340, right? Because 17*20 is 340. But since 19 is one le
             finish_reason='stop',
         )
     )
+
+
+FINISH_REASON_CASES: list[tuple[cohere.ChatFinishReason, FinishReason]] = [
+    ('COMPLETE', 'stop'),
+    ('STOP_SEQUENCE', 'stop'),
+    ('MAX_TOKENS', 'length'),
+    ('TOOL_CALL', 'tool_call'),
+    ('ERROR', 'error'),
+    ('TIMEOUT', 'error'),
+]
+
+
+def test_finish_reason_cases_cover_sdk_literal():
+    """Fails when the SDK adds a `ChatFinishReason` value that `FINISH_REASON_CASES` doesn't pin.
+
+    The SDK types it as `Literal[...] | Any`, so pyright can't flag a value missing from the model's mapping.
+    """
+    sdk_literal, _ = get_args(cohere.ChatFinishReason)
+    assert set(get_args(sdk_literal)) <= {finish_reason for finish_reason, _ in FINISH_REASON_CASES}
+
+
+@pytest.mark.parametrize(('finish_reason', 'expected'), FINISH_REASON_CASES)
+def test_finish_reason_map_covers_all_sdk_values(
+    finish_reason: cohere.ChatFinishReason, expected: FinishReason, allow_model_requests: None
+):
+    """Every `ChatFinishReason` value the SDK defines normalizes without dropping the raw value.
+
+    The mock reaches finish reasons such as `TIMEOUT` and `ERROR`, which a VCR response cannot reliably trigger.
+    """
+    c = ChatResponse(
+        id='123',
+        finish_reason=finish_reason,
+        message=AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+            role='assistant',
+        ),
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    result = agent.run_sync('hello')
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.finish_reason == expected
+    assert response.provider_details == {'finish_reason': finish_reason}

@@ -256,9 +256,11 @@ with a `warnings.warn`.
 Spill keys (`overflow_handle`, `overflow_bytes`, `overflow_content_handle`) live in
 `ToolReturn.metadata` alongside whatever the tool put there. A pre-existing mapping is copied
 in with stringified keys; a pre-existing non-mapping value (a string, a dataclass, anything
-that is not a `Mapping`) is kept under `original_metadata` rather than dropped. Either way the
-caller's own metadata survives a spill and is readable from `metadata` on the resulting
-`ToolReturnPart` after `Agent.run`.
+that is not a `Mapping`) is kept under `original_metadata` rather than dropped. A list or tuple,
+the shape the AG-UI and Vercel AI adapters read UI events and chunks from, stays a list with the
+spill keys appended as one dict item, and a single event or chunk becomes such a list, so those
+events still reach the UI. Either way the caller's own metadata survives a spill and is readable
+from `metadata` on the resulting `ToolReturnPart` after `Agent.run`.
 
 ## Size unit
 
@@ -380,8 +382,9 @@ security does not come from per-instance isolation:
   foreign-owned root raises `PermissionError`; for a write, the band's `then` fallback runs.
   Windows has no uid, so it uses the unsuffixed `pyai_harness_overflow` root and skips the
   ownership check.
-- `read` resolves the target and rejects any path that escapes the root. Handle segments are
-  sanitized so a crafted handle cannot traverse out.
+- `read` and `write` resolve the target, following symlinks, and reject any path that escapes
+  the root. `write` checks before it creates a directory, and a refused write runs the band's
+  `then` fallback. Handle segments are sanitized so a crafted handle cannot traverse out.
 
 Set `cleanup_after` to delete spills older than that age.
 

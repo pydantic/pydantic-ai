@@ -67,7 +67,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and run its tests.')
 ```
 
-The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B, Render, Sprites, Daytona and boxd, a local smolvm microVM, and self-hosted OpenSandbox servers. A
+The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B, Render, Sprites, Daytona, boxd and Kubernetes (agent-sandbox), a local smolvm microVM, and self-hosted OpenSandbox servers. A
 sandbox is created the first time the run uses it (a tool call, or `Coder` loading repo
 instructions at run start; durable runs create it when they start), and keeps running after the run until you or its
 provider stop it; see [Cleaning up](#cleaning-up). If the run never used it, calling a method on `result.workspace` after a run with `ref=None` may create a new sandbox that no message records. Check the ref before using the workspace after a run, and arrange to clean up any new sandbox you create.
@@ -310,6 +310,10 @@ check it as they adopt it.
 A capability checks authority when it reads a file, so a change applies from the next read. Text it
 already added to a conversation stays in that history, so start a new conversation after lowering a
 workspace's authority.
+
+Pydantic AI Harness's workspace capabilities, such as [`E2BSandbox`](harness/e2b-sandbox.md), [`DockerContainer`](harness/docker-container.md) and [`SSHWorkspace`](harness/ssh-workspace.md), take the
+same `authority` and `path_authority` arguments, for a sandbox, container or host filled with files the operator didn't write.
+Their paths are paths on the sandbox, container or host, so `~` isn't expanded.
 
 For a single run, wrap its workspace in `AuthorityWorkspace(workspace, authority=...)` and pass it as
 `workspace=`, as with `ReadOnlyWorkspace`. A wrapper only lowers the authority: with several, the
@@ -799,9 +803,30 @@ Local commands that exceed the 10 MiB combined output limit raise `WorkspaceOutp
 The local backend and command-backed shell fallback require POSIX. A filesystem-only backend
 works without shell support, but cannot run commands.
 
+On Windows, use [`WindowsWorkspace`][pydantic_ai.capabilities.WindowsWorkspace] in place of `LocalWorkspace`.
+It takes the same options and also isolates nothing. Commands run in PowerShell (`pwsh` when it is on `PATH`,
+else Windows PowerShell), and paths are Windows paths (`C:\Users\me\project`). Each command runs in a Windows Job
+Object, so a timeout or cancellation ends the processes it started too; a process it started in the background
+outlives a command that returns. Commands get only the variables Windows tools need to start (`PATH`, `PATHEXT`,
+`SYSTEMROOT`, `TEMP`, `USERPROFILE`, `APPDATA` and the like), plus `env`.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import WindowsWorkspace
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[WindowsWorkspace('.')])
+```
+
+A backend whose shell and paths are not POSIX says so with
+[`SupportsPlatform`][pydantic_ai.workspaces.SupportsPlatform]; tools read it as
+[`Workspace.platform`][pydantic_ai.workspaces.Workspace.platform], and use
+[`Workspace.paths`][pydantic_ai.workspaces.Workspace.paths] (`posixpath` or `ntpath`) for its paths.
+The [conformance suite](#checking-a-backend) checks a `'windows'` backend's commands in PowerShell.
+
 ## Limits
 
-- `LocalWorkspace` runs only on POSIX systems (macOS and Linux) and isolates nothing. Create its root
+- `LocalWorkspace` runs only on POSIX systems (macOS and Linux), and `WindowsWorkspace` only on Windows; neither
+  isolates anything. Create its root
   first: every operation needs it. While it exists, absolute paths outside it are allowed.
   `defer_loading=True` is rejected because the workspace must be selected before deferred
   capabilities load. Its ref normalizes `.` and `..` without resolving symlinks, so differently
