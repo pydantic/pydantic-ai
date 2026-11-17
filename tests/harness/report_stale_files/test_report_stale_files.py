@@ -14,12 +14,20 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, RunContext
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.messages import ModelMessage, ModelResponse, SystemPromptPart, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import FileEntry, LocalWorkspaceBackend
+from pydantic_ai.workspaces import FileEntry, LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness import FileSystem, ReportStaleFiles
 from pydantic_ai_harness.report_stale_files import STALE_FILES_ORIGIN
 from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
@@ -322,30 +330,23 @@ These files you read were deleted from the workspace:
         agent = _agent(tmp_path, (None, _read('config.py')), (None, 'done'), (None, 'done'), capability=capability)
         first = await agent.run('go')
         for index in range(1024):
-            await capability.for_run(_ctx(conversation_id=f'other-{index}'))
+            await capability.for_run(_ctx(tmp_path, f'other-{index}'))
         config.write_text('A = 2\n')
         result = await agent.run('again', message_history=first.all_messages())
         assert _notices(result.all_messages()) == [[], [], []]
 
-    async def test_run_without_a_conversation_id_keeps_its_own_observations(self) -> None:
-        capability = ReportStaleFiles[None]()
-        first = await capability.for_run(_ctx(conversation_id=None))
-        second = await capability.for_run(_ctx(conversation_id=None))
-        assert first is not second
-        assert first == second == capability
+    async def test_run_without_a_conversation_id_keeps_its_own_observations(self, tmp_path: Path) -> None:
+        capability = await _observed(tmp_path)
+        request: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('go')])]
+        assert await _enqueued(capability, tmp_path, None, request) == []
+        assert await _enqueued(capability, tmp_path, 'observed', request) == [f'{CHANGED}\n- `config.py`']
 
-    async def test_provider_resume_turn_gets_no_notice(self) -> None:
-        enqueued: list[object] = []
-        ctx = _ctx(conversation_id=None)
-        ctx.enqueue = lambda *content, priority='asap': enqueued.extend(content)
-        request_context = ModelRequestContext(
-            model=TestModel(),
-            messages=[ModelResponse(parts=[TextPart('prior')])],
-            model_settings=None,
-            model_request_parameters=ModelRequestParameters(),
-        )
-        assert await ReportStaleFiles[None]().before_model_request(ctx, request_context) is request_context
-        assert enqueued == []
+    async def test_provider_resume_turn_gets_no_notice(self, tmp_path: Path) -> None:
+        capability = await _observed(tmp_path)
+        resume: list[ModelMessage] = [ModelResponse(parts=[TextPart('prior')])]
+        assert await _enqueued(capability, tmp_path, 'observed', resume) == []
+        request: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('go')])]
+        assert await _enqueued(capability, tmp_path, 'observed', request) == [f'{CHANGED}\n- `config.py`']
 
     def test_limits_must_be_positive(self) -> None:
         with pytest.raises(ValueError, match=r'`max_tracked_files` must be at least 1\.'):
@@ -356,7 +357,39 @@ These files you read were deleted from the workspace:
             ReportStaleFiles[None](max_checked_bytes=0)
 
 
-def _ctx(*, conversation_id: str | None) -> RunContext[None]:
+def _ctx(tmp_path: Path, conversation_id: str | None) -> RunContext[None]:
     return RunContext[None](
-        deps=None, model=TestModel(), usage=RunUsage(), prompt=None, conversation_id=conversation_id
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        prompt=None,
+        conversation_id=conversation_id,
+        workspace=Workspace(LocalWorkspaceBackend(working_dir=tmp_path)),
     )
+
+
+async def _observed(tmp_path: Path) -> ReportStaleFiles[None]:
+    """A capability that recorded `config.py` in the conversation `'observed'`, after which the file changed."""
+    config = tmp_path / 'config.py'
+    config.write_text('A = 1\n')
+    capability = ReportStaleFiles[None]()
+    await _agent(tmp_path, (None, _read('config.py')), (None, 'done'), capability=capability).run(
+        'go', conversation_id='observed'
+    )
+    config.write_text('A = 2\n')
+    return capability
+
+
+async def _enqueued(
+    capability: ReportStaleFiles[None], tmp_path: Path, conversation_id: str | None, messages: list[ModelMessage]
+) -> list[str]:
+    """The notices a run of `conversation_id` enqueues before a request whose history is `messages`."""
+    ctx = _ctx(tmp_path, conversation_id)
+    run = await capability.for_run(ctx)
+    enqueued: list[object] = []
+    ctx.enqueue = lambda *content, priority='asap': enqueued.extend(content)
+    request_context = ModelRequestContext(
+        model=TestModel(), messages=messages, model_settings=None, model_request_parameters=ModelRequestParameters()
+    )
+    assert await run.before_model_request(ctx, request_context) is request_context
+    return [part.content for part in enqueued if isinstance(part, SystemPromptPart)]
