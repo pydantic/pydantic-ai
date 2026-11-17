@@ -258,11 +258,7 @@ async def test_child_tasks_are_registered(app: App):
     ]
 
 
-@pytest.mark.skip(
-    reason='Hatchet matches a replayed child spawn on a hash of its input, which carries wall-clock message '
-    'timestamps, so the replay fails with a `NonDeterminismError`. Needs a caller-supplied durable idempotency key.'
-)
-async def test_replayed_durable_task_reuses_child_results(app: App):  # pragma: no cover
+async def test_replayed_durable_task_reuses_child_results(app: App):
     """A durable task reset to after its child tasks replays their results instead of running them again."""
     ref = await app.run_weather.aio_run(Prompt(prompt='What is the weather?'), wait_for_result=False)
     first = await ref.aio_result()
@@ -270,9 +266,12 @@ async def test_replayed_durable_task_reuses_child_results(app: App):  # pragma: 
 
     details = await app.hatchet.runs.aio_get_details(ref.workflow_run_id)
     (task_run,) = details.task_runs.values()
-    # Two model requests and a tool call are nodes 1-3 of the durable event log; branch from after them.
-    await app.hatchet.runs.aio_reset_durable_task(task_run.external_id, node_id=4, branch_id=1)
-    replayed = RunOutput.model_validate(await app.hatchet.runs.get_run_ref(ref.workflow_run_id).aio_result())
+    # The run's start time is node 1 of the durable event log, and its two model requests and tool call are
+    # nodes 2-4: branch from after them, so the durable task runs again and replays every one.
+    await app.hatchet.runs.aio_reset_durable_task(task_run.external_id, node_id=5, branch_id=1)
+    # A workflow run's result maps each of its tasks to that task's output.
+    outputs = await app.hatchet.runs.get_run_ref(ref.workflow_run_id).aio_result()
+    replayed = RunOutput.model_validate(outputs['pydantic_ai_test_weather'])
 
     assert replayed == first
     assert (app.calls.model_requests, app.calls.tools) == (requests, tools)

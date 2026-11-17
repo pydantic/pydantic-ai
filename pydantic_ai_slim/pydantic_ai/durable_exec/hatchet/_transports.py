@@ -39,6 +39,7 @@ from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 from pydantic_ai.workspaces import WorkspaceRef
 
+from ._run_context import stable_capability_ids
 from ._spec import HATCHET_ENGINE_SPEC
 
 if TYPE_CHECKING:
@@ -92,10 +93,11 @@ class _JSONTransport(ParameterTransport[ParamsT, TaskInput], Generic[ParamsT, Wi
 
     def dump(self, params: ParamsT) -> TaskInput:
         wire, deps = self.to_wire(params)
-        return TaskInput(
-            params=cast(JsonValue, _adapter(self.wire_type).dump_python(wire, mode='json')),
-            deps=self._runtime.dump_deps(deps),
-        )
+        payload = cast(JsonValue, _adapter(self.wire_type).dump_python(wire, mode='json'))
+        # Tool definitions name their capability by its key too, so the run's synthetic keys are replaced throughout.
+        if (ctx := _params_run_context(params)) is not None and (replacements := stable_capability_ids(ctx)):
+            payload = _replace_strings(payload, replacements)
+        return TaskInput(params=payload, deps=self._runtime.dump_deps(deps))
 
     def load(self, payload: TaskInput, *, runtime: object) -> ParamsT:
         wire = cast(WireT, _adapter(self.wire_type).validate_python(payload.params))
@@ -106,6 +108,21 @@ class _JSONTransport(ParameterTransport[ParamsT, TaskInput], Generic[ParamsT, Wi
 
     def _deserialize(self, serialized: dict[str, Any], deps: Any) -> RunContext[Any]:
         return self._runtime.deserialize_operation_run_context(serialized, deps)
+
+
+def _params_run_context(params: object) -> RunContext[Any] | None:
+    ctx: object = getattr(params, 'run_context', None) or getattr(params, 'ctx', None)
+    return cast('RunContext[Any]', ctx) if isinstance(ctx, RunContext) else None
+
+
+def _replace_strings(value: JsonValue, replacements: dict[str, str]) -> JsonValue:
+    if isinstance(value, str):
+        return replacements.get(value, value)
+    if isinstance(value, list):
+        return [_replace_strings(item, replacements) for item in value]
+    if isinstance(value, dict):
+        return {key: _replace_strings(item, replacements) for key, item in value.items()}
+    return value
 
 
 @dataclass(kw_only=True)

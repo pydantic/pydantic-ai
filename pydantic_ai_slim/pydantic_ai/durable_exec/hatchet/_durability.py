@@ -40,6 +40,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
+from ._clock import durable_clock
 from ._event_stream import HatchetAgentRunEvents, HatchetEventStream, publish_event, task_event_stream_handler
 from ._operation_backend import (
     HatchetOperationBackend,
@@ -338,7 +339,11 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Make the agent graph's waits durable sleeps, which a replayed durable task doesn't sleep again."""
+        """Make the run replay-safe: durable sleeps for the agent graph's waits, and message times from a durable clock.
+
+        A replayed durable task spawns its child tasks again and Hatchet checks each against the recorded one,
+        input included, so the run must stamp its messages with the times it stamped the first time.
+        """
         if not self.in_durable_context:
             return await handler()
         durable_ctx = self._durable_context()
@@ -346,7 +351,9 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
         async def durable_sleep(seconds: float) -> None:
             await durable_ctx.aio_sleep_for(timedelta(seconds=seconds))
 
-        with set_agent_graph_sleep(durable_sleep):
+        # Recorded before the run spawns anything, so a replay starts its clock at the same time.
+        start = await durable_ctx.aio_now()
+        with set_agent_graph_sleep(durable_sleep), durable_clock(start):
             return await super().wrap_run(ctx, handler=handler)
 
     # --- Durable streams ---

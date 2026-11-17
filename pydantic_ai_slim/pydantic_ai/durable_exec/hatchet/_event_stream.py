@@ -16,11 +16,13 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Any, Generic, cast
 
+import grpc
 import pydantic
 from hatchet_sdk import Context, Hatchet
 from pydantic import TypeAdapter
 
 from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -83,7 +85,16 @@ async def publish_event(
     error: str | None = None,
 ) -> None:
     message = _StreamMessage[Any](id=message_id, event=event, error=error)
-    await hatchet.streams.aio_publish(topic, _publish_adapter.dump_json(message), namespace=config.namespace)
+    try:
+        await hatchet.streams.aio_publish(topic, _publish_adapter.dump_json(message), namespace=config.namespace)
+    except grpc.aio.AioRpcError as rpc_error:
+        if rpc_error.code() == grpc.StatusCode.PERMISSION_DENIED:
+            # A retry can't fix a missing entitlement, and a model task would repeat its request on every attempt.
+            raise UserError(
+                f'Publishing agent events to Hatchet durable streams was denied: {rpc_error.details()}. Enable durable '
+                "streams for the tenant, or remove `HatchetDurability`'s `event_stream`."
+            ) from rpc_error
+        raise
 
 
 def task_event_stream_handler(

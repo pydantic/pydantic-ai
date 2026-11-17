@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
 from hatchet_sdk import (
@@ -67,6 +67,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 
+from ._clock import advance_durable_clock
 from ._transports import TaskInput
 
 if TYPE_CHECKING:
@@ -142,6 +143,8 @@ class TaskOutput(BaseModel):
     """The JSON output of every Hatchet task that runs a durable operation."""
 
     payload: JsonValue
+    completed_at: datetime
+    """When the task finished, which the durable task's replay-safe clock advances to."""
 
 
 def validate_task_config(config: Mapping[str, object], label: str) -> HatchetTaskConfig:
@@ -216,7 +219,7 @@ async def run_operation_in_task(
         payload = _encoded_error_message('user_error', None, str(error)) if isinstance(error, UserError) else str(error)
         raise NonRetryableError(payload) from error
     try:
-        return TaskOutput(payload=cast(JsonValue, operation.result_codec.dump(value)))
+        return TaskOutput(payload=cast(JsonValue, operation.result_codec.dump(value)), completed_at=datetime.now(UTC))
     except (PydanticSerializationError, TypeError) as error:
         # A result that can't be encoded fails the same way on every attempt, so it isn't retried.
         raise NonRetryableError(_encoded_error_message('user_error', None, str(error))) from error
@@ -357,6 +360,7 @@ class HatchetBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gene
             if rebuilt is not None:
                 raise rebuilt from error
             raise
+        advance_durable_clock(output.completed_at)
         return self._operation.result_codec.load(output.payload)
 
 
