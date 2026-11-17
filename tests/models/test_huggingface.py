@@ -1455,7 +1455,7 @@ async def test_hf_model_reasoning_field_and_think_tags_both_surfaces(allow_model
 
 
 async def test_hf_model_reasoning_field_thinking_part_round_trip(allow_model_requests: None):
-    """A mock client captures the follow-up request, since cassette replay does not match on the request body."""
+    """No live round trip is recorded, so a mock client returns `reasoning` and captures the `<think>` text the follow-up request sends back."""
     mock_client = MockHuggingFace.create_mock(
         [
             completion_message(
