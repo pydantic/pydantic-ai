@@ -41,11 +41,6 @@ try:
     from pydantic_monty import (
         AbstractOS,
         AsyncMontyRemote,
-        MontyCrashedError,
-        MontyDisconnectError,
-        MontyRuntimeError,
-        MontySyntaxError,
-        MontyTypingError,
         MountDir,
         OsFunction,
         OsHandler,
@@ -70,16 +65,23 @@ from pydantic_ai_harness._code_tools import (
 from pydantic_ai_harness._monty_exec import (
     MontyExecutor,
     MontyRunState,
+    MontySessionsNotStored,
+    MontyTurnFailed,
+    MontyTurnUnavailable,
     PrintCapture,
+    Snapshot,
+    TurnFeed,
     in_temporal_workflow,
-    is_sandbox_panic,
 )
+from pydantic_ai_harness._monty_turns import MontyFailure, MontyTurn, TurnRequest
 from pydantic_ai_harness._typeguards import is_mapping
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, renamed_duration_limit, warn_argument_renamed
 from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RUN_CODE_TOOL_NAME, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
 
 if TYPE_CHECKING:
+    from anyio.from_thread import BlockingPortal
+
     from pydantic_ai_harness.code_mode._speculation import SpeculationCoordinator
 
 # Deprecated: a positional `(name, args, kwargs)` OS callback. Pass Monty's keyword-only `OsHandler`
@@ -198,6 +200,16 @@ def as_os_handler(os_access: CodeModeOS | None) -> AbstractOS | OsHandler | None
     return handler
 
 
+_DURABLE_TURNS_PATCH = 'pydantic_ai_harness.code_mode.durable_turns'
+
+
+def _workflow_patched(patch_id: str) -> bool:
+    """`temporalio.workflow.patched`, imported only once a workflow is known to be running."""
+    from temporalio import workflow
+
+    return workflow.patched(patch_id)
+
+
 def in_durable_execution(ctx: RunContext[object]) -> bool:
     """Whether a durable executor is active, where streamed execution tiers must stay disabled."""
     return any(
@@ -206,7 +218,7 @@ def in_durable_execution(ctx: RunContext[object]) -> bool:
     )
 
 
-def _exhausted_sandbox_limit(error: MontyRuntimeError) -> str | None:
+def _exhausted_sandbox_limit(error: MontyFailure) -> str | None:
     """Which `CodeModeResourceLimits` limit this runtime error reports, or `None` for anything else.
 
     Derived from `_SANDBOX_LIMIT_MARKERS` rather than from a check per limit, so recognising a new
@@ -219,14 +231,13 @@ def _exhausted_sandbox_limit(error: MontyRuntimeError) -> str | None:
     Memory-limit resets are conservative because Monty cannot distinguish all heap-limit failures
     from callback errors, and does not guarantee heap integrity after a memory limit fires.
     """
-    message = error.display(format='msg')
     for limit, marker in _SANDBOX_LIMIT_MARKERS.items():
-        if marker in message:
+        if marker in error.message:
             return limit
     return None
 
 
-def _is_duration_exhausted(error: MontyRuntimeError) -> bool:
+def _is_duration_exhausted(error: MontyFailure) -> bool:
     """Whether this runtime error is Monty stopping the snippet at `max_duration_seconds`.
 
     Stricter than `_exhausted_sandbox_limit` because it gates a session reset, and a wrong reset
@@ -244,7 +255,7 @@ def _is_duration_exhausted(error: MontyRuntimeError) -> bool:
     Callers must read `False` as "not known to be a timeout". A miss keeps the session and the
     ordinary runtime-error message.
     """
-    return not error.traceback() and _exhausted_sandbox_limit(error) == 'max_duration_seconds'
+    return not error.has_traceback and _exhausted_sandbox_limit(error) == 'max_duration_seconds'
 
 
 def _elided(count: int, shown: int, unit: str) -> str:
@@ -803,7 +814,7 @@ def _raise_usage_limit_exceeded(execution: RunCodeExecution) -> None:
         raise execution.usage_limit_exceeded
 
 
-def _raise_escaped_tool_failed(error: MontyRuntimeError, execution: RunCodeExecution) -> None:
+def _raise_escaped_tool_failed(error: MontyFailure, execution: RunCodeExecution) -> None:
     """Raise a `ToolFailed` when the snippet ended on a nested call's uncaught `ToolFailed`.
 
     Raising it from `run_code` gives the model a failed result that spends no retry, as calling the
@@ -819,9 +830,9 @@ def _raise_escaped_tool_failed(error: MontyRuntimeError, execution: RunCodeExecu
     Limit failures that reset the session come back as `TimeoutError` or `MemoryError`, so they never
     reach the match and need no reset advice here.
     """
-    if type(error.exception()) is not Exception:
+    if error.type_name != 'Exception':
         return
-    message = error.display(format='msg')
+    message = error.message
     escaped = next((nested for nested in reversed(execution.nested_errors.values()) if str(nested) == message), None)
     if not isinstance(escaped, ToolFailed):
         return
@@ -841,12 +852,12 @@ def _raise_escaped_tool_failed(error: MontyRuntimeError, execution: RunCodeExecu
     raise ToolFailed(content) from escaped
 
 
-def _runtime_failure_retry(error: MontyRuntimeError, execution: RunCodeExecution, *, reset_advice: str) -> ModelRetry:
+def _runtime_failure_retry(error: MontyFailure, execution: RunCodeExecution, *, reset_advice: str) -> ModelRetry:
     """Build the retry for an uncaught sandbox runtime error, including any session-reset advice."""
     # Tool errors (e.g. a wrapped tool's `ModelRetry`) re-raise in the sandbox and surface
     # here if uncaught. Re-wrapping a `ModelRetry` is fine: the display keeps its message
     # and the model still gets a retry.
-    message = f'Runtime error:\n{execution.capture.prepend_to(error.display())}'
+    message = f'Runtime error:\n{execution.capture.prepend_to(error.display)}'
     if execution.budget_exhausted or _exhausted_sandbox_limit(error) is not None or reset_advice:
         # A retry is the only record the model gets of an uncaught failure, and these
         # calls already started. Without them the model reruns their side effects when
@@ -856,9 +867,7 @@ def _runtime_failure_retry(error: MontyRuntimeError, execution: RunCodeExecution
         # would otherwise reconstruct from.
         message += _started_calls_note(execution)
     message += reset_advice
-    if isinstance(error.exception(), RuntimeError) and re.fullmatch(
-        r'suspension limit [0-9]+ exceeded', error.display(format='msg')
-    ):
+    if 'RuntimeError' in error.exception_types and re.fullmatch(r'suspension limit [0-9]+ exceeded', error.message):
         # Monty has no typed marker for this limit, and unlike a timeout it has a
         # traceback. Keep the advice conditional: a tool could raise the same text.
         message += (
@@ -978,6 +987,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     `CodeMode` creates one per run when `speculate` is set. The stream watcher launches calls
     into it and the dispatch path below claims them; `for_run_step` copies share it by reference.
     """
+
+    run_monty_turn: Callable[[RunContext[AgentDepsT], TurnRequest], Awaitable[MontyTurn]] | None = field(
+        default=None, kw_only=True, repr=False
+    )
+    """`CodeMode`'s `monty_turn` durable operation, set when the capability has the `id` it needs to be one."""
 
     # Shared by `for_run_step` copies so they use the same REPL session and the original entered
     # instance can close it. `for_run` leaves this unset, giving concurrent runs isolated state.
@@ -1290,6 +1304,59 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             return None
         return next((run_id for run_id, cap in ctx.capabilities.items() if cap is self.capability), None)
 
+    def _durable_turn(
+        self, ctx: RunContext[AgentDepsT], run_state: MontyRunState
+    ) -> Callable[[TurnRequest], Awaitable[MontyTurn]] | None:
+        """Inside a Temporal workflow, the operation that runs each Monty turn in an activity, or `None` to run turns here.
+
+        A remote sandbox otherwise keeps the workflow task waiting on the network while a snippet
+        computes, and Temporal fails a workflow task that does not yield within 2 seconds. Turns move
+        out only where they behave as they do here: an `os_access` handler may use workflow APIs, and
+        Monty does not keep `'overlay'` mount writes across a stored snapshot. The first `run_code`
+        call decides for the whole run, so a run never moves REPL state between the two paths, and
+        `workflow.patched` keeps runs that started before this existed on the path they started on.
+        """
+        if run_state.durable_turns is None:
+            mounts = self.mount if isinstance(self.mount, list) else [self.mount] if self.mount is not None else []
+            run_state.durable_turns = (
+                self.monty_sandbox is not None
+                and self.run_monty_turn is not None
+                and self.os_access is None
+                and all(mount.mode != 'overlay' for mount in mounts)
+                and _workflow_patched(_DURABLE_TURNS_PATCH)
+            )
+        if not run_state.durable_turns or self.run_monty_turn is None:
+            return None
+        return partial(self.run_monty_turn, ctx)
+
+    async def _feed_start(
+        self,
+        ctx: RunContext[AgentDepsT],
+        run_state: MontyRunState,
+        code: str,
+        capture: PrintCapture,
+        *,
+        type_check_stubs: str | None,
+        limits: ResourceLimits,
+        in_workflow: bool,
+    ) -> tuple[Callable[[], Awaitable[Snapshot]], BlockingPortal | None]:
+        """How to start feeding `code`, and the portal to call Monty through: in turns, or on the live session."""
+        if in_workflow and (run_turn := self._durable_turn(ctx, run_state)) is not None:
+            return partial(TurnFeed(run_turn, run_state, capture).start, code, type_check_stubs), None
+        type_check = type_check_stubs is not None
+        session = await run_state.get_session(
+            type_check=type_check, type_check_stubs=type_check_stubs, limits=limits, in_temporal_workflow=in_workflow
+        )
+        start = partial(
+            session.feed_start,
+            code,
+            print_callback=capture.callback,
+            os=as_os_handler(self.os_access),
+            mount=self.mount,
+            skip_type_check=not type_check,
+        )
+        return start, run_state.portal
+
     async def _execute_code(
         self,
         code: str,
@@ -1350,36 +1417,33 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         if repl is not None and await repl.restore(run_state, limits=limits, in_temporal_workflow=in_workflow):
             # The type checker would reject the names the restored state defines.
             fresh_repl = type_check = False
-        session = await run_state.get_session(
-            type_check=type_check,
+        start, portal = await self._feed_start(
+            ctx,
+            run_state,
+            code,
+            capture,
             type_check_stubs=type_check_stubs if type_check else None,
             limits=limits,
-            in_temporal_workflow=in_workflow,
+            in_workflow=in_workflow,
         )
         try:
-            # Already converted in `__post_init__`; this narrows the field's type.
-            os_handler = as_os_handler(self.os_access)
             completed = await MontyExecutor(
                 dispatch=partial(self._dispatch_tool_call, ctx, execution, tool_manager, tool),
                 valid_names=callable_defs,
                 sequential_names=sequential_tools,
                 global_sequential=global_sequential,
-                portal=run_state.portal,
+                portal=portal,
                 # The configured limit, kept inside a Temporal workflow too: Monty's elapsed-time
                 # check is dropped there for replay, but sleeps are charged what they request.
                 max_sleep_seconds=configured.get('max_feed_duration_secs'),
-                os_handler=os_handler,
-            ).run(
-                partial(
-                    session.feed_start,
-                    code,
-                    print_callback=capture.callback,
-                    os=os_handler,
-                    mount=self.mount,
-                    skip_type_check=not type_check,
-                )
-            )
+                # Already converted in `__post_init__`; this narrows the field's type.
+                os_handler=as_os_handler(self.os_access),
+            ).run(start)
             run_state.has_executed_feed = True
+        except MontySessionsNotStored:
+            # The first turn ran nothing, so run this call, and the rest of the run, in the workflow.
+            run_state.durable_turns = False
+            return await self._execute_code(code, ctx, tool, execution)
         except BaseException as exc:
             retry = await self._feed_failure_retry(exc, run_state, execution, fresh_repl=fresh_repl)
             if retry is None:
@@ -1396,11 +1460,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         return result
 
     @staticmethod
-    async def _reset_for_runtime_error(error: MontyRuntimeError, run_state: MontyRunState) -> str:
+    async def _reset_for_runtime_error(error: MontyFailure, run_state: MontyRunState) -> str:
         if _is_duration_exhausted(error):
             advice = _TIME_LIMIT_MESSAGE
-        elif isinstance(error.exception(), MemoryError) and (
-            not error.traceback() or _exhausted_sandbox_limit(error) == 'max_memory'
+        elif 'MemoryError' in error.exception_types and (
+            not error.has_traceback or _exhausted_sandbox_limit(error) == 'max_memory'
         ):
             advice = (
                 'The sandbox ran out of memory and the session was reset. '
@@ -1413,8 +1477,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         return f'\n\n{advice}'
 
     @staticmethod
-    def _worker_failure_message(error: MontyCrashedError | MontyDisconnectError) -> str:
-        if isinstance(error, MontyCrashedError):
+    def _worker_failure_message(error: MontyFailure) -> str:
+        if error.kind == 'crashed':
             return (
                 _TIME_LIMIT_MESSAGE
                 if error.timed_out
@@ -1440,52 +1504,57 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         Returns `None` for an interruption, which the caller re-raises unchanged. Raises `ToolFailed`
         instead when the snippet let a nested call's `ToolFailed` escape.
         """
+        if isinstance(error, MontyTurnUnavailable):
+            await run_state.reset()
+            return None
+        failure = error.failure if isinstance(error, MontyTurnFailed) else MontyFailure.from_error(error)
+        if failure is None:
+            # An interruption re-raises unchanged after dropping the suspended session.
+            await run_state.reset()
+            return None
         capture = execution.capture
-        match error:
-            case MontySyntaxError():
+        match failure.kind:
+            case 'syntax':
                 if fresh_repl:
                     # No code ran, so discard the checkout-time type stubs. A later step may expose
                     # a different tool catalog (for example after Tool Search discovers a tool).
                     await run_state.reset()
-                return ModelRetry(f'Syntax error in code:\n{capture.prepend_to(error.display())}')
-            case MontyTypingError():
+                return ModelRetry(f'Syntax error in code:\n{capture.prepend_to(failure.display)}')
+            case 'typing':
                 # Typing errors can only come from the fresh-feed check above.
                 await run_state.reset()
-                return ModelRetry(f'Type error in code:\n{capture.prepend_to(error.display())}')
-            case MontyRuntimeError():
+                return ModelRetry(f'Type error in code:\n{capture.prepend_to(failure.display)}')
+            case 'runtime':
                 run_state.has_executed_feed = True
-                _raise_escaped_tool_failed(error, execution)
+                _raise_escaped_tool_failed(failure, execution)
                 return _runtime_failure_retry(
-                    error, execution, reset_advice=await self._reset_for_runtime_error(error, run_state)
+                    failure, execution, reset_advice=await self._reset_for_runtime_error(failure, run_state)
                 )
-            case MontyCrashedError() | MontyDisconnectError():
+            case 'crashed' | 'disconnected':
                 # The worker died mid-feed (e.g. the code exhausted its memory or hit the
                 # request timeout) and the REPL state died with it; the pool replaces the
                 # worker transparently. Reset so the retry starts from a fresh,
                 # type-checked session.
                 await run_state.reset()
                 _raise_usage_limit_exceeded(execution)
-                return ModelRetry(f'{self._worker_failure_message(error)}{_started_calls_note(execution)}')
-            case Exception():
+                return ModelRetry(f'{self._worker_failure_message(failure)}{_started_calls_note(execution)}')
+            case 'other':
                 # The session may have been invalidated by a host-side binding or protocol failure.
                 # Make the reset visible so the model can rebuild state on its next attempt.
                 await run_state.reset()
                 _raise_usage_limit_exceeded(execution)
                 error_text = (
-                    type(error).__name__ if self.monty_sandbox is not None else f'{type(error).__name__}: {error}'
+                    failure.type_name if self.monty_sandbox is not None else f'{failure.type_name}: {failure.display}'
                 )
                 return ModelRetry(
                     'Code execution failed and the session was reset. Re-run any imports, recreate '
                     f'any state you need, and try again.\n{capture.prepend_to(error_text)}{_started_calls_note(execution)}'
                 )
-            case _:
-                # Convert a sandbox panic to a retry (see `is_sandbox_panic`);
-                # interruptions re-raise unchanged after dropping the suspended session.
+            case 'panic':
+                # Convert a sandbox panic to a retry rather than end the run.
                 # A panic aborts the VM mid-execution, so the REPL's accumulated state cannot
                 # be trusted; drop it so the retry starts from a fresh, type-checked session.
                 await run_state.reset()
-                if not is_sandbox_panic(error):
-                    return None
                 _raise_usage_limit_exceeded(execution)
                 return ModelRetry(
                     'The code aborted inside the sandbox and the session was reset. Revise the code and try again.'

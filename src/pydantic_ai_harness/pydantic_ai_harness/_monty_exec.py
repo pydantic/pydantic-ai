@@ -43,6 +43,7 @@ try:
         CollectString,
         ExternalException,
         ExternalFuture,
+        ExternalResult,
         ExternalReturnValue,
         ExternalSettledResult,
         MontyComplete,
@@ -51,6 +52,15 @@ try:
         OsHandler,
         OSPolicy,
         ResourceLimits,
+    )
+
+    from pydantic_ai_harness._monty_turns import (
+        MontyFailure,
+        MontyTurn,
+        TurnCall,
+        TurnRequest,
+        TurnResume,
+        settled_data,
     )
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
@@ -134,6 +144,21 @@ def _remote_turn_timeout(limits: ResourceLimits) -> float | None:
     return None if max_feed_duration_seconds is None else max_feed_duration_seconds + _REMOTE_TURN_SLACK_SECONDS
 
 
+def session_os_policy(os_policy: OSPolicy | None) -> OSPolicy:
+    """The policies a session is checked out with: `os_policy` merged over `_OS_POLICY`, key by key."""
+    return _OS_POLICY | (os_policy or {})
+
+
+async def build_remote_pool(
+    sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]], limits: ResourceLimits
+) -> AsyncMontyRemote:
+    """The remote pool `sandbox` names: dialed from a URL, or built by a sync or async factory."""
+    if isinstance(sandbox, str):
+        return AsyncMontyRemote(sandbox, request_timeout=_remote_turn_timeout(limits))
+    pool = sandbox()
+    return await pool if inspect.isawaitable(pool) else pool
+
+
 @dataclass
 class MontyRunState:
     """A Monty worker pool and its checked-out REPL session, opened lazily and closed together.
@@ -153,6 +178,10 @@ class MontyRunState:
     session: AsyncMontySession | None = None
     portal: BlockingPortal | None = None
     has_executed_feed: bool = False
+    stored_state: bytes | None = None
+    """The server's record of the session when each turn runs as a durable operation (see `TurnFeed`)."""
+    durable_turns: bool | None = None
+    """Whether this run's `run_code` calls run each turn as a durable operation; `None` until the first call decides."""
     _pool_stack: AsyncExitStack = field(default_factory=AsyncExitStack, repr=False)
     _session_stack: AsyncExitStack = field(default_factory=AsyncExitStack, repr=False)
 
@@ -172,14 +201,8 @@ class MontyRunState:
             try:
                 if in_temporal_workflow:
                     self.portal = self._pool_stack.enter_context(start_blocking_portal())
-                if self.pool_factory is not None:
-                    pool = self.pool_factory()
-                    if inspect.isawaitable(pool):
-                        pool = await pool
-                elif self.monty_sandbox_url is None:
-                    pool = AsyncMonty()
-                else:
-                    pool = AsyncMontyRemote(self.monty_sandbox_url, request_timeout=_remote_turn_timeout(limits))
+                remote = self.pool_factory or self.monty_sandbox_url
+                pool = AsyncMonty() if remote is None else await build_remote_pool(remote, limits)
                 self.pool = await _enter_monty(self._pool_stack, pool, self.portal)
             except BaseException:
                 await self._release_pool()  # a failed spawn or dial must not leave the portal thread behind
@@ -190,7 +213,7 @@ class MontyRunState:
                 limits=limits,
                 type_check=type_check,
                 type_check_stubs=type_check_stubs,
-                os_policy=_OS_POLICY | (self.os_policy or {}),
+                os_policy=session_os_policy(self.os_policy),
             )
             self.session = await self._checkout_with_retry(checkout)
         return self.session
@@ -211,6 +234,7 @@ class MontyRunState:
         # Detach before awaiting the exit, so a session checked out meanwhile is not dropped.
         stack, self._session_stack = self._session_stack, AsyncExitStack()
         self.session = None
+        self.stored_state = None
         self.has_executed_feed = False
         await _release_monty(stack)
 
@@ -252,10 +276,15 @@ class PrintCapture:
 
     def __init__(self) -> None:
         self.callback = CollectString()
+        self._relayed = ''
 
     @property
     def joined(self) -> str:
-        return self.callback.output
+        return self.callback.output + self._relayed
+
+    def relay(self, printed: str) -> None:
+        """Add output a turn printed in another process (see `TurnFeed`)."""
+        self._relayed += printed
 
     def prepend_to(self, error_message: str) -> str:
         """Prefix captured stdout to an error message, so the model sees what printed before the error."""
@@ -263,6 +292,129 @@ class PrintCapture:
         if not printed:
             return error_message
         return f'[stdout before error]\n{printed}\n[/stdout before error]\n{error_message}'
+
+
+class MontySessionsNotStored(Exception):
+    """The Monty server stores no sessions, so a turn cannot run apart from the one before it."""
+
+
+class MontyTurnFailed(Exception):
+    """A turn ended in a sandbox error, described by `failure`."""
+
+    def __init__(self, failure: MontyFailure) -> None:
+        super().__init__(failure.kind)
+        self.failure = failure
+
+
+class MontyTurnUnavailable(Exception):
+    """The durable operation that runs a turn failed, so the turn's outcome is unknown; see `__cause__`."""
+
+
+@dataclass
+class TurnFeed:
+    """One feed of a remote session, run one turn at a time through `run_turn`, a durable operation.
+
+    `MontyExecutor` drives it exactly as it drives a live session, through the `Turn*` snapshots
+    below, so the host handles calls, sleeps, and deferred results in the workflow as before. Each
+    turn starts from `run_state.stored_state` and replaces it with the record the turn stored.
+    """
+
+    run_turn: Callable[[TurnRequest], Awaitable[MontyTurn]]
+    run_state: MontyRunState
+    capture: PrintCapture
+
+    async def start(self, code: str, type_check_stubs: str | None) -> TurnSnapshot:
+        return await self._turn(TurnRequest(self.run_state.stored_state, code=code, type_check_stubs=type_check_stubs))
+
+    async def resume(self, resume: TurnResume) -> TurnSnapshot:
+        return await self._turn(TurnRequest(self.run_state.stored_state, resume=resume))
+
+    async def _turn(self, request: TurnRequest) -> TurnSnapshot:
+        try:
+            turn = await self.run_turn(request)
+        except Exception as error:
+            raise MontyTurnUnavailable('The durable operation running a Monty turn failed.') from error
+        if turn.kind == 'not_stored':
+            raise MontySessionsNotStored
+        self.capture.relay(turn.prints)
+        if turn.state is not None:
+            self.run_state.stored_state = turn.state
+        match turn.kind:
+            case 'call':
+                assert turn.call is not None
+                return TurnFunctionSnapshot(self, turn.call)
+            case 'waiting':
+                return TurnFutureSnapshot(self, turn.pending_call_ids)
+            case 'complete':
+                return TurnComplete(turn.output)
+            case 'failed':
+                assert turn.failure is not None
+                raise MontyTurnFailed(turn.failure)
+
+
+@dataclass
+class TurnFunctionSnapshot:
+    """An `AsyncFunctionSnapshot` stand-in for a turn that paused at an external call."""
+
+    feed: TurnFeed
+    call: TurnCall
+
+    @property
+    def function_name(self) -> str:
+        return self.call.function_name
+
+    @property
+    def args(self) -> tuple[Any, ...]:
+        return self.call.args
+
+    @property
+    def kwargs(self) -> dict[str, Any]:
+        return self.call.kwargs
+
+    @property
+    def call_id(self) -> int:
+        return self.call.call_id
+
+    @property
+    def is_os_function(self) -> bool:
+        return self.call.is_os_function
+
+    def trace_context(self) -> otel_context.Context:
+        return otel_context.get_current()
+
+    async def resume(self, result: ExternalResult) -> TurnSnapshot:
+        return await self.feed.resume(TurnResume.from_result(result))
+
+    async def resume_auto(self) -> TurnSnapshot:
+        return await self.feed.resume(TurnResume('auto'))
+
+    async def resume_not_handled(self) -> TurnSnapshot:
+        return await self.feed.resume(TurnResume('not_handled'))
+
+
+@dataclass
+class TurnFutureSnapshot:
+    """An `AsyncFutureSnapshot` stand-in for a turn that paused awaiting deferred calls."""
+
+    feed: TurnFeed
+    pending_call_ids: list[int]
+
+    async def resume(self, results: dict[int, ExternalSettledResult]) -> TurnSnapshot:
+        settled = {call_id: settled_data(result) for call_id, result in results.items()}
+        return await self.feed.resume(TurnResume('settled', settled=settled))
+
+
+@dataclass
+class TurnComplete:
+    """A `MontyComplete` stand-in for a turn that finished the snippet."""
+
+    output: Any
+
+
+TurnSnapshot = TurnFunctionSnapshot | TurnFutureSnapshot | TurnComplete
+FunctionSnapshot = AsyncFunctionSnapshot | TurnFunctionSnapshot
+"""A sandbox paused at an external call, live or from a durable turn."""
+Snapshot = AsyncSnapshot | TurnSnapshot
 
 
 @dataclass
@@ -308,15 +460,15 @@ class MontyExecutor:
         default_factory=dict[int, ExternalSettledResult], init=False
     )
 
-    async def run(self, feed_start: Callable[[], Awaitable[AsyncSnapshot]]) -> MontyComplete:
-        """Drive the REPL from `feed_start` (a bound `AsyncMontySession.feed_start`) until it completes."""
+    async def run(self, feed_start: Callable[[], Awaitable[Snapshot]]) -> MontyComplete | TurnComplete:
+        """Drive the REPL from `feed_start` (a bound `AsyncMontySession.feed_start` or `TurnFeed.start`) until it completes."""
         try:
             state = await call_monty(self.portal, feed_start)
-            while not isinstance(state, MontyComplete):
+            while not isinstance(state, MontyComplete | TurnComplete):
                 if isinstance(state, AsyncNameLookupSnapshot):
                     # Leave the name undefined so the sandbox raises `NameError`.
                     state = await call_monty(self.portal, state.resume)
-                elif isinstance(state, AsyncFunctionSnapshot):
+                elif isinstance(state, AsyncFunctionSnapshot | TurnFunctionSnapshot):
                     state = await self._handle_function(state)
                 else:
                     state = await self._resolve_futures(state)
@@ -345,7 +497,7 @@ class MontyExecutor:
                     await asyncio.gather(*cancelled, return_exceptions=True)
         return state
 
-    async def _handle_function(self, snapshot: AsyncFunctionSnapshot) -> AsyncSnapshot:
+    async def _handle_function(self, snapshot: FunctionSnapshot) -> Snapshot:
         """Dispatch (or defer) a single external function call."""
         if snapshot.is_os_function:
             match snapshot.function_name:
@@ -399,7 +551,7 @@ class MontyExecutor:
         self._pending[snapshot.call_id] = call
         return await call_monty(self.portal, snapshot.resume, ExternalFuture(future=...))
 
-    async def _sleep(self, snapshot: AsyncFunctionSnapshot) -> AsyncSnapshot:
+    async def _sleep(self, snapshot: FunctionSnapshot) -> Snapshot:
         """Wait for a sandbox sleep here rather than in Monty, charging it to `max_sleep_seconds`.
 
         Monty has already validated the duration: `args` is one non-negative float.
@@ -425,9 +577,7 @@ class MontyExecutor:
         self._pending[snapshot.call_id] = PendingCall(task, otel_context.get_current())
         return await call_monty(self.portal, snapshot.resume, ExternalFuture(future=...))
 
-    async def _answer_os_call(
-        self, snapshot: AsyncFunctionSnapshot, handler: OsHandler, name: OsFunction
-    ) -> AsyncSnapshot:
+    async def _answer_os_call(self, snapshot: FunctionSnapshot, handler: OsHandler, name: OsFunction) -> Snapshot:
         """Call `os_access` on the workflow's own thread, so it can use `temporalio.workflow` APIs.
 
         Through the portal Monty would call it from another thread. File calls are not routed here:
@@ -446,11 +596,11 @@ class MontyExecutor:
             return await call_monty(self.portal, snapshot.resume_not_handled)
         return await call_monty(self.portal, snapshot.resume, ExternalReturnValue(return_value=value))
 
-    async def _raise_in_sandbox(self, snapshot: AsyncFunctionSnapshot, exc: Exception) -> AsyncSnapshot:
+    async def _raise_in_sandbox(self, snapshot: FunctionSnapshot, exc: Exception) -> Snapshot:
         """Resume the suspended call by raising `exc` at its sandbox call site."""
         return await call_monty(self.portal, snapshot.resume, ExternalException(exception=exc))
 
-    def _dispatch(self, snapshot: AsyncFunctionSnapshot, *, parallel: bool) -> PendingCall:
+    def _dispatch(self, snapshot: FunctionSnapshot, *, parallel: bool) -> PendingCall:
         context = snapshot.trace_context()
         token = otel_context.attach(context)
         try:
@@ -460,7 +610,7 @@ class MontyExecutor:
         finally:
             otel_context.detach(token)
 
-    async def _resolve_futures(self, snapshot: AsyncFutureSnapshot) -> AsyncSnapshot:
+    async def _resolve_futures(self, snapshot: AsyncFutureSnapshot | TurnFutureSnapshot) -> Snapshot:
         """Resolve the deferred calls a `FutureSnapshot` is waiting on."""
         if self.flush is not None:
             await self.flush()

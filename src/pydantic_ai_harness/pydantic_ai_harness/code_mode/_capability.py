@@ -4,13 +4,18 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, ToolSearch as _ToolSearch
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CapabilityOrdering,
+    ToolSearch as _ToolSearch,
+    durable_operation,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -21,6 +26,8 @@ from pydantic_ai.messages import (
     post_compaction_window,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
+from pydantic_ai_harness._monty_exec import build_remote_pool, session_os_policy
+from pydantic_ai_harness._monty_turns import MontyTurn, TurnRequest, run_monty_turn
 from pydantic_ai_harness._warn import renamed_duration_limit
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore
@@ -35,6 +42,7 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeOSPolicy,
     CodeModeResourceLimits,
     CodeModeToolset,
+    _resolve_resource_limits,  # pyright: ignore[reportPrivateUsage]
     as_os_handler,
     in_durable_execution,
     monty_sandbox_from_url,
@@ -246,6 +254,9 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     speculation_stats: SpeculationStats = field(default_factory=SpeculationStats, init=False, repr=False)
     """Aggregate launch/adopt/evict counters across this instance's runs, when `speculate` is set."""
 
+    _durable_operations_need_id: ClassVar[bool] = False
+    """An id-less `CodeMode` binds no `monty_turn` operation and runs every Monty turn in the workflow, as before it existed."""
+
     _speculation: SpeculationCoordinator[AgentDepsT] | None = field(default=None, init=False, repr=False)
 
     _in_flight_announcements: set[str] = field(default_factory=set[str], init=False, repr=False)
@@ -351,6 +362,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 repl_store=self.repl_store,
                 capability=self,
                 speculation=self._speculation,
+                run_monty_turn=None if self.id is None else self._monty_turn,
             )
         return CodeModeToolset(
             wrapped=toolset,
@@ -366,7 +378,22 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             repl_store=self.repl_store,
             capability=self,
             speculation=self._speculation,
+            run_monty_turn=None if self.id is None else self._monty_turn,
         )
+
+    @durable_operation('monty_turn')
+    async def _monty_turn(self, ctx: RunContext[AgentDepsT], request: TurnRequest) -> MontyTurn:
+        """Run one turn of the remote sandbox in an activity, outside the workflow task.
+
+        `CodeModeToolset._durable_turn` says when a run uses it. The pool is opened per turn: the
+        session lives on the server between turns, so nothing here needs to outlive one.
+        """
+        assert self.monty_sandbox is not None, 'only a remote sandbox runs turns as durable operations'
+        limits = _resolve_resource_limits(self.resource_limits)
+        async with await build_remote_pool(self.monty_sandbox, limits) as pool:
+            return await run_monty_turn(
+                pool, request, limits=limits, os_policy=session_os_policy(self.os_policy), mount=self.mount
+            )
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
