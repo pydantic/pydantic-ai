@@ -31,13 +31,18 @@ from typing import Any
 
 import anyio
 from temporalio import workflow
-from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
+from temporalio.workflow import ActivityConfig, ChildWorkflowConfig, LocalActivityConfig
 from typing_extensions import Unpack
 
 
 async def execute_activity(activity: Any, *, args: Sequence[Any], **config: Unpack[ActivityConfig]) -> Any:
     """Drop-in replacement for `workflow.execute_activity()` — see the module docstring for why."""
     return await _await_with_single_cancel(workflow.start_activity(activity, args=args, **config))
+
+
+async def execute_local_activity(activity: Any, *, args: Sequence[Any], **config: Unpack[LocalActivityConfig]) -> Any:
+    """Drop-in replacement for `workflow.execute_local_activity()`, for the same reason as `execute_activity`."""
+    return await _await_with_single_cancel(workflow.start_local_activity(activity, args=args, **config))
 
 
 async def execute_child_workflow(

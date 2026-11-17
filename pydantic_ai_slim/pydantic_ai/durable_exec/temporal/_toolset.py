@@ -77,10 +77,15 @@ async def heartbeating() -> AsyncGenerator[None]:
     silently run without heartbeats (the server would have failed the attempt via
     `heartbeat_timeout` anyway had the crash come early). An exception from the wrapped
     body always wins — a heartbeat failure never replaces it.
+
+    A local activity doesn't beat: Temporal has no heartbeats for one, and logs a warning for each it's sent.
     """
 
     async def beat() -> None:
-        timeout = activity.info().heartbeat_timeout
+        info = activity.info()
+        if info.is_local:
+            return
+        timeout = info.heartbeat_timeout
         interval = timeout.total_seconds() / 2 if timeout else 5.0
         while True:
             activity.heartbeat()

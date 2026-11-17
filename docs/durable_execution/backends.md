@@ -193,6 +193,9 @@ The backend's `register` receives each [`DurableOperation`][pydantic_ai.durable_
 and returns a [`BoundDurableOperation`][pydantic_ai.durable_exec.BoundDurableOperation]. Run its
 worker-side handler inside [`durable_unit_scope`][pydantic_ai.durable_exec.durable_unit_scope], so
 a durable operation called from inside the unit runs directly instead of scheduling another unit.
+An operation with `local` set comes from `@durable_operation(local=True)` and asks to run in the
+process that runs the durable container's code. If your engine can run units in another process,
+keep this one in the container's process where its SDK allows, as Temporal does with a local activity.
 
 Every parameter type carries the run's `RunContext` (as `run_context`, or `ctx` on the toolset
 parameters; it is `None` when a suspended response is cancelled outside a run), and that context

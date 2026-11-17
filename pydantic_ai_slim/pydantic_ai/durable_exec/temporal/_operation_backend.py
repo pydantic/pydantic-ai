@@ -6,7 +6,7 @@ from typing import Any, Generic, Literal, Protocol, TypeVar, cast
 
 from temporalio import activity, workflow
 from temporalio.exceptions import ApplicationError, TemporalError
-from temporalio.workflow import ActivityConfig
+from temporalio.workflow import ActivityConfig, LocalActivityConfig
 
 from pydantic_ai.durable_exec._operation import (
     CapabilityOperationId,
@@ -29,7 +29,7 @@ from pydantic_ai.durable_exec._operation import (
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
 from pydantic_ai.exceptions import ModelAPIError, UserError
 
-from ._activity_execution import execute_activity, execute_child_workflow
+from ._activity_execution import execute_activity, execute_child_workflow, execute_local_activity
 from ._model_errors import (
     model_errors_as_application_errors,
     rebuilt_model_errors,
@@ -113,6 +113,8 @@ class TemporalOperationConfig(DurableOperationConfig[TemporalOperationConfigValu
 
 
 class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[ParamsT, WireT, ResultT]):
+    _LOCAL_ACTIVITY_CONFIG_KEYS = LocalActivityConfig.__required_keys__ | LocalActivityConfig.__optional_keys__
+
     def __init__(
         self,
         operation: DurableOperation[ParamsT, WireT, ResultT],
@@ -172,6 +174,20 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
                 )
         if isinstance(operation_id, CapabilityOperationId):
             with rebuilt_retry_requests():
+                if self._operation.local:
+                    # A local activity runs on the worker running this workflow, so it has no task queue, and
+                    # it can't heartbeat; the timeouts and retry policy carry over from the activity config.
+                    local_config = cast(
+                        LocalActivityConfig,
+                        {
+                            key: value
+                            for key, value in activity_config.items()
+                            if key in self._LOCAL_ACTIVITY_CONFIG_KEYS
+                        },
+                    )
+                    return await execute_local_activity(
+                        self.registration, args=cast(Sequence[Any], payload), **local_config
+                    )
                 return await execute_activity(
                     activity=self.registration, args=cast(Sequence[Any], payload), **activity_config
                 )
