@@ -28,7 +28,7 @@ The model's instructions then include a line such as `Today's date is Friday, 20
 |---|---|---|
 | `timezone` | `datetime.UTC` | An IANA time zone name such as `'Europe/Amsterdam'`, or a `tzinfo`. An unknown name raises `ZoneInfoNotFoundError` when the capability is built |
 | `precision` | `'date'` | `'date'` states the weekday and date; `'hour'` states the hour as well: `The current time is within the hour starting 2026-01-02T14:00+01:00 (Friday, Europe/Amsterdam).` |
-| `id` | `'current_time'` | Keys the instruction block, so a change can be appended to the message history |
+| `id` | `'current_time'` | Keys the instruction block, so a change can be appended to the message history. `None` or `''` means the default |
 
 ## Prompt caching
 

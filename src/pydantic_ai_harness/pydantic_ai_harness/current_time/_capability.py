@@ -12,6 +12,10 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import InstructionPart, ModelRequest
 from pydantic_ai.tools import AgentDepsT, RunContext
 
+_ID = 'current_time'
+_WEEKDAYS = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')
+"""Spelled out because `%A` follows the process locale."""
+
 
 @dataclass(kw_only=True)
 class CurrentTime(AbstractCapability[AgentDepsT]):
@@ -22,8 +26,11 @@ class CurrentTime(AbstractCapability[AgentDepsT]):
     instructions, which keeps the cached prompt prefix.
     """
 
-    id: str | None = 'current_time'
-    """Keys the instruction block, which appending a changed value to the history needs."""
+    id: str | None = _ID
+    """Keys the instruction block, which appending a changed value to the history needs.
+
+    `None` or `''` means the default, `current_time`.
+    """
     timezone: str | tzinfo = UTC
     """An IANA time zone name such as `'Europe/Amsterdam'`, or a `tzinfo`."""
     precision: Literal['date', 'hour'] = 'date'
@@ -31,6 +38,7 @@ class CurrentTime(AbstractCapability[AgentDepsT]):
     hour of a conversation."""
 
     def __post_init__(self) -> None:
+        self.id = self.id or _ID
         self._zone()
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], InstructionPart | None]:
@@ -47,9 +55,10 @@ class CurrentTime(AbstractCapability[AgentDepsT]):
         zone = self._zone()
         now = stamp.astimezone(zone)
         name = zone.key if isinstance(zone, ZoneInfo) else now.tzname()
+        weekday = _WEEKDAYS[now.weekday()]
         if self.precision == 'date':
-            text = f"Today's date is {now:%A}, {now.date().isoformat()} ({name})."
+            text = f"Today's date is {weekday}, {now.date().isoformat()} ({name})."
         else:
             hour = now.replace(minute=0, second=0, microsecond=0).isoformat(timespec='minutes')
-            text = f'The current time is within the hour starting {hour} ({now:%A}, {name}).'
+            text = f'The current time is within the hour starting {hour} ({weekday}, {name}).'
         return InstructionPart(text, on_change='append')

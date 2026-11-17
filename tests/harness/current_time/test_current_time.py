@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone, tzinfo
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
@@ -41,6 +42,11 @@ class _HostZone(tzinfo):
 
     def __repr__(self) -> str:
         return "tzfile('/usr/share/zoneinfo/XST')"
+
+
+def _localized_strftime(*args: object) -> str:
+    """`datetime` formats `%A` through `time.strftime`, which follows `LC_TIME`: a German locale says `Freitag`."""
+    return 'Freitag'  # pragma: no cover
 
 
 def _clock(monkeypatch: pytest.MonkeyPatch, now: datetime) -> None:
@@ -109,6 +115,22 @@ Today's date is Saturday, 2026-01-03 (UTC).
         instructions = CurrentTime[None]().get_instructions()
         ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), messages=[])
         assert instructions(ctx) is None
+
+    @pytest.mark.parametrize('id', [None, ''])
+    def test_an_empty_id_falls_back_to_the_default(self, id: str | None) -> None:
+        assert CurrentTime[None](id=id).id == 'current_time'
+
+    @pytest.mark.parametrize('precision', ['date', 'hour'])
+    def test_the_weekday_ignores_the_process_locale(
+        self, precision: Literal['date', 'hour'], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr('time.strftime', _localized_strftime)
+        instructions = CurrentTime[None](precision=precision).get_instructions()
+        request = ModelRequest(parts=[], timestamp=datetime(2026, 1, 2, 12, tzinfo=UTC))
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), messages=[request])
+        part = instructions(ctx)
+        assert part is not None
+        assert 'Friday' in part.content
 
     def test_an_unknown_time_zone_fails_when_built(self) -> None:
         with pytest.raises(ZoneInfoNotFoundError):
