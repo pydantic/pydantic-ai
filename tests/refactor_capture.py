@@ -129,6 +129,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import builtins
+import contextvars
 import dataclasses
 import functools
 import importlib.util
@@ -142,6 +143,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import weakref
 from collections import Counter, defaultdict
 from collections.abc import (
@@ -973,14 +975,25 @@ class RefactorCapture:
         if session in self._closed_sessions:
             return
         self._closed_sessions.add(session)
+        played_audio_bytes: list[object] = []
+
+        def read_played_audio_bytes() -> None:
+            _RECORDING_SESSION_CALL.set((running_task_id(), id(session)))
+            try:
+                played_audio_bytes.append(session.played_audio_bytes)
+            except Exception as e:
+                played_audio_bytes.append({'error': normalized(f'{type(e).__name__}: {e}')})
+
+        # Reading it can raise the error that ended the session. Raised where another exception is being handled, as
+        # when `close` raises, that error would be chained to it, and Python would cut the other's chain short to
+        # keep it from looping back. A thread of its own handles none.
+        thread = threading.Thread(target=contextvars.copy_context().run, args=(read_played_audio_bytes,))
+        thread.start()
+        thread.join()
         # What the capture reads is no call the test or the session made.
         core_token = _RECORDING_CORE_CALL.set(True)
         session_token = _RECORDING_SESSION_CALL.set((running_task_id(), id(session)))
         try:
-            try:
-                played_audio_bytes: object = session.played_audio_bytes
-            except Exception as e:
-                played_audio_bytes = {'error': normalized(f'{type(e).__name__}: {e}')}
             record: dict[str, object] = {
                 'kind': 'session',
                 'node': self.node,
@@ -989,7 +1002,7 @@ class RefactorCapture:
                 'all_messages': normalized(session.all_messages()),
                 'new_messages': normalized(session.new_messages()),
                 'usage': normalized(session.usage),
-                'played_audio_bytes': played_audio_bytes,
+                'played_audio_bytes': played_audio_bytes[0],
                 'drops': {name: getattr(session, name) for name in SESSION_DROP_COUNTERS},
             }
         finally:

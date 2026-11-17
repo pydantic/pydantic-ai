@@ -594,9 +594,15 @@ async def converse():
 
 async def fail():
     talk = session(fails=True)
-    with pytest.raises(RuntimeError, match='provider went away'):
-        async with talk:
-            [item async for item in talk.stream_transcripts()]
+    async with talk:
+        with pytest.raises(RuntimeError, match='provider went away') as failure:
+            [event async for event in talk]
+        try:
+            raise KeyError('handled')
+        except KeyError:
+            await talk.close()
+    # Recording what the closed session holds raises its failure again, which must not chain it to the one handled.
+    assert failure.value.__context__ is None
 
 
 async def close_with_audio_unread():
@@ -1416,7 +1422,7 @@ def test_capture_records_what_realtime_sessions_do(run: RunCapture, tmp_path: Pa
                 ['events'],
                 'UserError: This realtime session is closed and cannot be iterated.',
             ),
-            ('test_session', 'Session.stream_transcripts', {'session': 1}, ['items', 'kwargs'], None),
+            ('test_session', 'Session.__aiter__', {'session': 1}, ['events'], 'RuntimeError: provider went away'),
             ('test_session', 'SessionCore.apply', {'core': 1}, ['args', 'kwargs', 'result'], None),
             ('test_session', 'SessionCore.take_effects', {'core': 1}, ['args', 'kwargs', 'result'], None),
             ('test_session', 'SessionCore.apply', {'core': 1}, ['args', 'kwargs', 'result'], None),
@@ -1430,7 +1436,6 @@ def test_capture_records_what_realtime_sessions_do(run: RunCapture, tmp_path: Pa
                 ['all_messages', 'drops', 'new_messages', 'played_audio_bytes', 'usage'],
                 None,
             ),
-            ('test_session', 'Session.__aexit__', {'session': 1}, [], 'RuntimeError: provider went away'),
             ('test_session', 'Session.stream_audio', {'session': 2}, ['items', 'kwargs'], None),
             ('test_session', 'SessionCore.apply', {'core': 2}, ['args', 'kwargs', 'result'], None),
             ('test_session', 'SessionCore.take_effects', {'core': 2}, ['args', 'kwargs', 'result'], None),
@@ -1510,7 +1515,6 @@ def test_capture_records_what_realtime_sessions_do(run: RunCapture, tmp_path: Pa
                 [{'index': 0, 'speaker': 'assistant', 'delta': 'hello', 'transcript': 'hello'}],
                 None,
             ),
-            ('stream_transcripts', {}, [], None),
             ('stream_audio', {}, [], None),
         ]
     )
@@ -1520,6 +1524,7 @@ def test_capture_records_what_realtime_sessions_do(run: RunCapture, tmp_path: Pa
         [
             (['PartStartEvent', 'PartDeltaEvent', 'PartDeltaEvent', 'PartEndEvent', 'RealtimeTurnCompleteEvent'], None),
             ([], 'UserError: This realtime session is closed and cannot be iterated.'),
+            ([], 'RuntimeError: provider went away'),
         ]
     )
     assert [
