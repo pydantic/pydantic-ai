@@ -208,7 +208,9 @@ class SdkModelLiteral:
 
 
 SDK_MODEL_LITERALS = [
-    SdkModelLiteral('openai', 'openai', AllModels, OpenAIModelName, frozenset({'gpt-6.1-terra'})),
+    SdkModelLiteral(
+        'openai', 'openai', AllModels, OpenAIModelName, frozenset({'gpt-6.1-terra', 'gpt-6.2-sol', 'gpt-6.2-astra'})
+    ),
     SdkModelLiteral(
         'openai-image',
         'openai',
