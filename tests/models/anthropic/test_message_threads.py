@@ -38,7 +38,7 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import NativeTool, ProcessHistory
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import sanitize_messages
+from pydantic_ai.messages import ModelMessagesTypeAdapter, sanitize_messages
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import MCPServerTool
@@ -426,13 +426,13 @@ _CLIENTS: dict[str, Callable[[httpx2.AsyncClient], AsyncAnthropicClient]] = {
 
 
 async def _first_request_thread(
-    client_name: str, supported: bool, provider_type: type[AnthropicProvider]
+    client_name: str, supported: bool, provider_type: type[AnthropicProvider], stream: bool
 ) -> tuple[object, bool]:
     """The `thread` the first request on a client sends, and whether it sends the threads beta.
 
     When the request isn't expected to use a thread, it checks the setting is ignored with a warning.
     """
-    api = _Api()
+    api = _Api(stream=stream)
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(api.handle)) as http_client:
         client = _CLIENTS[client_name](http_client)
         agent = Agent(
@@ -440,12 +440,12 @@ async def _first_request_thread(
             model_settings=_SETTINGS,
         )
         if supported:
-            await agent.run('Hi')
+            await _run(agent, 'Hi', [], stream)
         else:
             with pytest.warns(
                 UserWarning, match=f'`anthropic_previous_message_id` is not supported on `{type(client).__name__}`'
             ):
-                await agent.run('Hi')
+                await _run(agent, 'Hi', [], stream)
 
     [body] = api.bodies
     # The legacy Bedrock client sends its betas in the body rather than the header.
@@ -461,15 +461,21 @@ async def test_thread_by_client(allow_model_requests: None, client_name: str):
     """
     supported = client_name in ('api', 'foundry')
     expected = ({'type': 'create'}, True) if supported else (None, False)
-    assert await _first_request_thread(client_name, supported, AnthropicProvider) == expected
+    assert await _first_request_thread(client_name, supported, AnthropicProvider, stream=False) == expected
 
 
 @pytest.mark.parametrize(
     ('client_name', 'supported'),
     [pytest.param('api', False, id='api-off'), pytest.param('vertex', True, id='vertex-on')],
 )
-async def test_thread_provider_profile_wins(allow_model_requests: None, client_name: str, supported: bool):
-    """A provider whose profile sets `anthropic_supports_message_threads` wins over the client-class default."""
+@pytest.mark.parametrize('stream', [False, True])
+async def test_thread_provider_profile_wins(
+    allow_model_requests: None, client_name: str, supported: bool, stream: bool
+):
+    """A provider whose profile sets `anthropic_supports_message_threads` wins over the client-class default.
+
+    Both sides of the flag are checked plain and streamed.
+    """
 
     class ThreadsProvider(AnthropicProvider):
         @staticmethod
@@ -477,7 +483,7 @@ async def test_thread_provider_profile_wins(allow_model_requests: None, client_n
             return AnthropicModelProfile(anthropic_supports_message_threads=supported)
 
     expected = ({'type': 'create'}, True) if supported else (None, False)
-    assert await _first_request_thread(client_name, supported, ThreadsProvider) == expected
+    assert await _first_request_thread(client_name, supported, ThreadsProvider, stream) == expected
 
 
 async def test_edited_history_starts_a_new_thread(allow_model_requests: None):
@@ -491,6 +497,28 @@ async def test_edited_history_starts_a_new_thread(allow_model_requests: None):
 
     assert api.bodies[1]['thread'] == {'type': 'create'}
     assert _user_texts(api.bodies[1]) == ['My card number is [redacted]', 'Hello', 'Again']
+
+
+async def test_stored_history_continues_the_thread(allow_model_requests: None):
+    """A history dumped to JSON and loaded back continues the thread, and edited after loading, creates one.
+
+    The thread rides in the response's `provider_response_id`, `history_digest` and `provider_details`, so a
+    serialization change that drops or alters any of them would quietly turn every continue into a create.
+    """
+    api = _Api(replies=[{'type': 'text', 'text': 'Hello'}])
+    async with _model(api) as model:
+        agent = Agent(model, model_settings=_SETTINGS)
+        first = (await agent.run('My card number is 1234')).all_messages()
+        stored = ModelMessagesTypeAdapter.dump_json(first)
+        loaded = ModelMessagesTypeAdapter.validate_json(stored)
+        await agent.run('Again', message_history=loaded)
+        redacted = [ModelRequest.user_text_prompt('My card number is [redacted]'), *loaded[1:]]
+        await agent.run('Again', message_history=redacted)
+
+    assert loaded == first
+    _, continued, created = api.bodies
+    assert continued['thread'] == {'type': 'continue', 'previous_message_id': 'msg_1'}
+    assert created['thread'] == {'type': 'create'}
 
 
 async def test_refusal_starts_a_new_thread(allow_model_requests: None):

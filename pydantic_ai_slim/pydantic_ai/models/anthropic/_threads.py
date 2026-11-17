@@ -97,19 +97,6 @@ class Thread:
         return params
 
 
-def continue_cache_breakpoints(
-    breakpoints: tuple[list[str], list[str]] | None,
-) -> tuple[list[str], list[str]] | None:
-    """The cache breakpoints of a continue request, from those of its new messages prepared on their own.
-
-    A continue request leaves out `system` and `tools`, so their breakpoints aren't in it.
-    """
-    requested, applied = (
-        [path for path in paths if not path.startswith(('system[', 'tools['))] for paths in breakpoints or ([], [])
-    )
-    return (requested, applied) if requested else None
-
-
 def may_use_thread(
     model: AnthropicModel, model_settings: AnthropicModelSettings, compaction: BetaCompactionConfigParam | None
 ) -> bool:

@@ -371,7 +371,6 @@ try:
         MESSAGE_THREADS_BETA,
         Thread,
         ThreadRecord,
-        continue_cache_breakpoints,
         may_use_thread,
         served_by_fallback_model,
         thread_continuation,
@@ -2004,9 +2003,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # before it in them marks the end of the previous response, which a continue request can't send again.
             # A create request with the full history keeps the boundary where it was put.
             return None
+        # A continue request leaves out `system` and `tools`, so their breakpoints aren't in it.
+        requested, applied = (
+            [path for path in paths if not path.startswith(('system[', 'tools['))]
+            for paths in new_prepared.cache_breakpoints or ([], [])
+        )
         return Thread(
             continuation=(previous_message_id, new_prepared.anthropic_messages),
-            cache_breakpoints=continue_cache_breakpoints(new_prepared.cache_breakpoints),
+            cache_breakpoints=(requested, applied) if requested else None,
             continues_replay=continues_replay,
         )
 
