@@ -1778,7 +1778,9 @@ async def test_legacy_structured_tool_return_payload_decodes() -> None:
 async def test_heartbeating_beats_and_stops(monkeypatch: pytest.MonkeyPatch):
     """Heartbeats fire on the derived cadence while the body runs and stop cleanly after."""
     beats: list[None] = []
-    monkeypatch.setattr('temporalio.activity.info', lambda: SimpleNamespace(heartbeat_timeout=timedelta(seconds=0.02)))
+    monkeypatch.setattr(
+        'temporalio.activity.info', lambda: SimpleNamespace(is_local=False, heartbeat_timeout=timedelta(seconds=0.02))
+    )
     monkeypatch.setattr('temporalio.activity.heartbeat', lambda: beats.append(None))
 
     async with heartbeating():
@@ -1796,7 +1798,7 @@ async def test_heartbeating_beat_crash_surfaces_after_body(monkeypatch: pytest.M
     def broken_heartbeat() -> None:
         raise RuntimeError('heartbeat exploded')
 
-    monkeypatch.setattr('temporalio.activity.info', lambda: SimpleNamespace(heartbeat_timeout=None))
+    monkeypatch.setattr('temporalio.activity.info', lambda: SimpleNamespace(is_local=False, heartbeat_timeout=None))
     monkeypatch.setattr('temporalio.activity.heartbeat', broken_heartbeat)
 
     with pytest.raises(RuntimeError, match='heartbeat exploded'):
@@ -1810,7 +1812,7 @@ async def test_heartbeating_body_error_wins_over_beat_crash(monkeypatch: pytest.
     def broken_heartbeat() -> None:
         raise RuntimeError('heartbeat exploded')
 
-    monkeypatch.setattr('temporalio.activity.info', lambda: SimpleNamespace(heartbeat_timeout=None))
+    monkeypatch.setattr('temporalio.activity.info', lambda: SimpleNamespace(is_local=False, heartbeat_timeout=None))
     monkeypatch.setattr('temporalio.activity.heartbeat', broken_heartbeat)
 
     with pytest.raises(ValueError, match='request failed'):
