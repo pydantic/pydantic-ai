@@ -203,6 +203,52 @@ Every platform verifies Claude's thinking signatures and redacted thinking, so t
 
 Anthropic Files API file IDs and code execution container IDs aren't sent through the `AsyncAnthropicBedrock`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients, where [`anthropic_accepts_file_and_container_ids`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_accepts_file_and_container_ids] is `False`: an Anthropic [`UploadedFile`][pydantic_ai.messages.UploadedFile] raises a [`UserError`][pydantic_ai.exceptions.UserError], a [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]'s files aren't uploaded, and no container from the history is reused.
 
+## Anthropic-compatible gateways
+
+Relays and gateways that serve Claude models behind the same Messages API as `api.anthropic.com` — with their own base URL and API key — work through the same `AnthropicProvider`: pass the gateway's `base_url` and key instead of Anthropic's, and the rest of this page applies unchanged.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers import AnthropicProvider
+
+model = AnthropicModel(
+    '{{ anthropic:medium.name }}',
+    provider=AnthropicProvider(
+        api_key='your-gateway-api-key',
+        base_url='https://your-gateway.example',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+Details worth checking before the first request:
+
+- **Base URL form**: give the gateway's root, without a `/v1` suffix — the Anthropic SDK appends the request path itself, so a base URL ending in `/v1` requests `/v1/v1/messages` and fails. (The OpenAI-compatible convention is the opposite; for that path see [other compatible APIs](compatible-apis.md).)
+- **Model ids**: they belong to the gateway, not to Anthropic. List them with `GET {base_url}/v1/models` or the gateway's console. An authenticated request that returns `404 model not found` usually has a wrong model id, not a wrong base URL.
+- **Feature surface**: `AnthropicModel` sends tool definitions, thinking blocks and prompt-cache breakpoints to whatever endpoint you point it at; how much of that a gateway honors is up to the gateway. When one doesn't take the top-level caching parameter, the [per-block fallback](#automatic-caching) applies.
+
+!!! note "Worked example: TeapotRouter"
+    [TeapotRouter](https://teapotrouter.com) is one such gateway and is used here as a concrete example — disclosure: I'm one of its developers. The steps are the same for any Anthropic-compatible gateway.
+
+    ```python
+    from pydantic_ai import Agent
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers import AnthropicProvider
+
+    model = AnthropicModel(
+        'claude-sonnet-5-5',
+        provider=AnthropicProvider(
+            api_key='your-teapotrouter-key',
+            base_url='https://api.teapotrouter.com',
+        ),
+    )
+    agent = Agent(model)
+    ```
+
+    Its model list is `GET https://api.teapotrouter.com/v1/models`, and real sample outputs for each model are viewable without an account at [teapotrouter.com/demo/model-lab](https://teapotrouter.com/demo/model-lab).
+
 ## Task Budgets (Beta)
 
 Anthropic's [task budgets](https://platform.claude.com/docs/en/build-with-claude/task-budgets) let you give Claude an advisory token budget for a full agentic loop — including thinking, tool calls, tool results, and output — so the model can pace itself and finish gracefully as the budget is consumed. Configure them with [`AnthropicModelSettings.anthropic_task_budget`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_task_budget], which takes an [`AnthropicTaskBudget`][pydantic_ai.models.anthropic.AnthropicTaskBudget] payload and maps to `output_config.task_budget`.
