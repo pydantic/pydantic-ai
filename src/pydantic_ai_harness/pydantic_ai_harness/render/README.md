@@ -207,6 +207,13 @@ integration assign stable idempotency keys to chained calls.
 Either kind of retry can repeat an external action performed before its result was recorded; use application-level
 idempotency keys or deduplication for writes and API requests that must not happen twice.
 
+Render doesn't wait the delay a model error asks for in its `retry_after` (read from a provider's `Retry-After`
+header, for example). A task's `Retry` sets the wait between its attempts when the task is registered, with no way to
+change it for one failure, and a task run can't sleep durably, so a chained model request task run is retried after
+`wait_duration_ms` and `backoff_scaling` whatever the provider asked for. Size those for your provider's rate limits,
+or give model requests no retries and let a [fallback model](https://pydantic.dev/docs/ai/capabilities/model-fallback/)
+take over.
+
 Render retries are separate from Pydantic AI's `ModelRetry`, which asks the model to correct or reconsider a call,
 and from retries in the provider SDK. Account for all three when setting retry limits and timeouts; see the
 [Pydantic AI retry guide](https://pydantic.dev/docs/ai/core-concepts/retries/).
