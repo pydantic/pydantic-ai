@@ -41,7 +41,7 @@ try:
     from temporalio.common import RetryPolicy
     from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.testing import WorkflowEnvironment
-    from temporalio.worker import Replayer, Worker
+    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker, WorkflowRunner
     from temporalio.worker.workflow_sandbox import (
         RestrictedWorkflowAccessError,
         SandboxedWorkflowRunner,
@@ -465,6 +465,22 @@ workflow_side_code_mode_agents = {
         toolsets=[FunctionToolset(tools=[add], id='math')],
         capabilities=[
             CodeMode(monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
+            TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        ],
+    ),
+    'local': Agent(
+        FunctionModel(_code_mode_model),
+        name='code_mode_temporal_local_agent',
+        toolsets=[FunctionToolset(tools=[add], id='math')],
+        capabilities=[CodeMode(id='code'), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    ),
+    # Would run turns as activities in a workflow that started after this version of Code Mode.
+    'unpatched': Agent(
+        FunctionModel(_code_mode_model),
+        name='code_mode_temporal_unpatched_agent',
+        toolsets=[FunctionToolset(tools=[add], id='math')],
+        capabilities=[
+            CodeMode(id='code', monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
         ],
     ),
@@ -905,17 +921,28 @@ async def test_remote_turns_fall_back_without_stored_sessions(client: Client) ->
     assert _activity_types(history) == ['model_request', 'monty_turn', 'call_tool', 'model_request', 'model_request']
 
 
-@pytest.mark.parametrize('reason', ['overlay', 'os_access', 'no_id'])
-async def test_remote_turns_stay_in_the_workflow(client: Client, reason: str) -> None:
-    """An `'overlay'` mount (the default mode), `os_access`, or a `CodeMode` without `id` keeps every turn in the
-    workflow."""
+@pytest.mark.parametrize('reason', ['overlay', 'os_access', 'no_id', 'local', 'unpatched'])
+async def test_remote_turns_stay_in_the_workflow(client: Client, monkeypatch: pytest.MonkeyPatch, reason: str) -> None:
+    """An `'overlay'` mount (the default mode), `os_access`, a `CodeMode` without `id`, a local sandbox, or a
+    workflow that started before this version of Code Mode keeps every turn in the workflow.
+
+    Unsandboxed for `'unpatched'`, so `workflow.patched` can be faked.
+    """
     workflow_id = f'test_code_mode_temporal_workflow_side_{reason}'
+    runner: WorkflowRunner = _workflow_runner()
+    if reason == 'unpatched':
+
+        def unpatched(patch_id: str) -> bool:
+            return False
+
+        monkeypatch.setattr(workflow, 'patched', unpatched)
+        runner = UnsandboxedWorkflowRunner()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
         workflows=[WorkflowSideWorkflow],
         plugins=[AgentPlugin(workflow_side_code_mode_agents[reason])],
-        workflow_runner=_workflow_runner(),
+        workflow_runner=runner,
     ):
         output = await client.execute_workflow(
             WorkflowSideWorkflow.run,
@@ -930,7 +957,7 @@ async def test_remote_turns_stay_in_the_workflow(client: Client, reason: str) ->
     assert _activity_types(history) == ['model_request', 'call_tool', 'model_request', 'model_request']
 
 
-async def _run_call_sites(client: Client, workflow_id: str, *, stores: bool) -> list[Any]:
+async def _run_call_sites(client: Client, workflow_id: str, *, stores: bool) -> list[object]:
     SERVER.stores = stores
     try:
         async with Worker(
@@ -960,6 +987,8 @@ async def test_remote_turns_resume_calls_in_place(client: Client, monkeypatch: p
     workflow_side = await _run_call_sites(client, f'{workflow_id}_workflow_side', stores=False)
 
     type_error, prints, added, call_sites, syntax_error, no_json_form, values, not_utf8, sleeps = returns
+    assert isinstance(type_error, str) and isinstance(prints, str) and isinstance(sleeps, str)
+    assert isinstance(not_utf8, str)
     assert type_error.startswith('Type error in code:\nerror[missing-argument]')
     assert added == 2
     first_line = (Path(__file__).parent / 'stored_sessions.py').read_text().splitlines()[0]
@@ -982,6 +1011,7 @@ async def test_remote_turns_resume_calls_in_place(client: Client, monkeypatch: p
     # The print cap and `max_suspensions` stop both paths at the same point. The numbers in Monty's
     # message differ: a turn's limits are what the earlier turns left.
     for limited, limited_in_workflow in [(prints, workflow_side[1]), (sleeps, workflow_side[8])]:
+        assert isinstance(limited_in_workflow, str)
         assert re.sub(r'\d+', 'N', limited) == re.sub(r'\d+', 'N', limited_in_workflow)
     assert 'MemoryError: memory limit exceeded' in prints
     assert 'RuntimeError: suspension limit 1 exceeded' in sleeps
