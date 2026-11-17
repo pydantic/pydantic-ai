@@ -68,7 +68,7 @@ Approvals that other capabilities ask for, such as a tool registered with `requi
 
 ## Rules
 
-`rules` allow, ask about, or deny calls by tool name, arguments, and shell command, before the mode decides. A call no rule matches follows the mode:
+`rules` allow, ask about, or deny calls by tool, arguments, and shell command, before the mode decides. A call no rule matches follows the mode:
 
 ```python
 from pydantic_ai_harness.permissions import PermissionRule, Permissions
@@ -80,25 +80,33 @@ permissions = Permissions(
         PermissionRule('allow', command='rg'),
         PermissionRule('ask', command='git push'),
         PermissionRule('deny', command='rm -rf', reason='Delete files one at a time.'),
-        PermissionRule('allow', tool='write_file', args={'path': 'docs/*'}),
-        PermissionRule('ask', tool='deploy', args={'env': 'prod*'}),
+        PermissionRule('allow', tools=['write_file'], args={'path': 'docs/*'}),
+        PermissionRule('ask', tools=['deploy'], args={'env': 'prod*'}),
     ],
 )
 ```
 
-A `PermissionRule` matches a call when every field it sets matches: `tool` is a glob for the tool name, `args` maps argument names to globs for their string values, matched both as given and as a normalized path (`notes/../secrets/key` as `secrets/key`, without resolving symlinks): an allow rule needs both to match, an ask or deny rule either, and `command` is the words of a shell command. When several rules match, `'deny'` beats `'ask'`, which beats `'allow'`, whatever their order, so a broad allow rule cannot override a deny rule.
+A `PermissionRule` matches a call when every field it sets matches:
 
-- **`'allow'`** runs the call without asking, even in `'read-only'` mode or when it matches `ask_commands`.
-- **`'ask'`** holds the call like the mode does, with the rule's `reason` for the person deciding. A call to a tool that neither writes files nor runs commands is held with a plain `ApprovalRequired`, like `requires_approval=True`, so `ask_permissions` leaves it for the next handler.
+- `tools` is a [`ToolSelector`](https://pydantic.dev/docs/ai/api/pydantic-ai/tools/#pydantic_ai.tools.ToolSelector), as for other tool-scoped capabilities: `'all'` (the default), a list of names, a metadata match, or a predicate.
+- `args` maps argument names to globs for their string values. Each value is matched as given and as a normalized path, so `notes/../secrets/key` is also matched as `secrets/key`. Symlinks are not resolved. An allow rule needs both forms to match; an ask or deny rule needs either.
+- `command` is the words of a shell command, described below.
+
+When several rules match, `'deny'` beats `'ask'`, which beats `'allow'`, whatever their order, so a broad allow rule cannot override a deny rule.
+
+- **`'allow'`** runs the call without the `'read-only'` mode asking. A command that matches `ask_commands` still asks in `'auto'` and `'read-only'`: remove a pattern from `ask_commands` to let it run.
+- **`'ask'`** holds the call like the mode does, with the rule's `reason` for the person deciding. A call to a tool that neither writes files nor runs commands is held with a plain `ApprovalRequired`, like `requires_approval=True`, with the rule's `reason` in its metadata. `ask_permissions` leaves it for the next handler.
 - **`'deny'`** refuses the call without running it, even when it was approved, for example by another capability's approval. The model gets a tool result with `outcome='denied'` saying a permission rule refused it, with the rule's `reason`.
 
 A `command` rule only matches tools that declare a shell command argument (see [Which calls are checked](#which-calls-are-checked)), and judges a compound command by each of its simple commands, split at `;`, `&&`, `||`, `|`, and `&`:
 
-- A command runs by rule only when an `'allow'` rule matches every simple command in it. An allow rule matches a simple command that starts with its words and has no redirection other than to `/dev/null` or a file descriptor, so `PermissionRule('allow', command='git status')` lets `ls && git status --short` run when `ls` is allowed too, but not `git status > ~/.bashrc` or `FOO=1 git status`.
-- An `'ask'` or `'deny'` rule matches a simple command that contains its words anywhere, including inside quotes, so `sudo rm -rf /`, `ls; rm -rf /`, and `sh -c "rm -rf /"` match `'rm -rf'`, and its first word also matches a path ending in it, such as `/bin/rm`.
-- A command too complex to split, with command or parameter substitution (`$(...)`, `${...}`, backticks), `$'...'` quoting, process substitution, subshells, here-documents, line breaks, or unbalanced quotes, is checked word by word, quotes removed. A rule never allows it: where an allow rule, including one for the whole tool, would have, it asks instead.
+- A command runs by rule only when an `'allow'` rule matches every simple command in it. An allow rule matches a simple command that starts with its words and has no redirection other than to `/dev/null` or a file descriptor. So `PermissionRule('allow', command='git status')` lets `ls && git status --short` run when `ls` is allowed too, but not `git status > ~/.bashrc` or `FOO=1 git status`.
+- An `'ask'` or `'deny'` rule matches a simple command that contains its words anywhere, including inside quotes. So `sudo rm -rf /`, `ls; rm -rf /`, and `sh -c "rm -rf /"` match `'rm -rf'`, and its first word also matches a path ending in it, such as `/bin/rm`.
+- Some commands are too complex to split: those with `$` (expansions, substitutions, and `$'...'` quoting), backticks, process substitution, subshells, here-documents, line breaks, or unbalanced quotes. Any command on a `'windows'` workspace is one too, since PowerShell quotes differently. When command rules apply to the tool, such a command asks unless a deny rule's words appear in it. A rule never allows it, including one for the whole tool.
 
-An allow rule trusts everything after its words, so allowing `find` also allows `find -exec rm {} \;`: allow the narrowest commands you can. Deny rules match words, not behavior, so `rm -r -f` does not match `'rm -rf'`. Like `ask_commands`, rules are a convenience, not a sandbox.
+An allow rule trusts everything after its words, so allowing `find` also allows `find -exec rm {} \;`: allow the narrowest commands you can. Deny rules match words, not behavior, so `rm -r -f` does not match `'rm -rf'`. Quoted operators such as `echo '|'` are split like real ones, which can make a command ask when it did not need to. Like `ask_commands`, rules are a convenience, not a sandbox.
+
+In an agent spec, `rules` is a list of mappings of these fields (`PermissionRuleSpec`), with `tools` limited to the serializable forms.
 
 ## Changing the mode during a run
 

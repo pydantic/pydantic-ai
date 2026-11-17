@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Awaitable, Callable, Mapping, MutableSet, Sequence
+from collections.abc import Awaitable, Callable, MutableSet, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Any, Literal, NamedTuple, cast
 
@@ -21,10 +21,11 @@ from pydantic_ai.tools import (
     ToolApproved,
     ToolDefinition,
     ToolDenied,
+    matches_tool_selector,
 )
 from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness.file_system._tool_kinds import CREATE_DIRECTORY_KIND, EDIT_FILE_KIND, WRITE_FILE_KIND
-from pydantic_ai_harness.permissions._rules import PermissionRule, decide
+from pydantic_ai_harness.permissions._rules import PermissionRule, PermissionRuleSpec, decide
 
 PermissionMode = Literal['full', 'auto', 'read-only']
 """How much the agent may do without asking.
@@ -196,13 +197,23 @@ class Permissions(AbstractCapability[AgentDepsT]):
 
     @classmethod
     def from_spec(
-        cls, *args: Any, rules: Sequence[PermissionRule | Mapping[str, Any]] = (), **kwargs: Any
-    ) -> Permissions[Any]:
-        """Build from spec arguments, where each rule is a mapping of `PermissionRule` fields."""
+        cls,
+        mode: PermissionMode = 'full',
+        *,
+        rules: Sequence[PermissionRuleSpec] = (),
+        ask_commands: Sequence[str] = DEFAULT_ASK_COMMANDS,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+    ) -> Permissions[AgentDepsT]:
+        """Build the serializable configuration: a fixed mode, and rules as mappings of `PermissionRule` fields."""
         return cls(
-            *args,
-            rules=[rule if isinstance(rule, PermissionRule) else PermissionRule(**rule) for rule in rules],
-            **kwargs,
+            mode,
+            rules=[PermissionRule(**rule) for rule in rules],
+            ask_commands=ask_commands,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
         )
 
     def mode_for(self, ctx: RunContext[AgentDepsT]) -> PermissionMode:
@@ -218,7 +229,7 @@ class Permissions(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
     ) -> dict[str, Any]:
         """Refuse a call a rule denies, and hold one asked about until it is approved, unless remembered."""
-        asked = self._asks(ctx, tool_def=tool_def, args=args)
+        asked = await self._asks(ctx, tool_def=tool_def, args=args)
         if asked is None:
             return args
         if ctx.tool_call_approved:
@@ -247,7 +258,7 @@ class Permissions(AbstractCapability[AgentDepsT]):
         """Inside a durable run, record a call approved with `remember=True` in its `ToolReturnPart`'s metadata."""
         if not (ctx.tool_call_approved and in_durable_context(ctx) and _remember(ctx.tool_call_metadata)):
             return result
-        asked = self._asks(ctx, tool_def=tool_def, args=args)
+        asked = await self._asks(ctx, tool_def=tool_def, args=args)
         if asked is None or _nests_tool_return(result):
             return result
         tool_return = cast(ToolReturn[Any], result) if isinstance(result, ToolReturn) else ToolReturn[Any](result)
@@ -259,30 +270,47 @@ class Permissions(AbstractCapability[AgentDepsT]):
         )
         return replace(tool_return, metadata={**existing, **remembered.model_dump()})
 
-    def _asks(self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]) -> _Asked | None:
+    async def _asks(
+        self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> _Asked | None:
         """What to ask about this call, or `None` to run it; raises `SkipToolExecution` when a rule denies it."""
         command = _command(tool_def, args)
-        rule = decide(self.rules, tool_name=tool_def.name, command=command, args=args)
+        rules = [rule for rule in self.rules if await matches_tool_selector(rule.tools, ctx, tool_def)]
+        rule = decide(rules, command=command, args=args, posix=ctx.workspace.platform != 'windows')
         if rule is not None and rule.verdict != 'allow':
             return _rule_asks(ctx, rule, _subject(tool_def, args, command))
-        mode = self.mode_for(ctx)
-        if rule is not None or mode == 'full':
+        return self._mode_asks(
+            self.mode_for(ctx), tool_def=tool_def, args=args, command=command, allowed=rule is not None
+        )
+
+    def _mode_asks(
+        self,
+        mode: PermissionMode,
+        *,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        command: str | None,
+        allowed: bool,
+    ) -> _Asked | None:
+        """What the mode asks about a call; a rule's allow skips read-only's blanket ask, not `ask_commands`."""
+        if mode == 'full':
             return None
         if tool_def.tool_kind in _WRITE_KINDS:
             # The file tools only reach files inside their root, so `'auto'` lets them write.
             path = args.get('path')
-            if mode == 'read-only' and isinstance(path, str):
+            if mode == 'read-only' and not allowed and isinstance(path, str):
                 return _Asked(action='write', subject=path, reason='Read-only mode asks before every file write.')
             return None
         if command is None:
             return None
-        if mode == 'read-only':
+        if mode == 'read-only' and not allowed:
             return _Asked(action='command', subject=command, reason='Read-only mode asks before every command.')
         if any(pattern.search(command) for pattern in self._patterns):
+            label = 'Auto' if mode == 'auto' else 'Read-only'
             return _Asked(
                 action='command',
                 subject=command,
-                reason='Auto mode asks before commands that delete, push, install, or reach the network.',
+                reason=f'{label} mode asks before commands that delete, push, install, or reach the network.',
             )
         return None
 
@@ -321,7 +349,7 @@ def _rule_asks(
         # Not a command or file write, so it takes the plain approval flow, like `requires_approval=True`.
         if ctx.tool_call_approved:
             return None
-        raise ApprovalRequired
+        raise ApprovalRequired(metadata={'reason': rule.reason} if rule.reason else None)
     reason = rule.reason or f'A permission rule asks before this {what}.'
     return _Asked(action=subject[0], subject=subject[1], reason=reason)
 

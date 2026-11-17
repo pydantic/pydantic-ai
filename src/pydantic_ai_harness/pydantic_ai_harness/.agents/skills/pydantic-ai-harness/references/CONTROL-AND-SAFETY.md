@@ -418,10 +418,10 @@ Holds the `FileSystem` writes and `Shell` commands a permission mode asks about 
 `'read-only'` asks about every write and command. Other tools are not checked unless a rule matches them.
 
 `rules=[PermissionRule(...)]` decide before the mode: each rule is `'allow'`, `'ask'`, or `'deny'` for calls
-matching its `tool` glob, `args` globs, and shell `command` words. `'deny'` beats `'ask'` beats `'allow'`, whatever
-the order. A compound command runs by rule only if an allow rule matches every simple command in it, while an ask
-or deny rule matching any one decides it. A denied call returns a `ToolReturnPart` with `outcome='denied'`, even
-when it was approved.
+matching its `tools` selector, `args` globs, and shell `command` words. `'deny'` beats `'ask'` beats `'allow'`,
+whatever the order. A compound command runs by rule only if an allow rule matches every simple command in it, while
+an ask or deny rule matching any one decides it. An allow skips `'read-only'`'s blanket ask but not `ask_commands`.
+A denied call returns a `ToolReturnPart` with `outcome='denied'`, even when it was approved.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -460,8 +460,8 @@ Gotchas:
 - Delegates are only checked when `Permissions` reaches them: pass it in `SubAgents(shared_capabilities=[...])`.
 - `ask_commands` patterns and `rules` are a convenience, not a sandbox: use a sandbox workspace when the agent
   must not reach something. An allow rule trusts everything after its words (`find` allows `find -exec`).
-- Commands with substitutions, subshells, here-documents, or line breaks cannot be split: they ask when an allow
-  rule could otherwise have vouched for them.
+- Commands with `$`, backticks, subshells, here-documents, or line breaks, and every command on a `'windows'`
+  workspace, cannot be split: when command rules apply to the tool they ask unless a deny rule matches.
 
 ## SpendLimits
 
