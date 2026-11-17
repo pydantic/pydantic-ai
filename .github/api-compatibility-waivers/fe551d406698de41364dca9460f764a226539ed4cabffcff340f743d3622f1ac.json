@@ -1,5 +1,0 @@
-{
-  "against": "v2.69.0",
-  "reason": "Harness 1.0 removes the 0.x deprecation shims (#12997): `pydantic_ai_harness.sub_agents._capability`, SubAgents.__init__(shared_capabilities): Positional parameter was moved. Each removed path emitted a `HarnessDeprecationWarning` naming its replacement during 0.x.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13687"
-}

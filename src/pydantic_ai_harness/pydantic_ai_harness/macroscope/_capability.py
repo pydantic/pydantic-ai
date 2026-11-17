@@ -60,6 +60,10 @@ class Macroscope(AbstractCapability[AgentDepsT]):
     Cannot start with `-` or contain `=`; put the CLI on the workspace's PATH instead.
     """
 
+    # Keyword-only since the positional `cwd` was removed, so an old positional call fails instead of
+    # landing its working directory on `timeout`.
+    _: KW_ONLY
+
     timeout: float = 600.0
     """Maximum seconds to wait for a review. Reviews call a remote service, so this is
     generous by default."""
@@ -70,7 +74,6 @@ class Macroscope(AbstractCapability[AgentDepsT]):
     Leave as `None` for the default validate-then-fix guidance, or set `''` to
     contribute no instructions at all."""
 
-    _: KW_ONLY
     id: str | None = 'macroscope'
     """Stable capability ID, so its instructions are addressable and `defer_loading=True` needs none.
 

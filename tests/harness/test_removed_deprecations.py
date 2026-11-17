@@ -10,8 +10,10 @@ import pytest
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.compaction import ReportContextUsage
 from pydantic_ai_harness.file_system import FileSystem
+from pydantic_ai_harness.macroscope import Macroscope
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import Shell
+from pydantic_ai_harness.sub_agents import SubAgents
 
 
 @pytest.mark.parametrize(
@@ -97,6 +99,8 @@ def test_renamed_acp_aliases_are_gone(name: str) -> None:
         pytest.param(lambda: FileSystem('.', ['*.py']), id='FileSystem'),  # pyright: ignore[reportCallIssue]
         pytest.param(lambda: RepoContext('./repo'), id='RepoContext'),  # pyright: ignore[reportCallIssue]
         pytest.param(lambda: ReportContextUsage(None, 200_000), id='ReportContextUsage'),  # pyright: ignore[reportCallIssue]
+        pytest.param(lambda: Macroscope('main', 'macroscope', '.'), id='Macroscope'),  # pyright: ignore[reportCallIssue]
+        pytest.param(lambda: SubAgents((), {}, None, {}, None, True, False), id='SubAgents'),  # pyright: ignore[reportCallIssue]
     ],
 )
 def test_a_removed_positional_argument_cannot_shift_onto_the_next_field(construct: Callable[[], object]) -> None:

@@ -628,8 +628,8 @@ agent = Agent(
     capabilities=[
         SystemReminders(
             reminders=[
-                Reminder('Stay focused on the original request.', interval=5, tag=None),
-                Reminder('Run the tests before finishing.', interval=10, max_fires=2, tag=None),
+                Reminder('Stay focused on the original request.', interval=5),
+                Reminder('Run the tests before finishing.', interval=10, max_fires=2),
             ],
             dynamic_reminders=[
                 GoalReanchor(),

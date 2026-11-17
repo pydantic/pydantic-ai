@@ -186,7 +186,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         'anthropic:claude-sonnet-4-6',
         capabilities=[
             SystemReminders(
-                reminders=[Reminder('Stay focused on the original request.', interval=5, tag=None)],
+                reminders=[Reminder('Stay focused on the original request.', interval=5)],
             )
         ],
     )

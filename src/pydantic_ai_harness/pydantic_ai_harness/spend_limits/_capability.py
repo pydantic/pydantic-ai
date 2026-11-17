@@ -491,10 +491,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                     )
                 warnings.warn(warning_message, UnpricedModelWarning, stacklevel=3)
             return None
-        # Raised last, after the store has recorded the response. The request happened and its tokens were really spent, so
-        # dropping them would leave a token ceiling understating what the
-        # model was asked to do, and an audit that skipped exactly the
-        # unpriced responses would be missing the ones worth knowing about.
+        # Raised last, after the store has recorded the response. The request happened and its tokens were really
+        # spent, so dropping them would leave a token ceiling understating what the model was asked to do, and an
+        # audit that skipped exactly the unpriced responses would be missing the ones worth knowing about.
         if response.usage.unmeasured_requests:
             return UnpricedModelError(
                 f'Usage was incomplete for model {model}; only the known subtotal ${usd} was recorded, and known '

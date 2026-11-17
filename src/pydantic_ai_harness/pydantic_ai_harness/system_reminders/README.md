@@ -55,7 +55,7 @@ agent = Agent(
     'anthropic:claude-sonnet-4-6',
     capabilities=[
         SystemReminders(
-            reminders=[Reminder('Stay focused on the original request.', interval=5, tag=None)],
+            reminders=[Reminder('Stay focused on the original request.', interval=5)],
         )
     ],
 )
@@ -98,7 +98,6 @@ SystemReminders(
         Reminder(
             'Run the tests and report any failures before you finish.',
             interval=10,
-            tag=None,
             scope='conversation',
         )
     ],
@@ -211,7 +210,7 @@ from pydantic_ai_harness.system_reminders import Reminder, ReminderFiredEvent
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    capabilities=[SystemReminders(reminders=[Reminder('...', interval=5, tag=None)])],
+    capabilities=[SystemReminders(reminders=[Reminder('...', interval=5)])],
 )
 
 @agent.on_event(ReminderFiredEvent)

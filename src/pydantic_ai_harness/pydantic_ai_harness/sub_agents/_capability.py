@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 import warnings
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -192,6 +192,10 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     """If `True`, the parent run's `usage` is shared with each sub-agent run, so
     token usage aggregates and usage limits apply across the whole agent tree."""
 
+    # Keyword-only since the positional `inherit_tools` was removed, so an old positional call fails instead of
+    # shifting every later option one slot.
+    _: KW_ONLY
+
     shared_capabilities: Sequence[AgentCapability[AgentDepsT]] = ()
     """Capabilities applied to every sub-agent run, in addition to whatever each
     sub-agent already has."""
@@ -204,10 +208,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     tool_name: str = 'delegate_task'
     """Name of the delegate tool exposed to the model."""
 
-    # Keyword-only on the field rather than through a `KW_ONLY` marker: a marker applies to every
-    # field after it, which would take `tool_retries` and `contain_errors` off the positional
-    # contract they already have.
-    id: str | None = field(default='sub_agents', kw_only=True)
+    id: str | None = 'sub_agents'
     """Fixed, since an agent exposes a single delegate tool. Durable execution requires one.
 
     Two `SubAgents` capabilities would register the same `tool_name` and collide. The shared id
@@ -232,14 +233,14 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     can override this per delegate. See `SubAgent.contain_errors` for the
     containment contract and what always propagates regardless."""
 
-    workspace: WorkspaceBackend | None = field(default=None, kw_only=True)
+    workspace: WorkspaceBackend | None = None
     """A workspace to read `agent_folders` from instead of the run's, such as
     `LocalWorkspaceBackend('/app')` for definitions that ship with the application.
 
     A backend, not the `LocalWorkspace` capability. It is used in-process only: a durable engine
     does not route it through its workflow machinery."""
 
-    workspace_resolver: WorkspaceResolver[AgentDepsT] | None = field(default=None, kw_only=True)
+    workspace_resolver: WorkspaceResolver[AgentDepsT] | None = None
     """Opt into `delegate_task(working_directory=...)` with an async callback receiving the parent
     context and a `DelegationWorkspaceRequest` with the delegate name and requested directory.
     Return the child's `Workspace`; the caller owns
@@ -306,7 +307,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     _delegation_off: bool = field(default=False, init=False, repr=False, compare=False)
     """Set on the instance `for_run` returns for a run at `max_depth`, which contributes nothing."""
 
-    task_control: TaskControl | None = field(default=None, kw_only=True)
+    task_control: TaskControl | None = None
     """Let delegations outlive the tool call, and give the model tools to manage them. Off by default.
 
     See `TaskControl`. Only one `SubAgents` on an agent can set it. On Temporal and DBOS, each task runs in a durable
@@ -315,7 +316,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     engines, and a bound `DelegationTasks` owner raise a `UserError`.
     """
 
-    dynamic_agents: DynamicAgents[AgentDepsT] | None = field(default=None, kw_only=True)
+    dynamic_agents: DynamicAgents[AgentDepsT] | None = None
     """Let the model create sub-agents during a run, with a `create_agent` tool. Off by default.
     Only one `SubAgents` on an agent can set it. On Temporal and DBOS, every delegation other than to `self` runs in a
     durable unit of its own, so recovery rebuilds the created agents and reuses the delegations' results. Other durable
