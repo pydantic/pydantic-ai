@@ -284,7 +284,9 @@ Gotchas: `defense` plus `block_high_risk` or `semantic_detection` raises `UserEr
 `semantic_detection=True` without ONNX Runtime. Importing the module without the extra raises
 `ImportError`. Not scanned: provider-native tools, externally supplied deferred results,
 `ModelRetry` messages, `ToolReturn.metadata`, mapping keys, media. A withheld result carries
-diagnostics in `ToolReturn.metadata['prompt_injection']` (not sent to the model). With a custom ML
+diagnostics in `ToolReturn.metadata['prompt_injection']` (not sent to the model). Every flagged verdict
+emits a zero-duration `prompt_injection flagged` span (`prompt_injection.action`, `.risk_level`,
+`.detections`; sanitized field names only with content tracing). With a custom ML
 `defense`, call `defense.warmup_tier2()` at startup (on the worker, under durable execution).
 Under Temporal, DBOS, and Prefect, semantic warmup and classification with `semantic_detection=True`
 or a supplied `defense` are durable operations. Give every defender on a durable-capable agent a
