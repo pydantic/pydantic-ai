@@ -185,6 +185,10 @@ async def test_approver_sees_what_the_tool_receives(case: Case, path: DeferralPa
         if isinstance(part, ToolReturnPart) and part.tool_call_id == 'call'
     )
     assert to_jsonable_python(tool_return.content) == requests.validated_args['call']
+    recorded_calls = [
+        part for message in resumed.all_messages() for part in message.parts if isinstance(part, ToolCallPart)
+    ]
+    assert recorded_calls == [ToolCallPart(case.tool.__name__, case.model_args, tool_call_id='call')]
 
 
 async def test_external_call_carries_validated_args():
