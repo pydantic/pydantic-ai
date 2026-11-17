@@ -27,7 +27,7 @@ flowchart TB
     accDescr: The model calls PlaywrightBrowser tools (navigate, snapshot, click and 15 more), one call per action, for page text or screenshot. They run Chromium from the first call to run end. An egress guard passes every request to allowed sites, except navigation and data requests to other domains (allowed_domains) and loopback, private and metadata addresses (block_private_addresses).
     model(["model"])
     browser["PlaywrightBrowser()<br/>navigate, snapshot, click<br/>and 15 more tools"]:::capability
-    chromium["Chromium<br/>starts on the first call,<br/>closes at run end"]:::external
+    chromium["Chromium<br/>starts on the first call,<br/>closes or disconnects<br/>at run end"]:::external
     guard["egress guard"]:::capability
     web["allowed sites<br/>on the web"]:::external
     offlist["navigation and<br/>data requests<br/>to other domains"]:::blocked
@@ -174,10 +174,11 @@ not raised to abort the agent run.
 | `max_content_tokens` | `4000` | Approximate token budget for every textual tool result. |
 | `action_timeout_ms` | `5000` | Default deadline for element actions (click, type, read, wait). `0` disables it. |
 | `navigation_timeout_ms` | `60000` | Default deadline for navigation and load settling, and for starting or attaching to the browser. `0` disables it. |
-| `chromium_sandbox` | `True` | Run the launched Chromium with its renderer sandbox. Turn it off only where the sandbox cannot start (a container without the kernel privileges it needs). Ignored with `cdp_url`. |
+| `chromium_sandbox` | `True` | Run the launched Chromium with its renderer sandbox. Turn it off only where the sandbox cannot start (a container without the kernel privileges it needs). Ignored when attaching over CDP (`cdp_url`). |
 | `auto_install_chromium` | `False` | Fetch Chromium automatically when the binary is missing. |
 | `storage_state` | `None` | Playwright storage state (cookies + localStorage) loaded at launch; see [Authenticated sites](#authenticated-sites). |
-| `cdp_url` | `None` | Attach to a Chromium already running at this CDP endpoint instead of launching one; see [Attaching to a running browser](#attaching-to-a-running-browser). |
+| `cdp_url` | `None` | Attach to a Chromium already running at this CDP endpoint, or at the one a function of the run context returns, instead of launching one; see [Attaching to a running browser](#attaching-to-a-running-browser). |
+| `cdp_context` | `'new'` | Choose `'new'` for an isolated context or `'default'` for the default context's sign-ins and tabs. Only `'default'` requires a CDP endpoint and excludes `storage_state`. |
 
 ## Two of them
 
@@ -274,26 +275,130 @@ No local Chromium binary is involved, so the install hint and
 `auto_install_chromium` do not apply. This is what managed-browser providers and
 benchmark harnesses expect: they start a browser and hand you its endpoint.
 
-The run still gets its own browser context, so `storage_state`, the domain
-allowlist, and the private-address block apply exactly as they do for a launched
-browser, and the agent does not inherit the sessions already open in that
-Chrome. Pointing `cdp_url` at your personal everyday browser is still the
-higher-risk choice -- that process holds every account you are logged into, and
-anything the agent can reach through it is reachable in one prompt injection.
-Prefer a browser started for the agent, with a scoped `storage_state`. Provider
-endpoints sometimes embed an auth token in the URL; treat those as secrets.
+By default (`cdp_context='new'`), each run creates an isolated context with its
+own `storage_state` and egress guards. Use a browser dedicated to the agent;
+CDP endpoints can contain authentication tokens and must be kept secret.
+
+### Reusing the default context
+
+Set `cdp_context='default'` to reuse the browser's sign-ins, tabs, and in-memory
+state. Pydantic AI selects the first page or opens one if none exists. A missing
+default context or more than eight tabs returns a tool error. This mode cannot
+be combined with `storage_state`.
+
+This is the higher-risk mode: the agent can act as every account signed in to
+that browser, and one prompt injection reaches all of them. Attach it to a
+profile dedicated to the agent, never your everyday browser, and set
+`allowed_domains` when the agent reads pages you do not control.
+
+Loaded tab and frame URLs must pass the policy's navigation and subframe rules
+before handlers are attached and before page operations. Chromium's error page
+and `srcdoc`, `data:` and `blob:` subframes load no document a request could
+carry, so they are not put to the policy. On refusal, close or
+navigate the blocked tab in the provider browser and retry; Pydantic AI leaves it
+unchanged. A frame that reports no URL yet gets one second to load; if it still
+has none, the call returns a tool error asking the model to retry. The check runs
+on every call, but a document that passed is not checked again until its frame
+navigates, and one call spends at most five seconds on it. A context with more
+documents than that allows gets a tool error asking the model to retry, and each
+retry picks up from the documents already checked.
+
+Only tabs showing an `http(s)` page, `about:blank` or Chromium's error page are
+adopted. Any other tab, such as the browser's own `chrome://newtab/` start page,
+an extension page, or a `file:`, `data:` or `blob:` document, is left out
+whatever the policy: Pydantic AI does not list, read, navigate or close it, or
+count it toward the eight tabs, and opens a blank tab when no other is left. The
+same goes for a tab holding a frame outside the web, other than an inline
+`srcdoc`, `data:` or `blob:` one: extensions such as password managers inject
+their own UI into the pages they run on as a `chrome-extension://` frame, so give
+the agent a profile whose extensions do not. When a tab moves to such a page, or
+gets such a frame, while attached, such as a site's `blob:` receipt popup, the
+call that finds it returns a tool error naming the page by its scheme
+and host only, since the rest of a `data:` URL is the document itself, and the
+agent stops using that tab, which stays open in the browser. The next call works
+on another tab, or on a new blank one. A frame that appears during a call, such
+as an extension's menu injected when the agent clicks into a login field, can
+still be captured by that call's `snapshot` or `screenshot_on_navigate` image;
+the next call drops the tab. A `chrome://` page the agent opens itself through
+`navigate` follows the policy instead: under a policy that admits it, `navigate`
+returns its text before the next call drops the tab
+([#13698](https://github.com/pydantic/pydantic-ai/issues/13698)).
+
+While attached, the session refuses new service-worker registrations, and
+Playwright leaves the browser's download and emulation settings as they are.
+Playwright routes service-worker requests through the request guards, including
+those of workers registered before attachment, unless
+`PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set. Connections opened before
+attachment bypass the guards, and so does a new WebSocket opened through the
+browser's own `WebSocket` constructor if script that ran before attachment kept
+a reference to it. A page loaded before attachment can still register a worker
+until it navigates.
+
+### Provisioning a browser per run
+
+Pass a function of the run context, sync or async, as `cdp_url` to create or
+resume a provider browser for each run, for example one per user:
+
+```python
+from dataclasses import dataclass, field
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness.playwright import PlaywrightBrowser
+
+
+@dataclass
+class Deps:
+    user_id: str
+    browser_ids: list[str] = field(default_factory=list[str])
+
+
+async def browser_for_user(ctx: RunContext[Deps]) -> str:
+    # Create or resume the provider's browser for this user's profile here.
+    browser_id = f'browser-{ctx.deps.user_id}'
+    ctx.deps.browser_ids.append(browser_id)
+    return f'wss://browsers.example.com/{browser_id}'
+
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    deps_type=Deps,
+    capabilities=[PlaywrightBrowser(cdp_url=browser_for_user, cdp_context='default')],
+)
+
+
+async def main():
+    deps = Deps(user_id='alice')
+    try:
+        await agent.run('Check my open orders.', deps=deps)
+    finally:
+        for browser_id in deps.browser_ids:
+            print(f'Delete or sleep {browser_id} here.')
+```
+
+The first browser tool call of a run calls the function, and its endpoint is
+reused for the rest of that run, including connection retries; a run without
+browser calls never calls it. `navigation_timeout_ms` bounds an async call: one
+that times out is a tool error, and the next browser call tries again. An
+exception the function raises ends the run. At run end the capability only
+disconnects, so record what the function created on the run's deps as soon as
+the provider returns it, and delete or sleep it once `agent.run` returns, as
+above. A spec cannot carry a function, so `from_spec` takes only an endpoint
+string.
 
 ## Lifecycle
 
-Chromium starts lazily on the first browser-tool call and is closed when the run
-ends -- on success, error, or cancellation. Runs that never call a browser tool
-pay no Playwright cost (no subprocess, no window). Each agent run gets its own
-page and browser, so concurrent `agent.run()` calls never share a tab.
+Each run gets a `PlaywrightBrowserSession` that starts or connects to Chromium
+on the first browser-tool call. A run with no browser use starts neither a
+driver nor a browser. On success, error, or cancellation, a locally launched
+browser is closed; a CDP connection is disconnected. The caller decides when to
+retain, sleep, or delete the provider browser and save its profile.
 
-That lifecycle lives in `PlaywrightBrowserSession`, which the capability creates
-per run. It is exported for the case where you want the same guarded browser
-without an agent around it -- the allowlist, the private-address block, the
-service-worker block, the tab tracking, and the dialog handling all come with it:
+Locally launched browsers and `cdp_context='new'` have an isolated context per
+run. Runs using `'default'` against the same browser share its pages and state;
+the caller must coordinate concurrent access.
+
+Use `PlaywrightBrowserSession` directly for the same guards, tab tracking, and
+dialog handling without an agent:
 
 ```python
 from pydantic_ai_harness.playwright import PlaywrightBrowserSession
@@ -302,6 +407,10 @@ async with PlaywrightBrowserSession() as session:
     page = await session.ensure_page()  # Chromium starts here, not on entry
     await page.goto('https://example.com')
 ```
+
+The session takes the same `cdp_url` and `cdp_context` options as the
+capability, with the same checks. A `cdp_url` function passed to the session
+takes no arguments, since the session has no run context.
 
 `PlaywrightBrowserToolset` is exported on the same basis: pass it a session to
 get the eighteen tools without the capability's hooks. The policy lives on the
@@ -396,8 +505,9 @@ redacted whichever tool returned them.
 
 - A session keeps up to eight tabs open; a page that opens more has the extras
   closed, which is recorded in the event log.
-- Uploads and downloads are not exposed: the context refuses downloads, and there
-  is no tool to put a file into a page. Both need an artifact contract between the
+- Uploads and downloads are not exposed: a new context refuses downloads (with
+  `cdp_context='default'` the browser's own setting applies), and there is no tool
+  to put a file into a page. Both need an artifact contract between the
   page and the host filesystem, tracked in
   [#590](https://github.com/pydantic/pydantic-ai-harness/issues/590).
 - CSS selectors cannot reach content inside iframes; reading and acting there
@@ -466,7 +576,9 @@ Enforcement is at two layers: a network route guard aborts a refused request
 before it leaves (covering clicks, `execute_js`, and history moves, not just
 `navigate`), and each tool re-checks the resulting URL and bounces to
 `about:blank` so disallowed content never reaches the model. Service workers are
-blocked in the browser context so their traffic cannot slip past the route guard.
+blocked in a new browser context so their traffic cannot slip past the route
+guard; [Reusing the default context](#reusing-the-default-context) covers what an
+inherited context leaves outside it.
 
 ### Rules the two fields cannot express
 

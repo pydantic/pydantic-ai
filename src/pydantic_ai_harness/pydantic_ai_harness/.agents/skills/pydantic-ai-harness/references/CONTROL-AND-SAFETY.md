@@ -31,6 +31,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Counter instruction fade in long runs, cache-safe | `SystemReminders` |
 | Have a second model review the run and steer it when it drifts | `TrajectoryJudge` |
 | Interrupt an agent that keeps repeating the same tool call, result, or response, or repeats itself within a streaming response | `DetectLoops` |
+| Cap calls per tool or per run, or refuse exact repeats, and let the run continue | `ToolBudgets(per_tool=..., total=..., refuse_repeats=...)` |
 | Have the agent review and revise its answer before the run ends | `RefineOutput` |
 
 ## RepairToolArguments
@@ -650,6 +651,10 @@ agent = Agent(
   as a lasting `SystemPromptPart` re-sent on every later request (one more part per firing, so bound it
   with `interval`/`max_fires`); use it for guidance that must outlast its step, instructions for text
   that holds on every step, and the default `'request'` for per-step nudges or changing values.
+  `skip_unchanged=True` (requires `scope='conversation'`) skips a firing while a copy of the same text
+  is still in the history the model sees, across runs too, and records it again once compaction drops it.
+  List any `ProcessHistory`/compaction that drops messages before `SystemReminders`, or a trimmed
+  copy still suppresses the firing.
 - `dynamic_reminders`: callables `(ctx) -> str | GeneratedReminder | None`, sync or async, evaluated
   on **every** request. A `str` is sent as written (no tag); a `GeneratedReminder` is quoted as data. Reminders are system prompts, so return only text you wrote and
   quote user input or tool output as data.
@@ -666,6 +671,11 @@ agent = Agent(
   construction. On any error it sends `GoalReanchor` text instead, logging a warning with the
   traceback once per run under `pydantic_ai_harness.system_reminders`; only a budget too tight for
   the extra request is silent. A wrapper that gates it itself should pass `interval=1`.
+- `LLMReminder` vs `TrajectoryJudge`: `LLMReminder` adds a model-written goal refresher on every
+  firing, blocks the request it precedes, and falls back to `GoalReanchor` text on error;
+  `TrajectoryJudge` runs alongside the agent (outside durable execution), steers only when the
+  run drifts, and raises an evaluation error on the run. Use `LLMReminder` for a regular goal
+  refresher, the judge for course correction, and `GoalReanchor` for free re-anchoring.
 - Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
   (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
   gone without a warning, so turn on caching on the model (such as `anthropic_cache`).
@@ -789,6 +799,55 @@ except LoopDetectedError as error:
   `.tool_names`; `.fingerprints` and `.passage` only with `trace_include_content`); no
   arguments or results otherwise. A failed judge emits `loop judge failed`
   (`error.type`). A `model=` judge isn't instrumented; its usage is added to the run's.
+
+## ToolBudgets
+
+In `wrap_tool_execute`, refuses a function tool call that is over its `per_tool` budget, over the run's
+`total`, or (for tools in `refuse_repeats`) an exact repeat of a call that already ran in this run.
+The refused call doesn't run: `SkipToolExecution` answers it with a `ToolReturn` naming the budget
+("3 of 3 `web_search` calls used; no more are allowed in this run."), and the run continues.
+
+```python
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from pydantic_ai_harness import ToolBudgets
+
+
+def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) < 5:
+        return ModelResponse(parts=[ToolCallPart('web_search', {'query': 'pydantic'})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+budgets = ToolBudgets(per_tool={'web_search': 3}, total=20, refuse_repeats={'web_search'})
+agent = Agent(FunctionModel(model), capabilities=[budgets])
+
+
+@agent.tool_plain
+def web_search(query: str) -> str:
+    return f'results for {query}'
+
+
+messages = agent.run_sync('Research Pydantic').all_messages()
+parts = [part for message in messages for part in message.parts]
+print([part.metadata for part in parts if isinstance(part, ToolReturnPart) and part.metadata])
+#> [{'origin': 'pydantic-ai-harness.tool_budgets.refusal.v1', 'reason': 'repeat'}]
+```
+
+- Find refusals by `metadata['origin'] == 'pydantic-ai-harness.tool_budgets.refusal.v1'`, never by text;
+  `metadata['reason']` is `'per_tool'`, `'total'` or `'repeat'` (`ToolBudgetReason`).
+  `UsageLimits.tool_calls_limit` stays the hard ceiling and counts refused calls.
+- A call counts when execution starts (success, `ModelRetry`, failure or `CallDeferred`); calls another
+  capability skips or holds for approval, and refused calls, don't. Repeats match tool name plus sorted-key
+  JSON arguments; a failed call isn't remembered. Parallel calls can't overshoot: they are checked against
+  calls still in flight, so one refused because of a call that is then skipped stays refused.
+- Counts live on the per-run instance from `for_run`, so compaction doesn't reset them; hooks run in
+  workflow code under Temporal, DBOS, and Prefect, so replay reaches the same refusals. Each new run
+  starts at zero, including one resumed after an approval round outside the run, so with approval
+  rounds the budget is per round, not per task.
+- Emits a `tool call refused` span (`tool_budgets.reason`, `tool_budgets.tool_name`).
 
 ## RefineOutput
 
