@@ -1259,6 +1259,32 @@ def gave_up_on(
     return gave_up
 
 
+def retrying_client(handler: Callable[[httpx2.Request], httpx2.Response]) -> httpx2.AsyncClient:
+    """A client with a retrying transport like the retries guide's: 3 attempts, rejecting every error status.
+
+    Once it gives up, it raises the transport's `HTTPStatusError` rather than return the status to the provider SDK.
+    """
+    # Imported here rather than at module scope: `tenacity` is an optional dependency.
+    from tenacity import retry_if_exception_type, stop_after_attempt, wait_none
+
+    from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
+
+    def validate_response(response: httpx2.Response) -> None:
+        response.raise_for_status()
+
+    transport = AsyncHTTPX2TenacityTransport(
+        config=RetryConfig(
+            retry=retry_if_exception_type(httpx2.HTTPStatusError),
+            wait=wait_none(),
+            stop=stop_after_attempt(3),
+            reraise=True,
+        ),
+        wrapped=httpx2.MockTransport(handler),
+        validate_response=validate_response,
+    )
+    return httpx2.AsyncClient(transport=transport)
+
+
 def decode_request_body(content: bytes, headers: httpx2.Headers) -> bytes:
     """Decode a wire request using HTTPX's content-encoding support."""
     return httpx2.Response(200, content=content, headers=headers).content

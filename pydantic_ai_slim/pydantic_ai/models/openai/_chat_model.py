@@ -595,6 +595,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     extra_body=self._thinking_false_extra_body(model_settings, model_request_parameters),
                 )
             except APIStatusError as e:
+                # A status a retrying transport gave up on arrives as `httpx2.HTTPStatusError` instead, which isn't
+                # checked here: it stays a `ModelHTTPError`, so fallback moves on to the next model, see
+                # https://github.com/pydantic/pydantic-ai/pull/11934.
                 if model_response := check_azure_content_filter(e, self.client, self.system, self.model_name):
                     return model_response
                 raise

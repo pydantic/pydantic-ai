@@ -598,7 +598,7 @@ Because the request is queued server-side, the time to the first token is higher
 To end the run instead of waiting, add [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] to the agent's `output_type`: the run then ends with a `PendingModelResponse` as soon as the background response is queued (when streaming, the response streams until it's finished, unless the stream drops before then), and running the agent again with the run's message history checks on the same background response. See [Ending a run while it waits](../batch.md#ending-a-run-while-it-waits).
 
 !!! note
-    A message history that ends in a pending response (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired]. Abandoning or cancelling a run that's waiting cancels the server-side background job.
+    A message history that ends in a pending response (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired], or, with a [retrying transport](../retries.md#a-retrying-client) whose `validate_response` rejects the 404, a [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError], so that a [fallback model](../retries.md#model-fallback-is-not-a-retry) moves on. Abandoning or cancelling a run that's waiting cancels the server-side background job.
 
 ## Batch API
 
