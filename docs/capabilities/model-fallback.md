@@ -287,7 +287,7 @@ print(request.instructions)
 
 Text that depends on the model is best left with the default [`on_change='rewrite'`][pydantic_ai.messages.InstructionPart.on_change]: switching models starts a new prompt cache anyway, so rewriting the instructions costs nothing extra.
 
-Only the instructions and model settings are resolved again: a toolset from [`get_toolset`][pydantic_ai.capabilities.AbstractCapability.get_toolset], `before_model_request` and `wrap_model_request` hooks, and the tools the model calls see the model selected for the step as `ctx.model`. Toolsets' instructions, like an MCP server's, are resolved once per step too, so that under durable execution an attempt doesn't add a durable unit to the run. So are the instructions of [deferred capabilities][pydantic_ai.capabilities.AbstractCapability.defer_loading] the model has loaded, which are delivered through message history. A suspended response that's [continued](#continuing-suspended-responses) keeps the instructions it was sent.
+Only the instructions and model settings are resolved again: a toolset from [`get_toolset`][pydantic_ai.capabilities.AbstractCapability.get_toolset], `before_model_request` and `wrap_model_request` hooks, and the tools the model calls see the model selected for the step as `ctx.model`. Toolsets' instructions, like an MCP server's, are resolved once per step too, so an attempt doesn't ask a toolset for them again under durable execution. An agent or capability instruction function that makes a [durable call](../durable_execution/overview.md) runs again for each model after the first, and so makes that call again. So are the instructions of [deferred capabilities][pydantic_ai.capabilities.AbstractCapability.defer_loading] the model has loaded, which are delivered through message history. A suspended response that's [continued](#continuing-suspended-responses) keeps the instructions it was sent.
 
 ## Failed attempts and telemetry
 
@@ -378,6 +378,14 @@ agent = Agent(
     ],
 )
 ```
+
+Instructions and model settings are resolved again for each model a step falls back to (see [Instructions for each model](#instructions-for-each-model)):
+
+!!! warning "Upgrading with runs in flight"
+    Resolving instructions and settings again for a fallback attempt changes what a run records once it falls back. Before upgrading, let in-flight runs finish, or deploy the upgrade as a new version:
+
+    - A run recorded before the upgrade that already fell back, and whose instructions make a durable call, schedules a durable unit on replay that its history doesn't have. That's a nondeterminism error on Temporal, Azure and Render, a `DBOSUnexpectedStepError` on DBOS, and shifted `#n` step names on Lambda, Absurd and pgtask.
+    - On Prefect, a flow run retried across the upgrade whose fallback attempt now gets different instructions or settings misses the model request's task cache and sends that request again.
 
 A `FallbackModel` instead runs its whole chain inside one activity, along with the deadlines it gives each model, and when every model fails, its [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] reaches the workflow without the attempts it lists, so the usage of the responses it rejected isn't recorded.
 
