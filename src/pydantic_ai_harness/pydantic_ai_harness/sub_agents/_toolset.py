@@ -33,10 +33,17 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.framing import register_tag, wrap
-from pydantic_ai.messages import BaseToolReturnPart, ModelMessage, ModelResponse, is_retry, repair_messages
+from pydantic_ai.messages import (
+    BaseToolReturnPart,
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    is_retry,
+    repair_messages,
+)
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 # Private import: pydantic-ai has no public way to tell capability-contributed
@@ -44,6 +51,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai_harness._code_tools import reserve_nested_call
 from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
@@ -91,8 +99,10 @@ from pydantic_ai_harness.sub_agents._tasks import (
     NOT_BACKGROUNDABLE,
     RESUME_DIRECTORY_MISMATCH,
     DelegationReports,
+    DelegationSnapshot,
     DelegationTask,
     DelegationTasks,
+    preview,
 )
 
 logger = logging.getLogger(__name__)
@@ -140,8 +150,7 @@ _MODEL_ARG = 'model'
 """Name of the delegate tool's model-selection argument, shared by the function
 signature and the schema rewrite that shapes it to the configured menu."""
 _MAX_LISTED_TASKS = 50
-_PREVIEW_CHARS = 80
-CONTROL_TOOL_NAMES = frozenset({'list_tasks', 'message_task', 'answer_task', 'cancel_task'})
+CONTROL_TOOL_NAMES = frozenset({'list_tasks', 'check_task', 'message_task', 'answer_task', 'cancel_task'})
 """The tools `SubAgents(task_control=...)` adds next to the delegate tool."""
 CREATE_AGENT_TOOL_NAME = 'create_agent'
 
@@ -394,17 +403,26 @@ def _emits_events(ctx: RunContext[AgentDepsT]) -> bool:
     return tool_def is not None and tool_def.capability_id is not None
 
 
-def _is_capability_contributed(toolset: AbstractToolset[AgentDepsT]) -> bool:
-    """Whether `toolset`'s tree contains a `CapabilityOwnedToolset`."""
+def _tree_has(toolset: AbstractToolset[AgentDepsT], predicate: Callable[[AbstractToolset[AgentDepsT]], bool]) -> bool:
+    """Whether a toolset in `toolset`'s tree matches `predicate`."""
     found = False
 
     def visit(node: AbstractToolset[AgentDepsT]) -> None:
         nonlocal found
-        if isinstance(node, CapabilityOwnedToolset):
-            found = True
+        found = found or predicate(node)
 
     toolset.apply(visit)
     return found
+
+
+def _is_capability_contributed(toolset: AbstractToolset[AgentDepsT]) -> bool:
+    """Whether `toolset`'s tree contains a `CapabilityOwnedToolset`."""
+    return _tree_has(toolset, lambda node: isinstance(node, CapabilityOwnedToolset))
+
+
+def _exposes(name: str, original: str) -> bool:
+    """Whether `name` is `original`, or `original` with a prefix a wrapper added."""
+    return name == original or name.endswith(f'_{original}')
 
 
 def _resumable_here(owner: DelegationTasks, resume: str, *, conversation_id: str, agent_name: str) -> DelegationTask:
@@ -462,15 +480,34 @@ def _task_line(owner: DelegationTasks, record: DelegationTask) -> str:
     if record.parent_id != DelegationTasks.child_id():
         details.append(f'started by task {record.parent_id}')
     details.append('resumable' if record.resumable and not record.user_stopped else 'not resumable')
-    line = f'- {record.id} ({record.agent_name}, {", ".join(details)}): {_preview(record.prompt)!r}'
+    line = f'- {record.id} ({record.agent_name}, {", ".join(details)}): {preview(record.prompt)!r}'
     if (question := owner.pending_question(record.id)) is not None:
         # The question came whole as its own message; this is a reminder of which one it is.
-        line += f'\n  Waiting for an answer to: {_preview(question[1])!r}'
+        line += f'\n  Waiting for an answer to: {preview(question[1])!r}'
     return line
 
 
-def _preview(text: str) -> str:
-    return text if len(text) <= _PREVIEW_CHARS else f'{text[:_PREVIEW_CHARS]}...'
+def _snapshot_text(snapshot: DelegationSnapshot, *, background: bool) -> str:
+    task, elapsed = f'Task {snapshot.task_id} ({snapshot.agent_name})', f'{snapshot.elapsed_seconds:.0f}s'
+    if snapshot.status != 'running':
+        result = 'Its report is delivered separately.' if background else 'Its result went to the call that started it.'
+        return f'{task} finished ({snapshot.outcome}) after {elapsed}. {result}'
+    if snapshot.usage is None:
+        lines = [
+            f'{task} has been running for {elapsed}. No activity is visible: '
+            'it runs elsewhere, or has not made its first model request yet.'
+        ]
+    else:
+        requests = snapshot.usage.requests
+        lines = [f'{task} has been running for {elapsed}, with {requests} model request{"s" if requests != 1 else ""}.']
+    if snapshot.recent_tool_calls:
+        calls = ', '.join(f'{call.tool_name}({call.args})' for call in snapshot.recent_tool_calls)
+        lines.append(f'Recent tool calls: {calls}')
+    if snapshot.latest_text is not None:
+        lines.append(f'Latest text, not its final result: {snapshot.latest_text!r}')
+    if snapshot.pending_question is not None:
+        lines.append(f'Waiting for an answer to: {preview(snapshot.pending_question)!r}')
+    return '\n'.join(lines)
 
 
 class SubAgentToolset(FunctionToolset[AgentDepsT]):
@@ -566,6 +603,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         )
         if task_control is not None:
             self.add_function(self.list_tasks, prepare=self._prepare_control, metadata={'temporal': False})
+            self.add_function(self.check_task, prepare=self._prepare_control, metadata={'temporal': False})
             self.add_function(self.message_task, prepare=self._prepare_control, metadata={'temporal': False})
             self.add_function(self.answer_task, prepare=self._prepare_control, metadata={'temporal': False})
             self.add_function(self.cancel_task, prepare=self._prepare_control, metadata={'temporal': False})
@@ -1141,8 +1179,22 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             lines.append(f'({" and ".join(omitted)} not shown.)')
         return '\n'.join(lines)
 
-    async def message_task(self, ctx: RunContext[AgentDepsT], task_id: str, message: str) -> str:
-        """Send a message to a running task you started, to steer it. It reads the message at its next model request.
+    async def check_task(self, ctx: RunContext[AgentDepsT], task_id: str) -> str:
+        """See what a task you started is doing now, without waiting for it. Its report still arrives on its own.
+
+        Args:
+            ctx: The run context.
+            task_id: The task's ID.
+        """
+        owner = self._owner()
+        record = self._visible(ctx, owner, task_id)
+        return _snapshot_text(owner.snapshot(record.id), background=record.background)
+
+    async def message_task(self, ctx: RunContext[AgentDepsT], task_id: str, message: str) -> object:
+        """Send a message to a task you started, to steer it.
+
+        A running task reads the message at its next model request. A finished task resumes with the message as
+        its next prompt, in the background if it ran there, as a delegate call with `resume` would.
 
         Args:
             ctx: The run context.
@@ -1156,10 +1208,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if ctx.in_durable_context:
             raise ModelRetry(f'Task {task_id} runs in a durable unit of its own, which messages cannot reach.')
         if record.status != 'running':
-            raise ModelRetry(
-                f'Task {task_id} has finished ({record.outcome}), and messages only reach running tasks. '
-                'To continue it, delegate again with `resume`.'
-            )
+            return await self._resume_by_message(ctx, record, message)
         event = await self._announce(
             ctx, owner, record, TaskSteeredEvent(task_id=task_id, agent_name=record.agent_name, message=message)
         )
@@ -1171,6 +1220,34 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         elif not owner.steer(task_id, event.message):
             return f'Task {task_id} finished before the message reached it.'
         return f'Message sent to task {task_id}.'
+
+    async def _resume_by_message(self, ctx: RunContext[AgentDepsT], record: DelegationTask, message: str) -> object:
+        """Resume a finished task through the delegate tool, so the hooks, guards and approvals on it apply."""
+        tool_manager = ctx.tool_manager
+        assert tool_manager is not None, 'Tools run with the run step tool manager set'
+        # A wrapper such as `PrefixedToolset` may expose the delegate tool under another name: the one whose
+        # longest matching tool name of this toolset is the delegate tool's.
+        names = [
+            name
+            for name, tool in (tool_manager.tools or {}).items()
+            if max((own for own in self.tools if _exposes(name, own)), key=len, default=None) == self._tool_name
+            and _tree_has(tool.toolset, lambda node: node is self)
+        ]
+        resume = f'with `agent_name={record.agent_name!r}` and `resume={record.id!r}`.'
+        if len(names) != 1:
+            raise ModelRetry(f'To resume task {record.id}, call the delegate tool {resume}')
+        args = {'agent_name': record.agent_name, 'task': message, 'background': record.background, 'resume': record.id}
+        call = ToolCallPart(names[0], args, tool_call_id=f'{ctx.tool_call_id}-resume')
+        reserved = reserve_nested_call(ctx)
+        try:
+            result = await tool_manager.handle_call(call, wrap_validation_errors=False)
+        except (ApprovalRequired, CallDeferred):
+            raise ModelRetry(f'Resuming task {record.id} needs approval. Call `{names[0]}` {resume}') from None
+        finally:
+            ctx.usage.tool_calls -= reserved
+        if isinstance(result, ToolDenied):
+            return f'Task {record.id} was not resumed: {result.message}'
+        return result
 
     async def answer_task(self, ctx: RunContext[AgentDepsT], task_id: str, answer: str) -> str:
         """Answer the question a task you started is waiting on.
@@ -1530,17 +1607,21 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         owner: DelegationTasks | None,
         record: DelegationTask | None,
     ) -> None:
+        # Installed only for a record, and a record exists only under the owner that `current` returns.
+        assert owner is not None and record is not None
+        record.messages = child_ctx.messages
+        tools = child_ctx.tool_manager.tools if child_ctx.tool_manager is not None else None
+        owner.follow(record, frozenset(name for name, tool in (tools or {}).items() if tool.tool_def.kind == 'output'))
+
         async def observed() -> AsyncIterable[AgentStreamEvent]:
             async for event in events:
-                # Installed only for a record, and a record exists only under the owner that `current` returns.
-                if owner is not None and record is not None:  # pragma: no branch
-                    record.messages = child_ctx.messages
-                    # The model streaming this request, so an observer can show the child's context usage.
-                    model = child_ctx.model
-                    await owner.notify(record, event, model_name=model.model_name, context_window=model.context_window)
-                    if self._forward_events:
-                        progress = TaskProgressEvent(task_id=record.id, agent_name=record.agent_name, event=event)
-                        await owner.publish(record, progress, observe=False)
+                record.messages = child_ctx.messages
+                # The model streaming this request, so an observer can show the child's context usage.
+                model = child_ctx.model
+                await owner.notify(record, event, model_name=model.model_name, context_window=model.context_window)
+                if self._forward_events:
+                    progress = TaskProgressEvent(task_id=record.id, agent_name=record.agent_name, event=event)
+                    await owner.publish(record, progress, observe=False)
                 yield event
 
         if self._event_stream_handler is not None:
