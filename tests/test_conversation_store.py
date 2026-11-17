@@ -1420,6 +1420,41 @@ async def test_a_resumed_run_that_fails_before_adding_a_message_leaves_the_calls
     assert reloaded.deferred_tool_requests == loaded.deferred_tool_requests
 
 
+async def test_a_resumed_run_that_fails_after_running_the_approved_calls_leaves_none_waiting() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), deps_type=type(None))
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file() -> str:
+        return 'deleted'
+
+    paused = await agent.run('Delete it', output_type=[str, DeferredToolRequests])
+    await store.save(paused)
+    loaded = await store.load(paused.conversation_id)
+    assert loaded is not None and loaded.deferred_tool_requests is not None
+    [call] = loaded.deferred_tool_requests.approvals
+
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        await agent.run(
+            conversation=loaded,
+            output_type=[str, DeferredToolRequests],
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
+            usage_limits=UsageLimits(request_limit=0),
+        )
+    failed = exc_info.value.conversation
+    assert failed is not None
+    # The approved call ran, so its result is in the history and nothing is left to approve.
+    returns = [part for message in failed.messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    assert [(part.tool_call_id, part.content) for part in returns] == [(call.tool_call_id, 'deleted')]
+    assert failed.deferred_tool_requests is None
+
+    await store.save(failed)
+    reloaded = await store.load(paused.conversation_id)
+    assert reloaded is not None
+    assert reloaded.deferred_tool_requests is None
+    assert reloaded.messages == failed.messages
+
+
 async def test_an_externally_cancelled_event_stream_carries_its_conversation() -> None:
     started = asyncio.Event()
     agent = Agent(TestModel())
