@@ -168,6 +168,9 @@ EXEMPT: dict[str, Exempt] = {
     'NativeOrLocalTool': Exempt(
         'Base class that needs a subclass; `WebSearch`, `WebFetch`, `XSearch` and `MCP` are its cases.'
     ),
+    'WindowsWorkspace': Exempt(
+        "Builds only on Windows; it's `LocalWorkspace` with another backend, which adds nothing to the conversation."
+    ),
 }
 
 _NO_LOCAL_FALLBACK = 'The provider has no native {}, and the default has no local fallback.'
@@ -298,9 +301,11 @@ AGENT_FEATURES: dict[str, Scenario] = {
         serialize_history=True,
     ),
     # The models whose APIs can change effort mid-conversation (#10385); Chat Completions can't.
+    # Chat Completions uses gpt-5.2, which accepts function tools at each of the scenario's efforts. Every
+    # scenario registers a function tool, and `OpenAIChatModel` refuses that with reasoning on for GPT-6.
     'agent:effort_change': Scenario(
         run_kwargs={'model_settings': _effort_by_step},
-        model_names={'openai-responses': 'gpt-6.1-sol', 'openai-chat': 'gpt-6.1-sol'},
+        model_names={'openai-responses': 'gpt-6.1-sol', 'openai-chat': 'gpt-5.2'},
         serialize_history=True,
     ),
     # A UI endpoint that keeps the history on the server (#11372): the client sends its whole conversation back,

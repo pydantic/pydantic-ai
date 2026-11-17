@@ -29,7 +29,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
-    local as local_module,
+    _host as host_module,
 )
 
 pytestmark = [
@@ -247,8 +247,8 @@ async def test_background_child_holding_a_pipe_returns_after_the_drain_grace(
     that fallback on whatever anyio is installed; the other case is the installed version's own path.
     """
     if force_pipe_bound_wait:
-        monkeypatch.setattr(local_module, '_ANYIO_WAITS_FOR_PIPES', True)
-    monkeypatch.setattr(local_module, '_OUTPUT_DRAIN_GRACE', 0.05)
+        monkeypatch.setattr(host_module, '_ANYIO_WAITS_FOR_PIPES', True)
+    monkeypatch.setattr(host_module, '_OUTPUT_DRAIN_GRACE', 0.05)
     workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
     child_pid_file = tmp_path / 'child-pid'
@@ -271,7 +271,7 @@ async def test_anyio_4_15_wait_path(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
     No background child here: on anyio before 4.15 that path waits for the pipes to close.
     """
-    monkeypatch.setattr(local_module, '_ANYIO_WAITS_FOR_PIPES', False)
+    monkeypatch.setattr(host_module, '_ANYIO_WAITS_FOR_PIPES', False)
     result = await LocalWorkspaceBackend(tmp_path).run(['echo', 'done'], timeout=10)
     assert (result.exit_code, result.stdout) == (0, 'done\n')
 
@@ -362,7 +362,7 @@ async def test_stalled_spawn_is_bounded(tmp_path: Path, monkeypatch: pytest.Monk
 
     monkeypatch.setattr(anyio, 'open_process', stalled_spawn)
     # At least the command timeout below, so the deadline has passed when the grace expires.
-    monkeypatch.setattr(local_module, '_SPAWN_GRACE', 0.1)
+    monkeypatch.setattr(host_module, '_SPAWN_GRACE', 0.1)
     workspace = LocalWorkspaceBackend(tmp_path)
     async with anyio.create_task_group() as tg:
 
@@ -385,7 +385,7 @@ async def test_stalled_spawn_is_bounded(tmp_path: Path, monkeypatch: pytest.Monk
 async def test_stalled_reap_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     workspace = LocalWorkspaceBackend(tmp_path)
     real_close = workspace._close  # pyright: ignore[reportPrivateUsage]
-    monkeypatch.setattr(local_module, '_REAP_GRACE', 0.05)
+    monkeypatch.setattr(host_module, '_REAP_GRACE', 0.05)
     entered = anyio.Event()
 
     async def timed_out_after_spawn(
@@ -416,7 +416,7 @@ async def test_stalled_reap_is_bounded(tmp_path: Path, monkeypatch: pytest.Monke
 async def test_stalled_reap_without_a_timeout_is_not_a_command_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     workspace = LocalWorkspaceBackend(tmp_path)
     real_close = workspace._close  # pyright: ignore[reportPrivateUsage]
-    monkeypatch.setattr(local_module, '_REAP_GRACE', 0.05)
+    monkeypatch.setattr(host_module, '_REAP_GRACE', 0.05)
     calls = 0
 
     async def stalled_close(process: anyio.abc.Process) -> None:

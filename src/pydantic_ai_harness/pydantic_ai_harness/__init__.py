@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     )
     from .ipython_code_mode import IPythonCodeMode
     from .keenable import KeenableSearch
+    from .kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -90,6 +91,7 @@ if TYPE_CHECKING:
     from .step_persistence import StepPersistence
     from .sub_agents import SubAgent, SubAgents
     from .system_reminders import SystemReminders
+    from .tool_budgets import ToolBudgets
     from .tool_call_judge import ToolCallJudge
     from .tool_output_limits import ToolOutputLimits
     from .trajectory_judge import TrajectoryJudge
@@ -144,6 +146,8 @@ __all__ = [
     'InputGuardrail',
     'InputGuardrailFunc',
     'KeenableSearch',
+    'KubernetesSandbox',
+    'KubernetesSandboxBackend',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
@@ -194,6 +198,7 @@ __all__ = [
     'SummarizingCompaction',
     'SystemReminders',
     'TieredCompaction',
+    'ToolBudgets',
     'ToolCallJudge',
     'ToolGuardrail',
     'ToolOutputLimits',
@@ -251,6 +256,8 @@ _LAZY_EXPORTS = {
     'InputGuardrailFunc': 'guardrails',
     'IPythonCodeMode': 'ipython_code_mode',
     'KeenableSearch': 'keenable',
+    'KubernetesSandbox': 'kubernetes_sandbox',
+    'KubernetesSandboxBackend': 'kubernetes_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
@@ -300,6 +307,7 @@ _LAZY_EXPORTS = {
     'SummarizingCompaction': 'compaction',
     'SystemReminders': 'system_reminders',
     'TieredCompaction': 'compaction',
+    'ToolBudgets': 'tool_budgets',
     'ToolCallJudge': 'tool_call_judge',
     'ToolGuardrail': 'guardrails',
     'ToolOutputLimits': 'tool_output_limits',

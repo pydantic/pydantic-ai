@@ -180,6 +180,8 @@ Function tools and event stream handlers registered on the agent directly or thr
 
 A function tool running in the workflow can load an [on-demand capability](../capabilities/on-demand.md) with [`ctx.load_capability()`][pydantic_ai.tools.RunContext.load_capability], but a tool running as a step can't; see [Loading a capability from code](../capabilities/on-demand.md#loading-from-code-durable).
 
+A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] applies its `sequential=True` and `defer_loading=True` to the [`Tool`][pydantic_ai.tools.Tool] instances it holds. Workflows started before Pydantic AI did so keep listing those tools without them, so that they recover with the steps they recorded: a run holding such a tool [patches](https://docs.dbos.dev/python/tutorials/upgrading-workflows) its workflow when it starts, and a workflow without the patch marker gets the old listing.
+
 All other agents and toolsets are supported.
 
 ### Agent Run Context and Dependencies
@@ -245,6 +247,14 @@ A run's [`timeout=`](../timeouts.md#bounding-a-whole-run) works inside a workflo
 
 The deadline bounds the agent run, not the workflow. To bound the whole workflow as well, start it inside DBOS's `SetWorkflowTimeout`, which cancels the workflow when it expires.
 
+### Counting Tokens Before a Request
+
+With [`count_tokens_before_request=True`](../agent.md#usage-limits), the token count runs as a `{name}__model.count_tokens` step ahead of each model request step, so recovery replays the recorded count instead of calling the provider again.
+
+!!! warning "Compatibility impact: recorded token-count steps"
+
+    Recording the count as a step adds a step ahead of each model request step of a run that sets `count_tokens_before_request=True`. Before upgrading, let in-flight workflows that set it finish, or deploy the upgrade as a new DBOS application version. Recovering an older workflow with the new code can raise `DBOSUnexpectedStepError`. Runs without `count_tokens_before_request` keep their existing step sequence.
+
 ### Suspended Turns and Background Mode
 
 When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request step, and the wait between polls is a durable `DBOS.sleep` step, so recovery skips completed waits. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first step. Size step timeouts for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation step. [Batched requests](../batch.md#durable-execution) work the same way: submitting a request and each check on its batch are separate steps, with durable sleeps between checks.
@@ -294,6 +304,8 @@ Child workflows are only supported for async tools in a [`FunctionToolset`][pyda
 ### Concurrent Agent Runs
 
 Every run of an agent records its model requests and tool calls as steps with the same names, and DBOS replays a recovered workflow's steps in the order they start, checking only their names. When one workflow runs the same agent more than once at the same time, like `asyncio.gather(agent.run(...), agent.run(...))` or parallel tool calls that each run the same nested agent, the runs can start their steps in a different order during recovery than they originally did. Recovery then hands each run the results the other one recorded, and the workflow carries on with them.
+
+A run holding a `Tool` instance that a `FunctionToolset` made sequential or deferred also patches its workflow when it starts. If another run in the workflow starts a step at that moment, the workflow lists those tools without `sequential` and `defer_loading`, as Pydantic AI did before applying them. If the patch was recorded, recovery can fail with `DBOSUnexpectedStepError` when another run starts a step while recovery checks for it.
 
 Give each concurrent run a workflow of its own, so its steps are recorded and replayed in a sequence of their own: call a `@DBOS.workflow` function that runs the agent once, or run a tool that runs a nested agent in a [child workflow](#child-workflows).
 
@@ -357,11 +369,13 @@ For custom tools, you can annotate them directly with [`@DBOS.step`](https://doc
 
 ## Step Retries
 
-On top of the automatic retries for request failures that DBOS will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, with improper `Retry-After` handling.
+On top of the automatic retries for request failures that DBOS will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, and a retry inside the step waits out the provider's `Retry-After` there, rather than as the durable wait described below.
 
 When using DBOS, it's recommended to not use [transport retries](../retries.md#transport-retries) and to turn off your provider API client's own retry logic, by setting [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0`, so the engine is the [one retry owner](../retries.md#choosing-one-retry-owner).
 
 You can customize DBOS's retry policy using [step configuration](#step-configuration).
+
+DBOS retries a step inside the step, after sleeping its backoff in the process that runs it. A model step (a model request, and also the steps that compact messages or cancel a suspended response) is different when the model error says how long to wait before trying again, in its [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] (read from a `Retry-After` or `retry-after-ms` header, for example), and `model_step_config` allows another attempt: the step records the failed attempt, the workflow waits that long with a durable [`DBOS.sleep`](https://docs.dbos.dev/python/reference/contexts#sleep), which a recovered workflow doesn't sleep again, and the request runs again in a new step with the attempts the step had left. The step's journal then shows the model step, a `DBOS.sleep` step, and the model step again. The wait is capped at DBOS's own backoff for that attempt or a minute, whichever is longer, so a provider asking for hours doesn't park the workflow for hours. A model error without a `retry_after` gets DBOS's own backoff, as before, and the deprecated `DBOSAgent` doesn't wait `retry_after`.
 
 DBOS has no selective non-retryable-exception support, so if you enable step retries (`retries_allowed`), framework misconfiguration errors like `UserError` are retried along with everything else. The Temporal and Prefect integrations mark those non-retryable; on DBOS, expect a misconfigured agent to burn its full retry budget before failing.
 
