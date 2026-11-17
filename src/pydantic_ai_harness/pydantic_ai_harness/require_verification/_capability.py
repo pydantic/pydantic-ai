@@ -35,14 +35,15 @@ DEFAULT_VERIFICATION_COMMANDS: tuple[str, ...] = (
     r'(?:make|just)\s+(?:\S+\s+)*?(?:test|lint|typecheck|check|build)\w*\b',
     r'(?:mvn|gradle|\./mvnw|\./gradlew)\s+(?:\S+\s+)*?(?:test|verify|check|build)\b',
 )
-"""Regular expressions for the commands that count as verification, matched at the start of each `&&` step."""
+"""Regular expressions for the commands that count as verification, matched at the start of a command's steps."""
 
 DEFAULT_EDIT_COMMANDS: tuple[str, ...] = (
     r'\b(?:ruff\s+format|black|isort|cargo\s+fmt|gofmt\s+-w)\b',
     r'--(?:fix|write)\b',
     r'(?<![\w-])(?:sed|perl)(?:\s+-\w+)*\s+-\w*i',
-    r'\bgit\s+apply\b|(?:^|\s)patch\s',
-    r'\btee\b',
+    r'\bgit\s+(?:apply|am|checkout|cherry-pick|merge|mv|pull|rebase|reset|restore|revert|rm|stash|switch)\b',
+    r'(?<![\w-])(?:patch|mv|cp|rm|tee)\s',
+    r'(?<![\w-])(?:ba|z|da)?sh\s+-\w*c\b',
     r'(?<![\d&>-])>>?(?!&|\s*/dev/null)',
 )
 """Regular expressions for the commands that count as edits, searched for anywhere outside quoted strings."""
@@ -51,8 +52,10 @@ _ORIGIN = 'pydantic-ai-harness.require_verification.v1'
 """The `origin` in the `metadata` of the `SystemPromptPart` a redirect is delivered as."""
 
 _ASSIGNMENTS = re.compile(r'^(?:env\s+)?(?:\w+=\S*\s+)*')
-_MASKING = re.compile(r'[;|&`\n]|\$\(')
-_FD_DUPLICATION = re.compile(r'\d*[<>]&(?:\d+|-)')
+_MASKING = re.compile(r'[|&`]|\$\(')
+_STATEMENT_SEPARATOR = re.compile(r'[;\n]')
+_SHORT_CIRCUIT = re.compile(r'(?<![\w-])(?:exit|exec|return)\b')
+_FD_DUPLICATION = re.compile(r'(?<!\d)\d*[<>]&(?:\d+|-)')
 _SINGLE_QUOTED = re.compile(r"'[^']*'")
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
 _FAILED = ('[exit code:', '[Command timed out', '[File-size limit exceeded', '[Command failed with max_file_bytes')
@@ -95,9 +98,11 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
 
     _verification: tuple[re.Pattern[str], ...] = field(init=False, repr=False, compare=False)
     _edit: tuple[re.Pattern[str], ...] = field(init=False, repr=False, compare=False)
-    _edited: bool = field(default=False, init=False, repr=False, compare=False)
+    _edits: int = field(default=0, init=False, repr=False, compare=False)
+    _started: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False, compare=False)
     _results: dict[str, bool] = field(default_factory=dict[str, bool], init=False, repr=False, compare=False)
     _attempts: int = field(default=0, init=False, repr=False, compare=False)
+    _reported: bool = field(default=False, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.max_attempts < 0:
@@ -112,6 +117,19 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
         """Return a fresh instance, so runs don't share their edits, results, or attempts."""
         return replace(self)
 
+    async def before_tool_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+    ) -> ValidatedToolArgs:
+        """Note how many edits preceded a verification command, as calls in one response run in parallel."""
+        if (command := _command(tool_def, args)) is not None and self._verifies(command):
+            self._started[call.tool_call_id] = self._edits
+        return args
+
     async def after_tool_execute(
         self,
         ctx: RunContext[AgentDepsT],
@@ -122,6 +140,7 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
         result: Any,
     ) -> Any:
         """Record a successful edit or verification command."""
+        edits_before = self._started.pop(call.tool_call_id, None)
         if tool_def.tool_kind in (WRITE_FILE_KIND.id, EDIT_FILE_KIND.id):
             path = args.get('path')
             if not (isinstance(path, str) and any(fnmatch(path, pattern) for pattern in self.exempt_paths)):
@@ -129,8 +148,12 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
         elif (command := _command(tool_def, args)) is not None:
             if any(pattern.search(_QUOTED.sub('', command)) for pattern in self._edit):
                 self._mark_edit()
-            elif self._verifies(command) and (passed := _passed(result)) is not None:
-                self._results[command] = passed
+            # A verification that an edit in a parallel call may have raced, or no verification at all, records nothing.
+            elif edits_before == self._edits:
+                if (passed := _passed(result)) is None:
+                    self._results.pop(command, None)
+                else:
+                    self._results[command] = passed
         return result
 
     async def after_node_run(
@@ -148,7 +171,7 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
             and node.model_response.model_name is not None
             and isinstance(result, End)
             and not isinstance(result.data.output, DeferredToolRequests | PendingModelResponse)
-            and self._edited
+            and self._edits
             and not (self._results and all(self._results.values()))
         ):
             return result
@@ -159,7 +182,9 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
             ).end()
             metadata = {'origin': _ORIGIN, 'attempt': self._attempts}
             ctx.enqueue(SystemPromptPart(self.instructions, metadata=metadata), priority='when_idle')
-        else:
+        elif not self._reported:
+            # Something else, like `RefineOutput`, can still continue the run: report its first unverified end once.
+            self._reported = True
             ctx.tracer.start_span(
                 'completion unverified', attributes={'require_verification.attempts': self._attempts}
             ).end()
@@ -170,13 +195,21 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
     def _mark_edit(self) -> None:
         # Any edit makes every earlier result stale. Narrowing that to the edits a check depends on would need
         # its full dependency closure (fixtures, config, imports), and a wrong guess there passes unverified work.
-        self._edited = True
+        self._edits += 1
         self._results.clear()
 
     def _verifies(self, command: str) -> bool:
-        """Whether `command` runs a verification whose exit status no other part of it can hide."""
-        steps = [_ASSIGNMENTS.sub('', step.strip(), count=1) for step in command.split('&&')]
-        if any(_MASKING.search(_FD_DUPLICATION.sub('', _SINGLE_QUOTED.sub('', step))) for step in steps):
+        """Whether `command` runs a verification whose exit status no other part of it can hide.
+
+        The exit status is the last `;`- or newline-separated statement's, so the check must be in it,
+        joined only by `&&` to the rest of that statement.
+        """
+        text = _FD_DUPLICATION.sub('', _SINGLE_QUOTED.sub("''", command))
+        statements = [statement for statement in _STATEMENT_SEPARATOR.split(text) if statement.strip()]
+        if not statements or _SHORT_CIRCUIT.search(text):
+            return False
+        steps = [_ASSIGNMENTS.sub('', step.strip(), count=1) for step in statements[-1].split('&&')]
+        if any(_MASKING.search(step) for step in steps):
             return False
         return any(pattern.match(step) for step in steps for pattern in self._verification)
 

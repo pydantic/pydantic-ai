@@ -6,19 +6,26 @@ import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from pathlib import Path
 
+import anyio
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
-from pydantic_ai.capabilities import Hooks, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, Hooks, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.tools import Tool
-from pydantic_ai_harness import DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS, FileSystem, RequireVerification, Shell
+from pydantic_ai_harness import (
+    DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS,
+    FileSystem,
+    RefineOutput,
+    RequireVerification,
+    Shell,
+)
 from pydantic_ai_harness.require_verification import CompletionUnverifiedEvent
 
 _SHELL = {'code_arg_language': 'shell', 'code_arg_name': 'command'}
@@ -61,7 +68,7 @@ def _agent(
     *turns: Turn,
     capability: RequireVerification[None] | None = None,
     outputs: Callable[[str], object] = lambda command: '(no output)',
-    extra: Sequence[Hooks[None]] = (),
+    extra: Sequence[AbstractCapability[None]] = (),
 ) -> Agent[None, str]:
     """An agent with real file tools and a `run_command` that returns `outputs(command)` instead of running it."""
 
@@ -160,6 +167,12 @@ class TestRequireVerification:
             "sed -E -i 's/1/2/' app.py",
             'echo 2 > app.py',
             'echo 2 >> app.py',
+            'git checkout -- src/',
+            'git stash pop',
+            'mv app.py main.py',
+            'rm app.py',
+            'bash -c "sed -i s/1/2/ app.py"',
+            "sh -c 'echo 2 > app.py'",
         ],
     )
     async def test_an_edit_command_makes_checks_stale(self, tmp_path: Path, command: str) -> None:
@@ -208,6 +221,8 @@ class TestRequireVerification:
             'uv run pytest 2>&1',
             'pytest -q > /dev/null 2>&1',
             "pytest -k 'parse|render'",
+            'cd pkg; uv run pytest',
+            'export CI=1\npytest -q\n',
         ],
     )
     async def test_recognizes_verification_commands(self, tmp_path: Path, command: str) -> None:
@@ -222,6 +237,9 @@ class TestRequireVerification:
             'git status',
             'pytest || true',
             'pytest; true',
+            'pytest; echo done',
+            'exit 0; pytest',
+            'cd pkg || exit; pytest',
             'pytest | tail -5',
             'pytest &',
             'pytest $(cat args)',
@@ -287,6 +305,74 @@ class TestRequireVerification:
         # The failed `pytest` passed when rerun; `pyright` failed until it too was rerun.
         assert result.output == 'Verified.'
         assert len(_redirects(result.new_messages())) == 1
+
+    async def test_a_rerun_still_running_replaces_an_earlier_pass(self, tmp_path: Path) -> None:
+        outputs = iter(['(no output)', 'PID: 7 (supervisor)\nOutput: /tmp/o\nStatus: /tmp/s'])
+        agent = _agent(
+            tmp_path,
+            _write(),
+            _run('pytest -q'),
+            _run('pytest -q'),
+            'Done.',
+            capability=RequireVerification(max_attempts=1),
+            outputs=lambda command: next(outputs),
+        )
+
+        result = await agent.run('Fix the bug')
+
+        assert _attempts(result.new_messages()) == [1]
+
+    async def test_a_check_raced_by_an_edit_in_the_same_response_is_stale(self, tmp_path: Path) -> None:
+        edited = anyio.Event()
+
+        async def run_command(command: str) -> str:
+            if command == 'pytest -q':
+                await edited.wait()
+                await anyio.wait_all_tasks_blocked()
+            else:
+                edited.set()
+            return '(no output)'
+
+        turns = iter(
+            [
+                [_write()],
+                [_run('pytest -q'), _run('ruff format .')],
+                [TextPart('Done.')],
+            ]
+        )
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=next(turns, [TextPart('done')]))
+
+        agent = Agent[None, str](
+            FunctionModel(model),
+            deps_type=type(None),
+            tools=[Tool(run_command, metadata=_SHELL)],
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), RequireVerification(max_attempts=1)],
+        )
+
+        result = await agent.run('Fix the bug')
+
+        # `pytest` started before `ruff format` changed the code, so its pass is stale.
+        assert _attempts(result.new_messages()) == [1]
+
+    async def test_the_unverified_end_is_reported_once_when_another_capability_continues_the_run(
+        self, tmp_path: Path
+    ) -> None:
+        events, hooks = _unverified()
+        agent = _agent(
+            tmp_path,
+            _write(),
+            'Done.',
+            'Revised.',
+            capability=RequireVerification(max_attempts=0),
+            extra=[hooks, RefineOutput()],
+        )
+
+        result = await agent.run('Fix the bug')
+
+        assert result.output == 'Revised.'
+        assert len(events) == 1
 
     async def test_attempts_are_bounded_and_the_unverified_end_is_reported(self, tmp_path: Path) -> None:
         events, hooks = _unverified()
@@ -420,7 +506,12 @@ class TestRequireVerification:
         ]
 
     async def test_long_repetitive_commands_are_matched_in_linear_time(self, tmp_path: Path) -> None:
-        commands = ['echo ' + 'sed ' * 16_000, 'echo ' + 'sed -sed ' * 8_000, 'make ' + 'x ' * 32_000]
+        commands = [
+            'echo ' + 'sed ' * 16_000,
+            'echo ' + 'sed -sed ' * 8_000,
+            'make ' + 'x ' * 32_000,
+            'echo ' + '1' * 32_000,
+        ]
         agent = _agent(tmp_path, *[_run(command) for command in commands], 'Done.')
 
         started = time.perf_counter()

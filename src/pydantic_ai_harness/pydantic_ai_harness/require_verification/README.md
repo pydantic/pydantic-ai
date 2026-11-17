@@ -29,7 +29,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[FileSystem(), Shell(), 
 
 `RequireVerification` records what the agent's tool calls do during a run:
 
-- An **edit** is a successful [`FileSystem`](../file_system/) `write_file` or `edit_file` call, recognized by its tool kind whatever it is named, or a shell command matching `edit_commands`, such as `ruff format .`, `sed -i`, or a `>` redirect. Edits to files matching `exempt_paths` don't count.
+- An **edit** is a successful [`FileSystem`](../file_system/) `write_file` or `edit_file` call, recognized by its tool kind whatever it is named, or a shell command matching `edit_commands`, such as `ruff format .`, `sed -i`, `git checkout`, `mv`, `rm`, an `sh -c` script, or a `>` redirect. Edits to files matching `exempt_paths` don't count.
 - A **check** is a shell command matching `verification_commands`, such as `pytest`, `uv run pyright`, `pnpm test`, or `cargo build`. The [`Shell`](../shell/) tool's result tells whether it passed.
 
 Each edit makes every earlier check result stale. When the run would end after an edit, and checks have run since then, the latest run of each must have passed. Otherwise a system prompt carrying `instructions` is added to the conversation and the model answers again, with its tools available. After `max_attempts` of these redirects in one run, the run ends anyway and reports it with a `CompletionUnverifiedEvent`.
@@ -55,14 +55,15 @@ RequireVerification(
 ## Recognizing commands
 
 - A command is read from the argument a tool's metadata names with `code_arg_name`, on tools whose metadata sets `code_arg_language='shell'`, as `Shell`'s `run_command` and `shell` tools do.
-- A command counts as a check when one of its `&&`-joined steps starts with a match for a `verification_commands` pattern, after any leading `NAME=value` assignments. A command with `;`, `|`, `||`, a background `&`, or a command substitution does not count, because the shell's exit status can then hide a failed check. File-descriptor duplications such as `2>&1`, and text in single quotes, are ignored for this.
+- A command's exit status is that of its last `;`- or newline-separated statement, so a command counts as a check when one of the `&&`-joined steps of that statement starts with a match for a `verification_commands` pattern, after any leading `NAME=value` assignments. `cd pkg; pytest` counts, and `pytest; echo done` does not. A statement with `|`, `||`, a background `&`, or a command substitution does not count, and neither does a command with `exit`, `exec`, or `return`, because the exit status can then hide a failed check. File-descriptor duplications such as `2>&1`, and text in single quotes, are ignored for this.
 - A command counts as an edit when an `edit_commands` pattern matches anywhere in it outside quoted strings. The default `>` pattern skips `->`, `>&`, and redirections to `/dev/null`. An edit command is not also a check, so `ruff check --fix` makes earlier checks stale and leaves the run with none.
-- A check passed when `run_command` reports no `[exit code: N]`, timeout, or file-size limit notice, or when the `shell` tool reports an `exit_code` of `0`. A command started with `start_command` or the `shell` tool's background mode, or still running when the `shell` tool returns, never counts as a check, even after it finishes. Run checks in the foreground.
+- A check passed when `run_command` reports no `[exit code: N]`, timeout, or file-size limit notice, or when the `shell` tool reports an `exit_code` of `0`. A command started with `start_command` or the `shell` tool's background mode, or still running when the `shell` tool returns, never counts as a check, even after it finishes, and clears the result of an earlier run of the same command. Run checks in the foreground.
+- Calls from one model response run in parallel. A check that started before an edit in another call finished records no result, as it may have checked the code from before the edit.
 - Commands outside `edit_commands` are not edits. Extend it with the commands your agent uses to change files, such as a code generator.
 
 ## Ending unverified
 
-- A run that ends after every redirect is used emits a `CompletionUnverifiedEvent` with the number of `attempts` and the `failed_commands`, the checks whose latest run since the last edit failed. Listen for it with [`Hooks`](https://pydantic.dev/docs/ai/core-concepts/hooks/) to fail a CI job or flag the result:
+- The first time the run would end unverified after every redirect is used, it emits a `CompletionUnverifiedEvent` with the number of `attempts` and the `failed_commands`, the checks whose latest run since the last edit failed. Listen for it with [`Hooks`](https://pydantic.dev/docs/ai/core-concepts/hooks/) to fail a CI job or flag the result:
 
 ```python
 from pydantic_ai import Agent, RunContext
@@ -82,7 +83,7 @@ async def record(ctx: RunContext[None], event: CompletionUnverifiedEvent) -> Non
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[FileSystem(), Shell(), RequireVerification(), hooks])
 ```
 
-- The event is dispatched immediately, so listeners get it before the run returns. It is not recorded in the message history.
+- The event is dispatched immediately, so listeners get it before the run returns. It is emitted at most once per run, even when another capability, such as `RefineOutput`, continues the run after it. It is not recorded in the message history.
 - With `max_attempts=0` the agent is never sent back, and an unverified run only emits the event.
 
 ## Redirects

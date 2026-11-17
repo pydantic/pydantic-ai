@@ -907,7 +907,7 @@ shell command matching `edit_commands`) and the latest run of every check since 
 matching `verification_commands`) did not pass, adds a system prompt telling the model to run its checks or
 explain the blocker. Up to `max_attempts=2` times per run; after that the run ends and emits a
 `CompletionUnverifiedEvent` (`attempts`, `failed_commands`), dispatched immediately so `Hooks.on.event`
-listeners get it before the run returns.
+listeners get it before the run returns; at most once per run.
 
 ```python
 from pydantic_ai import Agent
@@ -919,10 +919,14 @@ agent = Agent('test', capabilities=[FileSystem(), Shell(), RequireVerification()
 
 - Any edit makes every earlier check stale. Edits to `exempt_paths` (`*.md`, `*.mdx`, `*.rst`) don't count.
 - Commands come from tools whose metadata sets `code_arg_language='shell'` and `code_arg_name`, as
-  `Shell`'s do. A check is an `&&`-joined step starting with a `verification_commands` match; `;`, `|`,
-  `||`, background `&`, and command substitution disqualify it (`2>&1` and single-quoted text are ignored). Pass/fail is read from `Shell`'s
-  `[exit code: N]`/timeout/file-limit trailer or the `shell` tool's `exit_code`; a background or still-running command never counts. `edit_commands` match outside quotes; the default `>`
-  pattern skips `->`, `>&`, and `/dev/null`.
+  `Shell`'s do. A check is an `&&`-joined step of the last `;`/newline statement that starts with a
+  `verification_commands` match (`cd pkg; pytest` counts, `pytest; echo done` does not). `|`, `||`,
+  background `&`, command substitution, and `exit`/`exec`/`return` disqualify it; `2>&1` and single-quoted
+  text are ignored. Pass/fail is read from `Shell`'s `[exit code: N]`/timeout/file-limit trailer or the
+  `shell` tool's `exit_code`; a background or still-running command never counts and clears that
+  command's earlier result. A check that an edit in a parallel call of the same response overtook
+  records nothing. `edit_commands` match outside quotes (defaults include formatters, `--fix`, `sed -i`,
+  `git checkout`/`stash`/..., `mv`/`cp`/`rm`, `sh -c`, and `>` except `->`, `>&`, `/dev/null`).
 - The redirect is a `SystemPromptPart`; find it by
   `metadata['origin'] == 'pydantic-ai-harness.require_verification.v1'` (with `attempt`), never by text.
 - State is per run (`for_run`); hooks run in workflow code under Temporal, DBOS, and Prefect. Skipped like
