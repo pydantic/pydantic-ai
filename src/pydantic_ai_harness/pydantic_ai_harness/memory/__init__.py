@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pydantic_ai_harness._warn import warn_class_renamed
-from pydantic_ai_harness.memory._capability import Memory, WriteMetadataFunc
+from pydantic_ai_harness.memory._capability import Memory, MemorySnapshotPart, WriteMetadataFunc
 from pydantic_ai_harness.memory._file import FileMemoryStore
 from pydantic_ai_harness.memory._in_memory import InMemoryMemoryStore
 from pydantic_ai_harness.memory._postgres import PostgresConnection, PostgresMemoryStore, PostgresPool
@@ -46,6 +46,7 @@ __all__ = [
     'MemorySearchMatchResult',
     'MemorySearchResponse',
     'MemorySearchResult',
+    'MemorySnapshotPart',
     'MemoryStore',
     'MemoryToolset',
     'MemoryWriteResult',
