@@ -98,7 +98,7 @@ class DaytonaProvider:
                 await sandbox.set_labels({**sandbox.labels, SECRET_LABEL: secret.id})
         except BaseException:
             with anyio.CancelScope(shield=True):
-                # Each in its own `finally`, so the secret, which holds the token, goes even if the sandbox does not.
+                # The secret, which holds the token, first, so it goes even if deleting the sandbox fails.
                 try:
                     if secret is not None:
                         await _delete_secret(client, secret.id)

@@ -1254,7 +1254,7 @@ async def test_a_provider_that_puts_the_token_in_the_sandbox_says_so(checkout: P
     [request] = [message for message in result.new_messages() if isinstance(message, ModelRequest)]
     assert (
         'signed in to GitHub as the user, with a token saved in the sandbox, which anything run there can read; '
-        'leave GH_TOKEN unset. Never run `gh auth login`.'
+        'leave GH_TOKEN unset. Otherwise the copy has no GitHub access and no origin remote. Never run `gh auth login`.'
     ) in (request.instructions or '')
 
 

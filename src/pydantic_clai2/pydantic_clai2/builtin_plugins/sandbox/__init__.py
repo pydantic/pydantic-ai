@@ -99,14 +99,15 @@ class _ConversationSandbox(ConversationWorkspace[None]):
         return (
             f'Your shell and file tools run in a {provider.title} sandbox. {provider.working_dir} '
             "is a copy of the user's checkout, made when this conversation started; the user sees changes there "
-            'only once they are pushed. git, and gh if it is installed, are signed in to GitHub as the user'
+            'only once they are pushed. If the user had a gh login when the sandbox was made, git, and gh if it is '
+            'installed, are signed in to GitHub as the user'
             + (
                 ', with a token saved in the sandbox, which anything run there can read; leave GH_TOKEN unset. '
                 if provider.token_in_sandbox
                 else ' through a proxy outside the sandbox, so the sandbox holds only a stand-in for the token, '
                 'which the proxy replaces. '
             )
-            + 'Never run `gh auth login`.'
+            + 'Otherwise the copy has no GitHub access and no origin remote. Never run `gh auth login`.'
         )
 
     def get_toolset(self) -> FunctionToolset[None] | None:
@@ -290,12 +291,6 @@ class SandboxPlugin(Plugin):
             with anyio.CancelScope(shield=True):
                 await sandbox.close()
 
-
-_HOW_SIGNED_IN = {
-    False: ' through a proxy outside the sandbox, so the sandbox holds only a stand-in for the token, which the proxy replaces',
-    True: ', with a token saved in the sandbox, which anything run there can read; leave GH_TOKEN unset',
-}
-"""How the instructions say the sandbox is signed in, by `SandboxProvider.token_in_sandbox`."""
 
 _SET_BY_CLAI = frozenset({'GH_TOKEN', *SANDBOX_ENV})
 """What `request_env` refuses: `GH_TOKEN` is CLAI's GitHub login (a proxy's stand-in, or unset so the saved token is used)."""

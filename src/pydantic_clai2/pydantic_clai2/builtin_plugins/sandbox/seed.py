@@ -172,7 +172,7 @@ def clone_script(snapshot: Snapshot) -> str:
         'git config --global url.https://github.com/.insteadOf git@github.com:',
         'git config --global --add url.https://github.com/.insteadOf ssh://git@github.com/',
         # A proxy provider sets `GH_TOKEN` to a stand-in its proxy replaces, or replaces the whole header; any other
-        # leaves `GH_TOKEN` unset and has written the token to `GITHUB_TOKEN_FILE`.
+        # leaves `GH_TOKEN` unset, and `/sandbox` writes the token to `GITHUB_TOKEN_FILE`.
         'git config --global credential.https://github.com.helper '
         + shlex.quote(
             '!f() { echo username=x-access-token; '

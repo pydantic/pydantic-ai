@@ -2854,7 +2854,7 @@ it. A fork or copy of the conversation uses the same sandbox, and stops working 
 
 `git` and `gh` in the sandbox act as your `gh` login, so the agent can push and open pull requests.
 Each sandbox gets the token `gh` has when you run `/sandbox`, and loses it when the sandbox is deleted.
-Without a `gh` login, the sandbox has no GitHub access.
+Without a `gh` login, the sandbox has no GitHub access, and its copy has no `origin` remote.
 
 | Provider | Install extra | Keys | Where your GitHub token is | Who can read it | Keys the agent asks for (`request_env`) |
 |---|---|---|---|---|---|
