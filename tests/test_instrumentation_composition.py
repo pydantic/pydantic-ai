@@ -4,6 +4,9 @@
 class path of the nearest Pydantic AI or Harness class, so a backend can index which classes a run
 used by key alone; `pydantic_ai.active_capabilities` on each model request span lists the ids
 active on that step.
+
+These are unit tests rather than VCR tests: the claims are about attributes recorded on the spans of
+in-memory model runs, which no provider exchange captures.
 """
 
 from __future__ import annotations

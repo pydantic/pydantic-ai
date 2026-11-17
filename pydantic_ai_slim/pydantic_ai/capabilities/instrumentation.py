@@ -475,7 +475,7 @@ class Instrumentation(AbstractCapability[Any]):
             message_json_cache=self._message_json_cache,
             defer_request_attributes=True,
         ) as (finish, _):
-            self._record_step_composition(ctx)
+            self._record_step_composition(ctx, request_context)
             captured_response: ModelResponse | None = None
             captured_time_to_first_chunk: float | None = None
 
@@ -519,11 +519,12 @@ class Instrumentation(AbstractCapability[Any]):
                 self._record_cache_health(request_context, response, segments)
                 return response
 
-    def _record_step_composition(self, ctx: RunContext[Any]) -> None:
+    def _record_step_composition(self, ctx: RunContext[Any], request_context: ModelRequestContext) -> None:
         """Note this step's active capabilities on its model request span, and its toolsets for the run span."""
         include_content = self.settings.include_content
         toolset = ctx.tool_manager.toolset if ctx.tool_manager is not None else None
-        url_ids = mcp_telemetry_url_ids(ctx.capabilities.values(), toolset)
+        # The ids the graph derived for this request's parameters, so per-step and run-end attributes share one source.
+        url_ids = model_request_telemetry_url_ids(request_context.model_request_parameters)
         active_ids = ctx.active_capability_ids
         self._active_capability_ids |= active_ids
         # An agent run always has a tool manager by its first model request; the type allows a run context without one.
