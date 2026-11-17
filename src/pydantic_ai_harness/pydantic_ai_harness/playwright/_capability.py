@@ -255,8 +255,10 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     signed in to that browser: attach it to a profile dedicated to the agent, not
     an everyday browser. Only tabs showing an `http(s)` page, `about:blank` or
     Chromium's error page are adopted: any other tab, such as the browser's own
-    start page, is never listed, read or closed, whatever the policy. Loaded tab
-    and frame URLs must pass the egress policy
+    start page, is never listed, read or closed, whatever the policy. When a
+    tracked tab moves to such a page, the call that finds it returns an error
+    naming the page and the agent stops using that tab, which stays open in the
+    browser. Loaded tab and frame URLs must pass the egress policy
     before handlers are attached and before tools read or act on a page. Egress
     guards and native session handlers still apply, and documents loaded while
     attached cannot register service workers. Downloads follow the browser's own

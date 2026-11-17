@@ -536,6 +536,13 @@ class _FakePage:
             self.popup_events.append(event)
             self.popup_handlers.append(handler)
 
+    def remove_listener(self, event: str, f: Callable[..., object]) -> None:
+        # Strict like Playwright's emitter: removing a handler that was never added fails.
+        kept = [handler for handler in self.handlers[event] if handler != f]
+        assert len(kept) < len(self.handlers[event]), f'{f!r} was never added for {event!r}'
+        self.handlers[event] = kept
+        self.popup_handlers = [handler for handler in self.popup_handlers if handler != f]
+
     def emit(self, event: str, payload: object) -> None:
         """Deliver a page event the way Playwright's receive loop would."""
         for handler in self.handlers.get(event, []):
@@ -2559,18 +2566,56 @@ class TestPlaywrightBrowserLifecycle:
         assert browser is not None and len(browser.contexts[0].pages) == 9
         assert not start.closed and not start.handlers
 
+    @pytest.mark.parametrize('tabs', [1, 2], ids=['last_tab', 'another_tab_left'])
     @pytest.mark.parametrize('policy', _POLICIES_FOR_BROWSER_PAGES)
-    async def test_default_context_names_a_tab_that_moved_to_a_page_outside_the_web(self, policy: EgressPolicy) -> None:
+    async def test_default_context_stops_using_an_active_tab_that_moved_off_the_web(
+        self, monkeypatch: pytest.MonkeyPatch, policy: EgressPolicy, tabs: int
+    ) -> None:
         page = _FakePage(url='https://example.com/', body='Allowed content')
+        cm = _install_fake_driver(monkeypatch, page)
+        _populate_default_context(monkeypatch, tabs=tabs)
         session = PlaywrightBrowserSession(cdp_url='http://localhost:9222', cdp_context='default', policy=policy)
         async with session:
-            tools = _toolset(page, session=session)
+            tools = PlaywrightBrowserToolset[None](session=session)
             assert await tools.get_text() == 'Allowed content'
             page.url = 'chrome://version/'
             result = await tools.get_text()
-        assert 'showing a page the agent cannot read: chrome://version/' in result
-        assert 'Close that tab in the provider browser' in result
-        assert 'blocked by the browser policy' not in result
+            assert 'showing a page the agent cannot read: chrome://version/' in result
+            assert 'The agent stops using that tab, which stays open in the browser' in result
+            assert 'blocked by the browser policy' not in result
+            # The next call works: on the other tab, or on a blank one opened because none was left.
+            assert await tools.get_text() == 'Hello body'
+            browser = cm.driver.chromium.browser
+            assert browser is not None
+            context = browser.contexts[0]
+            assert len(context.pages) == 2 and session.pages == [context.pages[1]]
+        assert not page.closed and page.goto_calls == [] and not any(page.handlers.values())
+        assert page.url == 'chrome://version/'
+
+    async def test_default_context_stops_using_a_popup_that_lands_off_the_web(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A site's receipt preview: `window.open(URL.createObjectURL(blob))` opens a top-level `blob:` tab,
+        # which Chromium allows, and the session adopts it as a popup.
+        shop = _FakePage(url='https://example.com/', title='Shop', body='Order 42')
+        _install_fake_driver(monkeypatch, shop)
+        _populate_default_context(monkeypatch, tabs=2)
+        session = PlaywrightBrowserSession(cdp_url='http://localhost:9222', cdp_context='default')
+        async with session:
+            tools = PlaywrightBrowserToolset[None](session=session)
+            assert await tools.get_text() == 'Order 42'
+            receipt = _FakePage(url='blob:https://example.com/receipt', title='RECEIPT', body='RECEIPT')
+            shop.emit('popup', receipt)
+            assert session.pages[-1] is receipt and receipt.handlers
+            refused = await tools.tabs()
+            assert 'showing a page the agent cannot read: blob:https://example.com/receipt' in refused
+            listed = await tools.tabs()
+            assert 'RECEIPT' not in listed and 'blob:' not in listed
+            assert listed.startswith('0 (active): Shop -- https://example.com/') and '1: ' in listed
+            assert await tools.tabs('close', 1) == 'Closed tab 1. Active tab is now 0.'
+            assert 'Order 42' in str(await tools.navigate('https://example.com/orders'))
+            assert session.pages == [shop]
+        assert not receipt.closed and receipt.goto_calls == [] and not any(receipt.handlers.values())
 
     async def test_cdp_url_function_is_lazy_and_called_once_per_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cm = _install_fake_driver(monkeypatch, _FakePage())

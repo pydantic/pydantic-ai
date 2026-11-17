@@ -319,6 +319,7 @@ class _Page(Protocol):
 
     @property
     def url(self) -> str: ...  # pragma: no cover
+    def remove_listener(self, event: str, f: Callable[..., object]) -> None: ...  # pragma: no cover
     @property
     def mouse(self) -> _Mouse: ...  # pragma: no cover
     @property
@@ -1273,8 +1274,40 @@ class PlaywrightBrowserSession:
             if self.page is None:
                 raise BrowserUnavailableError('Browser failed to launch.')  # pragma: no cover
         if self._cdp_context == 'default':
+            await self._leave_tabs_off_the_web()
             await self._validate_default_context_pages(self.pages)
         return self.page
+
+    async def _leave_tabs_off_the_web(self) -> None:
+        """Stop using every tracked tab that moved off the web, and refuse the call that found one.
+
+        The tab is neither navigated nor closed: in the default context it can be the
+        profile owner's, so it stays open in the browser, unwired and unlisted, the way
+        attaching leaves such a tab out. The active tab moves to another tracked one, or
+        to a new blank tab when none is left, so the next call works.
+        """
+        left = [page for page in self.pages if self._is_off_web(page.url)]
+        if not left:
+            return
+        for page in left:
+            # Every listener `_wire_page` added, so the tab reports nothing more.
+            for event, handler in (
+                ('popup', self._on_popup),
+                ('console', self._on_console),
+                ('pageerror', self._on_page_error),
+                ('response', self._on_response),
+                ('requestfailed', self._on_request_failed),
+                ('dialog', self._on_dialog),
+                ('close', self._on_page_closed),
+            ):
+                page.remove_listener(event, handler)
+            # The same bookkeeping as a tab that closed.
+            self._on_page_closed(page)
+        if not self.pages:
+            await self._bounded(self.open_tab())
+        raise BrowserUnavailableError(
+            self._off_web_tab_message(', '.join(_without_credentials(page.url) for page in left))
+        )
 
     async def _validate_default_context_pages(self, pages: Sequence[_Page]) -> None:
         """Check loaded documents before listeners or tools can expose their contents.
@@ -1312,11 +1345,8 @@ class PlaywrightBrowserSession:
             # inline subframe's document came from a page this check covers, not a request.
             return
         if top_level and self._is_off_web(frame.url):
-            raise BrowserUnavailableError(
-                f'A tab in the default CDP context is showing a page the agent cannot read: '
-                f'{_without_credentials(frame.url)}. Close that tab in the provider browser, or navigate it '
-                'to an allowed URL, then retry.'
-            )
+            # Reached when the URL arrived during the wait above: the next call leaves the tab out.
+            raise BrowserUnavailableError(self._off_web_tab_message(_without_credentials(frame.url)))
         document = EgressRequest(url=frame.url, kind='navigation' if top_level else 'subframe', top_level=top_level)
         if (reason := await self.decide(document)) is None:
             return
@@ -1393,6 +1423,14 @@ class PlaywrightBrowserSession:
             self._wire_page(page)
             self.pages.append(page)
         self.page = pages[0]
+
+    @staticmethod
+    def _off_web_tab_message(urls: str) -> str:
+        """The error for a default-context tab found showing a page outside the web."""
+        return (
+            f'A tab in the default CDP context is showing a page the agent cannot read: {urls}. The agent '
+            'stops using that tab, which stays open in the browser. Retry the call.'
+        )
 
     @staticmethod
     def _is_off_web(url: str) -> bool:

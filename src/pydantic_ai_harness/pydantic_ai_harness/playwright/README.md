@@ -303,9 +303,11 @@ Only tabs showing an `http(s)` page, `about:blank` or Chromium's error page are
 adopted. Any other tab, such as the browser's own `chrome://newtab/` start page,
 an extension page, or a `file:`, `data:` or `blob:` document, is left out
 whatever the policy: Pydantic AI does not list, read, navigate or close it, or
-count it toward the eight tabs, and opens a blank tab when no other is left. A
-tab that moves to such a page while attached returns a tool error naming the
-page until it is navigated or closed. That includes a page the agent opens
+count it toward the eight tabs, and opens a blank tab when no other is left. When
+a tab moves to such a page while attached, such as a site's `blob:` receipt
+popup, the call that finds it returns a tool error naming the page, and the
+agent stops using that tab, which stays open in the browser. The next call works
+on another tab, or on a new blank one. That includes a page the agent opens
 itself: under a policy that admits `chrome://` URLs, `navigate` still opens one
 and returns its text ([#13698](https://github.com/pydantic/pydantic-ai/issues/13698)).
 
