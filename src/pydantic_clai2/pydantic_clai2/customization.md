@@ -546,8 +546,10 @@ class Where(Plugin):
         return (lambda: self.host.workspace.name,)
 ```
 
-The fragment is appended after the built-in figures and painted muted. The row
-repaints about ten times a second while CLAI works and once a second while idle,
+Fragments form the main footer's `plugins` group and are painted muted. Users
+control the group's position and visibility with `display.footer_fields`; see the
+[status-line reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#status-line).
+The row repaints about ten times a second while CLAI works and once a second while idle,
 so it runs that often: no blocking IO, no awaits, no printing. Return an empty
 string to contribute nothing that frame. Fragments are truncated from the right
 on narrow terminals and cannot set their own colours. get_status_segments adds

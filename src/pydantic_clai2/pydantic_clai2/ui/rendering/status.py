@@ -73,7 +73,7 @@ class Status:
     streamed_chars: int = 0
     activity: str = 'ready'
     status_segments: tuple[StatusSegment, ...] = ()
-    """Plugin fragments appended after the built-in figures; the shell fills this in each turn."""
+    """Fragments in the main footer's configurable `plugins` group; the shell fills this in each turn."""
     agent: str = ''
     """The subagent these figures belong to, painted before the model; empty for the main conversation."""
     subagent: 'Callable[[], Status | None]' = lambda: None
