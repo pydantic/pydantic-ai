@@ -12,12 +12,15 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from pydantic import JsonValue
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import (
     DataCapabilityPart,
     InstructionCapabilityPart,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
@@ -253,3 +256,14 @@ HISTORIES: list[HistoryCase] = [
         'code-loaded-capability-across-instruction-windows', _code_loaded_capability_across_instruction_windows
     ),
 ]
+
+
+def message_json(message: ModelMessage) -> dict[str, JsonValue]:
+    """`message` as JSON, without what no adapter sends: timestamps, metadata, and a request's `instructions`, its
+    system prompt, which adapters read from the trailing request alone."""
+    [dumped] = ModelMessagesTypeAdapter.dump_python([message], mode='json')
+    for key in ('instructions', 'timestamp', 'metadata'):
+        dumped.pop(key, None)
+    for part in dumped['parts']:
+        part.pop('timestamp', None)
+    return dumped

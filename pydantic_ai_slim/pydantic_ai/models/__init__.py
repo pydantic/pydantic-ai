@@ -2331,6 +2331,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     )
     """The passes `Model.prepare_messages` runs, in order.
 
+    Each entry holds the `Model` function itself, so overriding a `_*_pass` method in a subclass has no effect: override
+    the hooks a pass calls, such as `_note_lookalike_frames` or `_render_tool_availability_deltas`, instead.
+
     `tests/test_projection_passes.py` checks the declarations against what each pass does, and that no pass drops a
     kind a later pass reads.
     """

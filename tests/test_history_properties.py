@@ -53,7 +53,7 @@ from pydantic_ai.models import (
 )
 
 from .conftest import try_import
-from .history_cases import HISTORIES, HistoryCase
+from .history_cases import HISTORIES, HistoryCase, message_json
 from .history_invariants import (
     WireBlock,
     WireMessage,
@@ -856,17 +856,6 @@ class Rendered:
     request_scoped_tail: int
     """How many of the trailing request's last parts are request-scoped prompts, which later requests drop."""
     body: list[JsonValue]
-
-
-def message_json(message: ModelMessage) -> dict[str, JsonValue]:
-    """`message` as JSON, without what no adapter sends: timestamps, metadata, and a request's `instructions`, its
-    system prompt, which adapters read from the trailing request alone."""
-    [dumped] = ModelMessagesTypeAdapter.dump_python([message], mode='json')
-    for key in ('instructions', 'timestamp', 'metadata'):
-        dumped.pop(key, None)
-    for part in dumped['parts']:
-        part.pop('timestamp', None)
-    return dumped
 
 
 async def _render(case: MapperCase, history: list[ModelMessage]) -> Rendered:

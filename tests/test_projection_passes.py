@@ -22,8 +22,8 @@ from pydantic_ai.models import (
     _ProjectionPass,  # pyright: ignore[reportPrivateUsage]
 )
 
-from .history_cases import HistoryCase
-from .test_history_properties import MapperCase, history_case_params, message_json
+from .history_cases import HistoryCase, message_json
+from .test_history_properties import MapperCase, history_case_params
 
 PROJECTION_PASSES = Model._PROJECTION_PASSES  # pyright: ignore[reportPrivateUsage]
 
@@ -31,8 +31,6 @@ REMOVED_KINDS: frozenset[_PartKind] = frozenset(
     kind for projection_pass in PROJECTION_PASSES for kind in projection_pass.consumes | projection_pass.drops
 )
 """The part kinds some pass consumes or drops: the ones whose readers the declarations have to name."""
-
-KNOWN_ORDER_FINDINGS: list[tuple[str, str, str]] = []
 
 
 def _reads(projection_pass: _ProjectionPass) -> frozenset[_PartKind]:
@@ -46,7 +44,7 @@ def test_no_pass_drops_a_kind_a_later_pass_reads():
         for later in PROJECTION_PASSES[index + 1 :]
         for kind in sorted(earlier.drops & _reads(later), key=lambda kind: kind.__name__)
     ]
-    assert violations == KNOWN_ORDER_FINDINGS
+    assert violations == []
 
 
 def test_pass_names_are_unique():
