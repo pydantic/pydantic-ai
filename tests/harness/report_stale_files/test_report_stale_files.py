@@ -253,7 +253,8 @@ class TestReportStaleFiles:
         assert _notices(result.all_messages())[-1] == [f'{CHANGED}\n- `newer.txt`']
 
     async def test_files_that_exactly_fill_the_byte_budget_are_all_checked(self, tmp_path: Path) -> None:
-        names = ('older.txt', 'newer.txt')
+        """The two most recently read files fill the budget, so the oldest isn't checked on that request."""
+        names = ('oldest.txt', 'older.txt', 'newer.txt')
         for name in names:
             (tmp_path / name).write_text('one\n')
 
