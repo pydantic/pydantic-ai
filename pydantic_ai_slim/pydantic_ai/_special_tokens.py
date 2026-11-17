@@ -341,6 +341,8 @@ class StreamRestorer:
         default_factory=dict[int, _StreamedTextRestorer | _StreamedArgsRestorer]
     )
     args_parts: set[int] = field(default_factory=set[int])
+    tool_call_ids: dict[int, str] = field(default_factory=dict[int, str])
+    """Each tool call's id, for the delta that sends its held arguments: UI adapters need it on every delta."""
 
     def restore(self, event: ModelResponseStreamEvent) -> ModelResponseStreamEvent:
         if isinstance(event, PartStartEvent):
@@ -354,6 +356,7 @@ class StreamRestorer:
         if isinstance(part, TextPart):
             return replace(event, part=replace(part, content=self._text_restorer(event.index).feed(part.content)))
         if isinstance(part, ToolCallPart):
+            self.tool_call_ids[event.index] = part.tool_call_id
             if isinstance(part.args, str):
                 return replace(event, part=replace(part, args=self._args_restorer(event.index).feed(part.args)))
             return replace(event, part=_restore_part(part))
@@ -366,6 +369,8 @@ class StreamRestorer:
                 event, delta=replace(delta, content_delta=self._text_restorer(event.index).feed(delta.content_delta))
             )
         if isinstance(delta, ToolCallPartDelta):
+            if delta.tool_call_id is not None:
+                self.tool_call_ids[event.index] = delta.tool_call_id
             if isinstance(delta.args_delta, str):
                 args_delta = self._args_restorer(event.index).feed(delta.args_delta)
                 return replace(event, delta=replace(delta, args_delta=args_delta))
@@ -416,7 +421,7 @@ class StreamRestorer:
         for index, restorer in self.restorers.items():
             if include(index) and (held := restorer.flush()):
                 delta = (
-                    ToolCallPartDelta(args_delta=held)
+                    ToolCallPartDelta(args_delta=held, tool_call_id=self.tool_call_ids.get(index))
                     if index in self.args_parts
                     else TextPartDelta(content_delta=held)
                 )

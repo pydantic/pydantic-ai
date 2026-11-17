@@ -37,6 +37,8 @@ classifiers = [
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
     "pydantic-ai-harness[coder,skills]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
+    # Direct `httpx` use in `pydantic-clai2` until its own `httpx2` migration; the harness no longer installs it.
+    "httpx>=0.28.1",
     # The `skills` extra's dependency, declared directly as well: `/update` to `main` runs the old build,
     # whose uv overrides replace the harness requirement with its own extras, so an extra added since is
     # dropped. Without PyYAML the `coder` plugin, which imports `pydantic_ai_harness.skills`, fails to load.

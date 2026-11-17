@@ -14,7 +14,23 @@ Re-inject behavioral guidance mid-run to counter instruction fade -- without mov
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/system_reminders/)
 
-![SystemReminders runs in the before_model_request hook. A Reminder with interval=3 fires on requests 3 and 6. When it fires, the reminder is added at the tail of that request, after the cache breakpoint, so the cached prefix of tools, instructions and conversation is reused. The next request does not show it again.](https://pydantic.dev/docs/ai/img/harness/system-reminders.svg)
+```mermaid
+flowchart TB
+    accTitle: System Reminders: restate guidance late in a long run
+    accDescr: The agent loop fills each model request with a cached prefix of tools, instructions and conversation. Before each request, the SystemReminders capability runs in before_model_request, and a Reminder(interval=3) adds a reminder on requests 3 and 6. The reminder sits at the tail of the request, after the cache breakpoint, for that request only, and the request goes to the model.
+    loop["agent loop"]
+    cap["SystemReminders()<br/>before_model_request"]:::capability
+    subgraph request["Model request"]
+        prefix["cached prefix<br/>tools, instructions,<br/>conversation"]
+        tail["reminder at the tail,<br/>after cache breakpoint,<br/>this request only"]:::capability
+    end
+    model(["model"])
+    loop --> prefix
+    loop -->|"before each request"| cap
+    cap -.->|"Reminder(interval=3):<br/>on requests 3 and 6"| tail
+    request --> model
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The problem
 
@@ -61,6 +77,7 @@ A `Reminder` fires on a cadence within a run:
 | `max_fires` | Cap the number of fires per run. `None` = no limit. |
 | `tag` | Also wrap the content in `<tag>\ncontent\n</tag>`. `None` sends the raw content. Left unset, it's `None` and warns that the default changed. |
 | `scope` | `'request'` (the default) shows each firing for its own request only; `'conversation'` keeps it in front of the model for the rest of the conversation. See [Lasting reminders](#lasting-reminders). |
+| `skip_unchanged` | Skip a firing while a copy of the same text is still in the history the model sees. Requires `scope='conversation'`. See [Lasting reminders](#lasting-reminders). |
 
 A request-scoped reminder, the default, adds recency; it doesn't keep a rule in force. The model sees each firing only in the request it fires on, so with `interval>1` it sees the reminder on the requests where it fires and not on the ones in between, and a `trigger` or `max_fires` narrows that further. Text the model must follow at every step belongs in the agent's [instructions](https://pydantic.dev/docs/ai/core-concepts/agent/#instructions), which every request sends. Guidance it must still act on several steps after a firing can be a [lasting reminder](#lasting-reminders).
 
@@ -89,6 +106,8 @@ SystemReminders(
 ```
 
 Each firing adds a `SystemPromptPart` to the message history for good, and every later request sends all of them again. So the history grows by one part per firing: with `interval=N`, a run of R requests gains `R // N` copies, and with the default `interval=1`, one on every request. The copies are appended and never moved, so the cached prefix holds, and with caching turned on for your model each earlier copy is read from cache. Use `interval` and `max_fires` to bound the growth: `max_fires=1` records the reminder once per run.
+
+To keep one copy instead of one per firing, set `skip_unchanged=True`. A firing is skipped while a lasting copy of the same text is still in the history the model sees, from the latest native compaction boundary on, so chained runs that pass the history along don't add a copy each. Once compaction drops the copy, or the text changes, the next firing records it again. The check reads the history as `SystemReminders` sees it, so list a `ProcessHistory` or compaction capability that drops messages before `SystemReminders`.
 
 Choose the scope by what the text has to do:
 
@@ -171,6 +190,15 @@ Only a direct entry takes that route. Two shapes do not:
 
 Without a durability engine, generation runs directly in all three cases, with the same fallback to
 `GoalReanchor` on error.
+
+### `LLMReminder` or `TrajectoryJudge`
+
+[Trajectory Judge](../trajectory_judge/) also has a second model read the run and adds its text to the conversation, framed the same way: a fixed note in system voice and the generated text as data on the user channel. They differ in what that model is asked and when its text is added:
+
+- `LLMReminder` restates the goal on every firing, whether or not the run has drifted. It's generated before the request it goes out with, so each firing adds that model call's latency, and it reads a compact transcript of the goal and recent messages. On error it sends `GoalReanchor` text instead.
+- `TrajectoryJudge` asks whether the run is on track and adds nothing to the history when it is. Outside durable execution it runs alongside the agent, so it adds no latency, and it reads the opening request and the most recent activity within `window` tokens, tool calls and results included. An evaluation error is raised on the run, so give it an `agent` with a fallback model if it should degrade instead.
+
+Use `LLMReminder` for a regular, model-written refresher of the goal, and `TrajectoryJudge` to correct a run only when it goes off course. For plain goal re-anchoring with no model call, use `GoalReanchor`.
 
 ## Observing reminders
 

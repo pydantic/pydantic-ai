@@ -1,4 +1,4 @@
-"""How `OpenAIChatModel` and the model classes that validate with its `_ChatCompletion` read a Chat Completions `finish_reason`."""
+"""How `OpenAIChatModel` and the model classes that validate with its `LenientChatCompletion` read a Chat Completions `finish_reason`."""
 
 from __future__ import annotations as _annotations
 
