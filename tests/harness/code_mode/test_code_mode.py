@@ -2295,15 +2295,13 @@ class TestCodeMode:
         assert 'delete_file' not in declared[0]
         assert ('delete_file' in declared[-1]) is not sandboxed
         announced = [
-            part.metadata
+            part.tools
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, SystemPromptPart) and part.metadata
+            if isinstance(part, DiscoveryAnnouncementPart)
         ]
-        assert announced == (
-            [{'origin': 'pydantic-ai-harness.code_mode.discovery.v1', 'tools': ['delete_file']}] if sandboxed else []
-        )
+        assert announced == ([('delete_file',)] if sandboxed else [])
 
     async def test_tool_without_return_schema_warns(self) -> None:
         """A sandboxed tool with no return_schema triggers a one-time warning."""
