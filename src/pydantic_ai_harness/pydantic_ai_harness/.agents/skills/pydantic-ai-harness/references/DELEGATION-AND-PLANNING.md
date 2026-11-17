@@ -462,8 +462,8 @@ custom = Agent('test', capabilities=[AdaptiveReasoning(select=by_step)])
 
 Gotchas:
 
-- `select` replaces the default policy; `ctx.messages[-1]` is the request about to be sent, and
-  returning `None` leaves `thinking` as other layers set it. Keep it deterministic for durable replay.
+- `select` replaces the default policy; the last `ModelRequest` in `ctx.messages` is the one the step
+  answers (a resumed paused turn ends in a suspended `ModelResponse`), and returning `None` leaves `thinking` as other layers set it. Keep it deterministic for durable replay.
 - It overrides model-, agent- and earlier-capability `thinking`; a run's `model_settings` and
   provider-specific settings (`anthropic_thinking`, `openai_reasoning_effort`) override it.
 - Each change is recorded as a `ModelSettingsDeltaPart`. Models with `supports_mid_conversation_effort`

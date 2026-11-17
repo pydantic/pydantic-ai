@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, ModelRetry, RunContext, ToolDenied
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Thinking
 from pydantic_ai.exceptions import ToolFailed
 from pydantic_ai.messages import (
@@ -17,6 +17,8 @@ from pydantic_ai.messages import (
     ModelSettingsDeltaPart,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
@@ -91,8 +93,36 @@ class TestAdaptiveReasoning:
     def test_custom_levels(self):
         efforts: list[object] = []
         model = _model([_call('read', '1')], efforts=efforts)
-        _agent(model, AdaptiveReasoning(deliberate='xhigh', routine=False)).run_sync('go')
-        assert efforts == snapshot(['xhigh', False])
+        _agent(model, AdaptiveReasoning(deliberate='xhigh', routine='low')).run_sync('go')
+        assert efforts == snapshot(['xhigh', 'low'])
+
+    def test_resumed_turn_keeps_its_effort(self):
+        efforts: list[object] = []
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('go')]),
+            ModelResponse(parts=[_call('read', '1')]),
+            ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='1')]),
+            ModelResponse(parts=[TextPart('partial ')], state='suspended'),
+        ]
+        _agent(_model(efforts=efforts), AdaptiveReasoning()).run_sync(message_history=history)
+        assert efforts == snapshot(['medium'])
+
+    def test_denied_tool_is_deliberate(self):
+        efforts: list[object] = []
+        model = _model([_call('delete', '1')], efforts=efforts)
+        agent = _agent(model, AdaptiveReasoning())
+
+        @agent.tool_plain(requires_approval=True)
+        def delete(path: str) -> str:
+            return path  # pragma: no cover
+
+        first = agent.run_sync('go', output_type=[str, DeferredToolRequests])
+        assert isinstance(first.output, DeferredToolRequests)
+        agent.run_sync(
+            message_history=first.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={'1': ToolDenied()}),
+        )
+        assert efforts == snapshot(['high', 'high'])
 
     def test_retry_feedback_is_deliberate(self):
         efforts: list[object] = []

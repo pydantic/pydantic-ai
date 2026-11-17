@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import BaseToolReturnPart, RetryFeedbackPart, UserPromptPart
+from pydantic_ai.messages import BaseToolReturnPart, ModelRequest, RetryFeedbackPart, UserPromptPart
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -36,8 +36,10 @@ class AdaptiveReasoning(AbstractCapability[AgentDepsT]):
     """The effort for a request that only returns successful tool results."""
 
     select: Callable[[RunContext[AgentDepsT]], ThinkingLevel | None] | None = None
-    """Replaces the default policy. Called once per step with the request about to be sent as `ctx.messages[-1]`.
+    """Replaces the default policy. Called once per step with the run's `RunContext`.
 
+    The last `ModelRequest` in `ctx.messages` is the one the step answers. `ctx.messages` ends in a suspended
+    `ModelResponse` instead when the step resumes a turn the provider paused.
     Return `None` to leave `thinking` as the model, agent and earlier capabilities set it.
     """
 
@@ -52,7 +54,7 @@ class AdaptiveReasoning(AbstractCapability[AgentDepsT]):
         return resolve
 
     def _default_effort(self, ctx: RunContext[AgentDepsT]) -> ThinkingLevel:
-        parts = ctx.messages[-1].parts
+        parts = next(message for message in reversed(ctx.messages) if isinstance(message, ModelRequest)).parts
         returns = [part for part in parts if isinstance(part, BaseToolReturnPart)]
         routine = (
             bool(returns)

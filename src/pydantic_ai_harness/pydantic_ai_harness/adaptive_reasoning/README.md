@@ -29,16 +29,16 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[AdaptiveReasoning(delib
 
 `AdaptiveReasoning` sets the unified `thinking` setting for each model request, the same setting the core [Thinking](https://pydantic.dev/docs/ai/capabilities/thinking/) capability sets once per run. Each provider maps the level to its own parameter, and a model that doesn't support thinking ignores it.
 
-| The request about to be sent | Effort |
+| The last request in the history | Effort |
 |---|---|
 | Only returns tool results, all successful | `routine` (default `'medium'`) |
 | Has a user prompt, a failed, retried or denied tool result, or retry feedback on the model's output | `deliberate` (default `'high'`) |
 
-Both fields take any [`ThinkingLevel`](https://pydantic.dev/docs/ai/api/pydantic-ai/settings/#pydantic_ai.settings.ThinkingLevel), including `False` to turn thinking off on routine steps.
+Both fields take any [`ThinkingLevel`](https://pydantic.dev/docs/ai/api/pydantic-ai/settings/#pydantic_ai.settings.ThinkingLevel).
 
 ## Custom policy
 
-Pass `select` to replace the default policy. It is called once per step with the run's [`RunContext`](https://pydantic.dev/docs/ai/api/pydantic-ai/tools/#pydantic_ai.tools.RunContext), where `ctx.messages[-1]` is the request about to be sent. Return `None` to leave `thinking` as the model, agent and earlier capabilities set it.
+Pass `select` to replace the default policy. It is called once per step with the run's [`RunContext`](https://pydantic.dev/docs/ai/api/pydantic-ai/tools/#pydantic_ai.tools.RunContext), where the last `ModelRequest` in `ctx.messages` is the one the step answers. When the step resumes a turn the provider paused, `ctx.messages` ends in the suspended `ModelResponse` instead. Return `None` to leave `thinking` as the model, agent and earlier capabilities set it.
 
 ```python
 from pydantic_ai import Agent, RunContext
@@ -66,7 +66,7 @@ Each change of effort is recorded in the request as a [`ModelSettingsDeltaPart`]
 
 ## Durable execution
 
-The default policy reads only the request about to be sent, so under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) a replay picks the same effort. A custom `select` should be deterministic for the same reason.
+The default policy reads only the last request in the history, so under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) a replay picks the same effort. A custom `select` should be deterministic for the same reason.
 
 ## Telemetry
 
