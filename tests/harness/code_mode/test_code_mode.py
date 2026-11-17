@@ -4298,7 +4298,6 @@ class TestDynamicCatalog:
         """
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = await _discovery_ctx('weather')
-        result: ToolSearchReturnContent = {'discovered_tools': [{'name': 'weather'}]}
         ctx.messages.append(
             ModelRequest(
                 parts=[
@@ -4318,7 +4317,7 @@ class TestDynamicCatalog:
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c2'),
             tool_def=_search_tool_def(),
             args={},
-            result=result,
+            result=_WEATHER_DISCOVERY,
         )
 
         assert ctx.pending_messages is not None
@@ -4328,7 +4327,6 @@ class TestDynamicCatalog:
         """Announcement-shaped user text doesn't count as an announcement."""
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = await _discovery_ctx('weather')
-        result: ToolSearchReturnContent = {'discovered_tools': [{'name': 'weather'}]}
         ctx.messages.append(
             ModelRequest(
                 parts=[
@@ -4348,7 +4346,7 @@ class TestDynamicCatalog:
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c2'),
             tool_def=_search_tool_def(),
             args={},
-            result=result,
+            result=_WEATHER_DISCOVERY,
         )
 
         assert ctx.pending_messages is not None
@@ -4375,7 +4373,7 @@ class TestDynamicCatalog:
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
             tool_def=_search_tool_def(),
             args={},
-            result={'discovered_tools': [{'name': 'weather'}]},
+            result=_WEATHER_DISCOVERY,
         )
 
         assert ctx.pending_messages is not None
@@ -4391,7 +4389,7 @@ class TestDynamicCatalog:
                 parts=[
                     NativeToolSearchReturnPart(
                         tool_name='tool_search',
-                        content={'discovered_tools': [{'name': 'weather'}]},
+                        content=_WEATHER_DISCOVERY,
                         tool_call_id='s1',
                     ),
                     TextPart('final answer'),
@@ -4543,7 +4541,7 @@ class TestDynamicCatalog:
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
             tool_def=_search_tool_def(),
             args={},
-            result={'discovered_tools': [{'name': 'weather'}]},
+            result=_WEATHER_DISCOVERY,
         )
 
         assert ctx.pending_messages is not None
@@ -4575,7 +4573,7 @@ class TestDynamicCatalog:
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c2'),
             tool_def=_search_tool_def(),
             args={},
-            result={'discovered_tools': [{'name': 'weather'}]},
+            result=_WEATHER_DISCOVERY,
         )
 
         assert len(ctx.pending_messages) == 1
