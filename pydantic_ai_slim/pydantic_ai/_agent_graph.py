@@ -2455,6 +2455,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The loaded capabilities' instruction parts this request resolved, before the hooks ran, by capability id."""
     _step_instruction_parts: list[_messages.InstructionPart] | None = field(repr=False, init=False, default=None)
     """The instruction parts this request step resolved for its model, before the hooks ran, without the loaded ones."""
+    _step_toolset_instruction_parts: list[_messages.InstructionPart] = field(
+        repr=False, init=False, default_factory=list[_messages.InstructionPart]
+    )
+    """The toolsets' instruction parts this request step resolved, which an attempt at another model reuses."""
     _step_instruction_window: bool = field(repr=False, init=False, default=False)
     """Whether the history had an instruction window when this request step resolved its instructions."""
     _step_loaded_parts: list[_messages.InstructionPart] = field(
@@ -3157,11 +3161,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         run_context: RunContext[DepsT],
+        *,
+        for_attempt: bool = False,
     ) -> list[_messages.InstructionPart] | None:
-        """Resolve the step's instruction parts for `run_context.model`, sorted, without the loaded capabilities'."""
-        instruction_parts = await _get_instructions(ctx, run_context)
-        if instruction_parts:
-            instruction_parts = _messages.InstructionPart.sorted(instruction_parts) or None
+        """Resolve the step's instruction parts for `run_context.model`, sorted, without the loaded capabilities'.
+
+        For an attempt at another model, only the agent's and capabilities' instructions are resolved again: the
+        toolsets' are the ones the step resolved. A toolset's instructions can come from a durable unit, like an MCP
+        server's under durable execution, and asking for them again per attempt would schedule a unit a replay of a
+        run recorded before doesn't have.
+        """
+        if not for_attempt:
+            self._step_toolset_instruction_parts = await collect_toolset_instructions(
+                ctx.deps.tool_manager.toolset, run_context
+            )
+        parts = [*(await ctx.deps.get_instructions(run_context) or ()), *self._step_toolset_instruction_parts]
+        instruction_parts = _messages.InstructionPart.sorted(parts) or None
         if instruction_parts is None and self._step_instruction_window:
             # An empty source set withdraws tracked blocks; hooks can still explicitly unset parts.
             instruction_parts = []
@@ -3519,7 +3534,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # A resumed suspended response is continued with the instructions it was sent (see `_prepare_resume_request`),
         # and instruction parts a hook changed stay as it left them.
         resolve_instructions = recording is not None and recording.parameters is not None
-        resolved = await self._resolve_step_instructions(ctx, attempt_context) if resolve_instructions else None
+        resolved = (
+            await self._resolve_step_instructions(ctx, attempt_context, for_attempt=True)
+            if resolve_instructions
+            else None
+        )
         request_context.model_settings = _copy_settings(
             baseline.with_hook_changes(ctx.deps.get_model_settings(attempt_context).layered)
         )
