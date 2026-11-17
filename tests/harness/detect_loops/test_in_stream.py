@@ -362,14 +362,14 @@ class TestDetectLoops:
         assert result.output == LOOP * 40
 
     async def test_a_long_part_is_fed_without_copying_its_rest(self):
-        slices: list[int] = []
+        slices: list[tuple[str, int]] = []
 
         class Text(str):
             def __getitem__(self, key: SupportsIndex | slice, /) -> str:
                 piece = super().__getitem__(key)
-                caller = (frame := inspect.currentframe()) and frame.f_back
-                if caller and caller.f_code.co_name == '_feed':
-                    slices.append(len(piece))
+                frame = inspect.currentframe()
+                assert frame is not None and frame.f_back is not None
+                slices.append((frame.f_back.f_code.co_name, len(piece)))
                 return piece
 
         content = Text(PROGRESS * 20)
@@ -380,8 +380,9 @@ class TestDetectLoops:
 
         await agent.run('Explain')
 
-        assert sum(slices) == len(content)
-        assert max(slices) == 64
+        fed = [length for caller, length in slices if caller == '_feed']
+        assert sum(fed) == len(content)
+        assert max(fed) == 64
 
     async def test_a_pending_parallel_input_guard_decides_before_the_loop_is_acted_on(self):
         detected = asyncio.Event()
@@ -398,7 +399,6 @@ class TestDetectLoops:
             await detected.wait()
             return GuardrailResult.block('Not allowed.')
 
-        reads: list[str] = []
         script = _script(
             [*(_thinking(LOOP) for _ in range(60)), 'answer'], [_args('{"path": "a.txt"}', name='read_file')]
         )
@@ -408,15 +408,13 @@ class TestDetectLoops:
         )
 
         @agent.tool_plain
-        def read_file(path: str) -> str:
-            reads.append(path)
-            return 'contents'
+        def read_file(path: str) -> str:  # pragma: no cover
+            raise AssertionError('a blocked prompt runs no tools')
 
         result = await agent.run('Explain', event_stream_handler=_drain)
 
         assert result.output == 'Not allowed.'
         assert len(script.requests) == 1
-        assert reads == []
 
     async def test_error_stops_the_stream_and_the_run(self):
         script = _script([LOOP] * 60)
