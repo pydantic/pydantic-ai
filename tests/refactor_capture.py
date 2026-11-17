@@ -975,39 +975,32 @@ class RefactorCapture:
         if session in self._closed_sessions:
             return
         self._closed_sessions.add(session)
-        played_audio_bytes: list[object] = []
+        record: dict[str, object] = {
+            'kind': 'session',
+            'node': self.node,
+            'target': method_target(type(session), 'close'),
+            'session': self._number('session', session),
+        }
 
-        def read_played_audio_bytes() -> None:
+        def read() -> None:
+            # What the capture reads is no call the test or the session made.
+            _RECORDING_CORE_CALL.set(True)
             _RECORDING_SESSION_CALL.set((running_task_id(), id(session)))
+            record['all_messages'] = normalized(session.all_messages())
+            record['new_messages'] = normalized(session.new_messages())
+            record['usage'] = normalized(session.usage)
             try:
-                played_audio_bytes.append(session.played_audio_bytes)
+                record['played_audio_bytes'] = session.played_audio_bytes
             except Exception as e:
-                played_audio_bytes.append({'error': normalized(f'{type(e).__name__}: {e}')})
+                record['played_audio_bytes'] = {'error': normalized(f'{type(e).__name__}: {e}')}
+            record['drops'] = {name: getattr(session, name) for name in SESSION_DROP_COUNTERS}
 
-        # Reading it can raise the error that ended the session. Raised where another exception is being handled, as
-        # when `close` raises, that error would be chained to it, and Python would cut the other's chain short to
-        # keep it from looping back. A thread of its own handles none.
-        thread = threading.Thread(target=contextvars.copy_context().run, args=(read_played_audio_bytes,))
+        # Reading `played_audio_bytes` can raise the error that ended the session. Raised where another exception is
+        # being handled, as when `close` raises, that error would be chained to it, and Python would cut the other's
+        # chain short to keep it from looping back. A thread of its own handles none.
+        thread = threading.Thread(target=contextvars.copy_context().run, args=(read,))
         thread.start()
         thread.join()
-        # What the capture reads is no call the test or the session made.
-        core_token = _RECORDING_CORE_CALL.set(True)
-        session_token = _RECORDING_SESSION_CALL.set((running_task_id(), id(session)))
-        try:
-            record: dict[str, object] = {
-                'kind': 'session',
-                'node': self.node,
-                'target': method_target(type(session), 'close'),
-                'session': self._number('session', session),
-                'all_messages': normalized(session.all_messages()),
-                'new_messages': normalized(session.new_messages()),
-                'usage': normalized(session.usage),
-                'played_audio_bytes': played_audio_bytes[0],
-                'drops': {name: getattr(session, name) for name in SESSION_DROP_COUNTERS},
-            }
-        finally:
-            _RECORDING_SESSION_CALL.reset(session_token)
-            _RECORDING_CORE_CALL.reset(core_token)
         self.records.append(record)
 
     def _wrap_core(self, cls: type[SessionCore]) -> None:
@@ -1261,13 +1254,12 @@ def recorded(value: object) -> object:
 
     A set is sorted, so two equal sets, like the `Owed` tokens `SessionCore.wait_tokens` returns, are recorded alike.
     """
-    items: list[object] = []
     if isinstance(value, list | tuple):
-        items = [*value]
+        items: list[object] = [*value]
         return [recorded(item) for item in items]
     if isinstance(value, Set):
-        items = [*value]
-        return sorted((recorded(item) for item in items), key=json.dumps)
+        members: list[object] = [*value]
+        return sorted((recorded(member) for member in members), key=json.dumps)
     if value is None or isinstance(value, bool | int | float | str):
         return normalized(value)
     return tagged(value)

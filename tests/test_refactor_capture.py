@@ -28,6 +28,7 @@ from pydantic_ai.capabilities import BatchModelRequests
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models import StreamedResponse, override_allow_model_requests
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.realtime._core import Owed
 
 from .batch_utils import FAST_BATCH_SETTINGS
 from .conftest import IsStr, try_import
@@ -52,6 +53,7 @@ with try_import() as imports_successful:
         compare,
         main,
         normalized,
+        recorded,
     )
 
 # Imported before the `REALTIME` session's capture starts, so the capture finds `ReplayWebSocket` among the classes
@@ -2067,6 +2069,17 @@ def test_main_extracts_the_base_commit_where_no_symlink_leads(tmp_path: Path, mo
         ([*pytest_command, f'{CAPTURE_OPTION}={out / "head"}', 'tests/test_nothing.py'], ''),
     ]
     assert os.path.realpath(out) == str(out)
+
+
+def test_recorded_sorts_a_set():
+    """A set comes out in one order, whatever order it iterates in, as two equal sets can on the two sides."""
+    assert recorded(frozenset({'b', 'c', 'a'})) == snapshot(['a', 'b', 'c'])
+    assert recorded({Owed('response', 'r1', 0), Owed('input', '0', 0)}) == snapshot(
+        [
+            {'type': 'Owed', 'value': {'kind': 'input', 'key': '0', 'epoch': 0}},
+            {'type': 'Owed', 'value': {'kind': 'response', 'key': 'r1', 'epoch': 0}},
+        ]
+    )
 
 
 def test_normalized_replaces_values_that_change_between_runs():
