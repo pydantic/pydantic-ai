@@ -6189,7 +6189,7 @@ async def test_deferred_tool_handler_via_hooks_returns_none_when_unhandled():
     assert len(result.output.approvals) == 1
 
 
-def test_deferred_tool_requests_native_approvals_are_decided_only_by_name():
+def test_deferred_tool_requests_native_approvals_are_answered_only_by_id():
     """Calls the provider runs itself are answered in `approvals` by id, and never by `approve_all`."""
     native = NativeToolCallPart('crm_lookup', {'email': 'ada@example.com'}, tool_call_id='mcp_1', provider_name='p')
     requests = DeferredToolRequests(

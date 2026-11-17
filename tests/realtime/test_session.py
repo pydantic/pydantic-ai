@@ -13111,7 +13111,7 @@ async def test_a_provider_tool_call_nothing_approves_is_denied() -> None:
     assert not any(isinstance(e, DeferredToolResultsEvent) for e in events)
 
 
-async def _consume(session: Any) -> None:
+async def _consume(session: _RealtimeSession) -> None:
     async for _ in session:
         pass
 
