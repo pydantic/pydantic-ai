@@ -633,7 +633,17 @@ GEMINI_IMAGES = [
         ),
         pytest.param(
             _openrouter_claude,
-            ({'image': True, 'document': True, 'document_media_types': ALL_DOCUMENTS, 'audio': True, 'video': False}),
+            (
+                {
+                    'image': True,
+                    'document': True,
+                    'document_media_types': ALL_DOCUMENTS,
+                    'audio': True,
+                    'video': False,
+                    'audio_media_types': ['audio/mpeg', 'audio/wav'],
+                    'image_media_types': COMMON_IMAGES,
+                }
+            ),
             marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
             id='openrouter_claude',
         ),
