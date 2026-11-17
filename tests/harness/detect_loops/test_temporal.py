@@ -28,7 +28,7 @@ from temporalio.worker import Replayer, Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
-from pydantic_ai_harness.detect_loops import DetectLoops
+from pydantic_ai_harness.detect_loops import DetectLoops, LoopJudge
 from tests.harness._temporal import ignore_source_reads_left_open, skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
@@ -53,6 +53,24 @@ def _read_file(path: str) -> str:
 agent = Agent(
     FunctionModel(_model), name='detect_loops', tools=[_read_file], capabilities=[DetectLoops(), TemporalDurability()]
 )
+
+
+def _looping_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if 'Change your approach' in str(messages[-1]):
+        return ModelResponse(parts=[TextPart('The config is fine.')])
+    return ModelResponse(parts=[TextPart('I should check the config file again. ' * 80)])
+
+
+def _judge(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # A judge asked in workflow code would overrule the heuristic, so the nudge below proves it wasn't asked.
+    return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'looping': False})])  # pragma: no cover
+
+
+looping_agent = Agent(
+    FunctionModel(_looping_model),
+    name='detect_loops_in_response',
+    capabilities=[DetectLoops(stream_detector=LoopJudge(model=FunctionModel(_judge))), TemporalDurability()],
+)
 stopping_agent = Agent(
     FunctionModel(_model),
     name='detect_loops_error',
@@ -72,6 +90,16 @@ class LoopingWorkflow(PydanticAIWorkflow):
 
 
 @workflow.defn
+class LoopingInResponseWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [looping_agent]
+
+    @workflow.run
+    async def run(self) -> bytes:
+        result = await looping_agent.run('Is the config fine?')
+        return ModelMessagesTypeAdapter.dump_json(result.all_messages())
+
+
+@workflow.defn
 class StoppingWorkflow(PydanticAIWorkflow):
     __pydantic_ai_agents__ = [stopping_agent]
 
@@ -87,11 +115,21 @@ async def test_detection_runs_inside_a_workflow_and_survives_replay() -> None:
     async with await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir()) as env:  # pyright: ignore[reportUnknownMemberType]
         client = await Client.connect(env.client.service_client.config.target_host, plugins=[PydanticAIPlugin()])
         workflow_id = uuid4().hex
+        in_response_id = uuid4().hex
         async with Worker(
-            client, task_queue='detect-loops', workflows=[LoopingWorkflow, StoppingWorkflow], workflow_runner=runner
+            client,
+            task_queue='detect-loops',
+            workflows=[LoopingWorkflow, LoopingInResponseWorkflow, StoppingWorkflow],
+            workflow_runner=runner,
         ):
             dumped = await client.execute_workflow(
                 LoopingWorkflow.run, id=workflow_id, task_queue='detect-loops', execution_timeout=timedelta(seconds=60)
+            )
+            in_response_dumped = await client.execute_workflow(
+                LoopingInResponseWorkflow.run,
+                id=in_response_id,
+                task_queue='detect-loops',
+                execution_timeout=timedelta(seconds=60),
             )
             # `LoopDetectedError` is an `AgentRunError`, so it fails the workflow instead of retrying its task.
             with pytest.raises(WorkflowFailureError) as exc_info:
@@ -102,6 +140,7 @@ async def test_detection_runs_inside_a_workflow_and_survives_replay() -> None:
                     execution_timeout=timedelta(seconds=60),
                 )
         history = await client.get_workflow_handle(workflow_id).fetch_history()
+        in_response_history = await client.get_workflow_handle(in_response_id).fetch_history()
 
     assert isinstance(exc_info.value.cause, ApplicationError)
     assert exc_info.value.cause.type == 'LoopDetectedError'
@@ -118,6 +157,23 @@ async def test_detection_runs_inside_a_workflow_and_survives_replay() -> None:
     ]
     # Replaying the recorded history re-runs detection in workflow code; a different decision would be
     # a nondeterminism error.
-    replayer = Replayer(workflows=[LoopingWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=runner)
+    replayer = Replayer(
+        workflows=[LoopingWorkflow, LoopingInResponseWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=runner
+    )
     replay = await replayer.replay_workflow(history, raise_on_replay_failure=False)
+    assert replay.replay_failure is None
+
+    # A loop within a response is found in the whole response, in workflow code, by the heuristic alone: the
+    # judge's model call would not be journaled, so it's never made there.
+    in_response = ModelMessagesTypeAdapter.validate_json(in_response_dumped)
+    assert [
+        part.metadata for message in in_response for part in message.parts if isinstance(part, SystemPromptPart)
+    ] == [
+        {
+            'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
+            'pattern': 'repeated_stream_text',
+            'tool_names': [],
+        }
+    ]
+    replay = await replayer.replay_workflow(in_response_history, raise_on_replay_failure=False)
     assert replay.replay_failure is None

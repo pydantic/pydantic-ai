@@ -65,7 +65,7 @@ def _safe_segment(segment: str) -> str:
     """Make one path segment filesystem-safe without collapsing distinct keys.
 
     Empty or dot-only segments are replaced so a handle can never escape the root via
-    `.`/`..`; the resolve-within-root check in `read` is the second line of defense.
+    `.`/`..`; the resolve-within-root check in `read` and `write` is the second line of defense.
     """
     cleaned = _UNSAFE_SEGMENT.sub('_', segment)
     if cleaned in ('', '.', '..'):
@@ -183,10 +183,11 @@ class LocalFileOverflowStore:
     Security comes from three mechanisms: the default root is per user
     (`pyai_harness_overflow-<euid>` under the system temp dir); the root itself cannot be a
     symlink, and on POSIX it must be owned by the current user and is tightened to `0700` if
-    group or other bits are set; and `read` resolves the target (following symlinks) and
-    rejects anything that escapes the root via symlink, `..`, or an absolute path. Handle
-    segments are also sanitized by `_safe_segment`. On Windows there is no uid, so the
-    default root is `pyai_harness_overflow` and the ownership check is skipped.
+    group or other bits are set; and `read` and `write` resolve the target (following symlinks)
+    and reject anything that escapes the root via symlink, `..`, or an absolute path, before
+    `write` creates any directory. Handle segments are also sanitized by `_safe_segment`. On
+    Windows there is no uid, so the default root is `pyai_harness_overflow` and the ownership
+    check is skipped.
 
     Files are kept after the run by default (a later `read_tool_result` may need them).
     Set `cleanup_after` to opt into age-based pruning; see that field.
@@ -251,20 +252,23 @@ class LocalFileOverflowStore:
 
     def _write(self, key: str, data: bytes) -> None:
         self._ensure_root()
-        path = self._path(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
+        target = self._confined_path(key)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
 
     async def read(self, handle: str) -> bytes:
         return await anyio.to_thread.run_sync(self._read, handle)
 
     def _read(self, handle: str) -> bytes:
         self._check_root()
+        return self._confined_path(handle).read_bytes()
+
+    def _confined_path(self, handle: str) -> Path:
+        """Return the file for `handle` with symlinks resolved, refusing one outside the root."""
         target = self._path(handle).resolve()
-        root = self._root.resolve()
-        if not target.is_relative_to(root):
+        if not target.is_relative_to(self._root.resolve()):
             raise PermissionError(f'Handle {handle!r} resolves outside the store root.')
-        return target.read_bytes()
+        return target
 
     # --- opt-in TTL pruning (non-blocking, non-erroring) ---
 

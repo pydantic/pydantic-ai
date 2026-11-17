@@ -60,6 +60,8 @@ from pydantic_ai_harness._workspace_provider import (
 )
 
 if TYPE_CHECKING:
+    from e2b import SandboxNetworkOpts
+
     from pydantic_ai.workspaces import WorkspaceCommand
 
 __all__ = ('E2BSandboxBackend',)
@@ -246,6 +248,10 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             `pwd -P` on first use.
         env: Environment variables every command gets, on a created or an attached sandbox;
             per-command `env` is layered on top. Nothing is read from the host environment.
+        network: E2B's network options for a newly created sandbox, passed to `Sandbox.create`
+            unchanged: egress allow and deny lists, and `rules` that set headers on requests to a
+            host, from E2B's proxy outside the sandbox. An attached sandbox keeps the options it
+            was created with.
     """
 
     def __init__(
@@ -259,6 +265,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        network: SandboxNetworkOpts | None = None,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'e2b')
@@ -283,6 +290,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         self._sandbox_timeout = sandbox_timeout
         self._env = dict(env) if env is not None else None
         self._allow_internet_access = allow_internet_access
+        self._network = network
         self._probe_setsid = template is not None or sandbox is not None or ref is not None
         self._setsid: bool | None = None
         self._setsid_lock = anyio.Lock()
@@ -508,6 +516,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                         timeout=self._sandbox_timeout,
                         envs=dict(self._env) if self._env is not None else None,
                         allow_internet_access=self._allow_internet_access,
+                        network=self._network,
                         # Pause at the end of the lifetime instead of killing, so the files survive.
                         lifecycle={'on_timeout': 'pause'},
                     )

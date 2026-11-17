@@ -66,8 +66,19 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     to_text,
 )
 from pydantic_ai_harness.tool_output_limits._store import _safe_segment  # pyright: ignore[reportPrivateUsage]
+from tests.conftest import try_import
 from tests.harness._recording_durability import RecordingDurability
 from tests.harness.conftest import agent_run_names
+
+with try_import() as ag_ui_imports_successful:
+    from ag_ui.core import CustomEvent, RunAgentInput, UserMessage
+
+    from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+with try_import() as vercel_ai_imports_successful:
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+    from pydantic_ai.ui.vercel_ai.request_types import DataUIPart
+    from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
@@ -114,6 +125,24 @@ def _fixed_model(text: str) -> FunctionModel:
         return ModelResponse(parts=[TextPart(content=text)])
 
     return FunctionModel(respond)
+
+
+def _ui_event_agent(tmp_path: Path, metadata: object) -> Agent[None, str]:
+    """An agent whose `big_tool` returns spilling output with `metadata` attached."""
+    cap: ToolOutputLimits[object] = ToolOutputLimits(
+        bands=[Band(over=100, action=Spill())], store=LocalFileOverflowStore(base_dir=tmp_path)
+    )
+    agent = Agent(TestModel(call_tools=['big_tool']), capabilities=[cap])
+
+    @agent.tool_plain
+    def big_tool() -> ToolReturn:
+        return ToolReturn(return_value='data line\n' * 500, metadata=metadata)
+
+    return agent
+
+
+def _big_tool_return(messages: list[ModelMessage]) -> ToolReturnPart:
+    return next(p for m in messages for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_name == 'big_tool')
 
 
 def _call(tool_name: str = 'big_tool', tool_call_id: str = 'call-1') -> ToolCallPart:
@@ -335,6 +364,23 @@ class TestStore:
         (root / 'evil').symlink_to(secret)
         with pytest.raises(PermissionError, match='outside the store root'):
             await store.read('evil')
+
+    @pytest.mark.parametrize('link', ['file', 'directory'])
+    async def test_symlink_escape_rejected_for_write(self, tmp_path: Path, link: str):
+        outside = tmp_path / 'outside'
+        outside.mkdir()
+        root = tmp_path / 'store'
+        store = LocalFileOverflowStore(base_dir=root)
+        await store.write('run/c.0', b'inside')  # creates the root
+        if link == 'file':
+            (root / 'run' / 'evil.0').symlink_to(outside / 'planted')
+            key = 'run/evil.0'
+        else:
+            (root / 'evil').symlink_to(outside, target_is_directory=True)
+            key = 'evil/sub/c.0'
+        with pytest.raises(PermissionError, match='outside the store root'):
+            await store.write(key, b'spilled')
+        assert list(outside.iterdir()) == []
 
 
 # ---------------------------------------------------------------------------
@@ -1349,6 +1395,42 @@ class TestAgentIntegration:
         assert part.metadata is not None
         assert part.metadata['original_metadata'] == 'app-request-id-123'
         assert 'overflow_handle' in part.metadata
+
+    @pytest.mark.parametrize('metadata', [['a', 'b'], ('a', 'b')], ids=['list', 'tuple'])
+    async def test_spill_appends_handles_to_list_metadata(self, tmp_path: Path, metadata: object, anyio_backend: str):
+        result = await _ui_event_agent(tmp_path, metadata).run('go')
+        part = _big_tool_return(result.all_messages())
+        assert part.metadata[:2] == ['a', 'b']
+        assert part.metadata[2].keys() == {'overflow_handle', 'overflow_bytes'}
+
+    @pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed')
+    @pytest.mark.parametrize('as_list', [True, False], ids=['list', 'single'])
+    async def test_spill_keeps_ag_ui_events(self, tmp_path: Path, as_list: bool, anyio_backend: str):
+        event = CustomEvent(name='cards', value={'n': 100})
+        run_input = RunAgentInput(
+            thread_id='t',
+            run_id='r',
+            messages=[UserMessage(id='u', content='go')],
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={},
+        )
+        adapter = AGUIAdapter(agent=_ui_event_agent(tmp_path, [event] if as_list else event), run_input=run_input)
+        events = [e async for e in adapter.run_stream()]
+        assert [(e.name, e.value) for e in events if isinstance(e, CustomEvent)] == [('cards', {'n': 100})]
+        assert list(tmp_path.rglob('*'))
+
+    @pytest.mark.skipif(not vercel_ai_imports_successful(), reason='vercel ai dependencies not installed')
+    @pytest.mark.parametrize('as_list', [True, False], ids=['list', 'single'])
+    async def test_spill_keeps_vercel_ai_data_chunks(self, tmp_path: Path, as_list: bool, anyio_backend: str):
+        chunk = DataChunk(type='data-search-results', data={'count': 100})
+        result = await _ui_event_agent(tmp_path, [chunk] if as_list else chunk).run('go')
+        assert 'overflow_handle' in _big_tool_return(result.all_messages()).metadata[-1]
+        ui_parts = [p for m in VercelAIAdapter.dump_messages(result.all_messages()) for p in m.parts]
+        assert [(p.type, p.data) for p in ui_parts if isinstance(p, DataUIPart)] == [
+            ('data-search-results', {'count': 100})
+        ]
 
     async def test_structured_return_with_bytes_that_are_not_utf8(self, anyio_backend: str):
         """Binary in a structured return is measured as base64 rather than failing the run."""
