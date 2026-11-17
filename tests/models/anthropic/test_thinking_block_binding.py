@@ -399,10 +399,26 @@ async def test_anthropic_retries_a_stale_thinking_block_a_retrying_transport_gav
     assert sent == [(path, False), (path, False), (path, False), (path, True)]
 
 
-async def test_anthropic_does_not_retry_an_unrelated_bad_request_a_retrying_transport_gave_up_on(
+@pytest.mark.parametrize('call', ['request', 'request_stream', 'count_tokens'])
+@pytest.mark.parametrize(
+    'model_name,body',
+    [
+        pytest.param(
+            'claude-fable-5-1',
+            {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'max_tokens: Field required'}},
+            id='unrelated_bad_request',
+        ),
+        pytest.param('claude-fable-5', stale_thinking_block_error().body, id='model_does_not_bind'),
+    ],
+)
+async def test_anthropic_does_not_retry_a_bad_request_a_retrying_transport_gave_up_on(
     allow_model_requests: None,
+    call: Literal['request', 'request_stream', 'count_tokens'],
+    model_name: str,
+    body: object,
 ):
-    """A 400 a retrying transport gave up on that isn't a stale thinking block raises, without a `drop_block` retry.
+    """A 400 a retrying transport gave up on raises without a `drop_block` retry, unless it is a stale thinking block
+    on a model that binds them.
 
     Not a VCR test, for the reason
     `test_anthropic_retries_a_stale_thinking_block_a_retrying_transport_gave_up_on` gives.
@@ -411,18 +427,23 @@ async def test_anthropic_does_not_retry_an_unrelated_bad_request_a_retrying_tran
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        error = {'type': 'invalid_request_error', 'message': 'max_tokens: Field required'}
-        return httpx2.Response(400, json={'type': 'error', 'error': error})
+        return httpx2.Response(400, json=body)
 
     model = AnthropicModel(
-        'claude-fable-5-1',
+        model_name,
         provider=AnthropicProvider(api_key='test', base_url='http://localhost', http_client=retrying_client(handler)),
     )
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('What is 2+2?')]
+    settings: AnthropicModelSettings = {'max_retries': 0, 'max_tokens': 1024}
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        await model.request(
-            [ModelRequest.user_text_prompt('What is 2+2?')], {'max_retries': 0}, ModelRequestParameters()
-        )
+        if call == 'request':
+            await model.request(messages, settings, ModelRequestParameters())
+        elif call == 'request_stream':
+            async with model.request_stream(messages, settings, ModelRequestParameters()):
+                pass  # pragma: no cover
+        else:
+            await model.count_tokens(messages, settings, ModelRequestParameters())
 
     assert exc_info.value.status_code == 400
     assert len(requests) == 3
