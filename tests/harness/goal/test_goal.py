@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from inline_snapshot import snapshot
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -47,28 +48,61 @@ def _goal_spans(exporter: InMemorySpanExporter) -> list[ReadableSpan]:
 
 
 class TestGoal:
-    async def test_retries_with_goal_and_gap(self) -> None:
-        calls = 0
+    @pytest.mark.parametrize('headless', [True, False])
+    async def test_retries_with_goal_and_gap(self, headless: bool) -> None:
+        instructions: list[str | None] = []
+        feedback: list[str] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            nonlocal calls
-            calls += 1
-            assert info.instructions is not None
-            assert 'Finish the work' in info.instructions
-            assert 'unattended' in info.instructions
-            if calls == 1:
-                return ModelResponse(parts=[TextPart('Should I continue?')])
-            (feedback,) = messages[-1].parts
-            assert isinstance(feedback, UserPromptPart)
-            assert (
-                'Goal not met: Finish the work\nWhat remains: Produce the completed work.\n'
-                'Nobody is available to answer questions.'
-            ) in str(feedback.content)
-            return ModelResponse(parts=[TextPart('done')])
+            instructions.append(info.instructions)
+            if len(messages) > 1:
+                (part,) = messages[-1].parts
+                assert isinstance(part, UserPromptPart)
+                feedback.append(str(part.content))
+            return question_then_done(messages, info)
 
-        agent = Agent(FunctionModel(respond), capabilities=[Goal(goal='Finish the work', verify=complete)])
+        goal = Goal(goal='Finish the work', verify=complete, headless=headless)
+        agent = Agent(FunctionModel(respond), capabilities=[goal])
         assert (await agent.run('Start')).output == 'done'
-        assert calls == 2
+        (first, second) = instructions
+        assert first == second
+        assert {'instructions': first, 'retry': feedback} == snapshot(
+            {
+                True: {
+                    'instructions': """\
+Your goal is:
+Finish the work
+This run is unattended: nobody is available to answer questions. Work toward the goal before producing a final answer. Make reasonable decisions within the supplied constraints. Do not invent missing credentials, bypass approvals, or claim success without evidence. If completion is impossible, explain the blocker accurately.\
+""",
+                    'retry': [
+                        """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:retry_feedback>
+Goal not met: Finish the work
+What remains: Produce the completed work.
+Nobody is available to answer questions. Continue within the supplied constraints; do not bypass approvals or fabricate success.
+</pyai:retry_feedback>\
+"""
+                    ],
+                },
+                False: {
+                    'instructions': """\
+Your goal is:
+Finish the work\
+""",
+                    'retry': [
+                        """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:retry_feedback>
+Goal not met: Finish the work
+What remains: Produce the completed work.
+Continue within the supplied constraints; do not bypass approvals or fabricate success.
+</pyai:retry_feedback>\
+"""
+                    ],
+                },
+            }
+        )[headless]
 
     async def test_exhaustion_is_bounded(self) -> None:
         checks = 0
@@ -100,23 +134,6 @@ class TestGoal:
         assert goal.get_instructions() == 'Your goal is:\nFinish'
         agent = Agent(TestModel(custom_output_text='Which file?'), capabilities=[goal])
         assert (await agent.run('Start')).output == 'Which file?'
-
-    async def test_interactive_verifier_omits_the_unattended_note(self) -> None:
-        feedback: list[str] = []
-
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            assert info.instructions == 'Your goal is:\nFinish'
-            if len(messages) > 1:
-                (part,) = messages[-1].parts
-                assert isinstance(part, UserPromptPart)
-                feedback.append(str(part.content))
-            return question_then_done(messages, info)
-
-        agent = Agent(FunctionModel(respond), capabilities=[Goal(goal='Finish', verify=complete, headless=False)])
-        assert (await agent.run('Start')).output == 'done'
-        (retry,) = feedback
-        assert 'What remains: Produce the completed work.\nContinue within the supplied constraints' in retry
-        assert 'Nobody' not in retry
 
     async def test_typed_output_and_dependencies(self) -> None:
         async def verify(ctx: RunContext[str], output: object) -> str | None:

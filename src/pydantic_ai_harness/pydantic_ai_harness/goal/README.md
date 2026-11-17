@@ -17,7 +17,6 @@ Define completion using evidence you trust. A model declaring success is not pro
 ```python
 from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_harness import Goal
 
@@ -27,13 +26,14 @@ class Summary(BaseModel):
 
 
 async def verify(ctx: RunContext[int], output: object) -> str | None:
-    if not isinstance(output, Summary) or len(output.items) != ctx.deps:
+    summary = Summary.model_validate(output)  # also accepts the JSON data a durable engine passes
+    if len(summary.items) != ctx.deps:
         return f'Provide exactly {ctx.deps} summary items.'
     return None
 
 
 agent = Agent(
-    TestModel(custom_output_args={'items': ['First finding', 'Second finding']}),
+    'anthropic:claude-sonnet-5-5',
     deps_type=int,
     output_type=Summary,
     retries={'output': 3},
@@ -41,10 +41,10 @@ agent = Agent(
 )
 result = agent.run_sync('Summarize the findings.', deps=2)
 print(result.output.items)
-#> ['First finding', 'Second finding']
+#> ...
 ```
 
-This example uses a local test model so it runs without credentials. Replace it with your production model and a verifier appropriate to the task. For blocking checks, offload the work rather than blocking the agent's event loop.
+For blocking checks, offload the work rather than blocking the agent's event loop.
 
 ## Judge completion with a model
 
@@ -53,7 +53,6 @@ When completion is a matter of judgment rather than a mechanical check, the veri
 ```python
 from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_harness import Goal
 
@@ -66,7 +65,7 @@ class Verdict(BaseModel):
 
 
 judge = Agent(
-    TestModel(custom_output_args={'complete': True}),
+    'anthropic:claude-haiku-5-5',
     output_type=Verdict,
     instructions='Decide whether the answer meets the goal. If it does not, say what is missing.',
 )
@@ -80,13 +79,13 @@ async def verify(ctx: RunContext[None], output: object) -> str | None:
 
 
 agent = Agent(
-    TestModel(custom_output_text='Breaking: `Agent.foo` was removed.'),
+    'anthropic:claude-sonnet-5-5',
     retries={'output': 3},
     capabilities=[Goal(goal=GOAL, verify=verify)],
 )
 result = agent.run_sync('Draft the release note.')
 print(result.output)
-#> Breaking: `Agent.foo` was removed.
+#> ...
 ```
 
 Passing `usage=ctx.usage` adds the judge's requests and tokens to the run's usage, so the run's `UsageLimits` account for them (from the next request, under [durable execution](#durable-execution)). Every judge call adds cost and latency, and its verdict can vary between calls; each rejection also spends one of the output retries. Prefer a deterministic check wherever one exists, and reserve the judge for what only a model can assess. To steer the run while it works, rather than only checking its final answer, see [Trajectory Judge](https://pydantic.dev/docs/ai/harness/trajectory-judge/).

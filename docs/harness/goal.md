@@ -13,7 +13,7 @@ Keep an unattended agent working until a caller-defined completion check accepts
 
 ## Define completion
 
-Supply an explicit `goal` and an async `verify(ctx, output)` callable. Without `verify`, `Goal` only adds the goal instructions and never vetoes an answer. The verifier returns `None` to accept the output, or a nonempty string describing what remains. It receives the processed output unchanged, including structured outputs, and can inspect dependencies and message history through `RunContext`; [durable execution](#durable-execution) changes some of this.
+Supply an explicit `goal` and an async `verify(ctx, output)` callable. Without `verify`, `Goal` only adds the goal instructions and never vetoes an answer. The verifier returns `None` to accept the output, or a nonempty string describing what remains. It receives the processed output unchanged, including structured outputs, and can inspect dependencies and message history through [`RunContext`][pydantic_ai.tools.RunContext]; [durable execution](#durable-execution) changes some of this.
 
 Output functions run before this check. A rejection can call them again on a later attempt. Keep output functions and verifiers read-only or idempotent; perform irreversible commits only after `agent.run()` returns an accepted result. `Goal` does not roll back tool calls or output-function side effects.
 
@@ -22,7 +22,6 @@ Define completion using evidence you trust. A model declaring success is not pro
 ```python
 from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_harness import Goal
 
@@ -32,13 +31,14 @@ class Summary(BaseModel):
 
 
 async def verify(ctx: RunContext[int], output: object) -> str | None:
-    if not isinstance(output, Summary) or len(output.items) != ctx.deps:
+    summary = Summary.model_validate(output)  # also accepts the JSON data a durable engine passes
+    if len(summary.items) != ctx.deps:
         return f'Provide exactly {ctx.deps} summary items.'
     return None
 
 
 agent = Agent(
-    TestModel(custom_output_args={'items': ['First finding', 'Second finding']}),
+    '{{ anthropic:medium }}',
     deps_type=int,
     output_type=Summary,
     retries={'output': 3},
@@ -46,10 +46,10 @@ agent = Agent(
 )
 result = agent.run_sync('Summarize the findings.', deps=2)
 print(result.output.items)
-#> ['First finding', 'Second finding']
+#> ...
 ```
 
-This example uses a local test model so it runs without credentials. Replace it with your production model and a verifier appropriate to the task. For blocking checks, offload the work rather than blocking the agent's event loop.
+For blocking checks, offload the work rather than blocking the agent's event loop.
 
 ## Judge completion with a model
 
@@ -58,7 +58,6 @@ When completion is a matter of judgment rather than a mechanical check, the veri
 ```python
 from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_harness import Goal
 
@@ -71,7 +70,7 @@ class Verdict(BaseModel):
 
 
 judge = Agent(
-    TestModel(custom_output_args={'complete': True}),
+    '{{ anthropic:small }}',
     output_type=Verdict,
     instructions='Decide whether the answer meets the goal. If it does not, say what is missing.',
 )
@@ -85,24 +84,24 @@ async def verify(ctx: RunContext[None], output: object) -> str | None:
 
 
 agent = Agent(
-    TestModel(custom_output_text='Breaking: `Agent.foo` was removed.'),
+    '{{ anthropic:medium }}',
     retries={'output': 3},
     capabilities=[Goal(goal=GOAL, verify=verify)],
 )
 result = agent.run_sync('Draft the release note.')
 print(result.output)
-#> Breaking: `Agent.foo` was removed.
+#> ...
 ```
 
 Passing `usage=ctx.usage` adds the judge's requests and tokens to the run's usage, so the run's `UsageLimits` account for them (from the next request, under [durable execution](#durable-execution)). Every judge call adds cost and latency, and its verdict can vary between calls; each rejection also spends one of the output retries. Prefer a deterministic check wherever one exists, and reserve the judge for what only a model can assess. To steer the run while it works, rather than only checking its final answer, see [Trajectory Judge](trajectory-judge.md).
 
 ## Bound continuation
 
-When a final output fails verification, `Goal` raises `ModelRetry` through the public output hook. Core sends the goal and the verifier's explanation back to the model, preserving the conversation and allowing further tool calls. There is no second agent loop or persisted goal object.
+When a final output fails verification, `Goal` raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] through the public output hook. Core sends the goal and the verifier's explanation back to the model, preserving the conversation and allowing further tool calls. There is no second agent loop or persisted goal object.
 
-Set `Agent(retries={'output': n})` to bound these continuations. Goal rejections share the output retry budget with other output validation failures; they do not reserve independent rounds. Exhaustion raises `UnexpectedModelBehavior` rather than returning an unverified answer. Outside durable execution verifier exceptions propagate, and an empty explanation raises `UserError`.
+Set `Agent(retries={'output': n})` to bound these continuations. Goal rejections share the output retry budget with other output validation failures; they do not reserve independent rounds. Exhaustion raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] rather than returning an unverified answer. Outside durable execution verifier exceptions propagate, and an empty explanation raises [`UserError`][pydantic_ai.exceptions.UserError].
 
-`UsageLimits` remain authoritative. Reaching a usage limit raises `UsageLimitExceeded`; `Goal` does not bypass the limit with an extra tool-less grace request. Token consumption cannot in general be predicted before a response. Applications needing a final wrap-up should budget for it explicitly rather than rely on a request after exhaustion.
+[`UsageLimits`][pydantic_ai.usage.UsageLimits] remain authoritative. Reaching a usage limit raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded]; `Goal` does not bypass the limit with an extra tool-less grace request. Token consumption cannot in general be predicted before a response. Applications needing a final wrap-up should budget for it explicitly rather than rely on a request after exhaustion.
 
 The instructions ask the model to make reasonable decisions, but do not authorize bypassing approvals or inventing credentials. Decide whether an accurately reported blocker satisfies your completion condition. If not, the verifier should reject it and the bounded run will eventually fail rather than claim success.
 
@@ -112,7 +111,7 @@ The instructions ask the model to make reasonable decisions, but do not authoriz
 
 Each `Goal` has the default `id` `'goal'`. Two sharing an `id` are one goal stated twice when they agree, and a `UserError` when they differ. To enforce several goals, give each its own `id`: each contributes its own instructions and completion check, and every check must accept. A capability instance keeps no per-run retry counter and can be reused across runs. Callable verifiers are not serializable in agent specifications.
 
-Use `run()` or `run_sync()` when rejected output must stay private. Partial streamed outputs are not checked. Core does not support output retries through `run_stream()`; a rejected final streamed output raises `UnexpectedModelBehavior`, and the caller may already have received partial content. Deferred tool approvals are not completed answers and remain the host's responsibility.
+Use `run()` or `run_sync()` when rejected output must stay private. Partial streamed outputs are not checked. Core does not support output retries through [`run_stream()`][pydantic_ai.Agent.run_stream]; a rejected final streamed output raises `UnexpectedModelBehavior`, and the caller may already have received partial content. Deferred tool approvals are not completed answers and remain the host's responsibility.
 
 `Goal` evaluates processed output with outermost ordering inside instrumentation, like `OutputGuardrail`. Other output-changing capabilities at the same ordering position can still run after it; arrange their ordering so verification sees the output you intend to accept. This capability does not replace verification tools, task planning, or a live trajectory judge: those can produce evidence or steer work before completion.
 
@@ -127,3 +126,9 @@ The output crosses the engine's serializer. On an engine that transports JSON, s
 ## Telemetry
 
 Each completion check emits a `goal.verify` span through `ctx.tracer`. `goal.met` records whether the check accepted. `goal.description` and, for a rejection, `goal.gap` are recorded only when `trace_include_content` is enabled. With `trace_include_content`, the span also records verifier exceptions; otherwise they are left to the enclosing run span, which withholds their messages. A `Goal` without `verify` and partial outputs emit no goal spans. Core instrumentation already records the resulting model requests and retry flow.
+
+## API reference
+
+::: pydantic_ai_harness.goal.Goal
+
+::: pydantic_ai_harness.goal.GoalVerifier
