@@ -188,6 +188,7 @@ _CAPABILITY_PAGE_META = {
     'browser-use.md': ('browser_use', 'Browser Use'),
     'compaction.md': ('compaction', 'Compaction'),
     'tool-output-limits.md': ('tool_output_limits', 'Tool Output Limits'),
+    'tool-bridge.md': ('tool_bridge', 'Tool Bridge'),
     'tool-call-judge.md': ('tool_call_judge', 'Tool Call Judge'),
     'approval-reviewer.md': ('approval_reviewer', 'Approval Reviewer'),
     'permissions.md': ('permissions', 'Permissions'),

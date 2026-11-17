@@ -171,6 +171,10 @@ def _run_look_up(topic: str) -> tuple[str, dict[str, Any]]:
     return 'run_code', {'code': f'await look_up(topic={topic!r})'}
 
 
+def _bridge_look_up(topic: str) -> tuple[str, dict[str, Any]]:
+    return 'tool_call', {'name': 'look_up', 'args_json': f'{{"topic": "{topic}"}}'}
+
+
 def _forecast(city: str) -> str:
     """Get the weather forecast for a city."""
     return f'Sunny in {city}.'
@@ -480,6 +484,7 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
 
 SCENARIOS: dict[str, Scenario] = {
     'CodeMode': Scenario(look_up=_run_look_up),
+    'ToolBridge': Scenario(look_up=_bridge_look_up),
     'CompactOnRequest': Scenario(state_calls=(('compact_context', {'focus': 'the forecast'}),)),
     'DeduplicateFileReads': Scenario(
         state_calls=(('read_file', {'path': 'notes.md'}), ('read_file', {'path': 'notes.md'}))

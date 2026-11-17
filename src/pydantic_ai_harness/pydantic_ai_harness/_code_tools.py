@@ -31,7 +31,7 @@ FOLD_INTO_CODE_MODE = 'fold_into_code_mode'
 """Tool metadata key that, set to `True`, lets `CodeMode` and `IPythonCodeMode` fold a code-execution tool into
 the sandbox anyway, keeping its `code_arg_name` for whatever else reads it."""
 
-_FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
+FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
 """Kinds of the framework's control tools, which stay native to drive tool search and capability loading."""
 
 BUILTIN_NAMES = frozenset(dir(builtins))
@@ -56,7 +56,7 @@ def can_be_sandboxed(tool_def: ToolDefinition) -> bool:
     """
     folds = bool(tool_def.metadata and tool_def.metadata.get(FOLD_INTO_CODE_MODE) is True)
     return (
-        tool_def.tool_kind not in _FRAMEWORK_CONTROL_TOOL_KINDS
+        tool_def.tool_kind not in FRAMEWORK_CONTROL_TOOL_KINDS
         and not tool_def.unless_native
         and (folds or not is_code_execution_tool(tool_def))
     )
