@@ -9,13 +9,11 @@ from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
     ModelRequest,
-    ModelRequestPart,
     ModelResponse,
-    SystemPromptPart,
 )
 from pydantic_ai.models import (
     ModelRequestContext,
-    _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
+    _leading_standing_system_prompt,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.profiles import CompactionInstructionsMode
 
@@ -62,7 +60,7 @@ async def compact_with_model(
         raise UnexpectedModelBehavior(f'{model.model_name!r} returned no compaction part from `compact_messages`.')
     # The provider's compaction stands for the conversation, not the application's system prompt: that keeps opening
     # the history, so it's still sent as the system prompt after the compaction, and found again for the next one.
-    standing = _standing_system_prompt(request.messages[:kept_from])
+    standing = _leading_standing_system_prompt(request.messages[:kept_from])
     opening: list[ModelMessage] = [ModelRequest(parts=list(standing))] if standing else []
     return CompactionResult(
         messages=[*opening, response, *request.messages[kept_from:]],
@@ -71,17 +69,6 @@ async def compact_with_model(
         usage=response.usage,
         kept_from=len(opening) + 1,
     )
-
-
-def _standing_system_prompt(messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
-    """The parts of the standing system prompt of `messages`: the opening parts of the requests it starts with, merged."""
-    parts: list[ModelRequestPart] = []
-    for message in messages:
-        if not isinstance(message, ModelRequest):
-            break
-        parts.extend(message.parts)
-    count = _standing_system_prompt_count(ModelRequest(parts=parts))
-    return [part for part in parts[:count] if isinstance(part, SystemPromptPart)]
 
 
 def _turn_start(messages: Sequence[ModelMessage]) -> int:
