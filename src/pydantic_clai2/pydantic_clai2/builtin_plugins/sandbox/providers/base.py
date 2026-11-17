@@ -5,7 +5,7 @@ import os
 import posixpath
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
 from pydantic_clai2.builtin_plugins.sandbox.seed import GITHUB_TOKEN_FILE, SandboxBackend
@@ -70,10 +70,10 @@ class SandboxProvider(Protocol):
     async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
         """A new, running sandbox whose commands get `SANDBOX_ENV`, and its reference.
 
-        With `github`, `git` and `gh` there act as `github.login`. A provider whose proxy can sign requests gets the
-        token for this sandbox only, and the sandbox holds a stand-in the proxy replaces, in `GH_TOKEN` or where
-        `give_github_login` would put the token; any other writes the token into the sandbox (`give_github_login`). A `create` that raises, or is cancelled, first
-        deletes whatever it made, as no caller has its reference to delete it later.
+        With `github`, a provider whose proxy can sign requests gives the proxy the token for this sandbox only,
+        and the sandbox holds a stand-in the proxy replaces. Where it cannot (`token_in_sandbox`), `/sandbox`
+        writes the token in afterwards with `give_github_login`. Before raising, `create` deletes whatever it
+        made, as no caller has its reference to delete it later.
         """
         ...
 
@@ -107,6 +107,18 @@ def saved_key(name: str) -> str | None:
     return saved.get_secret_value() if saved is not None else os.environ.get(name) or None
 
 
+@runtime_checkable
+class _KeepsEnv(Protocol):
+    @property
+    def env(self) -> dict[str, str]: ...
+
+
+def keep_env(backend: SandboxBackend, name: str, value: str) -> None:
+    """`set_env` for a backend that adds its `env` to each command, as the sandbox's own cannot be changed."""
+    assert isinstance(backend, _KeepsEnv)
+    backend.env[name] = value
+
+
 async def give_github_login(backend: SandboxBackend, github: GitHubCredential) -> None:
     """Sign the sandbox's `git` and `gh` in as `github.login` by writing the token into the sandbox's home.
 
@@ -121,7 +133,10 @@ async def give_github_login(backend: SandboxBackend, github: GitHubCredential) -
     # `gh` reads its login from here when `GH_TOKEN` is unset.
     hosts = posixpath.join(home, '.config/gh/hosts.yml')
     # Folders only their user can enter, made before the files, so no other user can read a file as it is written.
-    await _check(backend, ['mkdir', '-p', '-m', '700', posixpath.dirname(token), posixpath.dirname(hosts)])
+    # `chmod` too, as `mkdir -p` leaves an existing `~/.config/gh` as it was.
+    folders = [posixpath.dirname(token), posixpath.dirname(hosts)]
+    await _check(backend, ['mkdir', '-p', *folders])
+    await _check(backend, ['chmod', '700', *folders])
     files = Workspace(backend)
     await files.write_bytes(token, github.token.encode())
     await files.write_bytes(

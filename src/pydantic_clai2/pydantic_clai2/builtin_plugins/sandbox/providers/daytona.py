@@ -21,6 +21,7 @@ from pydantic_clai2.builtin_plugins.sandbox.providers.base import (
     GITHUB_HOSTS,
     SANDBOX_ENV,
     GitHubCredential,
+    keep_env,
     saved_key,
 )
 from pydantic_clai2.builtin_plugins.sandbox.seed import SandboxBackend
@@ -84,7 +85,7 @@ class DaytonaProvider:
             backend = DaytonaSandboxBackend(
                 client=client,
                 working_dir=self.working_dir,
-                env=dict(SANDBOX_ENV),
+                env=SANDBOX_ENV,
                 secrets=None if secret is None else {'GH_TOKEN': secret.name},
             )
             sandbox = await backend.get_sandbox()
@@ -97,13 +98,16 @@ class DaytonaProvider:
                 await sandbox.set_labels({**sandbox.labels, SECRET_LABEL: secret.id})
         except BaseException:
             with anyio.CancelScope(shield=True):
+                # Each in its own `finally`, so the secret, which holds the token, goes even if the sandbox does not.
                 try:
-                    if backend is not None and backend.ref is not None:
-                        await self._destroy(client, backend.ref)
                     if secret is not None:
                         await _delete_secret(client, secret.id)
                 finally:
-                    await client.close()
+                    try:
+                        if backend is not None and backend.ref is not None:
+                            await self._destroy(client, backend.ref)
+                    finally:
+                        await client.close()
             raise
         self._clients[backend] = client
         return WorkspaceRef(provider=self.name, id=sandbox.id), backend
@@ -111,21 +115,16 @@ class DaytonaProvider:
     def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
         from pydantic_ai_harness.daytona_sandbox import DaytonaSandboxBackend
 
-        # Built here, on the event loop, as `reopen` may do no I/O but the key may be only in `/keys`, which a
-        # backend left to open its own client would not read. The constructor's reads of two small dotenv files
-        # are the only blocking it does.
+        # Built here, though it reads the key store and two small dotenv files: the key may be only in `/keys`,
+        # which a backend left to open its own client would not read.
         client = self._client()
-        backend = DaytonaSandboxBackend(client=client, ref=ref, working_dir=self.working_dir, env=dict(SANDBOX_ENV))
+        backend = DaytonaSandboxBackend(client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
         self._clients[backend] = client
         return backend
 
     async def set_env(self, backend: SandboxBackend, name: str, value: str) -> None:
-        from pydantic_ai_harness.daytona_sandbox import DaytonaSandboxBackend
-
-        assert isinstance(backend, DaytonaSandboxBackend)
-        # Daytona forgets a running sandbox's added variables when it stops (proven live), so the backend keeps
-        # it and adds it to each command, until CLAI exits.
-        backend.env[name] = value
+        # Daytona forgets a running sandbox's added variables when it stops (proven live).
+        keep_env(backend, name, value)
 
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:

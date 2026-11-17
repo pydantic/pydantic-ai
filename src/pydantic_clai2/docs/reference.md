@@ -50,7 +50,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/forks` | Show this session's background forks |
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
-| `/sandbox [e2b\|boxd\|daytona\|modal\|render\|sprites\|delete]` | Start a new conversation in a cloud sandbox; no argument says where this one runs. See [Cloud sandboxes](#cloud-sandboxes-sandbox) |
+| `/sandbox [e2b\|boxd\|daytona\|opensandbox\|modal\|sprites\|kubernetes\|delete]` | Start a new conversation in a cloud sandbox; no argument says where this one runs. See [Cloud sandboxes](#cloud-sandboxes-sandbox) |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
 | `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer CLAI is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
@@ -2842,7 +2842,7 @@ no agent telemetry spans.
 
 ### Cloud sandboxes: `/sandbox`
 
-Run `/sandbox PROVIDER` (`e2b`, `boxd`, `daytona`, `opensandbox`, `modal`, `render`, `sprites`, or `kubernetes`) in a new
+Run `/sandbox PROVIDER` (`e2b`, `boxd`, `daytona`, `opensandbox`, `modal`, `sprites`, or `kubernetes`) in a new
 conversation, before its first prompt. CLAI copies this checkout (the branch, its unpushed commits, and
 uncommitted files) into a new cloud sandbox, and every command and file edit of the conversation runs
 there. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
@@ -2860,12 +2860,11 @@ Without a `gh` login, the sandbox has no GitHub access.
 |---|---|---|---|---|---|
 | `e2b` | `pydantic-clai2[e2b]` | `E2B_API_KEY` | E2B's proxy, in the sandbox's network rules | anyone with an API key for your E2B team; use a team of your own | kept with the sandbox |
 | `boxd` | `pydantic-clai2[boxd]` | `BOXD_API_KEY` | boxd's proxy, in a private secret made for the machine | a command in the sandbox, as below | kept with the machine; only a machine made with a `gh` login takes one |
-| `daytona` | `pydantic-clai2[daytona]` | `DAYTONA_API_KEY` | Daytona's proxy, in a secret of your Daytona organization made for the sandbox | members of your organization who can manage its secrets | until CLAI exits |
-| `opensandbox` | `pydantic-clai2[opensandbox]` | `OPEN_SANDBOX_DOMAIN`, and `OPEN_SANDBOX_API_KEY` if your server needs one | your OpenSandbox server's credential proxy, in the memory of the sandbox's egress sidecar | anyone with your server's API key can use it; anyone who can read the sidecar's memory on the server's machine | until CLAI exits |
-| `modal` | `pydantic-clai2[modal]` | Modal's own login: `modal token new` | in the sandbox | anything run in the sandbox | until CLAI exits |
-| `render` | `pydantic-clai2[render]` | `RENDER_API_KEY` and `RENDER_WORKSPACE_ID` | in the sandbox | anything run in the sandbox | until CLAI exits, sent to Render with each command |
-| `sprites` | `pydantic-clai2[sprites]` | `SPRITE_TOKEN` | in the Sprite | anything run in the Sprite | until CLAI exits, sent to Sprites in each command's URL |
-| `kubernetes` | `pydantic-clai2[kubernetes]` | `CLAI_KUBERNETES_WARM_POOL`, and `CLAI_KUBERNETES_NAMESPACE` if it is not `default`; `kubectl`'s current context | in the sandbox pod | anything run in the pod, and anyone who can exec into it | until CLAI exits |
+| `daytona` | `pydantic-clai2[daytona]` | `DAYTONA_API_KEY` | Daytona's proxy, in a secret of your Daytona organization made for the sandbox | anyone in your Daytona organization who can create sandboxes can name the secret and have the proxy send the token | for this CLAI session, sent to Daytona inside each command |
+| `opensandbox` | `pydantic-clai2[opensandbox]` | `OPEN_SANDBOX_DOMAIN`, and `OPEN_SANDBOX_API_KEY` if your server needs one | your OpenSandbox server's credential proxy, in the memory of the sandbox's egress sidecar | anyone with your server's API key can use it; anyone who can read the sidecar's memory on the server's machine | for this CLAI session |
+| `modal` | `pydantic-clai2[modal]` | Modal's own login: `modal token new` | in the sandbox | anything run in the sandbox | for this CLAI session |
+| `sprites` | `pydantic-clai2[sprites]` | `SPRITE_TOKEN` | in the Sprite | anything run in the Sprite | for this CLAI session, sent to Sprites in each command's URL |
+| `kubernetes` | `pydantic-clai2[kubernetes]` | `CLAI_KUBERNETES_WARM_POOL`, and `CLAI_KUBERNETES_NAMESPACE` if it is not `default`; `kubectl`'s current context | in the sandbox pod | anything run in the pod, and anyone who can exec into it | for this CLAI session |
 
 Install a provider with `uv tool install 'pydantic-clai2[PROVIDER]'`, and add its keys in `/keys`.
 `/sandbox PROVIDER` says what is missing.
@@ -2879,10 +2878,15 @@ agent must not have your token.
 `dns+nft` mode. Its credential proxy keeps the token in the memory of the sandbox's egress sidecar until
 the sandbox is deleted; if the sidecar restarts, the token is gone and `git` and `gh` there are signed
 out. OpenSandbox's proxy is meant for sandboxes that reach only the hosts it allows, so a sandbox made with
-a `gh` login reaches only those three GitHub hosts: it can't install packages. One made without a `gh`
-login keeps your server's network policy.
+a `gh` login reaches only `github.com`, `api.github.com`, and `uploads.github.com`: it can't install
+packages or download release assets, archives, or Git LFS files. One made without a `gh` login keeps
+your server's network policy.
 
-**In the sandbox** (`modal`, `render`, `sprites`, `kubernetes`): these have no proxy that can add it, so
+`daytona` keeps the token in a `CLAI_GITHUB_...` secret of your Daytona organization, which
+`/sandbox delete` deletes with the sandbox. A sandbox deleted outside CLAI, in Daytona's dashboard or CLI
+or by Daytona's auto-delete, leaves its secret behind: delete it on Daytona's Secrets page.
+
+**In the sandbox** (`modal`, `sprites`, `kubernetes`): these have no proxy that can add it, so
 CLAI saves the token in the sandbox's home folder for `git` and `gh`. Anything run there, the agent
 included, can read it, and it goes when the sandbox does. A `kubernetes` sandbox is a pod CLAI claims from
 your [agent-sandbox](https://agent-sandbox.sigs.k8s.io) warm pool, on the cluster `kubectl`'s current
@@ -2890,8 +2894,8 @@ context names, and reaches through `kubectl port-forward`. Its pod runs commands
 uploads, so the token travels base64-encoded inside a command to the pod.
 
 How long a sandbox lasts differs. An `e2b` sandbox that times out is paused, and Daytona stops an idle
-one; both keep their files, so delete them when you are done. A `modal` or `render` sandbox ends after
-24 hours, with its files and any unpushed work, and a Modal sandbox cannot be paused. A Sprite has no
+one; both keep their files, so delete them when you are done. A `modal` sandbox ends after
+24 hours, with its files and any unpushed work, and cannot be paused. A Sprite has no
 time limit and sleeps while idle. An `opensandbox` sandbox or a `kubernetes` claim has no time limit.
 
 With `boxd`, a command in the sandbox can still learn the token. boxd puts the real token
@@ -2910,8 +2914,8 @@ for it by name, and CLAI shows the `/keys` picker: pick a saved key or type a ne
 is saved in `/keys`. CLAI sets it as an environment variable in the sandbox, so the agent
 carries on in the same turn without seeing the value. This key is in the sandbox, and anything
 run there can read it. It reaches every command started afterwards; a server started before it
-needs a restart. The table says how long it lasts: a sandbox reopened after CLAI exits no longer
-has one that lasts until CLAI exits, so the agent asks again. The agent asks only in the terminal,
+needs a restart. The table says how long it lasts: one kept for this CLAI session is gone once the session
+closes the sandbox, as an idle session does, or in a `/fork`, so the agent asks again. The agent asks only in the terminal,
 not in the web UI.
 
 ### Several sessions in the web UI

@@ -20,7 +20,7 @@ from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_clai2.builtin_plugins.sandbox.providers.base import (
     SANDBOX_ENV,
     GitHubCredential,
-    give_github_login,
+    keep_env,
     saved_key,
 )
 from pydantic_clai2.builtin_plugins.sandbox.seed import SandboxBackend
@@ -62,7 +62,7 @@ class SpritesProvider:
     def _backend(self, client: 'AsyncSpritesClient', ref: WorkspaceRef | None = None) -> 'SpritesSandboxBackend':
         from pydantic_ai_harness.sprites_sandbox import SpritesSandboxBackend
 
-        backend = SpritesSandboxBackend(client=client, ref=ref, working_dir=self.working_dir, env=dict(SANDBOX_ENV))
+        backend = SpritesSandboxBackend(client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
         self._clients[backend] = client
         return backend
 
@@ -71,9 +71,8 @@ class SpritesProvider:
         backend = self._backend(client)
         try:
             await backend.get_sandbox()
-            if github is not None:
-                await give_github_login(backend, github)
         except BaseException:
+            # The Sprite may exist already: the backend makes the working folder in it after creating it.
             with anyio.CancelScope(shield=True):
                 try:
                     if backend.ref is not None:
@@ -85,15 +84,12 @@ class SpritesProvider:
         return backend.ref, backend
 
     def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
-        # Built here, on the event loop, as `reopen` may do no I/O but the token may be only in `/keys`, which a
-        # backend left to open its own client would not read.
+        # Built here, though it reads the key store: the token may be only in `/keys`, which a backend left to
+        # open its own client would not read.
         return self._backend(self._client(), ref)
 
     async def set_env(self, backend: SandboxBackend, name: str, value: str) -> None:
-        from pydantic_ai_harness.sprites_sandbox import SpritesSandboxBackend
-
-        assert isinstance(backend, SpritesSandboxBackend)
-        backend.env[name] = value
+        keep_env(backend, name, value)
 
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:

@@ -737,10 +737,6 @@ BLOCKBUSTER_LIBRARY_SETUP: tuple[tuple[str, str], ...] = (
     # use: `kubernetes_asyncio` reads the kubeconfig and writes its embedded certificates to temporary
     # files synchronously (its exec credential plugins run as asyncio subprocesses and stay covered).
     ('k8s_agent_sandbox/async_k8s_helper.py', '_ensure_initialized'),
-    # Render's SDK reads its own package metadata for the User-Agent of each client it builds. CLAI's
-    # `/sandbox render` builds one in its synchronous `reopen`, which cannot offload it, so that the key
-    # can come from `/keys`.
-    ('render/version.py', 'get_version'),
 )
 
 

@@ -14,10 +14,8 @@ from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path
 
-import anyio
-
 from pydantic_ai.workspaces import WorkspaceRef
-from pydantic_clai2.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, GitHubCredential, give_github_login
+from pydantic_clai2.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, GitHubCredential, keep_env
 from pydantic_clai2.builtin_plugins.sandbox.seed import SandboxBackend
 
 
@@ -46,29 +44,19 @@ class ModalProvider:
         from pydantic_ai_harness.modal_sandbox import ModalSandboxBackend
 
         # Modal's longest lifetime, 24 hours, and no idle timeout: Modal would end an idle sandbox, not pause it.
-        backend = ModalSandboxBackend(working_dir=self.working_dir, env=dict(SANDBOX_ENV), sandbox_timeout=86_400)
-        try:
-            sandbox = await backend.get_sandbox()
-            if github is not None:
-                await give_github_login(backend, github)
-        except BaseException:
-            if backend.ref is not None:
-                with anyio.CancelScope(shield=True):
-                    await self.delete(backend.ref)
-            raise
-        return WorkspaceRef(provider=self.name, id=sandbox.object_id), backend
+        backend = ModalSandboxBackend(working_dir=self.working_dir, env=SANDBOX_ENV, sandbox_timeout=86_400)
+        # Nothing after Modal creates the sandbox can fail, so there is nothing here to clean up.
+        await backend.get_sandbox()
+        assert backend.ref is not None
+        return backend.ref, backend
 
     def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
         from pydantic_ai_harness.modal_sandbox import ModalSandboxBackend
 
-        return ModalSandboxBackend(ref=ref, working_dir=self.working_dir, env=dict(SANDBOX_ENV))
+        return ModalSandboxBackend(ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
 
     async def set_env(self, backend: SandboxBackend, name: str, value: str) -> None:
-        from pydantic_ai_harness.modal_sandbox import ModalSandboxBackend
-
-        assert isinstance(backend, ModalSandboxBackend)
-        # Modal cannot change a running sandbox's environment, so the backend adds it to each command until CLAI exits.
-        backend.env[name] = value
+        keep_env(backend, name, value)
 
     async def close(self, backend: SandboxBackend) -> None:
         del backend  # Modal's own client is shared by the process, and closes with it.

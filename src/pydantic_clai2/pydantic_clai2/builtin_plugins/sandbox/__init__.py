@@ -12,7 +12,7 @@ A sandbox stays until `/sandbox delete`, which keeps the history: a copy of the 
 
 import re
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 import anyio
@@ -26,7 +26,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_clai2.builtin_plugins.sandbox.providers import PROVIDERS, GitHubCredential, SandboxProvider
-from pydantic_clai2.builtin_plugins.sandbox.providers.base import SANDBOX_ENV
+from pydantic_clai2.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, give_github_login
 from pydantic_clai2.builtin_plugins.sandbox.seed import SandboxBackend, Snapshot, seed, snapshot
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import load_keys
@@ -99,8 +99,14 @@ class _ConversationSandbox(ConversationWorkspace[None]):
         return (
             f'Your shell and file tools run in a {provider.title} sandbox. {provider.working_dir} '
             "is a copy of the user's checkout, made when this conversation started; the user sees changes there "
-            f'only once they are pushed. git, and gh if it is installed, are signed in to GitHub as the user{_HOW_SIGNED_IN[provider.token_in_sandbox]}. '
-            'Never run `gh auth login`.'
+            'only once they are pushed. git, and gh if it is installed, are signed in to GitHub as the user'
+            + (
+                ', with a token saved in the sandbox, which anything run there can read; leave GH_TOKEN unset. '
+                if provider.token_in_sandbox
+                else ' through a proxy outside the sandbox, so the sandbox holds only a stand-in for the token, '
+                'which the proxy replaces. '
+            )
+            + 'Never run `gh auth login`.'
         )
 
     def get_toolset(self) -> FunctionToolset[None] | None:
@@ -252,7 +258,11 @@ class SandboxPlugin(Plugin):
             await conversation.commit_messages(
                 [ModelRequest(parts=[request]), ModelResponse(parts=[reply], workspace_ref=ref)]
             )
-            await seed(backend, checkout)
+            if github is not None and provider.token_in_sandbox:
+                # After the commit, so a sandbox holding the token is named for `/sandbox delete` even if this fails.
+                await give_github_login(backend, github)
+            # Without a login the sandbox cannot clone from GitHub, so the whole history goes over in the bundle.
+            await seed(backend, checkout if github is not None else replace(checkout, clone_url=None))
         except BaseException:
             with anyio.CancelScope(shield=True):
                 try:
@@ -346,7 +356,8 @@ def _started(
     lines = [f'This conversation now runs in {provider.title} sandbox {ref.id}. {provider.working_dir} holds {holds}.']
     if github is None:
         lines.append(
-            'gh has no GitHub login here, so the sandbox cannot push or reach private repositories. Run gh auth login, then /new.'
+            'gh has no GitHub login here, so the sandbox cannot push or reach private repositories. '
+            f'Run /sandbox delete and gh auth login, then /new and /sandbox {provider.name} again.'
         )
     else:
         lines.append(

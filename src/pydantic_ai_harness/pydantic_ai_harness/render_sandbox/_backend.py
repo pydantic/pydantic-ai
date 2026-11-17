@@ -136,11 +136,6 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         """The sandbox's identity: `None` until a fresh one is created, then set for good."""
         return self._ref
 
-    @property
-    def env(self) -> dict[str, str]:
-        """The variables every command gets, under the command's own; add one to give it to later commands."""
-        return self._env
-
     def _operation(self) -> AbstractAsyncContextManager[RenderAsync]:
         # Without a caller-supplied client, each top-level operation opens its own and closes it when
         # done, so a backend dropped by a durable task or another event loop leaves no pool behind.
@@ -159,8 +154,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         except RateLimitError:
             raise
         except ClientError as error:
-            # Render's reason, such as an account without a payment card, is what the user can act on.
-            raise WorkspaceUnavailableError(f'Could not create a Render sandbox: {error}') from error
+            raise WorkspaceUnavailableError('Could not create a Render sandbox') from error
         self._ref = WorkspaceRef(provider='render', id=sandbox.id)
         self._working_dir_pending = True
         logger.info('Created Render sandbox %s', sandbox.id)

@@ -59,7 +59,6 @@ from pydantic_clai2.builtin_plugins.sandbox.providers import (
     kubernetes as kubernetes_provider,
     modal as modal_provider,
     opensandbox as opensandbox_provider,
-    render as render_provider,
     sprites as sprites_provider,
 )
 from pydantic_clai2.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, give_github_login
@@ -95,7 +94,6 @@ if TYPE_CHECKING:
     from tests.harness.kubernetes_sandbox.fake_sandboxd import FakeCluster
     from tests.harness.modal_sandbox.fake_modal import FakeModal
     from tests.harness.opensandbox_sandbox.fake_opensandbox import FakeOpenSandbox
-    from tests.harness.render_sandbox.workspace_helpers import WorkspaceHarness
     from tests.harness.sprites_sandbox.fake_sprites import SpriteTransport
 
 CLONE_URL = 'https://github.com/owner/repo.git'
@@ -462,15 +460,15 @@ class TestCommand:
             'daytona',
             'opensandbox',
             'modal',
-            'render',
             'sprites',
             'kubernetes',
             'delete',
         ]
 
+    @pytest.mark.parametrize('origin', [None, 'https://github.com/owner/private.git'])
     @pytest.mark.parametrize('gap', ['no gh', 'no login', 'token refused'])
     async def test_without_a_github_login(
-        self, checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch, gap: str
+        self, checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch, gap: str, origin: str | None
     ) -> None:
         def no_gh(hostname: str) -> str:
             raise UserError('gh is not installed')
@@ -484,10 +482,20 @@ class TestCommand:
             monkeypatch.setattr(sandbox, 'gh_token', nothing)
         else:
             monkeypatch.setattr(sandbox, 'gh_user', nothing)
-        git(checkout, 'remote', 'remove', 'origin')
+        if origin is None:
+            git(checkout, 'remote', 'remove', 'origin')
+        else:
+            # A repository on GitHub the sandbox cannot clone without a login, as the fake has no `private.git`.
+            git(checkout, 'remote', 'set-url', 'origin', origin)
         message = await plugin_of(load(checkout)).command(['fake'])
-        assert 'gh has no GitHub login here, so the sandbox cannot push or reach private repositories.' in message
+        assert (
+            'gh has no GitHub login here, so the sandbox cannot push or reach private repositories. '
+            'Run /sandbox delete and gh auth login, then /new and /sandbox fake again.'
+        ) in message
         assert provider.created == [None]
+        # The whole history went over in the bundle instead of a clone.
+        copy = provider.folder(WorkspaceRef(provider='fake', id='sbx-1'))
+        assert git(copy, 'rev-parse', 'HEAD') == git(checkout, 'rev-parse', 'HEAD')
 
     async def test_origin_not_on_github(self, checkout: Path, provider: FakeProvider) -> None:
         git(checkout, 'remote', 'set-url', 'origin', 'https://gitlab.com/owner/repo.git')
@@ -536,6 +544,20 @@ class TestCommand:
         # Still in the history, so `/sandbox delete` can try again.
         assert history_sandbox(plugin.host.conversation.messages) == WorkspaceRef(provider='fake', id='sbx-1')
         assert provider.closed
+
+    async def test_a_failed_login_whose_delete_failed_stays_named(
+        self, checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The login runs after the sandbox is named, so a sandbox that may hold the token is never lost.
+        provider.token_in_sandbox = True
+        provider.delete_error = RuntimeError('network down')
+        monkeypatch.setenv('HOME', 'relative')
+        plugin = plugin_of(load(checkout))
+        with pytest.raises(RuntimeError, match='network down'):
+            await plugin.command(['fake'])
+        assert history_sandbox(plugin.host.conversation.messages) == WorkspaceRef(provider='fake', id='sbx-1')
+        provider.delete_error = None
+        assert await plugin.command(['delete']) == 'Deleted Fake sandbox sbx-1. Run /new to start another conversation.'
 
     async def test_a_slow_github_is_not_a_missing_login(
         self, checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
@@ -1219,6 +1241,8 @@ async def test_a_provider_that_puts_the_token_in_the_sandbox_says_so(checkout: P
     provider.token_in_sandbox = True
     loaded = load(checkout)
     message = await plugin_of(loaded).command(['fake'])
+    # `/sandbox` wrote the login into the sandbox's home, which the fake shares with the test.
+    assert (Path(os.environ['HOME']) / '.config/clai/github-token').read_text(encoding='utf-8') == 'gho_secret'
     assert (
         'The token is saved in the sandbox, where anything run there can read it, until the sandbox is deleted.'
         in message
@@ -1298,8 +1322,28 @@ async def test_a_sandbox_that_only_runs_commands(checkout: Path, provider: FakeP
     assert git(copy, 'rev-parse', 'HEAD') == git(checkout, 'rev-parse', 'HEAD')
     assert git(copy, 'status', '--porcelain') == ' M README.md\n?? untracked.txt'
 
+    # An existing `~/.config/gh` is made private too.
+    (home / '.config/gh').mkdir(parents=True, mode=0o755)
     await give_github_login(backend, GITHUB)
     assert signed_in(home) == SIGNED_IN
+    assert stat.S_IMODE((home / '.config/gh').stat().st_mode) == 0o700
+
+
+@pytest.mark.parametrize('home', ['none', 'a file'])
+async def test_a_login_with_no_home_folder_fails(
+    provider: FakeProvider, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, home: str
+) -> None:
+    # No home folder to sign in under, or one where the login's folders cannot be made.
+    if home == 'none':
+        monkeypatch.setenv('HOME', '')
+        raised = 'no home folder'
+    else:
+        (tmp_path / 'file').touch()
+        monkeypatch.setenv('HOME', str(tmp_path / 'file'))
+        raised = r'^Could not sign the sandbox in to GitHub: mkdir: .*'
+    _, backend = await provider.create(github=None)
+    with pytest.raises(RuntimeError, match=raised):
+        await give_github_login(backend, GITHUB)
 
 
 @dataclass
@@ -1449,20 +1493,41 @@ class TestDaytona:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        import daytona
+        from daytona_api_client_async.exceptions import ApiException
 
         fake, account = fake_daytona
         monkeypatch.setenv('GH_TOKEN', 'dtn_secret_1')
         provider = daytona_provider.DaytonaProvider(working_dir=str(tmp_path / 'workspace'))
         ref, backend = await provider.create(github=GITHUB)
         await provider.close(backend)
-        account.delete_error = daytona.DaytonaError('service unavailable')
-        with pytest.raises(daytona.DaytonaError):
+        # What the secrets API raises, unwrapped by the SDK.
+        account.delete_error = ApiException(status=503)
+        with pytest.raises(ApiException):
             await provider.delete(ref)
         # The sandbox, and the label naming the secret, are still there, so a retry deletes both.
         assert any(sandbox.state == 'started' for sandbox in fake.sandboxes)
         account.delete_error = None
         await provider.delete(ref)
+        assert account.secrets == {}
+
+    async def test_a_failed_create_whose_sandbox_delete_fails_still_deletes_the_secret(
+        self,
+        fake_daytona: 'tuple[FakeDaytona, FakeDaytonaSecrets]',
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        _, account = fake_daytona
+        # Daytona put the token itself in the sandbox, so `create` fails after making the sandbox and secret.
+        monkeypatch.setenv('GH_TOKEN', 'gho_x')
+
+        async def destroy(self: object, client: object, ref: WorkspaceRef) -> None:
+            raise OSError('Daytona is down')
+
+        monkeypatch.setattr(daytona_provider.DaytonaProvider, '_destroy', destroy)
+        provider = daytona_provider.DaytonaProvider(working_dir=str(tmp_path / 'workspace'))
+        with pytest.raises(OSError, match='Daytona is down'):
+            await provider.create(github=GITHUB)
+        # The token does not outlive the failed create, even though the sandbox does.
         assert account.secrets == {}
 
     @pytest.mark.parametrize(
@@ -1542,6 +1607,7 @@ class TestModal:
         # Modal's longest lifetime, and no idle timeout, which would end the sandbox rather than pause it.
         assert (kwargs['timeout'], kwargs['idle_timeout']) == (86_400, None)
         assert kwargs['env'] == SANDBOX_ENV
+        await give_github_login(backend, GITHUB)
         assert signed_in(Path(os.environ['HOME'])) == SIGNED_IN
         [made] = fake_modal.sandboxes
         # The token went by the file API, never in a command.
@@ -1555,111 +1621,12 @@ class TestModal:
         ref, _ = await provider.create(github=None)
         assert ref.id == 'sb-owned-2'
 
-    @pytest.mark.parametrize('home', ['none', 'a file'])
-    async def test_a_failed_create_leaves_nothing_behind(
-        self, fake_modal: 'FakeModal', tmp_path: Path, monkeypatch: pytest.MonkeyPatch, home: str
-    ) -> None:
-        # No home folder to sign in under, or one where the login's folders cannot be made: the sandbox goes.
-        if home == 'none':
-            monkeypatch.setenv('HOME', '')
-            raised = 'no home folder'
-        else:
-            (tmp_path / 'file').touch()
-            monkeypatch.setenv('HOME', str(tmp_path / 'file'))
-            raised = r'^Could not sign the sandbox in to GitHub: mkdir: .*'
+    async def test_a_failed_create_leaves_nothing_behind(self, fake_modal: 'FakeModal', tmp_path: Path) -> None:
         workspace = tmp_path / 'workspace'
         workspace.mkdir()
-        with pytest.raises(RuntimeError, match=raised):
-            await modal_provider.ModalProvider(working_dir=str(workspace)).create(github=GITHUB)
-        [made] = fake_modal.sandboxes
-        assert made.shutting_down
         fake_modal.create_error = OSError('Modal is down')
         with pytest.raises(OSError, match='Modal is down'):
             await modal_provider.ModalProvider(working_dir=str(workspace)).create(github=GITHUB)
-
-
-@pytest.fixture
-def fake_render(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 'Iterator[WorkspaceHarness]':
-    """The harness's Render fake, whose commands run here; every client CLAI makes is wired to it."""
-    import render
-
-    from tests.harness.render_sandbox.workspace_helpers import client_is_closed, make_workspace_harness
-
-    harness = make_workspace_harness(monkeypatch, tmp_path)
-    made: list[render.RenderAsync] = []
-    real = render.RenderAsync
-
-    def client(*, token: str | None, owner_id: str | None) -> render.RenderAsync:
-        assert (token, owner_id) == ('rnd_key', 'tea-1')
-        opened = real(token=token, owner_id=owner_id)
-        harness.install(opened)
-        made.append(opened)
-        return opened
-
-    monkeypatch.setattr(render, 'RenderAsync', client)
-    monkeypatch.delenv(render_provider.KEY_NAME, raising=False)
-    monkeypatch.delenv(render_provider.WORKSPACE_KEY_NAME, raising=False)
-    yield harness
-    assert all(client_is_closed(opened) for opened in made)
-
-
-@pytest.mark.skipif(find_spec('render') is None, reason='render not installed')
-class TestRender:
-    """Render, through the SDK fake the harness's own Render tests use."""
-
-    def test_missing(self, fake_render: 'WorkspaceHarness', monkeypatch: pytest.MonkeyPatch) -> None:
-        provider = render_provider.RenderProvider()
-        message = (
-            'Add your Render API key in /keys as RENDER_API_KEY, and the tea-... ID of a workspace with sandboxes '
-            'as RENDER_WORKSPACE_ID. Make a key as https://render.com/docs/api#1-create-an-api-key says.'
-        )
-        assert provider.missing() == message
-        save_key(name='RENDER_API_KEY', value='rnd_key')
-        assert provider.missing() == message
-        monkeypatch.setenv('RENDER_WORKSPACE_ID', 'tea-1')
-        assert provider.missing() is None
-        monkeypatch.setattr(render_provider, 'find_spec', not_installed)
-        assert provider.missing() == (
-            "Render support is not installed. Install CLAI with it: uv tool install 'pydantic-clai2[render]'."
-        )
-
-    async def test_create_reopen_delete(
-        self, fake_render: 'WorkspaceHarness', monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        save_key(name='RENDER_API_KEY', value='rnd_key')
-        save_key(name='RENDER_WORKSPACE_ID', value='tea-1')
-        provider = render_provider.RenderProvider(working_dir=str(tmp_path / 'workspace'))
-        ref, backend = await provider.create(github=GITHUB)
-        assert ref == backend.ref == WorkspaceRef(provider='render', id='sb-1')
-        # Render's longest lifetime.
-        assert fake_render.create_calls['sb-1'].timeout_seconds == 86_400
-        assert signed_in(Path(os.environ['HOME'])) == SIGNED_IN
-        assert not any('gho_x' in str(command) for command in fake_render.commands)
-        reopened = provider.reopen(ref)
-        await provider.set_env(reopened, 'API_KEY', 'sk-1')
-        assert (await reopened.run(['printenv', 'API_KEY'])).stdout == 'sk-1\n'
-        await provider.close(reopened)
-        await provider.close(backend)
-        await provider.close(backend)  # Closing again has nothing left to close.
-        await provider.delete(ref)
-        assert fake_render.terminated == ['sb-1']
-        ref, backend = await provider.create(github=None)
-        await provider.close(backend)
-
-    async def test_a_failed_create_leaves_nothing_behind(
-        self, fake_render: 'WorkspaceHarness', monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        save_key(name='RENDER_API_KEY', value='rnd_key')
-        save_key(name='RENDER_WORKSPACE_ID', value='tea-1')
-        monkeypatch.setenv('HOME', 'relative')
-        provider = render_provider.RenderProvider(working_dir=str(tmp_path / 'workspace'))
-        with pytest.raises(RuntimeError, match='no home folder'):
-            await provider.create(github=GITHUB)
-        assert fake_render.terminated == ['sb-1']
-        fake_render.create_error = OSError('Render is down')
-        with pytest.raises(OSError, match='Render is down'):
-            await provider.create(github=GITHUB)
-        assert fake_render.created == ['sb-1']
 
 
 @pytest.fixture
@@ -1735,6 +1702,7 @@ class TestSprites:
         [name] = fake_sprites.created
         assert ref == backend.ref == WorkspaceRef(provider='sprites', id=name)
         assert {client.token for client in fake_sprites.clients} == {'spr-1'}
+        await give_github_login(backend, GITHUB)
         assert signed_in(Path(os.environ['HOME'])) == SIGNED_IN
         # The token went by the filesystem API, never in an exec URL.
         assert not any('gho_x' in socket.query_url for socket in fake_sprites.execs)
@@ -1750,15 +1718,9 @@ class TestSprites:
         await provider.close(backend)
         await provider.delete(ref)
 
-    async def test_a_failed_create_leaves_nothing_behind(
-        self, fake_sprites: 'SpriteTransport', monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    async def test_a_failed_create_leaves_nothing_behind(self, fake_sprites: 'SpriteTransport', tmp_path: Path) -> None:
         save_key(name='SPRITE_TOKEN', value='spr-1')
-        monkeypatch.setenv('HOME', 'relative')
         provider = sprites_provider.SpritesProvider(working_dir=str(tmp_path / 'workspace'))
-        with pytest.raises(RuntimeError, match='no home folder'):
-            await provider.create(github=GITHUB)
-        assert len(fake_sprites.created) == 1 and fake_sprites.names == set()
         fake_sprites.create_error = OSError('Sprites is down')
         with pytest.raises(OSError, match='Sprites is down'):
             await provider.create(github=GITHUB)
@@ -1930,6 +1892,7 @@ class TestKubernetes:
         assert fake_cluster.created == [
             ('pool', 'sandboxes', {'shutdown_after_seconds': None, 'sandbox_ready_timeout': 180})
         ]
+        await give_github_login(backend, GITHUB)
         assert signed_in(Path(os.environ['HOME'])) == SIGNED_IN
         reopened = provider.reopen(ref)
         await provider.set_env(reopened, 'API_KEY', 'sk-1')
@@ -1942,15 +1905,10 @@ class TestKubernetes:
         await provider.close(backend)
         await provider.delete(ref)
 
-    async def test_a_failed_create_leaves_nothing_behind(
-        self, fake_cluster: 'FakeCluster', monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv('HOME', 'relative')
+    async def test_a_failed_create_leaves_nothing_behind(self, fake_cluster: 'FakeCluster') -> None:
         provider = kubernetes_provider.KubernetesProvider(working_dir=str(fake_cluster.base / 'checkout'))
-        with pytest.raises(RuntimeError, match='no home folder'):
-            await provider.create(github=GITHUB)
-        assert fake_cluster.claims == {} and len(fake_cluster.created) == 1
-        assert all(client.closed for client in fake_cluster.clients)
         fake_cluster.create_error = OSError('the cluster is down')
         with pytest.raises(OSError, match='the cluster is down'):
             await provider.create(github=GITHUB)
+        assert fake_cluster.claims == {}
+        assert all(client.closed for client in fake_cluster.clients)

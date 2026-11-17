@@ -20,7 +20,7 @@ from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_clai2.builtin_plugins.sandbox.providers.base import (
     SANDBOX_ENV,
     GitHubCredential,
-    give_github_login,
+    keep_env,
     saved_key,
 )
 from pydantic_clai2.builtin_plugins.sandbox.seed import SandboxBackend
@@ -65,16 +65,11 @@ class KubernetesProvider:
             env=SANDBOX_ENV,
         )
         try:
+            # A claim that fails is rolled back by the backend, so only its `kubectl port-forward` is left to stop.
             await backend.get_sandbox()
-            if github is not None:
-                await give_github_login(backend, github)
         except BaseException:
             with anyio.CancelScope(shield=True):
-                try:
-                    if backend.ref is not None:
-                        await self.delete(backend.ref)
-                finally:
-                    await backend.aclose()
+                await backend.aclose()
             raise
         assert backend.ref is not None
         return backend.ref, backend
@@ -85,8 +80,7 @@ class KubernetesProvider:
         return KubernetesSandboxBackend(ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
 
     async def set_env(self, backend: SandboxBackend, name: str, value: str) -> None:
-        # sandboxd cannot change a running pod's environment, so the backend adds it to each command until CLAI exits.
-        _kubernetes(backend).env[name] = value
+        keep_env(backend, name, value)
 
     async def close(self, backend: SandboxBackend) -> None:
         # Stops the `kubectl port-forward` the backend started.
