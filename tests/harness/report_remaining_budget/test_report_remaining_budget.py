@@ -64,7 +64,7 @@ class TestReportRemainingBudget:
     async def test_reports_run_limits_on_every_request(self):
         agent = _agent(
             _model(
-                RequestUsage(input_tokens=400, output_tokens=200, cost=Decimal('0.25')),
+                RequestUsage(input_tokens=400, output_tokens=200, cost=Decimal('0.251')),
                 RequestUsage(input_tokens=60_000, output_tokens=1_000, cost=Decimal('0.5')),
             ),
             ReportRemainingBudget(),
@@ -86,11 +86,11 @@ Budget remaining:
 """,
                 """\
 Budget remaining:
-- this run: 2 requests including this one, 1 tool call, about 2M input tokens, about 1.3k output tokens, about 61k total tokens, $1.75\
+- this run: 2 requests including this one, 1 tool call, about 1.9M input tokens, about 1.3k output tokens, about 61k total tokens, $1.74\
 """,
                 """\
 Budget remaining:
-- this run: 1 request including this one, 0 tool calls, about 1.9M input tokens, 300 output tokens, 400 total tokens, $1.25\
+- this run: 1 request including this one, 0 tool calls, about 1.9M input tokens, 300 output tokens, 400 total tokens, $1.24\
 """,
             ]
         )
@@ -119,7 +119,7 @@ Budget remaining:
                 """\
 Budget remaining:
 - this run: 3 requests including this one
-- today: $10.00, about 1M tokens
+- today: $10.00, about 999k tokens
 - this month (tenant): 100 tokens
 - spend limit for this run: $3.00\
 """,

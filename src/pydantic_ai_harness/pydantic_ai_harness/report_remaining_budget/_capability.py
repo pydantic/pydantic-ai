@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -32,13 +32,14 @@ def _tokens(count: int, kind: str) -> str:
     count = max(count, 0)
     if count < 1000:
         return f'{count} {kind}'
-    value, unit = (count / 1000, 'k') if count < 999_500 else (count / 1_000_000, 'M')
-    rounded = f'{value:.1f}'.removesuffix('.0') if value < 10 else f'{value:.0f}'
+    size, unit = (1000, 'k') if count < 1_000_000 else (1_000_000, 'M')
+    tenths = count * 10 // size
+    rounded = f'{tenths // 10}.{tenths % 10}'.removesuffix('.0') if tenths < 100 else str(tenths // 10)
     return f'about {rounded}{unit} {kind}'
 
 
 def _usd(amount: Decimal) -> str:
-    return f'${max(amount, Decimal(0)):.2f}'
+    return f'${max(amount, Decimal(0)).quantize(Decimal("0.01"), rounding=ROUND_DOWN)}'
 
 
 def _run_line(ctx: RunContext[AgentDepsT]) -> str | None:

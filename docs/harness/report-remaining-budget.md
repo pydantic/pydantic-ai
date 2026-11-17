@@ -41,7 +41,7 @@ Budget remaining:
 
 - **This run** lists each `UsageLimits` ceiling that is set: requests (counting the one being sent), tool calls, input, output and total tokens, and the USD `cost_limit`. `per_request_input_tokens_limit` caps one request's context rather than a running total, so it is not reported. With no limit set, the line is left out.
 - **Spend budgets** get one line per `Budget` with a `usd` or `tokens` ceiling, labelled by window (`spend limit for this run`, `this conversation`, `today`, `this month`, `in total`) and by `name` unless it is `'default'`, so a run-window, daily or per-tenant spend remainder is not read as the run's usage limits. A budget with neither ceiling only counts spend and is left out.
-- Token counts below 1,000 are exact; larger ones are rounded (`about 1.3k`, `about 38k`, `about 1.2M`), so the status stays short. Remainders never go below zero.
+- Token counts below 1,000 are exact; larger ones are rounded down (`about 1.3k`, `about 38k`, `about 1.2M`), so the status stays short. USD is rounded down to the cent. Remainders never go below zero, and rounding never reports more than is left.
 - A `cost_limit` counts a run with no price data as having spent nothing; core warns with `CostNotFoundWarning` in that case.
 
 A run without `usage_limits=` still has core's default `request_limit=50`, so that is reported. Nothing is sent only when no limit applies: `UsageLimits(request_limit=None)` with no other limit, and no `spend_limits`.
