@@ -223,8 +223,9 @@ receipt, so `CI Review` cannot stand in for douwebot even though both can use th
 Maintainer-authorized protected-configuration reviews satisfy the same rule.
 A clean OpenCode fallback approval satisfies the same gate as a Claude approval. The review body and receipt identify the engine that served the review: `engine=claude`, `engine=opencode` for OpenCode Go, or `engine=opencode-zai` for OpenCode on the GLM Coding Plan. Reviews from before the Coding Plan replaced DeepInfra carry `engine=opencode-deepinfra`, which the gate still reads.
 
-`pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews,
-inline-comment changes and review-thread resolution with a read-only token, including on forks. Its completion wakes
+`pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews
+and inline-comment changes with a read-only token, including on forks. GitHub Actions has no
+review-thread trigger, so resolving an optional finding's thread updates the status on the next wake-up. Its completion wakes
 `PR Review Gates`, which also runs on PR Bots completion. The latter covers writes by `GITHUB_TOKEN`,
 which cannot trigger the observer. Do not add a `pull_request_target` trigger to `PR Review Gates`:
 GitHub blocks that event by default in public repositories (#12961). The publisher binds each

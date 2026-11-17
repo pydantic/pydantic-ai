@@ -130,6 +130,7 @@ orchestrator = Agent(
 | `max_calls` | The maximum number of delegations to this sub-agent per parent run. Once reached, further delegations return a soft budget-exhausted message without running the child. Counts are scoped to one `Agent.run` (a `run_id`) and cleared when it ends, so each parent run and each level of a nested tree budgets independently. |
 | `on_failure` | A steering message returned to the parent for any soft degradation of this delegate, in place of the built-in default. Setting it also makes child failures soft (see below). |
 | `contain_errors` | Whether an unexpected crash in this delegate is caught and returned to the parent as a bounded `ModelRetry` instead of aborting the parent run (see below). Unset inherits the `SubAgents(contain_errors=...)` default (off). |
+| `keep_partial_output` | Whether a child stopped by `timeout_seconds` or its own `usage_limits` passes on its last text response to the parent (see below). Off by default. |
 
 ## Per-delegation model selection
 
@@ -216,6 +217,8 @@ change where disk agent definitions are discovered: `SubAgents.workspace` contro
 ## Failure handling
 
 A *soft outcome* returns a steering message to the parent as a normal tool result, so its model reads the message and decides what to do next (rather than immediately re-delegating, which a `ModelRetry` invites). A timeout, a reached `usage_limits` budget, and an exhausted `max_calls` budget are always soft. When `on_failure` is set, the message it carries replaces the built-in default for these outcomes.
+
+With `keep_partial_output=True`, a delegation stopped by its timeout or its own usage budget also hands the parent the child's last text response, so the work the child did before it stopped reaches the parent. It follows the steering message (or `on_failure`), framed as `<partial_output>...</partial_output>`, and the outcome stays `timeout` or `budget`. `DelegationFinishedEvent.output` carries the same text, bounded like any other output. The text has not passed the child's output validation. It is the last thing the child said, not an answer it approved, and can be text the child's output validator or `OutputGuardrail` rejected, so leave this off for a child whose guardrails keep content from its parent. Text from a response the child answered with a retry is skipped, as is a final response the run stopped before acting on, or one with an output tool call the stop cut off before its verdict. A child with no such text returns the steering message alone.
 
 A sub-agent run that ends with `DeferredToolRequests` (its `output_type` includes it and a tool needed approval or was deferred) is a soft outcome too. The parent cannot approve the child's tool calls or resume its run, and delegating the same task again would most likely stop the same way, so instead of returning the marker as output the delegation returns a steering message naming the sub-agent and why it stopped, or the `on_failure` message when that is set. A sub-agent that resolves its own deferred calls, for example with [`HandleDeferredToolCalls`](../capabilities/handle-deferred-tool-calls.md), never ends this way and returns its output as usual. A run that ends with `PendingModelResponse` (its `output_type` includes it and a model request was left waiting on the provider, for example in a batch) returns a steering message the same way, including on a remote worker, and the request is cancelled, since nobody will check on it later. Cancelling is best effort, and a [batch](../batch.md) is only cancelled once no other request in it is still waiting.
 
@@ -761,6 +764,7 @@ SubAgent(
     contain_errors=None,   # contain an unexpected crash as a bounded retry; None inherits the SubAgents default
     resumable=True,        # whether a finished task can be resumed, with a task owner
     can_ask_questions=True,  # give the sub-agent `ask_parent`, with task_control
+    keep_partial_output=False,  # pass on the child's last text when its timeout or usage budget stops it
 )
 ```
 

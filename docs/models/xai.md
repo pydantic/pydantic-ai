@@ -282,6 +282,24 @@ agent = Agent(
 
 More agents means deeper research, at the cost of more tokens and higher latency. Other xAI models ignore the setting.
 
+## Service tier
+
+xAI offers [priority processing](https://docs.x.ai/developers/advanced-api-usage/priority-processing), which schedules a request ahead of standard traffic when priority capacity is available, at a premium per-token price. Set the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field to `'priority'` to opt in, or to `'default'` to request standard processing explicitly:
+
+```py {title="xai_service_tier.py"}
+from pydantic_ai import Agent
+from pydantic_ai.settings import ModelSettings
+
+agent = Agent(
+    '{{ xai:medium }}',
+    model_settings=ModelSettings(service_tier='priority'),
+)
+```
+
+xAI has no auto or flex tier, so `'auto'` and `'flex'` are omitted from the request and xAI's standard processing applies.
+
+A priority request can be served at the default tier, and xAI bills the priority rate only when the response confirms `'priority'`. When xAI reports the tier that served a response, it's stored in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['service_tier']`.
+
 ## Streaming cancellation
 
 !!! note "Transport cancellation"

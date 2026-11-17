@@ -51,7 +51,7 @@ from pydantic_ai.capabilities import (
     WrapToolExecuteHandler,
 )
 from pydantic_ai.durable_exec import durable_unit_scope
-from pydantic_ai.exceptions import SkipToolExecution, ToolFailed, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import SkipToolExecution, ToolFailed, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -1465,6 +1465,7 @@ class _Unencodable:
 async def test_native_submission_with_a_value_json_cannot_encode_is_rejected(route: str):
     """As Tool Output's validation would, Native Output rejects a submitted value with no JSON form."""
     raised: list[str] = []
+    tool_errors: list[Exception] = []
 
     class SubmitBeforeRequest(AbstractCapability[None]):
         async def before_model_request(
@@ -1494,7 +1495,7 @@ async def test_native_submission_with_a_value_json_cannot_encode_is_rejected(rou
         try:
             await ctx.submit_output('final_result', {'order_id': _Unencodable(), 'total': 1})
         except Exception as e:
-            raised.append(type(e).__name__)
+            tool_errors.append(e)
             raise
         return 'assembled'  # pragma: no cover
 
@@ -1502,7 +1503,8 @@ async def test_native_submission_with_a_value_json_cannot_encode_is_rejected(rou
 
     assert result.output == Invoice(order_id='from_model', total=2)
     if route == 'tool_call':
-        assert raised == ['ToolRetryError']
+        [error] = tool_errors
+        assert isinstance(error, ToolRetryError)
     else:
         [message] = raised
         assert message.startswith('The output could not be encoded as JSON')
