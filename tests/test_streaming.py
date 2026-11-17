@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime as _datetime
-from types import AsyncGeneratorType, TracebackType
+from types import AsyncGeneratorType, NoneType, TracebackType
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
@@ -101,7 +101,15 @@ from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
 from .canonical_system_utils import PROVIDER_NAME, StampedModel
-from .conftest import IsDatetime, IsInt, IsNow, IsStr, legacy_retry_prompt_part, message_part
+from .conftest import (
+    IsDatetime,
+    IsInt,
+    IsNow,
+    IsStr,
+    assert_cancellation_leaks_no_tasks,
+    legacy_retry_prompt_part,
+    message_part,
+)
 from .realtime.simulation._loop import SimulatedLoop
 
 READINESS_WAIT_TIMEOUT = 5
@@ -7842,6 +7850,46 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
         await task
 
     assert cleanup_finished.is_set()
+
+
+@pytest.mark.parametrize('primed', [False, True], ids=['lazy', 'primed'])
+@pytest.mark.parametrize('entry', ['run_stream', 'run_stream_events'])
+async def test_stream_cancelled_at_any_point_leaves_no_task_behind(
+    entry: Literal['run_stream', 'run_stream_events'], primed: bool
+):
+    """Cancelling a streamed run at any point of its lifecycle must not leave a task it started pending.
+
+    On Python 3.11, draining the finished `ready_waiter` at the stream handoff yields to the event loop, so a
+    cancellation can land after `_streaming_handler` has parked on `stream_done.wait()`, which only the error
+    path's cleanup unblocks. See https://github.com/pydantic/pydantic-ai/issues/13716.
+
+    An `on_model_request_error` hook makes the stream be primed before the handoff, so a cancellation there commits
+    the interrupted response from the error path, which must happen only once.
+    """
+
+    class HandlesErrors(AbstractCapability[None]):
+        async def on_model_request_error(  # pragma: no cover
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            raise error
+
+    capabilities: list[AbstractCapability[None]] = [HandlesErrors()] if primed else []
+    agent = Agent(TestModel(), deps_type=NoneType, capabilities=capabilities)
+
+    async def consume() -> None:
+        with capture_run_messages() as messages:
+            try:
+                if entry == 'run_stream':
+                    async with agent.run_stream('Hello') as result:
+                        await result.get_output()
+                else:
+                    async with agent.run_stream_events('Hello') as stream:
+                        async for _ in stream:
+                            pass
+            finally:
+                assert len([m for m in messages if isinstance(m, ModelResponse)]) <= 1
+
+    await assert_cancellation_leaks_no_tasks(consume)
 
 
 # endregion

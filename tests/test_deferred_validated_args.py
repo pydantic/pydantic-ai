@@ -198,7 +198,7 @@ async def test_approver_sees_what_the_tool_receives(case: Case, path: DeferralPa
 
 
 async def test_external_call_carries_validated_args():
-    """A call the tool defers for external execution carries its validated arguments too."""
+    """A call deferred for external execution carries its validated arguments, and so does the run's `conversation`."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('lookup', {'target': 'HTTPS://Example.COM'}, tool_call_id='call')])
@@ -216,6 +216,7 @@ async def test_external_call_carries_validated_args():
             validated_args={'call': {'target': 'https://example.com/'}},
         )
     )
+    assert result.conversation.deferred_tool_requests == result.output
 
 
 async def test_call_deferred_again_after_inline_approval_carries_validated_args():

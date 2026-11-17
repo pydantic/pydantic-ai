@@ -6,7 +6,7 @@ from dataclasses import replace
 import pytest
 from render.workflows import Options, Retry, Workflows
 
-from pydantic_ai import Agent, AgentStreamEvent, FunctionToolset, RunContext
+from pydantic_ai import Agent, AgentStreamEvent, FunctionToolset, RunContext, Tool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import RenderWorkflows
@@ -226,3 +226,23 @@ def test_different_static_tool_options_fail_before_registration() -> None:
             ],
         )
     assert app.registered_task_names == []
+
+
+def test_a_tool_that_runs_outside_its_task_is_not_held_to_the_toolset_options() -> None:
+    app = RecordingWorkflows()
+
+    async def slow() -> str:
+        return 'slow'  # pragma: no cover - invocation is outside this registration contract
+
+    Agent(
+        TestModel(),
+        name='durable-opt-out',
+        toolsets=[FunctionToolset([Tool(slow, durable=False)], id='lookup')],
+        capabilities=[
+            RenderWorkflows(
+                app,
+                resolve_tool_options=lambda op, tool, name: Options(timeout_seconds=300) if name == 'slow' else None,
+            )
+        ],
+    )
+    assert 'durable-opt-out__function_toolset__lookup.call_tool' in app.registered_task_names
