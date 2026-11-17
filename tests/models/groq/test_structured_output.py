@@ -18,6 +18,7 @@ from ...conftest import try_import
 with try_import() as imports_successful:
     from groq.types.chat.chat_completion_message import ChatCompletionMessage
 
+    from pydantic_ai.models import create_async_http_client
     from pydantic_ai.models.groq import GroqModel, GroqModelSettings
     from pydantic_ai.providers.groq import GroqProvider
 
@@ -42,9 +43,6 @@ class CityInCountry(BaseModel):
     city: str
     country: Country
     neighbours: list[Country]
-
-
-CITY_IN_COUNTRY_JSON = '{"city": "Mexico City", "country": {"name": "Mexico"}, "neighbours": [{"name": "Guatemala"}]}'
 
 
 class CityWithNickname(BaseModel):
@@ -91,12 +89,99 @@ async def test_groq_native_output_with_function_tools(
     )
 
 
+GroqResponseFormatOutput = NativeOutput[CityInCountry] | PromptedOutput[CityLocation]
+
+
+@dataclass(frozen=True)
+class GroqResponseFormatCase:
+    id: str
+    model_name: str
+    output_type: GroqResponseFormatOutput
+    expected: object
+    """Snapshot of the request body's `response_format`."""
+    output: CityInCountry | CityLocation
+
+
+GROQ_RESPONSE_FORMAT_CASES = [
+    GroqResponseFormatCase(
+        # Groq's strict mode requires `additionalProperties: false` on every object, nested ones included.
+        id='qwen3.8-native-strict-nested',
+        model_name='qwen/qwen3.8-27b',
+        output_type=NativeOutput(CityInCountry),
+        expected=snapshot(
+            {
+                'type': 'json_schema',
+                'json_schema': {
+                    'name': CityInCountry.__qualname__,
+                    'schema': {
+                        'properties': {
+                            'city': {'type': 'string'},
+                            'country': {
+                                'properties': {'name': {'type': 'string'}},
+                                'required': ['name'],
+                                'type': 'object',
+                                'additionalProperties': False,
+                            },
+                            'neighbours': {
+                                'items': {
+                                    'properties': {'name': {'type': 'string'}},
+                                    'required': ['name'],
+                                    'type': 'object',
+                                    'additionalProperties': False,
+                                },
+                                'type': 'array',
+                            },
+                        },
+                        'required': ['city', 'country', 'neighbours'],
+                        'type': 'object',
+                        'additionalProperties': False,
+                    },
+                    'strict': True,
+                },
+            }
+        ),
+        output=CityInCountry(
+            city='Mexico City',
+            country=Country(name='Mexico'),
+            neighbours=[Country(name='United States'), Country(name='Guatemala')],
+        ),
+    ),
+    GroqResponseFormatCase(
+        id='qwen3.8-prompted',
+        model_name='qwen/qwen3.8-27b',
+        output_type=PromptedOutput(CityLocation),
+        expected=snapshot({'type': 'json_object'}),
+        output=CityLocation(city='Mexico City', country='Mexico'),
+    ),
+]
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in GROQ_RESPONSE_FORMAT_CASES])
+async def test_groq_response_format(allow_model_requests: None, groq_api_key: str, case: GroqResponseFormatCase):
+    """Groq answers the `response_format` qwen3.8 gets: a strict `json_schema` for `NativeOutput`, with
+    `additionalProperties: false` on every object, and `json_object` for `PromptedOutput`.
+
+    Cassette matching ignores the request body, so a request hook reads the body off the wire, on replay too.
+    """
+    sent: list[httpx.Request] = []
+
+    async def record(request: httpx.Request) -> None:
+        sent.append(request)
+
+    async with create_async_http_client() as http_client:
+        http_client.event_hooks = {'request': [record], 'response': []}
+        provider = GroqProvider(api_key=groq_api_key, http_client=http_client)
+        agent = Agent(GroqModel(case.model_name, provider=provider), output_type=case.output_type)
+        result = await agent.run('What is the largest city in Mexico? Name two of its neighbouring countries.')
+
+    assert result.output == case.output
+    [request] = sent
+    assert json.loads(request.content)['response_format'] == case.expected
+
+
 GroqRequestBodyOutput = (
-    NativeOutput[CityLocation]
-    | NativeOutput[CityInCountry]
-    | NativeOutput[CityWithNickname]
-    | PromptedOutput[CityLocation]
-    | type[str]
+    NativeOutput[CityLocation] | NativeOutput[CityWithNickname] | PromptedOutput[CityLocation] | type[str]
 )
 
 
@@ -130,48 +215,6 @@ GROQ_REQUEST_BODY_CASES = [
                         'schema': {
                             'properties': {'city': {'type': 'string'}, 'country': {'type': 'string'}},
                             'required': ['city', 'country'],
-                            'type': 'object',
-                            'additionalProperties': False,
-                        },
-                        'strict': True,
-                    },
-                },
-            }
-        ),
-    ),
-    GroqRequestBodyCase(
-        # Groq's strict mode requires `additionalProperties: false` on every object, nested ones included.
-        id='qwen3.8-native-strict-nested',
-        model_name='qwen/qwen3.8-27b',
-        output_type=NativeOutput(CityInCountry),
-        response=CITY_IN_COUNTRY_JSON,
-        expected=snapshot(
-            {
-                'stream': False,
-                'response_format': {
-                    'type': 'json_schema',
-                    'json_schema': {
-                        'name': CityInCountry.__qualname__,
-                        'schema': {
-                            'properties': {
-                                'city': {'type': 'string'},
-                                'country': {
-                                    'properties': {'name': {'type': 'string'}},
-                                    'required': ['name'],
-                                    'type': 'object',
-                                    'additionalProperties': False,
-                                },
-                                'neighbours': {
-                                    'items': {
-                                        'properties': {'name': {'type': 'string'}},
-                                        'required': ['name'],
-                                        'type': 'object',
-                                        'additionalProperties': False,
-                                    },
-                                    'type': 'array',
-                                },
-                            },
-                            'required': ['city', 'country', 'neighbours'],
                             'type': 'object',
                             'additionalProperties': False,
                         },
@@ -257,12 +300,6 @@ GROQ_REQUEST_BODY_CASES = [
         ),
     ),
     GroqRequestBodyCase(
-        id='qwen3.8-prompted',
-        model_name='qwen/qwen3.8-27b',
-        output_type=PromptedOutput(CityLocation),
-        expected=snapshot({'stream': False, 'response_format': {'type': 'json_object'}}),
-    ),
-    GroqRequestBodyCase(
         id='qwen3.8-prompted-stream',
         model_name='qwen/qwen3.8-27b',
         output_type=PromptedOutput(CityLocation),
@@ -334,15 +371,17 @@ GROQ_REQUEST_BODY_CASES = [
 
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in GROQ_REQUEST_BODY_CASES])
 async def test_groq_request_body(allow_model_requests: None, case: GroqRequestBodyCase):
-    """What `GroqModel` sends for structured output and reasoning settings.
+    """What `GroqModel` sends for structured output and reasoning settings beyond `test_groq_response_format`.
 
-    `NativeOutput` sends a `json_schema` response format, strict where Groq supports it. `PromptedOutput` sends
-    `json_object` unless function tools are present or the profile turns JSON mode off. `thinking` on the always-on
-    reasoning models sends `reasoning_format`.
+    `NativeOutput` sends a `json_schema` response format, strict when the schema meets strict mode's requirements.
+    `PromptedOutput` sends `json_object` unless function tools are present or the profile turns JSON mode off.
+    `thinking` on the always-on reasoning models sends `reasoning_format`.
 
-    The claim is the request body, which cassette matching ignores, so a mock transport serves the responses and the
-    body is read off the wire. `GroqProvider` takes a legacy `httpx.AsyncClient`, so the shared `request_capture`
-    fixture, an `httpx2` client, can't be injected.
+    A mock transport serves the responses and the body is read off the wire. The stream, tool and profile cases vary
+    how the request is built on models Groq answers in the recordings. Groq offers Muse Spark Open and MiniMax M2.7
+    only as an Enterprise preview, and has shut qwen3.6 down for its free and developer tiers, so those cases have no
+    recording. `GroqProvider` takes a legacy `httpx.AsyncClient`, so the shared `request_capture` fixture, an
+    `httpx2` client, can't be injected.
     """
     sent: list[httpx.Request] = []
 
