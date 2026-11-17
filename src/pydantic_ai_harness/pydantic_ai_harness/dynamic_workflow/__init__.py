@@ -5,7 +5,17 @@ from pydantic_ai_harness.dynamic_workflow._toolset import (
     AgentRevealPart,
     DynamicWorkflowToolset,
     WorkflowAgent,
+    WorkflowCall,
+    WorkflowCallScheduler,
     WorkflowResourceLimits,
 )
 
-__all__ = ['AgentRevealPart', 'DynamicWorkflow', 'DynamicWorkflowToolset', 'WorkflowAgent', 'WorkflowResourceLimits']
+__all__ = [
+    'AgentRevealPart',
+    'DynamicWorkflow',
+    'DynamicWorkflowToolset',
+    'WorkflowAgent',
+    'WorkflowCall',
+    'WorkflowCallScheduler',
+    'WorkflowResourceLimits',
+]

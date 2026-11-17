@@ -348,7 +348,8 @@ class ModelProfile(TypedDict, total=False):
 
     DeepSeek's V4 models, for example, only accept forcing while thinking is off. When False and the request
     thinks, a forced tool choice is handled as if `supports_forced_tool_choice` were False. Whether the request
-    thinks accounts for `thinking_enabled_by_default`.
+    thinks accounts for `thinking_enabled_by_default`. On OpenRouter routes other than Anthropic's, which return a
+    400 for it, an explicit forcing raises a `ModelRequestRejectedError` instead of a `UserError`.
     """
 
     forced_tool_choice_disables_thinking: bool
