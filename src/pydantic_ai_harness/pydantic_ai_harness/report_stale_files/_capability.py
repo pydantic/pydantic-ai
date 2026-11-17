@@ -159,12 +159,12 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
         deleted: list[str] = []
         budget = self.max_checked_bytes
         for path, observation in reversed(list(self._observations.items())):
+            if budget <= 0:
+                break
             if observation.workspace != ctx.workspace.ref:
                 continue
             state, read = await _state(ctx.workspace, path, observation, budget)
             budget -= read
-            if budget <= 0:
-                break
             if state == 'deleted':
                 self._observations.pop(path, None)
                 deleted.append(path)

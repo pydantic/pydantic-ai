@@ -247,6 +247,25 @@ class TestReportStaleFiles:
         result = await agent.run('go')
         assert _notices(result.all_messages())[-1] == [f'{CHANGED}\n- `newer.txt`']
 
+    async def test_files_that_exactly_fill_the_byte_budget_are_all_checked(self, tmp_path: Path) -> None:
+        names = ('older.txt', 'newer.txt')
+        for name in names:
+            (tmp_path / name).write_text('one\n')
+
+        def change_both() -> None:
+            for name in names:
+                (tmp_path / name).write_text('two\n')
+
+        agent = _agent(
+            tmp_path,
+            *((None, _read(name)) for name in names),
+            (change_both, _LIST),
+            (None, 'done'),
+            capability=ReportStaleFiles(max_checked_bytes=8),
+        )
+        result = await agent.run('go')
+        assert _notices(result.all_messages())[-1] == [f'{CHANGED}\n- `newer.txt`\n- `older.txt`']
+
     async def test_file_that_reads_past_the_byte_budget_is_not_hashed(self, tmp_path: Path) -> None:
         """A backend that can't tell a file's size up front, as the shell fallback can't, still keeps to the budget."""
         target = tmp_path / 'data.txt'
