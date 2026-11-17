@@ -143,7 +143,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import threading
 import weakref
 from collections import Counter, defaultdict
 from collections.abc import (
@@ -156,6 +155,7 @@ from collections.abc import (
     Mapping,
     Set,
 )
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
@@ -997,10 +997,10 @@ class RefactorCapture:
 
         # Reading `played_audio_bytes` can raise the error that ended the session. Raised where another exception is
         # being handled, as when `close` raises, that error would be chained to it, and Python would cut the other's
-        # chain short to keep it from looping back. A thread of its own handles none.
-        thread = threading.Thread(target=contextvars.copy_context().run, args=(read,))
-        thread.start()
-        thread.join()
+        # chain short to keep it from looping back. A thread of its own handles none, and `result` raises here what
+        # else the reads raise there.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(contextvars.copy_context().run, read).result()
         self.records.append(record)
 
     def _wrap_core(self, cls: type[SessionCore]) -> None:
