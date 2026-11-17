@@ -21,7 +21,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[ToolBridge()])
 | `tool_describe` | `name` | The tool's name, description and `parameters_json_schema` |
 | `tool_call` | `name`, `args_json` | The tool's result |
 
-`tool_call` takes the arguments as a JSON object string rather than a nested object, because some models send nested free-form objects as `null`. An empty string is read as `{}`.
+`tool_call` takes the arguments as a JSON object string rather than a nested object, because some models send nested free-form objects as `null`. An empty string is read as `{}`. `tool_call` has the tool kind `TOOL_CALL_KIND` (`tool_bridge.tool_call`), exported from `pydantic_ai_harness.tool_bridge`, so an approval UI or another capability can recognize it whatever it is named.
 
 A tool added, removed or changed mid-run changes what `tool_search` finds, not the tool definitions sent to the provider. A tool reached through the bridge is validated and run through the same path as a direct call, under the `tool_call` call's ID: argument validation, tool hooks, `ModelRetry`, approval and usage limits apply to it as to any tool, and an unknown name or invalid arguments ask the model to retry. Both `tool_call` and the bridged tool count as tool calls, and `tool_calls_limit` is checked for both before the bridged tool runs. A bridged tool's retries are counted under its own name, as for a direct call, so its `ctx.retry` and `max_retries` see only its own failures; each one also spends a retry of `tool_call`. If any bridged tool is `sequential`, so is `tool_call`.
 

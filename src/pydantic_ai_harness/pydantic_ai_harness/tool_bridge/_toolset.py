@@ -12,7 +12,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import ToolDefinition
 from pydantic_ai.capabilities import ToolSearchFunc
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, ToolFailedError, ToolRetryError, UserError
-from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ToolCallPart, ToolKind, ToolReturnPart
 from pydantic_ai.tool_manager import (
     ToolManager,
     _drop_superseded_tools as drop_superseded_tools,  # pyright: ignore[reportPrivateUsage]
@@ -36,9 +36,18 @@ class _DescribeArgs(TypedDict):
     name: str
 
 
-class _CallArgs(TypedDict):
+class ToolCallArgs(TypedDict):
+    """Arguments of the `tool_call` dispatcher."""
+
     name: str
+    """The bridged tool to call."""
+
     args_json: str
+    """The bridged tool's arguments, as a JSON object string."""
+
+
+TOOL_CALL_KIND = ToolKind('tool_bridge', CALL_TOOL_NAME, args=ToolCallArgs)
+"""The kind of `ToolBridge`'s `tool_call` tool, so an approval UI or capability can tell it apart whatever it is named."""
 
 
 class _Match(TypedDict):
@@ -70,7 +79,7 @@ _DISPATCHERS = {
     CALL_TOOL_NAME: _dispatcher(
         'Call a tool found with `tool_search`. Pass its name, and its arguments as a JSON object string '
         'matching the schema `tool_describe` returns, for example `{"city": "Paris"}`, or `{}` for none.',
-        _CallArgs,
+        ToolCallArgs,
     ),
 }
 
@@ -124,6 +133,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
                     description=description,
                     parameters_json_schema=schema,
                     sequential=sequential and name == CALL_TOOL_NAME,
+                    tool_kind=TOOL_CALL_KIND if name == CALL_TOOL_NAME else None,
                 ),
                 max_retries=self.max_retries,
                 args_validator=validator,

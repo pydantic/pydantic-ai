@@ -452,7 +452,8 @@ native), `search` (a `ToolSearchFunc`, default keyword matching), `max_results=1
 Gotchas: approval-required and external tools, framework control tools, code-execution tools (`run_code`,
 `run_command`) and `unless_native` fallbacks stay native, as do deferred tools a capability owns; other `defer_loading=True` tools are bridged, so `ToolSearch` has nothing left to reveal; the
 names `tool_search`, `tool_describe` and `tool_call` are reserved; each call costs an extra step and
-loses provider-side strict schema validation. Two merge into one (default `id='tool_bridge'`).
+loses provider-side strict schema validation. Two merge into one (default `id='tool_bridge'`). Recognize `tool_call` by its kind,
+`TOOL_CALL_KIND` (`tool_bridge.tool_call`, from `pydantic_ai_harness.tool_bridge`), not its name.
 
 ## Media externalization (not a capability)
 

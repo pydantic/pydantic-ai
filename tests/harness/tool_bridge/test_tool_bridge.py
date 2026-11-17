@@ -41,7 +41,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import FileSystem, ToolBridge
 from pydantic_ai_harness.file_system import READ_FILE_KIND
-from pydantic_ai_harness.tool_bridge import ToolBridgeToolset
+from pydantic_ai_harness.tool_bridge import TOOL_CALL_KIND, ToolBridgeToolset
 
 
 def _get_weather(city: str) -> str:
@@ -394,10 +394,10 @@ class TestToolBridge:
 
         await agent.run('hi')
 
-        assert {tool_def.name: tool_def.sequential for tool_def in tool_defs} == {
-            'tool_search': False,
-            'tool_describe': False,
-            'tool_call': True,
+        assert {tool_def.name: (tool_def.sequential, tool_def.tool_kind) for tool_def in tool_defs} == {
+            'tool_search': (False, None),
+            'tool_describe': (False, None),
+            'tool_call': (True, TOOL_CALL_KIND.id),
         }
 
     @pytest.mark.parametrize('bridged', [None, ['cat_file']], ids=['both-bridged', 'reader-native'])
