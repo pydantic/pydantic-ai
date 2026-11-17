@@ -309,7 +309,7 @@ Each decision emits an `artifact_scan flagged` span (source and excerpts only wi
 
 Gotchas: regex only, so paraphrases slip through and quoted attacks false-positive. `html_comment`
 flags linter directives in skills; narrow `threats` there. Memory files read via `FileSystem` and
-bundled skill files are not scanned. Subclass and override `scan` to plug in another detector.
+bundled skill files read other than through `Skills(read_files=True)` are not scanned. Subclass and override `scan` to plug in another detector.
 
 ## ToolCallJudge
 
