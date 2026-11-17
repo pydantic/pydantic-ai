@@ -401,21 +401,17 @@ async def test_anthropic_retries_a_stale_thinking_block_a_retrying_transport_gav
 
 @pytest.mark.parametrize('call', ['request', 'request_stream', 'count_tokens'])
 @pytest.mark.parametrize(
-    'model_name,body',
+    'model_name,stale_thinking_block',
     [
-        pytest.param(
-            'claude-fable-5-1',
-            {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'max_tokens: Field required'}},
-            id='unrelated_bad_request',
-        ),
-        pytest.param('claude-fable-5', stale_thinking_block_error().body, id='model_does_not_bind'),
+        pytest.param('claude-fable-5-1', False, id='unrelated_bad_request'),
+        pytest.param('claude-fable-5', True, id='model_does_not_bind'),
     ],
 )
 async def test_anthropic_does_not_retry_a_bad_request_a_retrying_transport_gave_up_on(
     allow_model_requests: None,
     call: Literal['request', 'request_stream', 'count_tokens'],
     model_name: str,
-    body: object,
+    stale_thinking_block: bool,
 ):
     """A 400 a retrying transport gave up on raises without a `drop_block` retry, unless it is a stale thinking block
     on a model that binds them.
@@ -423,6 +419,11 @@ async def test_anthropic_does_not_retry_a_bad_request_a_retrying_transport_gave_
     Not a VCR test, for the reason
     `test_anthropic_retries_a_stale_thinking_block_a_retrying_transport_gave_up_on` gives.
     """
+    body = (
+        stale_thinking_block_error().body
+        if stale_thinking_block
+        else {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'max_tokens: Field required'}}
+    )
     requests: list[httpx2.Request] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
