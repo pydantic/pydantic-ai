@@ -9,13 +9,24 @@ from pathlib import Path
 import httpx2
 from pydantic import TypeAdapter
 
+import pydantic_ai
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._workspace import workspace_path
 
-_REMOTE_BASE = 'https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs'
-"""Raw-markdown base for the live fallback. Tracks `pydantic/pydantic-ai:main`,
-and each topic maps to `{base}/{page}` -- byte-identical to a local checkout."""
+_REMOTE_BASE = 'https://raw.githubusercontent.com/pydantic/pydantic-ai/{ref}/docs'
+"""Raw-markdown base for the remote fallback at a git ref; each topic maps to
+`{base}/{page}` -- byte-identical to a local checkout."""
+
+_RELEASE_VERSION_RE = re.compile(r'\d+\.\d+\.\d+((a|b|rc)\d+)?')
+"""A released `pydantic_ai` version, which has a `v{version}` tag. Dev and local builds have none."""
+
+
+def _installed_docs_ref() -> str:
+    """The git tag of the installed `pydantic_ai` release, or `main` for a build that has no tag."""
+    version = pydantic_ai.__version__
+    return f'v{version}' if _RELEASE_VERSION_RE.fullmatch(version) else 'main'
+
 
 _FETCH_TIMEOUT = 30.0
 """Per-request timeout (seconds) for the remote markdown fetch."""
@@ -64,7 +75,7 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
     """Exposes one `read_pyai_docs` tool that locates and returns a pyai doc.
 
     Resolution per call: a configured local checkout first (when the topic's
-    page exists there), otherwise a raw-markdown fetch from `main`. The full doc
+    page exists there), otherwise a raw-markdown fetch at `remote_ref`. The full doc
     is returned with its model aliases, like `{{ openai:medium }}`, replaced by the
     models they stand for, read from the docs' alias file through the same
     resolution. Results are memoized in the run-scoped `cache` dict when caching
@@ -76,9 +87,19 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
         *,
         local_docs_path: Path | None,
         cache: dict[PydanticAIDocsTopic, str] | None,
+        remote_ref: str | None = None,
     ) -> None:
+        """Build the toolset.
+
+        Args:
+            local_docs_path: Docs checkout inside the run workspace, or `None` to always fetch.
+            cache: Dict to memoize pages in, or `None` to disable caching.
+            remote_ref: Git ref of `pydantic/pydantic-ai` to fetch from. `None` uses the
+                installed `pydantic_ai` release's tag, or `main` for a build without one.
+        """
         super().__init__()
         self._local_docs_path = local_docs_path
+        self._remote_ref = remote_ref
         # Shared with the run-scoped capability; `None` disables caching entirely.
         self._cache = cache
         self.add_function(self.read_pyai_docs, name='read_pyai_docs')
@@ -138,7 +159,7 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
 
     async def _fetch_remote(self, file: str) -> str:
         """Fetch `file` from the live source, or raise a descriptive error."""
-        url = f'{_REMOTE_BASE}/{file}'
+        url = f'{_REMOTE_BASE.format(ref=self._remote_ref or _installed_docs_ref())}/{file}'
         try:
             async with httpx2.AsyncClient(timeout=_FETCH_TIMEOUT) as client:
                 response = await client.get(url)
