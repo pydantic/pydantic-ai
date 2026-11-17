@@ -17,6 +17,11 @@ def validated_budget(name: str, value: object, *, limit: int | None = None) -> i
     return value
 
 
+def one_line(text: str) -> str:
+    """Collapse whitespace, so third-party text can't start a line that reads as the tool's own labels."""
+    return ' '.join(text.split())
+
+
 def truncate_head(text: str, max_chars: int) -> str:
     """Limit text to `max_chars`, keeping the head.
 

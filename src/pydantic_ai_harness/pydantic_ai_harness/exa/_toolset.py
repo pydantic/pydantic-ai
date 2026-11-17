@@ -20,6 +20,7 @@ from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import ToolOperation, raise_retry
+from pydantic_ai_harness._output import one_line
 from pydantic_ai_harness._warn import warn_argument_renamed
 from pydantic_ai_harness._web_search import defer_to_native_web_search
 
@@ -427,11 +428,6 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         if not sources:
             sources = source_map((result.url, result.title) for result in response.results)
         return ToolReturn(with_sources(answer, sources), metadata={'sources': source_list(sources)})
-
-
-def one_line(text: str) -> str:
-    """Collapse whitespace, so third-party text can't start a line that looks like the tool's own labels."""
-    return ' '.join(text.split())
 
 
 def _format_result(result: Result, body: str | None) -> str:

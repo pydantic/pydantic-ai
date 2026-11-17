@@ -20,7 +20,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import ToolOperation, raise_retry
 from pydantic_ai_harness._json_api import JsonApiClient, MalformedResponse, recoverable
-from pydantic_ai_harness._output import truncate_head_within, validated_budget
+from pydantic_ai_harness._output import one_line, truncate_head_within, validated_budget
 from pydantic_ai_harness._typeguards import is_mapping, is_object_list
 from pydantic_ai_harness._web_search import defer_to_native_web_search
 
@@ -179,11 +179,6 @@ def validate_options(
 
 def _text(value: object) -> str:
     return value if isinstance(value, str) else ''
-
-
-def _one_line(value: object) -> str:
-    """Collapse whitespace, so third-party text can't start a line that looks like the tool's own labels."""
-    return ' '.join(_text(value).split())
 
 
 def _format_result(title: str | None, url: str, body: str) -> str:
@@ -377,10 +372,12 @@ class FirecrawlSearchToolset(FunctionToolset[AgentDepsT]):
             url = _text(result.get('url')).strip()
             if not self._is_usable_result_url(url):
                 continue
-            title = _one_line(result.get('title')) or None
+            title = one_line(_text(result.get('title'))) or None
             # A result whose scrape failed has no markdown, so its highlight stands in. The highlight
             # goes on one line, so page text can't start a line that reads as another result.
-            body = (_text(result.get('markdown')) if self._full_page else '') or _one_line(result.get('description'))
+            body = (_text(result.get('markdown')) if self._full_page else '') or one_line(
+                _text(result.get('description'))
+            )
             sources.setdefault(url, title)
             sections.append(_format_result(title, url, truncate_head_within(body, self._max_text_chars)))
             if len(sections) >= self._max_results:
@@ -420,8 +417,8 @@ class FirecrawlSearchToolset(FunctionToolset[AgentDepsT]):
         markdown = _text(page.get('markdown'))
         if not markdown:
             raise ModelRetry(f'No content could be retrieved for {url!r}. Check the URL or try another page.')
-        resolved = _one_line(details.get('url')) or url
-        title = _one_line(details.get('title')) or None
+        resolved = one_line(_text(details.get('url'))) or url
+        title = one_line(_text(details.get('title'))) or None
         return ToolReturn(
             _format_result(title, resolved, truncate_head_within(markdown, self._max_text_chars)),
             metadata={'sources': _source_list({resolved: title})},

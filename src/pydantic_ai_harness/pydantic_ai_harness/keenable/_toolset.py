@@ -16,7 +16,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import ToolOperation, raise_retry
 from pydantic_ai_harness._json_api import JsonApiClient, MalformedResponse, recoverable
-from pydantic_ai_harness._output import truncate_head_within, validated_budget
+from pydantic_ai_harness._output import one_line, truncate_head_within, validated_budget
 from pydantic_ai_harness._typeguards import is_object_list
 
 KEENABLE_MAX_RESULTS = 50
@@ -200,11 +200,6 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         """Convert a `url -> title` mapping into the metadata `sources` list."""
         return [{'url': url, 'title': title} for url, title in sources.items()]
 
-    @staticmethod
-    def _one_line(text: object) -> str:
-        """Collapse whitespace, so third-party text can't start a line that looks like another result."""
-        return ' '.join(str(text).split())
-
     @recoverable('Keenable')
     async def web_search(self, query: str) -> ToolReturn[str]:
         """Search the web and return matching pages, each with a short excerpt.
@@ -236,10 +231,10 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         lines: list[str] = []
         sources: dict[str, str | None] = {}
         for index, (url, result) in enumerate(results, start=1):
-            title = self._one_line(result.get('title') or '')[: self._MAX_TITLE_CHARS] or None
+            title = one_line(str(result.get('title') or ''))[: self._MAX_TITLE_CHARS] or None
             sources[url] = title
             lines.append(f'{index}. {title or url}\n   {url}')
-            excerpt = self._one_line(result.get('snippet') or '')[: self._max_snippet_chars]
+            excerpt = one_line(str(result.get('snippet') or ''))[: self._max_snippet_chars]
             if excerpt:
                 lines.append(f'   {excerpt}')
 
