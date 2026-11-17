@@ -72,7 +72,7 @@ interactions:
           code: 400
           metadata:
             raw: |+
-              data: {"error":{"code":"invalid_parameter_error","param":null,"message":"The tool_choice parameter does not support being set to required or object in thinking mode","type":"invalid_request_error"},"id":"chatcmpl-5b700f3c-3ae7-99a6-b8d8-91448308b219"}
+              data: {"error":{"code":"invalid_parameter_error","param":null,"message":"The tool_choice parameter does not support being set to required or object in thinking mode","type":"invalid_request_error"},"id":"chatcmpl-90b95656-eb93-9431-a37f-86e8714852de"}
 
             provider_name: Alibaba
             is_byok: false
@@ -81,7 +81,7 @@ interactions:
               message: Provider returned error
               provider_name: Alibaba
               raw: |+
-                data: {"error":{"code":"invalid_parameter_error","param":null,"message":"The tool_choice parameter does not support being set to required or object in thinking mode","type":"invalid_request_error"},"id":"chatcmpl-91e77ed6-cc1b-496f-9b6a-62fe83a0aad7"}
+                data: {"error":{"code":"invalid_parameter_error","param":null,"message":"The tool_choice parameter does not support being set to required or object in thinking mode","type":"invalid_request_error"},"id":"chatcmpl-8cd3f4b4-3d36-4c0f-adcb-2b53264f4633"}
 
-        user_id: user_2u7zrLB02neVzhe7P3Am4Jhz4cW
-  recorded_at: 2026-11-17T14:38:51.072366+00:00
+        user_id: scrubbed
+  recorded_at: 2026-11-17T15:11:22.983216+00:00

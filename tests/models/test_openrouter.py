@@ -2218,19 +2218,19 @@ async def test_openrouter_explicit_forced_tool_choice_with_thinking_errors(
     ('settings', 'expected_request', 'expected_part_kinds'),
     [
         pytest.param(
-            OpenRouterModelSettings(),
+            {},
             {'tool_choice': 'auto', 'reasoning': None},
             snapshot(['thinking', 'tool-call']),
             id='qwen-flash-thinking-by-default',
         ),
         pytest.param(
-            OpenRouterModelSettings(thinking='low'),
+            {'thinking': 'low'},
             {'tool_choice': 'auto', 'reasoning': {'effort': 'low', 'enabled': True}},
             snapshot(['thinking', 'tool-call']),
             id='qwen-flash-thinking',
         ),
         pytest.param(
-            OpenRouterModelSettings(thinking=False),
+            {'thinking': False},
             {'tool_choice': 'required', 'reasoning': {'effort': 'none'}},
             snapshot(['tool-call']),
             id='qwen-flash-thinking-disabled',
@@ -2241,7 +2241,7 @@ async def test_openrouter_tool_choice_on_routes_that_reject_forcing_while_reason
     allow_model_requests: None,
     openrouter_api_key: str,
     request_capture: RequestCapture,
-    settings: OpenRouterModelSettings,
+    settings: 'OpenRouterModelSettings',
     expected_request: dict[str, Any],
     expected_part_kinds: list[str],
 ) -> None:
@@ -2269,21 +2269,21 @@ async def test_openrouter_tool_choice_on_routes_that_reject_forcing_while_reason
     ('settings', 'expected_error'),
     [
         pytest.param(
-            OpenRouterModelSettings(tool_choice='required'),
+            {'tool_choice': 'required'},
             snapshot(
                 "tool_choice='required' is not supported by model 'qwen/qwen3.8-flash'. This model does not support forcing tool use while thinking is enabled. Disable thinking with `thinking=False` or `openrouter_reasoning={'enabled': False}`, or use `tool_choice='auto'`."
             ),
             id='required-thinking-by-default',
         ),
         pytest.param(
-            OpenRouterModelSettings(thinking='low', tool_choice='required'),
+            {'thinking': 'low', 'tool_choice': 'required'},
             snapshot(
                 "tool_choice='required' is not supported by model 'qwen/qwen3.8-flash'. This model does not support forcing tool use while thinking is enabled. Disable thinking with `thinking=False` or `openrouter_reasoning={'enabled': False}`, or use `tool_choice='auto'`."
             ),
             id='required',
         ),
         pytest.param(
-            OpenRouterModelSettings(tool_choice=['get_weather']),
+            {'tool_choice': ['get_weather']},
             snapshot(
                 "tool_choice=['get_weather'] is not supported by model 'qwen/qwen3.8-flash'. This model does not support forcing tool use while thinking is enabled. Disable thinking with `thinking=False` or `openrouter_reasoning={'enabled': False}`, or use `tool_choice='auto'`."
             ),
@@ -2292,7 +2292,7 @@ async def test_openrouter_tool_choice_on_routes_that_reject_forcing_while_reason
     ],
 )
 async def test_openrouter_explicit_forced_tool_choice_rejected_while_reasoning(
-    allow_model_requests: None, settings: OpenRouterModelSettings, expected_error: str
+    allow_model_requests: None, settings: 'OpenRouterModelSettings', expected_error: str
 ) -> None:
     """Qwen3.8 Flash returns a 400 for a forced `tool_choice` while it reasons, so an explicit one raises before sending.
 
@@ -2365,7 +2365,7 @@ async def test_openrouter_forced_tool_choice_while_reasoning_provider_400_withou
             'code': 400,
             'metadata': {
                 'raw': """\
-data: {"error":{"code":"invalid_parameter_error","param":null,"message":"The tool_choice parameter does not support being set to required or object in thinking mode","type":"invalid_request_error"},"id":"chatcmpl-5b700f3c-3ae7-99a6-b8d8-91448308b219"}
+data: {"error":{"code":"invalid_parameter_error","param":null,"message":"The tool_choice parameter does not support being set to required or object in thinking mode","type":"invalid_request_error"},"id":"chatcmpl-90b95656-eb93-9431-a37f-86e8714852de"}
 
 """,
                 'provider_name': 'Alibaba',
@@ -2376,7 +2376,7 @@ data: {"error":{"code":"invalid_parameter_error","param":null,"message":"The too
                         'message': 'Provider returned error',
                         'provider_name': 'Alibaba',
                         'raw': """\
-data: {"error":{"code":"invalid_parameter_error","param":null,"message":"The tool_choice parameter does not support being set to required or object in thinking mode","type":"invalid_request_error"},"id":"chatcmpl-91e77ed6-cc1b-496f-9b6a-62fe83a0aad7"}
+data: {"error":{"code":"invalid_parameter_error","param":null,"message":"The tool_choice parameter does not support being set to required or object in thinking mode","type":"invalid_request_error"},"id":"chatcmpl-8cd3f4b4-3d36-4c0f-adcb-2b53264f4633"}
 
 """,
                     }
