@@ -18,7 +18,7 @@ import json
 import posixpath
 import shlex
 import uuid
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import AnyStr
 

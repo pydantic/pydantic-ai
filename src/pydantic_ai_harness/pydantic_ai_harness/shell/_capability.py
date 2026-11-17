@@ -15,7 +15,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import require_workspace
 from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT
-from pydantic_ai_harness.shell._toolset import RUN_SCOPED_TOOL_NAMES, ShellToolset
+from pydantic_ai_harness.shell._toolset import RUN_SCOPED_TOOL_NAMES, SecretEnv, ShellToolset
 
 _DEFAULT_DENIED_COMMANDS: tuple[str, ...] = (
     'rm',
@@ -129,8 +129,9 @@ class Shell(AbstractCapability[AgentDepsT]):
     provider-credential denylist.
     """
 
-    secret_env: Mapping[str, str] | None = field(default=None, kw_only=True, repr=False)
-    """Secrets added to every command's environment, like `env`, and masked in what the tools return.
+    secret_env: SecretEnv[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
+    """Secrets added to every command's environment, like `env`, and masked in what the tools return. A function of
+    the run's context gives each run its own, such as keys a run's user saved: it is called once per run.
 
     Exact occurrences of each value are replaced with `[REDACTED:<name>]` in tool results and retry or failure
     messages before the model sees them. This guards against a secret printed by accident, not against a command

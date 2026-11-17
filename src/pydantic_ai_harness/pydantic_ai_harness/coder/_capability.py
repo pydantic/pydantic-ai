@@ -20,6 +20,7 @@ from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT, Shell
+from pydantic_ai_harness.shell._toolset import SecretEnv
 from pydantic_ai_harness.subagents import SubAgents, TaskControl
 from pydantic_ai_harness.subagents._control import ASK_PARENT_TOOL_NAME
 from pydantic_ai_harness.subagents._toolset import CONTROL_TOOL_NAMES
@@ -167,6 +168,9 @@ class Coder(CombinedCapability[AgentDepsT]):
             which OpenAI and Gemini 2.5+ would otherwise turn on, and relies on the
             bundled `RepairToolArguments` instead. `None` leaves the choice to the
             provider. Tools bound next to `Coder` keep their own value.
+        secret_env: The `shell` tool's [`Shell(secret_env=...)`][pydantic_ai_harness.shell.Shell.secret_env]:
+            secrets in every command's environment, masked in what it returns; a function of the run gives each
+            run its own.
     """
 
     def __init__(
@@ -181,6 +185,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         task_control: TaskControl | None = None,
         caching: bool = True,
         strict: bool | None = False,
+        secret_env: SecretEnv[AgentDepsT] | None = None,
     ) -> None:
         if task_control is not None and not sub_agents:
             raise ValueError('`task_control` requires `sub_agents=True`.')
@@ -236,6 +241,7 @@ class Coder(CombinedCapability[AgentDepsT]):
                 allow_interactive=True,
                 # No env patterns: the workspace, not the host process, supplies the command environment.
                 tools=['shell'],
+                secret_env=secret_env,
             ),
         ]
         if bundled_repo_context is not None:

@@ -13,7 +13,7 @@ import weakref
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
 import anyio
 
@@ -34,6 +34,9 @@ from pydantic_ai_harness.shell._limits import (
 )
 from pydantic_ai_harness.shell._persistent import MAX_FOREGROUND_WAIT, CommandMode, run_persistent_command
 from pydantic_ai_harness.shell._policy import is_interactive_command, recoverable, run_model_command
+
+SecretEnv: TypeAlias = 'Mapping[str, str] | Callable[[RunContext[AgentDepsT]], Mapping[str, str]]'
+"""`Shell.secret_env`: the secrets, or a function giving each run its own from its context."""
 
 RUN_SCOPED_TOOL_NAMES: tuple[str, ...] = ('run_command', 'start_command', 'check_command', 'stop_command')
 """The default tools. Background commands keep running until they exit, `stop_command` stops them, or the workspace ends."""
@@ -81,7 +84,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         max_log_bytes: int | None = None,
         env: Mapping[str, str] | None = None,
         denied_env_patterns: Sequence[str] = (),
-        secret_env: Mapping[str, str] | None = None,
+        secret_env: SecretEnv[AgentDepsT] | None = None,
         tools: Sequence[str] = RUN_SCOPED_TOOL_NAMES,
         cwd: Path | None = None,
         id: str | None = None,
@@ -109,8 +112,11 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         self._allow_interactive = allow_interactive
         self._env = dict(env) if env is not None else None
         self._denied_env_patterns = list(denied_env_patterns)
-        self._secret_env = dict(secret_env) if secret_env is not None else None
-        secrets = {name: value for name, value in (secret_env or {}).items() if value}
+        # A function of the run is resolved by `for_run`, in each run's own copy; until then nothing is masked or added.
+        self._secret_source = secret_env
+        given = None if secret_env is None or callable(secret_env) else secret_env
+        self._secret_env = dict(given) if given is not None else None
+        secrets = {name: value for name, value in (given or {}).items() if value}
         self._secret_values = list(secrets.values())
         self._secret_masks = [f'[REDACTED:{name}]' for name in secrets]
         self._secret_bytes = [value.encode() for value in self._secret_values]
@@ -153,7 +159,10 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             )
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        """Return a fresh instance per run when `persist_cwd` tracks a cwd, so each run has its own.
+        """Return a fresh instance per run when it has per-run state: a cwd or secrets.
+
+        A copy is made when `persist_cwd` tracks a cwd, or when `secret_env` is a function of the run, which is
+        called here with the run's context.
 
         `get_toolset` builds one shared instance at agent construction (see
         `AbstractToolset.for_run`, which defaults to returning `self`). The tracked
@@ -161,7 +170,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         each other's cwd. Without `persist_cwd` there is no per-run state and every run
         shares this instance, which durable execution requires of the toolset it registered.
         """
-        if not self._persist_cwd:
+        secret_env = self._secret_source(ctx) if callable(self._secret_source) else self._secret_source
+        if not self._persist_cwd and not callable(self._secret_source):
             return self
         return ShellToolset(
             allowed_commands=self._allowed_commands,
@@ -175,7 +185,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             allow_interactive=self._allow_interactive,
             env=self._env,
             denied_env_patterns=self._denied_env_patterns,
-            secret_env=self._secret_env,
+            secret_env=secret_env,
             tools=self._tools,
             id=self.id,
         )

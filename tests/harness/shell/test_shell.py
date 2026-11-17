@@ -2385,6 +2385,16 @@ class TestShellSecretEnv:
         assert output.startswith('[REDACTED:TMP_TOKEN]\n')
         assert _SECRET not in output
 
+    async def test_a_function_of_the_run_gives_each_run_its_own(self, tmp_path: Path) -> None:
+        """One `Shell` serves two runs: each command gets, and each result masks, the secret its own run was given."""
+        given = iter(['sk-first-run-111', 'sk-second-run-222'])
+        shell = Shell[None](secret_env=lambda ctx: {'TMP_TOKEN': next(given)})
+        outputs = [
+            await call_tool([shell, LocalWorkspace(tmp_path)], 'run_command', {'command': 'printf "%s" "$TMP_TOKEN"'})
+            for _ in range(2)
+        ]
+        assert outputs == ['[stdout]\n[REDACTED:TMP_TOKEN]'] * 2
+
     async def test_masked_before_output_cap(self, shell_dir: Path) -> None:
         ts = _secret_toolset(max_output_chars=30)
         output = await _call_shell_tool(ts, shell_dir, 'run_command', command=f'printf "%s{"y" * 20}" "$TMP_TOKEN"')
