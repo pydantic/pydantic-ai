@@ -131,6 +131,7 @@ class ExamplesConfig(BaseExamplesConfig):
 
 RUNNABLE_HARNESS_PAGES = frozenset(
     {
+        'adaptive-reasoning.md',
         'artifact-scanning.md',
         'aws-lambda.md',
         'azure-durable-task.md',

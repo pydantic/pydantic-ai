@@ -240,6 +240,7 @@ How the agent thinks and divides the work.
 | Capability | Package | What it does |
 |---|---|---|
 | [Thinking](https://ai.pydantic.dev/capabilities/thinking/) | Core | Provider-adaptive extended thinking at configurable effort |
+| [Adaptive Reasoning](pydantic_ai_harness/adaptive_reasoning/) | Harness | Raise or lower thinking effort per model request, from what the request answers |
 | [Planning](pydantic_ai_harness/planning/) | Harness | Model-owned task plans with a cache-safe live reminder |
 | [Subagents](pydantic_ai_harness/sub_agents/) | Harness | Delegate self-contained tasks to named child agents |
 | [Peers](pydantic_ai_harness/peers/) | Harness | Discover and message other agent sessions without controlling their runs |

@@ -112,6 +112,7 @@ How the agent thinks and divides the work.
 | Capability | Package | What it does |
 |---|---|---|
 | [Thinking](thinking.md) | Core | Provider-adaptive extended thinking at configurable effort |
+| [Adaptive Reasoning](https://pydantic.dev/docs/ai/harness/adaptive-reasoning/) | Harness | Raise or lower thinking effort per model request, from what the request answers |
 | [Planning](https://pydantic.dev/docs/ai/harness/planning/) | Harness | Model-owned task plans with a cache-safe live reminder |
 | [Subagents](https://pydantic.dev/docs/ai/harness/subagents/) | Harness | Delegate self-contained tasks to named child agents |
 | [Dynamic Workflow](https://pydantic.dev/docs/ai/harness/dynamic-workflow/) | Harness | The model orchestrates sub-agents from one Python script: fan-out, chain, vote in a single tool call, with hard `max_agent_calls` budgets |

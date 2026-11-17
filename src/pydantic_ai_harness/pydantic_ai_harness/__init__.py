@@ -6,6 +6,7 @@ from ._warn import HarnessDeprecationWarning, MCPReadOnlyNoToolsWarning
 
 if TYPE_CHECKING:
     from .absurd import AbsurdDurability
+    from .adaptive_reasoning import AdaptiveReasoning
     from .advisor import Advisor
     from .approval_reviewer import ApprovalReviewer
     from .artifact_scanning import ArtifactScanner
@@ -103,6 +104,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     'AbsurdDurability',
+    'AdaptiveReasoning',
     'Advisor',
     'ApprovalReviewer',
     'ArtifactScanner',
@@ -217,6 +219,7 @@ __all__ = [
 
 _LAZY_EXPORTS = {
     'AbsurdDurability': 'absurd',
+    'AdaptiveReasoning': 'adaptive_reasoning',
     'Advisor': 'advisor',
     'ApprovalReviewer': 'approval_reviewer',
     'ArtifactScanner': 'artifact_scanning',
