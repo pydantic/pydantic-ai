@@ -1053,6 +1053,8 @@ Temporal doesn't retry a model error that another attempt at the same request ca
 
 A model error that's an instance of a listed class fails the model activity on its first attempt, whatever the retry policy says, and still reaches workflow code as its own class, where an `on_model_request_error` hook or the [`ModelFallback`](../capabilities/model-fallback.md) capability can act on it. Classes match with `isinstance`, so listing [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] also covers [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError]. The `ApplicationError` type the retry policy sees doesn't change. Other model errors, like a rate limit, an overloaded model or a dropped connection, are retried according to the retry policy.
 
+When the provider rejects the Native Output schema the model inferred as [too complex](../models/anthropic.md#schema-complexity-limits), workflow code attempts the request again in Tool Output, in a new activity. The switch lasts for the agent run: a new run, including one after continue-as-new, infers Native Output again and waits for the rejection once more. To skip that wait, wrap the output type in [`ToolOutput`][pydantic_ai.output.ToolOutput].
+
 A list you pass replaces the default, so include the default classes you still want, or pass `()` to have the retry policy retry every model error:
 
 ```python {title="temporal_non_retryable_model_errors.py"}
