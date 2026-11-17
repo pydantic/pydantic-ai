@@ -122,8 +122,10 @@ members = [
 required-version = ">=0.9.25"
 default-groups = ["dev", "lint"]
 # No patched `soupsieve` (>= 4.0.0, see the floor below) supports Python < 3.11.5, so the lock
-# leaves those patch versions out. Lock-only: the published `requires-python` stays `>=3.11`.
-environments = ["python_full_version >= '3.11.5'"]
+# leaves those patch versions out. The lock is never installed on Pyodide, and a dependency that
+# splits on `emscripten` (`pandas`'s `tzdata`) would otherwise need a Pyodide wheel for every
+# native-only package (`psycopg-binary`). Lock-only: the published metadata is unchanged.
+environments = ["python_full_version >= '3.11.5' and sys_platform != 'emscripten'"]
 exclude-newer = "7 days"
 constraint-dependencies = [
     "ray>=2.55.0",
