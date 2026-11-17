@@ -210,6 +210,11 @@ class TestStackOneAuth:
         capability = StackOne[str | None](account_id='45320', auth=per_user_key)
         assert await connections_for(capability, missing) == []
 
+    async def test_auth_function_returning_oauth_raises(self):
+        capability = StackOne[str | None](account_id='45320', auth=per_user_key)
+        with pytest.raises(UserError, match="must return a StackOne API key, not 'oauth'"):
+            await connections_for(capability, 'oauth')
+
     def test_per_run_toolset_keeps_the_derived_id(self):
         assert StackOne[str | None](account_id='45320', auth=per_user_key).get_toolset().id == 'stackone-45320'
 
