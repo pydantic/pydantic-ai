@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field, fields
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from pydantic import BaseModel
@@ -607,13 +607,14 @@ def test_message_history_round_trip_preserves_binary_content() -> None:
     assert ModelMessagesTypeAdapter.validate_json(dumped) == messages
 
 
-def test_native_approvals_are_redacted_too() -> None:
-    """A provider's call awaiting approval carries its arguments, which are redacted like a function tool's."""
-    call = NativeToolCallPart('lookup', {'photo': IMAGE}, tool_call_id='mcp_1')
-    redacted = redact_binary_content(
-        DeferredToolRequests(native_approvals=[call]), InstrumentationSettings(include_binary_content=False)
-    )
-    assert isinstance(redacted, dict)
-    shape = cast('dict[str, object]', redacted)
-    assert set(shape) == {'calls', 'approvals', 'metadata', 'native_approvals'}
-    assert IMAGE.base64 not in str(shape)
+def test_native_approvals_take_the_same_walk_as_approvals() -> None:
+    """A provider's call awaiting approval is exported as a function tool's is, and only when there is one."""
+    call = NativeToolCallPart('lookup', {'q': 'ada'}, tool_call_id='mcp_1')
+    settings = InstrumentationSettings(include_binary_content=False)
+    assert redact_binary_content(DeferredToolRequests(native_approvals=[call]), settings) == {
+        'calls': [],
+        'approvals': [],
+        'metadata': {},
+        'native_approvals': [call],
+    }
+    assert redact_binary_content(DeferredToolRequests(), settings) == {'calls': [], 'approvals': [], 'metadata': {}}
