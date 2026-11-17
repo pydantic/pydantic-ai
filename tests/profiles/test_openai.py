@@ -376,6 +376,37 @@ def test_json_schema_transformer_keeps_supported_patterns():
     assert escaped_schema_transformer.is_strict_compatible is True
 
 
+@pytest.mark.parametrize('strict', [False, True])
+def test_json_schema_transformer_preserves_recursive_root_union(strict: bool):
+    schema = {
+        '$ref': '#/$defs/U',
+        '$defs': {
+            'U': {
+                'anyOf': [
+                    {'type': 'string'},
+                    {'type': 'array', 'items': {'$ref': '#/$defs/U'}},
+                ],
+                'title': 'U',
+            }
+        },
+    }
+
+    assert OpenAIJsonSchemaTransformer(schema, strict=strict).walk() == {
+        '$defs': {
+            'U': {
+                'anyOf': [
+                    {'type': 'string'},
+                    {'type': 'array', 'items': {'$ref': '#'}},
+                ]
+            }
+        },
+        'anyOf': [
+            {'type': 'string'},
+            {'type': 'array', 'items': {'$ref': '#'}},
+        ],
+    }
+
+
 def test_json_schema_transformer_removes_unsupported_regex_lookarounds():
     json_schema: dict[str, Any] = {
         'properties': {
