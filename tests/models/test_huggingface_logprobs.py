@@ -44,7 +44,7 @@ def novita_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(HARDCODED_MODEL_INFERENCE_MAPPING, 'novita', {mapping.hf_model_id: mapping})
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr(additional_matchers=['body'])
 async def test_huggingface_logprobs(
     allow_model_requests: None, huggingface_api_key: str, vcr: Cassette, novita_mapping: None
 ):
@@ -116,7 +116,7 @@ async def test_huggingface_logprobs_null_top_logprobs(allow_model_requests: None
     assert provider_details['logprobs'] == snapshot([{'token': 'hello', 'logprob': -0.25, 'top_logprobs': []}])
 
 
-@pytest.mark.vcr()
+@pytest.mark.vcr(additional_matchers=['body'])
 async def test_huggingface_logprobs_streaming(
     allow_model_requests: None, huggingface_api_key: str, vcr: Cassette, novita_mapping: None
 ):
