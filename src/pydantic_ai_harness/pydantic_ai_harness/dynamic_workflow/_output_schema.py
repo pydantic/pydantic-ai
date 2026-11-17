@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import Literal
 
@@ -58,11 +59,18 @@ _TYPE_CHECKS: dict[_JsonType, Callable[[JsonValue], bool]] = {
     'object': lambda value: isinstance(value, dict),
     'array': lambda value: isinstance(value, list),
     'string': lambda value: isinstance(value, str),
-    'integer': lambda value: isinstance(value, int) and not isinstance(value, bool),
+    'integer': lambda value: (
+        (isinstance(value, int) and not isinstance(value, bool)) or (isinstance(value, float) and value.is_integer())
+    ),
     'number': lambda value: isinstance(value, int | float) and not isinstance(value, bool),
     'boolean': lambda value: isinstance(value, bool),
     'null': lambda value: value is None,
 }
+
+
+def _json_equal(a: JsonValue, b: JsonValue) -> bool:
+    """JSON equality, which unlike Python's keeps `true` and `1` apart."""
+    return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
 
 def _value_error(value: JsonValue, schema: OutputSchema) -> str | None:
@@ -71,10 +79,10 @@ def _value_error(value: JsonValue, schema: OutputSchema) -> str | None:
     types: list[_JsonType] = type_ if isinstance(type_, list) else [type_] if type_ is not None else []
     if types and not any(_TYPE_CHECKS[t](value) for t in types):
         return f'expected {" or ".join(types)}'
-    if 'enum' in schema and value not in schema['enum']:
-        return f'must be one of {schema["enum"]}'
-    if 'const' in schema and value != schema['const']:
-        return f'must be {schema["const"]!r}'
+    if 'enum' in schema and not any(_json_equal(value, option) for option in schema['enum']):
+        return f'must be one of {json.dumps(schema["enum"])}'
+    if 'const' in schema and not _json_equal(value, schema['const']):
+        return f'must be {json.dumps(schema["const"])}'
     if 'anyOf' in schema and all(schema_errors(value, option) for option in schema['anyOf']):
         return 'matches none of the anyOf options'
     return None

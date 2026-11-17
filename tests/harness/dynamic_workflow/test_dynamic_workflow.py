@@ -690,6 +690,7 @@ _KITCHEN_SINK_SCHEMA = {
         'tags': {'type': 'array', 'items': {'type': 'string'}},
         'kind': {'enum': ['a', 'b']},
         'version': {'const': 1},
+        'flag': {'const': True},
         'ref': {'anyOf': [{'type': 'string'}, {'type': 'integer'}]},
         'meta': {'type': 'object', 'additionalProperties': {'type': 'string'}},
         'open': {'type': 'object'},
@@ -703,6 +704,7 @@ _KITCHEN_SINK_SCHEMA = {
 async def test_output_not_matching_the_schema_is_retried() -> None:
     bad = {
         'extra': 1,
+        'flag': 1,
         'count': True,
         'score': 'x',
         'ok': 1,
@@ -715,7 +717,8 @@ async def test_output_not_matching_the_schema_is_retried() -> None:
     }
     good = {
         'name': 'n',
-        'count': 1,
+        'count': 1.0,
+        'flag': True,
         'score': 0.5,
         'ok': True,
         'note': None,
@@ -750,14 +753,14 @@ async def test_output_not_matching_the_schema_is_retried() -> None:
 Output does not match the required schema:
 $.name: required
 $.extra: additional property not allowed
+$.flag: must be true
 $.count: expected integer
 $.score: expected number
 $.ok: expected boolean
 $.note: expected string or null
 $.tags[1]: expected string
-$.kind: must be one of ['a', 'b']
-$.version: must be 1
-$.ref: matches none of the anyOf options\
+$.kind: must be one of ["a", "b"]
+$.version: must be 1\
 """
         ]
     )
