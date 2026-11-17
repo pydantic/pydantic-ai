@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import base64
+import codecs
 import logging
 import posixpath
 import re
+import sys
 import warnings
-from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
+from collections import deque
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
+from contextlib import aclosing
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, Literal
 
@@ -54,7 +58,7 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     to_text,
     truncate_text,
 )
-from pydantic_ai_harness.tool_output_limits._store import SPILL_DIR, OverflowStore, WorkspaceOverflowStore
+from pydantic_ai_harness.tool_output_limits._store import SPILL_DIR, OverflowStore, WorkspaceOverflowStore, iter_payload
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +232,15 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     _bands: list[Band] = field(init=False, repr=False)
     _per_tool: dict[str, list[Band]] = field(init=False, repr=False)
     _toolset: AgentToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
+    _spilled_calls: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False, compare=False)
+    """Spill name -> the run step that first wrote it, on the per-run instance `for_run` returns.
+
+    A `tool_call_id` is only unique within one response, so a later response can reuse one. The step
+    of a name's first spill is what tells the two apart: the call that wrote it first keeps the
+    documented `run_id/tool_call_id.retry` handle, and a later call that would land on the same name
+    is parked one level down. Kept on the instance rather than read off the history, which a
+    capability such as a compaction may rewrite mid-run.
+    """
 
     def __post_init__(self) -> None:
         self._store = self.store if self.store is not None else WorkspaceOverflowStore()
@@ -276,6 +289,14 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 "to this run. Attach one, such as `LocalWorkspace('.')`, or pass `store=LocalFileOverflowStore()` "
                 'to keep spills on this machine.'
             )
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> ToolOutputLimits[AgentDepsT]:
+        """Return a copy with no spill names recorded, so runs don't share them.
+
+        A shallow copy rather than `replace`, which would rebuild the toolset that `get_toolset`
+        builds once for durable execution.
+        """
+        return replace_no_init(self, _spilled_calls={})
 
     @property
     def _spills_to_run_workspace(self) -> bool:
@@ -326,7 +347,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 unit: `'bytes'` slices raw bytes, for output without useful line breaks such as minified JSON;
                     `offset` and `limit` then count bytes, so pass a larger `limit` (up to 50,000).
             """
-            return await _read_slice(self._store_for(ctx).read, handle, offset, limit, from_end, pattern, unit)
+            return await _read_slice(self._store_for(ctx), handle, offset, limit, from_end, pattern, unit)
 
         async def grep_tool_result(
             ctx: RunContext[AgentDepsT],
@@ -348,8 +369,8 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 max_matches: Maximum number of matches to return (>= 1; clamped to a built-in cap).
                 offset: Number of matches to skip, to continue a previous search. Must be >= 0.
             """
-            read = self._store_for(ctx).read
-            return await _grep(read, handle, pattern, context, max_matches, offset, _reader(ctx, handle))
+            store = self._store_for(ctx)
+            return await _grep(store, handle, pattern, context, max_matches, offset, _reader(ctx, handle))
 
         # Only the reader steps aside: `read_file` cannot search, and `FileSystem` may offer no search tool.
         prepare = step_aside_for_read_file if self._spills_to_run_workspace else None
@@ -582,6 +603,20 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return None, None
         return await self._apply(ctx, call, then, unit)
 
+    def _handle_key(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '') -> str:
+        """Build a per-run, per-call, per-retry key so concurrent and retried calls never clash.
+
+        `suffix` keeps a return's `return_value` and `content` spills on distinct handles. A later
+        step reusing a name already spilled this run (see `_spilled_calls`) gets
+        `run_id/<step>/tool_call_id.retry` instead of the plain `run_id/tool_call_id.retry`.
+        """
+        run_id = ctx.run_id or 'run'
+        name = f'{call.tool_call_id or "call"}.{ctx.retry}{suffix}'
+        first_step = self._spilled_calls.setdefault(name, ctx.run_step)
+        if first_step == ctx.run_step:
+            return f'{run_id}/{name}'
+        return f'{run_id}/{ctx.run_step}/{name}'
+
     async def _spill(
         self,
         ctx: RunContext[AgentDepsT],
@@ -589,7 +624,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         action: Spill,
         unit: _Unit,
     ) -> tuple[str | None, str | None]:
-        key = _handle_key(ctx, call, unit.suffix)
+        key = self._handle_key(ctx, call, unit.suffix)
         # Text crosses the durable boundary as is; only binary needs base64 to travel as JSON.
         if unit.binary:
             payload = base64.b64encode(unit.data).decode('ascii')
@@ -782,16 +817,6 @@ def _log_fallback(operation: str, tool_name: str, fallback: str, exc: Exception)
     )
 
 
-def _handle_key(ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '') -> str:
-    """Build a per-run, per-call, per-retry key so concurrent and retried calls never clash.
-
-    `suffix` keeps a return's `return_value` and `content` spills on distinct handles.
-    """
-    run_id = ctx.run_id or 'run'
-    call_id = call.tool_call_id or 'call'
-    return f'{run_id}/{call_id}.{ctx.retry}{suffix}'
-
-
 def _with_handles(
     existing: object,
     value_handle: str | None,
@@ -884,10 +909,10 @@ _MAX_GREP_CONTEXT = 10
 """Hard cap on context lines shown on each side of a `grep_tool_result` match."""
 
 
-async def _load(read: Callable[[str], Awaitable[bytes]], handle: str) -> bytes | str:
-    """Read a spill, or return the message that guides the model to a valid handle."""
+async def _guarded(handle: str, query: Awaitable[str]) -> str:
+    """Run a spill query, or return the message that guides the model to a valid handle."""
     try:
-        return await read(handle)
+        return await query
     except WorkspaceError as error:
         raise_tool_failure(error)
     except (OSError, UserError):
@@ -918,13 +943,8 @@ def _byte_len(text: str) -> int:
 
 
 def _display(text: str) -> str:
-    """Render a line of `_decode`d text for the model, with undecodable bytes as U+FFFD."""
+    """Render a line of `_payload_texts` text for the model, with undecodable bytes as U+FFFD."""
     return text.encode('utf-8', 'surrogateescape').decode('utf-8', errors='replace')
-
-
-def _decode(data: bytes) -> str:
-    """Decode a spill so every stored byte stays recoverable, keeping byte offsets exact for any payload."""
-    return data.decode('utf-8', 'surrogateescape')
 
 
 @dataclass
@@ -950,7 +970,15 @@ class _Page:
         self.shown += match
 
 
-def _fill(entries: Iterable[_Entry]) -> _Page:
+@dataclass(frozen=True)
+class _Stop:
+    """Why `_place` filled the page: whether context from `start` (or the next entry) is left out."""
+
+    omit: bool
+    start: int | None = None
+
+
+async def _fill(entries: AsyncIterator[_Entry]) -> _Page:
     """Render `entries` up to the output cap.
 
     Stops before a line that would cross the cap, so the match count stays true to the body. Until
@@ -958,71 +986,57 @@ def _fill(entries: Iterable[_Entry]) -> _Page:
     longer than the cap on its own is cut. Context left out either way is recorded in `omitted`.
     """
     page = _Page()
-    entries = iter(entries)
     separate = False
-    for entry in entries:
+    async for entry in entries:
         if entry[2] < 0:
             separate = True
-        elif _place(page, entries, entry, separate):
+        elif (stop := _place(page, entry, separate)) is None:
             separate = False
         else:
+            if stop.omit:
+                await _omit(page, entries, stop.start)
             break
     if page.kept > page.first:
         page.omitted.insert(0, (page.first, page.kept - 1))
     return page
 
 
-def _place(page: _Page, entries: Iterator[_Entry], entry: _Entry, separate: bool) -> bool:
-    """Add one line to `page`, returning `False` once the page is full."""
+def _place(page: _Page, entry: _Entry, separate: bool) -> _Stop | None:
+    """Add one line to `page`, returning why it stopped once it is full."""
     prefix, line, index, match = entry
     if page.first < 0:
         page.first = page.kept = index
     text = ('--\n' if separate else '') + prefix + _display(line)
     if page.size + len(text) <= _MAX_READ_CHARS:
         page.add(text, match)
-        return True
+        return None
     if page.shown:
         # A line opening the next group belongs to a match the next page shows.
-        if not (match or separate):
-            _omit(page, entries, index)
-        return False
+        return _Stop(omit=not (match or separate), start=index)
     page.lines.clear()
     page.size = 0
     page.kept = index if match else index + 1
     if not match:
-        return True
+        return None
     if len(text) <= _MAX_READ_CHARS:
         page.add(text, match)
-        return True
+        return None
     kept = line[: _MAX_READ_CHARS - len(prefix)]
     page.add(prefix + _display(kept), match)
     page.cut = (index, _byte_len(kept))
-    _omit(page, entries, None)
-    return False
+    return _Stop(omit=True)
 
 
-def _omit(page: _Page, entries: Iterator[_Entry], start: int | None) -> None:
+async def _omit(page: _Page, entries: AsyncIterator[_Entry], start: int | None) -> None:
     """Record the context lines from `start` (or the next entry) up to the next match or group separator."""
     end = start
-    for _, _, index, match in entries:
+    async for _, _, index, match in entries:
         if index < 0 or match:
             break
         start = index if start is None else start
         end = index
     if start is not None and end is not None:
         page.omitted.append((start, end))
-
-
-_LINE_BREAK = re.compile('\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]')
-"""The line boundaries `str.splitlines` uses."""
-
-
-def _line_start(text: str, index: int) -> int:
-    """The byte offset line `index` of `text` starts at."""
-    position = 0
-    for _, line_break in zip(range(index), _LINE_BREAK.finditer(text)):
-        position = line_break.end()
-    return _byte_len(text[:position])
 
 
 @dataclass(frozen=True)
@@ -1058,19 +1072,19 @@ def _reader(ctx: RunContext[Any], handle: str) -> _Reader:
     return _Reader(handle, name or READ_TOOL_NAME)
 
 
-def _capped(text: str, page: _Page, more: str, reader: _Reader) -> str:
+async def _capped(store: OverflowStore, page: _Page, more: str, reader: _Reader) -> str:
     """The header note for output stopped at the cap, saying what was left out and where it continues."""
     notes = [reader.omitted(start, end) for start, end in page.omitted]
     if page.cut is not None:
         index, shown_bytes = page.cut
-        notes.append(reader.cut(_line_start(text, index) + shown_bytes))
+        notes.append(reader.cut(await _line_start(store, reader.handle, index) + shown_bytes))
     if more:
         notes.append(more)
     return f', output capped at {_MAX_READ_CHARS:,} chars; {"; ".join(notes)}' if notes else ''
 
 
 async def _read_slice(
-    read: Callable[[str], Awaitable[bytes]],
+    store: OverflowStore,
     handle: str,
     offset: int,
     limit: int,
@@ -1082,7 +1096,8 @@ async def _read_slice(
 
     `pattern` is a literal substring (not a regex), so a model-supplied value cannot hang
     the host with catastrophic backtracking. `limit` is clamped and the joined output is
-    capped, so one call can never return an unbounded amount of text.
+    capped, so one call can never return an unbounded amount of text. Every matching line is
+    counted, but only the lines the window needs are kept.
     """
     if offset < 0:
         raise ModelRetry('`offset` must be >= 0.')
@@ -1090,67 +1105,108 @@ async def _read_slice(
         raise ModelRetry('`limit` must be >= 1.')
     if unit == 'bytes' and pattern is not None:
         raise ModelRetry("`pattern` filters lines, so it cannot be combined with `unit='bytes'`.")
-
-    data = await _load(read, handle)
-    if isinstance(data, str):
-        return data
     if unit == 'bytes':
-        return _byte_slice(handle, data, offset, min(limit, _MAX_READ_CHARS), from_end)
+        return await _guarded(handle, _byte_slice(store, handle, offset, min(limit, _MAX_READ_CHARS), from_end))
+    return await _guarded(handle, _line_slice(store, handle, offset, min(limit, _MAX_READ_LINES), from_end, pattern))
 
-    limit = min(limit, _MAX_READ_LINES)
-    text = _decode(data)
-    lines = text.splitlines()
-    indices: Sequence[int] = (
-        range(len(lines)) if pattern is None else [index for index, line in enumerate(lines) if pattern in line]
-    )
-    total = len(indices)
-    if from_end:
-        end = max(0, total - offset)
-        first = max(0, end - limit)
-    else:
-        first = offset
-        end = offset + limit
-    window = indices[first:end]
 
-    page = _fill(('', lines[index], index, True) for index in window)
+async def _line_slice(
+    store: OverflowStore, handle: str, offset: int, limit: int, from_end: bool, pattern: str | None
+) -> str:
+    total, window = await _matching_window(store, handle, pattern, offset, limit, from_end=from_end)
+    first = max(0, max(0, total - offset) - limit) if from_end else offset
+    page = await _fill(_aiter(('', line, index, True) for index, line in window))
     more = f'the next line is at offset={first + page.shown}, from_end=False' if page.shown < len(window) else ''
-    header = f'[handle {handle!r}: {total:,} matching line(s); showing {page.shown}{_capped(text, page, more, _Reader(handle))}]'
-    return '\n'.join([header, *page.lines])
+    capped = await _capped(store, page, more, _Reader(handle))
+    return '\n'.join([f'[handle {handle!r}: {total:,} matching line(s); showing {page.shown}{capped}]', *page.lines])
 
 
-def _byte_slice(handle: str, data: bytes, offset: int, limit: int, from_end: bool) -> str:
-    """Slice raw stored bytes, decoding a multi-byte UTF-8 sequence cut at either edge as U+FFFD."""
-    total = len(data)
+async def _aiter(entries: Iterable[_Entry]) -> AsyncIterator[_Entry]:
+    for entry in entries:
+        yield entry
+
+
+async def _byte_slice(store: OverflowStore, handle: str, offset: int, limit: int, from_end: bool) -> str:
+    """Slice raw stored bytes, decoding a multi-byte UTF-8 sequence cut at either edge as U+FFFD.
+
+    A forward read keeps only the slice; a read from the end keeps the last `offset + limit` bytes.
+    """
+    total = 0
+    kept = bytearray()
+    async with aclosing(iter_payload(store, handle)) as chunks:
+        async for chunk in chunks:
+            if from_end:
+                kept += chunk
+                del kept[: max(0, len(kept) - (offset + limit))]
+            else:
+                kept += chunk[max(0, offset - total) : max(0, offset + limit - total)]
+            total += len(chunk)
     if from_end:
         end = max(0, total - offset)
         start = max(0, end - limit)
+        kept = kept[len(kept) - (total - start) : len(kept) - (total - end)]
     else:
         start = min(offset, total)
-        end = min(start + limit, total)
-    body = data[start:end].decode('utf-8', errors='replace')
+        end = start + len(kept)
     header = f'[handle {handle!r}: bytes {start}-{end} of {total} (end exclusive)]'
-    return f'{header}\n{body}' if body else header
+    return '\n'.join([header, kept.decode('utf-8', errors='replace')]) if kept else header
 
 
-def _grep_lines(lines: list[str], page: list[int], context: int) -> Iterator[_Entry]:
-    """Yield the matches in `page` with `context` lines around each, and a `--` entry between groups.
+@dataclass
+class _Grep:
+    """Turns a payload's lines, in order, into the entries of one page of matches.
 
-    Windows that overlap or touch merge into one group. Only lines in `page` are marked as matches.
+    The matches whose ordinal is in `page` are shown with `context` lines around each. Windows that
+    overlap or touch merge into one group, with a separator entry between groups. Only matches in
+    `page` are marked as matches. Every match is counted in `matches`.
     """
-    hits = set(page)
-    end = 0
-    for index in page:
-        start = max(end, index - context)
-        if end and start > end:
-            yield _SEPARATOR
-        end = min(len(lines), index + context + 1)
-        for n in range(start, end):
-            match = n in hits
-            yield f'{n + 1}{":" if match else "-"}', lines[n], n, match
+
+    pattern: str
+    context: int
+    page: range
+    matches: int = 0
+    end: int = 0
+    """The index after the last line shown."""
+    after: int = 0
+    """How many trailing context lines are still to show."""
+    before: deque[tuple[int, str]] = field(default_factory=deque[tuple[int, str]])
+
+    def entries(self, index: int, line: str) -> list[_Entry]:
+        match = self.pattern in line
+        entries = self._match(index, line) if match and self.matches in self.page else self._context(index, line)
+        self.matches += match
+        self.before.append((index, line))
+        if len(self.before) > self.context:
+            self.before.popleft()
+        return entries
+
+    def _match(self, index: int, line: str) -> list[_Entry]:
+        leading = [(n, text) for n, text in self.before if n >= self.end]
+        entries: list[_Entry] = [_SEPARATOR] if self.end and (leading[0][0] if leading else index) > self.end else []
+        entries += [(f'{n + 1}-', text, n, False) for n, text in leading]
+        entries.append((f'{index + 1}:', line, index, True))
+        self.end, self.after = index + 1, self.context
+        return entries
+
+    def _context(self, index: int, line: str) -> list[_Entry]:
+        if not self.after:
+            return []
+        self.end, self.after = index + 1, self.after - 1
+        return [(f'{index + 1}-', line, index, False)]
+
+
+async def _grep_entries(store: OverflowStore, handle: str, grep: _Grep) -> AsyncGenerator[_Entry]:
+    index = 0
+    async with aclosing(_payload_lines(store, handle)) as batches:
+        async for batch in batches:
+            for line in batch:
+                for entry in grep.entries(index, line):
+                    yield entry
+                index += 1
 
 
 async def _grep(
-    read: Callable[[str], Awaitable[bytes]],
+    store: OverflowStore,
     handle: str,
     pattern: str,
     context: int,
@@ -1172,20 +1228,100 @@ async def _grep(
         raise ModelRetry('`max_matches` must be >= 1.')
     if offset < 0:
         raise ModelRetry('`offset` must be >= 0.')
-    context = min(context, _MAX_GREP_CONTEXT)
-    max_matches = min(max_matches, _MAX_GREP_MATCHES)
+    page = range(offset, offset + min(max_matches, _MAX_GREP_MATCHES))
+    return await _guarded(handle, _grep_page(store, handle, pattern, min(context, _MAX_GREP_CONTEXT), page, reader))
 
-    data = await _load(read, handle)
-    if isinstance(data, str):
-        return data
 
-    text = _decode(data)
-    lines = text.splitlines()
-    matches = [index for index, line in enumerate(lines) if pattern in line]
-    page = matches[offset : offset + max_matches]
-    filled = _fill(_grep_lines(lines, page, context))
-    more = len(matches) - offset - filled.shown
-    remaining = f', {more:,} more; continue with offset={offset + filled.shown}' if more > 0 else ''
-    capped = _capped(text, filled, '', reader)
-    header = f'[handle {handle!r}: {len(matches):,} matching line(s); showing {filled.shown}{remaining}{capped}]'
+async def _grep_page(
+    store: OverflowStore, handle: str, pattern: str, context: int, page: range, reader: _Reader
+) -> str:
+    grep = _Grep(pattern, context, page)
+    async with aclosing(_grep_entries(store, handle, grep)) as entries:
+        filled = await _fill(entries)
+        async for _ in entries:
+            pass
+    more = grep.matches - page.start - filled.shown
+    remaining = f', {more:,} more; continue with offset={page.start + filled.shown}' if more > 0 else ''
+    capped = await _capped(store, filled, '', reader)
+    header = f'[handle {handle!r}: {grep.matches:,} matching line(s); showing {filled.shown}{remaining}{capped}]'
     return '\n'.join([header, *filled.lines])
+
+
+async def _matching_window(
+    store: OverflowStore, handle: str, pattern: str | None, offset: int, limit: int, *, from_end: bool
+) -> tuple[int, list[tuple[int, str]]]:
+    """Count the lines containing `pattern` and return the count with the window `offset` and `limit` select.
+
+    The window holds each line with its index in the spill. A forward read keeps only the window. A read
+    from the end keeps the last `offset + limit` lines, since where its window starts is known only once
+    the payload ends.
+    """
+    total = index = 0
+    kept: deque[tuple[int, str]] = deque(maxlen=min(offset + limit, sys.maxsize) if from_end else limit)
+    async with aclosing(_payload_lines(store, handle)) as batches:
+        async for batch in batches:
+            matching = [(index + n, line) for n, line in enumerate(batch) if pattern is None or pattern in line]
+            index += len(batch)
+            kept.extend(matching if from_end else matching[max(0, offset - total) : max(0, offset + limit - total)])
+            total += len(matching)
+    window = list(kept)
+    return total, window[: max(0, len(window) - offset)] if from_end else window
+
+
+_LINE_BREAK = re.compile('\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]')
+"""The line boundaries `str.splitlines` uses."""
+
+
+async def _line_start(store: OverflowStore, handle: str, index: int) -> int:
+    """The byte offset line `index` of a stored payload starts at, counting lines as `str.splitlines` does."""
+    if index == 0:
+        return 0
+    position = breaks = 0
+    async with aclosing(_payload_texts(store, handle)) as texts:
+        async for text in texts:
+            for line_break in _LINE_BREAK.finditer(text):
+                breaks += 1
+                if breaks == index:
+                    return position + _byte_len(text[: line_break.end()])
+            position += _byte_len(text)
+    return position  # pragma: no cover - the line was just read from this payload
+
+
+async def _payload_texts(store: OverflowStore, handle: str) -> AsyncGenerator[str]:
+    """Yield a stored payload's text one decoded chunk at a time.
+
+    `surrogateescape` keeps every stored byte recoverable, so byte offsets stay exact for any payload;
+    `_display` renders undecodable bytes as U+FFFD. A trailing CR waits for the next chunk, which may
+    start with the LF of a CRLF.
+    """
+    decoder = codecs.getincrementaldecoder('utf-8')(errors='surrogateescape')
+    cr = ''
+    async with aclosing(iter_payload(store, handle)) as chunks:
+        async for chunk in chunks:
+            text = cr + decoder.decode(chunk)
+            cr = '\r' if text.endswith('\r') else ''
+            yield text.removesuffix(cr)
+    yield cr + decoder.decode(b'', final=True)
+
+
+async def _payload_lines(store: OverflowStore, handle: str) -> AsyncGenerator[list[str]]:
+    """Yield a stored payload's lines as `str.splitlines` splits its text, one decoded chunk's lines at a time."""
+    pieces: list[str] = []
+    async with aclosing(_payload_texts(store, handle)) as texts:
+        async for text in texts:
+            yield _complete_lines(text, pieces)
+    if pieces:
+        yield [''.join(pieces)]
+
+
+def _complete_lines(text: str, pieces: list[str]) -> list[str]:
+    """Return the lines `text` completes, keeping its unterminated end in `pieces`."""
+    lines = text.splitlines()
+    # The last line is unterminated when `text` ends with it: `splitlines` yields an empty line only before a break.
+    end = lines.pop() if lines and lines[-1] and text.endswith(lines[-1]) else None
+    if pieces and lines:
+        lines[0] = ''.join(pieces) + lines[0]
+        pieces.clear()
+    if end is not None:
+        pieces.append(end)
+    return lines

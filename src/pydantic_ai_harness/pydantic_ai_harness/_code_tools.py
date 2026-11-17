@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
     is_multi_modal_content,
 )
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import AgentDepsT, ToolDenied
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDenied
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
 
@@ -161,6 +161,25 @@ class NestedCallOutcome:
     """The called tool's `tool_kind`, so the history records the same typed parts a direct call would."""
 
 
+def reserve_nested_call(ctx: RunContext[AgentDepsT]) -> int:
+    """Check `tool_calls_limit` for a call a tool makes, and count it as pending; returns the count to release.
+
+    Raises:
+        UsageLimitExceeded: the call and the tool making it would exceed `tool_calls_limit`.
+    """
+    usage_limits = ctx.usage_limits
+    if usage_limits is None or usage_limits.tool_calls_limit is None:
+        return 0
+    # This call counts once it succeeds, and so does the enclosing call.
+    usage_limits.check_before_tool_call(replace(ctx.usage, tool_calls=ctx.usage.tool_calls + 2))
+    # A pending call counts toward the limit until it settles: calls started together with
+    # `asyncio.gather` would otherwise all pass the check before any of them is counted. Core
+    # counts the call itself once it succeeds, so the caller releases the reservation however it ends.
+    # usage-attribution: a temporary pending-call reservation, released by the caller
+    ctx.usage.tool_calls += 1
+    return 1
+
+
 async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: ToolCallPart) -> NestedCallOutcome:
     """Run one tool call dispatched from inside the sandbox through the nested `ToolManager`."""
     tool_def = tool_manager.get_tool_def(call_part.tool_name)
@@ -176,20 +195,10 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
             ),
             tool_kind=tool_kind,
         )
-    usage_limits = ctx.usage_limits
-    reserved = 0
-    if usage_limits is not None and usage_limits.tool_calls_limit is not None:
-        # This call counts once it succeeds, and so does the enclosing `run_code` call.
-        try:
-            usage_limits.check_before_tool_call(replace(ctx.usage, tool_calls=ctx.usage.tool_calls + 2))
-        except UsageLimitExceeded as exc:
-            return NestedCallOutcome(error=exc, usage_limit_exceeded=exc, tool_kind=tool_kind)
-        # A pending call counts toward the limit until it settles: calls started together with
-        # `asyncio.gather` would otherwise all pass the check before any of them is counted. Core
-        # counts the call itself once it succeeds, so the reservation is released however it ends.
-        reserved = 1
-        # usage-attribution: a temporary pending-call reservation, released in `finally` below
-        ctx.usage.tool_calls += 1
+    try:
+        reserved = reserve_nested_call(ctx)
+    except UsageLimitExceeded as exc:
+        return NestedCallOutcome(error=exc, usage_limit_exceeded=exc, tool_kind=tool_kind)
     try:
         result = await tool_manager.handle_call(call_part, wrap_validation_errors=False)
     except (CallDeferred, ApprovalRequired) as exc:
