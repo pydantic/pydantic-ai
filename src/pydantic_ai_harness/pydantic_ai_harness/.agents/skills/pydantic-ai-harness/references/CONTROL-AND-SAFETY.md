@@ -899,7 +899,8 @@ print([part.content for part in parts if isinstance(part, ToolReturnPart)])
 #> ['`divide` raised ZeroDivisionError: division by zero']
 ```
 
-- `format_error(tool_name, error) -> str` replaces the text, for example to hide internals;
+- `format_error(ctx, info) -> str` replaces the text, for example to hide internals; `info` is a
+  `ToolErrorInfo` (`name`, `args`, `tool_call_id`, `error`) from `pydantic_ai_harness.report_tool_errors`;
   `exceptions=(TimeoutError, ...)` reports only those types (default `(Exception,)`), the rest propagate.
 - No limit of its own and the tool stays available; `UsageLimits` stop a model that keeps failing.
 - `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution`, `RunCancelled` pass

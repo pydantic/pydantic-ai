@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,7 +20,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool, WrapperToolset
 
-__all__ = ['ReportToolErrors']
+__all__ = ['ReportToolErrors', 'ToolErrorInfo']
 
 _PASS_THROUGH = (
     ModelRetry,
@@ -35,8 +35,25 @@ _PASS_THROUGH = (
 """Signals a tool raises on purpose, a cancellation core already reports, and errors no retry can fix."""
 
 
-def _describe(tool_name: str, error: Exception) -> str:
-    return f'`{tool_name}` raised {type(error).__name__}: {error}'
+@dataclass(frozen=True, kw_only=True)
+class ToolErrorInfo:
+    """The failed tool call and the exception it raised, as `ReportToolErrors.format_error` sees them."""
+
+    name: str
+    """Name of the tool the model called."""
+
+    args: Mapping[str, Any]
+    """Validated arguments the tool was called with."""
+
+    tool_call_id: str
+    """Identifier of this call, for correlating with the run's messages."""
+
+    error: Exception
+    """The exception the tool raised."""
+
+
+def _describe(ctx: RunContext[Any], info: ToolErrorInfo) -> str:
+    return f'`{info.name}` raised {type(info.error).__name__}: {info.error}'
 
 
 @dataclass
@@ -57,8 +74,8 @@ class ReportToolErrors(AbstractCapability[AgentDepsT]):
     ```
     """
 
-    format_error: Callable[[str, Exception], str] = _describe
-    """Build the text the model sees from the tool name and the exception, for example to hide internals.
+    format_error: Callable[[RunContext[AgentDepsT], ToolErrorInfo], str] = _describe
+    """Build the text the model sees from the run context and the failed call, for example to hide internals.
 
     The default names the tool, the exception type and its message.
     """
@@ -82,4 +99,5 @@ class _ReportErrorsToolset(WrapperToolset[AgentDepsT]):
         except _PASS_THROUGH:
             raise
         except self.report.exceptions as error:
-            raise ToolFailed(self.report.format_error(name, error)) from error
+            info = ToolErrorInfo(name=name, args=tool_args, tool_call_id=ctx.tool_call_id or '', error=error)
+            raise ToolFailed(self.report.format_error(ctx, info)) from error

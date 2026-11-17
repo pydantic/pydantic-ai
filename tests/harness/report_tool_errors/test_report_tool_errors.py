@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness import ReportToolErrors, ToolGuardrail
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolResultInfo
+from pydantic_ai_harness.report_tool_errors import ToolErrorInfo
 
 
 def _scripted(*responses: Sequence[ModelResponsePart]) -> FunctionModel:
@@ -104,11 +105,13 @@ class TestReportToolErrors:
         assert [outcome for _, _, outcome in _tool_results(result.all_messages())] == ['failed', 'failed', 'failed']
 
     def test_format_error_replaces_the_text(self) -> None:
-        def hide_internals(tool_name: str, error: Exception) -> str:
-            return f'{tool_name} failed ({type(error).__name__})'
+        def hide_internals(ctx: RunContext[None], info: ToolErrorInfo) -> str:
+            return f'{info.name}({info.args}) failed ({type(info.error).__name__}) in call {info.tool_call_id}'
 
         result = _agent(_scripted([_divide('c1', 0)]), ReportToolErrors(format_error=hide_internals)).run_sync('go')
-        assert _tool_results(result.all_messages()) == snapshot([('c1', 'divide failed (ZeroDivisionError)', 'failed')])
+        assert _tool_results(result.all_messages()) == snapshot(
+            [('c1', "divide({'a': 1, 'b': 0}) failed (ZeroDivisionError) in call c1", 'failed')]
+        )
 
     def test_exceptions_narrows_what_is_reported(self) -> None:
         report = ReportToolErrors[None](exceptions=(TimeoutError,))
@@ -122,8 +125,8 @@ class TestReportToolErrors:
             agent.run_sync('go')
 
     def test_the_last_listed_instance_formats_the_error(self) -> None:
-        first = ReportToolErrors[None](format_error=lambda tool_name, error: 'first')
-        last = ReportToolErrors[None](format_error=lambda tool_name, error: 'last')
+        first = ReportToolErrors[None](format_error=lambda ctx, info: 'first')
+        last = ReportToolErrors[None](format_error=lambda ctx, info: 'last')
         result = _agent(_scripted([_divide('c1', 0)]), first, last).run_sync('go')
         assert _tool_results(result.all_messages()) == snapshot([('c1', 'last', 'failed')])
 

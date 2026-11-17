@@ -40,14 +40,16 @@ The failed call gets a tool result with `outcome='failed'` that names the tool, 
 `divide` raised ZeroDivisionError: division by zero
 ```
 
-To hide internals such as file paths or hostnames, pass `format_error`, which builds the text from the tool name and the exception:
+To hide internals such as file paths or hostnames, pass `format_error`, which builds the text from the run context and a `ToolErrorInfo` carrying the tool name, its arguments, the tool call ID and the exception:
 
 ```python
+from pydantic_ai import RunContext
 from pydantic_ai_harness import ReportToolErrors
+from pydantic_ai_harness.report_tool_errors import ToolErrorInfo
 
 
-def hide_internals(tool_name: str, error: Exception) -> str:
-    return f'`{tool_name}` failed with {type(error).__name__}.'
+def hide_internals(ctx: RunContext[None], info: ToolErrorInfo) -> str:
+    return f'`{info.name}` failed with {type(info.error).__name__}.'
 
 
 report = ReportToolErrors(format_error=hide_internals)
