@@ -4003,7 +4003,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         the attempt was sent, so the accepted attempt's instructions and settings are the ones in history.
         """
         recording = self._step_recording
-        if _unwrap_model(request_context.model) is _unwrap_model(baseline.model):
+        if unwrap_model(request_context.model) is unwrap_model(baseline.model):
             if recording is not None and self._recorded_for_other_model:
                 # Back at the step's model after an attempt at another: record what the step resolved for it again.
                 recording.record(
