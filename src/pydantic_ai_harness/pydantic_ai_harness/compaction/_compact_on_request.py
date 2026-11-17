@@ -89,10 +89,9 @@ class CompactOnRequest(AbstractCapability[AgentDepsT]):
         agent = Agent(
             'openai:gpt-5.6-luna',
             capabilities=[
-                TieredCompaction(tiers=[SummarizingCompaction(max_messages=1)], target_fraction=0.8),
-                # `max_messages` is required by the strategy, but `CompactOnRequest` bypasses it.
+                TieredCompaction(tiers=[SummarizingCompaction()], target_fraction=0.8),
                 CompactOnRequest(
-                    SummarizingCompaction(max_messages=1, keep_messages=6),
+                    SummarizingCompaction(keep_messages=6),
                     min_tokens=30_000,
                     max_per_run=2,
                 ),

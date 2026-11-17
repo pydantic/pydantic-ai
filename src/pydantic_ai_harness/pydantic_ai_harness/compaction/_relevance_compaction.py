@@ -180,7 +180,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             capabilities=[
                 RelevanceCompaction(
                     'system-one:nimble',
-                    summarizer=SummarizingCompaction(model='anthropic:claude-haiku-5-5', max_messages=1),
+                    summarizer=SummarizingCompaction(model='anthropic:claude-haiku-5-5'),
                     max_fraction=0.8,
                 )
             ],
