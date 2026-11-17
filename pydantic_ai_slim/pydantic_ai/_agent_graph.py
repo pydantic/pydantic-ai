@@ -95,6 +95,7 @@ from . import (
 )
 from ._cancel import RunCancellation
 from ._capability_loads import deferred_capability_ids, keep_loaded_state
+from ._capability_parts import has_capability_parts
 from ._compaction_requests import CompactionRequests, RequestedCompaction
 from ._compaction_view import CompactionView
 from ._context_size import (
@@ -860,6 +861,8 @@ class _AttemptCompaction:
         prepared.restore(request_context)
         if self.sent is not None:
             request_context.messages = list(self.sent)
+            # A reader of the hooked request, like a trajectory judge, sees the request this compaction sends.
+            request_context._hooked_messages = list(self.sent)  # pyright: ignore[reportPrivateUsage]
 
     def raise_error(self) -> None:
         """Fail the attempt with the error compacting failed with, if it did."""
@@ -3785,6 +3788,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         attempt_model = processed_context.model
         request_context.model = attempt_model
         request_context.messages = list(processed_context.messages)
+        request_context._hooked_messages = list(request_context.messages)  # pyright: ignore[reportPrivateUsage]
         request_context.model_settings = processed_context.model_settings or None
         request_context.model_request_parameters = processed_context.model_request_parameters
         request_context.model_id = processed_context.model_id
@@ -3926,7 +3930,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         else:
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, list(messages))
             request_context.model_request_parameters = model_request_parameters
-            if _has_instruction_state(messages):
+            if _continuation_needs_prepare(messages):
                 # Projection can split a foreign native tool-search exchange into a trailing
                 # `ModelRequest` next to an existing one. Only merge: the suspended tail is the live
                 # frontier, so its tool calls must not get synthesized returns.
@@ -5465,6 +5469,15 @@ def _record_model_settings_changes(
     for request in requests:
         request.parts = [*request.parts, delta]
     ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
+
+
+def _continuation_needs_prepare(messages: list[_messages.ModelMessage]) -> bool:
+    """Whether a continuation's history must go through `Model.prepare_messages` before it is sent.
+
+    Instruction state needs rendering, and so do capability parts: `prepare_messages` renders them, so a
+    continuation never hands one to a model's adapter.
+    """
+    return _has_instruction_state(messages) or has_capability_parts(messages)
 
 
 def _with_outgoing_reveal_state(

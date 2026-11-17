@@ -11,12 +11,21 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any, Generic, Literal, assert_never
+from typing import Any, Generic, Literal, NamedTuple, TypeVar, assert_never
 
-from typing_extensions import TypedDict
+from typing_extensions import TypeAliasType, TypedDict
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
+
+_CeilingT = TypeVar('_CeilingT', Decimal, int)
+
+Ceiling = TypeAliasType(
+    'Ceiling',
+    _CeilingT | Callable[[RunContext[AgentDepsT]], _CeilingT | None],
+    type_params=(_CeilingT, AgentDepsT),
+)
+"""A `Budget` ceiling: a fixed amount, or a callable resolving one from the run (`None` for no ceiling)."""
 
 Window = Literal['run', 'conversation', 'day', 'month', 'total']
 """The period a budget counts over."""
@@ -72,10 +81,10 @@ class Budget(Generic[AgentDepsT]):
     and reports, and never stops a run. That is how per-tenant accounting with
     no cap is expressed.
 
-    Generic in the agent's dependency type so `scope` is checked against it: the
-    parameter comes from the `Agent` the capability is passed to, so a scope
-    reaching for a field the deps do not have is a type error rather than an
-    `AttributeError` on the first request.
+    Generic in the agent's dependency type so `scope` and the ceiling callables are
+    checked against it: the parameter comes from the `Agent` the capability is passed
+    to, so a callable reaching for a field the deps do not have is a type error rather
+    than an `AttributeError` on the first request.
 
     ```python
     from decimal import Decimal
@@ -85,14 +94,21 @@ class Budget(Generic[AgentDepsT]):
     Budget(usd=Decimal('100'), window='day')
     Budget(usd=Decimal('10'), window='day', scope=lambda ctx: ctx.deps.tenant_id)
     Budget(window='month', name='accounting')  # counts, never blocks
+    Budget(usd=lambda ctx: ctx.deps.allowance_usd, window='month', scope=lambda ctx: ctx.deps.account_id)
     ```
+
+    A callable ceiling is resolved from the run alongside `scope` whenever the budget is read, so
+    each partition can carry its own allowance. `None` means no ceiling on that partition, and
+    zero or less means nothing is allowed. Under durable execution it must return the same value
+    when replayed with the same run context: it is read in orchestration, so a changed value can
+    flip a replayed refusal.
     """
 
-    usd: Decimal | None = None
-    """Ceiling in US dollars. `None` means this budget does not limit spend."""
+    usd: Ceiling[Decimal, AgentDepsT] | None = None
+    """Ceiling in US dollars, or a callable resolving it from the run. `None` means this budget does not limit spend."""
 
-    tokens: int | None = None
-    """Ceiling in total tokens. `None` means this budget does not limit tokens."""
+    tokens: Ceiling[int, AgentDepsT] | None = None
+    """Ceiling in total tokens, or a callable resolving it from the run. `None` means this budget does not limit tokens."""
 
     window: Window = 'day'
     """The period the ceiling applies to."""
@@ -136,16 +152,7 @@ class Budget(Generic[AgentDepsT]):
             raise UserError(f'Budget.window must be one of {sorted(WINDOWS)}; got {self.window!r}.')
         if not self.name or SEPARATOR in self.name:
             raise UserError(f'Budget.name must be non-empty and must not contain {SEPARATOR!r}; got {self.name!r}.')
-        if self.usd is not None:
-            # Checked before the comparison, which raises `InvalidOperation` on a NaN
-            # rather than returning False. An infinity passes it and reads as a ceiling
-            # that can never be reached, which `usd=None` already says outright.
-            if not self.usd.is_finite():
-                raise UserError(f'Budget.usd must be a finite amount; got {self.usd}. Use `usd=None` for no ceiling.')
-            if self.usd <= 0:
-                raise UserError(f'Budget.usd must be positive; got {self.usd}. Use `usd=None` for no ceiling.')
-        if self.tokens is not None and self.tokens <= 0:
-            raise UserError(f'Budget.tokens must be positive; got {self.tokens}. Use `tokens=None` for no ceiling.')
+        self._check_ceilings()
         self._check_retain()
         if self.warn_at is not None:
             if not 0 < self.warn_at <= 1:
@@ -155,6 +162,12 @@ class Budget(Generic[AgentDepsT]):
                     f'Budget {self.name!r} sets warn_at but no `usd` or `tokens` ceiling, so the warning could '
                     'never fire. Add a ceiling, or drop warn_at to leave it a plain counter.'
                 )
+
+    def _check_ceilings(self) -> None:
+        """Validate plain ceilings; a callable's are validated once `resolve_ceilings` has its value."""
+        for kind, ceiling in (('usd', self.usd), ('tokens', self.tokens)):
+            if ceiling is not None and not callable(ceiling):
+                _check_ceiling(kind, ceiling)
 
     def _check_retain(self) -> None:
         if isinstance(self.retain, timedelta):
@@ -267,6 +280,73 @@ def scope_key(budget: Budget[Any], ctx: RunContext[Any] | None, explicit: str | 
             "so returning it would share that budget's counter."
         )
     return resolved
+
+
+class Ceilings(NamedTuple):
+    """The ceilings a budget applies to one reading, with any callable resolved for the run."""
+
+    usd: Decimal | None
+    tokens: int | None
+
+    @property
+    def enforces(self) -> bool:
+        """Whether either ceiling is set, so the reading can refuse a request."""
+        return self.usd is not None or self.tokens is not None
+
+
+def plain_ceilings(budget: Budget[Any]) -> Ceilings | None:
+    """`budget`'s ceilings, or `None` when either is a callable, which only a run context can resolve."""
+    usd, tokens = budget.usd, budget.tokens
+    if callable(usd) or callable(tokens):
+        return None
+    return Ceilings(usd, tokens)
+
+
+def resolve_ceilings(budget: Budget[AgentDepsT], ctx: RunContext[AgentDepsT]) -> Ceilings:
+    """The ceilings `budget` applies in this run, with a callable one resolved.
+
+    A resolved zero or less is kept rather than refused: unlike a configured `usd: 0`, which more
+    likely means "no limit", an allowance of zero read from `deps` means nothing is allowed, and
+    `None` already says "no limit". It reads as exhausted.
+    """
+    return Ceilings(
+        _resolve_ceiling(budget.name, 'usd', budget.usd, ctx, Decimal),
+        _resolve_ceiling(budget.name, 'tokens', budget.tokens, ctx, int),
+    )
+
+
+def _resolve_ceiling(
+    name: str,
+    kind: str,
+    ceiling: Ceiling[_CeilingT, AgentDepsT] | None,
+    ctx: RunContext[AgentDepsT],
+    expected: type[_CeilingT],
+) -> _CeilingT | None:
+    if not callable(ceiling):
+        return ceiling
+    resolved: object = ceiling(ctx)
+    if resolved is None:
+        return None
+    # Checked rather than coerced, as `scope` is: an allowance read from deps is often a float.
+    if isinstance(resolved, bool) or not isinstance(resolved, expected):
+        raise UserError(
+            f'The `{kind}` ceiling of budget {name!r} must return {expected.__name__} or None; '
+            f'got {type(resolved).__name__}.'
+        )
+    if isinstance(resolved, Decimal) and not resolved.is_finite():
+        raise UserError(f'The `{kind}` ceiling of budget {name!r} must return a finite amount or None; got {resolved}.')
+    return resolved
+
+
+def _check_ceiling(kind: str, ceiling: Decimal | int) -> None:
+    """Reject a ceiling of zero or less, and a USD one that is not finite."""
+    # Checked before the comparison, which raises `InvalidOperation` on a NaN
+    # rather than returning False. An infinity passes it and reads as a ceiling
+    # that can never be reached, which `usd=None` already says outright.
+    if isinstance(ceiling, Decimal) and not ceiling.is_finite():
+        raise UserError(f'Budget.{kind} must be a finite amount; got {ceiling}. Use `{kind}=None` for no ceiling.')
+    if ceiling <= 0:
+        raise UserError(f'Budget.{kind} must be positive; got {ceiling}. Use `{kind}=None` for no ceiling.')
 
 
 def store_key(budget: Budget[Any], bucket_id: str, scope: str) -> str:
