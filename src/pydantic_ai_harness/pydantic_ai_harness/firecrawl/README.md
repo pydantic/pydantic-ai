@@ -80,7 +80,7 @@ agent = Agent(
 | Field | Default | What it does |
 |---|---|---|
 | `max_results` | `5` | How many results `web_search` returns, from 1 to 100. Sent to Firecrawl as `limit`. |
-| `extraction_mode` | `'highlights'` | `'highlights'` returns query-relevant passages per result; `'full_page'` also scrapes every result and returns its markdown. |
+| `extraction_mode` | `'highlights'` | `'highlights'` returns query-relevant passages per result; `'full_page'` also scrapes every result and returns its markdown, framed in a `<page_content>` tag so page text can't pass for another result. |
 | `max_text_chars` | `10_000` | Budget for each `web_search` result body and for the page `get_page` returns; longer text is truncated and marked, with the marker counted against the budget. A budget too small to hold the marker ends the text with `…` instead. |
 | `include_domains` | `[]` | If non-empty, search results only come from these domains. Mutually exclusive with `exclude_domains`. |
 | `exclude_domains` | `[]` | Search results never come from these domains. |

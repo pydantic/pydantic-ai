@@ -74,7 +74,8 @@ class FirecrawlSearch(AbstractCapability[AgentDepsT]):
     description when it has none), on one line, which keeps surveying several
     sources cheap.
     `'full_page'` also scrapes every result and returns its full markdown,
-    capped at `max_text_chars`; Firecrawl bills each scraped result.
+    capped at `max_text_chars` and framed in a `<page_content>` tag; Firecrawl
+    bills each scraped result.
     """
 
     max_text_chars: int = 10_000

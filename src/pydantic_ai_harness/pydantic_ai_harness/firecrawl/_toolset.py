@@ -15,6 +15,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai._ssrf import is_cloud_metadata_ip, is_private_ip
 from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.framing import register_tag, wrap
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
@@ -26,6 +27,8 @@ from pydantic_ai_harness._web_search import defer_to_native_web_search
 
 FIRECRAWL_MAX_RESULTS = 100
 """The most results one Firecrawl search returns; the API rejects a larger `limit`."""
+
+_PAGE_CONTENT_TAG = register_tag('page_content')
 
 FirecrawlExtractionMode = Literal['highlights', 'full_page']
 """How `web_search` attaches page content: query-relevant highlights or each result's full markdown."""
@@ -335,6 +338,17 @@ class FirecrawlSearchToolset(FunctionToolset[AgentDepsT]):
         )
         self.add_function(self.get_page, name='get_page')
 
+    def _result_body(self, result: Mapping[str, object]) -> str:
+        """A result's page markdown in `'full_page'` mode, else its highlight, within the text budget.
+
+        Page text can't pass for another result: a full page is framed in a `<page_content>` tag, and a
+        highlight goes on one line. A result whose scrape failed has no markdown, so its highlight stands in.
+        """
+        markdown = _text(result.get('markdown')) if self._full_page else ''
+        if markdown:
+            return wrap(_PAGE_CONTENT_TAG, truncate_head_within(markdown, self._max_text_chars))
+        return truncate_head_within(one_line(_text(result.get('description'))), self._max_text_chars)
+
     def _is_usable_result_url(self, url: str) -> bool:
         """Whether a result URL is one to show: well formed, and inside the domain lists.
 
@@ -377,13 +391,8 @@ class FirecrawlSearchToolset(FunctionToolset[AgentDepsT]):
             if not self._is_usable_result_url(url):
                 continue
             title = one_line(_text(result.get('title'))) or None
-            # A result whose scrape failed has no markdown, so its highlight stands in. The highlight
-            # goes on one line, so page text can't start a line that reads as another result.
-            body = (_text(result.get('markdown')) if self._full_page else '') or one_line(
-                _text(result.get('description'))
-            )
             sources.setdefault(url, title)
-            sections.append(_format_result(title, url, truncate_head_within(body, self._max_text_chars)))
+            sections.append(_format_result(title, url, self._result_body(result)))
             if len(sections) >= self._max_results:
                 break
         if not sections:
