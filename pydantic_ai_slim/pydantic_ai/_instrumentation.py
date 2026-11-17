@@ -8,7 +8,7 @@ from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from functools import cache, lru_cache
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
@@ -508,7 +508,8 @@ def model_request_parameters_attributes(
 _PUBLIC_PACKAGES = frozenset({'pydantic_ai', 'pydantic_ai_harness'})
 
 
-@cache
+# Bounded, as user classes can be created dynamically (per request or tenant) and a cache entry keeps its class alive.
+@lru_cache(maxsize=1024)
 def public_class_path(cls: type[AbstractCapability[Any]] | type[AbstractToolset[Any]]) -> str:
     """The import path of the nearest Pydantic AI or Harness class in `cls`'s MRO, for run composition attributes.
 

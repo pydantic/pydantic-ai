@@ -117,6 +117,11 @@ SECRETS = {
     'capability_instruction': 'SENTINEL-capability-instruction',
     'capability_data': 'SENTINEL-capability-data',
     'capability_description': 'SENTINEL-capability-description',
+    # A user's class names, recorded as `user_class` on the agent run span, and the id a run assigns a
+    # capability without one, which is built from the lowercased class name.
+    'capability_class': 'SENTINEL_capability_class',
+    'capability_run_assigned_id': 'sentinel_capability_class',
+    'toolset_class': 'SENTINEL_toolset_class',
 }
 
 
@@ -570,6 +575,15 @@ async def test_only_url_derived_mcp_ids_are_masked(include_content: bool, native
     assert observed_parameters
     # The id is derived from the hostname alone, so the path's token never reaches it.
     assert capability.id == 'mcp.example.test'
+    composition = [
+        str(span.attributes.get(key))
+        for span in exporter.get_finished_spans()
+        if span.attributes
+        for key in ('pydantic_ai.capabilities', 'pydantic_ai.toolsets', 'pydantic_ai.active_capabilities')
+        if key in span.attributes
+    ]
+    assert composition, 'no composition attributes exported: the scenario proves nothing about them'
+    assert not any(capability.id in value for value in composition)
     if native:
         assert json.loads(serialized)['native_tools'][0]['id'] == '[REDACTED]'
         assert any(
@@ -893,6 +907,34 @@ async def test_no_content_reaches_telemetry_from_a_deferred_capability_catalog(i
     await agent.run(SECRETS['user_prompt'])
 
     check(exporter, include_content, {'user_prompt', 'model_text', 'capability_description'})
+
+
+class SENTINEL_capability_class(AbstractCapability[object]):
+    """A user capability whose class name, and so the id a run assigns it, is a sentinel."""
+
+
+class SENTINEL_toolset_class(FunctionToolset[object]):
+    """A user toolset whose class name is a sentinel."""
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_the_run_composition(include_content: bool) -> None:
+    """User class names and run-assigned ids in `pydantic_ai.capabilities`, `pydantic_ai.toolsets` and `pydantic_ai.active_capabilities`."""
+    settings, exporter = redacted_setup(include_content)
+    toolset = SENTINEL_toolset_class()
+
+    @toolset.tool_plain
+    def ping() -> str:
+        return 'pong'
+
+    agent = Agent(
+        TestModel(call_tools=[]),
+        toolsets=[toolset],
+        capabilities=[SENTINEL_capability_class(), Instrumentation(settings=settings)],
+    )
+    await agent.run('go')
+
+    check(exporter, include_content, {'capability_class', 'capability_run_assigned_id', 'toolset_class'})
 
 
 @pytest.mark.parametrize('include_content', [True, False])
