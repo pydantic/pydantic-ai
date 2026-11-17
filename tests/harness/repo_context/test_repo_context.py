@@ -213,7 +213,8 @@ class TestDiscoverInstructionFiles:
         workspace = MagicMock(spec=Workspace)
         workspace.working_dir = AsyncMock(return_value=tmp_path.as_posix())
         workspace.stat = AsyncMock(side_effect=error)
-        cap = RepoContext[object](expose_inventory_tool=False)
+        # Without nested traversal, so setup asks the mock nothing about authority.
+        cap = RepoContext[object](expose_inventory_tool=False, nested_traversal=False)
         ctx = _run_context(workspace=workspace)
 
         await cap.before_run(ctx)
