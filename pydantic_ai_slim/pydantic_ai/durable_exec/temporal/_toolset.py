@@ -354,8 +354,8 @@ def resolve_tool_activity_config(
 ) -> ActivityConfig | Literal[False]:
     """Resolve per-tool Temporal activity config.
 
-    Reads `tool.tool_def.metadata['temporal']` first, then falls back to the explicit
-    `tool_activity_config` dict keyed by tool name. Returns an `ActivityConfig` dict
+    Reads `tool.tool_def.metadata['temporal']` first, then `tool.tool_def.durable`, then falls back to the
+    explicit `tool_activity_config` dict keyed by tool name. Returns an `ActivityConfig` dict
     (possibly empty), or `False` to skip activity wrapping.
 
     The config is validated back into Temporal's own types: a `DynamicToolset`'s tools are

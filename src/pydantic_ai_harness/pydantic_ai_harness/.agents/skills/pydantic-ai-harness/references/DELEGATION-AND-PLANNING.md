@@ -26,7 +26,7 @@ Gives the model plan tools and keeps the current plan in front of it: every tool
 ends its result with the whole plan in a `<plan_reminder>` tag, and a fixed note in the static
 instructions says what the tag holds. Only when the latest plan isn't visible (after compaction, in a
 run started without it, or after an outside store change) does `Planning` record it as user-channel
-data. The plan never goes in system voice, and the history only grows, so plan edits don't break the
+data, a `PlanReminderPart` (from `pydantic_ai_harness.planning`; find records by type). The plan never goes in system voice, and the history only grows, so plan edits don't break the
 prompt cache or preserved thinking.
 
 ```python
@@ -128,7 +128,7 @@ orchestrator = Agent(
 ```
 
 `SubAgent(agent, name=None, description=None, models=None, usage_limits=None, timeout_seconds=None,
-max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate controls.
+max_calls=None, on_failure=None, contain_errors=None, on_model_error=None)` sets per-delegate controls.
 
 `SubAgents` parameters that change behaviour:
 
@@ -170,8 +170,15 @@ Gotchas:
   `DeferredToolRequests` or `PendingModelResponse` (the parent cannot resume it) are soft: a steering
   message (or `on_failure`) comes back as the tool result, with outcome `failed`. A model request the
   child left pending (e.g. in a `BatchModelRequests` batch) is cancelled first, best effort, on a
-  remote `SubAgentWorker` too; a batch is only cancelled once no other request in it still waits. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
+  remote `SubAgentWorker` too; a batch is only cancelled once no other request in it still waits. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`;
+  `on_model_error='return'` returns the error plus the steering message as a tool result instead, and `'retry'`
+  keeps the `ModelRetry` even with `on_failure` set. If it's unset, setting `on_failure` returns that message alone,
+  without the error. Other
   crashes abort the parent unless `contain_errors=True`.
+- `SubAgent(keep_partial_output=True)` appends the child's last text response, framed as
+  `<partial_output>`, to the steering message when its timeout or own usage budget stops it. The text
+  has not passed output validation and can be text the child rejected; leave it off for a child whose
+  guardrails keep content from its parent.
 - A locally run child inheriting `count_tokens_before_request=True` from the run's limits that
   raises `NotImplementedError` before a request is counted in its `usage` (such as a model with no
   `count_tokens`) is started once more without it (under a new run ID when recorded as a task). A
@@ -199,7 +206,8 @@ orchestrator = Agent(
 ```
 
 - `delegate_task` takes `background=True` and `resume=<task_id>`; the model also gets `list_tasks`,
-  `message_task`, `answer_task`, and `cancel_task(force=False)`. Sub-agents get `ask_parent`
+  `check_task` (a running task's recent activity, from `DelegationTasks.snapshot(task_id)`),
+  `message_task` (which resumes a finished task), `answer_task`, and `cancel_task(force=False)`. Sub-agents get `ask_parent`
   (`SubAgent(can_ask_questions=False)` removes it; `SubAgent(resumable=False)` makes one one-shot, as
   `DelegationTasks(one_shot=...)` does by name for an owner the application binds).
 - Without a bound `DelegationTasks`, each run opens its own owner: background reports arrive as
@@ -234,14 +242,13 @@ orchestrator = Agent(
 ## DelegationReports
 
 Delivers finished background-task reports from a `DelegationTasks` owner into a parent run. Each
-report is the child's output as framed `<task_output task_id=... agent_name=...>` data in a
-`UserPromptPart`, with `outcome=...` only when the task didn't succeed and no preamble.
-`is_task_report(part)` identifies that part by its
-metadata, so hosts can keep it out of user-prompt listings. Like `BackgroundTools` completions, the
-metadata is never sent to the model, but the Vercel AI and AG-UI message conversions omit it: a
-history that round-trips through them returns the report as plain user text, and `is_task_report`
-no longer matches it. `message_history` is trusted as the caller's own, metadata included; load untrusted
-client history with a UI adapter or pass it through `sanitize_messages`, which resets `TextContent.metadata`.
+report is a `TaskOutputPart` (a `DataCapabilityPart` from `pydantic_ai_harness.sub_agents`): the child's
+output as `<task_output task_id=... agent_name=...>` data, with `outcome=...` only when the task didn't
+succeed, and a note naming the sub-agent as its author. A question is a `TaskQuestionPart`
+(`<task_question>`). The output goes out as written; text in it that looks like the frame's tag or an
+application frame gets a further note instead. Find both by type, or with `is_task_report(part)`, which
+also matches the metadata-marked user text an earlier version delivered, so hosts can keep them out of
+user-prompt listings. The Vercel AI and AG-UI message conversions leave capability parts out.
 
 ```python
 from pydantic_ai_harness.sub_agents import DelegationReports, DelegationTasks
@@ -292,8 +299,9 @@ agent = Agent('test', capabilities=[Peers(network=view, inbox=inbox)])
 - Use `LocalPeerInbox(path=...)` for pending messages across restarts. The host owns transport,
   identity, authentication, and any cross-process coordination; the in-memory network
   does not supply those. A receiver without `Peers(inbox=...)` does not read an inbox.
-- Peer text is untrusted data, not user approval. Use `read_peer_message(part)` to read typed
-  provenance from message metadata, not by parsing displayed text. A host delivering peer
+- Peer text is untrusted data, not user approval: it arrives as a `PeerMessagePart` with no
+  authority. Find it by that type, or use `read_peer_message(part)` to read the typed message,
+  not by parsing displayed text. A host delivering peer
   messages itself sends each as its own part. If peers can reach the agent, require approval
   for tools with side effects: a peer message can steer the run into any unapproved tool.
 - Joining `InMemoryPeerNetwork` without an inbox is send-only; incoming messages are rejected.
@@ -339,6 +347,8 @@ All parameters are keyword-only: `agents` (required), `tool_name='run_workflow'`
 `run_workflow` calls), `max_retries=3`, `forward_usage=True`, `inherit_model=False` (children keep their own
 models; `True` makes them follow the parent run's resolved model, e.g. after a per-run model override), `sub_agent_usage_limits=None` (applied to each child run),
 `resource_limits=None` (backstop 256 MB, no time cap; dict merges, `'unlimited'` disables),
+`call_scheduler=None` (a `(RunContext) -> WorkflowCallScheduler` factory, called once per `run_workflow`
+call, for integrations that decide when sub-agent calls start; not called under `DBOSDurability`),
 `id`/`description`/`defer_loading`.
 
 Gotchas:
@@ -360,6 +370,10 @@ Gotchas:
 - Children do not inherit the parent's workspace: give each its own workspace capability. Children
   gathered in parallel on one checkout can overwrite each other's edits.
 - `defer_loading=True` requires a stable `id`. `workflow.reveal(agent)` adds a sub-agent mid-run.
+- A `WorkflowCallScheduler` gets each call as a `WorkflowCall` (`agent_name`, `start`) and must release
+  held calls in `flush`. Under `AWSLambdaDurability` a released call has to await `call.start()`
+  without suspending first (no semaphore or other await before it), or it
+  misses the `parallel` batch and the script hangs.
 - Not agent-spec serializable.
 
 ## Advisor
@@ -384,13 +398,16 @@ agent = Agent('test', capabilities=[Advisor('anthropic:claude-opus-5-5', max_use
 typed = Agent('test', capabilities=[Advisor('openai:gpt-5.6-sol', output_type=Decision)])
 ```
 
-`Advisor(model, *, mode='auto', output_type=str, max_uses=None, max_tokens=None, caching=None,
-forward_history=False)`. `mode`: `'auto'`, `'native'` (provider tool; history gets provider-native
-parts), or `'local'` (always the `advisor` function tool; history gets a `ToolCallPart` and
-`ToolReturnPart`).
+`Advisor(model, *, native=True, local=True, output_type=str, max_uses=None, max_tokens=None,
+caching=None, forward_history=False, id=None, defer_loading=False, description=None)`. By
+default it uses the provider tool where it applies (history gets provider-native parts) and the
+`advisor` function tool otherwise (history gets a `ToolCallPart` and `ToolReturnPart`). `local=False`
+requires the provider tool; `native=False` always uses the function tool. `mode=` is deprecated.
+
+<!-- TODO(harness 1.0, #12997): remove the `mode=` deprecation sentence above. -->
 
 The executor decides when to consult. To require a consultation before a verdict, use
-`mode='local'` and check this run's history in an output validator:
+`native=False` and check this run's history in an output validator:
 
 ```python {test="skip" lint="skip"}
 @agent.output_validator
@@ -404,8 +421,8 @@ def advised(ctx: RunContext[None], output: str) -> str:
 Gotchas:
 
 - Raise at construction: `max_uses < 1`, `max_tokens < 1024`, a non-`str` `output_type` with
-  `mode='native'`, `mode='native'` without an `anthropic:`/`openrouter:` string, OpenRouter native
-  with `max_uses`. `mode='native'` with an executor on a different provider raises `UserError` at run time.
+  `local=False`, `local=False` without an `anthropic:`/`openrouter:` string, OpenRouter native
+  with `max_uses`. `local=False` with an executor on a different provider raises `UserError` at run time.
 - A `Model` instance, a non-default `output_type`, or `max_uses` on OpenRouter select local execution.
 - `max_uses` can be a callable `(ctx) -> int`, resolved per executor request, for a budget across runs
   kept in `deps`. Below 1, the native tool is omitted and the local tool returns its limit message.
@@ -416,10 +433,11 @@ Gotchas:
   `count_tokens` and retried once without the up-front count (limits checked after the response) on any
   pre-request `NotImplementedError`, unless a request was counted in the shared `usage` since the
   consultation started, in which case the error propagates.
-- An agent has one advisor (tool name `advisor`): two `Advisor`s merge, a `None` option taking the
-  other instance's value, two list `output_type`s combining, and any other option the later one's.
+- Two `Advisor`s with the same `id` merge, a `None` option taking the other instance's value, two
+  list `output_type`s combining, and any other option the later one's. With different `id`s, their
+  built `advisor` tools conflict.
 - Durable runs: DBOS records each local consultation under the default `id` (`advisor`; keep it stable once
-  deployed). Under Temporal and Prefect use `mode='native'`: their activity- or task-local usage doesn't merge
+  deployed). Under Temporal and Prefect use `local=False`: their activity- or task-local usage doesn't merge
   back into the run, so local execution is unsupported there.
 
 ## BackgroundTools
@@ -427,20 +445,19 @@ Gotchas:
 Selected tools start, return a "running in background (task id)" message immediately, and deliver the
 result as a follow-up message when done.
 
-Each follow-up is a `ModelRequest` containing a `UserPromptPart` whose first content item is
-`TextContent` with `metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': original_tool_call_id}`,
-including handled failure notifications. This identifies the entire completion part, including any
-files and extra content. The metadata is not sent to the model and survives native message
-serialization and merging consecutive requests. The Vercel AI and AG-UI message conversions omit
-this metadata. A history loaded back from them keeps the text and its framing, but the follow-up
-is then an ordinary user prompt. `ToolReturn.metadata` is discarded.
+Each follow-up, including a handled failure notification, is a `BackgroundToolResultPart` (a
+`DataCapabilityPart` from `pydantic_ai_harness.background_tools`, with `tool_name`, `tool_call_id` and
+`outcome` fields); find follow-ups by that type. The Vercel AI and AG-UI message conversions leave
+capability parts out. The tool's return value and files, then any `ToolReturn.content`, go in the same
+frame; `ToolReturn.metadata` is discarded.
 
-The follow-up wraps what the tool returned in `<pyai:tool_result tool_name="..." tool_call_id="...">`
-tags, the same tags Pydantic AI puts around tool files it sends on the user channel. This tells the
-model the text is the tool's output rather than something the user said, and which pending call it
-completes. A closing `</pyai:tool_result>` tag inside the output is escaped, so the output cannot end the
-frame early. A failed call is framed the same way with `outcome="failed"`, wrapping the message from
-`ModelRetry` or `ToolFailed`.
+The follow-up wraps what the tool returned in `<tool_result tool_name="..." tool_call_id="...">`
+tags, like the `<pyai:tool_result>` tags Pydantic AI puts around tool files it sends on the user channel, with a note that
+the tool wrote it, not the user or the application. This tells the model the text is the tool's output
+rather than something the user said, and which pending call it completes. The output goes out as
+written: text in it that looks like `<tool_result>` or an application frame such as `<system>` gets a
+further note naming the tool as its author, so it cannot end the frame early. A failed call is framed
+the same way with `outcome="failed"`, wrapping the message from `ModelRetry` or `ToolFailed`.
 
 ```python
 import asyncio
