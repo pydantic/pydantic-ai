@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import posixpath
 import re
 from collections import OrderedDict
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AbstractCapability, on_event
@@ -30,19 +30,14 @@ _DELETED = 'These files you read were deleted from the workspace:'
 _SHOWN_PATH = re.compile(r'[A-Za-z0-9._/@+-]{1,200}')
 """Paths a notice names. The notice is in system voice, so a path with other characters is only counted."""
 
+_MAX_CHECKED_BYTES = 64 << 20
+"""Files larger than this, which `read_file` won't return either, are not read to be checked."""
+
 _CONVERSATIONS_KEPT = 1024
 """How many conversations' observations an instance keeps, most recently used first."""
 
-
-@dataclass
-class _Observation:
-    path: str
-    """The path as the file tool named it, relative to its root."""
-    content_hash: str
-
-
-_Observations = OrderedDict[str, _Observation]
-"""Observations by absolute workspace path, least recently observed first."""
+_Observations = OrderedDict[str, str]
+"""Content hashes by absolute workspace path, least recently observed first."""
 
 
 @dataclass
@@ -53,8 +48,8 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
     `FileWrittenEvent`. Before each model request it reads the recorded files through the run's workspace,
     and when one no longer matches, it sends a request-scoped system prompt naming it. A changed file is
     named on every request until the model reads it again; a deleted file is named once. A file that can't
-    be read for another reason, such as a permission error or a workspace failure, is skipped and checked
-    again on the next request.
+    be read for another reason, such as a permission error or a workspace failure, or that is over 64 MiB, is
+    skipped and checked again on the next request.
 
     Observations are kept per conversation, in memory on the instance the agent was built with, so a run
     continued from an earlier run's `message_history` hears about changes made between the runs.
@@ -101,9 +96,9 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
 
     @on_event(FileReadEvent, FileWrittenEvent)
     async def _observe(self, ctx: RunContext[AgentDepsT], event: FileReadEvent | FileWrittenEvent) -> None:
-        key = posixpath.normpath(posixpath.join(event.root_dir, event.path))
-        self._observations[key] = _Observation(event.path, event.content_hash)
-        self._observations.move_to_end(key)
+        path = await ctx.workspace.resolve(event.path, base=event.root_dir)
+        self._observations[path] = event.content_hash
+        self._observations.move_to_end(path)
         while len(self._observations) > self.max_tracked_files:
             self._observations.popitem(last=False)
 
@@ -117,21 +112,33 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
             return request_context
         changed: list[str] = []
         deleted: list[str] = []
-        for key, observation in list(self._observations.items()):
+        for path, content_hash in list(self._observations.items()):
             try:
-                content = await ctx.workspace.read_bytes(key)
+                entry = await ctx.workspace.stat(path)
+                if entry.is_dir or (entry.size is not None and entry.size > _MAX_CHECKED_BYTES):
+                    continue
+                content = await ctx.workspace.read_bytes(path)
             except (FileNotFoundError, NotADirectoryError):
-                self._observations.pop(key, None)
-                deleted.append(observation.path)
+                self._observations.pop(path, None)
+                deleted.append(path)
                 continue
             except (OSError, WorkspaceError):
                 continue
-            if bytes_hash(content) != observation.content_hash:
-                changed.append(observation.path)
+            if bytes_hash(content) != content_hash:
+                changed.append(path)
         if changed or deleted:
-            notice = _render(changed, deleted, self.max_reported_files)
+            working_dir = Path(await ctx.workspace.working_dir())
+            notice = _render(_shown(changed, working_dir), _shown(deleted, working_dir), self.max_reported_files)
             ctx.enqueue(SystemPromptPart(notice, scope='request', metadata={'origin': STALE_FILES_ORIGIN}))
         return request_context
+
+
+def _shown(paths: list[str], working_dir: Path) -> list[str]:
+    """Each path as the file tools take it: relative to the working directory when inside it, else absolute."""
+    return [
+        (Path(path).relative_to(working_dir) if Path(path).is_relative_to(working_dir) else Path(path)).as_posix()
+        for path in paths
+    ]
 
 
 def _render(changed: list[str], deleted: list[str], limit: int) -> str:

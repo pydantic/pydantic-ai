@@ -48,7 +48,12 @@ def _notices(messages: list[ModelMessage]) -> list[list[str]]:
     return requests[:-1]
 
 
-def _agent(tmp_path: Path, *steps: Step, capability: ReportStaleFiles[None] | None = None) -> Agent[None, str]:
+def _agent(
+    tmp_path: Path,
+    *steps: Step,
+    capability: ReportStaleFiles[None] | None = None,
+    file_system: FileSystem[None] | None = None,
+) -> Agent[None, str]:
     """An agent whose model takes the next step, after the step's action changes the workspace."""
 
     async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
@@ -63,7 +68,7 @@ def _agent(tmp_path: Path, *steps: Step, capability: ReportStaleFiles[None] | No
     return Agent(
         FunctionModel(stream_function=respond),
         deps_type=type(None),
-        capabilities=[LocalWorkspace(tmp_path), FileSystem(), capability or ReportStaleFiles()],
+        capabilities=[LocalWorkspace(tmp_path), file_system or FileSystem(), capability or ReportStaleFiles()],
     )
 
 
@@ -140,6 +145,42 @@ class TestReportStaleFiles:
         )
         result = await agent.run('go')
         assert _notices(result.all_messages()) == [[], [], [], [f'{CHANGED}\n- `data.txt`']]
+
+    async def test_paths_are_named_as_the_file_tools_take_them(self, tmp_path: Path) -> None:
+        """The working directory is inside the `FileSystem` root, so event paths are relative to a different root."""
+        app = tmp_path / 'app'
+        app.mkdir()
+        (app / 'config.py').write_text('A = 1\n')
+        (tmp_path / 'shared.txt').write_text('one\n')
+
+        def change_both() -> None:
+            (app / 'config.py').write_text('A = 2\n')
+            (tmp_path / 'shared.txt').write_text('two\n')
+
+        agent = _agent(
+            app,
+            (None, _read('config.py')),
+            (None, _read('../shared.txt')),
+            (change_both, _LIST),
+            (None, 'done'),
+            file_system=FileSystem(root_dir=tmp_path),
+        )
+        result = await agent.run('go')
+        assert _notices(result.all_messages())[-1] == [
+            f'{CHANGED}\n- `config.py`\n- `{(tmp_path / "shared.txt").as_posix()}`'
+        ]
+
+    async def test_file_too_large_to_read_is_skipped(self, tmp_path: Path) -> None:
+        target = tmp_path / 'big.bin'
+        target.write_bytes(b'small')
+
+        def grow() -> None:
+            with target.open('r+b') as file:
+                file.truncate(65 << 20)
+
+        agent = _agent(tmp_path, (None, _read('big.bin')), (grow, _LIST), (None, 'done'))
+        result = await agent.run('go')
+        assert _notices(result.all_messages()) == [[], [], []]
 
     async def test_least_recently_observed_file_is_dropped_past_the_limit(self, tmp_path: Path) -> None:
         for name in ('a.txt', 'b.txt'):
