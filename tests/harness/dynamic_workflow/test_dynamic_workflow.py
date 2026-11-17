@@ -702,6 +702,18 @@ _KITCHEN_SINK_SCHEMA = {
 }
 
 
+async def test_output_schema_reusing_a_dict_is_rejected_before_it_expands() -> None:
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(_sub_agent(), allow_output_schema=True)])
+    # 40 levels that each reuse the level below twice: tiny in the sandbox, 2**40 values once expanded.
+    code = """\
+s = {'type': 'string'}
+for _ in range(40):
+    s = {'type': 'object', 'anyOf': [{'properties': {'a': s}}, {'properties': {'a': s}}]}
+await sub(task='x', output_schema=s)"""
+    with pytest.raises(ModelRetry, match='output_schema is not usable: it has more than 10000 values'):
+        await _run_script(ts, code)
+
+
 async def test_output_not_matching_the_schema_is_retried() -> None:
     bad = {
         'extra': 1,

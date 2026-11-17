@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, TypeGuard
 
 from pydantic import ConfigDict, JsonValue, TypeAdapter, ValidationError, with_config
 from typing_extensions import TypedDict
@@ -12,6 +12,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import ModelRetry, StructuredDict
 
 _MAX_ERRORS = 10
+_MAX_SCHEMA_VALUES = 10_000
 
 JsonObject = dict[str, JsonValue]
 _JsonType = Literal['object', 'array', 'string', 'integer', 'number', 'boolean', 'null']
@@ -40,8 +41,36 @@ class OutputSchema(TypedDict, total=False):
 _OUTPUT_SCHEMA_ADAPTER = TypeAdapter(OutputSchema)
 
 
+def _is_dict(value: object) -> TypeGuard[dict[object, object]]:
+    return isinstance(value, dict)
+
+
+def _is_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
+def _check_size(schema: object) -> None:
+    """Raise `ValueError` if `schema` holds more than `_MAX_SCHEMA_VALUES` values, counting each reuse.
+
+    A script can reuse one dict at many places, so a schema that is small in the sandbox can expand into
+    exponentially many nodes once copied or validated against on the host.
+    """
+    stack = [schema]
+    count = 0
+    while stack:
+        count += 1
+        if count > _MAX_SCHEMA_VALUES:
+            raise ValueError(f'it has more than {_MAX_SCHEMA_VALUES} values')
+        node = stack.pop()
+        if _is_dict(node):
+            stack.extend(node.values())
+        elif _is_list(node):
+            stack.extend(node)
+
+
 def parse_output_schema(schema: object) -> OutputSchema:
     """Validate `schema` as an object `OutputSchema`, raising `ValueError` with the reasons it is not one."""
+    _check_size(schema)
     try:
         parsed = _OUTPUT_SCHEMA_ADAPTER.validate_python(schema, strict=True)
     except ValidationError as exc:

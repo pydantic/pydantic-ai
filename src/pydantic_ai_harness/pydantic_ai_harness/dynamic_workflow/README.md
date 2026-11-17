@@ -196,8 +196,8 @@ why it is opt-in per sub-agent.
 The schema can use `type`, `properties`, `required`, `additionalProperties`, `items`, `enum`,
 `const` and `anyOf`, plus the annotations `title`, `description`, `default` and `examples`, and
 nested objects are written inline. Every validation keyword it accepts is enforced. A schema that is not
-an object schema, or that uses any other keyword (including `$ref` and `$defs`), fails the call
-before it counts against `max_agent_calls`. A sub-agent with
+an object schema, that uses any other keyword (including `$ref` and `$defs`), or that holds more
+than 10,000 values, fails the call before it counts against `max_agent_calls`. A sub-agent with
 [output validators](https://pydantic.dev/docs/ai/core-concepts/output/#output-validator-functions)
 cannot take a per-run output type, so a call to it with `output_schema` raises a `RuntimeError` in
 the script.
