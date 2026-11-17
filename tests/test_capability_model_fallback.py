@@ -27,8 +27,13 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    AgentInstructionSource,
     AgentRunResult,
     AgentStreamEvent,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
+    InstructionId,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -86,7 +91,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingEffort
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
@@ -3305,7 +3310,7 @@ async def test_a_nested_setting_a_hook_removed_in_place_stays_removed_for_every_
     ],
 )
 async def test_the_thinking_effort_recorded_is_the_one_the_model_fallen_back_to_was_sent(
-    backup_effort: str | None, recorded: list[_messages.ModelSettingsDeltaPart]
+    backup_effort: ThinkingEffort | None, recorded: list[_messages.ModelSettingsDeltaPart]
 ):
     """The thinking effort history records, and the events announce, are the ones of the model that answered."""
 
@@ -3323,8 +3328,8 @@ async def test_the_thinking_effort_recorded_is_the_one_the_model_fallen_back_to_
         return FunctionModel(fn, stream_function=stream, model_name=name, profile=ModelProfile(supports_thinking=True))
 
     def settings(ctx: RunContext[Any]) -> ModelSettings:
-        effort = backup_effort if ctx.model.model_name == 'backup' else 'low'
-        return cast(ModelSettings, {'thinking': effort} if effort is not None else {})
+        effort: ThinkingEffort | None = backup_effort if ctx.model.model_name == 'backup' else 'low'
+        return {'thinking': effort} if effort is not None else {}
 
     events: list[_messages.ModelSettingsDeltaEvent] = []
 
@@ -3388,5 +3393,59 @@ async def test_hooks_resolved_again_see_the_model_id_of_the_model_fallen_back_to
             ('native tool', 'backup'),
             ('instructions', 'backup'),
             ('settings', 'backup'),
+        ]
+    )
+
+
+async def test_an_appended_instruction_change_is_recorded_for_the_model_fallen_back_to():
+    """In an open `on_change='append'` window, the change recorded is the one the model fallen back to was sent."""
+    calls: list[str] = []
+
+    def respond(name: str, *, fail_on_step_two: bool = False) -> FunctionModel:
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append(name)
+            last = messages[-1]
+            assert isinstance(last, ModelRequest)
+            if not any(isinstance(part, ToolReturnPart) for part in last.parts):
+                return ModelResponse(parts=[ToolCallPart('noop')])
+            if fail_on_step_two:
+                raise ModelAPIError(model_name=name, message='down')
+            return ModelResponse(parts=[TextPart(name)])
+
+        return FunctionModel(fn, model_name=name)
+
+    agent = _with_noop(
+        Agent(respond('primary', fail_on_step_two=True), capabilities=[ModelFallback(respond('backup'))])
+    )
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[None]) -> str:
+        return f'{ctx.model.model_name} at step {ctx.run_step}'
+
+    result = await agent.run('x')
+    assert result.output == 'backup'
+    assert calls == ['primary', 'primary', 'backup']
+    first, second = [message for message in result.all_messages() if isinstance(message, ModelRequest)]
+    assert first.parts[-1] == snapshot(
+        InstructionBaselinePart(
+            instructions=[
+                InstructionPart(
+                    content='primary at step 1',
+                    dynamic=True,
+                    on_change='append',
+                    name='state',
+                    id=InstructionId(source=AgentInstructionSource(), name='state'),
+                )
+            ]
+        )
+    )
+    # Only the backup's change, in the window the first step opened.
+    assert second.parts[1:] == snapshot(
+        [
+            InstructionDeltaPart(
+                id=InstructionId(source=AgentInstructionSource(), name='state'),
+                content='backup at step 2',
+                base_hash='711de19569bb61d127d7be80aad2a86ebc1ac030566d585a7bc729b371014900',
+            )
         ]
     )
