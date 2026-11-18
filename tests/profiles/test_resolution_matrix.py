@@ -36,6 +36,7 @@ from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AdvisorTool,
     CodeExecutionTool,
+    ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -414,14 +415,21 @@ def test_openai_gpt_5_4():
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
+                {
+                    CodeExecutionTool,
+                    ComputerTool,
+                    FileSearchTool,
+                    ImageGenerationTool,
+                    MCPServerTool,
+                    ToolSearchTool,
+                    WebSearchTool,
+                }
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_max_reasoning_effort': False,
-            'openai_responses_supports_computer_tool': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_supports_phase': True,
             'tool_addition_mode': 'with_definitions',
@@ -444,8 +452,7 @@ def test_openai_gpt_5_4_nano(model_name: str):
     minus the native `computer` tool, which OpenAI doesn't offer on it."""
     expected = _normalize(OpenAIProvider.model_profile('gpt-5.4'))
     assert expected is not None
-    expected['supported_native_tools'] -= {ToolSearchTool}
-    expected['openai_responses_supports_computer_tool'] = False
+    expected['supported_native_tools'] -= {ToolSearchTool, ComputerTool}
     assert _normalize(OpenAIProvider.model_profile(model_name)) == expected
 
 
@@ -470,7 +477,15 @@ def test_openai_gpt_5_6():
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool, ToolSearchTool}
+                {
+                    CodeExecutionTool,
+                    ComputerTool,
+                    FileSearchTool,
+                    ImageGenerationTool,
+                    MCPServerTool,
+                    ToolSearchTool,
+                    WebSearchTool,
+                }
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -479,7 +494,6 @@ def test_openai_gpt_5_6():
             'openai_responses_supports_reasoning_context': True,
             'openai_responses_supports_reasoning_mode': True,
             'tool_addition_mode': 'with_definitions',
-            'openai_responses_supports_computer_tool': True,
             'openai_supports_phase': True,
             'openai_responses_tool_choice_accepts_additional_tools': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
@@ -520,7 +534,15 @@ def test_openai_gpt_6_astra():
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool, ToolSearchTool}
+                {
+                    CodeExecutionTool,
+                    ComputerTool,
+                    FileSearchTool,
+                    ImageGenerationTool,
+                    MCPServerTool,
+                    ToolSearchTool,
+                    WebSearchTool,
+                }
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -528,7 +550,6 @@ def test_openai_gpt_6_astra():
             'openai_responses_supports_reasoning_context': True,
             'openai_responses_supports_reasoning_mode': True,
             'tool_addition_mode': 'with_definitions',
-            'openai_responses_supports_computer_tool': True,
             'openai_supports_phase': True,
             'openai_responses_tool_choice_accepts_additional_tools': True,
             'openai_responses_supports_max_reasoning_effort': True,
@@ -721,7 +742,6 @@ def test_openai_gpt_4o():
             'json_schema_transformer': _OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'openai_responses_supports_max_reasoning_effort': False,
-            'openai_responses_supports_computer_tool': False,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
@@ -758,7 +778,6 @@ def test_openai_o3_mini():
             'thinking_enabled_by_default': True,
             'openai_supports_minimal_reasoning_effort': False,
             'openai_responses_supports_max_reasoning_effort': False,
-            'openai_responses_supports_computer_tool': False,
             'openai_supports_reasoning': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
@@ -795,7 +814,6 @@ def test_openai_codex_gpt_5_6():
             'openai_responses_supports_reasoning_mode': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_phase': True,
-            'openai_responses_supports_computer_tool': False,
             'openai_supports_minimal_reasoning_effort': False,
             'openai_responses_tool_choice_accepts_additional_tools': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),

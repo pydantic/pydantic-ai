@@ -913,7 +913,7 @@ class ComputerTool(AbstractNativeTool):
 
     Supported by:
 
-    * OpenAI Responses, on models whose profile sets `openai_responses_supports_computer_tool`
+    * OpenAI Responses, on GPT-5.4 (not nano), GPT-5.5, GPT-5.6 and GPT-6 through OpenAI and Bedrock Mantle
     * Anthropic, on models whose profile sets `anthropic_computer_tool_version`
     """
 
