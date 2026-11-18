@@ -196,6 +196,13 @@ integration assign stable idempotency keys to chained calls.
 Either kind of retry can repeat an external action performed before its result was recorded; use application-level
 idempotency keys or deduplication for writes and API requests that must not happen twice.
 
+Render doesn't wait the delay a model error asks for in its `retry_after` (read from a provider's `Retry-After`
+header, for example). A task's `Retry` sets the wait between its attempts when the task is registered, with no way to
+change it for one failure, and a task run can't sleep durably, so a chained model request task run is retried after
+`wait_duration_ms` and `backoff_scaling` whatever the provider asked for. Size those for your provider's rate limits,
+or give model requests no retries and let a [fallback model](../capabilities/model-fallback.md)
+take over.
+
 Render retries are separate from Pydantic AI's `ModelRetry`, which asks the model to correct or reconsider a call,
 and from retries in the provider SDK. Account for all three when setting retry limits and timeouts; see the
 [Pydantic AI retry guide](../retries.md).
@@ -330,8 +337,8 @@ that emit them inline.
 ## Large tool outputs
 
 `ToolOutputLimits` measures and reduces a tool return after the tool task run returns to its parent run.
-Configure `resolve_tool_options` to return `False` for its `read_tool_result` helper so the helper reads from the
-same task that stored the result.
+Configure `resolve_tool_options` to return `False` for its `read_tool_result` and `grep_tool_result` helpers so they
+read from the same task that stored the result.
 
 In `Spill` mode, the capability stores the full payload and gives the model a handle for a later `read_tool_result`
 call. A store backed by the parent run's local filesystem works within that run, but a retried entry task run or another
@@ -358,7 +365,7 @@ from pydantic_ai_harness import RenderWorkflows
 
 
 def resolve_tool_options(operation_id, _tool, tool_name):
-    if tool_name in {'delegate_task', 'read_tool_result', 'read_local_cache'}:
+    if tool_name in {'delegate_task', 'read_tool_result', 'grep_tool_result', 'read_local_cache'}:
         return False
     if isinstance(operation_id, (ToolsetCallToolId, ToolsetValidateToolArgumentsId)):
         if operation_id.toolset_id == 'research_tools':
@@ -389,6 +396,11 @@ Returning `False` for a function tool runs it inside the calling task run instea
 `metadata={'render_workflows': False}` on the tool does. The shared toolset definitions remain registered. `False` is
 rejected for MCP and dynamic tools. The harness `FileSystem` write tools opt out this way, so their file-change
 requests reach listeners in the parent task.
+
+An async function tool with the engine-neutral [`durable=False`](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) also
+runs inside the calling task run, whatever the resolver returns for it. Registration only sees `durable` set on
+the tool itself, so for a tool opted out by a `prepare` function or `PrepareTools` instead, have the resolver
+return `False` or the toolset's options.
 
 ## Execution limits
 

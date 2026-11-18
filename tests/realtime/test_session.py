@@ -9577,7 +9577,9 @@ async def test_agent_realtime_session_denied_tool_returns_denial_message() -> No
     lifecycle = [event for event in events if isinstance(event, (DeferredToolRequestsEvent, DeferredToolResultsEvent))]
     assert lifecycle == [
         DeferredToolRequestsEvent(
-            DeferredToolRequests(approvals=[ToolCallPart(tool_name='danger', args='{}', tool_call_id='tc')])
+            DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='danger', args='{}', tool_call_id='tc')], validated_args={'tc': {}}
+            )
         ),
         DeferredToolResultsEvent(DeferredToolResults(approvals={'tc': False})),
     ]
@@ -9674,7 +9676,10 @@ async def test_realtime_session_does_not_execute_an_approval_gated_tool_without_
     lifecycle = [event for event in events if isinstance(event, (DeferredToolRequestsEvent, DeferredToolResultsEvent))]
     assert lifecycle == [
         DeferredToolRequestsEvent(
-            DeferredToolRequests(approvals=[ToolCallPart(tool_name='transfer_funds', args='{}', tool_call_id='tc')])
+            DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='transfer_funds', args='{}', tool_call_id='tc')],
+                validated_args={'tc': {}},
+            )
         )
     ]
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
@@ -9703,7 +9708,10 @@ async def test_realtime_session_denies_an_approval_gated_tool_through_a_handler(
     lifecycle = [event for event in events if isinstance(event, DeferredToolRequestsEvent)]
     assert lifecycle == [
         DeferredToolRequestsEvent(
-            DeferredToolRequests(approvals=[ToolCallPart(tool_name='transfer_funds', args='{}', tool_call_id='tc')])
+            DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='transfer_funds', args='{}', tool_call_id='tc')],
+                validated_args={'tc': {}},
+            )
         )
     ]
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
@@ -9861,13 +9869,17 @@ async def test_tools_from_one_response_share_a_run_step() -> None:
     assert seen_steps[0] == seen_steps[1]
 
 
-def _ordered_events_agent() -> Agent[None, str]:
-    """Two tools where the *second* call finishes first, so completion order != call order."""
+def _ordered_events_agent(quick_landed: asyncio.Event) -> Agent[None, str]:
+    """Two tools where the *second* call finishes first, so completion order != call order.
+
+    `slow` returns only once `quick_landed` is set.
+    """
     agent: Agent[None, str] = Agent()
 
     @agent.tool_plain
     async def slow() -> str:
-        await asyncio.sleep(0.05)
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await quick_landed.wait()
         return 'slow'
 
     @agent.tool_plain
@@ -9881,8 +9893,16 @@ async def test_parallel_ordered_events_emits_results_in_call_order() -> None:
     # `parallel_ordered_events` promises parallel execution with events in call order. The session used
     # to read the mode only to spot `'sequential'`, so this fell through to plain parallel and results
     # streamed in completion order — the setting silently did nothing.
-    agent = _ordered_events_agent()
-    conn = FakeRealtimeConnection(
+    quick_result_sent = asyncio.Event()
+
+    class _QuickResultConnection(FakeRealtimeConnection):
+        async def send_input(self, content: RealtimeInput) -> None:
+            await super().send_input(content)
+            if isinstance(content, ToolResult) and content.tool_call_id == 'tc2':
+                quick_result_sent.set()
+
+    agent = _ordered_events_agent(quick_result_sent)
+    conn = _QuickResultConnection(
         [
             ToolCall(tool_call_id='tc1', tool_name='slow', args='{}'),
             ToolCall(tool_call_id='tc2', tool_name='quick', args='{}'),
@@ -9905,7 +9925,8 @@ async def test_parallel_ordered_events_emits_results_in_call_order() -> None:
 async def test_parallel_default_still_emits_results_in_completion_order() -> None:
     # The other side of the branch: the default mode is unchanged, so the ordering buffer only engages
     # where it was asked for.
-    agent = _ordered_events_agent()
+    quick_result_seen = asyncio.Event()
+    agent = _ordered_events_agent(quick_result_seen)
     conn = FakeRealtimeConnection(
         [
             ToolCall(tool_call_id='tc1', tool_name='slow', args='{}'),
@@ -9914,10 +9935,14 @@ async def test_parallel_default_still_emits_results_in_completion_order() -> Non
         ]
     )
     model = FakeRealtimeModel(conn)
+    results: list[str] = []
     async with agent.realtime(model).session() as session:
-        events = [e async for e in session]
+        async for e in session:
+            if isinstance(e, FunctionToolResultEvent):
+                results.append(e.part.tool_name)
+                if e.part.tool_name == 'quick':
+                    quick_result_seen.set()
 
-    results = [e.part.tool_name for e in events if isinstance(e, FunctionToolResultEvent)]
     assert results == ['quick', 'slow']
 
 
@@ -13005,7 +13030,10 @@ async def test_a_response_over_the_request_limit_within_one_frame_is_neither_rec
 
 
 async def test_a_response_whose_first_frame_trips_a_token_limit_is_recorded() -> None:
-    """A token limit its own usage tripped stops the session, but the response was made: it is recorded and counted."""
+    """A token limit its own usage tripped stops the session, but the response was made: it is recorded and counted.
+
+    The tool call later in the frame never runs, so it is refused: neither it nor a return for it is recorded.
+    """
 
     class _OneFrame(FakeRealtimeConnection):
         async def frames(self) -> AsyncIterator[RealtimeFrame]:
@@ -13013,6 +13041,7 @@ async def test_a_response_whose_first_frame_trips_a_token_limit_is_recorded() ->
                 ResponseStarted(response_id='r1'),
                 SessionUsage(usage=RequestUsage(input_tokens=100)),
                 OutputTranscript(text='Hi.', is_final=True),
+                ToolCall(tool_call_id='c1', tool_name='lookup', args='{}'),
             ]
             await asyncio.Event().wait()  # pragma: lax no cover
 
@@ -13023,7 +13052,9 @@ async def test_a_response_whose_first_frame_trips_a_token_limit_is_recorded() ->
             async for _ in session:
                 pass
     assert session.usage.requests == 1
-    assert [type(message).__name__ for message in session.all_messages()] == ['ModelResponse']
+    assert [
+        (type(message).__name__, [type(part).__name__ for part in message.parts]) for message in session.all_messages()
+    ] == snapshot([('ModelResponse', ['SpeechPart'])])
 
 
 async def test_a_turn_committed_while_a_response_is_spoken_follows_it() -> None:

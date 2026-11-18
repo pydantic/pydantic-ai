@@ -3433,6 +3433,66 @@ class TestPlaywrightBrowserLifecycle:
         assert 'token=' not in rendered
         assert 'http://127.0.0.1:59999' in rendered
 
+    # Messages as Playwright 1.64 words them. It quotes the `/json/version/` URL it
+    # derives from an `http(s)` endpoint, and a normalized form of the endpoint (host
+    # lower-cased, query percent-encoded), neither of which contains `cdp_url` verbatim.
+    @pytest.mark.parametrize(
+        ('endpoint', 'message', 'kept'),
+        [
+            pytest.param(
+                'http://127.0.0.1:9222/?apiToken=SUPERSECRET',
+                'BrowserType.connect_over_cdp: Unexpected status 401 when connecting to '
+                'http://127.0.0.1:9222/json/version/?apiToken=SUPERSECRET.\n'
+                'This does not look like a DevTools server, try connecting via ws://.\n'
+                'Call log:\n'
+                '  - <ws preparing> retrieving websocket url from http://127.0.0.1:9222/?apiToken=SUPERSECRET\n',
+                ('Unexpected status 401', 'http://127.0.0.1:9222'),
+                id='version-probe-query',
+            ),
+            pytest.param(
+                'http://127.0.0.1:9222/?x-api-key=SUPER"SECRET',
+                'BrowserType.connect_over_cdp: Unexpected status 401 when connecting to '
+                'http://127.0.0.1:9222/json/version/?x-api-key=SUPER%22SECRET.\n'
+                'This does not look like a DevTools server, try connecting via ws://.\n'
+                'Call log:\n'
+                '  - <ws preparing> retrieving websocket url from http://127.0.0.1:9222/?x-api-key=SUPER"SECRET\n',
+                ('Unexpected status 401', 'http://127.0.0.1:9222'),
+                id='percent-encoded-query',
+            ),
+            pytest.param(
+                'http://LOCALHOST:9222/session/SUPERSECRET',
+                'BrowserType.connect_over_cdp: Unexpected status 401 when connecting to '
+                'http://localhost:9222/session/SUPERSECRET/json/version/.\n'
+                'This does not look like a DevTools server, try connecting via ws://.\n'
+                'Call log:\n'
+                '  - <ws preparing> retrieving websocket url from http://LOCALHOST:9222/session/SUPERSECRET\n',
+                ('Unexpected status 401', 'http://localhost:9222'),
+                id='lower-cased-host-path',
+            ),
+            pytest.param(
+                'ws://LOCALHOST:9222/devtools/browser/SUPERSECRET',
+                'BrowserType.connect_over_cdp: WebSocket error: connect ECONNREFUSED 127.0.0.1:9222\n'
+                'Call log:\n'
+                '  - <ws connecting> ws://localhost:9222/devtools/browser/SUPERSECRET\n'
+                '  - <ws connect error> ws://localhost:9222/devtools/browser/SUPERSECRET '
+                'connect ECONNREFUSED 127.0.0.1:9222\n',
+                ('ECONNREFUSED 127.0.0.1:9222', 'ws://localhost:9222'),
+                id='websocket-lower-cased-host',
+            ),
+        ],
+    )
+    async def test_attach_failure_redacts_endpoint_forms_playwright_derives(
+        self, monkeypatch: pytest.MonkeyPatch, endpoint: str, message: str, kept: tuple[str, ...]
+    ) -> None:
+        page = _FakePage()
+        _install_fake_driver(monkeypatch, page, launch_error=PlaywrightError(message))
+        agent = Agent(TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser(cdp_url=endpoint)])
+        result = await agent.run('screenshot the page')
+        rendered = str(result.all_messages())
+        assert 'SECRET' not in rendered
+        for text in kept:
+            assert text in rendered
+
     async def test_attach_failure_redacts_an_endpoint_without_a_scheme_or_port(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
