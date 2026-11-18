@@ -240,6 +240,7 @@ def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
     ):
         assert BedrockProvider.model_profile(f'openai.{base_name}') == {
             'bedrock_disallows_sampling_settings': True,
+            'bedrock_supports_stop_sequences': False,
             'bedrock_thinking_variant': 'openai_responses',
             'supports_thinking': True,
             'thinking_always_enabled': base_name in ('gpt-6-astra', 'gpt-6.1-sol'),
