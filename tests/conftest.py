@@ -65,6 +65,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from . import cassette_hooks, cost_guards, gc_isolation
 from ._inline_snapshot import Builder, Custom, customize
+from ._timeouts import READINESS_WAIT_TIMEOUT
 from .cassette_utils import check_cache_prefix_stability
 from .function_model_prefix import RequestRecorder, check_function_model_prefix_stability, patch_models
 
@@ -1133,16 +1134,30 @@ def prefect_test_server() -> Iterator[None]:
     """
     pytest.importorskip('prefect')
     import prefect.testing.utilities
-    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
+    from prefect.settings import (
+        PREFECT_API_REQUEST_TIMEOUT,
+        PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED,
+        temporary_settings,
+    )
     from prefect.testing.utilities import prefect_test_harness
 
     # The task-run recorder is a background writer against the same sqlite file the flows write to.
     # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
     # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
     # here reads what it records: task run states reach the API through the task engine.
+    # The client's default request timeout is that same 60s, but a state change the server has read can wait
+    # that long for the write lock, and longer on a stalled runner. It then commits after the client gave up,
+    # and the client resends it: a resent `Failed` replaces the `AwaitingRetry` the server just stored, so a
+    # `@flow(retries=...)` run ends instead of retrying. A client that outwaits the server gets every reply:
+    # the committed state, or a 503 it can safely retry when the lock wait runs out.
     with (
         pytest.MonkeyPatch.context() as monkeypatch,
-        temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}),
+        temporary_settings(
+            {
+                PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False,
+                PREFECT_API_REQUEST_TIMEOUT: READINESS_WAIT_TIMEOUT,
+            }
+        ),
     ):
         # The harness picks its port by binding port 0 and closing the socket, which leaves the port free
         # for the 15-25s uvicorn takes to bind it. A server another worker starts meanwhile, such as a
