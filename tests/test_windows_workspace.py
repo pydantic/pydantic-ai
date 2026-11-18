@@ -58,6 +58,15 @@ class TestWindowsCommands:
         assert 'missing.txt' in result.stderr
         assert 'CLIXML' not in result.stderr
 
+    async def test_pwsh_stderr_is_left_as_captured(self, tmp_path: Path) -> None:
+        record = (
+            '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><S S="Error">x</S></Objs>'
+        )
+        result = await WindowsWorkspaceBackend(tmp_path, powershell='pwsh').run(
+            f'[Console]::Error.Write("#< CLIXML`r`n" + \'{record}\')', shell=True
+        )
+        assert result.stderr == f'#< CLIXML\r\n{record}'
+
     async def test_a_windows_powershell_cmdlet_failure_is_text(self, tmp_path: Path) -> None:
         backend = WindowsWorkspaceBackend(tmp_path, powershell='powershell.exe')
         result = await backend.run('Get-Item missing.txt', shell=True)
