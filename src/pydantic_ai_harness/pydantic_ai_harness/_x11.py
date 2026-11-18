@@ -373,7 +373,7 @@ class X11Computer:
 
     async def cursor_position(self) -> Point:
         output = (await self._run(['xdotool', 'getmouselocation', '--shell'])).stdout
-        x, y = (re.search(rf'^{axis}=(\d{{1,5}})$', output, re.MULTILINE) for axis in 'XY')
+        x, y = (re.search(rf'^{axis}=(\d{{1,5}})$', output, re.MULTILINE) for axis in ('X', 'Y'))
         if x is None or y is None:
             raise WorkspaceError(f'Unexpected `xdotool getmouselocation` output: {output.strip()!r}')
         return Point(x=int(x[1]), y=int(y[1]))
