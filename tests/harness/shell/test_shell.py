@@ -447,6 +447,17 @@ class TestCwdCapture:
         command_id = _parse_command_id(await persist_toolset.start_command(ctx, 'pwd'))
         assert str(shell_dir / 'subdir') in await _check_until(persist_toolset, shell_dir, command_id, 'subdir')
 
+    async def test_output_cannot_spoof_cwd(self, persist_toolset: ShellToolset[None], shell_dir: Path) -> None:
+        # The wrapper's own reports carry a random per-call marker, so output shaped like one is just output.
+        ctx = _ctx(shell_dir)
+        await persist_toolset.run_command(ctx, 'cd subdir')
+        spoof = f'printf %s __harness_cwd_{"0" * 32}_removed; exit 1'
+        assert await persist_toolset.run_command(ctx, spoof) == snapshot(
+            '[stdout]\n__harness_cwd_00000000000000000000000000000000_removed\n[exit code: 1]'
+        )
+        assert await persist_toolset.run_command(ctx, 'echo /; pwd') == f'[stdout]\n/\n{shell_dir / "subdir"}\n'
+        assert await persist_toolset.run_command(ctx, 'pwd') == f'[stdout]\n{shell_dir / "subdir"}\n'
+
     async def test_command_that_exits_early_keeps_cwd(
         self, persist_toolset: ShellToolset[None], shell_dir: Path
     ) -> None:

@@ -22,7 +22,7 @@ from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
-from pydantic_ai.workspaces import Workspace, WorkspaceError, WorkspaceTimeoutError
+from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceError, WorkspaceTimeoutError
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import metadata_dir, require_workspace, supports_commands
@@ -59,11 +59,11 @@ _COMMAND_ID = re.compile(r'[0-9a-f]{32}')
 # The start is one line, so the shell numbers the command's lines as before.
 _PERSIST_CWD_START = ' '.join(
     (
-        # `__harness_put ln` or `__harness_put mv -f` saves `$__harness_cwd` through a temp file. `ln` never
-        # replaces a file a parallel call saved first.
+        # `__harness_put` saves `$__harness_cwd` as a run's first directory, through a temp file and `ln`,
+        # which never replaces a file a parallel call saved first.
         '__harness_put() { { command -p mkdir -p -- "${__harness_state%/*}" &&',
         'printf %s "$__harness_cwd" > "$__harness_state.$$" &&',
-        'command -p "$@" -- "$__harness_state.$$" "$__harness_state"; } 2>/dev/null;',
+        'command -p ln -- "$__harness_state.$$" "$__harness_state"; } 2>/dev/null;',
         '__harness_ok=$?; command -p rm -f -- "$__harness_state.$$" 2>/dev/null; return $__harness_ok; };',
         # A saved directory that is gone, or a state entry that isn't a file holding an absolute path, is removed
         # and reported as `removed` instead of running the command.
@@ -71,11 +71,11 @@ _PERSIST_CWD_START = ' '.join(
         '__harness_cwd=$(test -f "$__harness_state" && command -p cat -- "$__harness_state" 2>/dev/null; printf x);',
         '__harness_cwd=${__harness_cwd%x};',
         'case $__harness_cwd in /*) test -d "$__harness_cwd" ;; *) false ;; esac ||',
-        '{ command -p rm -f -- "$__harness_state"; printf %s "${__harness_marker}removed"; exit 1; };',
+        '{ command -p rm -f -- "$__harness_state" 2>/dev/null; printf %s "${__harness_marker}removed"; exit 1; };',
         # No saved directory yet: save the working directory. If this toolset saved one before, the file was
         # lost; that is reported only when saving works, so a workspace that can't save runs on.
         'else __harness_cwd=$__harness_wd;',
-        '__harness_put ln && $__harness_lost && { printf %s "${__harness_marker}lost"; exit 1; };',
+        '__harness_put && $__harness_lost && { printf %s "${__harness_marker}lost"; exit 1; };',
         'fi; cd "$__harness_cwd" || exit;',
         # The command runs in a subshell, so an `EXIT` trap it sets runs before the outer shell reads its status.
         # Its stderr moves to fd 3, so the shell's own report of a subshell killed by a signal can be dropped.
@@ -337,6 +337,28 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     async def _staged_cwd_path(self, ctx: RunContext[AgentDepsT], marker: str) -> str:
         return f'{await self._cwd_state_path(ctx)}.{marker}'
 
+    async def _remove_staged_cwd(self, ctx: RunContext[AgentDepsT], marker: str) -> None:
+        """Remove the directory a stopped `run_command` staged: a timeout or cancellation can stop the wrapper first."""
+        if not self._persist_cwd:
+            return
+        with anyio.move_on_after(CONTROL_TIMEOUT, shield=True):
+            try:
+                await ctx.workspace.remove(await self._staged_cwd_path(ctx, marker))
+            except FileNotFoundError:
+                pass
+
+    async def _apply_persist_cwd_result(self, ctx: RunContext[AgentDepsT], result: CommandResult, marker: str) -> None:
+        """Turn the wrapper's `removed` or `lost` report into a retry, or note that this run saved a directory."""
+        if not self._persist_cwd:
+            return
+        reported = result.exit_code == 1 and not result.stderr
+        if reported and result.stdout == f'{marker}removed':
+            await self._removed_cwd(ctx)
+        if reported and result.stdout == f'{marker}lost':
+            self._lost_cwd()
+        if result.exit_code == 0:
+            self._saved_cwd_run = self._run_key(ctx)
+
     async def clear_run_cwd(self, ctx: RunContext[AgentDepsT]) -> None:
         """Remove the run's saved directory once its agent run ends."""
         self._saved_cwd_run = None
@@ -460,23 +482,11 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         except WorkspaceTimeoutError as exc:
             return _labelled(exc.stdout, exc.stderr, empty=None, trailer=f'[Command timed out after {timeout}s]')
         finally:
-            if interrupted and self._persist_cwd:
-                # A timeout or cancellation can stop the wrapper after the command staged its directory.
-                with anyio.move_on_after(CONTROL_TIMEOUT, shield=True):
-                    try:
-                        await ctx.workspace.remove(await self._staged_cwd_path(ctx, marker))
-                    except FileNotFoundError:
-                        pass
+            if interrupted:
+                await self._remove_staged_cwd(ctx, marker)
 
         exit_code = result.exit_code
-        if self._persist_cwd:
-            if exit_code == 1 and not result.stderr and result.stdout == f'{marker}removed':
-                await self._removed_cwd(ctx)
-            if exit_code == 1 and not result.stderr and result.stdout == f'{marker}lost':
-                self._lost_cwd()
-            if exit_code == 0:
-                self._saved_cwd_run = self._run_key(ctx)
-
+        await self._apply_persist_cwd_result(ctx, result, marker)
         output = _labelled(result.stdout, result.stderr, empty='(no output)')
         if exit_code != 0:
             output = f'{output}\n[exit code: {exit_code}]'
