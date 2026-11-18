@@ -876,7 +876,7 @@ from pydantic_ai_harness import ComputerUse, DockerContainer
 
 from pydantic_ai import Agent
 
-agent = Agent('{{ anthropic:medium }}', capabilities=[DockerContainer(desktop=True), ComputerUse()])
+agent = Agent('{{ openai:medium }}', capabilities=[DockerContainer(desktop=True), ComputerUse()])
 ```
 
 ## Advisor Tool
