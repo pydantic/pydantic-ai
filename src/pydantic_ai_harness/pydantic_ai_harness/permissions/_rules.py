@@ -27,7 +27,10 @@ _OPERATOR_CHARS = frozenset('();<>|&')
 _UNSPLITTABLE = ('$', '`', '<(', '>(', '\n', '\r')
 _LOOSE_SPLIT = re.compile(r'[\s;&|()<>`${}]+')
 _UNSPLITTABLE_OPERATOR = re.compile(r'[()]|<<|;;')
-_GLOB = re.compile(r'[*?\[]')
+_GLOB = re.compile(r'[*?]|\[[^\]]*\]')
+"""A pattern the shell expands: `*`, `?`, or a closed bracket expression, so the `[` builtin isn't one."""
+_LITERAL = re.compile(r'[^*?\[\]]')
+_REDIRECTION = re.compile(r'\d*[<>]+&?\s*[^\s;&|<>()]*')
 _GLOB_LIMIT = 4096
 """Longer argument values aren't globbed, which could take quadratic time: ask and deny rules match them, allow rules don't."""
 _HARMLESS_REDIRECTS = frozenset({('>', '/dev/null'), *(('>&', str(fd)) for fd in range(10))})
@@ -187,15 +190,20 @@ def _loose(words: Iterable[str]) -> list[str]:
 
 
 def _matches_word(word: str, expected: str) -> bool:
-    """Whether `word` is `expected`, or a pattern the shell could expand into it, such as `r[m]`."""
-    return word == expected or (_GLOB.search(word) is not None and fnmatchcase(expected, word))
+    """Whether `word` is `expected`, or a pattern with a literal character the shell could expand into it, such as `r[m]`.
+
+    A bare wildcard such as `*` stands for any file, not for the program or flag a rule names.
+    """
+    return word == expected or (
+        _GLOB.search(word) is not None and _LITERAL.search(word) is not None and fnmatchcase(expected, word)
+    )
 
 
 def _contains(words: Sequence[str], rule: Sequence[str]) -> bool:
     """Whether `rule`'s words run consecutively in `words`; its first word also matches a path ending in it."""
     head, rest = rule[0], rule[1:]
     return any(
-        _matches_word(posixpath.basename(word), head)
+        (_matches_word(word, head) or _matches_word(posixpath.basename(word), head))
         and len(following := words[i + 1 : i + len(rule)]) == len(rest)
         and all(map(_matches_word, following, rest))
         for i, word in enumerate(words)
@@ -244,7 +252,7 @@ def _unsplittable_rule(
     """
     if all(rule.verdict == 'allow' for rule in rules):
         return None
-    words = _loose([re.sub(r'[\'"\\]', '', command)])
+    words = _loose([_REDIRECTION.sub(' ', re.sub(r'[\'"\\]', '', command))])
     restrictive = _strictest(
         rule for rule in rules if rule.verdict != 'allow' and _contains(words, _loose(_words(rule.command or '')))
     )
