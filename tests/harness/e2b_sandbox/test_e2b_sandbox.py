@@ -132,7 +132,8 @@ def test_agent_spec_schema_publishes_every_field_but_the_client_and_network() ->
     """`from_spec` lists its fields by hand, so a new field must be added there too; `network` is code-only."""
     definitions = AgentSpec.model_json_schema_with_capabilities([E2BSandbox])['$defs']
     published = set(definitions['spec_params_E2BSandbox']['properties'])
-    assert published == {field.name for field in fields(E2BSandbox)} - {'client', 'network'}
+    # Fields set outside `__init__`, such as the `_authority_ceiling` every capability has, aren't spec fields.
+    assert published == {field.name for field in fields(E2BSandbox) if field.init} - {'client', 'network'}
 
 
 def test_from_spec_forwards_the_spec_fields() -> None:
