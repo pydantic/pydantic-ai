@@ -1000,10 +1000,11 @@ class _MessageCreateParams(TypedDict):
 
 
 class _CountTokensParams(TypedDict):
-    """The parameters a `count_tokens` request sends on every client: Bedrock's adds `max_tokens`, the others `model`."""
+    """The parameters a `count_tokens` request sends on every client. Bedrock's also sends `max_tokens`."""
 
     system: str | list[BetaTextBlockParam] | Omit
     messages: list[BetaMessageParam]
+    model: str
     tools: list[BetaToolUnionParam] | Omit
     tool_choice: BetaToolChoiceParam | Omit
     mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] | Omit
@@ -2686,6 +2687,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         params: _CountTokensParams = {
             'system': prepared.system_prompt or OMIT,
             'messages': prepared.anthropic_messages,
+            'model': self._model_name,
             'tools': prepared.tools or OMIT,
             'tool_choice': prepared.tool_choice or OMIT,
             'mcp_servers': prepared.mcp_servers or OMIT,
@@ -2702,8 +2704,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             else model_settings.get('extra_body'),
         }
         if isinstance(client, AsyncAnthropicBedrock):
-            return await count_tokens_via_bedrock(client, self._model_name, max_tokens=prepared.max_tokens, **params)
-        return await client.beta.messages.count_tokens(model=self._model_name, **params)
+            return await count_tokens_via_bedrock(client, max_tokens=prepared.max_tokens, **params)
+        return await client.beta.messages.count_tokens(**params)
 
     def _process_response(  # noqa: C901
         self,
