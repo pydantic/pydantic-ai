@@ -39,7 +39,7 @@ import anyio
 import anyio.to_thread
 from sprites import AsyncSprite, AsyncSpritesClient
 from sprites.async_filesystem import AsyncSpritePath
-from sprites.exceptions import FileNotFoundError_, IsADirectoryError_, NotADirectoryError_, NotFoundError
+from sprites.exceptions import FileNotFoundError_, IsADirectoryError_, NotADirectoryError_, NotFoundError, SpriteError
 from sprites.types import FileStat
 from websockets.datastructures import Headers
 from websockets.exceptions import InvalidStatus
@@ -242,6 +242,8 @@ class SpriteTransport:
     async def create(self, client: AsyncSpritesClient, name: str, *, runtime: str | None) -> AsyncSprite:
         if self.create_error is not None:
             raise self.create_error
+        if name in self.names:
+            raise SpriteError(f'Failed create sprite (status 409): sprite {name!r} already exists')
         self.names.add(name)
         self.created.append(name)
         self.create_started.set()
