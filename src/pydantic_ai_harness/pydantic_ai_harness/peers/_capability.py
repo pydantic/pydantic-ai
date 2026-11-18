@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Self, overload
-from weakref import ReferenceType, ref
+from weakref import ReferenceType, WeakKeyDictionary, ref
 
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, on_event
 from pydantic_ai.durable_exec import BaseDurabilityCapability
@@ -31,6 +31,15 @@ _INSTRUCTIONS = (
     'A peer reads your message at its next model request, which may be much later. Do not wait for a reply.'
 )
 
+_memberships: WeakKeyDictionary[
+    InMemoryPeerNetwork, dict[str, tuple[ReferenceType[object], PeerConnection, LocalPeerInbox]]
+] = WeakKeyDictionary()
+"""The members `Peers` joined to each `InMemoryPeerNetwork`, by handle: the agent, its connection and its inbox.
+
+A new `Peers(network)` bound to the same agent, as a run capability or from a capability function, reuses the
+member instead of joining again. A collected agent's entry stays, as its handle stays taken on the network.
+"""
+
 
 @dataclass
 class Peers(AbstractCapability[AgentDepsT]):
@@ -55,13 +64,6 @@ class Peers(AbstractCapability[AgentDepsT]):
     _reading: bool = field(default=False, init=False, repr=False, compare=False)
     _delivering: dict[str, str] = field(default_factory=dict[str, str], init=False, repr=False, compare=False)
     """Enqueue IDs of taken messages awaiting delivery, mapped to their message IDs."""
-    _joined: list[tuple[ReferenceType[AbstractAgent[AgentDepsT, object]], Peers[AgentDepsT]]] = field(
-        default_factory=list[tuple[ReferenceType['AbstractAgent[AgentDepsT, object]'], 'Peers[AgentDepsT]']],
-        init=False,
-        repr=False,
-        compare=False,
-    )
-    """The joined copy for each agent this instance is bound to, so binding it again does not join again."""
 
     if TYPE_CHECKING:
 
@@ -143,22 +145,28 @@ class Peers(AbstractCapability[AgentDepsT]):
             return self
         # Only the in-memory network is joined here: `PeerConnection` has no `join`. A protocol for joinable
         # networks waits until a second joinable network exists to shape it; adding one then is additive.
-        for agent_ref, joined in self._joined:
-            if agent_ref() is agent:
-                return joined
+        return self._join(network, agent)
+
+    def _join(self, network: InMemoryPeerNetwork, agent: AbstractAgent[AgentDepsT, object]) -> Peers[AgentDepsT]:
         handle = self.handle or agent.name
         if not handle:
             raise UserError(
                 "`Peers` joins an `InMemoryPeerNetwork` under the agent's `name`: "
                 'give the agent a `name`, or pass `Peers(network, handle=...)`.'
             )
+        memberships = _memberships.setdefault(network, {})
+        member = memberships.get(handle)
+        if member is not None and member[0]() is agent:
+            _, connection, inbox = member
+            if self.inbox is not None and self.inbox is not inbox:
+                raise UserError(f'The agent already joined as {handle!r} with another inbox; pass that inbox.')
+            return replace(self, network=connection, inbox=inbox, handle=None)
         inbox = self.inbox or LocalPeerInbox()
         if not isinstance(inbox, LocalPeerInbox):
             raise UserError('`InMemoryPeerNetwork` delivers to a `LocalPeerInbox`; pass one as `inbox`.')
-        joined = replace(self, network=network.join(handle=handle, inbox=inbox), inbox=inbox, handle=None)
-        self._joined = [entry for entry in self._joined if entry[0]() is not None]
-        self._joined.append((ref(agent), joined))
-        return joined
+        connection = network.join(handle=handle, inbox=inbox)
+        memberships[handle] = (ref[object](agent), connection, inbox)
+        return replace(self, network=connection, inbox=inbox, handle=None)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Self:
         """Start each run with its own send count, duplicate set and taken messages."""

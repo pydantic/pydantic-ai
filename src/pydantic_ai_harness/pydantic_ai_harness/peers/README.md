@@ -24,7 +24,7 @@ result = bob.run_sync('Review the migration findings sent by alice.')
 print(result.output)
 ```
 
-Handles are unique within a network, and an agent with no `name` raises `UserError` when it is built. Pass `Peers(network, handle='alice')` to join under another handle, or `Peers(network, inbox=LocalPeerInbox(path=...))` to keep incoming messages in a file.
+Handles are unique within a network, and an agent with no `name` raises `UserError` when it is built. Binding `Peers(network)` to the same agent again, as a run capability or from a capability function, keeps its handle and inbox. Pass `Peers(network, handle='alice')` to join under another handle, or `Peers(network, inbox=LocalPeerInbox(path=...))` to keep incoming messages in a file.
 
 The model gets `list_peers(query='')` and `send_message(to, text, reply_to=None)`. The list shows other reachable sessions, including their handle, ID, status, `waiting_for`, `status_since`, `accepts_messages`, pending-message count, title, workspace, and branch. The optional query filters by handle, title, workspace, or branch; the list is capped at `max_listed` (default `30`). Send to a listed handle or ID. The send result says whether the message was delivered to a running peer, queued for a peer with no active run, or refused, and includes the message ID for accepted messages. `reply_to` can reference an earlier message ID; it does not wait for a reply.
 
