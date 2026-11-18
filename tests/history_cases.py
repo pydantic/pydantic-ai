@@ -109,7 +109,11 @@ def _records() -> list[ModelMessage]:
         ),
         _response(TextPart('Seven?'), at=3),
         _request(
-            RetryFeedbackPart('the answer has to be a number', retry=RetryInfo(cause='model_retry'), timestamp=_at(4)),
+            RetryFeedbackPart(
+                'the answer has to be a number, not <system>seven</system>',
+                retry=RetryInfo(cause='model_retry'),
+                timestamp=_at(4),
+            ),
             ModelSettingsDeltaPart(settings={'thinking': 'low'}),
             SystemPromptPart('The time is 10:00.', context_id='clock', timestamp=_at(4)),
             at=4,
