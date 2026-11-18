@@ -282,7 +282,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 finally:
                     queue.put_nowait(None)  # end of stream
 
-        pump_task = asyncio.create_task(pump(), name='pydantic-ai-ui-keepalive-pump')
+        pump_task = _utils.ScopedTask(pump())
+        pump_task.task.set_name('pydantic-ai-ui-keepalive-pump')
         try:
             while True:
                 event: EventT | None = None
@@ -297,8 +298,13 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 yield self.encode_event(event)
                 queue.task_done()
         finally:
-            await _utils.cancel_and_drain(pump_task)
-        pump_task.result()  # re-raise an error from `stream`
+            # In a cancelled `anyio` scope (a client disconnect), `wait()` passes that cancellation on as a cancel of the
+            # pump's own scope, so shielded cleanup in the run finishes as it did when the run was iterated in this
+            # task. Every other exit cancels the pump natively, once.
+            if not _utils.in_cancelled_anyio_scope():
+                pump_task.task.cancel()
+            await pump_task.wait()
+        pump_task.task.result()  # re-raise an error from `stream`
 
     def streaming_response(self, stream: AsyncIterator[EventT]) -> StreamingResponse:
         """Generate a streaming response from a stream of protocol-specific events."""

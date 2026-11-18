@@ -3530,6 +3530,37 @@ async def test_encode_stream_sends_keepalive_while_source_is_quiet(anyio_backend
     assert source_closed.is_set()
 
 
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_encode_stream_keepalive_passes_anyio_cancellation_to_the_source(anyio_backend: str):
+    """A client disconnect cancels the run as an `anyio` scope would: shielded cleanup finishes, the rest is cut."""
+    shield_entered = anyio.Event()
+    release = anyio.Event()
+    shielded_work_done = False
+
+    async def events() -> AsyncIterator[str]:
+        nonlocal shielded_work_done
+        yield 'first'
+        with anyio.CancelScope(shield=True):
+            shield_entered.set()
+            await release.wait()
+            shielded_work_done = True
+        await anyio.sleep(READINESS_WAIT_TIMEOUT)  # cut by the cancellation
+        yield 'second'  # pragma: no cover
+
+    async def consume() -> None:
+        async for _ in DummyUIEventStream(keepalive_interval=READINESS_WAIT_TIMEOUT).encode_stream(events()):
+            pass
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(consume)
+        await shield_entered.wait()
+        tg.cancel_scope.cancel()
+        release.set()
+
+    assert shielded_work_done
+    assert not any(task.get_name() == 'pydantic-ai-ui-keepalive-pump' for task in asyncio.all_tasks())
+
+
 @pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
 async def test_encode_stream_keepalive_surfaces_source_error(anyio_backend: str):
     """A source error surfaces on both backends; on Trio, which the keepalive pump doesn't support, no keepalives are sent."""
