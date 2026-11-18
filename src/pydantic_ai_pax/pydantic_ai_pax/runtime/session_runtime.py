@@ -76,7 +76,7 @@ from pydantic_ai_pax.runtime.forks import Forks
 from pydantic_ai_pax.runtime.git_actions import git_commands
 from pydantic_ai_pax.runtime.imported_sessions import IMPORT_SOURCES
 from pydantic_ai_pax.runtime.live_runtimes import Served
-from pydantic_ai_pax.runtime.permissions import permissions_command, session_permissions
+from pydantic_ai_pax.runtime.permissions import permissions_command, session_permissions, unattended_only
 from pydantic_ai_pax.runtime.process import ClaiProcess
 from pydantic_ai_pax.runtime.project_instructions import ProjectInstructions
 from pydantic_ai_pax.runtime.question_status import QuestionStatus
@@ -912,14 +912,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         mount stays within every `FileSystem`, `ToolGuardrail`, `ToolCallJudge`, `Hooks` and `Permissions`
         the run has.
         """
-        granted = (*self.plugins, *self.loader.capabilities(), *self.permissions)
-        bound = (
-            *self.plugins,
-            *self.loader.run_capabilities(),
-            *self.permissions,
-            self._question_status,
-            NON_STRICT_SCHEMAS,
-        )
+        supplied = (*self.plugins, *self.loader.run_capabilities())
+        permissions = unattended_only(self.permissions, supplied)
+        granted = (*self.plugins, *self.loader.capabilities(), *permissions)
+        bound = (*supplied, *permissions, self._question_status, NON_STRICT_SCHEMAS)
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)
