@@ -43,7 +43,14 @@ from anthropic.types.beta import (
 
 from ... import _utils
 from ..._context_size import mark_context_input_tokens
-from ...messages import CompactionPart, ModelResponseStreamEvent, NativeToolCallPart, NativeToolSearchCallPart, TextPart
+from ...messages import (
+    CompactionPart,
+    ModelResponse,
+    ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolSearchCallPart,
+    TextPart,
+)
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
 from ._citations import citations_provider_details, fetched_page, map_citations
@@ -70,6 +77,7 @@ from ._response import (
     report_inference_geo,
     report_input_transformations,
 )
+from ._threads import ThreadRecord, served_by_fallback_model
 
 if TYPE_CHECKING:
     from . import AnthropicModelName
@@ -93,6 +101,9 @@ class AnthropicStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _history_fetched_pages: Sequence[tuple[str, str]] = ()
     _report_inference_geo: bool = False
+    _thread_record: ThreadRecord | None = None
+    """Records the message thread the request was sent in, if any, on the response `get()` builds."""
+    _from_fallback_model: bool = field(default=False, init=False)
     _current_block: BetaContentBlock | None = field(default=None, init=False)
     _ignored_server_tool_use_indices: set[int] = field(default_factory=set[int], init=False)
     _pending_citations: dict[int, list[BetaTextCitation]] = field(
@@ -103,6 +114,12 @@ class AnthropicStreamedResponse(StreamedResponse):
     _builtin_tool_calls: dict[str, NativeToolCallPart] = field(
         default_factory=dict[str, NativeToolCallPart], init=False
     )
+
+    def get(self) -> ModelResponse:
+        response = super().get()
+        if self._thread_record is None:
+            return response
+        return self._thread_record.stamp(response, from_fallback_model=self._from_fallback_model)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with map_api_errors(self._model_name, self._model_id_namespace):
@@ -330,6 +347,7 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     def _map_message_delta(self, event: BetaRawMessageDeltaEvent) -> None:
         self._usage = map_usage(event, self._provider_name, self._provider_url, self._model_name, self._usage)
+        self._from_fallback_model = served_by_fallback_model(event.usage)
         if (context_input_tokens := last_pass_input_tokens(event.usage)) is not None:
             mark_context_input_tokens(self, context_input_tokens)
         if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch

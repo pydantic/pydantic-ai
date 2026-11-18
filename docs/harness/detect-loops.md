@@ -155,19 +155,19 @@ detect_loops = DetectLoops(stream_detector=RepeatedLines())
 
 ### `'nudge'` (default)
 
-The capability enqueues a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] with [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], which joins the request being prepared. It keeps the default conversation scope, so like a course correction it keeps applying on later requests instead of being shown once, and later requests send it unchanged. For example:
+The capability enqueues a `LoopNudgePart`, an [`InstructionCapabilityPart`][pydantic_ai.messages.InstructionCapabilityPart] kind (a [capability part](../capabilities/custom.md#capability-parts) in the application's voice), with [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], which joins the request being prepared. It keeps the default conversation scope, so like a course correction it keeps applying on later requests instead of being shown once, and later requests send it unchanged. The model sees its text as a [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts), or as `<system>` user text on a model without inline system prompts. For example:
 
 ```text
 Your last 3 calls to `read_file` used the same arguments and returned the same result, so calling it again will not change the outcome. Change your approach, or explain what is blocking you.
 ```
 
-The text names tools using only letters, digits, and `_`; any other character becomes `_`. The real names, and the pattern, are in the part's `metadata`:
+The text names tools using only letters, digits, and `_`; any other character becomes `_`. The part's `pattern` and `tool_names` fields hold the pattern and the real names, and never reach the model. Find nudges in history by their type, not by their text:
 
 ```python {test="skip" lint="skip"}
-{'origin': 'pydantic-ai-harness.detect_loops.nudge.v1', 'pattern': 'repeated_result', 'tool_names': ['read_file']}
-```
+from pydantic_ai_harness.detect_loops import LoopNudgePart
 
-Find nudges in history by that `origin`, not by their text ([identifying system prompts](../message-history.md#identifying-system-prompts)). On a model without inline system prompts, Pydantic AI sends the part as `<system>` user text, as it does any [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts).
+nudges = [part for message in messages for part in message.parts if isinstance(part, LoopNudgePart)]
+```
 
 For a [loop within a response](#loops-within-a-response), the stream is also stopped and the request made again, with the nudge. The nudge is request-scoped there: the response that looped is gone, so it's sent with that one request instead of staying in the conversation. The capability raises `ModelRetry`, so the model also sees `Your previous response was rejected because it kept repeating itself.` as retry feedback, and each such retry counts against the agent's [output retries](../agent.md#how-output-retries-are-enforced): a model that keeps looping ends the run with `UnexpectedModelBehavior` once they run out. A streamed response that was stopped isn't kept in history, and the tokens it used aren't added to the run's usage. A response that arrived whole stays in history ahead of the retry, as any rejected response does.
 
@@ -267,6 +267,7 @@ When a `LoopJudge` fails or times out, a zero-duration `loop judge failed` span 
 
 - Several `DetectLoops` on one agent run independently. Each reports the loops its own settings describe, so you can, for example, nudge at the defaults and add a second one with higher thresholds and `action='error'` to stop a run that ignores the nudge.
 - [System Reminders](system-reminders.md) re-inject guidance on a cadence or condition, and [Trajectory Judge](trajectory-judge.md) asks a second model whether the run is on track. By default `DetectLoops` needs no second model and only acts on exact repetition; a [`LoopJudge`](#a-model-judge) adds a small model for loops within a response that aren't exact.
+- A loop found within a response while an [`InputGuardrail(parallel=True)`](guardrails.md#parallel-input-guards) is still deciding waits for its verdict, whatever the action. If the guard allows the prompt, the action runs as usual. If it blocks, the run ends with the guard's outcome instead of the action.
 
 `DetectLoops` does not detect a run that keeps exceeding the model's context window, and it doesn't truncate, restart, or roll back the run: compaction and your own handler cover those.
 
