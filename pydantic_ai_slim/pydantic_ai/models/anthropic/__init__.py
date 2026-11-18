@@ -1982,8 +1982,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if continuation is None:
             return None
         previous_message_id, new_messages, continues_replay = continuation
-        # This maps the new messages a second time. A slice of `prepared.anthropic_messages` would avoid that
-        # once the mapping can say where each history message starts. `continues_thread` keeps their
+        # This maps the new messages a second time, so a file URL that mapping downloads (a text `DocumentUrl`, or
+        # one with `force_download`) is downloaded twice. A slice of `prepared.anthropic_messages` would avoid that
+        # once the mapping can say where each history message starts (#13804). `continues_thread` keeps their
         # `SystemPromptPart`s where the full mapping puts them: none of them opens the conversation, so none is
         # hoisted into `system`, which a continue request doesn't send.
         try:
