@@ -80,7 +80,7 @@ class ModelSettingsForm(BaseModel):
     anthropic_cache_tool_definitions: bool | Literal['5m', '1h'] | None = Field(
         default=None, description='Cache Claude tool descriptions and schemas.'
     )
-    anthropic_thinking_mode: Literal['enabled', 'adaptive', 'disabled'] | None = Field(
+    anthropic_thinking_mode: Literal['enabled', 'adaptive', 'disabled', 'between_tools'] | None = Field(
         default=None, description='Claude thinking mode. Overrides generic thinking.'
     )
     anthropic_thinking_budget: int | None = Field(
@@ -92,7 +92,7 @@ class ModelSettingsForm(BaseModel):
     anthropic_thinking_display: Literal['updates', 'summarized'] | None = Field(
         default=None,
         description=(
-            "How Fable 5.1 reports reasoning between tool calls. 'updates' shows status lines while "
+            "How Claude reports reasoning between tool calls. 'updates' (Fable 5.1) shows status lines while "
             "reasoning stays hidden; 'summarized' folds them into a condensed trace."
         ),
     )
@@ -235,6 +235,8 @@ class ModelSettingsForm(BaseModel):
             mode = 'adaptive'
         if mode == 'disabled':
             return {'type': 'disabled'}
+        if mode == 'between_tools':
+            return {'type': 'between_tools'}
         thinking: BetaThinkingConfigEnabledParam | BetaThinkingConfigAdaptiveParam
         if mode == 'enabled':
             thinking = {'type': 'enabled', 'budget_tokens': self.anthropic_thinking_budget or 10000}
