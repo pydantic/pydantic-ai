@@ -583,23 +583,19 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 try:
                     sandbox = await client.get_sprite(ref.id)
                 except NotFoundError as error:
-                    if self._uncertain_create:
-                        # A 404 during eventual visibility is not proof that creation failed.
-                        raise NetworkError(f'Sprite {ref.id!r} may still be becoming visible') from error
-                    raise
-            else:
-                try:
-                    sandbox = await client.create_sprite(self._new_sprite_name, runtime=self._runtime)
-                except (NetworkError, TimeoutError, SpriteError) as error:
-                    if _create_refused(error):
+                    if not self._uncertain_create:
                         raise
-                    # The create may have committed even if lookup is not yet visible. Keep its
-                    # preallocated name for failure hooks and use lookup only on future attempts.
-                    self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
-                    self._uncertain_create = True
-                    sandbox = await _recover_create(client, self._new_sprite_name, error)
-                # Logged as soon as it exists: a Sprite persists until deleted, whatever ends the run later.
-                logger.info('Created Sprite %s', sandbox.name)
+                    # The lost create may never have reached Sprites, so send it again under the same
+                    # name. Sprites refuses a name that exists with a 409, so this cannot make a second Sprite.
+                    try:
+                        sandbox = await self._create(client)
+                    except SpriteError as resent:
+                        if '(status 409)' not in str(resent):
+                            raise
+                        # The first create committed, but lookups do not see the Sprite yet.
+                        raise NetworkError(f'Sprite {ref.id!r} may still be becoming visible') from error
+            else:
+                sandbox = await self._create(client)
             # Recorded as soon as the SDK returns, so a cancelled caller still leaves it named.
             self._sandbox = sandbox
             self._ref = WorkspaceRef(provider='sprites', id=sandbox.name)
@@ -612,7 +608,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         # control plane is a transport failure, which propagates for a retry;
         # `WorkspaceTimeoutError` is reserved for command deadlines.
         if ref is None:
-            # A timed-out create may have committed; a subsequent call must only look it up.
+            # A timed-out create may have committed; a subsequent call looks it up first.
             self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
             self._uncertain_create = True
         action = 'creation' if ref is None else 'connection'
@@ -620,6 +616,21 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             f'Sprite {action} did not complete within {_ACQUIRE_TIMEOUT:g}s; '
             'the Sprites control plane may be unreachable.'
         )
+
+    async def _create(self, client: AsyncSpritesClient) -> AsyncSprite:
+        try:
+            sandbox = await client.create_sprite(self._new_sprite_name, runtime=self._runtime)
+        except (NetworkError, TimeoutError, SpriteError) as error:
+            if _create_refused(error):
+                raise
+            # The create may have committed even if lookup is not yet visible. Keep its
+            # preallocated name for failure hooks, and look it up first on future attempts.
+            self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
+            self._uncertain_create = True
+            sandbox = await _recover_create(client, self._new_sprite_name, error)
+        # Logged as soon as it exists: a Sprite persists until deleted, whatever ends the run later.
+        logger.info('Created Sprite %s', sandbox.name)
+        return sandbox
 
     async def aclose(self) -> None:
         """Close the `AsyncSpritesClient` this backend created, if it created one.

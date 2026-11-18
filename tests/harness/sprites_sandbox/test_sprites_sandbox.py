@@ -555,12 +555,33 @@ class TestSpritesSandbox:
             await backend.get_sandbox()
         [name] = transport.created
         assert backend.ref == WorkspaceRef(provider='sprites', id=name)
-        # A 404 while the created Sprite becomes visible is a transport failure, not a missing Sprite.
-        transport.get_error_once = NotFoundError('still not visible')
+        # Sending the create again is refused with a 409, and a lookup that still 404s is a transport failure.
+        transport.get_error = NotFoundError('still not visible')
         with pytest.raises(NetworkError, match='may still be becoming visible'):
             await backend.get_sandbox()
+        transport.get_error = None
         assert (await backend.get_sandbox()).name == name
         assert transport.created == [name]
+
+    async def test_create_lost_before_it_reached_sprites_is_sent_again(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error = NetworkError('lost request')
+        with pytest.raises(NetworkError, match='lost request'):
+            await backend.get_sandbox()
+        assert backend.ref is not None
+        transport.create_error = None
+        assert (await backend.get_sandbox()).name == backend.ref.id
+        assert transport.created == [backend.ref.id]
+
+    async def test_create_sent_again_and_refused_otherwise_is_reported(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error = NetworkError('lost request')
+        with pytest.raises(NetworkError):
+            await backend.get_sandbox()
+        transport.create_error = refused = SpriteError('Failed create sprite (status 400): unknown runtime')
+        with pytest.raises(WorkspaceError) as caught:
+            await backend.get_sandbox()
+        assert caught.value.__cause__ is refused
 
     async def test_auth_error_reports_safe_reason_without_token(self, transport: SpriteTransport) -> None:
         secret = 'secret-sprite-token-123'
