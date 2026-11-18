@@ -50,6 +50,7 @@ _OUTPUT_BYTES_PER_CHAR = 4
 
 
 _COMMAND_ID = re.compile(r'[0-9a-f]{32}')
+"""A background command's ID: the name of its job directory."""
 
 # The `persist_cwd` wrapper around a `run_command` command. `_command_script` sets `__harness_state` (the saved
 # directory's file), `__harness_staged` (this call's new directory, before it replaces the saved one),
@@ -81,6 +82,8 @@ _PERSIST_CWD_START = ' '.join(
         'exec 3>&2; { ( exec 2>&3 3>&-\n',
     )
 )
+"""The one-line `persist_cwd` prefix that reads the saved directory and opens the command's subshell."""
+
 _PERSIST_CWD_SAVE = '\n'.join(
     (
         '',
@@ -105,7 +108,7 @@ _PERSIST_CWD_SAVE = '\n'.join(
         'exit $__harness_ec',
     )
 )
-"""A background command's ID: the name of its job directory."""
+"""The `persist_cwd` suffix that closes the subshell and saves the final directory on exit `0`."""
 
 _POSIX_JOB_HINT = '(e.g.\n`tail` in a later shell call) and stop the process with `kill` and the\nreturned PID.'
 """How the `shell` description says to read a job's log and stop it; on a `'windows'` workspace it is replaced."""
@@ -444,6 +447,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         timeout = timeout_seconds if timeout_seconds is not None else self._default_timeout
 
         marker = f'__harness_cwd_{uuid.uuid4().hex}_'
+        interrupted = True
         try:
             result = await run_model_command(
                 ctx.workspace,
@@ -452,15 +456,17 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 env=self._resolve_env(),
                 timeout=timeout,
             )
+            interrupted = False
         except WorkspaceTimeoutError as exc:
-            if self._persist_cwd:
-                # The kill can land after the command staged its directory and before the wrapper removed it.
+            return _labelled(exc.stdout, exc.stderr, empty=None, trailer=f'[Command timed out after {timeout}s]')
+        finally:
+            if interrupted and self._persist_cwd:
+                # A timeout or cancellation can stop the wrapper after the command staged its directory.
                 with anyio.move_on_after(CONTROL_TIMEOUT, shield=True):
                     try:
                         await ctx.workspace.remove(await self._staged_cwd_path(ctx, marker))
                     except FileNotFoundError:
                         pass
-            return _labelled(exc.stdout, exc.stderr, empty=None, trailer=f'[Command timed out after {timeout}s]')
 
         exit_code = result.exit_code
         if self._persist_cwd:
