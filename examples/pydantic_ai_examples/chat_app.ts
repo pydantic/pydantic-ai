@@ -20,7 +20,12 @@ async function onFetchResponse(response: Response): Promise<void> {
         break
       }
       text += decoder.decode(value)
-      addMessages(text)
+      // A network read can end in the middle of a JSON record.
+      const lastNewline = text.lastIndexOf('\n')
+      if (lastNewline !== -1) {
+        addMessages(text.slice(0, lastNewline))
+        text = text.slice(lastNewline + 1)
+      }
       spinner.classList.remove('active')
     }
     addMessages(text)
