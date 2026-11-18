@@ -446,10 +446,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         return 'stop' if self._nested_excluded(real, real_working_dir) else 'surface'
 
     def _nested_excluded(self, directory: Path, working_dir: Path) -> bool:
-        try:
-            parts = directory.relative_to(working_dir).parts
-        except ValueError:
-            return False
+        parts = directory.relative_to(working_dir).parts
         return any(fnmatchcase(part, pattern) for part in parts for pattern in self.nested_exclude)
 
     async def _enqueue_directory(
