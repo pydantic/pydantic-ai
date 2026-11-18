@@ -54,11 +54,6 @@ def test_pass_names_are_unique():
     assert len(names) == len(set(names))
 
 
-def _request_part_kinds() -> set[type]:
-    (union, *_) = get_args(ModelRequestPart)
-    return {get_args(member)[0] for member in get_args(union)}
-
-
 def test_unprepared_part_covers_every_request_kind_a_pass_removes():
     """Every request part kind a pass consumes or drops is in `_UnpreparedPart`, the type the adapters' one guard
     branch checks, except `SystemPromptPart`: every adapter maps one, and the `system_voice` pass consumes it only
@@ -67,7 +62,9 @@ def test_unprepared_part_covers_every_request_kind_a_pass_removes():
     This checks the declaration, not each adapter's behavior. Being in `_UnpreparedPart` doesn't mean every path
     raises: adapters still send a deprecated `RetryPromptPart` through `_sendable_request_parts`, and `FunctionModel`
     estimates a `SpeechPart`'s tokens from its transcript."""
-    request_kinds = _request_part_kinds()
+    # `ModelRequestPart` is `Annotated[Union, Discriminator]`, and each union member is `Annotated[Part, Tag]`.
+    (request_part_union, *_) = get_args(ModelRequestPart)
+    request_kinds = {get_args(member)[0] for member in get_args(request_part_union)}
     assert {kind for kind in REMOVED_KINDS if kind in request_kinds} - {SystemPromptPart} <= set(
         get_args(_UnpreparedPart)
     )
