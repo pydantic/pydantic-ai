@@ -68,6 +68,10 @@ async def test_directory_schema_is_opt_in(tmp_path: Path, enabled: bool) -> None
     [
         # A lower entry inside the delegate's directory lowers all of it: no file gets more than the parent gives it.
         ({'vendor/lib': 'none'}, 'vendor', 'none'),
+        # A `'user'` entry inside it caps all of it at `'user'`.
+        ({'vendor/lib': 'user'}, 'vendor', 'user'),
+        # As does a `'user'` entry for the directory itself.
+        ({'vendor': 'user'}, 'vendor', 'user'),
         # A lower entry elsewhere leaves the delegate at the directory's own level.
         ({'other': 'none'}, 'vendor', 'operator'),
         # An operator entry inside an untrusted parent doesn't raise the rest of the directory.
