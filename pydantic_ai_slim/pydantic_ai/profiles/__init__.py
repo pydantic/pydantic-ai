@@ -195,10 +195,10 @@ class ModelProfile(TypedDict, total=False):
 
     The agent records it on each of the model's `computer` calls as
     [`ComputerCallPart.screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side], since
-    under `ModelFallback` the tool can't otherwise tell which model made the call, and a computer use capability such
-    as Pydantic AI Harness's `ComputerUse` refuses a larger screen. Set by the profiles of models whose computer tool
-    scales a larger screenshot down, along with `computer_use_screenshot_max_pixels`, since such a model then answers
-    in the smaller image's pixels.
+    under `ModelFallback` the tool can't otherwise tell which model made the call, and a capability that drives the
+    screen can then refuse a larger one. Set by the profiles of models whose computer tool scales a larger screenshot
+    down, along with `computer_use_screenshot_max_pixels`, since such a model then answers in the smaller image's
+    pixels.
     """
 
     computer_use_screenshot_max_pixels: int
