@@ -208,6 +208,9 @@ def test_a_kind_can_declare_the_shape_of_its_metadata() -> None:
     # Without a declared shape, the metadata is read as it is.
     assert LookupReturnPart('lookup', {'in_stock': True}, metadata=[1]).typed_metadata == [1]
     assert ToolReturnPart('t', 'plain', metadata={'any': 1}).typed_metadata == {'any': 1}
+    # The metadata shape is part of the kind, like its argument and content shapes.
+    with pytest.raises(UserError, match=r"Tool kind 'test\.with-metadata' is already defined as "):
+        ToolKind('test', 'with-metadata', content=LookupResult, metadata=LookupResult)
 
 
 def test_metadata_that_does_not_fit_does_not_stop_promotion() -> None:
