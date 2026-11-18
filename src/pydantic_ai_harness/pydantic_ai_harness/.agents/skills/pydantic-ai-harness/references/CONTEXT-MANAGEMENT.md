@@ -435,7 +435,8 @@ Replaces the agent's tools with three fixed tools, so the tool definitions stay 
 tools sit behind them and however they change mid-run: `tool_search(query)` returns matching names
 and descriptions, `tool_describe(name)` returns the description and `parameters_json_schema`, and
 `tool_call(name, args_json)` runs the tool with its arguments as a JSON object string. Bridged calls
-go through the normal tool path (validation, hooks, approval, usage), and both `tool_call` and the
+go through the normal tool path (validation, hooks, usage; approval only through a
+`HandleDeferredToolCalls` handler), and both `tool_call` and the
 bridged tool count as tool calls. A bridged tool's retries count under its own name (its `ctx.retry` and
 `max_retries`) and also spend a `tool_call` retry; a `sequential` bridged tool makes `tool_call` sequential.
 
@@ -452,7 +453,7 @@ native), `search` (a `ToolSearchFunc`; `None` matches query words against names 
 Gotchas: approval-required and external tools, framework control tools, code-execution tools (`run_code`,
 `run_command`) and `unless_native` fallbacks stay native, as do deferred tools a capability owns; other `defer_loading=True` tools are bridged, so `ToolSearch` has nothing left to reveal; a bridged tool that
 raises `ApprovalRequired`/`CallDeferred` needs a `HandleDeferredToolCalls` handler (it sees the real tool name),
-else `tool_call` fails; the names `tool_search`, `tool_describe` and `tool_call` are reserved; each call costs an extra step and
+else the run raises `UserError`; the names `tool_search`, `tool_describe` and `tool_call` are reserved; each call costs an extra step and
 loses provider-side strict schema validation. Two merge into one (default `id='tool_bridge'`). It orders itself just inside `ToolSearch` and
 outside other wrappers (`SetToolMetadata`, `PrefixTools`); `CodeMode` wraps it. Recognize `tool_call` by its kind,
 `TOOL_CALL_KIND` (`tool_bridge.tool_call`, from `pydantic_ai_harness.tool_bridge`), not its name.

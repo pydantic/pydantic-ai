@@ -28,7 +28,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[ToolBridge()])
 
 `tool_call` takes the arguments as a JSON object string rather than a nested object, because some models send nested free-form objects as `null`. An empty string is read as `{}`. `tool_call` has the tool kind `TOOL_CALL_KIND` (`tool_bridge.tool_call`), exported from `pydantic_ai_harness.tool_bridge`, so an approval UI or another capability can recognize it whatever it is named.
 
-A tool added, removed or changed mid-run changes what `tool_search` finds, not the tool definitions sent to the provider. A tool reached through the bridge is validated and run through the same path as a direct call, under the `tool_call` call's ID: argument validation, tool hooks, `ModelRetry`, approval and usage limits apply to it as to any tool, and an unknown name or invalid arguments ask the model to retry. Both `tool_call` and the bridged tool count as tool calls, and `tool_calls_limit` is checked for both before the bridged tool runs. A bridged tool's retries are counted under its own name, as for a direct call, so its `ctx.retry` and `max_retries` see only its own failures; each one also spends a retry of `tool_call`. If any bridged tool is `sequential`, so is `tool_call`.
+A tool added, removed or changed mid-run changes what `tool_search` finds, not the tool definitions sent to the provider. A tool reached through the bridge is validated and run through the same path as a direct call, under the `tool_call` call's ID: argument validation, tool hooks, `ModelRetry` and usage limits apply to it as to any tool (approval works differently, see [What stays native](#what-stays-native)), and an unknown name or invalid arguments ask the model to retry. Both `tool_call` and the bridged tool count as tool calls, and `tool_calls_limit` is checked for both before the bridged tool runs. A bridged tool's retries are counted under its own name, as for a direct call, so its `ctx.retry` and `max_retries` see only its own failures; each one also spends a retry of `tool_call`. If any bridged tool is `sequential`, so is `tool_call`.
 
 ## Options
 
@@ -41,7 +41,7 @@ A tool added, removed or changed mid-run changes what `tool_search` finds, not t
 
 These tools are never bridged, so they reach the model as usual:
 
-- Tools that need approval or run outside the agent (`requires_approval=True`, external tools), so approval requests name the real tool. A bridged tool that raises `ApprovalRequired` or `CallDeferred` itself can be resolved by a [`HandleDeferredToolCalls`](../capabilities/handle-deferred-tool-calls.md) handler, which sees the tool's own name; a denial is recorded as the `tool_call` call's denied outcome. Without a handler that resolves it, the `tool_call` call fails, so an approval of `tool_call` never covers whichever tool the model named. Keep such a tool native with `tools` if it needs approval from outside the run.
+- Tools that need approval or run outside the agent (`requires_approval=True`, external tools), so approval requests name the real tool. A bridged tool that raises `ApprovalRequired` or `CallDeferred` itself can be resolved by a [`HandleDeferredToolCalls`](../capabilities/handle-deferred-tool-calls.md) handler, which sees the tool's own name; a denial is recorded as the `tool_call` call's denied outcome. Without a handler that resolves it, the run fails with a `UserError` rather than deferring `tool_call`, whose approval would cover whichever tool the model named. Keep such a tool native with `tools`, for example the tools of a toolset wrapped with `approval_required()`, if it needs approval from outside the run.
 - Framework control tools, such as tool search and `load_capability`.
 - Code-execution tools, such as Code Mode's `run_code` and Shell's `run_command`, which take a program as a string argument, so it isn't sent JSON-escaped inside `args_json`.
 - Local fallbacks for a provider-native tool (`unless_native`), so the model can drop them when the provider runs the tool natively.
@@ -56,7 +56,7 @@ Tools with `defer_loading=True` are bridged and found with `tool_search`, so [`T
 
 ## Composition
 
-Two `ToolBridge` capabilities on one agent merge into one; the later one's settings win. The bridge sits just inside tool search and outside every other capability that wraps the toolset, whatever order the capabilities are listed in, so wrappers such as `SetToolMetadata` and `PrefixTools` apply to the bridged tools. [`CodeMode`](code-mode.md) wraps the bridge's three tools like any other tools, so to put many tools behind `run_code` instead, use one of the two.
+Two `ToolBridge` capabilities on one agent merge into one; the later one's settings win. The bridge sits just inside tool search and outside every other capability that wraps the toolset, whatever order the capabilities are listed in, so wrappers such as `SetToolMetadata` and `PrefixTools` apply to the bridged tools. With [`CodeMode`](code-mode.md) too, Code Mode exposes the three dispatchers as sandbox functions rather than the bridged tools; use Code Mode alone to put many tools behind `run_code`.
 
 ## Telemetry
 

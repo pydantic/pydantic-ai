@@ -213,8 +213,8 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         own failures. A retry or failure it reports is passed on as `tool_call`'s.
 
         A deferral the tool raises (`ApprovalRequired`, `CallDeferred`) is only resolved by a
-        `HandleDeferredToolCalls` handler, which sees the tool's own name. Otherwise the call fails rather
-        than deferring `tool_call`, whose approval would then cover whichever tool the model named.
+        `HandleDeferredToolCalls` handler, which sees the tool's own name. Otherwise the run fails with a
+        `UserError` rather than deferring `tool_call`, whose approval would cover whichever tool the model named.
         """
         parent = ctx.tool_manager
         if parent is None:
@@ -242,9 +242,9 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         try:
             return await manager.handle_call(call)
         except (ApprovalRequired, CallDeferred) as exc:
-            raise ToolFailed(
-                f'Tool {name!r} needs approval or runs outside the agent, so it can only be called directly, '
-                'not through `tool_call`.'
+            raise UserError(
+                f'Tool {name!r} raised `{type(exc).__name__}` behind `ToolBridge`, and no `HandleDeferredToolCalls` '
+                'handler resolved it. Keep the tool native with `ToolBridge(tools=...)`, or add a handler.'
             ) from exc
         except ToolRetryError as exc:
             retry = exc.tool_retry

@@ -286,25 +286,13 @@ class TestToolBridge:
         assert call_ids == [call.tool_call_id, call.tool_call_id]
         assert _returns(result.all_messages()) == ["deleted a.txt for {'by': 'alice'}"]
 
-    async def test_unresolved_deferral_fails_the_call(self):
-        def delete_file(ctx: RunContext[object], path: str) -> str:
-            """Delete a file."""
-            raise ApprovalRequired
+    async def test_unresolved_deferral_raises(self):
+        toolset = FunctionToolset([_get_weather]).approval_required()
+        model = _scripted([_call('tool_call', name='_get_weather', args_json='{"city": "Oslo"}')])
+        agent = Agent(model, toolsets=[toolset], capabilities=[ToolBridge()], output_type=[str, DeferredToolRequests])
 
-        model = _scripted([_call('tool_call', name='delete_file', args_json='{"path": "a.txt"}')])
-        agent = Agent(model, tools=[delete_file], capabilities=[ToolBridge()], output_type=[str, DeferredToolRequests])
-
-        result = await agent.run('delete a.txt')
-
-        assert result.output == 'done'
-        [failed] = _return_parts(result.all_messages())
-        assert (failed.tool_name, failed.outcome, failed.content) == snapshot(
-            (
-                'tool_call',
-                'failed',
-                "Tool 'delete_file' needs approval or runs outside the agent, so it can only be called directly, not through `tool_call`.",
-            )
-        )
+        with pytest.raises(UserError, match=r"Tool '_get_weather' raised `ApprovalRequired` behind `ToolBridge`"):
+            await agent.run('weather?')
 
     async def test_denied_by_a_handler(self):
         def delete_file(ctx: RunContext[object], path: str) -> str:
