@@ -65,7 +65,7 @@ def test_efforts(name: str, included: str, excluded: str) -> None:
     assert included in efforts and excluded not in efforts
 
 
-def test_anthropic_modes_and_effort() -> None:
+def test_anthropic_effort_and_budget() -> None:
     # The thinking modes per model are in `test_claude_thinking_modes_follow_the_profile`.
     assert 'xhigh' not in model_options(model='anthropic:claude-opus-4-6')['anthropic_effort']
     assert 'xhigh' in model_options(model='anthropic:claude-opus-4-7')['anthropic_effort']
