@@ -53,6 +53,15 @@ class TestWindowsCommands:
         result = await WindowsWorkspaceBackend(tmp_path).run('Get-Item missing.txt', shell=True)
         assert result.exit_code == 1
         assert 'missing.txt' in result.stderr
+        assert 'CLIXML' not in result.stderr
+
+    async def test_a_windows_powershell_cmdlet_failure_is_text(self, tmp_path: Path) -> None:
+        backend = WindowsWorkspaceBackend(tmp_path, powershell='powershell.exe')
+        result = await backend.run('Get-Item missing.txt', shell=True)
+        assert result.exit_code == 1
+        assert result.stderr.startswith(f"Get-Item : Cannot find path '{tmp_path / 'missing.txt'}'")
+        assert 'CLIXML' not in result.stderr
+        assert '_x000D_' not in result.stderr
 
     async def test_windows_powershell_errors_are_text(self, tmp_path: Path) -> None:
         """Windows PowerShell 5.1 writes its error stream as CLIXML when the script comes from `-EncodedCommand`."""
@@ -156,12 +165,13 @@ class TestWindowsCommands:
 
 
 def test_clixml_stderr_is_decoded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Real Windows PowerShell 5.1 `Get-Item` output, which the Windows job can't pin: its wrapping follows the path.
+    """Real Windows PowerShell 5.1 `Get-Item` output, pinned whole and on every runner, Linux included.
 
-    Also markup that isn't a CLIXML record, and an unclosed record.
+    On the Windows job its line wrapping follows the temporary path. Also markup that isn't a CLIXML record,
+    and an unclosed record.
     """
     monkeypatch.setattr('pydantic_ai.workspaces.windows._on_windows', lambda: True)
-    backend = WindowsWorkspaceBackend(tmp_path)
+    backend = WindowsWorkspaceBackend(tmp_path, powershell='powershell.exe')
 
     def decode(stderr: str) -> str:
         return backend._decode_stderr(stderr.encode(), shell=True)  # pyright: ignore[reportPrivateUsage]

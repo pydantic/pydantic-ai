@@ -232,7 +232,7 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
     Windows paths (`C:\Users\me\project`), and a `shell=True` command runs in PowerShell: `pwsh` when it
     is on `PATH`, else Windows PowerShell. Its exit code is the last native command's, as in `sh`, and the
     CLIXML Windows PowerShell writes its errors as is decoded to text in its result's `stderr`; a timeout
-    or output-limit error's `stderr` is left as captured.
+    or output-limit error's `stderr`, and `pwsh`'s, are left as captured.
 
     Each command runs in a Windows Job Object, so a timeout or cancellation ends the processes it started
     along with it. A background job started with `Start-Process` stays in that Job Object: it outlives a
@@ -302,8 +302,10 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
 
     def _decode_stderr(self, data: bytes | bytearray, *, shell: bool) -> str:
         stderr = super()._decode_stderr(data, shell=shell)
-        # Windows PowerShell writes its error stream as CLIXML for the `-EncodedCommand` a `shell=True` command runs as.
-        return _decode_clixml(stderr) if shell else stderr
+        # Windows PowerShell, unlike `pwsh`, writes its error stream as CLIXML for an `-EncodedCommand` script.
+        if shell and ntpath.basename(self._executable()).lower() in ('powershell', 'powershell.exe'):
+            return _decode_clixml(stderr)
+        return stderr
 
     def _kill_tree(self, process: anyio.abc.Process) -> tuple[PermissionError | None, PermissionError | None]:
         job = self._jobs.get(process.pid)

@@ -821,7 +821,8 @@ It takes the same options and also isolates nothing. Commands run in PowerShell 
 else Windows PowerShell), and paths are Windows paths (`C:\Users\me\project`). Each command runs in a Windows Job
 Object, so a timeout or cancellation ends the processes it started too; a process it started in the background
 outlives a command that returns. Commands get only the variables Windows tools need to start (`PATH`, `PATHEXT`,
-`SYSTEMROOT`, `TEMP`, `USERPROFILE`, `APPDATA` and the like), plus `env`.
+`SYSTEMROOT`, `TEMP`, `USERPROFILE`, `APPDATA` and the like), plus `env`. Windows PowerShell writes its errors as
+CLIXML, which a command's `stderr` holds decoded to text; a timeout or output-limit error's `stderr` is left as captured.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
