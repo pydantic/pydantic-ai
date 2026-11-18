@@ -255,11 +255,13 @@ How the agent spends its context window over a long run, and how often it pays f
 |---|---|---|
 | [Code Mode](pydantic_ai_harness/code_mode/) | Harness | The model writes one Python script that calls many tools inside a [Monty](https://github.com/pydantic/monty) sandbox: one round-trip instead of N, and intermediate results never enter the context window |
 | [IPython Code Mode](pydantic_ai_harness/ipython_code_mode/) | Harness | Code Mode with a persistent [IPython](https://ipython.org/) kernel in place of the Monty sandbox: full CPython and any installed package, with state kept between calls. For local agents only; not a sandbox |
+| [Tool Bridge](pydantic_ai_harness/tool_bridge/) | Harness | Keep the tool list the model sees fixed behind `tool_search`, `tool_describe` and `tool_call`, so the prompt cache holds however many tools sit behind them |
 | [Tool Search](https://ai.pydantic.dev/capabilities/tool-search/) | Core | Load tool definitions on demand instead of carrying hundreds in every prompt |
 | [Compaction](https://ai.pydantic.dev/capabilities/compaction/) | Core | Provider-native compaction on OpenAI and Anthropic; the provider summarizes history server-side |
 | [Compaction](pydantic_ai_harness/compaction/) | Harness | Model-agnostic strategies: tool-result clearing, sliding-window trimming, LLM summarization, tiered; all window-relative, with live usage reporting |
 | [Tool Output Limits](pydantic_ai_harness/tool_output_limits/) | Harness | Truncate, spill to a queryable file, or summarize oversized tool returns at the source |
 | [Warn On Cache Busts](pydantic_ai_harness/warn_on_cache_busts/) | Harness | Detect prompt-cache prefix collapses between requests, from the provider's own numbers |
+| [Label Cross Model History](pydantic_ai_harness/label_cross_model_history/) | Harness | Tell the model when earlier assistant turns came from another model, after a model switch or handoff |
 
 ### Knowledge & memory
 
@@ -272,6 +274,7 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | [Conversation Search](pydantic_ai_harness/conversation_search/) | Harness | BM25 search over stored history, including turns compaction dropped |
 | [Skills](pydantic_ai_harness/skills/) | Harness | Load [Agent Skill](https://ai.pydantic.dev/capabilities/on-demand/) (`SKILL.md`) instructions on demand |
 | [Repo Context](pydantic_ai_harness/repo_context/) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
+| [Report Stale Files](pydantic_ai_harness/report_stale_files/) | Harness | Tell the model when a file it read or wrote has since changed or been deleted in the workspace |
 | [Pydantic AI Docs](pydantic_ai_harness/pydantic_ai_docs/) | Harness | On-demand Pydantic AI documentation lookup |
 
 ### Control & safety
@@ -286,6 +289,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Artifact Scanning](pydantic_ai_harness/artifact_scanning/) | Harness | Scan memory files and skills for prompt injection, credential exfiltration, and hidden content before they are stored or loaded |
 | [Spend Limits](pydantic_ai_harness/spend_limits/) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |
 | [Ask User](pydantic_ai_harness/ask_user/) | Harness | Let the model ask the user multiple-choice questions mid-run; you supply the answerer (terminal, web, test) |
+| [Deny Unanswered](pydantic_ai_harness/deny_unanswered/) | Harness | Deny approval and question calls that nobody answered by the end of an unattended run, in parent and child agents |
 | [Tool approval](https://ai.pydantic.dev/deferred-tools#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |
 | [Tool Call Judge](pydantic_ai_harness/tool_call_judge/) | Harness | A second model answers one risk question per tool call and blocks the call before the tool function runs |
 | [Approval Reviewer](pydantic_ai_harness/approval_reviewer/) | Harness | A second model answers one risk question per call waiting for approval, approves the low-risk ones, and leaves the rest to a person |
@@ -296,6 +300,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Tool Budgets](pydantic_ai_harness/tool_budgets/) | Harness | Cap calls per tool and per run, and refuse exact repeats, with a tool result the model can act on instead of an exception |
 | [Trajectory Judge](pydantic_ai_harness/trajectory_judge/) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
 | [Refine Output](pydantic_ai_harness/refine_output/) | Harness | Send the agent back to review and revise its output before the run ends |
+| [Wrap Up At Limits](pydantic_ai_harness/wrap_up_at_limits/) | Harness | End the run with a final answer, not `UsageLimitExceeded`, when a usage limit would stop it |
 
 ### Self-extension
 
@@ -317,6 +322,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 | [Render Workflows](pydantic_ai_harness/render/) | Harness | Run model requests and tool calls as chained task runs with separate retries, timeouts, and compute settings; retrying the task that runs the agent can repeat completed work |
 | [Step Persistence](pydantic_ai_harness/step_persistence/) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
 | [Model Fallback](https://ai.pydantic.dev/capabilities/model-fallback/) | Core | Fall back to other models when a model request fails or its response is rejected, within the run's own request step |
+| [Model Router](pydantic_ai_harness/model_router/) | Harness | Let another model pick the run's model from a named menu, once per run or per step, with a declared default |
 | [Instrumentation](https://ai.pydantic.dev/capabilities/instrumentation/) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |
 | [Managed Prompt](pydantic_ai_harness/logfire/) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt; version and roll out without redeploying |
 | [Thread Executor](https://ai.pydantic.dev/capabilities/thread-executor/) | Core | Run sync tools on a shared thread pool |
