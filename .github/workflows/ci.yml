@@ -559,16 +559,20 @@ jobs:
       # from that runtime passes every step above and fails every workflow at "Install
       # repository workflow policy" (#11935, https://github.com/pydantic/pydantic-ai/actions/runs/44225247904).
       # These steps set up that runtime as the compiled agent job does. They come last because
-      # `setup-python` changes `python3` and its environment for every later step.
+      # `setup-python` changes `python3` and its environment for every later step. They need no
+      # earlier step, so they run after a failed one too.
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: ${{ !cancelled() }}
         with:
           python-version: "3.12"
 
       - name: Import the gh-aw shim on the pinned engine runtime
+        if: ${{ !cancelled() }}
         run: |
           version=$(yq --front-matter=extract '.engine.version' .github/workflows/shared/engine-zai.md)
-          # The "Preinstall Pydantic AI coder agent" step of the engine definition `shared/engine-zai.md`
-          # imports, with the Logfire install that the workflows' OTLP endpoint turns on.
+          # Copied from the "Preinstall Pydantic AI coder agent" step of the engine definition revision
+          # `shared/engine-zai.md` imports, with the Logfire install that the workflows' OTLP endpoint
+          # turns on. Update it when that import changes.
           python3 -P -m pip install --quiet --user --disable-pip-version-check \
             "pydantic-ai-harness[coder]==$version" "pydantic-clai2==$version" \
             "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0" "cryptography>=48.0.1" "logfire>=4.39.0"
