@@ -62,6 +62,7 @@ from pydantic_ai_harness import (
     Coder,
     CompactOnRequest,
     CurrentTime,
+    LabelCrossModelHistory,
     ModelChoice,
     ModelRouter,
     Planning,
@@ -233,6 +234,10 @@ def _check_current_time(merged: CurrentTime[None]) -> None:
     assert (merged.timezone, merged.precision) == ('Asia/Tokyo', 'hour')
 
 
+def _check_label_cross_model_history(merged: LabelCrossModelHistory[None]) -> None:
+    assert (merged.id, merged.notice) == ('label_cross_model_history', 'second')
+
+
 def _check_sub_agents(merged: Any) -> None:
     # Rosters union: an agent either side could reach stays reachable through one delegate tool.
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
@@ -369,6 +374,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         ),
         _check_current_time,
     ),
+    'LabelCrossModelHistory': Combines(
+        'one `notice` instruction block per agent; two would state it twice',
+        lambda: (LabelCrossModelHistory[None](notice='first'), LabelCrossModelHistory[None](notice='second')),
+        _check_label_cross_model_history,
+    ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),
     'ServingModelRecorder': Anonymous('one per sub-agent run, added by the delegating toolset'),
@@ -441,6 +451,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'DetectLoops': Anonymous('only hooks; several detectors with their own thresholds and actions compose'),
     'ToolBudgets': Anonymous('only a hook; each counts the calls it lets run, so stacked budgets all apply'),
     'RefineOutput': Anonymous('only a hook; each counts its own rounds and adds its instructions to a round'),
+    'WrapUpAtLimits': Anonymous('only hooks; several on one agent each add their prompt to the final request'),
     'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
