@@ -764,9 +764,11 @@ after each turn and returns an ID, and the next turn starts from that ID in whic
 Computation in the sandbox then no longer counts against the workflow task's 2-second limit, and
 replay reads each turn's result from history instead of connecting to the server.
 
-The Monty server must store sessions, as Logfire Agent Sandboxes does. If it stores none, or cannot
-store a session's state, for example because its snapshot quota is full, the turn raises `UserError`
-and the workflow fails without retrying the turn.
+Turns run as activities only on a Monty server that stores sessions, as Logfire Agent Sandboxes does.
+On a server that stores none, the first turn finds this before running any code, and the run's
+snippets then run in workflow code as described above. If a storing server cannot store a session's
+state, for example because its snapshot quota is full, the turn raises `UserError` and the workflow
+fails without retrying the turn.
 
 This needs an `id` on `CodeMode`, which names the turn activity:
 
@@ -792,21 +794,23 @@ Put it on the agent instead.
 Each turn uses the `activity_config` you pass to `TemporalDurability`. Its `start_to_close_timeout`
 bounds one turn, and its retry policy retries a turn that failed to reach the server. A retry starts
 from the same stored ID, so it runs the turn again from the same state. Writes the turn made to a
-`'read-write'` mount are not undone, so a retried turn makes them again. When the retries run out, the
-workflow fails with Temporal's `ActivityError`. Errors in the snippet itself, such as syntax errors,
+`'read-write'` mount are not undone, so a retried turn makes them again. The recorded failure keeps
+the original error's type name but not its text, which can carry the pool's URL or credentials, so
+`non_retryable_error_types` such as `'ConnectionRefusedError'` still apply. When the retries run out,
+the workflow fails with Temporal's `ActivityError`. Errors in the snippet itself, such as syntax errors,
 exceptions, and time limits, are returned to the model as model retries, as they are outside Temporal.
 
-`max_memory` and `max_duration_seconds` apply to each turn; workflow code turns `max_duration_seconds`
-off. `max_suspensions` and the 10 MiB print cap count across a session's turns, as in workflow code.
-Keep `start_to_close_timeout` above `max_duration_seconds`: otherwise Temporal stops a long turn
-first and retries it, instead of Code Mode reporting the time limit to the model. With
-`'unlimited'`, `start_to_close_timeout` is the only bound on a turn.
+Turns use the same limits as workflow code: `max_memory` applies to each turn, `max_duration_seconds`
+is off, and `max_suspensions` and the 10 MiB print cap count across a session's turns. Sleeps are
+still charged against `max_duration_seconds`. `start_to_close_timeout` bounds how long one turn
+computes.
 
-Tool results and nested call arguments keep their types, `bytes` and tuples included, and the model
-sees the same snippet result as in workflow code. A result dict whose keys would not come back distinct,
-such as a `date` and the same date's ISO string, arrives as its `repr`. Each turn returns at most 1 MiB
-of prints and result, half Temporal's default payload limit, and cuts the rest with a note saying how
-much was left out. If the server will not store the session a snippet error left, Code Mode resets the
+Tool results and nested call arguments keep their types, including `bytes`, tuples, dates, times,
+`timedelta`, `Decimal` and sets, and the model sees the same snippet result as in workflow code. Each
+turn takes and returns at most 1 MiB, half Temporal's default payload limit. Longer prints, results and
+error text are cut with a note saying how much was left out, and tool results that would make a turn's
+input longer fail the snippet with a `MemoryError` that resets the session and tells the model to work
+in smaller batches. If the server will not store the session a snippet error left, Code Mode resets the
 session, as it does after a memory error. A nested call whose arguments have no JSON form,
 such as an instance of a class the snippet defined, raises `TypeError` in the snippet: its arguments
 cannot reach the tool's activity. If the server no longer has a run's stored state, for example

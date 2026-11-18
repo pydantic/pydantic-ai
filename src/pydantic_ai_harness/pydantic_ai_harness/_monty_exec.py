@@ -183,6 +183,8 @@ class MontyRunState:
     has_executed_feed: bool = False
     stored_state: str | None = None
     """The server's record of the session when each turn runs as a durable operation (see `TurnFeed`)."""
+    stores_sessions: bool = True
+    """False once a turn found that the server stores no sessions; the run's turns then stay in the workflow."""
     suspensions: int = 0
     """The pauses the session's turns made, which count toward its `max_suspensions` (see `TurnFeed`)."""
     _pool_stack: AsyncExitStack = field(default_factory=AsyncExitStack, repr=False)

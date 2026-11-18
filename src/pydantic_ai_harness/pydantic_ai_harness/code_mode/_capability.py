@@ -31,7 +31,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
 from pydantic_ai_harness._monty_exec import build_remote_pool, session_os_policy
-from pydantic_ai_harness._monty_turns import MontyServerError, MontyTurn, TurnRequest, run_monty_turn
+from pydantic_ai_harness._monty_turns import MontyTurn, TurnRequest, redacted_error_type, run_monty_turn
 from pydantic_ai_harness._warn import renamed_duration_limit
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore
@@ -421,11 +421,11 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 )
         except Exception as error:
             # Temporal records an activity's failure, cause included, in workflow history, and a pool
-            # or connection error's text can carry the pool's URL or credentials, so only the type is
-            # kept. A `UserError` stays one, which Temporal does not retry; the retry policy applies
-            # to anything else.
-            redacted = UserError if isinstance(error, UserError) else MontyServerError
-            raise redacted(type(error).__name__) from None
+            # or connection error's text can carry the pool's URL or credentials, so only the type's
+            # name is kept, and the retry policy matches it. A `UserError` stays one, which Temporal
+            # does not retry.
+            name = type(error).__name__
+            raise (UserError if isinstance(error, UserError) else redacted_error_type(name))(name) from None
 
     @property
     def has_wrap_run_event_stream(self) -> bool:

@@ -15,12 +15,16 @@ therefore plain data: the types below are what crosses the activity boundary.
 from __future__ import annotations
 
 import base64
+import hashlib
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal, TypeGuard, TypeVar, get_args
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
+from functools import cache
+from typing import Any, Literal, TypeGuard, TypeVar, cast, get_args
 
-from pydantic_core import PydanticSerializationError, from_json, to_json
+from pydantic_core import PydanticSerializationError, to_json
 from pydantic_monty import (
     AsyncFunctionSnapshot,
     AsyncFutureSnapshot,
@@ -65,11 +69,11 @@ def to_wire(value: object) -> object:
     Temporal's converter writes activity inputs and results as JSON, which would turn bytes into text
     and tuples into lists, and fails on bytes that are not UTF-8. Every value whose JSON form would
     differ is tagged, and every dict is tagged too, so a dict the snippet built is never read as a tag.
-    A value of any other type, such as a `datetime`, crosses as its JSON form and comes back as that
-    form, as a tool result does when CodeMode hands it to the sandbox. Raises `TypeError` for a dict
-    whose keys would then not come back distinct and hashable, such as a `date` beside its ISO string.
+    That covers every type Monty hands the host: dates, times, `timedelta`, `Decimal` and sets too. A
+    value of any other type crosses as its JSON form and comes back as that form, as a tool result
+    does when CodeMode hands it to the sandbox.
 
-    Also raises `TypeError` once it has written more values than `TURN_PAYLOAD_BYTES`. Each value
+    Raises `TypeError` once it has written more values than `TURN_PAYLOAD_BYTES`. Each value
     takes at least one byte of JSON, so the result could not cross anyway, and a list that holds the
     same list many times stops being expanded here instead of growing exponentially.
     """
@@ -90,18 +94,11 @@ class _Encoder:
             items = [self.encode(item) for item in value]
             return {'tuple': items} if isinstance(value, tuple) else items
         if is_mapping(value):
-            pairs = [[self.encode(key), self.encode(item)] for key, item in value.items()]
-            if not _keys_come_back(pairs):
-                raise TypeError('a dict whose keys would not come back distinct and hashable cannot cross as JSON')
-            return {'dict': pairs}
+            return {'dict': [[self.encode(key), self.encode(item)] for key, item in value.items()]}
+        if isinstance(value, set | frozenset):
+            items = cast(set[object] | frozenset[object], value)
+            return {type(items).__name__: [self.encode(item) for item in items]}
         return _scalar_to_wire(value)
-
-
-def _keys_come_back(pairs: list[list[object]]) -> bool:
-    try:
-        return len({from_wire(from_json(to_json(key))) for key, _ in pairs}) == len(pairs)
-    except (TypeError, PydanticSerializationError):  # unhashable after the trip, or no JSON form
-        return False
 
 
 def _scalar_to_wire(value: object) -> object:
@@ -111,6 +108,13 @@ def _scalar_to_wire(value: object) -> object:
         return value if math.isfinite(value) else {'float': repr(value)}
     if isinstance(value, bytes):
         return {'bytes': base64.b64encode(value).decode()}
+    # The other types Monty hands the host, tagged so they come back as themselves.
+    if isinstance(value, date | time):  # `datetime` is a `date`
+        return {type(value).__name__: value.isoformat()}
+    if isinstance(value, timedelta):
+        return {'timedelta': [value.days, value.seconds, value.microseconds]}
+    if isinstance(value, Decimal):
+        return {'Decimal': str(value)}
     return {'json': value}
 
 
@@ -131,6 +135,15 @@ def from_wire(value: object) -> Any:
         case 'dict':
             assert _is_list_or_tuple(data)
             return dict(_decoded_pair(pair) for pair in data)
+        case 'set' | 'frozenset':
+            return (set if tag == 'set' else frozenset)(from_wire(data))
+        case 'date' | 'datetime' | 'time':
+            return {'date': date, 'datetime': datetime, 'time': time}[str(tag)].fromisoformat(str(data))
+        case 'timedelta':
+            days, seconds, microseconds = cast(list[int], data)
+            return timedelta(days, seconds, microseconds)
+        case 'Decimal':
+            return Decimal(str(data))
         case _:
             return data
 
@@ -267,8 +280,11 @@ class MontyFailure:
     and the code that turns a failure into a retry reads only this.
     """
 
-    kind: Literal['syntax', 'typing', 'runtime', 'crashed', 'disconnected', 'other', 'panic', 'not_stored']
-    """`not_stored`: the server would not store the session between turns; `display` says why."""
+    kind: Literal[
+        'syntax', 'typing', 'runtime', 'crashed', 'disconnected', 'other', 'panic', 'not_stored', 'no_storage'
+    ]
+    """`not_stored`: the server refused to store the session; `display` says why. `no_storage`: the server
+    stores no sessions at all, found before the turn ran any code."""
     display: str = ''
     """The full report: `display()` for a sandbox error, `str()` for any other."""
     message: str = ''
@@ -283,7 +299,15 @@ class MontyFailure:
     cause: str | None = None
     """Why the server dropped the connection, for a disconnect."""
     session_lost: bool = False
+    message_sha256: str | None = None
+    """The SHA-256 of `message` before `_fit_turn` cut it, so it still matches the error it came from."""
     """Whether the server could not keep the session a runtime error left, so the next turn starts fresh."""
+
+    def carries(self, text: str) -> bool:
+        """Whether `message` is `text`, or was before `_fit_turn` cut it."""
+        if self.message_sha256 is None:
+            return self.message == text
+        return self.message_sha256 == _sha256(text)
 
     @classmethod
     def from_error(cls, error: BaseException) -> MontyFailure | None:
@@ -358,6 +382,16 @@ class MontyServerError(Exception):
     """
 
 
+@cache
+def redacted_error_type(type_name: str) -> type[MontyServerError]:
+    """A `MontyServerError` subclass named `type_name`.
+
+    Temporal records a failure's type as its class name, so a retry policy's
+    `non_retryable_error_types` that names the original type still matches.
+    """
+    return type(type_name, (MontyServerError,), {})
+
+
 TURN_PAYLOAD_BYTES = 1024 * 1024
 """The most a turn takes or returns, encoded: half Temporal's default 2 MiB payload limit.
 
@@ -368,10 +402,6 @@ to upload, while workflow code would hand the same text on for the model's tool 
 _NOTE_BYTES = 100
 """Room kept for the note that says how much of a text `_fit_turn` cut."""
 
-_NO_STORAGE = (
-    'The Monty server stores no sessions. Inside a durable workflow, CodeMode runs a remote '
-    '`monty_sandbox` one turn at a time and needs a server that stores sessions between turns.'
-)
 _DUMP_REFUSED = "The Monty server could not store the session's state, for example because its snapshot quota is full."
 
 
@@ -411,7 +441,7 @@ async def _run_turn(
     capture: CollectString,
 ) -> MontyTurn:
     if await _session_id(session) is None:
-        return MontyTurn('failed', failure=MontyFailure('not_stored', display=_NO_STORAGE))
+        return MontyTurn('failed', failure=MontyFailure('no_storage'))
     pauses = _Pauses()
     try:
         paused = await _load(session, request, mount=mount, capture=capture)
@@ -453,8 +483,8 @@ async def _run_turn(
     if isinstance(snapshot, MontyComplete):
         try:
             output = to_wire(model_safe_result(snapshot.output))
-        except TypeError:  # keys that would not come back distinct, or too many parts; `_fit_turn` cuts the `repr`
-            output = repr(snapshot.output)
+        except TypeError:  # more parts than a turn can return
+            output = f'[the result has more than {TURN_PAYLOAD_BYTES} parts, more than a turn can return]'
         return MontyTurn('complete', state=state, suspensions=pauses.count, output=output)
     if isinstance(snapshot, AsyncFunctionSnapshot):
         call = TurnCall(
@@ -512,11 +542,17 @@ def _fit_turn(turn: MontyTurn) -> MontyTurn:
         kept = max(len(data) - excess, len(data) // 2) - _NOTE_BYTES
         note = f'\n[{len(data) - kept} more bytes not shown: a turn returns at most {TURN_PAYLOAD_BYTES} bytes]'
         cut = data[:kept].decode(errors='ignore') + note
-        if name in ('display', 'message'):
+        if name == 'message' and failure.message_sha256 is None:
+            turn = replace(turn, failure=replace(failure, message=cut, message_sha256=_sha256(failure.message)))
+        elif name in ('display', 'message'):
             turn = replace(turn, failure=replace(failure, **{name: cut}))
         else:
             turn = replace(turn, **{name: cut})
     return turn
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode(errors='surrogatepass')).hexdigest()
 
 
 async def _answer_in_turn(
@@ -540,7 +576,7 @@ async def _answer_in_turn(
         elif not _args_cross(snapshot):
             message = (
                 f'{snapshot.function_name}() got arguments that cannot be sent to the tool: they need a JSON '
-                f'form, dict keys that stay distinct as JSON, and at most {TURN_PAYLOAD_BYTES // 2} bytes'
+                f'form and at most {TURN_PAYLOAD_BYTES // 2} bytes'
             )
             snapshot = pauses.seen(await snapshot.resume({'exception': TypeError(message)}))
         else:

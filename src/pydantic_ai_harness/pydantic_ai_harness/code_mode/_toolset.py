@@ -39,6 +39,7 @@ try:
     from pydantic_monty import (
         AbstractOS,
         AsyncMontyRemote,
+        MontyComplete,
         MountDir,
         OsFunction,
         OsHandler,
@@ -67,6 +68,7 @@ from pydantic_ai_harness._monty_exec import (
     MontyTurnUnavailable,
     PrintCapture,
     Snapshot,
+    TurnComplete,
     TurnFeed,
     in_temporal_workflow,
 )
@@ -828,12 +830,13 @@ def _raise_escaped_tool_failed(error: MontyFailure, execution: RunCodeExecution,
     """
     if error.type_name != 'Exception':
         return
-    message = error.message
-    escaped = next((nested for nested in reversed(execution.nested_errors.values()) if str(nested) == message), None)
+    escaped = next(
+        (nested for nested in reversed(execution.nested_errors.values()) if error.carries(str(nested))), None
+    )
     if not isinstance(escaped, ToolFailed):
         return
     _raise_usage_limit_exceeded(execution)
-    content = execution.capture.prepend_to(message)
+    content = execution.capture.prepend_to(str(escaped))
     if len(execution.nested_calls) > 1:
         # Without a traceback, this is what tells the model which other calls already ran, so it
         # does not repeat their side effects.
@@ -1335,9 +1338,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         in_workflow: bool,
     ) -> tuple[Callable[[], Awaitable[Snapshot]], BlockingPortal | None]:
         """How to start feeding `code`, and the portal to call Monty through: in turns, or on the live session."""
-        if in_workflow and (run_turn := self._durable_turn(ctx)) is not None:
-            # The configured limits: Monty's elapsed-time check is replay-safe in an activity.
-            feed = TurnFeed(run_turn, run_state, capture, _resolve_resource_limits(self.resource_limits))
+        if in_workflow and run_state.stores_sessions and (run_turn := self._durable_turn(ctx)) is not None:
+            # The workflow's limits, so a snippet runs under the same limits on either path.
+            feed = TurnFeed(run_turn, run_state, capture, limits)
             return partial(feed.start, code, type_check_stubs), None
         type_check = type_check_stubs is not None
         session = await run_state.get_session(
@@ -1352,6 +1355,31 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             skip_type_check=not type_check,
         )
         return start, run_state.portal
+
+    async def _feed(
+        self,
+        executor: MontyExecutor,
+        start: Callable[[], Awaitable[Snapshot]],
+        run_state: MontyRunState,
+        execution: RunCodeExecution,
+        *,
+        fresh_repl: bool,
+    ) -> MontyComplete | TurnComplete | None:
+        """Run the snippet from `start`, or return `None` when the first turn found the server stores no sessions.
+
+        That turn checks before it runs any code, so the snippet can run again on the live session.
+        """
+        try:
+            completed = await executor.run(start)
+        except BaseException as exc:
+            if isinstance(exc, MontyTurnFailed) and exc.failure.kind == 'no_storage':
+                return None
+            retry = await self._feed_failure_retry(exc, run_state, execution, fresh_repl=fresh_repl)
+            if retry is None:
+                raise
+            raise retry from exc
+        run_state.has_executed_feed = True
+        return completed
 
     async def _execute_code(
         self,
@@ -1413,7 +1441,20 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         if repl is not None and await repl.restore(run_state, limits=limits, in_temporal_workflow=in_workflow):
             # The type checker would reject the names the restored state defines.
             fresh_repl = type_check = False
-        start, portal = await self._feed_start(
+        executor = partial(
+            MontyExecutor,
+            dispatch=partial(self._dispatch_tool_call, ctx, execution, tool_manager, tool),
+            valid_names=callable_defs,
+            sequential_names=sequential_tools,
+            global_sequential=global_sequential,
+            # The configured limit, kept inside a Temporal workflow too: Monty's elapsed-time
+            # check is dropped there for replay, but sleeps are charged what they request.
+            max_sleep_seconds=configured.get('max_feed_duration_secs'),
+            # Already converted in `__post_init__`; this narrows the field's type.
+            os_handler=as_os_handler(self.os_access),
+        )
+        feed_start = partial(
+            self._feed_start,
             ctx,
             run_state,
             code,
@@ -1422,25 +1463,15 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             limits=limits,
             in_workflow=in_workflow,
         )
-        try:
-            completed = await MontyExecutor(
-                dispatch=partial(self._dispatch_tool_call, ctx, execution, tool_manager, tool),
-                valid_names=callable_defs,
-                sequential_names=sequential_tools,
-                global_sequential=global_sequential,
-                portal=portal,
-                # The configured limit, kept inside a Temporal workflow too: Monty's elapsed-time
-                # check is dropped there for replay, but sleeps are charged what they request.
-                max_sleep_seconds=configured.get('max_feed_duration_secs'),
-                # Already converted in `__post_init__`; this narrows the field's type.
-                os_handler=as_os_handler(self.os_access),
-            ).run(start)
-            run_state.has_executed_feed = True
-        except BaseException as exc:
-            retry = await self._feed_failure_retry(exc, run_state, execution, fresh_repl=fresh_repl)
-            if retry is None:
-                raise
-            raise retry from exc
+        start, portal = await feed_start()
+        feed = partial(self._feed, run_state=run_state, execution=execution, fresh_repl=fresh_repl)
+        completed = await feed(executor(portal=portal), start)
+        if completed is None:
+            # The server stores no sessions, so the snippet runs in the workflow, as before turns were activities.
+            run_state.stores_sessions = False
+            start, portal = await feed_start()
+            completed = await feed(executor(portal=portal), start)
+            assert completed is not None, 'only a turn activity finds that the server stores no sessions'
 
         _raise_usage_limit_exceeded(execution)
         result = completed.output
@@ -1534,7 +1565,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 await run_state.reset()
                 _raise_usage_limit_exceeded(execution)
                 return ModelRetry(f'{self._worker_failure_message(failure)}{_started_calls_note(execution)}')
-            case 'not_stored':
+            case 'not_stored' | 'no_storage':  # `no_storage` falls back in `_run_feed` and never gets here
                 # Retrying soon would meet the same refusal, so the run fails with the reason.
                 await run_state.reset()
                 raise UserError(failure.display)

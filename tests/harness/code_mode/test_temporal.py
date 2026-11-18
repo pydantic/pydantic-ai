@@ -28,7 +28,7 @@ import re
 import subprocess
 import sys
 import warnings
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -370,7 +370,11 @@ class CallSiteWorkflow:
         return result.output
 
 
+refusing_pool_calls: list[None] = []
+
+
 def _refusing_pool() -> StoredSessionPool:
+    refusing_pool_calls.append(None)
     raise ConnectionRefusedError('the Monty server refused the connection')
 
 
@@ -380,7 +384,16 @@ refusing_code_mode_agent = Agent(
     toolsets=[FunctionToolset(tools=[add], id='math')],
     capabilities=[
         CodeMode(id='code', monty_sandbox=_refusing_pool),  # pyright: ignore[reportArgumentType]
-        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(
+                    maximum_attempts=3,
+                    initial_interval=timedelta(milliseconds=1),
+                    non_retryable_error_types=['ConnectionRefusedError'],
+                ),
+            )
+        ),
     ],
 )
 
@@ -921,35 +934,27 @@ async def test_remote_turns_run_as_activities(
     assert replay_result.replay_failure is None
 
 
-@pytest.mark.parametrize(
-    ('refusal', 'message'),
-    [
-        ('stores nothing', 'The Monty server stores no sessions.'),
-        ('refuses the dump', "The Monty server could not store the session's state"),
-    ],
-)
-async def test_remote_turns_fail_without_storage(client: Client, refusal: str, message: str) -> None:
-    """A server that stores no sessions, or refuses to store one, fails the run on the first attempt.
+async def test_remote_turns_fail_when_the_server_refuses_to_store(client: Client) -> None:
+    """A server that refuses to store a session, for example with a full snapshot quota, fails the run.
 
-    A retry would meet the same refusal, for example a full snapshot quota, so the turn reports it and
-    the run raises `UserError` with CodeMode's own text, never the server's.
+    A retry would meet the same refusal, so the turn reports it and the run raises `UserError` with
+    CodeMode's own text, never the server's.
     """
-    stores = refusal != 'stores nothing'
-    agent = storing_code_mode_agent if stores else not_storing_code_mode_agent
-    SERVER.dumps_left = 0 if refusal == 'refuses the dump' else None
+    workflow_id = 'test_code_mode_temporal_dump_refused'
+    SERVER.dumps_left = 0
     try:
         async with Worker(
             client,
             task_queue=TASK_QUEUE,
             workflows=[StoredSessionsWorkflow],
-            plugins=[AgentPlugin(agent)],
+            plugins=[AgentPlugin(storing_code_mode_agent)],
             workflow_runner=_workflow_runner(),
         ):
             with pytest.raises(WorkflowFailureError) as exc_info:
                 await client.execute_workflow(
                     StoredSessionsWorkflow.run,
-                    args=['Calculate 3 + 4', stores],
-                    id=f'test_code_mode_temporal_no_storage_{refusal.split()[0]}',
+                    args=['Calculate 3 + 4', True],
+                    id=workflow_id,
                     task_queue=TASK_QUEUE,
                     execution_timeout=timedelta(seconds=30),
                 )
@@ -958,11 +963,39 @@ async def test_remote_turns_fail_without_storage(client: Client, refusal: str, m
     cause = exc_info.value.cause
     assert isinstance(cause, ApplicationError)
     assert cause.type == 'UserError'
-    assert cause.message.startswith(message)
-    history = await client.get_workflow_handle(
-        f'test_code_mode_temporal_no_storage_{refusal.split()[0]}'
-    ).fetch_history()
+    assert cause.message.startswith("The Monty server could not store the session's state")
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
     assert _activity_types(history) == ['model_request', 'monty_turn']
+
+
+async def test_remote_turns_fall_back_without_storage(client: Client) -> None:
+    """A server that stores no sessions runs the snippet in the workflow, as before turns were activities.
+
+    The first turn finds this before it runs any code, so the snippet runs once, and the rest of the run
+    makes no more turn activities.
+    """
+    workflow_id = 'test_code_mode_temporal_no_storage'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StoredSessionsWorkflow],
+        plugins=[AgentPlugin(not_storing_code_mode_agent)],
+        workflow_runner=_workflow_runner(),
+    ):
+        output = await client.execute_workflow(
+            StoredSessionsWorkflow.run,
+            args=['Calculate 3 + 4', False],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert output == 'done: 70'
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    assert _activity_types(history) == ['model_request', 'monty_turn', 'call_tool', 'model_request', 'model_request']
+    replay_result = await Replayer(
+        workflows=[StoredSessionsWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=_workflow_runner()
+    ).replay_workflow(history)
+    assert replay_result.replay_failure is None
 
 
 @pytest.mark.parametrize('reason', ['overlay', 'write_limit', 'os_access', 'no_id', 'local', 'unpatched'])
@@ -1047,7 +1080,7 @@ async def test_remote_turns_resume_calls_in_place(client: Client, monkeypatch: p
     )
     assert no_json_form == [
         "MontyClassProxy(name='P', attributes={'x': 1})",
-        'add() got arguments that cannot be sent to the tool: they need a JSON form, dict keys that stay distinct as JSON, and at most 524288 bytes',
+        'add() got arguments that cannot be sent to the tool: they need a JSON form and at most 524288 bytes',
     ]
     # On the workflow-side path that argument fails the tool's validation, which fails the snippet.
     assert [type_error, added, call_sites, syntax_error, values, not_utf8] == [
@@ -1088,7 +1121,12 @@ async def test_remote_turns_resume_calls_in_place(client: Client, monkeypatch: p
 
 async def test_failed_turn_activity_fails_the_workflow(client: Client) -> None:
     """A turn activity that fails after its retries fails the run like any other activity, rather than
-    raising an error Temporal would treat as a workflow bug and retry forever."""
+    raising an error Temporal would treat as a workflow bug and retry forever.
+
+    The recorded error keeps the original type's name, so the retry policy's
+    `non_retryable_error_types` still stops retries.
+    """
+    refusing_pool_calls.clear()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -1108,8 +1146,10 @@ async def test_failed_turn_activity_fails_the_workflow(client: Client) -> None:
     assert activity_error.activity_type.endswith('__monty_turn')
     assert isinstance(activity_error.cause, ApplicationError)
     # Only the error's type is recorded: a connection error's text can carry the pool's URL or credentials.
-    assert activity_error.cause.type == 'MontyServerError'
+    assert activity_error.cause.type == 'ConnectionRefusedError'
     assert activity_error.cause.message == 'ConnectionRefusedError'
+    assert activity_error.cause.non_retryable is False
+    assert len(refusing_pool_calls) == 1
     assert activity_error.cause.cause is None
     history = await client.get_workflow_handle('test_code_mode_temporal_refused_turn').fetch_history()
     assert 'refused the connection' not in history.to_json()
@@ -1172,6 +1212,21 @@ def give_up() -> str:
     raise ToolFailed('the tool gave up')
 
 
+async def give_up_at_length(length: int) -> str:
+    """Fail without asking the model to retry, with a message `length` characters long."""
+    raise ToolFailed('x' * length)
+
+
+async def type_names(values: list[object]) -> list[str]:
+    """Name each value's type. It runs in the workflow, so values reach it as the turn delivers them."""
+    return [type(value).__name__ for value in values]
+
+
+async def echo_here(value: object) -> object:
+    """Return `value`. It runs in the workflow, so the value crosses only the turn boundary."""
+    return value
+
+
 async def bad_csv() -> str:
     """Raise `csv.Error`. It runs in the workflow, so its error reaches the sandbox as itself."""
     raise csv.Error('bad row')
@@ -1196,12 +1251,24 @@ def _snippet_agent(
     name: str,
     monty_sandbox: Callable[[], StoredSessionPool] = StoredSessionPool,
     resource_limits: Literal['unlimited'] | None = None,
+    workflow_tools: tuple[Callable[..., Awaitable[object]], ...] = (bad_csv,),
 ) -> Agent:
+    """An agent whose `workflow_tools` run in the workflow, so their values cross only the turn boundary."""
+    in_workflow = [Tool(function, metadata={'temporal': False}) for function in workflow_tools]
     return Agent(
         FunctionModel(_snippet_model),
         name=f'code_mode_temporal_snippet_{name}_agent',
         toolsets=[
-            FunctionToolset(tools=[echo, repeat, give_up, Tool(bad_csv, metadata={'temporal': False})], id='echo')
+            FunctionToolset(
+                tools=[
+                    echo,
+                    repeat,
+                    give_up,
+                    give_up_at_length,
+                    *in_workflow,
+                ],
+                id='echo',
+            )
         ],
         capabilities=[
             CodeMode(
@@ -1222,6 +1289,7 @@ snippet_agents = {
     'default': _snippet_agent('default'),
     'unlimited': _snippet_agent('unlimited', resource_limits='unlimited'),
     'factory_error': _snippet_agent('factory_error', monty_sandbox=_refusing_factory),
+    'types': _snippet_agent('types', workflow_tools=(type_names, echo_here)),
 }
 
 
@@ -1313,24 +1381,24 @@ async def test_remote_turns_record_a_pool_user_error_by_type(client: Client) -> 
     assert 'secret-sentinel' not in history.to_json()
 
 
-@pytest.mark.parametrize(
-    ('code', 'expected'),
-    [
-        (
-            'import datetime\n{datetime.date(2020, 1, 1): 1, "2020-01-01": 2}',
-            "{datetime.date(2020, 1, 1): 1, '2020-01-01': 2}",
-        ),
-        (
-            'try:\n    await echo(value={frozenset({1}): 1})\nexcept TypeError as e:\n    error = str(e)\nerror',
-            'echo() got arguments that cannot be sent to the tool: they need a JSON form, dict keys that stay distinct as JSON, and at most 524288 bytes',
-        ),
-    ],
-)
-async def test_remote_turns_keep_every_mapping_key(client: Client, code: str, expected: str) -> None:
-    """A result whose keys would not come back distinct crosses as its `repr`, losing no entry, and a nested
-    call whose argument holds a key that would come back unhashable raises `TypeError` at the call site."""
-    output = await _run_snippet(client, f'test_code_mode_temporal_keys_{len(code)}', code)
-    assert output == expected
+async def test_remote_turns_keep_the_types_monty_hands_the_host(client: Client) -> None:
+    """Dates, times, durations, decimals and sets reach a tool as themselves, as on the workflow-side path.
+
+    So a `date | str` parameter still validates to `date`. The tools run in the workflow, so only the turn
+    boundary is between them and the snippet.
+    """
+    code = (
+        'import datetime, decimal\n'
+        'values = [datetime.date(2026, 11, 19), datetime.datetime(2026, 11, 19, 10, 30, tzinfo=datetime.timezone.utc),\n'
+        '    datetime.time(10, 30), datetime.timedelta(days=1, microseconds=5), decimal.Decimal("1.50"), {1}, frozenset({2})]\n'
+        'names = await type_names(values=values)\n'
+        'back = await echo_here(value=values)\n'
+        'f"{names} {[type(v).__name__ for v in back]}"'
+    )
+    output = await _run_snippet(client, 'test_code_mode_temporal_native_types', code, agent='types')
+    names = "['date', 'datetime', 'time', 'timedelta', 'Decimal', 'set', 'frozenset']"
+    # A tool's result reaches the sandbox in its JSON form on both paths (`_jsonable_for_sandbox`).
+    assert output == f"{names} ['str', 'str', 'str', 'str', 'str', 'list', 'list']"
 
 
 async def test_remote_turns_keep_the_default_suspension_cap(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1476,3 +1544,12 @@ async def test_remote_turns_stop_encoding_a_value_that_cannot_fit(client: Client
     )
     output = await _run_snippet(client, 'test_code_mode_temporal_shared_list', code)
     assert output.startswith('echo() got arguments that cannot be sent to the tool')
+
+
+async def test_remote_turns_keep_a_cut_tool_failure(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A nested `ToolFailed` whose message the turn has to cut still fails `run_code` without a retry."""
+    monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 2500)
+    output = await _run_snippet(
+        client, 'test_code_mode_temporal_cut_tool_failed', 'await give_up_at_length(length=1800)'
+    )
+    assert output == 'x' * 1800
