@@ -38,19 +38,32 @@ ERROR_TYPE_STATUS_CODES = {
 }
 
 
-def error_status_code(error: APIStatusError) -> int:
+def error_status_code(status_code: int, body: object | None) -> int:
     """The HTTP status of an Anthropic error, including one reported in a stream after a 200 response.
 
     An error event in a stream arrives after the response status was already 200, so the SDK raises it with that
     status; the error `type` identifies the status the same error has on a non-streaming request.
     """
-    if error.status_code >= 400:
-        return error.status_code
-    body = error.body
+    if status_code >= 400:
+        return status_code
     if _utils.is_str_dict(body) and _utils.is_str_dict(error_body := body.get('error')):
         if isinstance(error_type := error_body.get('type'), str) and error_type in ERROR_TYPE_STATUS_CODES:
             return ERROR_TYPE_STATUS_CODES[error_type]
-    return error.status_code
+    return status_code
+
+
+def status_and_body(error: APIStatusError | APIConnectionError) -> tuple[int, object | None] | None:
+    """The status and body of the error response `error` reports, or `None` for a connection that failed without one.
+
+    A retrying transport raises `httpx2.HTTPStatusError` for a status it gave up on, and `anthropic` wraps it in
+    `APIConnectionError`, so a recovery from an error response reads both shapes.
+    """
+    if isinstance(error, APIStatusError):
+        return error.status_code, error.body
+    if isinstance(cause := error.__cause__, httpx2.HTTPStatusError):
+        body, _, _ = _model_errors.transport_error_body(cause.response)
+        return cause.response.status_code, body
+    return None
 
 
 def reported_error_body(body: object | None) -> object | None:
@@ -61,20 +74,44 @@ def reported_error_body(body: object | None) -> object | None:
     return body.get('error', body) if _utils.is_str_dict(body) else None
 
 
-def is_expired_container_error(error: APIStatusError) -> bool:
+def is_expired_container_error(status_code: int, body: object | None) -> bool:
     """Whether Anthropic rejected a request because the container it reuses has expired.
 
     Anthropic answers an expired container with a 404 `not_found_error`, and earlier with a 500.
     """
-    status_code = error_status_code(error)
+    status_code = error_status_code(status_code, body)
     if status_code == 500:
         return True
-    error_body = reported_error_body(error.body)
+    error_body = reported_error_body(body)
     return (
         status_code == 404
         and _utils.is_str_dict(error_body)
         and str(error_body.get('message', '')).startswith('Container not found')
     )
+
+
+_THREAD_REPLAY_ERROR_CODES = frozenset({'thread_not_found', 'thread_already_continued', 'thread_continue_in_flight'})
+
+
+def is_thread_replay_error(body: object | None) -> bool:
+    """Whether a thread continue request failed in a way that sending the full conversation in a new thread recovers.
+
+    See https://platform.claude.com/docs/en/build-with-claude/message-threads#errors. A 404 for a model that
+    doesn't exist has no thread `error_code`, so it isn't replayed.
+    """
+    return thread_error_code(body) in _THREAD_REPLAY_ERROR_CODES
+
+
+def is_thread_unsupported_error(body: object | None) -> bool:
+    """Whether a thread request uses a feature or organization setting threads don't support, so it's sent without one."""
+    return thread_error_code(body) == 'thread_unsupported_request'
+
+
+def thread_error_code(body: object | None) -> object:
+    """The `error_code` in the `details` of a thread error, like `thread_not_found`."""
+    error_body = reported_error_body(body)
+    details = error_body.get('details') if _utils.is_str_dict(error_body) else None
+    return details.get('error_code') if _utils.is_str_dict(details) else None
 
 
 @contextmanager
@@ -85,7 +122,7 @@ def map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> Ge
         raise api_error(
             model_name,
             model_id_namespace,
-            status_code=error_status_code(e),
+            status_code=error_status_code(e.status_code, e.body),
             body=e.body,
             message=e.message,
             headers=dict(e.response.headers),

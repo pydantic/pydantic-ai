@@ -13,7 +13,7 @@ import json
 import math
 import os
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -72,6 +72,19 @@ class _NewEachStep(WrapperToolset[None]):
 class Trip(BaseModel):
     city: str
     nights: int
+
+
+@pytest.fixture(scope='module', autouse=True)
+def ipython_dir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Gives this module's kernels their own IPython profile, so they share no history file with other processes.
+
+    Otherwise every kernel on the machine writes its history to `~/.ipython/profile_default/history.sqlite`. A kernel
+    that hits a SQLite error there moves the file away, and a kernel whose history thread connects after the move
+    writes to a new file with no tables: the thread's error lands in the output of the cell that is running.
+    """
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv('IPYTHONDIR', str(tmp_path_factory.mktemp('ipython')))
+        yield
 
 
 @pytest.fixture(scope='module')
@@ -513,6 +526,14 @@ def book(*, trip: Trip, travellers: int) -> str:
 
         agent = Agent(_scripted(), capabilities=[IPythonCodeMode(kernel=kernel, tools=[])], tools=[Tool(run_code)])
         with pytest.raises(UserError, match="Tool name 'run_code' is reserved"):
+            await agent.run('Hi')
+
+    async def test_a_tool_named_after_a_builtin_is_rejected(self, kernel: IPythonKernel) -> None:
+        def open(path: str) -> str:
+            return path  # pragma: no cover
+
+        agent = Agent(_scripted(), capabilities=[IPythonCodeMode(kernel=kernel)], tools=[Tool(open)])
+        with pytest.raises(UserError, match="Tool name 'open' is a Python builtin"):
             await agent.run('Hi')
 
     async def test_the_tools_get_the_run_context(self, kernel: IPythonKernel) -> None:

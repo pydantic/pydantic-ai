@@ -31,6 +31,7 @@ from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import (
     Agent,
+    DeferredToolRequests,
     FunctionToolset,
     ModelMessage,
     ModelRequest,
@@ -51,13 +52,22 @@ from pydantic_ai._instrumentation import (
     serialize_any,
     span_include_content,
 )
-from pydantic_ai.capabilities import Capability, Hooks, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, LocalWorkspace
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, ToolFailed, UnexpectedModelBehavior
-from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart, UploadedFile
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.messages import (
+    DataCapabilityPart,
+    InstructionCapabilityPart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    OperatorSource,
+    OperatorText,
+    ToolResultSource,
+    UploadedFile,
+)
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -79,10 +89,10 @@ with try_import() as mcp_installed:
     from fastmcp import Client, FastMCP
     from fastmcp.client.transports import StreamableHttpTransport
 
-    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
+    from pydantic_ai import _mcp_compat
     from pydantic_ai.mcp import MCPToolset
 
-MCP_SDK_V2 = mcp_installed() and is_mcp_sdk_v2()
+MCP_SDK_V2 = mcp_installed() and _mcp_compat.MCP_SDK_V2
 
 pytestmark = [
     pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed'),
@@ -96,6 +106,7 @@ SECRETS = {
     'system_prompt': 'SENTINEL-system-prompt',
     'message_history': 'SENTINEL-message-history',
     'tool_args': 'SENTINEL-tool-args',
+    'validated_args': 'SENTINEL-validated-args',
     'tool_return': 'SENTINEL-tool-return',
     'tool_retry': 'SENTINEL-tool-retry',
     'tool_failed': 'SENTINEL-tool-failed',
@@ -105,6 +116,8 @@ SECRETS = {
     'model_text': 'SENTINEL-model-text',
     'provider_error_body': 'SENTINEL-provider-error-body',
     'prompted_output_template': 'SENTINEL-prompted-output-template',
+    'capability_instruction': 'SENTINEL-capability-instruction',
+    'capability_data': 'SENTINEL-capability-data',
     'capability_description': 'SENTINEL-capability-description',
 }
 
@@ -900,6 +913,85 @@ async def test_no_content_reaches_telemetry_from_message_history(include_content
     await agent.run(SECRETS['user_prompt'], message_history=history)
 
     check(exporter, include_content, {'user_prompt', 'message_history', 'model_text'})
+
+
+class AddAccount(AbstractCapability[Any]):
+    """A validation hook that adds a value the model never sent, so only the deferred call's `validated_args` holds it."""
+
+    async def after_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {**args, 'account': SECRETS['validated_args']}
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_a_deferred_calls_validated_args(include_content: bool) -> None:
+    """The run's `DeferredToolRequests` output carries the arguments as a validation hook left them."""
+    settings, exporter = redacted_setup(include_content)
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('transfer', {'amount': 1})])
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[AddAccount(), Instrumentation(settings=settings)],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def transfer(amount: int) -> str:  # pragma: no cover
+        # Never approved: the run ends on the approval request.
+        return str(amount)
+
+    result = await agent.run(SECRETS['user_prompt'])
+    assert isinstance(result.output, DeferredToolRequests)
+
+    check(exporter, include_content, {'user_prompt', 'validated_args'})
+
+
+@dataclass(kw_only=True)
+class _RedactedNudgePart(InstructionCapabilityPart, namespace='test_redaction', name='nudge'):
+    pass
+
+
+@dataclass(kw_only=True)
+class _RedactedPagePart(DataCapabilityPart, namespace='test_redaction', name='page', tag='fetched_page'):
+    pass
+
+
+@dataclass
+class _CapabilityPartReporter(AbstractCapability[object]):
+    """Enqueues an operator-voice part, which renders on the system role, and a data part framed on the user channel.
+
+    The run it's in makes one request.
+    """
+
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(
+            _RedactedNudgePart(content=OperatorText(SECRETS['capability_instruction']), source=OperatorSource()),
+            _RedactedPagePart(content=SECRETS['capability_data'], source=ToolResultSource(tool_name='fetch')),
+        )
+        return request_context
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_capability_parts(include_content: bool) -> None:
+    """What a capability enqueues, on the system role in the application's voice and framed on the user channel."""
+    settings, exporter = redacted_setup(include_content)
+    received: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
+
+    agent = Agent(FunctionModel(respond), capabilities=[_CapabilityPartReporter(), Instrumentation(settings=settings)])
+    await agent.run(SECRETS['user_prompt'])
+    # Both parts have to have reached the model, or their sentinels prove nothing.
+    assert SECRETS['capability_instruction'] in str(received) and SECRETS['capability_data'] in str(received)
+
+    check(exporter, include_content, {'user_prompt', 'capability_instruction', 'capability_data', 'model_text'})
 
 
 @pytest.mark.parametrize('include_content', [True, False])

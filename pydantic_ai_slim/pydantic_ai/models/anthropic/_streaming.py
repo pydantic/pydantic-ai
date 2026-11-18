@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import AsyncIterator, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -43,7 +44,14 @@ from anthropic.types.beta import (
 
 from ... import _utils
 from ..._context_size import mark_context_input_tokens
-from ...messages import CompactionPart, ModelResponseStreamEvent, NativeToolCallPart, NativeToolSearchCallPart, TextPart
+from ...messages import (
+    CompactionPart,
+    ModelResponse,
+    ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolSearchCallPart,
+    TextPart,
+)
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
 from ._citations import citations_provider_details, fetched_page, map_citations
@@ -70,6 +78,7 @@ from ._response import (
     report_inference_geo,
     report_input_transformations,
 )
+from ._threads import ThreadRecord, served_by_fallback_model
 
 if TYPE_CHECKING:
     from . import AnthropicModelName
@@ -93,8 +102,12 @@ class AnthropicStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _history_fetched_pages: Sequence[tuple[str, str]] = ()
     _report_inference_geo: bool = False
+    _thread_record: ThreadRecord | None = None
+    """Records the message thread the request was sent in, if any, on the response `get()` builds."""
+    _from_fallback_model: bool = field(default=False, init=False)
     _current_block: BetaContentBlock | None = field(default=None, init=False)
-    _ignored_server_tool_use_indices: set[int] = field(default_factory=set[int], init=False)
+    _ignored_block_indices: set[int] = field(default_factory=set[int], init=False)
+    """Blocks whose deltas are dropped: calls to server tools that aren't enabled, and block types the SDK doesn't know."""
     _pending_citations: dict[int, list[BetaTextCitation]] = field(
         default_factory=dict[int, list[BetaTextCitation]], init=False
     )
@@ -103,6 +116,12 @@ class AnthropicStreamedResponse(StreamedResponse):
     _builtin_tool_calls: dict[str, NativeToolCallPart] = field(
         default_factory=dict[str, NativeToolCallPart], init=False
     )
+
+    def get(self) -> ModelResponse:
+        response = super().get()
+        if self._thread_record is None:
+            return response
+        return self._thread_record.stamp(response, from_fallback_model=self._from_fallback_model)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with map_api_errors(self._model_name, self._model_id_namespace):
@@ -163,6 +182,13 @@ class AnthropicStreamedResponse(StreamedResponse):
     def _map_content_block_start(self, event: BetaRawContentBlockStartEvent) -> Iterator[ModelResponseStreamEvent]:  # noqa: C901
         self._current_block = current_block = event.content_block
         match current_block:
+            # The SDK builds a block type it doesn't know as a `BetaTextBlock` carrying that type.
+            case BetaTextBlock() if current_block.type != 'text':
+                warnings.warn(
+                    f'Handling of this content block type is not yet implemented, so it was skipped. Please report on our GitHub: {current_block.type!r}',
+                    UserWarning,
+                )
+                self._ignored_block_indices.add(event.index)
             case BetaTextBlock() if current_block.text:
                 yield from self._parts_manager.handle_text_delta(vendor_part_id=event.index, content=current_block.text)
             case BetaThinkingBlock():
@@ -260,7 +286,7 @@ class AnthropicStreamedResponse(StreamedResponse):
             # enabled-name set would leave their return part orphaned. Result presence is only
             # advisory: newer web tools can omit paired blocks with `response_inclusion: "excluded"`,
             # which pydantic-ai does not currently send.
-            self._ignored_server_tool_use_indices.add(index)
+            self._ignored_block_indices.add(index)
             return
         call_part = map_server_tool_use_block(block, self.provider_name)
         self._builtin_tool_calls[call_part.tool_call_id] = call_part
@@ -289,10 +315,16 @@ class AnthropicStreamedResponse(StreamedResponse):
         yield from self._parts_manager.handle_tool_call_delta_events(vendor_part_id=index, args=args_json_delta)
 
     def _map_content_block_delta(self, event: BetaRawContentBlockDeltaEvent) -> Iterator[ModelResponseStreamEvent]:
-        if event.index in self._ignored_server_tool_use_indices:
+        if event.index in self._ignored_block_indices:
             return
         delta = event.delta
         match delta:
+            # The SDK builds a delta type it doesn't know as a `BetaTextDelta` carrying that type.
+            case BetaTextDelta() if delta.type != 'text_delta':
+                warnings.warn(
+                    f'Handling of this content block delta type is not yet implemented, so it was skipped. Please report on our GitHub: {delta.type!r}',
+                    UserWarning,
+                )
             case BetaTextDelta():
                 yield from self._parts_manager.handle_text_delta(vendor_part_id=event.index, content=delta.text)
             case BetaThinkingDelta():
@@ -330,6 +362,7 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     def _map_message_delta(self, event: BetaRawMessageDeltaEvent) -> None:
         self._usage = map_usage(event, self._provider_name, self._provider_url, self._model_name, self._usage)
+        self._from_fallback_model = served_by_fallback_model(event.usage)
         if (context_input_tokens := last_pass_input_tokens(event.usage)) is not None:
             mark_context_input_tokens(self, context_input_tokens)
         if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
@@ -364,10 +397,18 @@ class AnthropicStreamedResponse(StreamedResponse):
                 citations=citations,
             )
         current_block = self._current_block
-        if event.index in self._ignored_server_tool_use_indices:
-            self._ignored_server_tool_use_indices.remove(event.index)
+        if event.index in self._ignored_block_indices:
+            self._ignored_block_indices.remove(event.index)
         elif isinstance(current_block, BetaMCPToolUseBlock):
-            yield from self._parts_manager.handle_tool_call_delta_events(vendor_part_id=event.index, args='}')
+            # A call with no arguments streams no input JSON, so restore the `{}` dropped at block start.
+            no_input = (
+                isinstance(part, NativeToolCallPart)
+                and isinstance(part.args, str)
+                and part.args.endswith('"tool_args":')
+            )
+            yield from self._parts_manager.handle_tool_call_delta_events(
+                vendor_part_id=event.index, args='{}}' if no_input else '}'
+            )
         elif isinstance(current_block, BetaServerToolUseBlock) and current_block.name in (
             'tool_search_tool_regex',
             'tool_search_tool_bm25',

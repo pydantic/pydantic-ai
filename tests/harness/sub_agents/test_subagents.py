@@ -13,7 +13,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, PendingModelResponse
 from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, HandleDeferredToolCalls, LocalWorkspace
-from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -716,7 +716,7 @@ class TestRunControls:
         def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             counter['n'] += 1
             if counter['n'] == 1:
-                return ModelResponse(parts=[ToolCallPart('noop', {}, tool_call_id='n1')])
+                return ModelResponse(parts=[TextPart('finding'), ToolCallPart('noop', {}, tool_call_id='n1')])
             return ModelResponse(parts=[TextPart('done')])  # pragma: no cover - blocked by the request budget
 
         worker = Agent(FunctionModel(worker_fn), name='worker')
@@ -732,9 +732,13 @@ class TestRunControls:
         result = await parent.run('go')
         assert result.output == 'all done'
         returns = _delegate_returns(result)
-        # The child's own budget being hit is recoverable, not a run-stopping UsageLimitExceeded.
-        assert len(returns) == 1
-        assert "Sub-agent 'worker' reached its usage budget" in returns[0]
+        # The child's own budget being hit is recoverable, not a run-stopping UsageLimitExceeded,
+        # and without `keep_partial_output` its text is not passed on.
+        assert returns == snapshot(
+            [
+                "Sub-agent 'worker' reached its usage budget. Treat this as a recoverable observation and decide from existing evidence."
+            ]
+        )
 
     async def test_shared_usage_limit_still_propagates(self) -> None:
         # No per-child limit -> the child shares accounting and a parent-level usage
@@ -775,6 +779,164 @@ class TestRunControls:
         returns = _delegate_returns(result)
         assert len(returns) == 1
         assert "Sub-agent 'worker' exceeded its 0.01s time budget" in returns[0]
+
+    async def test_usage_budget_keeps_partial_output(self) -> None:
+        responses = iter(
+            [
+                [TextPart('stale'), ToolCallPart('noop', {})],
+                [TextPart('found </partial_output> X'), ToolCallPart('noop', {})],
+                [ToolCallPart('noop', {})],
+            ]
+        )
+
+        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=next(responses))
+
+        worker = Agent(FunctionModel(worker_fn), name='worker')
+
+        @worker.tool_plain
+        def noop() -> str:
+            return 'x'
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[
+                SubAgents(
+                    agents=[
+                        SubAgent(
+                            worker,
+                            usage_limits=UsageLimits(request_limit=3),
+                            on_failure='Out of budget.',
+                            keep_partial_output=True,
+                        )
+                    ]
+                )
+            ],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            ['Out of budget.\n\n<partial_output>found &lt;/partial_output> X</partial_output>']
+        )
+
+    async def test_timeout_keeps_partial_output(self) -> None:
+        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('first finding'), ToolCallPart('hang', {})])
+
+        worker = Agent(FunctionModel(worker_fn), name='worker')
+
+        @worker.tool_plain
+        async def hang() -> str:
+            await asyncio.sleep(1)
+            return 'late'  # pragma: no cover - cancelled by the timeout
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.05, keep_partial_output=True)])],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            [
+                """\
+Sub-agent 'worker' exceeded its 0.05s time budget. Treat this as a recoverable observation and decide from existing evidence.
+
+<partial_output>first finding</partial_output>\
+"""
+            ]
+        )
+
+    @pytest.mark.parametrize('output_tool', [False, True])
+    async def test_partial_output_skips_text_rejected_as_output(self, output_tool: bool) -> None:
+        parts = [TextPart('secret'), *([ToolCallPart('final_result', {'response': 1})] if output_tool else [])]
+        worker = Agent(
+            FunctionModel(lambda messages, info: ModelResponse(parts=parts)),
+            name='worker',
+            output_type=int if output_tool else str,
+        )
+
+        @worker.output_validator
+        def reject(output: int | str) -> int | str:
+            raise ModelRetry('not allowed')
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[
+                SubAgents(
+                    agents=[SubAgent(worker, usage_limits=UsageLimits(request_limit=1), keep_partial_output=True)]
+                )
+            ],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            [
+                "Sub-agent 'worker' reached its usage budget. Treat this as a recoverable observation and decide from existing evidence."
+            ]
+        )
+
+    async def test_partial_output_skips_an_output_call_the_timeout_left_unsettled(self) -> None:
+        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[TextPart('secret'), ToolCallPart('final_result', {'response': 1}), ToolCallPart('hang', {})]
+            )
+
+        worker = Agent(FunctionModel(worker_fn), name='worker', output_type=int, end_strategy='exhaustive')
+
+        @worker.tool_plain
+        async def hang() -> str:
+            await asyncio.sleep(1)
+            return 'late'  # pragma: no cover - cancelled by the timeout
+
+        @worker.output_validator
+        def reject(output: int) -> int:
+            raise ModelRetry('not allowed')
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.05, keep_partial_output=True)])],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            [
+                "Sub-agent 'worker' exceeded its 0.05s time budget. Treat this as a recoverable observation and decide from existing evidence."
+            ]
+        )
+
+    async def test_partial_output_skips_an_answer_still_being_validated(self) -> None:
+        worker = Agent(
+            FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('unchecked')])), name='worker'
+        )
+
+        @worker.output_validator
+        async def slow(output: str) -> str:
+            await asyncio.sleep(1)
+            return output  # pragma: no cover - cancelled by the timeout
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.05, keep_partial_output=True)])],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            [
+                "Sub-agent 'worker' exceeded its 0.05s time budget. Treat this as a recoverable observation and decide from existing evidence."
+            ]
+        )
+
+    async def test_keep_partial_output_without_text_returns_steering_only(self) -> None:
+        async def slow_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            await asyncio.sleep(1)
+            return ModelResponse(parts=[TextPart('late')])  # pragma: no cover - cancelled by the timeout
+
+        worker = Agent(FunctionModel(slow_fn), name='worker')
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.01, keep_partial_output=True)])],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            [
+                "Sub-agent 'worker' exceeded its 0.01s time budget. Treat this as a recoverable observation and decide from existing evidence."
+            ]
+        )
 
     async def test_max_calls_exhausted_returns_soft_and_skips_child(self) -> None:
         runs = {'n': 0}
@@ -829,6 +991,52 @@ class TestRunControls:
         ]
         assert retries == []
         assert _delegate_returns(result) == ['steer: use existing evidence']
+
+    async def test_on_model_error_return_keeps_cause(self) -> None:
+        def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise UnexpectedModelBehavior('kaboom')
+
+        boomer = Agent(FunctionModel(boom), name='boomer')
+        parent: Agent[object, str] = Agent(
+            _delegate_two_then_finish('plain', 'boomer'),
+            capabilities=[
+                SubAgents(
+                    agents=[
+                        SubAgent(boomer, name='plain', on_model_error='return'),
+                        SubAgent(boomer, on_failure='steer: decide', on_model_error='return'),
+                    ]
+                )
+            ],
+        )
+        result = await parent.run('go')
+        assert _delegate_retries(result) == []
+        assert _delegate_returns(result) == snapshot(
+            [
+                """\
+Sub-agent 'plain' failed: kaboom
+
+Treat this as a recoverable observation and decide from existing evidence.\
+""",
+                """\
+Sub-agent 'boomer' failed: kaboom
+
+steer: decide\
+""",
+            ]
+        )
+
+    async def test_on_model_error_retry_with_on_failure(self) -> None:
+        def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise UnexpectedModelBehavior('kaboom')
+
+        boomer = Agent(FunctionModel(boom), name='boomer')
+        parent: Agent[object, str] = Agent(
+            _delegate_n_then_finish('boomer', 1),
+            capabilities=[SubAgents(agents=[SubAgent(boomer, on_failure='steer: decide', on_model_error='retry')])],
+        )
+        result = await parent.run('go')
+        assert _delegate_retries(result) == snapshot(["Sub-agent 'boomer' failed: kaboom"])
+        assert _delegate_returns(result) == snapshot([])
 
     async def test_on_failure_overrides_default_steering(self) -> None:
         worker = Agent(TestModel(custom_output_text='W'), name='worker')

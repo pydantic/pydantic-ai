@@ -32,10 +32,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    TextContent,
     TextPart,
     ToolCallPart,
-    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -55,6 +53,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness import BackgroundTools
 from pydantic_ai_harness._workspace import READ_ONLY_FAILURE
+from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
 from pydantic_ai_harness.shell._jobs import Job
@@ -2495,16 +2494,13 @@ async def test_background_tools_push_run_command_output(tmp_path: Path) -> None:
     )
     result = await agent.run('build')
     pushed = [
-        item.content
+        part.content
         for message in result.all_messages()
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-        for item in part.content
-        if isinstance(item, TextContent)
+        if isinstance(part, BackgroundToolResultPart)
     ]
-    assert len(pushed) == 1
-    assert '[stdout]\nbuilt\n' in pushed[0]
+    assert pushed == ['[stdout]\nbuilt\n']
 
 
 class _RefusesRemove(LocalWorkspaceBackend):
