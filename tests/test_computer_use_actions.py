@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from dataclasses import fields
+from typing import get_args
 
 import pytest
 from inline_snapshot import snapshot
@@ -19,8 +21,8 @@ from pydantic_ai.computer_use import (
     Drag,
     HoldKeys,
     MouseDown,
+    MouseMove,
     MouseUp,
-    MoveMouse,
     Point,
     PressKeys,
     Region,
@@ -88,7 +90,7 @@ _EVERY_ACTION: list[tuple[dict[str, object], ComputerToolAction]] = [
         {'type': 'click', 'x': 1, 'y': 2, 'modifiers': ['Control', 'cmd', 'Option']},
         Click(x=1, y=2, modifiers=('ctrl', 'super', 'alt')),
     ),
-    ({'type': 'move', 'x': 3, 'y': 4}, MoveMouse(x=3, y=4)),
+    ({'type': 'mouse_move', 'x': 3, 'y': 4}, MouseMove(x=3, y=4)),
     (
         {'type': 'drag', 'path': [{'x': 0, 'y': 0}, {'x': 5, 'y': 6}]},
         Drag(path=(Point(x=0, y=0), Point(x=5, y=6))),
@@ -96,9 +98,9 @@ _EVERY_ACTION: list[tuple[dict[str, object], ComputerToolAction]] = [
     ({'type': 'mouse_down', 'button': 'right'}, MouseDown(button='right')),
     ({'type': 'mouse_up'}, MouseUp()),
     ({'type': 'scroll', 'direction': 'down', 'x': 10, 'y': 20}, Scroll(direction='down', x=10, y=20)),
-    ({'type': 'type', 'text': 'hello'}, TypeText(text='hello')),
-    ({'type': 'keypress', 'keys': ['CTRL', 'Return']}, PressKeys(keys=('ctrl', 'enter'))),
-    ({'type': 'hold_key', 'keys': ['ESC'], 'seconds': 1}, HoldKeys(keys=('escape',), seconds=1)),
+    ({'type': 'type_text', 'text': 'hello'}, TypeText(text='hello')),
+    ({'type': 'press_keys', 'keys': ['CTRL', 'Return']}, PressKeys(keys=('ctrl', 'enter'))),
+    ({'type': 'hold_keys', 'keys': ['ESC'], 'seconds': 1}, HoldKeys(keys=('escape',), seconds=1)),
     ({'type': 'wait', 'seconds': 0.5}, Wait(seconds=0.5)),
     ({'type': 'screenshot'}, Screenshot()),
     (
@@ -162,6 +164,13 @@ def test_actions_are_validated_when_built_in_python(build: Callable[[], object],
         build()
 
 
+def test_each_action_type_is_its_class_name_in_snake_case() -> None:
+    (actions, _) = get_args(ComputerToolAction)
+    for action in get_args(actions):
+        (type_field,) = (field for field in fields(action) if field.name == 'type')
+        assert type_field.default == re.sub(r'(?<!^)(?=[A-Z])', '_', action.__name__).lower()
+
+
 def test_the_computer_tool_schema_requires_type_first_and_only_names_it_declares() -> None:
     schema = TypeAdapter(list[ComputerToolAction]).json_schema()['$defs']
     assert sorted(schema) == snapshot(
@@ -171,8 +180,8 @@ def test_the_computer_tool_schema_requires_type_first_and_only_names_it_declares
             'Drag',
             'HoldKeys',
             'MouseDown',
+            'MouseMove',
             'MouseUp',
-            'MoveMouse',
             'Point',
             'PressKeys',
             'Region',
