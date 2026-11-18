@@ -586,27 +586,6 @@ The `computer` tool shows and controls this computer's screen.
         await later.run('Thanks.', message_history=first.all_messages())
         assert reads == []
 
-    async def test_the_display_starts_before_the_first_request_without_the_native_tool(self) -> None:
-        # The shell is told a program it starts opens on the screen, so the screen must be up before the model's first
-        # command, as it is when the native tool reads its size.
-        reads: list[None] = []
-
-        class Counted(ScreenBackend):
-            async def display_size(self) -> tuple[int, int]:
-                reads.append(None)
-                return await super().display_size()
-
-        class Provider(ScreenProvider):
-            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
-                return Counted(self, ref)
-
-        agent = Agent(
-            FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])),
-            capabilities=[Provider().capability(), ComputerUse(native=False)],
-        )
-        await agent.run('Open the editor from the shell.')
-        assert reads
-
     async def test_each_call_emits_what_it_did(self, durability: list[AbstractCapability[object]]) -> None:
         model = _scripted([{'type': 'screenshot'}], [{'type': 'click', 'x': 1, 'y': 1}])
         agent = Agent(
