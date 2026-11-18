@@ -36,6 +36,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.otari import OtariProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
@@ -152,6 +153,11 @@ CASES = [
         lambda http_client: OpenRouterProvider(api_key='test', http_client=http_client),
     ),
     Case(
+        'otari',
+        lambda: OtariProvider(api_key='test'),
+        lambda http_client: OtariProvider(api_key='test', http_client=http_client),
+    ),
+    Case(
         'ovhcloud',
         lambda: OVHcloudProvider(api_key='test'),
         lambda http_client: OVHcloudProvider(api_key='test', http_client=http_client),
@@ -210,6 +216,7 @@ IMPORT_GUARD_CASES = [
     ('ollama', 'use the Ollama provider'),
     ('openai', 'use the OpenAI provider'),
     ('openrouter', 'use the OpenRouter provider'),
+    ('otari', 'use the Otari provider'),
     ('ovhcloud', 'use OVHcloud AI Endpoints provider'),
     ('sambanova', 'use the SambaNova provider'),
     ('snowflake', 'use the Snowflake provider'),

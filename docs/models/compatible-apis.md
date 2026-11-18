@@ -198,6 +198,43 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
+## Otari
+
+[Otari](https://otari.ai) is Mozilla.ai's open-source LLM gateway, which adds API key management, budgets, usage tracking and fallback routing in front of the providers it routes to. Use the hosted gateway at [otari.ai](https://otari.ai), or [run your own](https://github.com/mozilla-ai/otari).
+
+Create an API key on the **API keys** page of the otari.ai dashboard, set the `OTARI_API_KEY` environment variable and use [`OtariProvider`][pydantic_ai.providers.otari.OtariProvider] by name. Name the model as `<provider>:<model>`, or use the name of one of your routing policies or aliases:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('otari:anthropic:claude-sonnet-5-5')
+...
+```
+
+Requests go to otari.ai's US region by default. Pass `region='eu'` for an account in the EU region, or point `base_url` (or the `OTARI_BASE_URL` environment variable) at your self-hosted gateway's `/api/v1` URL:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.otari import OtariProvider
+
+eu_agent = Agent(
+    OpenAIChatModel(
+        'anthropic:claude-sonnet-5-5',
+        provider=OtariProvider(api_key='your-otari-api-key', region='eu'),
+    )
+)
+self_hosted_agent = Agent(
+    OpenAIChatModel(
+        'openai:gpt-5.2',
+        provider=OtariProvider(api_key='your-otari-api-key', base_url='http://localhost:8000/api/v1'),
+    )
+)
+...
+```
+
+The provider part of the model name selects the [model profile](#model-profile), so `anthropic:claude-sonnet-5-5` gets Claude's. After a host of many vendors' models, the vendor that follows decides: `groq:openai/gpt-oss-120b` gets gpt-oss's.
+
 ## OVHcloud AI Endpoints
 
 To use OVHcloud AI Endpoints, you need to create a new API key. To do so, go to the [OVHcloud manager](https://ovh.com/manager), then in Public Cloud > AI Endpoints > API keys. Click on `Create a new API key` and copy your new key.

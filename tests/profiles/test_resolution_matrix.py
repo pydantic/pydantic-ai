@@ -125,6 +125,7 @@ with try_import() as openai_imports:
         # OpenRouter installs its own Google transformer; importable so inline_snapshot can name it.
         _OpenRouterGoogleJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.providers.otari import OtariProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
@@ -4038,6 +4039,138 @@ def test_nebius_moonshotai():
 
 
 # =============================================================================
+# Otari — multi-provider gateway, `provider:model` names
+# =============================================================================
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_routing_policy_name():
+    profile = OtariProvider.model_profile('my-routing-policy')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_anthropic():
+    """`provider:model` and the catalogue's `creator/model` name the same family."""
+    profile = OtariProvider.model_profile('anthropic:claude-sonnet-5-5')
+    assert profile == OtariProvider.model_profile('anthropic/claude-sonnet-5-5')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+            'thinking_enabled_by_default': True,
+            'forced_tool_choice_disables_thinking': True,
+            'anthropic_supports_adaptive_thinking': True,
+            'anthropic_supports_effort': True,
+            'anthropic_supports_dynamic_filtering': True,
+            'anthropic_supports_xhigh_effort': True,
+            'anthropic_supports_max_effort': True,
+            'anthropic_disallows_budget_thinking': True,
+            'anthropic_disallows_sampling_settings': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': True,
+            'anthropic_disables_thinking_with_between_tools': True,
+            'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': True,
+            'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_supports_task_budgets': True,
+            'supports_forced_tool_choice': False,
+            'anthropic_binds_thinking_blocks': True,
+            'anthropic_max_output_tokens': 128000,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'supported_native_tools': frozenset(
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+            ),
+            'tool_deferral_mode': 'standalone',
+            'may_tokenize_special_tokens_in_content': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_gemini():
+    """Otari's own `gemini` provider id gets the Google family profile."""
+    profile = OtariProvider.model_profile('gemini:gemini-2.5-flash')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_tool_return_schema': True,
+            'supports_video_input': True,
+            'supports_thinking': True,
+            'google_supports_thinking_level': False,
+            'google_supports_strict_tool_definition': True,
+            'google_web_search_billed_per_prompt': True,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
+            'supported_document_media_types': frozenset(
+                {'application/pdf', 'text/csv', 'text/html', 'text/markdown', 'text/plain'}
+            ),
+            'may_tokenize_special_tokens_in_content': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_claude_on_vertex():
+    """A host of many vendors' models, like `vertexai`, doesn't pick the family: Claude on Vertex isn't Gemini."""
+    profile = OtariProvider.model_profile('vertexai:claude-sonnet-5-5')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': False}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_gpt_oss_on_groq():
+    """The vendor after a host names the family."""
+    profile = OtariProvider.model_profile('groq:openai/gpt-oss-120b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': _GptOssJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'default_framing_announcement': 'always',
+            'supports_forced_tool_choice': False,
+            'ignore_streamed_leading_whitespace': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_open_weight_model():
+    profile = OtariProvider.model_profile('together:qwen/qwen3.8-27b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+# =============================================================================
 # Stav — multi-lab routing
 # =============================================================================
 
@@ -4379,6 +4512,7 @@ _RouteProvider = Literal[
     'nebius',
     'ollama',
     'openrouter',
+    'otari',
     'snowflake',
     'stav',
     'together',
@@ -4415,6 +4549,8 @@ def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:  # no
             return OllamaProvider
         case 'openrouter':
             return OpenRouterProvider
+        case 'otari':
+            return OtariProvider
         case 'snowflake':
             return SnowflakeProvider
         case 'stav':
@@ -4437,6 +4573,7 @@ def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:  # no
         ('heroku', 'claude-opus-5-5'),
         ('litellm', 'anthropic/claude-opus-5-5'),
         ('snowflake', 'claude-opus-5-5'),
+        ('otari', 'anthropic:claude-opus-5-5'),
     ],
 )
 def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_name: _RouteProvider, model_name: str):
@@ -4560,6 +4697,12 @@ _GPT_OSS: tuple[_RouteProvider, str] = ('cerebras', 'gpt-oss-120b')
         ),
         pytest.param(
             _DEEPSEEK_V4,
+            ('stav', 'deepseek-ai/deepseek-v4-flash-0731'),
+            id='deepseek-v4-stav',
+            marks=_diverges('#12104', 'Stav allows forcing while DeepSeek V4 thinks'),
+        ),
+        pytest.param(
+            _DEEPSEEK_V4,
             ('nebius', 'deepseek-ai/DeepSeek-V4-Pro'),
             id='deepseek-v4-nebius',
             marks=_diverges('#12104', 'Nebius allows forcing while DeepSeek V4 thinks'),
@@ -4572,9 +4715,9 @@ _GPT_OSS: tuple[_RouteProvider, str] = ('cerebras', 'gpt-oss-120b')
         ),
         pytest.param(
             _DEEPSEEK_V4,
-            ('stav', 'deepseek-ai/deepseek-v4-flash-0731'),
-            id='deepseek-v4-stav',
-            marks=_diverges('#12104', 'Stav allows forcing while DeepSeek V4 thinks'),
+            ('otari', 'together:deepseek-ai/DeepSeek-V4-Pro'),
+            id='deepseek-v4-otari',
+            marks=_diverges('#12104', 'Otari allows forcing while DeepSeek V4 thinks'),
         ),
         pytest.param(
             _DEEPSEEK_V4_1,
@@ -4647,6 +4790,7 @@ def test_forced_tool_choice_guard_agrees_across_routes(
         ('ollama', 'deepseek-v4.1-flash:1017', True),
         ('fireworks', 'accounts/fireworks/models/deepseek-v4p1-flash', True),
         ('crusoe', 'deepseek-ai/DeepSeek-V4.1-Flash', True),
+        ('otari', 'together:deepseek-ai/DeepSeek-V4.1-Flash', True),
         ('together', 'deepseek-ai/DeepSeek-V3.2', False),
     ],
 )
