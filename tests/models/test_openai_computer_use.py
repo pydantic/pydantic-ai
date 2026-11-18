@@ -577,9 +577,10 @@ async def test_a_finished_call_in_a_filtered_response_runs_nothing(allow_model_r
     params = ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True)
     if streamed:
         async with model.request_stream(messages, None, params) as stream_response:
-            async for _ in stream_response:
-                pass
+            events = [event async for event in stream_response]
         stored = stream_response.get()
+        # The call was announced at its done event and isn't started a second time.
+        assert [type(event).__name__ for event in events] == ['PartStartEvent', 'PartEndEvent']
     else:
         stored = await model.request(messages, None, params)
 
