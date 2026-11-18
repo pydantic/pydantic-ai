@@ -26,6 +26,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Ask a second model whether each selected tool call should run | `ToolCallJudge(model, question=..., tools=...)` |
 | Let a second model approve low-risk calls that need approval, and ask a person about the rest | `ApprovalReviewer(model, question=..., tools=...)` |
 | Ask a person before file writes and commands, by permission mode (full, auto, read-only) | `Permissions(mode)` with `ask_permissions` in a `HandleDeferredToolCalls` handler |
+| Allow, ask about, or deny tool calls and shell commands by rule | `Permissions(rules=[PermissionRule(...)])` |
 | Cap USD or tokens per day/month/run, per tenant, across workers | `SpendLimits(budgets=[Budget(...)])` |
 | Cap tokens/cost for one run only | core `UsageLimits` (no harness capability needed) |
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
@@ -34,6 +35,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Interrupt an agent that keeps repeating the same tool call, result, or response, or repeats itself within a streaming response | `DetectLoops` |
 | Cap calls per tool or per run, or refuse exact repeats, and let the run continue | `ToolBudgets(per_tool=..., total=..., refuse_repeats=...)` |
 | Have the agent review and revise its answer before the run ends | `RefineOutput` |
+| End the run with a final answer instead of `UsageLimitExceeded` at a usage limit | `WrapUpAtLimits` |
 
 ## RepairToolArguments
 
@@ -416,7 +418,13 @@ Gotchas:
 Holds the `FileSystem` writes and `Shell` commands a permission mode asks about by raising
 `ApprovalRequired`: `'full'` (default) asks about nothing, `'auto'` asks about commands matching
 `ask_commands` (`DEFAULT_ASK_COMMANDS`: `rm -rf`, `git push`, `sudo`, network clients, installs), and
-`'read-only'` asks about every write and command. Other tools are not checked.
+`'read-only'` asks about every write and command. Other tools are not checked unless a rule matches them.
+
+`rules=[PermissionRule(...)]` decide before the mode: each rule is `'allow'`, `'ask'`, or `'deny'` for calls
+matching its `tools` selector, `args` globs, and shell `command` words. `'deny'` beats `'ask'` beats `'allow'`,
+whatever the order. A compound command runs by rule only if an allow rule matches every simple command in it, while
+an ask or deny rule matching any one decides it. An allow skips `'read-only'`'s blanket ask but not `ask_commands`.
+A denied call returns a `ToolReturnPart` with `outcome='denied'`, even when it was approved.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -453,8 +461,13 @@ Gotchas:
   skips asking about the same tool and command or path for the rest of the conversation, via the caller-ownable
   `remembered` set; inside durable execution it is kept in the message history instead.
 - Delegates are only checked when `Permissions` reaches them: pass it in `SubAgents(shared_capabilities=[...])`.
-- `ask_commands` patterns are a convenience, not a sandbox: use a sandbox workspace when the agent must not
-  reach something.
+- `ask_commands` patterns and `rules` are a convenience, not a sandbox: use a sandbox workspace when the agent
+  must not reach something. An allow rule trusts everything after its words (`find` allows `find . -delete`).
+- Commands with `$`, backticks, quoted operators, brace expansion, globbed command names, subshells,
+  here-documents, or line breaks, and every command on a `'windows'` workspace, cannot be split: no `command` rule
+  allows them. Their quote-stripped text is still checked against ask and deny rules, and when the shell expands
+  part of them (`$`, backticks, braces, line continuations, globbed command names) they ask if an ask or deny
+  command rule applies.
 
 ## SpendLimits
 
@@ -926,6 +939,56 @@ print(agent.run_sync('Explain the change').output)
   every answer, the first one included.
 - Several on one agent each count their own rounds and add their instructions to a round. Emits no spans.
 
+## WrapUpAtLimits
+
+When the run's `UsageLimits` leave room for one more model request but not another, makes that request
+the last: `tool_choice='none'` with the tool definitions kept (cached tools and instructions match), plus a
+request-scoped `WrapUpPart` (an `InstructionCapabilityPart` from `pydantic_ai_harness.wrap_up_at_limits`)
+with `prompt` (default `DEFAULT_WRAP_UP_PROMPT`). The answer is the
+run's output instead of `UsageLimitExceeded`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import UsageLimits
+
+from pydantic_ai_harness import WrapUpAtLimits
+
+
+def research(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if info.model_settings and info.model_settings.get('tool_choice') == 'none':
+        return ModelResponse(parts=[TextPart('partial answer')])
+    return ModelResponse(parts=[ToolCallPart('look_up', {'topic': 'x'})])
+
+
+agent = Agent(FunctionModel(research), capabilities=[WrapUpAtLimits()])
+
+
+@agent.tool_plain
+def look_up(topic: str) -> str:
+    return topic
+
+
+print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).output)
+#> partial answer
+```
+
+- Triggers on `request_limit` (the last allowed request), `tool_calls_limit` (fewer calls left than the
+  largest batch so far), and input/output/total token limits (projected from the run's responses).
+  `cost_limit` and `per_request_input_tokens_limit` are not projected. A larger batch that goes over
+  `tool_calls_limit` still raises. With no `usage_limits`, the default `request_limit=50` applies.
+- `wrapped_up_by(result.new_messages())` returns the `LimitName` that cut the run short, or `None`; it reads
+  the `WrapUpPart` on the final request, found by type.
+- With tool output, `tool_choice='none'` sends only the output tools; Anthropic caches messages per
+  `tool_choice`.
+- List it after capabilities that spend from the run's usage before a request, so it sees what they spent.
+- For a sub-agent, give it its own `SubAgent.usage_limits`; sharing the parent's budget spends the parent's
+  last request.
+- Compaction still runs on the final request; a summarizing strategy has no request left there, so wrap
+  it in `FallbackCompaction(fallback_on=(..., UsageLimitExceeded))`. Stateless and durable-safe. Span: `run wrapped up`
+  (`wrap_up_at_limits.limit`).
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/repair-tool-arguments/
@@ -939,4 +1002,5 @@ print(agent.run_sync('Explain the change').output)
 - https://pydantic.dev/docs/ai/harness/trajectory-judge/
 - https://pydantic.dev/docs/ai/harness/detect-loops/
 - https://pydantic.dev/docs/ai/harness/refine-output/
+- https://pydantic.dev/docs/ai/harness/wrap-up-at-limits/
 - https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/ (core tool approval and deferred tools)
