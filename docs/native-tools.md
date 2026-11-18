@@ -152,7 +152,7 @@ With Anthropic, the number of searches is reported as `web_search_requests` in [
 
 With Google GenerateContent, the number of Google Search grounding queries is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details], and the billed count as `web_searches` on [`RequestUsage`][pydantic_ai.usage.RequestUsage]: one per unique query on Gemini 3, and one per grounded request that returned a web source on Gemini 2.5 and older. The billed count is included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost], without deducting Google's free grounding allowance.
 
-With Google Interactions, Google's grounding tool counts are reported in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] as `<tool>_count`, such as `google_search_count`.
+With Google Interactions, Google's grounding tool counts are reported in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] as `<tool>_count`, such as `google_search_count`, and the billed count as `web_searches` on [`RequestUsage`][pydantic_ai.usage.RequestUsage]: the `google_search_count` on Gemini 3, and one per grounded request on Gemini 2.5 and older, whether or not a web source came back. The billed count is included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost].
 
 With OpenAI, you must use their Responses API to access the web search tool. The number of searches is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost]. Pages the model opens or searches within don't count as searches.
 

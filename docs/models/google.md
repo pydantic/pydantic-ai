@@ -263,8 +263,8 @@ Input file URLs are resolved by Google on both transports. Set `force_download=T
 file URL to download it locally with the library's address and response-size checks instead.
 Google Cloud can reject URLs blocked by the host's `robots.txt`; local downloading also handles that case.
 
-Native tool results accept PDF, MP3 audio and MP4 video for the Gemini 3.8 Flash and Gemini 4 Argon
-families, as defined by [`google_interactions_model_profile`][pydantic_ai.profiles.google.google_interactions_model_profile].
+Native tool results accept PDF, MP3 audio and MP4 video for the Gemini 3.8 Flash, Gemini 4 Argon, Gemini 4 Carbon
+and Gemini 4 Hydrogen families, as defined by [`google_interactions_model_profile`][pydantic_ai.profiles.google.google_interactions_model_profile].
 This support has expanded since the [initial PDF/audio probes](https://github.com/pydantic/pydantic-ai/issues/6192).
 Other models retain the conservative GenerateContent MIME profile; unsupported result files are
 sent in a framed user turn that identifies their originating tool call.
