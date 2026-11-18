@@ -283,7 +283,7 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
-By default Stav may run a request in any region. To keep compute inside a jurisdiction, pass `region`: `'eu'`, `'eea'`, a country code such as `'no'`, or a list such as `['no', 'se']` that allows any of them. Stav refuses a request it can't serve there instead of sending it elsewhere:
+By default Stav may run a request in any region. To keep compute inside a jurisdiction, pass `region`: `'eu'`, `'eea'`, a country code such as `'no'`, or a list such as `['no', 'se']` that allows any of them. Stav refuses a request it can't serve there instead of sending it elsewhere, with a 403 `endpoint_not_admissible` error that Pydantic AI raises as [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError]; the key is fine, so widen the region or pick another model:
 
 ```python
 from pydantic_ai import Agent
