@@ -61,8 +61,8 @@ The model must accept images.
   [OpenAI](../models/openai.md#native-tools).
 - Every other model gets `computer` as a regular function tool.
 
-A model whose profile doesn't list its native tools, such as one served by Ollama, vLLM or a custom provider, gets the
-native computer tool too. For a server without it, use `ComputerUse(native=False)`, or leave `ComputerTool` out of the
+An `OpenAIResponsesModel` on an OpenAI-compatible server whose profile doesn't list its native tools gets the native
+computer tool too. For a server without it, use `ComputerUse(native=False)`, or leave `ComputerTool` out of the
 profile's `supported_native_tools`.
 
 Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
