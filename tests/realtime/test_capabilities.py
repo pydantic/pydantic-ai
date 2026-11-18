@@ -94,6 +94,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tools import RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE
 
 from ..realtime_connections import InferredConnection
 from .test_session import (
@@ -1500,8 +1501,8 @@ async def test_a_seeded_load_advertises_its_tools_at_connect_on_any_model() -> N
     assert not any(isinstance(content, UpdateTools) for content in connection.sent)
 
 
-async def test_loading_an_already_loaded_capability_is_refused() -> None:
-    """A session knows what it loaded, so a second load is refused as in a standard run, and reveals nothing again."""
+async def test_loading_an_already_loaded_capability_is_a_no_op() -> None:
+    """A session knows what it loaded, so a second load is a no-op as in a standard run, and reveals nothing again."""
     connection = _ScriptedConnection()
     agent: Agent[None, str] = Agent(deps_type=type(None), capabilities=[_forecast_capability()])
     async with agent.realtime(FakeRealtimeModel(connection, profile=_UPDATES)).session() as session:
@@ -1516,7 +1517,10 @@ async def test_loading_an_already_loaded_capability_is_refused() -> None:
         )
 
     results = [event.part for event in events if isinstance(event, FunctionToolResultEvent)]
-    assert [part.outcome for part in results] == ['success', 'retried']
+    assert [part.outcome for part in results] == ['success', 'success']
+    assert results[1].content == {
+        'message': LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='weather')
+    }
     assert _sent_groups(connection) == [UpdateTools, ToolResult, ToolResult]
 
 
