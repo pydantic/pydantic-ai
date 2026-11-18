@@ -19,7 +19,6 @@ from pydantic_core import to_json
 
 from ... import _utils, usage
 from ..._utils import now_utc as _now_utc, number_to_datetime
-from ...computer_use import ComputerCallPart
 from ...exceptions import ModelConnectionError
 from ...messages import BinaryImage, FilePart, ModelResponse, ModelResponseStreamEvent, TextPart, ToolCallPart
 from .. import StreamedResponse
@@ -32,7 +31,7 @@ from ._citations import (
     responses_citations_provider_details,
     responses_output_text_annotation_ta,
 )
-from ._computer import map_computer_call
+from ._computer import map_computer_call, stop_computer_calls_unless_completed
 from ._errors import map_api_errors, response_error, response_error_type
 from ._history_digest import with_history_digest
 from ._model_names import OpenAIModelName
@@ -99,10 +98,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _pending_tool_search_call_ids: deque[str] = field(default_factory=deque[str], init=False)
     _function_call_args: dict[str, str] = field(default_factory=dict[str, str], init=False)
     _finalized_function_calls: set[str] = field(default_factory=set[str], init=False)
-    _computer_calls: list[responses.ResponseComputerToolCall] = field(
-        default_factory=list[responses.ResponseComputerToolCall], init=False
-    )
-    """The computer calls mapped so far, mapped again if the response turns out incomplete or failed."""
+    _status: ResponseStatus | None = field(default=None, init=False)
+    """The status of the complete response that ended the stream, which decides whether its computer calls may run."""
     _history: Hasher | None = None
     """The history this response was created from, digested with its parts as `ModelResponse.history_digest`."""
     # Custom HTTP clients can return streams outside the SDK's AsyncStream class.
@@ -110,6 +107,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def get(self) -> ModelResponse:
         response = super().get()
+        response.parts = stop_computer_calls_unless_completed(
+            response.parts, self.model_request_parameters, status=self._status, refused=self._has_refusal
+        )
         if self._is_websocket:
             response.provider_details = {**(response.provider_details or {}), 'transport': 'websocket'}
         return with_history_digest(response, self._history)
@@ -133,6 +133,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def _handle_terminal_response(self, response: responses.Response) -> None:
         """Take what the complete response that ends the stream reports as `_process_response` does."""
+        self._status = response.status
         # A stream resumed with `starting_after` has no `response.created`, so this is where it first sees these.
         self._model_name = response.model or self._model_name
         self.provider_response_id = self.provider_response_id or response.id
@@ -350,7 +351,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         self._store_conversation_id(chunk.response)
 
     def _map_failed(self, chunk: responses.ResponseFailedEvent) -> None:
-        self._refuse_computer_calls()
         self._record_usage(chunk.response)
         # Record the terminal state first, so a failed background job isn't cancelled after the raise.
         self._set_state(chunk.response.status)
@@ -367,19 +367,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             self.provider_details = {**(self.provider_details or {}), 'finish_reason': 'failed'}
             self.finish_reason = RESPONSES_FINISH_REASON_MAP.get('failed')
 
-    def _refuse_computer_calls(self) -> None:
-        """Make the computer calls announced so far run nothing, as the response turned out incomplete or failed.
-
-        OpenAI says to stop then, which is known only after the calls were announced complete. They're replaced in the
-        response without starting them a second time.
-        """
-        for item in self._computer_calls:
-            if call := self._computer_call(item, response_completed=False):
-                self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
-
     def _map_incomplete(self, chunk: responses.ResponseIncompleteEvent) -> None:
         self._record_usage(chunk.response)
-        self._refuse_computer_calls()
         # Parity with the non-streaming `_process_response`: map the incomplete
         # reason when the provider sends one, leave the finish reason unset otherwise.
         raw_finish_reason = details.reason if (details := chunk.response.incomplete_details) else None
@@ -580,7 +569,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             case responses.ResponseFunctionToolCall(id=str(item_id)) if item_id:
                 yield from self._map_function_call_done(item, item_id)
             case responses.ResponseComputerToolCall():
-                self._computer_calls.append(item)
                 yield from self._map_computer_call_done(item)
             case responses.ResponseReasoningItem():
                 if signature := item.encrypted_content:  # pragma: no branch
@@ -621,12 +609,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     def _map_computer_call_done(self, item: responses.ResponseComputerToolCall) -> Iterator[ModelResponseStreamEvent]:
         # Its actions arrive whole in the done event, and OpenAI finishes each item before adding the next, so the
         # call starts complete here and keeps its place among the other parts.
-        if call := self._computer_call(item, response_completed=True):
-            yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
-
-    def _computer_call(
-        self, item: responses.ResponseComputerToolCall, *, response_completed: bool
-    ) -> ComputerCallPart | None:
         # The ID is stored as `_map_function_call_done` stores a function call's.
         call_id = stored_tool_call_id(
             item.call_id,
@@ -634,9 +616,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             provider_response_id=self.provider_response_id,
             timestamp=self.timestamp,
         )
-        return map_computer_call(
-            item, self.model_request_parameters, call_id, self.provider_name, response_completed=response_completed
-        )
+        if call := map_computer_call(item, self.model_request_parameters, call_id, self.provider_name):
+            yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
 
     def _map_function_call_done(
         self, item: responses.ResponseFunctionToolCall, item_id: str
