@@ -379,7 +379,7 @@ def main() -> None:
     (output / f'{check.name}.json').write_text(result.model_dump_json(), encoding='utf-8')
     print(
         f'{check.name}: {result.outcome}, {len(result.findings)} findings, '
-        f'{sum(result.dropped.values())} dropped outside the changed lines, {usage.steps} steps, '
+        f'{sum(result.dropped.values())} dropped outside its files or the changed lines, {usage.steps} steps, '
         f'{usage.tokens:,} tokens, {usage.seconds} s'
     )
 

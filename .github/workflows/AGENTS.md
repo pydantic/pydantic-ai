@@ -420,7 +420,8 @@ attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` wh
 As each run ends, `run_with_fallback` also exports an `OpenCode run` span for it, under the service
 `opencode-fallback`, so a later run's failure cannot drop it. Each span carries its run's resource attributes above,
 `opencode_fallback.provider`, and the run's model as `opencode_fallback.model`. The model tells apart links on one
-provider that run different models, such as two OpenCode Go links of a configured chain. It also counts the `step_finish` events in the run's stream and the tokens they report,
+provider that run different models, such as two OpenCode Go links of a configured chain. Each span also counts the
+`step_finish` events in the run's stream and the tokens they report,
 every kind summed as in `pr_review_checks.tokens`, as `opencode_fallback.steps` and `opencode_fallback.tokens`, a failed
 or handed-over run's included. A run that did not serve has an error status. When the run's process failed, the span
 adds the error type, status, provider code, Go usage window and retry-after the job log names, as
