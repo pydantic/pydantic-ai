@@ -794,18 +794,6 @@ def chunked_stream_response(chunks: list[bytes], *, content_encoding: str | None
     return handle_request
 
 
-NON_GZIP_CODINGS = [
-    # `brotli.compress(b'decoded by httpx2')`
-    pytest.param('br', bytes.fromhex('0b08806465636f6465642062792068747470783203'), id='br'),
-    # `compression.zstd.compress(b'decoded by httpx2')`
-    pytest.param('zstd', bytes.fromhex('28b52ffd20118900006465636f64656420627920687474707832'), id='zstd'),
-    pytest.param('deflate', zlib.compress(b'decoded by httpx2'), id='deflate'),
-    pytest.param('gzip, deflate', zlib.compress(gzip.compress(b'decoded by httpx2')), id='gzip, deflate'),
-    pytest.param('not-a-real-coding', b'decoded by httpx2', id='not-a-real-coding'),
-]
-"""Content codings the bounded gzip reader does not handle, each with a body encoded in it."""
-
-
 class TestSafeDownload:
     """Tests for safe_download function."""
 
@@ -1251,7 +1239,18 @@ class TestSafeDownload:
         response = await safe_download('https://example.com/file.txt', max_bytes=64)
         assert response.content == payload
 
-    @pytest.mark.parametrize(('coding', 'encoded'), NON_GZIP_CODINGS)
+    # Content codings the bounded gzip reader does not handle, each with a body encoded in it.
+    _NON_GZIP_CODINGS = [
+        # `brotli.compress(b'decoded by httpx2')`
+        pytest.param('br', bytes.fromhex('0b08806465636f6465642062792068747470783203'), id='br'),
+        # `compression.zstd.compress(b'decoded by httpx2')`
+        pytest.param('zstd', bytes.fromhex('28b52ffd20118900006465636f64656420627920687474707832'), id='zstd'),
+        pytest.param('deflate', zlib.compress(b'decoded by httpx2'), id='deflate'),
+        pytest.param('gzip, deflate', zlib.compress(gzip.compress(b'decoded by httpx2')), id='gzip, deflate'),
+        pytest.param('not-a-real-coding', b'decoded by httpx2', id='not-a-real-coding'),
+    ]
+
+    @pytest.mark.parametrize(('coding', 'encoded'), _NON_GZIP_CODINGS)
     async def test_max_bytes_rejects_unsupported_content_encoding(
         self, serve_requests: Callable[[RequestHandler], None], coding: str, encoded: bytes
     ) -> None:
@@ -1261,7 +1260,7 @@ class TestSafeDownload:
         with pytest.raises(ValueError, match='Unsupported content-encoding for bounded download'):
             await safe_download('https://example.com/file.txt', max_bytes=64)
 
-    @pytest.mark.parametrize(('coding', 'encoded'), NON_GZIP_CODINGS)
+    @pytest.mark.parametrize(('coding', 'encoded'), _NON_GZIP_CODINGS)
     async def test_unbounded_download_leaves_content_encoding_to_httpx2(
         self, serve_requests: Callable[[RequestHandler], None], coding: str, encoded: bytes
     ) -> None:
