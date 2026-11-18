@@ -10,6 +10,9 @@
 
 Command line interface to chat to LLMs, part of the [Pydantic AI project](https://github.com/pydantic/pydantic-ai).
 
+> [!WARNING]
+> `clai` is deprecated in favour of [pax](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax) (`pydantic-ai-pax`) and will be removed in Pydantic AI v3. Try pax with `uvx pydantic-ai-pax`.
+
 ## Usage
 
 <!-- Keep this in sync with docs/cli.md -->
