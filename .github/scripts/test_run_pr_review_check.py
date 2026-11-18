@@ -236,7 +236,7 @@ def test_tokens_are_counted_and_never_stop_a_review(tmp_path: Path) -> None:
     with (tmp_path / 'out').open('w') as log:
         usage = run_opencode(['sh', '-c', f"printf '%s\\n' {lines}"], '', cwd=tmp_path, env={}, log=log, seconds=300)
     assert (usage.steps, usage.tokens, usage.stopped) == (2, 2 * (2 * 10**9 + 1), False)
-    assert usage.kinds == Counter({'input': 2 * 10**9, 'output': 2, 'cache.read': 2 * 10**9})
+    assert usage.tokens_by_kind == Counter({'input': 2 * 10**9, 'output': 2, 'cache.read': 2 * 10**9})
 
 
 def test_time_budget_stops_the_review(tmp_path: Path, expire_budget: list[float]) -> None:

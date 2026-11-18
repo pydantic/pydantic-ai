@@ -281,7 +281,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   plan of the review's last OpenCode run, such as `the backup Coding Plan`, and how many runs the
   review took. When the review's run completes or reaches its time budget, the span adds its steps,
   tokens, its input, output and cache-read tokens, and its duration. A validated answer adds the
-  outcome, the number of findings, and how many findings the review dropped. A review that
+  outcome, the number of findings, and how many findings the review dropped as outside its files or
+  changed lines. A review that
   raised has the outcome `FAILED`, the exception's class name and an error status. When the last
   run's process failed, the span adds the type, status and provider code of its stream's last
   `error` event, and whether the stream holds a `step_finish`. As each OpenCode run of the review
@@ -418,8 +419,8 @@ attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` wh
 
 As each run ends, `run_with_fallback` also exports an `OpenCode run` span for it, under the service
 `opencode-fallback`, so a later run's failure cannot drop it. Each span carries its run's resource attributes above,
-`opencode_fallback.provider`, and the run's model as `opencode_fallback.model`, which tells apart two links on one
-provider, such as two OpenCode Go links of a configured chain. It also counts the `step_finish` events in the run's stream and the tokens they report,
+`opencode_fallback.provider`, and the run's model as `opencode_fallback.model`. The model tells apart links on one
+provider that run different models, such as two OpenCode Go links of a configured chain. It also counts the `step_finish` events in the run's stream and the tokens they report,
 every kind summed as in `pr_review_checks.tokens`, as `opencode_fallback.steps` and `opencode_fallback.tokens`, a failed
 or handed-over run's included. A run that did not serve has an error status. When the run's process failed, the span
 adds the error type, status, provider code, Go usage window and retry-after the job log names, as

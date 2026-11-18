@@ -52,7 +52,7 @@ class Usage:
 
     steps: int = 0
     tokens: int = 0
-    kinds: Counter[str] = field(default_factory=Counter[str])
+    tokens_by_kind: Counter[str] = field(default_factory=Counter[str])
     """The tokens by kind, as `step_tokens` names them."""
     stopped: bool = False
     seconds: int = 0
@@ -184,7 +184,7 @@ def run_opencode(
                     continue
                 usage.steps += 1
                 usage.tokens += tokens.total()
-                usage.kinds += tokens
+                usage.tokens_by_kind += tokens
             process.wait()
         finally:
             timer.cancel()
@@ -325,9 +325,9 @@ def main() -> None:
         values = {
             'pr_review_checks.steps': usage.steps,
             'pr_review_checks.tokens': usage.tokens,
-            'pr_review_checks.input_tokens': usage.kinds['input'],
-            'pr_review_checks.output_tokens': usage.kinds['output'],
-            'pr_review_checks.cache_read_tokens': usage.kinds['cache.read'],
+            'pr_review_checks.input_tokens': usage.tokens_by_kind['input'],
+            'pr_review_checks.output_tokens': usage.tokens_by_kind['output'],
+            'pr_review_checks.cache_read_tokens': usage.tokens_by_kind['cache.read'],
             'pr_review_checks.seconds': usage.seconds,
         }
         changed = {change.path: change.positions for change in changes}

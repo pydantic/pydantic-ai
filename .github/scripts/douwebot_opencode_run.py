@@ -165,8 +165,10 @@ def step_tokens(line: str) -> Counter[str] | None:
         raise ValueError('OpenCode wrote an invalid stream event') from None
     kinds: Counter[str] = Counter()
     for kind, value in tokens.items():
-        for name, count in value.items() if isinstance(value, dict) else [('', value)]:
-            kinds[f'{kind}.{name}' if name else kind] += int(count)
+        if isinstance(value, dict):
+            kinds.update({f'{kind}.{name}': int(count) for name, count in value.items()})
+        else:
+            kinds[kind] += int(value)
     return kinds
 
 
