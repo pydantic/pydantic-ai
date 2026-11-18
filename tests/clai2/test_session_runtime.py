@@ -367,3 +367,37 @@ def test_a_runtime_takes_its_store_from_the_process(tmp_path: Path) -> None:
             headless=True,
             process=ClaiProcess.open(store),
         )
+
+
+async def test_execute_command_disables_repr_highlighting() -> None:
+    """Slash command output and errors should not have Rich's repr highlighter colour fragments."""
+    from pydantic_clai2.runtime.session_runtime import _execute_command
+
+    text = 'Signed in to Claude Code. Choose a model in /add_model > claude-code, or run /model claude-code:claude-opus-5-5.'
+
+    class _Commands:
+        async def execute_async(self, command: str) -> str:
+            return text
+
+    buffer = io.StringIO()
+    console = Console(file=buffer, color_system='truecolor', width=200)
+    await _execute_command(_Commands(), '/claude_code', console=console)  # type: ignore[arg-type]
+    assert '\x1b[' not in buffer.getvalue()
+    assert text in buffer.getvalue()
+
+
+async def test_execute_command_error_disables_repr_highlighting() -> None:
+    """Slash command errors should use only the error style without repr-highlighted fragments."""
+    from pydantic_clai2.runtime.session_runtime import _execute_command
+
+    error_text = 'failed for /model claude-code:claude-opus-5-5'
+
+    class _FailingCommands:
+        async def execute_async(self, command: str) -> str:
+            raise RuntimeError(error_text)
+
+    buffer = io.StringIO()
+    console = Console(file=buffer, color_system='truecolor', width=200)
+    await _execute_command(_FailingCommands(), '/model', console=console)  # type: ignore[arg-type]
+    # When repr highlighting is disabled, the entire error line is emitted in a single styled span.
+    assert error_text in buffer.getvalue()
