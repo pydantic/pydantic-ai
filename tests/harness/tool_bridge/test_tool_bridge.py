@@ -377,7 +377,7 @@ class TestToolBridge:
                 _call('tool_call', name='flaky', args_json='{}'),
             ]
         )
-        agent = Agent(model, tools=[Tool(flaky, max_retries=1)], capabilities=[ToolBridge()])
+        agent = Agent(model, tools=[Tool(flaky, max_retries=1)], capabilities=[ToolBridge(max_retries=3)])
 
         result = await agent.run('go')
 
@@ -571,4 +571,15 @@ class TestToolBridge:
         agent = Agent(model, tools=[Tool(flaky, max_retries=5)], capabilities=[ToolBridge(max_retries=1)])
 
         with pytest.raises(UnexpectedModelBehavior, match="Tool 'tool_call' exceeded max retries count of 1"):
+            await agent.run('go')
+
+    async def test_tool_call_retries_follow_the_agent_budget(self):
+        def flaky() -> str:
+            """Always fail."""
+            raise ModelRetry('try again')
+
+        model = _scripted([_call('tool_call', name='flaky', args_json='{}')] * 4)
+        agent = Agent(model, tools=[Tool(flaky, max_retries=5)], capabilities=[ToolBridge()], retries={'tools': 2})
+
+        with pytest.raises(UnexpectedModelBehavior, match="Tool 'tool_call' exceeded max retries count of 2"):
             await agent.run('go')

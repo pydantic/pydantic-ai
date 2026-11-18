@@ -46,8 +46,11 @@ class ToolBridge(AbstractCapability[AgentDepsT]):
     max_results: int = 10
     """Maximum number of `tool_search` results."""
 
-    max_retries: int = 3
-    """Retries for each dispatcher tool, spent on unknown tool names, invalid arguments and bridged tools' retries."""
+    max_retries: int | None = None
+    """Retries for each dispatcher tool, spent on unknown tool names, invalid arguments and bridged tools' retries.
+
+    `None` (default) uses the agent's tool retry budget, as `Agent(retries={'tools': N})` sets it.
+    """
 
     id: str | None = 'tool_bridge'
     """An agent has one bridge, so two of them merge into one by default."""

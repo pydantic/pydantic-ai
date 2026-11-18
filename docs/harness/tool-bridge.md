@@ -35,7 +35,7 @@ A tool added, removed or changed mid-run changes what `tool_search` finds, not t
 - `tools` (default `'all'`): which tools to bridge, as a list of names or a `(ctx, tool_def) -> bool` callable, sync or async. The rest stay visible to the model as normal tools.
 - `search`: ranks the bridged tools for a query, with the signature of a [`ToolSearchFunc`][pydantic_ai.capabilities.ToolSearchFunc]. `None` (default) ranks tools by how many of the query's words appear in their name or description.
 - `max_results` (default `10`): the most tools one `tool_search` returns.
-- `max_retries` (default `3`): retries for each dispatcher tool, spent on unknown tool names, invalid arguments and retries the bridged tools ask for.
+- `max_retries` (default `None`, the agent's tool retry budget, as `Agent(retries={'tools': N})` sets it): retries for each dispatcher tool, spent on unknown tool names, invalid arguments and retries the bridged tools ask for.
 
 ## What stays native
 

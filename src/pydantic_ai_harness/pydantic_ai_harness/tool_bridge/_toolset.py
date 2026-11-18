@@ -110,8 +110,11 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
     max_results: int = 10
     """Maximum number of `tool_search` results."""
 
-    max_retries: int = 3
-    """Retries for each dispatcher tool, spent on unknown tool names, invalid arguments and bridged tools' retries."""
+    max_retries: int | None = None
+    """Retries for each dispatcher tool, spent on unknown tool names, invalid arguments and bridged tools' retries.
+
+    `None` (default) uses the agent's tool retry budget, as `Agent(retries={'tools': N})` sets it.
+    """
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """Return the dispatcher tools plus the tools that aren't bridged."""
@@ -142,7 +145,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
                     sequential=sequential and name == CALL_TOOL_NAME,
                     tool_kind=TOOL_CALL_KIND if name == CALL_TOOL_NAME else None,
                 ),
-                max_retries=self.max_retries,
+                max_retries=self.max_retries if self.max_retries is not None else ctx.max_retries,
                 args_validator=validator,
                 bridged=bridged,
             )
