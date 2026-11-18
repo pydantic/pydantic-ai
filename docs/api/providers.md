@@ -96,6 +96,8 @@
 
 ::: pydantic_ai.providers.sambanova.SambaNovaProvider
 
+::: pydantic_ai.providers.stav.StavProvider
+
 ::: pydantic_ai.providers.snowflake.SnowflakeProvider
 
 ::: pydantic_ai.providers.typesafe.TypeSafeProvider

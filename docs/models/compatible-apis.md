@@ -268,6 +268,57 @@ print(result.output)
 
 For a complete list of available models, see the [SambaNova supported models documentation](https://docs.sambanova.ai/docs/en/models/sambacloud-models).
 
+## Stav
+
+[Stav](https://stav.ai) is a European AI inference gateway: one API key for models from many labs, addressed as `creator/model` (for example `deepseek-ai/deepseek-v4-flash-0731` or `mistral-ai/mistral-large-4`), with the option to keep compute in the EU or EEA. Create an API key on the [API keys page](https://stav.ai/app/connect/api-keys) of your Stav workspace.
+
+You can set the `STAV_API_KEY` environment variable and use [`StavProvider`][pydantic_ai.providers.stav.StavProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('stav:deepseek-ai/deepseek-v4-flash-0731')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+By default Stav may run a request in any region. To keep compute inside a jurisdiction, pass `region`: `'eu'`, `'eea'`, a country code such as `'no'`, or a list such as `['no', 'se']` that allows any of them. Stav refuses a request it can't serve there instead of sending it elsewhere, with a 403 `endpoint_not_admissible` error that Pydantic AI raises as [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError]; the key is fine, so widen the region or pick another model:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.stav import StavProvider
+
+model = OpenAIChatModel(
+    'mistral-ai/mistral-large-4',
+    provider=StavProvider(api_key='your-stav-api-key', region='eu'),
+)
+agent = Agent(model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+Set `STAV_BASE_URL` or pass `base_url` to point the provider at another Stav endpoint.
+
+Stav also serves the Responses API, so you can use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with the same provider. OpenAI and xAI models are passed through to their own Responses API; Stav translates other models onto Chat Completions and lists any request parameters it had to drop in the `X-Stav-Dropped-Params` response header. Unlike OpenAI, Stav doesn't store responses unless you set [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], which only passed-through models accept.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers.stav import StavProvider
+
+model = OpenAIResponsesModel(
+    'openai/gpt-5-mini',
+    provider=StavProvider(api_key='your-stav-api-key', region='eea'),
+)
+agent = Agent(model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
 ## Together AI
 
 Go to [Together.ai](https://www.together.ai/) and create an API key in your account settings.

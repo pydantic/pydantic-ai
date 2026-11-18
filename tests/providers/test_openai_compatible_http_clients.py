@@ -39,6 +39,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
+    from pydantic_ai.providers.stav import StavProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
     from pydantic_ai.providers.vllm import VLLMProvider
@@ -166,6 +167,11 @@ CASES = [
         lambda http_client: SnowflakeProvider(account='test', token='test', http_client=http_client),
     ),
     Case(
+        'stav',
+        lambda: StavProvider(api_key='test'),
+        lambda http_client: StavProvider(api_key='test', http_client=http_client),
+    ),
+    Case(
         'together',
         lambda: TogetherProvider(api_key='test'),
         lambda http_client: TogetherProvider(api_key='test', http_client=http_client),
@@ -207,6 +213,7 @@ IMPORT_GUARD_CASES = [
     ('ovhcloud', 'use OVHcloud AI Endpoints provider'),
     ('sambanova', 'use the SambaNova provider'),
     ('snowflake', 'use the Snowflake provider'),
+    ('stav', 'use the Stav provider'),
     ('together', 'use the Together AI provider'),
     ('vercel', 'use the Vercel provider'),
     ('vllm', 'use the vLLM provider'),

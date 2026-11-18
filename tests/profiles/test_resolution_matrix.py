@@ -128,6 +128,7 @@ with try_import() as openai_imports:
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
+    from pydantic_ai.providers.stav import StavProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
     from pydantic_ai.providers.vllm import VLLMProvider
@@ -4037,6 +4038,118 @@ def test_nebius_moonshotai():
 
 
 # =============================================================================
+# Stav — multi-lab routing
+# =============================================================================
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_stav_bare_name():
+    profile = StavProvider.model_profile('auto')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_stav_deepseek():
+    profile = StavProvider.model_profile('deepseek-ai/deepseek-v4-flash-0731')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_stav_mistral():
+    profile = StavProvider.model_profile('mistral-ai/mistral-large-4')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_stav_gpt_oss():
+    profile = StavProvider.model_profile('openai/gpt-oss-120b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': _GptOssJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'default_framing_announcement': 'always',
+            'supports_forced_tool_choice': False,
+            'ignore_streamed_leading_whitespace': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_stav_openai():
+    profile = StavProvider.model_profile('openai/gpt-5-mini')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'thinking_enabled_by_default': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'openai_reasoning_efforts': frozenset({'high', 'low', 'medium', 'minimal'}),
+            'may_tokenize_special_tokens_in_content': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_stav_anthropic():
+    profile = StavProvider.model_profile('anthropic/claude-sonnet-4-5')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+            'forced_tool_choice_disables_thinking': True,
+            'anthropic_supports_max_effort': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': False,
+            'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_binds_thinking_blocks': False,
+            'anthropic_max_output_tokens': 64000,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+            ),
+            'tool_deferral_mode': 'standalone',
+            'may_tokenize_special_tokens_in_content': False,
+        }
+    )
+
+
+# =============================================================================
 # Crusoe — multi-lab routing, structured output forced on for every model
 # =============================================================================
 
@@ -4267,13 +4380,14 @@ _RouteProvider = Literal[
     'ollama',
     'openrouter',
     'snowflake',
+    'stav',
     'together',
     'vercel',
 ]
 """The provider names the forced-tool-choice route tests use."""
 
 
-def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:
+def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:  # noqa: C901
     """The provider class behind a route name in the forced-tool-choice route tests below.
 
     Only the requested class is looked up, so a test needs only the extras of the routes it uses.
@@ -4303,6 +4417,8 @@ def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:
             return OpenRouterProvider
         case 'snowflake':
             return SnowflakeProvider
+        case 'stav':
+            return StavProvider
         case 'together':
             return TogetherProvider
         case 'vercel':  # pragma: no branch
@@ -4453,6 +4569,12 @@ _GPT_OSS: tuple[_RouteProvider, str] = ('cerebras', 'gpt-oss-120b')
             ('vercel', 'deepseek/deepseek-v4-pro'),
             id='deepseek-v4-vercel',
             marks=_diverges('#12104', 'Vercel allows forcing while DeepSeek V4 thinks'),
+        ),
+        pytest.param(
+            _DEEPSEEK_V4,
+            ('stav', 'deepseek-ai/deepseek-v4-flash-0731'),
+            id='deepseek-v4-stav',
+            marks=_diverges('#12104', 'Stav allows forcing while DeepSeek V4 thinks'),
         ),
         pytest.param(
             _DEEPSEEK_V4_1,

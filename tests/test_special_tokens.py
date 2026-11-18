@@ -601,6 +601,8 @@ ROUTE_CASES: list[tuple[str, str, str, bool]] = [
     ('vercel', 'VercelProvider', 'alibaba/qwen3.8-27b', True),
     ('vercel', 'VercelProvider', 'bare-model', True),
     ('vercel', 'VercelProvider', 'anthropic/claude-opus-5-5', False),
+    ('stav', 'StavProvider', 'deepseek-ai/deepseek-v4-flash-0731', True),
+    ('stav', 'StavProvider', 'anthropic/claude-sonnet-4-5', False),
     ('azure', 'AzureProvider', 'deepseek-v4-pro', True),
     ('azure', 'AzureProvider', 'grok-4.7', False),
     ('azure', 'AzureProvider', 'gpt-6-luna', False),
