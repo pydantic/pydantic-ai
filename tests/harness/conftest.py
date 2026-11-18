@@ -63,7 +63,7 @@ def pytest_configure(config: pytest.Config) -> None:
     Only the harness logger is raised: raising the root logger with `--log-level=INFO` would also capture SDK lines
     such as httpx's request URLs, which a failure prints into public CI output.
     """
-    if str(config.getoption('markexpr')).endswith('_live'):  # pragma: no cover - only the sandbox live workflow sets it
+    if str(config.getoption('markexpr')).endswith('_live'):
         logging.getLogger('pydantic_ai_harness').setLevel(logging.INFO)
 
 
