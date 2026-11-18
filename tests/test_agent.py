@@ -199,6 +199,7 @@ from .conftest import (
     IsNow,
     IsStr,
     TestEnv,
+    assert_cancellation_leaks_no_tasks,
     iter_message_parts,
     legacy_retry_prompt_part,
     message,
@@ -6314,7 +6315,7 @@ class TestMultipleToolCalls:
             assert info.output_tools is not None
             return ModelResponse(
                 parts=[
-                    ToolCallPart('deferred_tool'),
+                    ToolCallPart('deferred_tool', tool_call_id='deferred_tool'),
                     ToolCallPart('regular_tool', {'x': 1}),
                 ],
             )
@@ -6336,7 +6337,10 @@ class TestMultipleToolCalls:
 
         result = agent.run_sync('test early strategy with deferred tool call')
         assert result.output == snapshot(
-            DeferredToolRequests(calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())])
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())],
+                validated_args={'deferred_tool': {}},
+            )
         )
         messages = result.all_messages()
 
@@ -11165,6 +11169,18 @@ async def test_run_handoff_survives_absorbed_cancellation():
         pytest.fail('run completed instead of ending cancelled')
 
 
+async def test_run_cancelled_at_any_point_leaves_no_task_behind():
+    """Cancelling a run at any point of its lifecycle must not leave a task it started pending.
+
+    On Python 3.11, draining the finished `_ready_waiter` yields to the event loop, so a cancellation
+    can land after `_do_run` has parked on `_run_done.wait()`, which only the error path's cleanup
+    unblocks. See https://github.com/pydantic/pydantic-ai/issues/13716.
+    """
+    agent = Agent(TestModel())
+
+    await assert_cancellation_leaks_no_tasks(lambda: agent.run('test'))
+
+
 async def test_streaming_handoff_survives_absorbed_cancellation():
     """Streaming counterpart of #6422: model request survives cancellation without deadlock.
 
@@ -11340,7 +11356,7 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
                 ToolCallPart(tool_name='call_first'),
                 ToolCallPart(tool_name='call_first'),
                 ToolCallPart(tool_name='increment_integer_holder'),
-                ToolCallPart(tool_name='requires_approval'),
+                ToolCallPart(tool_name='requires_approval', tool_call_id='requires_approval'),
                 ToolCallPart(tool_name='call_second'),
                 ToolCallPart(tool_name='call_second'),
                 ToolCallPart(tool_name='call_second'),
@@ -11389,7 +11405,10 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
         result = agent.run_sync(user_prompt)
 
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())],
+            validated_args={'requires_approval': {}},
+        )
     )
     assert integer_holder == 2
 
@@ -11913,7 +11932,8 @@ async def test_hitl_tool_approval(serialize_history: bool):
             approvals=[
                 ToolCallPart(tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'),
                 ToolCallPart(tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'),
-            ]
+            ],
+            validated_args={'ok_to_delete': {'path': 'ok_to_delete.py'}, 'never_delete': {'path': 'never_delete.py'}},
         )
     )
 
@@ -13321,14 +13341,17 @@ async def test_run_with_unapproved_tool_call_in_history():
 
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='delete_file')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='delete_file', tool_call_id='delete_file')]),
     ]
 
     result = await agent.run(message_history=messages)
 
     assert result.all_messages() == messages
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='delete_file', tool_call_id=IsStr())])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='delete_file', tool_call_id=IsStr())],
+            validated_args={'delete_file': {}},
+        )
     )
 
 

@@ -1573,6 +1573,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         profile = self.profile
         merged = merge_model_settings(self.settings, model_settings) or {}
 
+        # Typed budget thinking fails here with a `UserError`, kept for backward compatibility. Budget thinking in
+        # `extra_body['thinking']` is sent as is: the API rejects it with a 400, which `FallbackModel`, `ModelFallback`
+        # and `model_request_batch` handle as a failure of that one request, and a check before sending would turn it
+        # into a hard failure for them.
         if (
             profile.get('anthropic_disallows_budget_thinking', False)
             and (anthropic_thinking := merged.get('anthropic_thinking'))
@@ -3581,7 +3585,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             [q for q in cast('list[Any]', raw_queries) if isinstance(q, str)] if isinstance(raw_queries, list) else []
         )
         wire_key = 'pattern' if strategy == 'regex' else 'query'
-        return native_name, {wire_key: ' '.join(queries)}
+        # Input fields beyond the query (e.g. `limit`) go back as the model sent them.
+        extra_input: dict[str, Any] = details.get('extra_input') or {}
+        return native_name, {wire_key: ' '.join(queries), **extra_input}
 
     def _map_native_tool_return_part(
         self,

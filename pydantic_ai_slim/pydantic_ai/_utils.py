@@ -1295,6 +1295,11 @@ def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     return isinstance(obj, dict)
 
 
+def is_list(obj: Any) -> TypeGuard[list[Any]]:
+    """Check if obj is a list, narrowing the type to `list[Any]`."""
+    return isinstance(obj, list)
+
+
 def is_google_files_api_url(url: str) -> bool:
     """Whether a URL uses the Google Files API prefix recognized by the Google adapters.
 

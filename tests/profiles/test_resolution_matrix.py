@@ -610,6 +610,33 @@ def test_openrouter_gpt_6_1_sol(model_name: str):
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['gpt-6.2-sol', 'gpt-6.2-astra'])
+def test_openai_gpt_6_2(model_name: str):
+    """GPT-6.2 Sol and Astra resolve GPT-6 Astra's capabilities: neither accepts `effort='none'`."""
+
+    profile = OpenAIProvider.model_profile(model_name)
+    assert _normalize(profile) == _normalize(OpenAIProvider.model_profile('gpt-6-astra'))
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'model_name', ['openai/gpt-6.2-sol', 'openai/gpt-6.2-sol-pro', 'openai/gpt-6.2-astra', 'openai/gpt-6.2-astra-pro']
+)
+def test_openrouter_gpt_6_2(model_name: str):
+    """OpenRouter's published GPT-6.2 routes retain the OpenAI reasoning capabilities.
+
+    OpenRouter accepted a mid-conversation `configuration_update` on both non-pro routes (probed live 2026-11-17).
+    """
+
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('thinking_always_enabled') is True
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+    assert profile.get('openai_responses_supports_reasoning_context') is True
+    assert profile.get('supports_mid_conversation_effort') is not model_name.endswith('-pro')
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra'])
 def test_openai_gpt_5_6_reasoning_mode(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
@@ -1795,6 +1822,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
         {
             'supports_json_schema_output': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
+            'supports_video_input': False,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
@@ -1842,6 +1870,7 @@ def test_openrouter_openai_gpt_5_4():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supports_video_input': False,
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
@@ -1999,6 +2028,7 @@ def test_openrouter_x_ai_grok_4_7():
             'supported_image_media_types': frozenset(
                 {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
             ),
+            'supports_video_input': False,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
@@ -2032,6 +2062,7 @@ def test_openrouter_mistral_large():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_video_input': False,
             'tool_call_id_length': 9,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -2060,6 +2091,7 @@ def test_openrouter_zai_glm_5_3():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': False,
             'thinking_always_enabled': True,
             'openrouter_lowest_reasoning_effort': 'minimal',
             'supports_thinking': True,
@@ -2091,6 +2123,7 @@ def test_openrouter_xai_grok_4():
             'supported_image_media_types': frozenset(
                 {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
             ),
+            'supports_video_input': False,
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_thinking': True,
@@ -2287,6 +2320,7 @@ def test_openrouter_qwen():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': False,
             'ignore_streamed_leading_whitespace': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -2314,6 +2348,7 @@ def test_openrouter_deepseek():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_video_input': False,
             'supports_thinking': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -2340,6 +2375,7 @@ def test_openrouter_meta_llama():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': False,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -2366,6 +2402,7 @@ def test_openrouter_moonshotai():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_video_input': False,
             'ignore_streamed_leading_whitespace': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -2395,6 +2432,7 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_video_input': False,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
