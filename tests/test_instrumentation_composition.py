@@ -20,6 +20,8 @@ import httpx2
 import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, TextPart, ToolCallPart
+from pydantic_ai._instrumentation import public_class_path
+from pydantic_ai._output import OutputToolset
 from pydantic_ai.capabilities import AbstractCapability, Capability, Thinking
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.capabilities.mcp import MCP
@@ -269,3 +271,8 @@ async def test_url_derived_mcp_toolset_id_is_never_recorded(include_content: boo
 
     assert run_span_composition(exporter)['toolsets'] == snapshot({'pydantic_ai.mcp.MCPToolset': [{}]})
     assert 'testserver' not in str([span.attributes for span in exporter.get_finished_spans()])
+
+
+def test_class_path_passes_over_a_framework_class_not_exported_under_its_name() -> None:
+    """A public-looking class only in a private module records as the nearest exported class it extends."""
+    assert public_class_path(OutputToolset) == 'pydantic_ai.toolsets.AbstractToolset'
