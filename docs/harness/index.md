@@ -284,6 +284,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Tool Budgets](tool-budgets.md) | Harness | Cap calls per tool and per run, and refuse exact repeats, with a tool result the model can act on instead of an exception |
 | [Trajectory Judge](trajectory-judge.md) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
 | [Refine Output](refine-output.md) | Harness | Send the agent back to review and revise its output before the run ends |
+| [Wrap Up At Limits](wrap-up-at-limits.md) | Harness | End the run with a final answer, not `UsageLimitExceeded`, when a usage limit would stop it |
 
 ### Self-extension
 
