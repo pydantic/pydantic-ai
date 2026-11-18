@@ -241,10 +241,8 @@ from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
 
 agent = Agent('{{ anthropic:large }}', capabilities=[KubernetesSandbox(warm_pool='desktop-pool', desktop=True), Shell(), ComputerUse()])
 
-
-async def main():
-    result = await agent.run('Open python.org in Firefox and tell me the latest release.')
-    print(result.output)
+result = agent.run_sync('Open python.org in Firefox and tell me the latest release.')
+print(result.output)
 ```
 
 The screen needs [Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid`](computer-use.md#what-the-display-needs) in the sandbox image. Pods run as a non-root user, so nothing is installed for you: without them, the first use of the screen raises `WorkspaceUnavailableError` naming what is missing. Build them into an image along with the programs the agent should use, and give the pool's template that image in place of `python:3.12`:
