@@ -986,6 +986,11 @@ Other models, Google Vertex AI, Microsoft Foundry and Claude Platform on AWS, an
 tool. Each model's largest screenshot is
 listed under [Screen size](../harness/computer-use.md#screen-size).
 
+To send the native tool for a model or client you've checked yourself, set two keys in the model's `profile`: add
+`ComputerTool` to [`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools], which replaces
+the model's own set, so list every native tool you use, and pick the tool with
+[`anthropic_default_computer_tool_version`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_default_computer_tool_version].
+
 ## Web Tool Callers
 
 On models that support dynamic filtering, [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] are sent as Anthropic's `20260209` versions, or as the `20260318` versions when you use [web tool settings](#web-tool-settings). By default, Anthropic lets the model call these from a server-side code execution sandbox, where it can filter results before they reach the context window. The sandbox is provided even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] isn't enabled, so an agent that also has its own shell or code tool has two places to run code, and the sandbox has none of the agent's files, credentials, or environment.

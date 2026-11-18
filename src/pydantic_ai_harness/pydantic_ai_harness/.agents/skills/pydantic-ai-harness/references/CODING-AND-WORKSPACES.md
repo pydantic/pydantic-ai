@@ -421,7 +421,8 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 - `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`, or pass
   `desktop=(w, h)`; the size is fixed at creation. It can't press F13 to F24, keypad Enter, the keypad operators,
   print screen, pause, scroll lock, the menu key or media keys, use side mouse buttons, or type characters beyond
-  U+FFFF (most emoji). Anyone with the sandbox's preview link can see and control its desktop.
+  U+FFFF (most emoji). Anyone with the sandbox's preview link can see and control its desktop, so a public
+  sandbox gets no desktop: its first desktop use or shell command raises `UserError`.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
 
@@ -494,7 +495,8 @@ Python up to 3.14.
 
 - The first operation creates the container; the image needs a POSIX `sh`, and its own entrypoint and
   command don't run. Creating the container (and pulling) is not bounded by a command's `timeout`. Without `image` the
-  capability only attaches and removes by ref, and leaves a run without a ref to other workspace capabilities.
+  capability only attaches and removes by ref, and leaves a run without a ref to other workspace capabilities,
+  unless `desktop=True`, which builds the desktop image (below).
   `working_dir=None` uses the image's `WORKDIR`; a missing `working_dir` is created on first use, in an attached container too.
 - The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`; attaching starts a stopped container,
   so it comes back. The container outlives the run: `await DockerContainer().destroy(ref)`.
