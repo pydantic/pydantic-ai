@@ -59,9 +59,10 @@ call ends with.
 
 ## What the model is told
 
-The instructions tell the model that the screen belongs to the computer its shell and file tools run on, so a program
-it starts from the shell opens on the screen. They tell it to prefer those tools unless the work needs the screen:
-using a program's window, checking what the screen shows, or doing what the user asked to be done on the screen.
+The instructions tell the model how to group actions into calls and never to follow instructions shown on the screen.
+A run with a tool that runs shell commands, such as `Shell`'s, is also told that a program it starts from the shell
+opens on the screen, to start a program with a window in the background, and to use the screen only for work that
+needs it: operating a program's window, reading what the screen shows, and work the user asked to be done on the screen.
 
 With `defer_loading=True`, the model reads only the capability's `description` until it loads it. The default names
 the same three cases. Pass `description=` to change when the model loads it.
@@ -92,7 +93,7 @@ Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `settle_seconds` | `0` | Wait this long after acting before the screenshot. Set it when screenshots show pages still loading or animating. |
+| `settle_seconds` | `2` | Longest wait after acting for the screen to stop changing: screenshots are taken until two in a row match. `0` takes the screenshot at once. |
 | `native` | `True` | Use the model's own computer use tool where it has one, by adding a `ComputerTool` that this tool runs. `False` gives every model this tool and all its actions; on GPT that adds zoom, triple-click, holding keys, pressing or releasing a mouse button, and reading the pointer position. |
 
 `ComputerUse` turns on [prompt caching](https://pydantic.dev/docs/ai/capabilities/caching/), since every request resends the screenshots. Set
