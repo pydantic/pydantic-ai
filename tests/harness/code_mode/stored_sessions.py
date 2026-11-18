@@ -32,8 +32,9 @@ class Server:
     records: dict[bytes, bytes] = field(default_factory=dict[bytes, bytes])
     drops_next_feed: Exception | None = None
     """An error the next `feed_start` raises, as a connection that drops mid-feed does."""
-    refuses_dumps: bool = False
-    """`dump()` raises `MontyRuntimeError`, as a server whose snapshot quota is full does."""
+    dumps_left: int | None = None
+    """How many more `dump()` calls succeed before the rest raise `MontyRuntimeError`, as on a server
+    whose snapshot quota fills, or that refuses to store a session a snippet error left; `None` is no limit."""
 
     def load(self, record_id: bytes) -> bytes:
         # Empty bytes are not a Monty dump, so loading a lost record raises Monty's own error.
@@ -57,10 +58,12 @@ class StoredSession:
         return b'session' if self.stores else None
 
     async def dump(self) -> bytes:
-        if SERVER.refuses_dumps:
-            # `MontyRuntimeError` cannot be built directly; Monty raises it for bytes that are not a dump.
-            async with self.pool.checkout() as fresh:
-                await fresh.load_session(b'')
+        if SERVER.dumps_left is not None:
+            if SERVER.dumps_left == 0:
+                # `MontyRuntimeError` cannot be built directly; Monty raises it for bytes that are not a dump.
+                async with self.pool.checkout() as fresh:
+                    await fresh.load_session(b'')
+            SERVER.dumps_left -= 1
         record_id = f'record-{len(SERVER.records)}'.encode()
         SERVER.records[record_id] = await self.session.dump()
         return record_id

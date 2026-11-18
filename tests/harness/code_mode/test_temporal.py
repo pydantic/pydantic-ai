@@ -22,6 +22,7 @@ runs `temporalite` automatically.
 from __future__ import annotations
 
 import contextvars
+import csv
 import json
 import re
 import subprocess
@@ -61,7 +62,7 @@ except ImportError:  # pragma: lax no cover
 
 from pydantic_ai import Agent, Tool, ToolDefinition
 from pydantic_ai.capabilities import DynamicCapability
-from pydantic_ai.exceptions import PydanticAIDeprecationWarning, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import PydanticAIDeprecationWarning, ToolFailed, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -461,19 +462,6 @@ workflow_side_code_mode_agents = {
                 id='code',
                 monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
                 os_access=_workflow_os,
-            ),
-            TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
-        ],
-    ),
-    # Temporal binds operations only for capabilities on the agent when it is built.
-    'dynamic': Agent(
-        FunctionModel(_code_mode_model),
-        name='code_mode_temporal_dynamic_agent',
-        toolsets=[FunctionToolset(tools=[add], id='math')],
-        capabilities=[
-            DynamicCapability(
-                lambda ctx: CodeMode(id='code', monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
-                id='dynamic_code',
             ),
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
         ],
@@ -948,7 +936,7 @@ async def test_remote_turns_fail_without_storage(client: Client, refusal: str, m
     """
     stores = refusal != 'stores nothing'
     agent = storing_code_mode_agent if stores else not_storing_code_mode_agent
-    SERVER.refuses_dumps = refusal == 'refuses the dump'
+    SERVER.dumps_left = 0 if refusal == 'refuses the dump' else None
     try:
         async with Worker(
             client,
@@ -966,7 +954,7 @@ async def test_remote_turns_fail_without_storage(client: Client, refusal: str, m
                     execution_timeout=timedelta(seconds=30),
                 )
     finally:
-        SERVER.refuses_dumps = False
+        SERVER.dumps_left = None
     cause = exc_info.value.cause
     assert isinstance(cause, ApplicationError)
     assert cause.type == 'UserError'
@@ -977,11 +965,11 @@ async def test_remote_turns_fail_without_storage(client: Client, refusal: str, m
     assert _activity_types(history) == ['model_request', 'monty_turn']
 
 
-@pytest.mark.parametrize('reason', ['overlay', 'write_limit', 'os_access', 'no_id', 'dynamic', 'local', 'unpatched'])
+@pytest.mark.parametrize('reason', ['overlay', 'write_limit', 'os_access', 'no_id', 'local', 'unpatched'])
 async def test_remote_turns_stay_in_the_workflow(client: Client, monkeypatch: pytest.MonkeyPatch, reason: str) -> None:
     """An `'overlay'` mount (the default mode), a mount with `write_bytes_limit`, `os_access`, a `CodeMode`
-    without `id` or returned by a `DynamicCapability`, a local sandbox, or a workflow that started before
-    this version of Code Mode keeps every turn in the workflow.
+    without `id`, a local sandbox, or a workflow that started before this version of Code Mode keeps every
+    turn in the workflow.
 
     Unsandboxed for `'unpatched'`, so `workflow.patched` can be faked.
     """
@@ -1174,6 +1162,21 @@ async def test_remote_turns_report_a_lost_session(client: Client, prompt: str, r
     assert not [result for result in activity_results if b'secret-token' in result]
 
 
+def repeat(text: str, times: int) -> str:
+    """Return `text` repeated `times` times."""
+    return text * times
+
+
+def give_up() -> str:
+    """Fail without asking the model to retry."""
+    raise ToolFailed('the tool gave up')
+
+
+async def bad_csv() -> str:
+    """Raise `csv.Error`. It runs in the workflow, so its error reaches the sandbox as itself."""
+    raise csv.Error('bad row')
+
+
 def _snippet_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
     """Model that runs the user prompt as one snippet, then returns what `run_code` returned."""
     returns = [
@@ -1193,7 +1196,9 @@ def _snippet_agent(name: str, monty_sandbox: Any = StoredSessionPool, **code_mod
     return Agent(
         FunctionModel(_snippet_model),
         name=f'code_mode_temporal_snippet_{name}_agent',
-        toolsets=[FunctionToolset(tools=[echo], id='echo')],
+        toolsets=[
+            FunctionToolset(tools=[echo, repeat, give_up, Tool(bad_csv, metadata={'temporal': False})], id='echo')
+        ],
         capabilities=[
             CodeMode(id='code', monty_sandbox=monty_sandbox, **code_mode),
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
@@ -1243,11 +1248,11 @@ async def test_remote_turns_reset_a_session_the_server_will_not_store(client: Cl
     Logfire Agent Sandboxes refused such a dump in a live run, and the retries outlasted the workflow.
     """
     workflow_id = 'test_code_mode_temporal_error_not_stored'
-    SERVER.refuses_dumps = True
+    SERVER.dumps_left = 0
     try:
         output = await _run_snippet(client, workflow_id, '1 / 0')
     finally:
-        SERVER.refuses_dumps = False
+        SERVER.dumps_left = None
     assert 'ZeroDivisionError' in output
     assert 'The sandbox could not keep the session after this error, so it was reset.' in output
     history = await client.get_workflow_handle(workflow_id).fetch_history()
@@ -1259,7 +1264,7 @@ async def test_remote_turns_cut_output_to_fit_a_payload(client: Client, monkeypa
 
     The limit is lowered from 1 MiB so the snippet stays small.
     """
-    monkeypatch.setattr('pydantic_ai_harness._monty_turns._TURN_PAYLOAD_BYTES', 1000)
+    monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 1000)
     output = await _run_snippet(client, 'test_code_mode_temporal_cut_output', 'print("p" * 3000)\n"r" * 3000')
     assert output.count('more bytes not shown: a turn returns at most 1000 bytes]') == 2
     assert len(output) < 3000
@@ -1267,7 +1272,7 @@ async def test_remote_turns_cut_output_to_fit_a_payload(client: Client, monkeypa
 
 async def test_remote_turns_cut_an_error_to_fit_a_payload(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
     """An error message larger than a turn may return is cut too: it crosses once as the report and once alone."""
-    monkeypatch.setattr('pydantic_ai_harness._monty_turns._TURN_PAYLOAD_BYTES', 1000)
+    monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 1000)
     output = await _run_snippet(client, 'test_code_mode_temporal_cut_error', 'raise ValueError("e" * 3000)')
     assert 'ValueError' in output
     assert 'more bytes not shown: a turn returns at most 1000 bytes]' in output
@@ -1276,7 +1281,7 @@ async def test_remote_turns_cut_an_error_to_fit_a_payload(client: Client, monkey
 
 async def test_remote_turns_charge_cut_prints_to_the_print_cap(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
     """Prints a turn cut to fit its payload still count toward the feed's print cap, as in workflow code."""
-    monkeypatch.setattr('pydantic_ai_harness._monty_turns._TURN_PAYLOAD_BYTES', 1000)
+    monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 1000)
     monkeypatch.setattr('pydantic_ai_harness._monty_exec._PRINT_LIMIT_BYTES', 2500)
     code = 'import time\nprint("a" * 1500)\ntime.sleep(0)\nprint("b" * 1500)'
     output = await _run_snippet(client, 'test_code_mode_temporal_print_cap', code)
@@ -1371,3 +1376,81 @@ async def test_remote_turns_stay_in_the_workflow_under_temporal_agent(client: Cl
     assert output == 'done: 70'
     history = await client.get_workflow_handle(workflow_id).fetch_history()
     assert 'monty_turn' not in _activity_types(history)
+
+
+dynamic_code_mode_agent = Agent(
+    FunctionModel(_code_mode_model),
+    name='code_mode_temporal_dynamic_agent',
+    toolsets=[FunctionToolset(tools=[add], id='math')],
+    capabilities=[
+        DynamicCapability(
+            lambda ctx: CodeMode(id='code', monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
+            id='dynamic_code',
+        ),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class DynamicWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await dynamic_code_mode_agent.run('Calculate 3 + 4')
+        return result.output
+
+
+async def test_remote_turns_refuse_a_dynamic_code_mode(client: Client) -> None:
+    """A `CodeMode` a `DynamicCapability` returns has no turn activity, so the run fails saying why.
+
+    Its turn would otherwise run inline, waiting on the network inside the workflow task.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicWorkflow],
+        plugins=[AgentPlugin(dynamic_code_mode_agent)],
+        workflow_runner=_workflow_runner(),
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                DynamicWorkflow.run,
+                id='test_code_mode_temporal_dynamic',
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+    cause = exc_info.value.cause
+    assert isinstance(cause, ApplicationError)
+    assert cause.type == 'UserError'
+    assert 'not returned by a `DynamicCapability`' in cause.message
+
+
+async def test_remote_turns_refuse_results_too_large_for_one_turn(
+    client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Results the sandbox awaits together that exceed a turn reset the session and tell the model to batch."""
+    monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 1000)
+    code = 'import asyncio\nawait asyncio.gather(repeat(text="x", times=600), repeat(text="y", times=600))'
+    output = await _run_snippet(client, 'test_code_mode_temporal_large_results', code)
+    assert 'more than the 1000 it can take' in output
+    assert 'the session was reset' in output
+
+
+async def test_remote_turns_reset_before_a_tool_failure(client: Client) -> None:
+    """A nested `ToolFailed` after which the server cannot keep the session still resets it and says so."""
+    SERVER.dumps_left = 2  # the turns before the error are stored; the one the error ends is not
+    try:
+        output = await _run_snippet(client, 'test_code_mode_temporal_tool_failed_reset', 'await give_up()')
+    finally:
+        SERVER.dumps_left = None
+    assert 'the tool gave up' in output
+    assert 'The sandbox could not keep the session after this error, so it was reset.' in output
+
+
+async def test_remote_turns_keep_module_exception_types(client: Client) -> None:
+    """A tool's `csv.Error` reaches the sandbox as `csv.Error`, not as `binascii.Error` or `Exception`."""
+    code = (
+        'import csv\ntry:\n    await bad_csv()\n    caught = "no"\nexcept csv.Error:\n    caught = "csv.Error"\ncaught'
+    )
+    output = await _run_snippet(client, 'test_code_mode_temporal_csv_error', code)
+    assert output == 'csv.Error'

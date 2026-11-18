@@ -785,6 +785,10 @@ Code Mode keeps running `run_code` in workflow code, as described above, when an
   them, so their directories must exist wherever turn activities run.
 - The workflow started before this version of Code Mode, so its history replays as it was recorded.
 
+A `CodeMode` with a remote `monty_sandbox` that a `DynamicCapability` returns fails the run with a
+`UserError`, because Temporal binds activities only for capabilities on the agent when it is built.
+Put it on the agent instead.
+
 Each turn uses the `activity_config` you pass to `TemporalDurability`. Its `start_to_close_timeout`
 bounds one turn, and its retry policy retries a turn that failed to reach the server. A retry starts
 from the same stored ID, so it runs the turn again from the same state. Writes the turn made to a

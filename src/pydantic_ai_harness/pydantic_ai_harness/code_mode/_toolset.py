@@ -18,7 +18,7 @@ from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
-from pydantic_ai.capabilities import AbstractCapability, durable_operation_bound
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature
@@ -810,7 +810,7 @@ def _raise_usage_limit_exceeded(execution: RunCodeExecution) -> None:
         raise execution.usage_limit_exceeded
 
 
-def _raise_escaped_tool_failed(error: MontyFailure, execution: RunCodeExecution) -> None:
+def _raise_escaped_tool_failed(error: MontyFailure, execution: RunCodeExecution, *, reset_advice: str) -> None:
     """Raise a `ToolFailed` when the snippet ended on a nested call's uncaught `ToolFailed`.
 
     Raising it from `run_code` gives the model a failed result that spends no retry, as calling the
@@ -823,8 +823,8 @@ def _raise_escaped_tool_failed(error: MontyFailure, execution: RunCodeExecution)
     A message Monty does not carry unchanged, such as one with a lone surrogate, falls back to a retry.
     Telling these apart exactly needs Monty to carry the exception type across the boundary.
 
-    Limit failures that reset the session come back as `TimeoutError` or `MemoryError`, so they never
-    reach the match and need no reset advice here.
+    The session is already reset when the server could not keep it after the error, and
+    `reset_advice` then tells the model so.
     """
     if error.type_name != 'Exception':
         return
@@ -845,7 +845,7 @@ def _raise_escaped_tool_failed(error: MontyFailure, execution: RunCodeExecution)
                     tool_name=tool_name, content=nested.message, tool_call_id=call_id, outcome='failed'
                 )
         content += f'\n\n{_describe_started_calls(execution.nested_calls, returns)}'
-    raise ToolFailed(content) from escaped
+    raise ToolFailed(content + reset_advice) from escaped
 
 
 def _runtime_failure_retry(error: MontyFailure, execution: RunCodeExecution, *, reset_advice: str) -> ModelRetry:
@@ -1310,18 +1310,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         computes, and Temporal fails a workflow task that does not yield within 2 seconds. Turns move
         out only where they behave as they do here: an `os_access` handler may use workflow APIs, and
         Monty restarts a mount's `write_bytes_limit` count and drops its `'overlay'` writes when a
-        stored session loads. The operation must also be bound to an activity, which a `CodeMode`
-        without `id`, one a `DynamicCapability` returns, or the deprecated `TemporalAgent` lacks; it
-        would otherwise run inline in the workflow. The answer is fixed for the run, so every
-        `run_code` call takes the same path, and `workflow.patched` keeps runs that started before
-        this existed on the path they started on.
+        stored session loads. The answer is fixed for the run, so every `run_code` call takes the same
+        path, and `workflow.patched` keeps runs that started before this existed on the path they
+        started on.
         """
         if self.monty_turn is None or self.monty_sandbox is None or self.os_access is not None:
             return None
         mounts = self.mount if isinstance(self.mount, list) else [self.mount] if self.mount is not None else []
         if any(mount.mode == 'overlay' or mount.write_bytes_limit is not None for mount in mounts):
-            return None
-        if self.capability is None or not durable_operation_bound(ctx, self.capability, 'monty_turn'):
             return None
         if not in_durable_execution(ctx) or not _workflow_patched(_DURABLE_TURNS_PATCH):
             return None
@@ -1527,10 +1523,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 return ModelRetry(f'Type error in code:\n{capture.prepend_to(failure.display)}')
             case 'runtime':
                 run_state.has_executed_feed = True
-                _raise_escaped_tool_failed(failure, execution)
-                return _runtime_failure_retry(
-                    failure, execution, reset_advice=await self._reset_for_runtime_error(failure, run_state)
-                )
+                reset_advice = await self._reset_for_runtime_error(failure, run_state)
+                _raise_escaped_tool_failed(failure, execution, reset_advice=reset_advice)
+                return _runtime_failure_retry(failure, execution, reset_advice=reset_advice)
             case 'crashed' | 'disconnected':
                 # The worker died mid-feed (e.g. the code exhausted its memory or hit the
                 # request timeout) and the REPL state died with it; the pool replaces the

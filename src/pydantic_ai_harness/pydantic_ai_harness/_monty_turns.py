@@ -54,7 +54,9 @@ SettledData = ExternalReturnValue | ExternalExceptionData
 SLEEP_FUNCTIONS = frozenset({'time.sleep', 'asyncio.sleep', 'system.sleep', 'system.async_sleep'})
 """The OS calls CodeMode answers on the host, charging the wait to the snippet's sleep allowance."""
 
-_EXCEPTION_TYPES = {name.rpartition('.')[2]: name for name in get_args(ExcType)}
+_EXCEPTION_TYPES: dict[str, list[ExcType]] = {}
+for _name in get_args(ExcType):
+    _EXCEPTION_TYPES.setdefault(_name.rpartition('.')[2], []).append(_name)
 
 
 def to_wire(value: object) -> object:
@@ -140,8 +142,8 @@ def settled_data(result: ExternalSettledResult) -> SettledData:
     exc_type: ExcType = next(
         name
         for base in type(exc).__mro__
-        if (name := _EXCEPTION_TYPES.get(base.__name__)) is not None
-        and base.__module__.partition('.')[0] in ('builtins', name.partition('.')[0])
+        for name in _EXCEPTION_TYPES.get(base.__name__, ())
+        if base.__module__.partition('.')[0] in ('builtins', name.partition('.')[0])
     )
     message = exc.args[0] if len(exc.args) == 1 and isinstance(exc.args[0], str) else str(exc)
     return ExternalExceptionData(exc_type=exc_type, message=message)
@@ -339,8 +341,8 @@ class MontyServerError(Exception):
     """
 
 
-_TURN_PAYLOAD_BYTES = 1024 * 1024
-"""The most a turn returns, encoded: half Temporal's default 2 MiB payload limit.
+TURN_PAYLOAD_BYTES = 1024 * 1024
+"""The most a turn takes or returns, encoded: half Temporal's default 2 MiB payload limit.
 
 The other half leaves room for the converter's envelope. Past the limit the activity result fails
 to upload, while workflow code would hand the same text on for the model's tool output limits to cut.
@@ -468,13 +470,21 @@ async def _state_after(session: AsyncMontySession, request: TurnRequest, failure
         return None
 
 
+def oversized(request: TurnRequest) -> str | None:
+    """Why `request` is more than a turn may take, or `None` when it fits."""
+    size = len(to_json(request))
+    if size <= TURN_PAYLOAD_BYTES:
+        return None
+    return f'the sandbox would receive {size} bytes in one step, more than the {TURN_PAYLOAD_BYTES} it can take'
+
+
 def _fit_turn(turn: MontyTurn) -> MontyTurn:
-    """`turn`, its longest text cut, pass after pass, until the encoded turn fits `_TURN_PAYLOAD_BYTES`.
+    """`turn`, its longest text cut, pass after pass, until the encoded turn fits `TURN_PAYLOAD_BYTES`.
 
     Measured on the encoded turn, so JSON escaping and error text count. A nested call's arguments
     are never cut: `_answer_in_turn` keeps them to half the budget, so the texts always hold the excess.
     """
-    while (excess := len(to_json(turn)) - _TURN_PAYLOAD_BYTES) > 0:
+    while (excess := len(to_json(turn)) - TURN_PAYLOAD_BYTES) > 0:
         output = turn.output if isinstance(turn.output, str) else repr(from_wire(turn.output))
         failure = turn.failure or MontyFailure('other')
         texts = {'prints': turn.prints, 'output': output, 'display': failure.display, 'message': failure.message}
@@ -483,7 +493,7 @@ def _fit_turn(turn: MontyTurn) -> MontyTurn:
         assert len(data) > _NOTE_BYTES, 'the excess is always in a text longer than the note'
         # At most half per pass, so a cut spreads over the texts rather than emptying the first.
         kept = max(len(data) - excess, len(data) // 2) - _NOTE_BYTES
-        note = f'\n[{len(data) - kept} more bytes not shown: a turn returns at most {_TURN_PAYLOAD_BYTES} bytes]'
+        note = f'\n[{len(data) - kept} more bytes not shown: a turn returns at most {TURN_PAYLOAD_BYTES} bytes]'
         cut = data[:kept].decode(errors='ignore') + note
         if name in ('display', 'message'):
             turn = replace(turn, failure=replace(failure, **{name: cut}))
@@ -513,7 +523,7 @@ async def _answer_in_turn(
         elif not _args_cross(snapshot):
             message = (
                 f'{snapshot.function_name}() got arguments that cannot be sent to the tool: they need a JSON '
-                f'form, dict keys that stay distinct as JSON, and at most {_TURN_PAYLOAD_BYTES // 2} bytes'
+                f'form, dict keys that stay distinct as JSON, and at most {TURN_PAYLOAD_BYTES // 2} bytes'
             )
             snapshot = pauses.seen(await snapshot.resume({'exception': TypeError(message)}))
         else:
@@ -523,7 +533,7 @@ async def _answer_in_turn(
 def _args_cross(snapshot: AsyncFunctionSnapshot) -> bool:
     try:
         wired = to_wire((snapshot.args, snapshot.kwargs))
-        return len(to_json(wired)) <= _TURN_PAYLOAD_BYTES // 2
+        return len(to_json(wired)) <= TURN_PAYLOAD_BYTES // 2
     except (TypeError, PydanticSerializationError):
         return False
 

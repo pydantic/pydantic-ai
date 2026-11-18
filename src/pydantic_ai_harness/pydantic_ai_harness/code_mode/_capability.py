@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
@@ -377,7 +378,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 monty_sandbox=self.monty_sandbox,
                 repl_store=self.repl_store,
                 capability=self,
-                monty_turn=self._monty_turn,
+                monty_turn=self._monty_turn if self.id is not None else None,
                 speculation=self._speculation,
             )
         return CodeModeToolset(
@@ -393,7 +394,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             monty_sandbox=self.monty_sandbox,
             repl_store=self.repl_store,
             capability=self,
-            monty_turn=self._monty_turn,
+            monty_turn=self._monty_turn if self.id is not None else None,
             speculation=self._speculation,
         )
 
@@ -405,6 +406,14 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         session lives on the server between turns, so nothing here needs to outlive one.
         """
         assert self.monty_sandbox is not None, 'only a remote sandbox runs turns as durable operations'
+        temporal_workflow = sys.modules.get('temporalio.workflow')
+        if temporal_workflow is not None and temporal_workflow.in_workflow():
+            # Temporal binds operations only for capabilities on the agent when it was built, so this
+            # one runs inline, where the network wait would block the workflow task.
+            raise UserError(
+                'Inside a Temporal workflow, a `CodeMode` with a remote `monty_sandbox` must be on the agent '
+                'when it is built, not returned by a `DynamicCapability`, so its turns can run as activities.'
+            )
         try:
             async with await build_remote_pool(self.monty_sandbox, request.limits) as pool:
                 return await run_monty_turn(

@@ -62,6 +62,7 @@ try:
         TurnRequest,
         TurnResume,
         from_wire,
+        oversized,
         settled_data,
     )
 except ImportError as _import_error:  # pragma: no cover
@@ -203,7 +204,7 @@ class MontyRunState:
             try:
                 if in_temporal_workflow:
                     self.portal = self._pool_stack.enter_context(start_blocking_portal())
-                remote = self.pool_factory or self.monty_sandbox_url
+                remote = self.pool_factory if self.pool_factory is not None else self.monty_sandbox_url
                 pool = AsyncMonty() if remote is None else await build_remote_pool(remote, limits)
                 self.pool = await _enter_monty(self._pool_stack, pool, self.portal)
             except BaseException:
@@ -370,6 +371,18 @@ class TurnFeed:
         return {**self.limits, 'max_suspensions': max_suspensions - self.run_state.suspensions + restored_pauses}
 
     async def _turn(self, request: TurnRequest) -> TurnSnapshot:
+        if (message := oversized(request)) is not None:
+            # Tool results the sandbox awaits, all sent in one turn. Reported as running out of memory,
+            # which resets the session and tells the model to work in smaller batches.
+            raise MontyTurnFailed(
+                MontyFailure(
+                    'runtime',
+                    display=f'MemoryError: {message}',
+                    message=message,
+                    type_name='MemoryError',
+                    exception_types=('MemoryError', 'Exception', 'BaseException'),
+                )
+            )
         try:
             turn = await self.run_turn(request)
         except Exception as error:
