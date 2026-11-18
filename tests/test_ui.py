@@ -3510,12 +3510,11 @@ async def test_encode_stream_sends_keepalive_while_source_is_quiet(stop_after: s
             yield 'first'
             await released.wait()
             yield 'second'
-            await anyio.sleep_forever()
         finally:
             source_closed.set()
 
     chunks: list[str] = []
-    async for chunk in DummyUIEventStream().encode_stream(events(), keepalive_interval=0.01):
+    async for chunk in DummyUIEventStream().encode_stream(events(), keepalive_interval=0.01):  # pragma: no branch
         chunks.append(chunk)
         if chunk == KEEPALIVE:
             released.set()
