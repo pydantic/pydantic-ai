@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from contextlib import AsyncExitStack
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import dataclass, field, replace
 from typing import Any, Self
 
@@ -50,9 +50,22 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
             return self
         return replace(self, toolsets=new_toolsets)
 
+    def _members_connect_ahead(self) -> list[AbstractAsyncContextManager[None] | None]:
+        # A duck-typed stand-in for a toolset doesn't have the hook.
+        return [t._connect_ahead() if isinstance(t, AbstractToolset) else None for t in self.toolsets]
+
     async def __aenter__(self) -> Self:
+        aheads = self._members_connect_ahead()
         async with AsyncExitStack() as exit_stack:
-            for toolset in self.toolsets:
+            for index, toolset in enumerate(self.toolsets):
+                # Members are entered one by one, in order, in this task. Before that, the connections of this
+                # member and the ones after it start, up to the next one whose `__aenter__` may set up what later
+                # ones need, so N servers cost the slowest handshake rather than the sum.
+                if index == 0 or aheads[index - 1] is None:
+                    for ahead in aheads[index:]:
+                        if ahead is None:
+                            break
+                        await exit_stack.enter_async_context(ahead)
                 await exit_stack.enter_async_context(toolset)
             self._exit_stack = exit_stack.pop_all()
         return self

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import copy
 import functools
@@ -9,7 +10,7 @@ import ssl
 import warnings
 from abc import ABC
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
@@ -934,6 +935,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _headers_func: MCPHeadersFunc[AgentDepsT] | None = None
     _static_auth: HTTPAuth | Literal['oauth'] | str | None = None
     _static_headers: dict[str, str] | None = None
+    _connecting: asyncio.Task[Any] | None = None
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -1368,6 +1370,35 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     def _invalidate_prompts_cache(self) -> None:
         self._cached_prompts = None
 
+    def _connect_ahead(self) -> AbstractAsyncContextManager[None] | None:
+        return self._connected_ahead() if type(self).__aenter__ is MCPToolset.__aenter__ else None
+
+    @asynccontextmanager
+    async def _connected_ahead(self) -> AsyncGenerator[None]:
+        if self._resolves_per_run or self._running_count or self._connecting is not None:
+            yield
+            return
+        # The FastMCP client keeps its session in an asyncio task of its own, so it can be entered from a
+        # task of ours and left from the caller's. This task's reference to the session is released on close.
+        task = self._connecting = asyncio.create_task(self.client.__aenter__())
+        try:
+            yield
+        finally:
+            if self._connecting is task:  # never entered: nobody waits for this connection
+                self._connecting = None
+                task.cancel()
+            with anyio.CancelScope(shield=True):
+                await asyncio.wait({task})
+                if not task.cancelled() and task.exception() is None:
+                    await self.client.__aexit__(None, None, None)  # pyright: ignore[reportUnknownMemberType]
+
+    async def _enter_client(self, exit_stack: AsyncExitStack) -> None:
+        if (connecting := self._connecting) is not None:
+            self._connecting = None
+            await connecting  # raises the connection error here, as entering the client would
+        # Joins the session `_connect_ahead` opened, if any, instead of opening another.
+        await exit_stack.enter_async_context(self.client)
+
     async def __aenter__(self) -> Self:
         if self._resolves_per_run:
             # There's nothing to connect with until a run resolves `auth`/`headers`: each run enters
@@ -1381,7 +1412,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 # once initialization fully succeeds, so `_initialized` can't see stale data from a
                 # session that got torn down mid-setup.
                 async with AsyncExitStack() as exit_stack:
-                    await exit_stack.enter_async_context(self.client)
+                    await self._enter_client(exit_stack)
                     # A modern (sessionless) session has no `initialize` handshake, so server
                     # metadata comes from era-neutral client properties; older clients only populate
                     # `initialize_result`.

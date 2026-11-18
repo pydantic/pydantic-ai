@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC
 from importlib.util import find_spec
@@ -53,7 +55,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsNow, IsStr, iter_message_parts
+from .conftest import IsDatetime, IsNow, IsStr, iter_message_parts, no_leaked_tasks
 
 has_mcp = find_spec('mcp') is not None
 if TYPE_CHECKING or has_mcp:  # pragma: lax no cover
@@ -801,6 +803,75 @@ async def test_context_manager_failed_initialization():
             pass
 
     assert server1.is_running is False
+
+
+if TYPE_CHECKING or has_mcp:  # pragma: lax no cover
+
+    class _ConnectRecordingTransport(FastMCPTransport):
+        """An in-process transport that records when its connection starts, and can hold it until an event is set."""
+
+        def __init__(self, hold_until: anyio.Event | None = None, fail: bool = False):
+            super().__init__(test_mcp_server)
+            self.started = anyio.Event()
+            self.hold_until = hold_until
+            self.fail = fail
+
+        @asynccontextmanager
+        async def connect_session(self, **session_kwargs: Any) -> AsyncGenerator[Any]:
+            self.started.set()
+            if self.hold_until is not None:
+                await self.hold_until.wait()
+            if self.fail:
+                raise InitializationError
+            async with super().connect_session(**session_kwargs) as session:
+                yield session
+
+
+@pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
+async def test_mcp_servers_connect_at_once_but_not_past_a_toolset_that_sets_up_on_enter():
+    """Why not VCR: it pins when `CombinedToolset` starts each in-process server's connection, which no recording shows.
+
+    The first server's connection only finishes once the second one's has started, so entering them one after the
+    other, as the members are, would hang. A toolset with its own `__aenter__` may set up what a later server needs,
+    so the server after it doesn't start connecting until it has been entered: its `__aenter__` gives the event loop
+    enough turns to start an in-process connection that had been started early.
+    """
+    second = _ConnectRecordingTransport()
+    first = _ConnectRecordingTransport(hold_until=second.started)
+    servers = [in_process_mcp_toolset(first), in_process_mcp_toolset(second)]
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with CombinedToolset([servers[0], PrefixedToolset(servers[1], 'second')]):
+            assert all(server.is_running for server in servers)
+
+    after_setup = _ConnectRecordingTransport()
+    started_at_setup: list[bool] = []
+
+    class SetsUpOnEnter(FunctionToolset[None]):
+        async def __aenter__(self) -> Self:
+            for _ in range(20):
+                await anyio.lowlevel.checkpoint()
+            started_at_setup.append(after_setup.started.is_set())
+            return self
+
+    server = in_process_mcp_toolset(after_setup)
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with CombinedToolset([SetsUpOnEnter(), server]):
+            assert server.is_running
+    assert started_at_setup == [False]
+
+
+@pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
+async def test_mcp_server_failing_to_connect_cancels_later_connections():
+    """Why not VCR: it pins the teardown of a connection started ahead for a server that is never entered."""
+    never = anyio.Event()
+    later = _ConnectRecordingTransport(hold_until=never)
+    servers = [in_process_mcp_toolset(_ConnectRecordingTransport(fail=True)), in_process_mcp_toolset(later)]
+    with no_leaked_tasks(), anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        with pytest.raises(RuntimeError, match='Client failed to connect'):
+            async with CombinedToolset(servers):
+                pass  # pragma: no cover
+    assert later.started.is_set()
+    assert not any(server.is_running for server in servers)
 
 
 async def test_tool_manager_reuse_self():

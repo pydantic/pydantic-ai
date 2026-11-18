@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from typing import Any, Self
 
@@ -38,6 +39,9 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
         if new_wrapped is self.wrapped:
             return self
         return replace(self, wrapped=new_wrapped)
+
+    def _connect_ahead(self) -> AbstractAsyncContextManager[None] | None:
+        return self.wrapped._connect_ahead() if type(self).__aenter__ is WrapperToolset.__aenter__ else None
 
     async def __aenter__(self) -> Self:
         await self.wrapped.__aenter__()

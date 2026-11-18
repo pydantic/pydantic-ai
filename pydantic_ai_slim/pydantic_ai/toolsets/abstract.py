@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, Self
 
@@ -149,6 +150,14 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         inner toolsets, entering new ones). Default: return `self` (no per-step changes).
         """
         return self
+
+    def _connect_ahead(self) -> AbstractAsyncContextManager[None] | None:
+        """While open, connect in the background so that `__aenter__` only waits for the connection.
+
+        `CombinedToolset` opens these ahead of entering its members one by one, so their connections overlap,
+        but never past a member that returns `None`: its `__aenter__` may set up what later members need.
+        """
+        return nullcontext() if type(self).__aenter__ is AbstractToolset.__aenter__ else None
 
     async def __aenter__(self) -> Self:
         """Enter the toolset context.
