@@ -11,7 +11,14 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from ..._framing import TOOL_RESULT_TAG, frame
 from ..._utils import is_str_dict
 from ...computer_use import ComputerCallPart, ComputerResult, ComputerReturnPart
-from ...messages import BinaryImage, ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart
+from ...messages import (
+    BinaryImage,
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+    _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
+)
 from .. import ModelRequestParameters, _computer_tool_names  # pyright: ignore[reportPrivateUsage]
 
 _SCROLL_PIXELS_PER_CLICK = 114
@@ -332,15 +339,24 @@ def _summary_message(
     natively.
     """
     texts = [item for item in content if isinstance(item, str)]
-    note = ' '.join([*texts, *scroll_notes]) if texts or scroll_notes else part.model_response_str(wrap_if_error=False)
+    references = [f'See file {image.identifier}.' for image in extra_images]
+    note = (
+        ' '.join([*texts, *scroll_notes, *references])
+        if texts or scroll_notes or references
+        else part.model_response_str(wrap_if_error=False)
+    )
     framed = frame(TOOL_RESULT_TAG, note, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
     if not extra_images:
         return responses.EasyInputMessageParam(role='user', content=framed)
     message_content: list[responses.ResponseInputContentParam] = [
-        responses.ResponseInputTextParam(type='input_text', text=framed),
-        *(
-            responses.ResponseInputImageParam(type='input_image', image_url=extra_image.data_uri, detail='original')
-            for extra_image in extra_images
-        ),
+        responses.ResponseInputTextParam(type='input_text', text=framed)
     ]
+    # Each image is framed on its own, as core frames a tool's files on the user channel.
+    for image in extra_images:
+        open_tag, close_tag = _tool_result_provenance_tags(part.tool_name, part.tool_call_id, image.identifier)
+        message_content += [
+            responses.ResponseInputTextParam(type='input_text', text=open_tag),
+            responses.ResponseInputImageParam(type='input_image', image_url=image.data_uri, detail='original'),
+            responses.ResponseInputTextParam(type='input_text', text=close_tag),
+        ]
     return responses.EasyInputMessageParam(role='user', content=message_content)
