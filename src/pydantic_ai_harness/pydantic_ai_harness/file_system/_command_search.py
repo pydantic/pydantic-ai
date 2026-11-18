@@ -85,8 +85,7 @@ async def run_posix_search(
     )
     result = await workspace.run(script, shell=True, timeout=SEARCH_TIMEOUT)
     stderr, _, status = result.stderr.rpartition(_STATUS)
-    unreadable = [Unreadable(path, 'Permission denied') for path in re.findall(f'{_UNREADABLE}([^\0]*)\0', stderr)]
-    stderr = re.sub(f'{_UNREADABLE}[^\0]*\0', '', stderr)
+    unreadable, stderr = _split_unreadable(stderr)
     output = result.stdout
     cut = len(output.encode('utf-8', errors='surrogateescape')) >= MAX_OUTPUT_BYTES
     # head closes the pipe at the cap; xargs can report its child dying of SIGPIPE.
@@ -105,6 +104,18 @@ async def run_posix_search(
                 break
             results.append(kept)
     return results, cut, unreadable
+
+
+def _split_unreadable(stderr: str) -> tuple[list[Unreadable], str]:
+    """The files the search script reported it could not read, and the rest of `stderr`.
+
+    Each report is a NUL-terminated record, so `stderr` is split at each NUL rather than searched for the
+    prefix: a search would read the rest of `stderr` again from every prefix that no NUL follows.
+    """
+    *records, rest = stderr.split('\0')
+    parts = [record.partition(_UNREADABLE) for record in records]
+    unreadable = [Unreadable(path, 'Permission denied') for _, prefix, path in parts if prefix]
+    return unreadable, ''.join(head if prefix else f'{head}\0' for head, prefix, _ in parts) + rest
 
 
 def _processing(pattern: str | None, *, literal: bool, ignore_case: bool, context: int) -> str:

@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 import pytest
-from mcp.server.fastmcp import FastMCP
 
 import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext, Tool
@@ -30,7 +29,7 @@ from pydantic_ai.capabilities import (
     Toolset,
 )
 from pydantic_ai.capabilities.abstract import leaf_capabilities
-from pydantic_ai.messages import ModelMessage, TextContent, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -92,7 +91,7 @@ from pydantic_ai_harness.sub_agents import (
     DelegationTasks,
     SubAgent,
     SubAgents,
-    is_task_report,
+    TaskOutputPart,
 )
 from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
@@ -114,19 +113,15 @@ from ..append_only import (
     run_conversation,
     skip_unless_installed,
 )
+from ._mcp_server import MCPServer
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
 
-# MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
-pytestmark = pytest.mark.filterwarnings(
-    "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
-)
 
-
-def _hosted_server() -> FastMCP:
+def _hosted_server() -> MCPServer:
     """An in-process stand-in for a hosted MCP service, with server instructions and one tool."""
-    server = FastMCP('hosted', instructions='Hosted service instructions.')
+    server = MCPServer('hosted', instructions='Hosted service instructions.')
 
     @server.tool()
     def search() -> str:
@@ -754,12 +749,10 @@ def _delegation_reports(
     def delivered_once(result: ConversationResult) -> None:
         parts = [part for message in result.history for part in getattr(message, 'parts', ()) if _REPORT in str(part)]
         assert len(parts) == 1, f'expected the report in history once, found {len(parts)}'
-        # Delivered as framed `<task_output>` data on the user channel, recognized by its metadata.
+        # Delivered as a typed `<task_output>` capability part, which survives serialization as one.
         (part,) = parts
-        assert is_task_report(part), f'expected a task report, found {part!r}'
-        assert not isinstance(part.content, str)
-        (text,) = part.content
-        assert isinstance(text, TextContent) and text.content.startswith('<task_output task_id=')
+        assert isinstance(part, TaskOutputPart), f'expected a task report, found {part!r}'
+        assert part.content == _REPORT
 
     scenario = Scenario(
         turns=(
