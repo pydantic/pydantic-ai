@@ -10,9 +10,9 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from ..._framing import TOOL_RESULT_TAG, frame
 from ..._utils import is_str_dict
-from ...computer_use import COMPUTER_KIND, ComputerCallPart, ComputerResult, ComputerReturnPart
+from ...computer_use import ComputerCallPart, ComputerResult, ComputerReturnPart
 from ...messages import BinaryImage, ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart
-from .. import ModelRequestParameters
+from .. import ModelRequestParameters, _computer_tool_names  # pyright: ignore[reportPrivateUsage]
 
 _SCROLL_PIXELS_PER_CLICK = 114
 """OpenAI scrolls by pixels and the `computer` tool by wheel clicks; one click scrolls about this far.
@@ -207,8 +207,9 @@ def map_computer_call(
     `None` when the request has no `computer` tool to run it.
     """
     # A request always has it, but recorded streams are replayed without tools by the stream parity test.
-    if not (tool_name := model_request_parameters.tool_name_for_kind(COMPUTER_KIND)):
+    if not (tool_names := _computer_tool_names(model_request_parameters)):
         return None
+    tool_name = tool_names[0]
     # The SDK doesn't validate a response, so the item can hold anything; it is kept as sent, without a warning.
     dumped = item.model_dump(mode='json', exclude_none=True, warnings=False)
     args: dict[str, Any] | str

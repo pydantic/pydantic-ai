@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from types import MemberDescriptorType
-from typing import Annotated, Any, ClassVar, Literal, Union
+from typing import Annotated, Any, Literal, Union
 
 import pydantic
 from pydantic_core import core_schema
@@ -17,9 +17,8 @@ from pydantic_ai._warnings import (
     provider_field_warnings_suppressed,
     suppress_provider_field_warnings,
 )
-from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ToolKind, UploadedFile
+from pydantic_ai.messages import UploadedFile
 
 __all__ = (
     'AbstractNativeTool',
@@ -175,15 +174,6 @@ class AbstractNativeTool(ABC):
     the native one isn't available). When `False` (the default), the request errors on
     models that can't honor the native tool — the user explicitly asked for it, so fail loudly
     rather than silently substituting different behavior.
-    """
-
-    executed_by: ClassVar[frozenset[ToolKind]] = frozenset()
-    """The kinds of the local tools that run this native tool's calls; empty when the provider runs them.
-
-    The native tool is only sent when the request has exactly one tool of each kind that the model can call: not
-    deferred, or revealed by history. With none, it is left out when it is
-    [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional], and the request is refused when it isn't. With
-    more than one, the request is refused.
     """
 
     @property
@@ -916,7 +906,10 @@ class ComputerTool(AbstractNativeTool):
 
     Pydantic AI Harness's `ComputerUse` adds it with each step's display size. A model adapter sends it in place of
     that tool, turns the provider's calls into [`ComputerArgs`][pydantic_ai.computer_use.ComputerArgs], and turns the
-    results back into the provider's format. See [Computer Tool](../native-tools.md#computer-tool).
+    results back into the provider's format. It is only sent when the request has exactly one tool of that kind that
+    the model can call: not deferred, or revealed by history. With none, it is left out when it is
+    [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional], and the request is refused when it isn't. With
+    more than one, the request is refused. See [Computer Tool](../native-tools.md#computer-tool).
 
     Supported by:
 
@@ -929,8 +922,6 @@ class ComputerTool(AbstractNativeTool):
 
     kind: str = 'computer'
     """The kind of tool."""
-
-    executed_by: ClassVar[frozenset[ToolKind]] = frozenset({COMPUTER_KIND})
 
 
 @dataclass(kw_only=True)
