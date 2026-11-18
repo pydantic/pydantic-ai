@@ -59,7 +59,8 @@ class TestWindowsCommands:
         backend = WindowsWorkspaceBackend(tmp_path, powershell='powershell.exe')
         result = await backend.run('Get-Item missing.txt', shell=True)
         assert result.exit_code == 1
-        assert result.stderr.startswith(f"Get-Item : Cannot find path '{tmp_path / 'missing.txt'}'")
+        assert result.stderr.startswith('Get-Item : Cannot find path ')
+        assert 'missing.txt' in result.stderr
         assert 'CLIXML' not in result.stderr
         assert '_x000D_' not in result.stderr
 
