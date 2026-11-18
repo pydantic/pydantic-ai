@@ -229,6 +229,33 @@ Pass the backend as `workspace=`, as in [Prepare a sandbox before the run](#prep
 - The vault is kept in memory next to the sandbox. Pausing and resuming a Kubernetes sandbox, or restarting the server's network proxy, empties it, so fill it again after you reattach. To swap the token, call `credential_vault.patch(credentials={'replace': [...]})` on `await backend.get_sandbox()`.
 - `allow_internet_access=False` already means a deny-all policy, so pass one or the other: `OpenSandbox` raises `UserError` and `OpenSandboxBackend` raises `ValueError` for both.
 
+## Give the agent a desktop
+
+Pass `desktop=True` for a sandbox with a screen, which [`ComputerUse`](../computer_use/) lets the agent see and control:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse, Shell
+from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[OpenSandbox(image='debian:bookworm-slim', desktop=True), Shell(), ComputerUse()])
+
+
+async def main():
+    result = await agent.run(
+        'Install Firefox with `apt-get install -y firefox-esr`, open python.org in it and tell me the latest release.'
+    )
+    print(result.output)
+```
+
+The screen needs Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid`. When the image's user is root or has passwordless `sudo`, the first use installs any that are missing with `apt-get`, from the Debian packages `xvfb`, `xdotool`, `x11-utils`, `scrot` and `util-linux`; otherwise build them into the image, or the first use of the screen raises `WorkspaceUnavailableError` naming what is missing. The screen starts empty, with no window manager or browser: install the programs the agent should use in the image or before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run), or let the agent install them with `Shell`. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another.
+
+Every screen action is a command, so use execd 1.2 or later: older versions take about a second per command.
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+
+The screen opens no port and no endpoint, and its X server accepts no network connections. There's no live viewer; to watch a run, save each screenshot as it arrives, as in [Watching a run](../computer_use/#watching-a-run).
+
 ## Clean up
 
 A run never destroys its sandbox. Destroy it, files included, with the ref you stored:
@@ -293,6 +320,7 @@ The sandbox's isolation is the server's runtime: a Docker container shares the h
 | `sandbox_timeout` | Seconds a sandbox may go unused before the server deletes it, files included; every operation renews it, and a single command must finish within it. Default: `None`, kept until destroyed. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`; `None` uses the image's own. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The first use installs the screen's programs with `apt-get` when the image's user is root or has passwordless `sudo`. The size applies when the display first starts, and a reattached sandbox keeps its display's size. Default: `False`. |
 | `authority` | The [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
 | `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 

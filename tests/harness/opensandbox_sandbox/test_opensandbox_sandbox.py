@@ -66,6 +66,7 @@ class TestConfiguration:
             'allow_internet_access',
             'authority',
             'description',
+            'desktop',
             'env',
             'id',
             'image',
@@ -87,6 +88,7 @@ class TestConfiguration:
             'sandbox_timeout': 60,
             'working_dir': '/project',
             'env': {'CONFIGURED': 'value'},
+            'desktop': (1280, 800),
         }
         assert OpenSandbox[None].from_spec(**fields) == OpenSandbox(**fields)
 

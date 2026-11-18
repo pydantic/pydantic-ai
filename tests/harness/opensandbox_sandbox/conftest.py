@@ -14,7 +14,13 @@ _HAS_OPENSANDBOX = importlib.util.find_spec('opensandbox') is not None
 collect_ignore = (
     []
     if _HAS_OPENSANDBOX
-    else ['test_backend.py', 'test_conformance.py', 'test_opensandbox_live.py', 'test_opensandbox_sandbox.py']
+    else [
+        'test_backend.py',
+        'test_conformance.py',
+        'test_opensandbox_desktop.py',
+        'test_opensandbox_live.py',
+        'test_opensandbox_sandbox.py',
+    ]
 )
 
 # The SDK-installed and slim jobs take opposite branches.
