@@ -786,8 +786,9 @@ class TestSlidingWindowCompaction:
         sw = SlidingWindowCompaction(
             max_messages=1, keep_tokens=8, tokenizer=tokenizer, preserve_first_user_message=False
         )
-        await sw.compact(messages, _make_ctx(messages))
-        assert len(counted) == len(set(counted))
+        result = await sw.compact(messages, _make_ctx(messages))
+        assert counted == ['msg6', 'msg5', 'msg4', 'msg3']
+        assert result == messages[-2:]
 
     async def test_keep_zero_keeps_the_request_being_answered(self):
         sw = SlidingWindowCompaction(max_messages=1, keep_messages=0)
