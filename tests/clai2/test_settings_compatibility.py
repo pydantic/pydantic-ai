@@ -583,15 +583,16 @@ def test_codex_speed_labels_preserve_existing_preferences(tmp_path: Path, tier: 
 
 
 @pytest.mark.parametrize(
-    ('stored', 'tier'),
+    ('stored', 'speed', 'tier'),
     [
-        pytest.param('{"service_tier":"default"}', 'default', id='fast-off'),
-        pytest.param('{"service_tier":"priority"}', 'priority', id='fast-on'),
-        pytest.param('{"max_tokens":64}', 'ultrafast', id='unrelated'),
+        pytest.param('{"service_tier":"default"}', 'standard', 'default', id='fast-off'),
+        pytest.param('{"service_tier":"priority"}', 'fast', 'priority', id='fast-on'),
+        pytest.param('{"service_tier":"flex"}', '(not set)', 'flex', id='other-tier'),
+        pytest.param('{"max_tokens":64}', 'ultrafast', 'ultrafast', id='unrelated'),
     ],
 )
-def test_codex_speed_default_keeps_saved_tiers(tmp_path: Path, stored: str, tier: str) -> None:
-    """A tier an older CLAI's `/fast` saved outranks the ultrafast default; other rows gain it."""
+def test_codex_speed_default_keeps_saved_tiers(tmp_path: Path, stored: str, speed: str, tier: str) -> None:
+    """A tier an older CLAI's `/fast` saved picks the speed instead of the ultrafast default; other rows gain it."""
     path = tmp_path / 'config.db'
     SettingsStore(path)
     name = 'openai-codex:gpt-6-astra'
@@ -599,7 +600,25 @@ def test_codex_speed_default_keeps_saved_tiers(tmp_path: Path, stored: str, tier
         connection.execute('INSERT INTO model_settings VALUES (?, ?)', (name, stored))
     settings = model_settings_from_json(SettingsStore(path).model_settings(name), model=name).to_model_settings() or {}
     assert (settings.get('openai_service_tier') or settings.get('service_tier')) == tier
+    source = ModelSettingsSource(SettingsStore(path), name)
+    row = FieldMenu(source).row_for('codex_speed')
+    assert row is not None and source.current(row) == speed
     assert SettingsStore(path).model_settings(name) == json.loads(stored)
+
+
+def test_codex_chain_keeps_its_saved_tier(tmp_path: Path) -> None:
+    """A chain's tier, as an older CLAI's `/fast` saved it, picks its Codex members' speed."""
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    members = ['openai-codex:gpt-6-astra', 'openai-codex@work:gpt-6-astra']
+    store.save_chain(name='pool', models=members)
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('INSERT INTO model_settings VALUES (?, ?)', ('chain:pool', '{"service_tier":"priority"}'))
+    context = CommandContext(
+        settings=Settings(model='chain:pool'), store=store, apply_setting=lambda key, settings: None
+    )
+    defaults = context.model_defaults('chain:pool')
+    assert [(defaults(member) or {}).get('openai_service_tier') for member in members] == ['priority', 'priority']
 
 
 def test_codex_speed_survives_edits_to_other_settings(tmp_path: Path) -> None:

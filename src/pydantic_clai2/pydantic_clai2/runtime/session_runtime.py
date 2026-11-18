@@ -171,6 +171,7 @@ def _fast_command(
     """`/fast [on|off|ultrafast]`: set the session model's Codex speed.
 
     No argument toggles standard and the model's default speed, ultrafast where it is offered, else fast.
+    The matching `service_tier` is saved too, the nearest one for ultrafast, for older CLAI builds.
     """
     from pydantic_clai2.models.model_settings import CodexSpeed, model_defaults, model_settings_from_json
 
@@ -187,10 +188,10 @@ def _fast_command(
     else:
         settings_as = context.settings_model(model)
         form = model_settings_from_json(saved, model=settings_as)
-        active = form.codex_speed or ('fast' if form.service_tier == 'priority' else 'standard')
         on = 'ultrafast' if model_defaults(model=settings_as).get('codex_speed') == 'ultrafast' else 'fast'
-        speed = on if active == 'standard' else 'standard'
-    store.save_model_settings(model, {**saved, 'codex_speed': speed})
+        speed = on if form.codex_speed in (None, 'standard') else 'standard'
+    tier = 'default' if speed == 'standard' else 'priority'
+    store.save_model_settings(model, {**saved, 'codex_speed': speed, 'service_tier': tier})
     return f'Codex speed {speed} for {model}. Applies on the next prompt.' + (
         ' Uses more ChatGPT credits; availability depends on your model and account.' if speed != 'standard' else ''
     )

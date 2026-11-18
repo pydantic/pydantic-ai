@@ -203,12 +203,16 @@ async def test_fast_toggle_preserves_other_preferences(tmp_path: Path) -> None:
         result = await shell.commands.execute_async(command)
         assert f'Codex speed {speed} for {model}' in result
         assert ('more ChatGPT credits' in result) is (speed != 'standard')
-        assert SettingsStore(store.path).model_settings(model) == {**saved, 'codex_speed': speed}
+        assert SettingsStore(store.path).model_settings(model) == {
+            **saved,
+            'codex_speed': speed,
+            'service_tier': 'default' if speed == 'standard' else 'priority',
+        }
         assert (shell.context.model_settings(model) or {}).get('openai_service_tier') == _TIERS[speed]
     for command in ('/fast yes', '/fast on off'):
         with pytest.raises(ValueError, match='Usage: /fast'):
             await shell.commands.execute_async(command)
-        assert store.model_settings(model) == {**saved, 'codex_speed': 'ultrafast'}
+        assert store.model_settings(model) == {**saved, 'codex_speed': 'ultrafast', 'service_tier': 'priority'}
     store.save_model_settings(model, {**saved, 'custom_params': {'service_tier': 'flex'}})
     with pytest.raises(ValueError, match='Custom service_tier overrides the Codex speed'):
         await shell.commands.execute_async('/fast')
@@ -221,7 +225,7 @@ async def test_fast_toggles_ultrafast_where_offered(tmp_path: Path) -> None:
     shell = _shell(store, model)
     assert 'Codex speed standard' in await shell.commands.execute_async('/fast')
     assert 'Codex speed ultrafast' in await shell.commands.execute_async('/fast')
-    assert store.model_settings(model) == {'codex_speed': 'ultrafast'}
+    assert store.model_settings(model) == {'codex_speed': 'ultrafast', 'service_tier': 'priority'}
 
 
 async def test_fast_toggle_turns_a_saved_priority_tier_off(tmp_path: Path) -> None:
@@ -231,4 +235,4 @@ async def test_fast_toggle_turns_a_saved_priority_tier_off(tmp_path: Path) -> No
     store.save_model_settings(model, {'service_tier': 'priority'})
     result = await _shell(store, model).commands.execute_async('/fast')
     assert 'Codex speed standard' in result
-    assert store.model_settings(model) == {'service_tier': 'priority', 'codex_speed': 'standard'}
+    assert store.model_settings(model) == {'service_tier': 'default', 'codex_speed': 'standard'}

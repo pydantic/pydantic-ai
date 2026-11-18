@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from pydantic_ai.settings import CacheRetention, ModelSettings
 from pydantic_clai2.models.custom_params import expand_params
-from pydantic_clai2.models.profiles import KEY_NAME, base_model
+from pydantic_clai2.models.profiles import KEY_NAME, base_model, provider_of
 
 if TYPE_CHECKING:
     # Typing only: the provider modules load the Anthropic and OpenAI SDKs, and every turn loads this module.
@@ -37,6 +37,9 @@ _CODEX_SERVICE_TIERS: dict[CodexSpeed, Literal['default', 'priority', 'ultrafast
     'ultrafast': 'ultrafast',
 }
 """The `openai_service_tier` each Codex speed sends, as the Codex CLI's `/fast` and `/ultrafast` do."""
+
+_TIER_SPEEDS: dict[str, CodexSpeed] = {'default': 'standard', 'priority': 'fast'}
+"""The Codex speed a saved `service_tier` stands for."""
 
 
 class ModelSettingsForm(BaseModel):
@@ -302,16 +305,20 @@ class ModelSettingsForm(BaseModel):
 
 
 def model_defaults(*, model: str, saved: Mapping[str, JsonValue] | None = None) -> dict[str, JsonValue]:
-    """CLAI's prompt caching default for every model, reasoning defaults for GPT families, and Codex's ultrafast.
+    """CLAI's prompt caching default for every model, reasoning defaults for GPT families, and Codex speeds.
 
     Caching uses the unified `cache` setting, which providers without configurable caching ignore. A
     saved `anthropic_cache*` override still applies, since provider-specific cache settings take
-    precedence over it. Ultrafast is the default speed of the Codex models that offer it, unless
-    `saved` has a `service_tier`, as `/fast` saved before Codex speeds.
+    precedence over it. A Codex model's speed follows a `service_tier` in `saved` that `/fast` writes,
+    as older CLAI builds also read it; without a saved tier, the Codex models that offer ultrafast use it.
     """
     defaults: dict[str, JsonValue] = {'cache': True, **gpt_defaults(model=model)}
-    if base_model(model) in ULTRAFAST_CODEX_MODELS and 'service_tier' not in (saved or {}):
-        defaults['codex_speed'] = 'ultrafast'
+    if provider_of(model) == 'openai-codex':
+        tier = (saved or {}).get('service_tier')
+        if isinstance(tier, str) and tier in _TIER_SPEEDS:
+            defaults['codex_speed'] = _TIER_SPEEDS[tier]
+        elif tier is None and base_model(model) in ULTRAFAST_CODEX_MODELS:
+            defaults['codex_speed'] = 'ultrafast'
     return defaults
 
 
@@ -332,13 +339,17 @@ def gpt_defaults(*, model: str) -> dict[str, JsonValue]:
     }
 
 
-def default_model_settings(*, model: str, saved: Mapping[str, JsonValue]) -> ModelSettings | None:
+def default_model_settings(
+    *, model: str, saved: Mapping[str, JsonValue], selected: Mapping[str, JsonValue] | None = None
+) -> ModelSettings | None:
     """The family defaults for `model` that `saved` leaves unset, as `ModelSettings`.
 
     Every default fills exactly one `ModelSettings` key, so merging the saved settings over these
-    gives the same settings as `model_settings_from_json(saved, model=model)`.
+    gives the same settings as `model_settings_from_json(saved, model=model)`. `selected` is the saved
+    row of the selection `model` runs under, such as its chain, whose tier picks a Codex speed; by default `saved`.
     """
-    defaults = {key: value for key, value in model_defaults(model=model, saved=saved).items() if key not in saved}
+    tiers = saved if selected is None else selected
+    defaults = {key: value for key, value in model_defaults(model=model, saved=tiers).items() if key not in saved}
     return ModelSettingsForm.model_validate(defaults).to_model_settings()
 
 

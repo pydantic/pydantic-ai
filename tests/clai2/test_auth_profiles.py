@@ -542,7 +542,7 @@ async def test_shell_runs_a_chain_of_codex_accounts(tmp_path: Path, monkeypatch:
     assert 'openai-codex:test answered' in text
     # `ModelFallback` resolves a later model only once the run falls back to it.
     assert resolved == ['openai-codex:test']
-    assert store.model_settings('chain:pool') == {'codex_speed': 'fast'}
+    assert store.model_settings('chain:pool') == {'codex_speed': 'fast', 'service_tier': 'priority'}
 
 
 @pytest.mark.parametrize('stock', [False, True])

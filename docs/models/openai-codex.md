@@ -138,7 +138,7 @@ The Codex backend caches prompts implicitly and rejects the explicit prompt cach
 
 ## Speed
 
-The Codex CLI's [Fast and Ultrafast speeds](https://developers.openai.com/codex/speed) are service tiers, which you select with [`openai_service_tier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_service_tier]. The CLI's `/fast` sends `'priority'`, `/ultrafast` sends `'ultrafast'`, and Standard sends no tier. Faster speeds use more of your plan's usage. Ultrafast is only offered on some models, and whether you can use a speed depends on your plan.
+The Codex CLI's [Fast and Ultrafast speeds](https://developers.openai.com/codex/speed) are service tiers, which you select with [`openai_service_tier`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_service_tier]. The CLI's `/fast` sends `'priority'`, `/ultrafast` sends `'ultrafast'`, and Standard sends no tier. Faster speeds use more of your plan's usage. Ultrafast is only offered on some models, and whether you can use a speed depends on your plan.
 
 ```python {title="codex_speed.py" test="skip - requires a ChatGPT sign-in"}
 from pydantic_ai import Agent
