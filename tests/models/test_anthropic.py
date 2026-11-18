@@ -10026,22 +10026,14 @@ async def test_anthropic_mcp_call_replays_empty_tool_args(allow_model_requests: 
     )
 
 
-@pytest.mark.parametrize(
-    'input_deltas',
-    [
-        [],
-        [
-            BetaRawContentBlockDeltaEvent(
-                type='content_block_delta', index=0, delta=BetaInputJSONDelta(type='input_json_delta', partial_json='')
-            )
-        ],
-    ],
-    ids=['no-delta', 'empty-delta'],
-)
-async def test_anthropic_mcp_call_streams_empty_tool_args(
-    allow_model_requests: None, input_deltas: list[BetaRawMessageStreamEvent]
-):
+@pytest.mark.parametrize('empty_delta', [False, True], ids=['no-delta', 'empty-delta'])
+async def test_anthropic_mcp_call_streams_empty_tool_args(allow_model_requests: None, empty_delta: bool):
     """Mocked, not recorded: no MCP server in the cassettes exposes a zero-argument tool."""
+    input_deltas: list[BetaRawMessageStreamEvent] = [
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta', index=0, delta=BetaInputJSONDelta(type='input_json_delta', partial_json='')
+        )
+    ][:empty_delta]
     stream: list[BetaRawMessageStreamEvent] = [
         BetaRawMessageStartEvent(
             type='message_start',
