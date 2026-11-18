@@ -267,8 +267,9 @@ class BubblewrapWorkspace(WrapperWorkspace):
     command keeps running after the call that started it, and they can signal the host user's other processes.
     `bwrap` and, without the network, `base64` are taken from a `PATH` directory outside the working
     directory, so a command cannot replace the next launch by writing there. When that directory contains
-    files the next SSH login runs on the host, such as `~/.ssh/rc` or `~/.bashrc`, they are bind-mounted
-    read-only (and created if missing), so a command cannot run code outside the sandbox through them.
+    files the next SSH login runs on the host, a fixed list of them, such as `~/.ssh/rc` and `~/.bashrc`, is
+    bind-mounted read-only (and created if missing). The rest of the home directory stays writable, including
+    files they source, so give the wrapper a project working directory rather than one containing `$HOME`.
 
     File methods run in the sandbox too, as shell commands, so they see what commands see and can't be
     tricked into writing outside it through a symlink. Only when the wrapped workspace is read-only (and so
