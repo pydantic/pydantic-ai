@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from itertools import accumulate
 from typing import Annotated, Any, TypeGuard
 
 from anthropic.types.beta import (
@@ -68,7 +69,7 @@ def computer_replay(part: ToolCallPart, provider_name: str, sent: NativeComputer
     blocks, counts = replay['computer_blocks'], replay['computer_action_counts']
     match part.args_as_dict():
         case {'actions': [*actions]} if blocks and len(blocks) == len(counts) and sum(counts) == len(actions):
-            starts = [sum(counts[:index]) for index in range(len(counts))]
+            starts = [0, *accumulate(counts)][:-1]
             members = [actions[start : start + count] for start, count in zip(starts, counts)]
             if all(_made(block, member, replay['computer_tool']) for block, member in zip(blocks, members)):
                 return replay
