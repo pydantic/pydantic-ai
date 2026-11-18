@@ -1,0 +1,196 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://integrate.api.nvidia.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "374"
+      content-type:
+      - application/json
+      host:
+      - integrate.api.nvidia.com
+    body:
+      type: json
+      content:
+        model: z-ai/glm-5.3-flash
+        stream: false
+        messages:
+        - role: user
+          content: What is the temperature in Paris? Use the tool.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_temperature
+            description: ""
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - nvcf-reqid
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      nvcf-reqid:
+      - d89d0ccc-4c7d-4238-9be3-106b05f8ffd9
+      nvcf-status:
+      - fulfilled
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-0655e9d6-9384-48c7-9324-774b568f7106
+        choices:
+        - index: 0
+          message:
+            content: null
+            tool_calls:
+            - id: 68f08696-1d77-413f-a4a2-4f9062a9eef6
+              type: function
+              function:
+                name: get_temperature
+                arguments: "{\"city\":\"Paris\"}"
+            role: assistant
+            reasoning_content: >-
+              The user wants the temperature in Paris. I should call the get_temperature tool
+              with city "Paris".
+          finish_reason: tool_calls
+          logprobs: null
+        created: 1793686070
+        model: z-ai/glm-5.3-flash
+        service_tier: null
+        system_fingerprint: null
+        object: chat.completion
+        usage:
+          prompt_tokens: 164
+          completion_tokens: 32
+          total_tokens: 196
+          prompt_tokens_details:
+            audio_tokens: null
+            cached_tokens: 0
+          completion_tokens_details:
+            accepted_prediction_tokens: null
+            audio_tokens: null
+            reasoning_tokens: 22
+            rejected_prediction_tokens: null
+  recorded_at: 2026-11-03T06:07:50.953136+00:00
+- request:
+    method: POST
+    uri: https://integrate.api.nvidia.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "795"
+      content-type:
+      - application/json
+      host:
+      - integrate.api.nvidia.com
+    body:
+      type: json
+      content:
+        model: z-ai/glm-5.3-flash
+        stream: false
+        messages:
+        - role: user
+          content: What is the temperature in Paris? Use the tool.
+        - role: assistant
+          reasoning_content: >-
+            The user wants the temperature in Paris. I should call the get_temperature tool
+            with city "Paris".
+          content: null
+          tool_calls:
+          - id: 68f08696-1d77-413f-a4a2-4f9062a9eef6
+            type: function
+            function:
+              name: get_temperature
+              arguments: "{\"city\":\"Paris\"}"
+        - role: tool
+          tool_call_id: 68f08696-1d77-413f-a4a2-4f9062a9eef6
+          content: 21 degrees Celsius in Paris
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_temperature
+            description: ""
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - nvcf-reqid
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      nvcf-reqid:
+      - e725c7a6-7527-427a-b3f8-92c72b669b4a
+      nvcf-status:
+      - fulfilled
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-e5e79e99-e4ab-43bd-9843-8213f16764d2
+        choices:
+        - index: 0
+          message:
+            content: The temperature in Paris is currently **21°C**. 🌤️
+            role: assistant
+            reasoning_content: null
+          finish_reason: stop
+          logprobs: null
+        created: 1793686318
+        model: z-ai/glm-5.3-flash
+        service_tier: null
+        system_fingerprint: null
+        object: chat.completion
+        usage:
+          prompt_tokens: 205
+          completion_tokens: 17
+          total_tokens: 222
+          prompt_tokens_details:
+            audio_tokens: null
+            cached_tokens: 0
+          completion_tokens_details:
+            accepted_prediction_tokens: null
+            audio_tokens: null
+            reasoning_tokens: 0
+            rejected_prediction_tokens: null
+  recorded_at: 2026-11-03T06:11:58.955422+00:00

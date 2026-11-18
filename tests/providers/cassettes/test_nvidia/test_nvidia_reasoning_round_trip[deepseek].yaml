@@ -1,0 +1,179 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://integrate.api.nvidia.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "387"
+      content-type:
+      - application/json
+      host:
+      - integrate.api.nvidia.com
+    body:
+      type: json
+      content:
+        model: deepseek-ai/deepseek-v4.1-flash
+        stream: false
+        messages:
+        - role: user
+          content: What is the temperature in Paris? Use the tool.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_temperature
+            description: ""
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 504
+    headers:
+      access-control-expose-headers:
+      - nvcf-reqid
+      connection:
+      - keep-alive
+      content-length:
+      - "0"
+      nvcf-error-source:
+      - upstream_status
+      nvcf-reqid:
+      - 35f07395-8fc4-4a9a-bb71-fa7dc1985ea3
+      nvcf-status:
+      - errored
+      vary:
+      - Origin
+    body:
+      type: none
+  recorded_at: 2026-11-03T15:46:07.079587+00:00
+- request:
+    method: POST
+    uri: https://integrate.api.nvidia.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "387"
+      content-type:
+      - application/json
+      host:
+      - integrate.api.nvidia.com
+    body:
+      type: json
+      content:
+        model: deepseek-ai/deepseek-v4.1-flash
+        stream: false
+        messages:
+        - role: user
+          content: What is the temperature in Paris? Use the tool.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_temperature
+            description: ""
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 504
+    headers:
+      access-control-expose-headers:
+      - nvcf-reqid
+      connection:
+      - keep-alive
+      content-length:
+      - "0"
+      nvcf-error-source:
+      - upstream_status
+      nvcf-reqid:
+      - e23c364e-2df4-43ca-a1a4-4799b42a193c
+      nvcf-status:
+      - errored
+      vary:
+      - Origin
+    body:
+      type: none
+  recorded_at: 2026-11-03T15:51:09.749479+00:00
+- request:
+    method: POST
+    uri: https://integrate.api.nvidia.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "387"
+      content-type:
+      - application/json
+      host:
+      - integrate.api.nvidia.com
+    body:
+      type: json
+      content:
+        model: deepseek-ai/deepseek-v4.1-flash
+        stream: false
+        messages:
+        - role: user
+          content: What is the temperature in Paris? Use the tool.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_temperature
+            description: ""
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 504
+    headers:
+      access-control-expose-headers:
+      - nvcf-reqid
+      connection:
+      - keep-alive
+      content-length:
+      - "0"
+      nvcf-error-source:
+      - upstream_status
+      nvcf-reqid:
+      - 326af44c-2fbc-40af-bb9a-26d7af6d3b9c
+      nvcf-status:
+      - errored
+      vary:
+      - Origin
+    body:
+      type: none
+  recorded_at: 2026-11-03T15:56:12.978736+00:00

@@ -301,6 +301,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'meta',
         'moonshotai',
         'nebius',
+        'nvidia',
         'ollama',
         'openrouter',
         'ovhcloud',

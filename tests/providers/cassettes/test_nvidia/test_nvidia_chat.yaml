@@ -1,0 +1,79 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://integrate.api.nvidia.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "157"
+      content-type:
+      - application/json
+      host:
+      - integrate.api.nvidia.com
+    body:
+      type: json
+      content:
+        model: nvidia/nemotron-3.5-super-vl-120b-a12b
+        stream: false
+        messages:
+        - role: user
+          content: What is the capital of France? Answer in one word.
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - nvcf-reqid
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      nvcf-reqid:
+      - b3b318f3-2d09-470f-9f74-a3fe5759aabb
+      nvcf-status:
+      - fulfilled
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-ce93b9a1-4df8-4821-b8e0-ac5660193ecf
+        choices:
+        - index: 0
+          message:
+            content: Paris
+            role: assistant
+            reasoning_content: |-
+              The user is asking for the capital of France and wants the answer in one word.
+
+              The capital of France is Paris.
+              "Paris" is one word.
+
+              I should answer with just "Paris".
+          finish_reason: stop
+          logprobs: null
+        created: 1793684892
+        model: private/nvidia/nemotron-3.5-super-120b-a12b
+        service_tier: null
+        system_fingerprint: null
+        object: chat.completion
+        usage:
+          prompt_tokens: 28
+          completion_tokens: 42
+          total_tokens: 70
+          prompt_tokens_details:
+            audio_tokens: null
+            cached_tokens: 0
+          completion_tokens_details:
+            accepted_prediction_tokens: null
+            audio_tokens: null
+            reasoning_tokens: 39
+            rejected_prediction_tokens: null
+  recorded_at: 2026-11-03T05:48:12.502440+00:00

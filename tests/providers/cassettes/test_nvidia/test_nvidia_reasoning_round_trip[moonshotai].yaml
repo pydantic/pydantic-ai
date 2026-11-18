@@ -1,0 +1,61 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://integrate.api.nvidia.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "376"
+      content-type:
+      - application/json
+      host:
+      - integrate.api.nvidia.com
+    body:
+      type: json
+      content:
+        model: moonshotai/kimi-k2.6
+        stream: false
+        messages:
+        - role: user
+          content: What is the temperature in Paris? Use the tool.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_temperature
+            description: ""
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 404
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "167"
+      content-type:
+      - application/problem+json
+      nvcf-error-source:
+      - upstream_status
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        status: 404
+        title: Not Found
+        detail: "Function '23d4f03a-b8a6-4adb-a183-7daa083a09cc': Not found for account 'A_dywOtJ60SWU9xtp2qUM59QA2kA5ucTH1d399PVIos'"
+  recorded_at: 2026-11-03T06:03:21.267240+00:00

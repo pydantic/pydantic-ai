@@ -349,6 +349,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
             from .moonshotai import MoonshotAIProvider
 
             return MoonshotAIProvider
+        case 'nvidia':
+            from .nvidia import NvidiaProvider
+
+            return NvidiaProvider
         case 'meta':
             from .meta import MetaProvider
 
