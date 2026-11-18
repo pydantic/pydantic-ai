@@ -147,12 +147,31 @@ Running out of retries or raising `CancelledError` also ends the run. The run en
 a model request already in progress finishes first. A tool can call `ctx.cancel()` to stop the run and
 the other background tools.
 
-A normal run waits for its background tools to finish. A pending call counts toward
-`tool_calls_limit`. If the run pauses for deferred tools or stops early, unfinished tools are
-cancelled. Results of tools that finished before a deferred-tool pause are kept in the message
-history, so a resumed run sees them, unless every call in the paused step was deferred. Results
-that have not been delivered when a run stops early are dropped. Async tools must allow
-cancellation; ignoring it can prevent the run from stopping.
+A run waits for its background tools to finish, also when it pauses for deferred tools. A pending call
+counts toward `tool_calls_limit`. At a deferred-tool pause, the results are added to the message history
+after the paused step, in the order the calls were made, so a resumed run sees them, even after a restart.
+A failed tool still ends the run.
+
+Results stay queued instead, and `BackgroundTools` doesn't queue them again, in two cases:
+
+- other queued content includes a `ModelResponse` or an interrupted request;
+- the run ends with a [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits),
+  which ends it once its request is submitted: background tools still running are cancelled, and only
+  results that already arrived stay queued.
+
+Results left queued aren't delivered. When you drive the run with
+[`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter], you can read them from
+[`AgentRun.pending_messages`][pydantic_ai.run.AgentRun.pending_messages]. With `run()`, `run_sync()`,
+`run_stream()` or a UI adapter, they're dropped.
+
+A tool's own `timeout` bounds how long the run waits for it, and a run's
+[`timeout`](../timeouts.md#bounding-a-whole-run) bounds the whole wait.
+
+Because the pause waits, `DeferredToolRequests` reaches the caller only after the slowest background
+tool finishes. To answer approvals while background tools keep running, resolve them inside the run
+with a [`HandleDeferredToolCalls`](../deferred-tools.md#resolving-deferred-calls-with-a-handler) handler.
+If the run stops early, unfinished tools are cancelled and results that have not been delivered
+are dropped. Async tools must allow cancellation; ignoring it can prevent the run from stopping.
 
 !!! warning
     Python cannot stop a synchronous tool before it returns. Cancelling the run will still wait for

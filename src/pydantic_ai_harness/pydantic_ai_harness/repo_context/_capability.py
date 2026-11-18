@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
+from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
 from pydantic_ai._utils import is_str_dict, replace_no_init
@@ -19,15 +19,13 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelRequestPart,
     TextContent,
-    ToolCallPart,
     UserPromptPart,
     WorkspaceSource,
     post_compaction_window,
 )
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import SupportsCommands, SupportsRealpath, Workspace
-from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, HarnessDeprecationWarning, warn_argument_ignored
 from pydantic_ai_harness._workspace import in_working_dir, innermost_backend, require_workspace, workspace_path
 from pydantic_ai_harness.file_system import DirectoryListedEvent, FileEditedEvent, FileReadEvent, FileWrittenEvent
 from pydantic_ai_harness.file_system._tool_kinds import step_aside_for_read_file
@@ -101,16 +99,6 @@ class ContextFilePathPart(
     """The directory the file applies to, which the traversal surfaced. Never sent to the model."""
 
 
-_DEFAULT_TRAVERSAL_TOOL_NAMES = frozenset({'list_directory', 'read_file'})
-_DEFAULT_TRAVERSAL_PATH_ARG = 'path'
-_TRAVERSAL_DEPRECATION = (
-    '`RepoContext.traversal_tool_names` and `RepoContext.traversal_path_arg` are deprecated. '
-    'Traversal detection now reacts to `FileReadEvent`, `DirectoryListedEvent` and `FileWrittenEvent`. '
-    'Hosts can emit these events by importing them from `pydantic_ai_harness.file_system`. '
-    'The customized tool-sniffing fallback remains active for this configuration.'
-)
-
-
 @dataclass
 class RepoContext(AbstractCapability[AgentDepsT]):
     """Discover and load a repo's accumulated coding-assistant context engineering.
@@ -161,11 +149,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     ```
     """
 
-    workspace_dir: Path | None = None
-    """Deprecated and ignored: the walk-up and asset scan are anchored at the workspace's working directory.
-
-    Set the working directory on the workspace instead, e.g. `LocalWorkspace('./repo')`.
-    """
+    # Keyword-only since the positional `workspace_dir` was removed, so an old positional call fails instead of
+    # landing its working directory on `home_dir`.
+    _: KW_ONLY
 
     home_dir: str | Path | None = None
     """The shallowest workspace directory to stop the walk-up at, inclusive, as a workspace path.
@@ -182,7 +168,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     autoload_instructions: bool = True
     """Strategy 1: load instruction files into the system prompt."""
 
-    autoload_symlink_roots: Sequence[str | Path] = field(default=(), kw_only=True)
+    autoload_symlink_roots: Sequence[str | Path] = ()
     """Authorize external autoload targets beneath these workspace paths, empty by default.
 
     Roots and targets are resolved through the workspace. Requires a backend implementing
@@ -205,12 +191,6 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     nested_inject: Literal['pointer', 'contents'] = 'contents'
     """For Strategy 3: inline the file `contents`, or append a one-line `pointer` the model can follow."""
 
-    traversal_tool_names: frozenset[str] = _DEFAULT_TRAVERSAL_TOOL_NAMES
-    """Deprecated tool names used by the compatibility traversal detector."""
-
-    traversal_path_arg: str = _DEFAULT_TRAVERSAL_PATH_ARG
-    """Deprecated path argument used by the compatibility traversal detector."""
-
     asset_roots: Sequence[str] = ('.claude', '.agents', '.codex', '.grok')
     """Root directories the inventory tool scans, relative to the working directory."""
 
@@ -227,6 +207,16 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     """Entry names that mark the repository root for `walk_up='repo_root'`.
 
     An entry of any kind counts, so a linked worktree's `.git` file marks its root like a `.git` directory.
+    """
+
+    nested_exclude: Sequence[str] = field(default=('node_modules', '.venv', 'venv', 'site-packages'), kw_only=True)
+    """For Strategy 3: `fnmatch` patterns for directory names whose instruction files are never surfaced.
+
+    A directory is skipped when any component of its path below the working directory matches, either as written
+    or after resolving symlinks, so everything beneath a match is skipped too, while the directories above it are
+    still surfaced. The default covers directories package managers install into, whose instruction files are
+    written for the package's own contributors and would otherwise take precedence over the project's. Matching
+    is case-sensitive.
     """
 
     nested_max_chars: int | None = 32_000
@@ -262,31 +252,22 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     _toolset: RepoContextToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
     """The one inventory toolset, shared with every per-run copy so durable execution sees the leaf it registered."""
 
-    _sniff_traversal_tools: bool = field(default=False, init=False, repr=False, compare=False)
-
     def __post_init__(self) -> None:
         if isinstance(self.root_markers, str):
             raise UserError(f'`RepoContext.root_markers` takes a sequence of names, e.g. `({self.root_markers!r},)`.')
+        if isinstance(self.nested_exclude, str):
+            raise UserError(
+                f'`RepoContext.nested_exclude` takes a sequence of patterns, e.g. `({self.nested_exclude!r},)`.'
+            )
         if self.nested_max_chars is not None and self.nested_max_chars < 0:
             raise UserError('`RepoContext.nested_max_chars` must not be negative.')
         if self.home_dir is not None and self.walk_up == 'repo_root':
             raise UserError(
                 "`RepoContext` takes either `home_dir` or `walk_up='repo_root'` to stop the walk-up, not both."
             )
-        if self.workspace_dir is not None:
-            warn_argument_ignored('RepoContext', 'workspace_dir', SET_WORKING_DIR_ON_THE_WORKSPACE)
-        self._sniff_traversal_tools = (
-            self.traversal_tool_names != _DEFAULT_TRAVERSAL_TOOL_NAMES
-            or self.traversal_path_arg != _DEFAULT_TRAVERSAL_PATH_ARG
-        )
-        if self._sniff_traversal_tools:
-            warnings.warn(_TRAVERSAL_DEPRECATION, HarnessDeprecationWarning, stacklevel=2)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> RepoContext[AgentDepsT]:
-        """Return a fresh per-run instance with isolated traversal/cache state.
-
-        The copy skips `__post_init__`, so deprecated arguments warned about at construction are not warned again.
-        """
+        """Return a fresh per-run instance with isolated traversal/cache state."""
         run = replace_no_init(self)
         run._context_files = None
         run._pending_dirs = set()
@@ -387,30 +368,6 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             self._toolset = toolset
         return self._toolset
 
-    async def after_tool_execute(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        call: ToolCallPart,
-        tool_def: ToolDefinition,
-        args: dict[str, Any],
-        result: Any,
-    ) -> Any:
-        """Support customized legacy traversal tool and argument names."""
-        if (
-            not self.nested_traversal
-            or not self._sniff_traversal_tools
-            or call.tool_name not in self.traversal_tool_names
-        ):
-            return result
-        raw_path = args.get(self.traversal_path_arg)
-        if not isinstance(raw_path, str):
-            return result
-        # The deprecated sniffer can name a directory outside the working directory on purpose, so only the
-        # directories between it and the working directory are confined.
-        await self._enqueue_context(ctx, await self._resolve_directory(ctx.workspace, raw_path), confine_target=False)
-        return result
-
     @on_event(FileReadEvent, DirectoryListedEvent, FileWrittenEvent)
     async def _on_file_traversal(
         self, ctx: RunContext[AgentDepsT], event: FileReadEvent | DirectoryListedEvent | FileWrittenEvent
@@ -435,7 +392,6 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         directory: Path,
         *,
-        confine_target: bool = True,
         written_file: Path | None = None,
     ) -> None:
         """Surface the instruction file of `directory` and of each directory between it and the working directory.
@@ -445,24 +401,53 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         working_dir = await self._working_dir(ctx.workspace)
         real_working_dir: Path | None = None
         in_history = self._sync_surfaced_dirs(ctx.messages)
-        for current in directories_up_to(directory, working_dir):
+        for current in self._chain_until_excluded(directory, working_dir):
             # Already surfaced, so it passed the check below then; skipping it first saves a `realpath`, which is a
             # command round trip on shell-backed sandboxes.
             if self._surfaced(str(current), in_history):
                 continue
             # The tool authorized the file or directory it touched, not every directory in its lexical path: a
             # symlinked directory there can take one of them, or the file's own parent, outside the project. So
-            # each must resolve inside the working directory too. The deprecated sniffer may name a directory
-            # outside the working directory on purpose; only that one is exempt.
-            if confine_target or current != directory or current.is_relative_to(working_dir):
-                if real_working_dir is None:
-                    real_working_dir = Path(await ctx.workspace.realpath(str(working_dir)))
-                if not Path(await ctx.workspace.realpath(str(current))).is_relative_to(real_working_dir):
-                    continue
+            # each must resolve inside the working directory too.
+            if real_working_dir is None:
+                real_working_dir = Path(await ctx.workspace.realpath(str(working_dir)))
+            verdict = await self._resolved_verdict(ctx.workspace, current, real_working_dir)
+            if verdict == 'stop':
+                break
+            if verdict == 'skip':
+                continue
             # Only the target directory can hold the file just written, so the others skip `_same_file`'s `realpath`s.
             await self._enqueue_directory(
                 ctx, current, in_history, written_file=written_file if current == directory else None
             )
+
+    def _chain_until_excluded(self, directory: Path, working_dir: Path) -> list[Path]:
+        """The directories from the working directory down to `directory`, up to the first `nested_exclude` match.
+
+        The chain runs shallowest first, so once one directory is excluded, every deeper one is too.
+        """
+        chain = directories_up_to(directory, working_dir)
+        for index, current in enumerate(chain):
+            if self._nested_excluded(current, working_dir):
+                return chain[:index]
+        return chain
+
+    async def _resolved_verdict(
+        self, workspace: Workspace, directory: Path, real_working_dir: Path
+    ) -> Literal['surface', 'skip', 'stop']:
+        """Whether `directory`, after symlinks, is surfaced, skipped as outside the working directory, or excluded.
+
+        Exclusion stops the chain, since every deeper directory is beneath the excluded one.
+        """
+        real = Path(await workspace.realpath(str(directory)))
+        if not real.is_relative_to(real_working_dir):
+            return 'skip'
+        # A symlink such as `libs/dep -> node_modules/dep` reaches an excluded directory under another name.
+        return 'stop' if self._nested_excluded(real, real_working_dir) else 'surface'
+
+    def _nested_excluded(self, directory: Path, working_dir: Path) -> bool:
+        parts = directory.relative_to(working_dir).parts
+        return any(fnmatchcase(part, pattern) for part in parts for pattern in self.nested_exclude)
 
     async def _enqueue_directory(
         self, ctx: RunContext[AgentDepsT], directory: Path, in_history: set[str], *, written_file: Path | None = None
@@ -516,16 +501,6 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if written_file.name not in self.filenames:
             return False
         return await workspace.realpath(str(written_file)) == await workspace.realpath(str(context_file))
-
-    async def _resolve_directory(self, workspace: Workspace, raw_path: str) -> Path:
-        working_dir = await self._working_dir(workspace)
-        text = await workspace.resolve(raw_path, base=working_dir.as_posix())
-        candidate = Path(text)
-        try:
-            entry = await workspace.stat(text)
-        except (FileNotFoundError, NotADirectoryError):
-            return candidate
-        return candidate.parent if not entry.is_dir else candidate
 
     async def _note(
         self, workspace: Workspace, context_file: ContextFile, directory: str, *, content: str | None

@@ -8,10 +8,12 @@ from .agent import (
     AgentRetries,
     AgentRunEvents,
     CallToolsNode,
+    CapturedConversation,
     EndStrategy,
     InstrumentationSettings,
     ModelRequestNode,
     UserPromptNode,
+    capture_run_conversation,
     capture_run_messages,
 )
 from .agent.spec import AgentSpec
@@ -282,6 +284,8 @@ __all__: tuple[str, ...] = (
     'ModelRequestNode',
     'UserPromptNode',
     'capture_run_messages',
+    'capture_run_conversation',
+    'CapturedConversation',
     'InstrumentationSettings',
     # embeddings
     'Embedder',

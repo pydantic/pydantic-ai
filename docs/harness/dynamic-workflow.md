@@ -98,7 +98,8 @@ The parts that matter:
 
 - Each sub-agent is an `async` function. You call it with `await`.
 - You pass the work as a single keyword argument, `task`. Always by keyword -- `reviewer(task="...")`, not `reviewer("...")`.
-- `asyncio.gather(...)` runs the two reviews concurrently instead of one after the other.
+- `asyncio.gather(...)` runs the two reviews concurrently instead of one after the other (except
+  in a DBOS workflow where a sub-agent [carries `DBOSDurability`](#running-under-other-durable-engines)).
 - The last expression's value becomes the result the model sees. The intermediate `reports` list never leaves the sandbox.
 
 Each call is a full `Agent.run`, with its own model loop, message history, tools, and typed output. Two things follow: calls are **isolated** (a sub-agent remembers nothing from an earlier call, so put everything it needs into `task`), and calls **cost tokens and take time** (which is why this capability gives you budgets, below).
@@ -175,7 +176,7 @@ These limits guard the orchestration script's own memory, not the sub-agents it 
 DynamicWorkflow(agents=[...], resource_limits={'max_duration_seconds': 30})
 ```
 
-`max_duration_seconds` measures the time your script spends running sandbox code, not wall-clock time. While the script waits on a sub-agent it is suspended and that time does not count, so the cap will not fire on a normal workflow no matter how long the sub-agents take. Its one job is catching a pure-CPU runaway -- a `while True:` loop that never awaits, which none of the sub-agent budgets can stop because it never calls a sub-agent. Pass `'unlimited'` to remove every sandbox resource limit; the separate 10 MiB print cap remains. A partial dict merges onto the backstop so you override only the caps you name. `max_duration_secs` is the deprecated name of `max_duration_seconds` and still works, with a warning.
+`max_duration_seconds` measures the time your script spends running sandbox code, not wall-clock time. While the script waits on a sub-agent it is suspended and that time does not count, so the cap will not fire on a normal workflow no matter how long the sub-agents take. Its one job is catching a pure-CPU runaway -- a `while True:` loop that never awaits, which none of the sub-agent budgets can stop because it never calls a sub-agent. Pass `'unlimited'` to remove every sandbox resource limit; the separate 10 MiB print cap remains. A partial dict merges onto the backstop so you override only the caps you name.
 
 ### Workflows do not nest
 
@@ -238,9 +239,11 @@ The script runs in Monty, a subset of Python. Knowing the edges matters:
 - No clock or randomness: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and
   unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_seconds` set,
   a script may sleep for at most that long in total.
-- `asyncio.gather(...)` runs sub-agents concurrently (one at a time under
-  [DBOS](#running-under-other-durable-engines)) with positional awaitables but no keyword
-  arguments, including `return_exceptions=True`. Other task creation and wait APIs are unavailable.
+- `asyncio.gather(...)` takes positional awaitables but no keyword arguments, including
+  `return_exceptions=True`. It runs sub-agents and `asyncio.sleep` calls concurrently, except in a
+  DBOS workflow where a sub-agent [carries `DBOSDurability`](#running-under-other-durable-engines),
+  where sub-agent calls and sleeps run one at a time. Other task creation and wait APIs are
+  unavailable.
 
 Before a script runs it is statically type-checked against the sub-agent signatures. An ordinary, statically provable mistake such as a misspelled function, a positional `task`, or a wrong-typed argument costs one retry but no sub-agent budget or sandbox execution. Values typed as `Any` can reach runtime validation; they are still rejected before a sub-agent runs.
 
@@ -258,11 +261,20 @@ runs close to it can stop at a different point on replay and cause a `Nondetermi
 
 ## Running under other durable engines
 
-`DBOSDurability` numbers steps in the order they start, so the steps of concurrent sub-agents would
-interleave by timing and recovery could replay one sub-agent's results into another call. When
-sub-agents carry it, all of the script's calls run one at a time, so each sub-agent keeps its own step
-checkpoints and recovery replays them into the same call. An `asyncio.gather` over sub-agents then takes the sum of
-their run times rather than the longest.
+`DBOSDurability` numbers a workflow's steps in the order they start, so the steps of concurrent
+sub-agents would interleave by timing and recovery could replay one sub-agent's results into another
+call. When any sub-agent in the catalog carries it, every sub-agent call the script makes, and every
+`asyncio.sleep` it gathers, runs one at a time inside a DBOS workflow, including calls to sub-agents
+without `DBOSDurability`. An `asyncio.gather` over sub-agents then takes the sum of their run times
+rather than the longest. Each call runs as ordinary workflow code, as it would outside
+`DynamicWorkflow`. A sub-agent that carries `DBOSDurability` keeps checkpoints for its model
+requests, MCP tool calls, and tools decorated with `@DBOS.step`, and DBOS checks the roles those
+`@DBOS.step` tools require. Recovery replays a call's finished steps and runs on from there. Other
+function tools run as workflow code and run again on recovery, so put side effects in `@DBOS.step`
+tools. A sub-agent without `DBOSDurability` keeps no checkpoints for its model requests, so recovery
+runs those again. Recording each call as one DBOS step would let the calls overlap, but DBOS runs a
+step called from inside another step as a plain function call, without its own checkpoint or role
+check.
 
 `AWSLambdaDurability` numbers a context's steps in the order they start too. When sub-agents carry it,
 the calls a script makes before it next waits run as the branches of one Lambda `parallel` operation,

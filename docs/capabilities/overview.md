@@ -126,12 +126,14 @@ How the agent spends its context window: the difference between an agent that de
 |---|---|---|
 | [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) | Harness | The model writes one Python script that calls many tools inside a [Monty](https://github.com/pydantic/monty) sandbox: one round-trip instead of N, and intermediate results never enter the context window |
 | [IPython Code Mode](https://pydantic.dev/docs/ai/harness/ipython-code-mode/) | Harness | Code Mode with a persistent [IPython](https://ipython.org/) kernel in place of the Monty sandbox: full CPython and any installed package, with state kept between calls. For local agents only; not a sandbox |
+| [Tool Bridge](https://pydantic.dev/docs/ai/harness/tool-bridge/) | Harness | Keep the tool list the model sees fixed behind `tool_search`, `tool_describe` and `tool_call`, so the prompt cache holds however many tools sit behind them |
 | [Tool Search](tool-search.md) | Core | Load tool definitions on demand instead of carrying hundreds in every prompt |
 | [Caching](caching.md) | Core | Provider-adaptive prompt caching of tools, instructions and the conversation, at a configurable retention |
 | [Compaction](compaction.md) | Core | Provider-native compaction on OpenAI and Anthropic; the provider summarizes history server-side |
 | [Compaction](https://pydantic.dev/docs/ai/harness/compaction/) | Harness | Model-agnostic strategies: tool-result clearing, sliding-window trimming, LLM summarization, tiered; all window-relative, with live usage reporting |
 | [Tool Output Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/) | Harness | Truncate, spill to a queryable file, or summarize oversized tool returns at the source |
 | [Warn On Cache Busts](https://pydantic.dev/docs/ai/harness/warn-on-cache-busts/) | Harness | Detect prompt-cache prefix collapses between requests, from the provider's own numbers |
+| [Label Cross Model History](https://pydantic.dev/docs/ai/harness/label-cross-model-history/) | Harness | Tell the model when earlier assistant turns came from another model, after a model switch or handoff |
 
 ### Knowledge & memory {#knowledge-memory}
 
@@ -145,6 +147,7 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | [Skills](https://pydantic.dev/docs/ai/harness/skills/) | Harness | Load [Agent Skill](on-demand.md) (`SKILL.md`) instructions on demand |
 | [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
 | [Pydantic AI Docs](https://pydantic.dev/docs/ai/harness/pydantic-ai-docs/) | Harness | On-demand Pydantic AI documentation lookup |
+| [Current Time](https://pydantic.dev/docs/ai/harness/current-time/) | Harness | Today's date, or the current hour, in a time zone you pick, without breaking the prompt cache |
 
 ### Control & safety {#control-safety}
 
@@ -197,6 +200,7 @@ Core also ships capabilities for customizing the agent loop itself, mostly for p
 | [Hooks](../hooks.md) | Core | Decorator-based lifecycle hook registration |
 | [Select Model](select-model.md) | Core | Select a static or per-step model with a callable |
 | [Model Fallback](model-fallback.md) | Core | Attempt other models when a request fails or its response is rejected |
+| [Retry On Model Errors](retry-on-model-errors.md) | Core | Attempt the same model again when a request fails with a transient error |
 | [Resolve Model ID](resolve-model-id.md) | Core | Resolve custom, application-specific model IDs with a callable |
 | [Prepare Tools / Prepare Output Tools](prepare-tools.md) | Core | Filter or modify function and [output tool][pydantic_ai.output.ToolOutput] definitions per step |
 | [Prefix Tools](prefix-tools.md) | Core | Wrap a capability and prefix its tool names |
