@@ -247,7 +247,8 @@ def test_agent_spec_schema_publishes_every_field_but_the_client() -> None:
     """`from_spec` lists its fields by hand, so a new field must be added there too."""
     definitions = AgentSpec.model_json_schema_with_capabilities([BoxdSandbox])['$defs']
     published = set(definitions['spec_params_BoxdSandbox']['properties'])
-    assert published == {field.name for field in dataclasses.fields(BoxdSandbox)} - {'client'}
+    # Fields set outside `__init__`, such as the `_authority_ceiling` every capability has, aren't spec fields.
+    assert published == {field.name for field in dataclasses.fields(BoxdSandbox) if field.init} - {'client'}
 
 
 @pytest.mark.parametrize('size', [{'snapshot': 'base'}, {'vcpu': 2}])
