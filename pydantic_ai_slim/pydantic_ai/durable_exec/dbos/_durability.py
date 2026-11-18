@@ -564,6 +564,9 @@ async def _call_child_workflow(
     DBOS records a child at the parent's next step position and hands a recovered call the child recorded
     there. Parallel calls can start their children in another order on recovery, handing a call another
     call's child, so the call then takes its own child's result by ID, derived from the run and tool call.
+
+    DBOS waits for the child it hands over before the call can tell it's another call's, so on recovery such a
+    call can wait for that sibling's child to finish before it gets to its own.
     """
     from dbos._context import get_local_dbos_context
 
@@ -577,26 +580,42 @@ async def _call_child_workflow(
     executions[call_key] = execution + 1
     child_id = f'{parent_id}-{ctx.run_id}-{ctx.run_step}-{execution}-{ctx.tool_call_id}'
 
-    async def positional_result() -> tuple[CallToolResult] | None:
-        """Call the child at the next step position, or return `None` if recovery handed it another call's child."""
-        # The child takes the next step position here, with no wait before it, so parallel calls keep their order.
-        step_id = context.function_id + 1
-        try:
-            with SetWorkflowID(child_id), SetWorkflowTimeout(timeout) if timeout is not None else nullcontext():
-                payload = await workflow(*args)
-        except Exception:
-            if await _handed_another_child(context, parent_id, step_id, child_id):
-                return None
-            raise
-        return None if await _handed_another_child(context, parent_id, step_id, child_id) else (payload,)
-
-    while (result := await positional_result()) is None:
+    while (
+        result := await _positional_child_result(
+            workflow, args, context=context, parent_id=parent_id, child_id=child_id, timeout=timeout
+        )
+    ) is None:
         # The call's own child, if it started before, is a child of the parent at another position, so take its
         # result. Otherwise it starts at the next position, which recovery hasn't handed to another call's child.
         recorded = await _recorded_children(context, parent_id)
         if own := [shard_key for child, shard_key in recorded.values() if child == child_id]:
             return await _outside_workflow(_workflow_result(child_id, shard_key=own[0]))
     return result[0]
+
+
+async def _positional_child_result(
+    workflow: Callable[..., Coroutine[Any, Any, CallToolResult]],
+    args: tuple[Any, ...],
+    *,
+    context: DBOSContext,
+    parent_id: str,
+    child_id: str,
+    timeout: float | None,
+) -> tuple[CallToolResult] | None:
+    """Call the child workflow at the parent's next step position, or return `None` if recovery handed it another call's child.
+
+    The child takes its position when `workflow` is called, so nothing may be awaited between reading the next
+    position and the call: parallel calls then take their positions in the order they were dispatched.
+    """
+    step_id = context.function_id + 1
+    try:
+        with SetWorkflowID(child_id), SetWorkflowTimeout(timeout) if timeout is not None else nullcontext():
+            payload = await workflow(*args)
+    except Exception:
+        if await _handed_another_child(context, parent_id, step_id, child_id):
+            return None
+        raise
+    return None if await _handed_another_child(context, parent_id, step_id, child_id) else (payload,)
 
 
 async def _recorded_children(context: DBOSContext, parent_id: str) -> dict[int, tuple[str | None, str | None]]:
