@@ -25,6 +25,25 @@ Direct toolset tests are appropriate when you need to inspect:
 Use the `CodeMode` tests as the current reference for direct `RunContext` and
 `ToolManager` setup.
 
+## State Pydantic AI Produces
+
+Don't hand-build state that Pydantic AI is supposed to produce: post-discovery
+or post-load tool definitions, `ToolSearchReturnPart` contents, `RunContext`
+fields such as `discovered_tool_names` or `loaded_capability_ids`, or
+`ModelRequestParameters` reveal sets. A fixture like that encodes an
+assumption about Pydantic AI's behavior, and it keeps passing after that
+behavior changes, because the test never calls the code that changed.
+
+- Prefer driving the real flow: an `Agent` with a `FunctionModel` that calls
+  `search_tools` or `load_capability`, then assert on what the next request
+  carries.
+- Where the real flow is impractical, such as native tool-search parts that
+  only a provider returns, keep the fixture and add a companion contract test
+  that asserts Pydantic AI still produces or reads the state the fixture
+  encodes, and reference that test from the fixture.
+
+Hand-built state is fine for unit tests of harness-internal logic.
+
 ## Boundary Reproductions
 
 When a capability invokes another parser, process, service, or container, add
