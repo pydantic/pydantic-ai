@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, ApprovalRequired, CallDeferred, RunContext, capture_run_messages
+from pydantic_ai import Agent, ApprovalRequired, CallDeferred, RunContext, ToolOutput, capture_run_messages
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -696,6 +696,49 @@ async def test_resuming_a_mixed_deferred_pause_with_a_repeated_call_id_runs_only
     assert [call.tool_name for call in resumed.output.approvals] == ['create_file']
     assert len(received) == 1
     assert get_data_runs == 1
+
+
+async def test_resuming_a_pause_whose_response_repeats_a_call_of_one_tool_fails_closed():
+    """A response that repeats a call's tool and ID can't be resumed without answers.
+
+    Calls on either side of an output call are checked as separate batches, so `'graceful'` handles both when the
+    output call fails validation: one runs and the other waits for approval. The recorded result could answer either call, so a plain resume refuses, like
+    resuming with `deferred_tool_results` does, instead of running the finished call again.
+    """
+    received: list[list[ModelMessage]] = []
+    runs: list[str] = []
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        return ModelResponse(
+            parts=[
+                ToolCallPart('write', {'path': 'secret'}, tool_call_id='call_1'),
+                ToolCallPart('final_result', {'wrong': 1}, tool_call_id='call_output'),
+                ToolCallPart('write', {'path': 'notes'}, tool_call_id='call_1'),
+            ]
+        )
+
+    agent = Agent(
+        FunctionModel(model_function),
+        output_type=[ToolOutput(str, name='final_result'), DeferredToolRequests],
+        end_strategy='graceful',
+    )
+
+    @agent.tool
+    def write(ctx: RunContext[object], path: str) -> str:
+        if path == 'secret' and not ctx.tool_call_approved:
+            raise ApprovalRequired
+        runs.append(path)
+        return 'written'
+
+    paused = await agent.run('Do it.')
+    assert isinstance(paused.output, DeferredToolRequests)
+    assert runs == ['notes']
+
+    with pytest.raises(UserError, match='duplicate'):
+        await agent.run(message_history=paused.all_messages())
+    assert runs == ['notes']
+    assert len(received) == 1
 
 
 async def test_resuming_after_content_recorded_at_an_all_deferred_pause_pauses_again():
