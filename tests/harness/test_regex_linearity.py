@@ -491,6 +491,8 @@ def test_a_super_linear_pattern_fails(pattern: str, failure: str):
         pytest.param(r'(?:ab){1,2}+', 0, 'ababab', id='possessive-group-at-its-bound'),
         pytest.param(r'x*', 0, 'axxb', id='empty-matches'),
         pytest.param(r'(?:a?){2,3}b', 0, 'b ab', id='empty-iterations'),
+        pytest.param(r'(?:|a)*', 0, 'xaa', id='empty-first-alternative'),
+        pytest.param(r'(?:ab)*?c|(?:|b)*?d', 0, 'ababc bd d', id='lazy-group-iterations'),
         pytest.param(r'(?:a?){2}+|(?:b?){0,3}+c', 0, 'x bbc', id='empty-possessive-iterations'),
     ],
 )

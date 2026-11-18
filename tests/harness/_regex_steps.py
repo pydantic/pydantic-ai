@@ -314,7 +314,7 @@ class StepCounter:
         return repeat
 
     def _repeat_sequence(self, body: Matcher, low: int, high: int, kind: str) -> Matcher:
-        """A repeat of a group; an iteration that matches nothing ends the repeat once `low` is met, as in `re`."""
+        """A repeat of a group; an iteration past `low` that matches nothing ends the repeat there, as in `re`."""
 
         def possessive(position: int, then: Continuation) -> bool:
             self._step()
@@ -331,7 +331,8 @@ class StepCounter:
 
             def another() -> bool:
                 return count < high and body(
-                    position, lambda end: (end != position or count < low) and iterate(end, then, count + 1)
+                    position,
+                    lambda end: then(end) if end == position and count >= low else iterate(end, then, count + 1),
                 )
 
             if kind == 'MIN_REPEAT':
