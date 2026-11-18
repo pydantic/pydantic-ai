@@ -13,6 +13,7 @@ import json
 import struct
 import zlib
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -317,9 +318,11 @@ async def test_openai_rejects_defer_loading_on_its_computer_tool(
         )
 
 
-async def test_a_computer_tool_found_by_tool_search_is_refused(allow_model_requests: None) -> None:
-    # The API rejects `defer_loading` on the native tool, so the deferral is refused.
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock([])))
+async def test_a_computer_tool_found_by_tool_search_goes_as_the_function_tool(allow_model_requests: None) -> None:
+    """The API rejects `defer_loading` on the native tool, so once tool search reveals the deferred tool, an optional
+    `ComputerTool` is left out, as an optional native tool the request can't send is, and one that isn't is refused."""
+    client = MockOpenAIResponses.create_mock(_done())
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
     computer = ToolDefinition(
         name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id, defer_loading=True
     )
@@ -329,8 +332,17 @@ async def test_a_computer_tool_found_by_tool_search_is_refused(allow_model_reque
         revealed_tool_names={'computer'},
         allow_text_output=True,
     )
+    await model.request([ModelRequest.user_text_prompt('Look.')], None, params)
+
+    (request,) = get_mock_responses_kwargs(client)
+    assert [(tool['type'], tool.get('name')) for tool in request['tools']] == [
+        ('tool_search', None),
+        ('function', 'computer'),
+    ]
+
+    required = replace(params, native_tools=[ToolSearchTool(), replace(COMPUTER_TOOL, optional=False)])
     with pytest.raises(UserError) as error:
-        await model.request([ModelRequest.user_text_prompt('Look.')], None, params)
+        await model.request([ModelRequest.user_text_prompt('Look.')], None, required)
     assert error.value.message == snapshot(
         "OpenAI sends the 'computer' tool as its native computer tool, which it cannot defer: the API rejects "
         '`defer_loading` on it as an unknown parameter. Defer the whole capability with '
