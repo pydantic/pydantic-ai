@@ -46,7 +46,8 @@ _OTARI_VENDOR_PROFILES: dict[str, ModelProfileFunc] = {
 }
 """Otari provider ids that serve one vendor's models but aren't spelled as the shared vendor map spells it.
 
-Hosts of many vendors' models, like `azure`, `bedrock`, `groq` or `vertexai`, have no entry: the model after them decides.
+Hosts of many vendors' models, like `azure`, `bedrock`, `groq` or `vertexai`, have no entry: a `vendor/model` id after
+them picks the family, and any other model name gets no family profile.
 """
 
 
