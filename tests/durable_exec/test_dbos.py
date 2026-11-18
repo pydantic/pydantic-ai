@@ -11,7 +11,7 @@ import uuid
 import warnings
 from collections import Counter, deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -6659,13 +6659,25 @@ async def child_workflow_lead_workflow() -> str:
     return (await child_workflow_lead.run('Explain tides.', timeout=3600)).output
 
 
-async def test_dbos_child_workflow_tool_survives_recovery(dbos: DBOS) -> None:
-    """A tool with `child_workflow` metadata runs in its own child workflow, which recovery resumes from its steps."""
+@pytest.mark.parametrize('positional_child_id', [False, True])
+async def test_dbos_child_workflow_tool_survives_recovery(dbos: DBOS, positional_child_id: bool) -> None:
+    """A tool with `child_workflow` metadata runs in its own child workflow, which recovery resumes from its steps.
+
+    With `positional_child_id`, the child was started before child IDs were derived from the tool call, under the
+    positional ID DBOS assigns, and recovery still reuses it.
+    """
     child_workflow_calls.clear()
     child_workflow_deadlines.clear()
     workflow_id = f'child-wf-{uuid.uuid4()}'
-    with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+    with (
+        SetWorkflowID(workflow_id),
+        pytest.raises(_ProcessCrash),
+        patch('pydantic_ai.durable_exec.dbos._durability.SetWorkflowID', return_value=nullcontext())
+        if positional_child_id
+        else nullcontext(),
+    ):
         await child_workflow_lead_workflow()
+    child_suffix = '-4' if positional_child_id else f'-{workflow_id}:1-2-research'
 
     # Recovery resumes every pending workflow, the child as well as its parent.
     workflows = await DBOS.list_workflows_async(workflow_id_prefix=workflow_id)
@@ -6673,7 +6685,7 @@ async def test_dbos_child_workflow_tool_survives_recovery(dbos: DBOS) -> None:
     assert sorted((w.workflow_id.removeprefix(workflow_id), w.name, w.status) for w in workflows) == [
         ('', 'child_workflow_lead_workflow', 'PENDING'),
         # The child's ID derives from the run ID, run step and tool call ID.
-        (f'-{workflow_id}:1-2-research', child_name, 'PENDING'),
+        (child_suffix, child_name, 'PENDING'),
     ]
     [child] = [w for w in workflows if w.workflow_id != workflow_id]
     await DBOS.resume_workflow_async(child.workflow_id)
@@ -6701,7 +6713,7 @@ async def test_dbos_child_workflow_tool_survives_recovery(dbos: DBOS) -> None:
             'DBOS.getResult',
             'child_wf_lead__model.request',
         ],
-        f'-{workflow_id}:1-2-research': ['child_wf_researcher__model.request'],
+        child_suffix: ['child_wf_researcher__model.request'],
     }
 
 
@@ -6737,11 +6749,18 @@ async def test_dbos_child_workflow_via_set_tool_metadata(dbos: DBOS) -> None:
     assert (await agent.run('Go.', deps='deps')).output == '{"delegate":"deps in None"}'
 
 
-@pytest.mark.parametrize('crash', ['after_both_children', 'before_second_child'])
-async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(dbos: DBOS, crash: str) -> None:
+@pytest.mark.parametrize(
+    ('crash', 'moon_fails'),
+    [('after_both_children', False), ('after_both_children', True), ('before_second_child', False)],
+)
+async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
+    dbos: DBOS, crash: str, moon_fails: bool
+) -> None:
     """A recovered run whose parallel child workflows start in another order still gets each tool call its own child's result."""
     researched: list[str] = []
     recovering = False
+    moon_researched = asyncio.Event()
+    call_b_done = asyncio.Event()
 
     def lead_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) > 1:
@@ -6755,6 +6774,10 @@ async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(db
 
     async def research(topic: str) -> str:
         researched.append(topic)
+        if topic == 'moon':
+            moon_researched.set()
+            if moon_fails:
+                raise ValueError('No moon tonight.')
         return topic
 
     class ReorderChildStarts(AbstractCapability[object]):
@@ -6763,12 +6786,26 @@ async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(db
         ) -> Any:
             if recovering and call.tool_call_id == 'call-a':
                 # Recovery starts `call-b`'s child first, at the position `call-a`'s child was recorded at.
-                await asyncio.sleep(0.05)
+                await call_b_done.wait()
             elif not recovering and crash == 'before_second_child' and call.tool_call_id == 'call-b':
                 # The process dies once `call-a`'s child has started, before `call-b`'s does.
-                await asyncio.sleep(0.05)
+                await moon_researched.wait()
                 raise _ProcessCrash
             return args
+
+        async def after_tool_execute(
+            self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, result: Any
+        ) -> Any:
+            if call.tool_call_id == 'call-b':
+                call_b_done.set()
+            return result
+
+        async def on_tool_execute_error(
+            self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Exception
+        ) -> Any:
+            if call.tool_call_id == 'call-b':
+                call_b_done.set()
+            return f'failed: {error}'
 
     agent = Agent(
         FunctionModel(lead_model),
@@ -6796,8 +6833,10 @@ async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(db
     assert sorted(researched) == (['moon', 'sun'] if crash == 'after_both_children' else ['moon'])
 
     recovering = True
+    call_b_done.clear()
     handle = await DBOS.resume_workflow_async(workflow_id)
-    assert sorted(await handle.get_result()) == ['call-a=moon', 'call-b=sun']
+    moon = 'failed: No moon tonight.' if moon_fails else 'moon'
+    assert sorted(await handle.get_result()) == [f'call-a={moon}', 'call-b=sun']
     # Recovery reuses the children that finished before the crash.
     assert sorted(researched) == ['moon', 'sun']
 

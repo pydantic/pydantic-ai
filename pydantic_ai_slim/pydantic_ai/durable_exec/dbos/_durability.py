@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Coroutine, Generator, Mapping
+from collections.abc import Callable, Coroutine, Generator, Mapping
 from contextlib import contextmanager, nullcontext
 from contextvars import Context, ContextVar
 from dataclasses import dataclass, replace
@@ -367,8 +367,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             config: Mapping[str, Any],
         ) -> Any:
             assert isinstance(tool, FunctionToolsetTool)  # `_child_workflow_config` admits only these
-            # Stable across recovery, so the call finds its own child however parallel calls' starts interleave.
-            child_id = f'{DBOS.workflow_id}-{ctx.run_id}-{ctx.run_step}-{ctx.tool_call_id}'
             args = (
                 name,
                 tool_args,
@@ -377,26 +375,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 DurableRunContext.serialize_run_context(ctx),
                 ctx.deps,
             )
-            timeout = config.get('workflow_timeout_sec')
-
-            @contextmanager
-            def child_options() -> Generator[None]:
-                with SetWorkflowID(child_id), SetWorkflowTimeout(timeout) if timeout is not None else nullcontext():
-                    yield
-
-            async def own_child_result() -> CallToolResult:
-                # Starting an existing workflow ID returns a handle to it rather than running it again.
-                with child_options():
-                    handle = await DBOS.start_workflow_async(call_tool_workflow, *args)
-                return await handle.get_result()
-
-            # Recorded at the next step position, which keeps the parent's history aligned on recovery.
-            with child_options():
-                await call_tool_workflow(*args)
-            # But DBOS hands a recovered call the child recorded at its position, which is another call's when
-            # parallel calls start in a different order, so the result comes from the call's own child, by ID.
-            # That child is missing if the call never started one before, and then starts now.
-            return self._unwrap_tool_result(await _outside_workflow(own_child_result()))
+            payload = await _call_child_workflow(
+                call_tool_workflow, args, ctx=ctx, timeout=config.get('workflow_timeout_sec')
+            )
+            return self._unwrap_tool_result(payload)
 
         self._child_workflow_toolsets[toolset_id] = DurableFunctionToolset(
             toolset,
@@ -558,6 +540,58 @@ def _child_workflow_config(tool: ToolsetTool[Any] | None, name: str) -> ChildWor
             f'DBOS metadata for tool {name!r} selects a child workflow, but only async function tools can run as one.'
         )
     return child_config
+
+
+async def _call_child_workflow(
+    workflow: Callable[..., Coroutine[Any, Any, CallToolResult]],
+    args: tuple[Any, ...],
+    *,
+    ctx: RunContext[Any],
+    timeout: float | None,
+) -> CallToolResult:
+    """Run a tool call's child workflow, and return the result of the call's own child.
+
+    DBOS records a child at the parent's next step position and hands a recovered call the child recorded
+    there. Parallel calls can start their children in another order on recovery, handing a call another
+    call's child, so the call then takes its own child's result by ID, derived from the run and tool call.
+    """
+    from dbos._context import get_local_dbos_context
+
+    parent_id = DBOS.workflow_id
+    context = get_local_dbos_context()
+    assert parent_id is not None and context is not None
+    child_id = f'{parent_id}-{ctx.run_id}-{ctx.run_step}-{ctx.tool_call_id}'
+
+    @contextmanager
+    def child_options() -> Generator[None]:
+        with SetWorkflowID(child_id), SetWorkflowTimeout(timeout) if timeout is not None else nullcontext():
+            yield
+
+    async def handed_another_child() -> bool:
+        steps = await DBOS.list_workflow_steps_async(parent_id, load_output=False)
+        recorded = next((step['child_workflow_id'] for step in steps if step['function_id'] == step_id), None)
+        # A child started before child IDs were derived has a positional ID, and keeps its positional result.
+        return recorded is not None and recorded != child_id and not recorded.endswith(f'{parent_id}-{step_id}')
+
+    async def own_child_result() -> CallToolResult:
+        # Starting an existing ID returns a handle to it rather than running it again. A call that never started
+        # its child before (it was handed another's) starts it now, as a workflow of its own rather than a child.
+        with child_options():
+            handle = await DBOS.start_workflow_async(workflow, *args)
+        return await handle.get_result()
+
+    # The child takes the next step position here, with no wait before it, so parallel calls keep their order.
+    step_id = context.function_id + 1
+    try:
+        with child_options():
+            payload = await workflow(*args)
+    except Exception:
+        if not await _outside_workflow(handed_another_child()):
+            raise
+    else:
+        if not await _outside_workflow(handed_another_child()):
+            return payload
+    return await _outside_workflow(own_child_result())
 
 
 async def _outside_workflow(awaitable: Coroutine[Any, Any, T]) -> T:
