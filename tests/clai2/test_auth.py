@@ -2,7 +2,7 @@
 
 import asyncio
 import io
-from functools import partial
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx2
@@ -22,13 +22,13 @@ from pydantic_ai.providers.openai_codex import (
     OpenAICodexOAuthFlow,
     OpenAICodexProvider,
 )
-from pydantic_clai2 import auth as auth_module
 from pydantic_clai2.auth import CodexAuth, CodexCredentials, code_from_paste, login_command
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.api_keys import forget_connection
 from pydantic_clai2.config.credential_store import has_credentials, load_codex_credentials, save_codex_credentials
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.models import codex as codex_models
 from pydantic_clai2.models.model_catalog import CODEX_MODELS
 from pydantic_clai2.plugins import PluginLogin
 from pydantic_clai2.plugins.menus import Dialogs
@@ -351,6 +351,12 @@ def test_default_model() -> None:
     assert Settings().model == 'openai-codex:gpt-6-astra'
 
 
+def mock_provider(account: str, respond: Callable[[httpx2.Request], httpx2.Response]) -> OpenAICodexProvider:
+    """The account's core provider, answered by `respond` instead of the Codex backend."""
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
+    return OpenAICodexProvider(credential_source=CodexCredentials(account=account), http_client=client)
+
+
 def serve_codex_models(monkeypatch: pytest.MonkeyPatch, status: int = 200) -> list[httpx2.Request]:
     """Answer the Codex catalog `GET {base_url}/models` through the real discovery, recording each request."""
     requests: list[httpx2.Request] = []
@@ -364,8 +370,10 @@ def serve_codex_models(monkeypatch: pytest.MonkeyPatch, status: int = 200) -> li
         ]
         return httpx2.Response(status, json={'models': served})
 
-    discover = partial(auth_module.discover_codex_models, transport=httpx2.MockTransport(respond))
-    monkeypatch.setattr(auth_module, 'discover_codex_models', discover)
+    def account_provider(self: CodexAuth, account: str, base_url: str | None = None) -> OpenAICodexProvider:
+        return mock_provider(account, respond)
+
+    monkeypatch.setattr(CodexAuth, 'account_provider', account_provider)
     return requests
 
 
@@ -391,12 +399,12 @@ async def test_codex_login_adds_the_account_models(
         (
             request.url.host,
             request.url.path,
-            'client_version' in request.url.params,
+            request.url.params['client_version'],
             request.headers['authorization'],
             request.headers['chatgpt-account-id'],
         )
         for request in requests
-    ] == [('chatgpt.com', '/backend-api/codex/models', True, 'Bearer fake-access', 'fake-account')]
+    ] == [('chatgpt.com', '/backend-api/codex/models', '0.170.0', 'Bearer fake-access', 'fake-account')]
 
 
 async def test_codex_login_falls_back_to_the_static_models(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -408,19 +416,19 @@ async def test_codex_login_falls_back_to_the_static_models(monkeypatch: pytest.M
     assert store.models() == sorted(name.replace('openai-codex:', 'openai-codex@work:') for name in CODEX_MODELS)
 
 
-async def test_codex_discovery_rejects_an_unexpected_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_codex_discovery_rejects_an_unexpected_catalog() -> None:
     def respond(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(200, json={'data': []})
 
     await CodexCredentials().save_login(CREDENTIALS)
     with pytest.raises(UserError, match='Codex returned an invalid model list'):
-        await auth_module.discover_codex_models(transport=httpx2.MockTransport(respond))
+        await codex_models.discover(mock_provider('openai-codex', respond))
 
     def hidden(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(200, json={'models': [{'slug': 'codex-auto-review', 'visibility': 'hide'}]})
 
     with pytest.raises(UserError, match='Codex returned no models for this account'):
-        await auth_module.discover_codex_models(transport=httpx2.MockTransport(hidden))
+        await codex_models.discover(mock_provider('openai-codex', hidden))
 
 
 async def test_cancelled_codex_login_adds_no_models(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

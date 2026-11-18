@@ -6,14 +6,12 @@ from functools import partial
 from urllib.parse import parse_qs, urlparse
 
 import anyio
-import httpx2
 from anyio import fail_after
-from openai import APIError
-from pydantic import BaseModel, Field, TypeAdapter, ValidationError
+from pydantic import TypeAdapter, ValidationError
 from rich.console import Console
 from termflow.tui import MenuBuilder, MenuItem
 
-from pydantic_ai.exceptions import ModelAPIError, UserError
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.openai_codex import OpenAICodexModel
 from pydantic_ai.providers.openai_codex import (
     OpenAICodexCredentials,
@@ -29,7 +27,7 @@ from pydantic_clai2.config.credential_store import (
     save_codex_credentials,
 )
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.models import LOGIN_ALIASES, github_copilot, login_names
+from pydantic_clai2.models import LOGIN_ALIASES, codex as codex_models, github_copilot, login_names
 from pydantic_clai2.models.accounts import remember
 from pydantic_clai2.models.profiles import ALL, DEFAULT, account, parse_model, split_profile, with_profile
 from pydantic_clai2.plugins import PluginLogin
@@ -45,8 +43,7 @@ CODEX = 'openai-codex'
 _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)
 _PASTE_PROMPT = 'Paste the URL the browser lands on (or finish there): '
 _CANCELLED = 'sign-in cancelled.'
-_CODEX_CLIENT_VERSION = '0.170.0'
-"""The Codex CLI release the model catalog is asked for: it requires one, and hides models that need a newer client."""
+"""How a cancelled Codex sign-in's message ends; `login_command` adds no models after one."""
 
 ReadLine = Callable[[str], Awaitable[str | None]]
 """Read one line after showing a prompt; `None` when the user cancels."""
@@ -95,71 +92,41 @@ async def login_command(
     if store is not None and (plugin is not None or has_credentials(account=account(name, profile))):
         remember(store, login=name, profile=profile, plugin=plugin)
         message += await _add_subscription_models(
-            name, message=message, store=store, profile=profile, select_default=select_default
+            name, message=message, store=store, codex=codex, profile=profile, select_default=select_default
         )
     return message
 
 
 async def _add_subscription_models(
-    name: str, *, message: str, store: SettingsStore, profile: str | None, select_default: Callable[[str], bool]
+    name: str,
+    *,
+    message: str,
+    store: SettingsStore,
+    codex: 'CodexAuth',
+    profile: str | None,
+    select_default: Callable[[str], bool],
 ) -> str:
     """After a subscription sign-in that was not cancelled, save its models; the text to add to `message`."""
     if name == github_copilot.ACCOUNT and message != github_copilot.CANCELLED:
         return ' ' + await _add_copilot_models(store, profile=profile, select_default=select_default)
     if name == CODEX and not message.endswith(_CANCELLED):
-        return ' ' + await _add_codex_models(store, profile=profile)
+        return ' ' + await _add_codex_models(store, codex=codex, profile=profile)
     return ''
 
 
-class _CodexModel(BaseModel):
-    """One entry of the Codex model catalog; only what CLAI reads."""
-
-    slug: str = Field(min_length=1)
-    visibility: str = 'list'
-
-
-class _CodexCatalog(BaseModel):
-    """The Codex backend's `GET /models` response, which is not the OpenAI `/v1/models` shape."""
-
-    models: list[_CodexModel]
-
-
-async def discover_codex_models(
-    *, account: str = CODEX, transport: httpx2.AsyncBaseTransport | None = None
-) -> list[str]:
-    """The models the account's Codex catalog lists, as the Codex CLI reads it, skipping hidden ones."""
-    async with httpx2.AsyncClient(transport=transport, timeout=20, follow_redirects=False) as client:
-        provider = OpenAICodexProvider(credential_source=CodexCredentials(account=account), http_client=client)
-        try:
-            body = await provider.client.with_options(max_retries=0).get(
-                '/models', cast_to=bytes, options={'params': {'client_version': _CODEX_CLIENT_VERSION}}
-            )
-        except (APIError, ModelAPIError):
-            raise UserError(
-                f'Codex model discovery failed. Check connectivity, or run /login {account} again.'
-            ) from None
-    try:
-        catalog = _CodexCatalog.model_validate_json(body)
-    except ValidationError:
-        raise UserError('Codex returned an invalid model list.') from None
-    names = list(dict.fromkeys(model.slug for model in catalog.models if model.visibility != 'hide'))
-    if not names:
-        raise UserError('Codex returned no models for this account.')
-    return names
-
-
-async def _add_codex_models(store: SettingsStore, *, profile: str | None) -> str:
+async def _add_codex_models(store: SettingsStore, *, codex: 'CodexAuth', profile: str | None) -> str:
     """Save every model a Codex login can use, or the built-in list when its catalog cannot be read."""
     try:
-        names = await discover_codex_models(account=account(CODEX, profile))
-        added = f'Added {len(names)} Codex models.'
+        names = await codex_models.discover(codex.account_provider(account(CODEX, profile)))
+        models = [with_profile(f'{CODEX}:{name}', profile) for name in names]
+        added = f'Added {len(models)} Codex models.'
     except UserError as exc:
         from pydantic_clai2.models.model_catalog import CODEX_MODELS
 
-        names = [model.partition(':')[2] for model in CODEX_MODELS]
-        added = f'{exc} Added the {len(names)} built-in Codex models.'
-    for name in names:
-        store.add_model(name=with_profile(f'{CODEX}:{name}', profile))
+        models = [with_profile(model, profile) for model in CODEX_MODELS]
+        added = f'{exc} Added the {len(models)} built-in Codex models.'
+    for model in models:
+        store.add_model(name=model)
     return added
 
 
