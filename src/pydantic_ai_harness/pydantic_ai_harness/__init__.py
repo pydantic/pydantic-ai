@@ -99,7 +99,7 @@ if TYPE_CHECKING:
     from .tool_output_limits import ToolOutputLimits
     from .trajectory_judge import TrajectoryJudge
     from .warn_on_cache_busts import WarnOnCacheBusts
-    from .wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT, LimitName, WrapUpAtLimits, wrapped_up_by
+    from .wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT, WrapUpAtLimits, wrapped_up_by
     from .youdotcom import YouResearch, YouSearch
 
 __all__ = [
@@ -154,7 +154,6 @@ __all__ = [
     'KubernetesSandbox',
     'KubernetesSandboxBackend',
     'LLM_API_KEY_ENV_PATTERNS',
-    'LimitName',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
     'Macroscope',
@@ -271,7 +270,6 @@ _LAZY_EXPORTS = {
     'KubernetesSandbox': 'kubernetes_sandbox',
     'KubernetesSandboxBackend': 'kubernetes_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
-    'LimitName': 'wrap_up_at_limits',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
     'ManagedPrompt': 'logfire',
