@@ -48,6 +48,8 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
 from tests.harness._docs_examples import documented_cleanup, python_blocks, run_block
 from tests.harness._tool_calls import call_tools
+from tests.harness.display_contract_live import check_display_contract
+from tests.harness.display_fakes import screen
 
 CONTEXT = 'kind-pydantic-ai-live'
 NAMESPACE = 'default'
@@ -144,9 +146,14 @@ def _new_backend(
     warm_pool: str = POOL,
     connection: Connection = 'port-forward',
     sandbox_timeout: int | None = LIVE_SANDBOX_TIMEOUT,
+    desktop: bool | tuple[int, int] = False,
 ) -> KubernetesSandboxBackend:
     return KubernetesSandboxBackend(
-        warm_pool=warm_pool, namespace=NAMESPACE, connection=connection, sandbox_timeout=sandbox_timeout
+        warm_pool=warm_pool,
+        namespace=NAMESPACE,
+        connection=connection,
+        sandbox_timeout=sandbox_timeout,
+        desktop=desktop,
     )
 
 
@@ -367,6 +374,26 @@ async def test_an_in_cluster_connection_follows_a_recreated_pod(pool: str, conne
     assert (await backend.run(['echo', 'hi'])).stdout == 'hi\n'
     await _recreate_pod(backend)
     await _destroy(backend)
+
+
+async def test_a_desktop_pool_serves_the_display() -> None:
+    """An image with the X programs gives a non-root pod a working display, which a shell command also sees."""
+    backend = _new_backend(warm_pool='desktop-pool', desktop=True)
+    try:
+        await check_display_contract(screen(backend))
+        assert (await backend.run('xwininfo -root | grep -c Width', shell=True)).stdout == '1\n'
+    finally:
+        await _destroy(backend)
+
+
+async def test_an_image_without_the_display_programs_is_refused_by_name() -> None:
+    """A non-root pod cannot install the programs, so the display refuses, naming what is missing."""
+    backend = _new_backend(desktop=True)
+    try:
+        with pytest.raises(WorkspaceUnavailableError, match=r'missing .*Xvfb.*no root or passwordless sudo'):
+            await screen(backend).display_size()
+    finally:
+        await _destroy(backend)
 
 
 async def test_coder_tools_run_in_the_sandbox_kubernetes_sandbox_supplies() -> None:

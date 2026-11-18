@@ -18,7 +18,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | A disposable environment on this machine with Docker or Podman, not a security boundary | `DockerContainer(image='python:3.13-slim')`: a local container on your kernel |
-| A desktop the agent sees and controls | `DockerContainer(desktop=True)` + `ComputerUse()`: a local container with a display; `E2BSandbox(desktop=True)` or `DaytonaSandbox(desktop=True)` in the cloud |
+| A desktop the agent sees and controls | `DockerContainer(desktop=True)` + `ComputerUse()`: a local container with a display; `E2BSandbox(desktop=True)` or `DaytonaSandbox(desktop=True)` in the cloud, `KubernetesSandbox(warm_pool=..., desktop=True)` on your cluster |
 | Sandboxes on your own server, on Docker or Kubernetes | `OpenSandbox(image='python:3.13-slim')`: an [OpenSandbox](https://open-sandbox.ai) sandbox |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrappedWorkspace(...)` to confine its commands to the working directory on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
@@ -409,6 +409,9 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   1280x800 for `ComputerUse()`, or pass `desktop=(w, h)`. XFCE takes `printscreen` and the media and volume keys
   itself. The agent can type only ASCII. A custom `template` needs Xvfb, `xdotool`, `xwininfo`, `scrot` and
   `setsid`, which the first use installs with `apt-get` as root or with passwordless `sudo`, and `startxfce4`.
+- `KubernetesSandbox(warm_pool=..., desktop=True)` gives the pod a 1280x800 screen for `ComputerUse()`, or pass
+  `desktop=(w, h)`. Pods run non-root, so the template's image must already have `xvfb`, `xdotool`, `x11-utils`, `scrot`
+  and `util-linux` (and a browser if the agent needs one); otherwise the first use refuses, naming what is missing.
 - Idempotent per-turn setup goes in a `@hooks.on.before_run` hook: `await ctx.workspace.run('test -d
   repo/.git || git clone <url> repo', shell=True, timeout=300)`. Clone into a subdirectory: `shell`,
   background commands, and output spills create `.pydantic-ai-harness/` in the working directory, so

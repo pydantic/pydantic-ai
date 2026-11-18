@@ -97,6 +97,11 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
     path wins. Paths are sandbox paths: relative ones resolve against the working directory, and `~` isn't expanded.
     See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
 
+    desktop: bool | tuple[int, int] = False
+    """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
+    for 1280x800, or its `(width, height)`. The `SandboxTemplate` image must already have Xvfb, `xdotool`,
+    `x11-utils`, `scrot` and `util-linux`: pods run as a non-root user, so nothing is installed."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('KubernetesSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
@@ -124,6 +129,7 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
         env: Mapping[str, str] | None = None,
         authority: Authority = 'operator',
         path_authority: Mapping[str, Authority] | None = None,
+        desktop: bool | tuple[int, int] = False,
         **kwargs: Any,
     ) -> KubernetesSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
@@ -145,13 +151,16 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
             env=env,
             authority=authority,
             path_authority=path_authority,
+            desktop=desktop,
             **kwargs,
         )
 
     def backend(self, ref: WorkspaceRef) -> KubernetesSandboxBackend:
         """Construct a lazy backend for a claim this capability made; close its connection with `aclose()`."""
         check_capability_ref(ref, self.namespace)
-        return KubernetesSandboxBackend(ref=ref, connection=self.connection, working_dir=self.working_dir, env=self.env)
+        return KubernetesSandboxBackend(
+            ref=ref, connection=self.connection, working_dir=self.working_dir, env=self.env, desktop=self.desktop
+        )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Delete the claim, and with it the sandbox, without running anything in it.
@@ -181,6 +190,7 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
             sandbox_timeout=self.sandbox_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            desktop=self.desktop,
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:

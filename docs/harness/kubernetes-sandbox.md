@@ -230,6 +230,38 @@ sandbox = KubernetesSandbox(
 
 `SandboxdInClusterConnectionConfig` takes the same ports, with `mode='in-cluster-pod-ip'` or `mode='in-cluster-service'`. For sandboxd started with `--auth-token-sha256` or `--auth-token-file`, pass the token as either config's `auth_token`; every command sends it.
 
+## Give the agent a desktop
+
+Pass `desktop=True` for a sandbox with a screen, which [`ComputerUse`](computer-use.md) lets the agent see and control:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse, Shell
+from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
+
+agent = Agent('{{ anthropic:large }}', capabilities=[KubernetesSandbox(warm_pool='desktop-pool', desktop=True), Shell(), ComputerUse()])
+
+
+async def main():
+    result = await agent.run('Open python.org in Firefox and tell me the latest release.')
+    print(result.output)
+```
+
+The screen needs Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid` in the sandbox image. Pods run as a non-root user, so nothing is installed for you: without them, the first use of the screen raises `WorkspaceUnavailableError` naming what is missing. Build them into an image along with the programs the agent should use, and give the pool's template that image in place of `python:3.12`:
+
+```dockerfile
+FROM python:3.12
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends xvfb xdotool x11-utils scrot util-linux firefox-esr \
+ && rm -rf /var/lib/apt/lists/*
+```
+
+The screen starts empty, with no window manager. It is 1280x800; pass a size such as `desktop=(1440, 900)` for another.
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+
+The screen opens no port, and its X server accepts no network connections. There's no live viewer; to watch a run, save each screenshot as it arrives, as in [Watching a run](computer-use.md#watching-a-run).
+
 ## Clean up
 
 Ending a run never deletes the sandbox. A sandbox claimed by `KubernetesSandbox` is deleted after `sandbox_timeout` (24 hours by default) whether or not anyone still uses it; delete it sooner with the ref you stored:
@@ -269,6 +301,7 @@ Everything else is set by your cluster, not by this capability: the pod's isolat
 | `sandbox_timeout` | Seconds after which a newly claimed sandbox is deleted. Default: `86_400` (24 hours); `None` keeps it until `destroy(ref)`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, sandboxd's root directory. Created on a new claim; on an attached claim it must already exist. |
 | `env` | Environment variables every command gets, on top of the container's own. Default: `None`. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. The template's image must have the screen's programs. The size applies when the display first starts, and a reattached sandbox keeps its display's size. Default: `False`. |
 | `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
 | `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
