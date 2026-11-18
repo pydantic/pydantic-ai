@@ -8,7 +8,16 @@ import dataclasses
 import warnings
 import weakref
 from collections import deque
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from copy import copy
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -23,6 +32,7 @@ from opentelemetry.context import Context
 from typing_extensions import TypeAliasType
 
 from .. import _agent_graph, _instructions, _system_prompt
+from .._capability_parts import render_capability_parts_for_live_channel
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._framing import SYSTEM_TAG, frame
 from .._instrumentation import annotate_tool_call_otel_metadata
@@ -55,6 +65,7 @@ from ..messages import (
     BinaryContent,
     BinaryImage,
     CapabilityEvent,
+    CapabilityPart,
     CustomEvent,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
@@ -122,7 +133,7 @@ from ._core import (
 from ._instrumentation import (
     SessionInstrumentation,
 )
-from ._lifecycle import LifecycleEvent, ResponseStarted, StaleEvent
+from ._lifecycle import LifecycleEvent, RealtimeFrame, ResponseStarted, StaleEvent
 from ._retained_audio import RetainedAudioBudget
 from ._utils import (
     InstructionChangeContext,
@@ -464,6 +475,14 @@ def _build_session_tool_return(
     return result_part, user_content
 
 
+def _check_image_retention(retain_images_every_n: int, retain_images_max: int | None) -> None:
+    """Refuse the image retention settings `RealtimeSession` can't apply."""
+    if retain_images_every_n < 1:
+        raise UserError('`retain_images_every_n` must be at least 1.')
+    if retain_images_max is not None and retain_images_max < 0:
+        raise UserError('`retain_images_max` must be at least 0, or `None` for no limit.')
+
+
 def _chain_context(error: BaseException, context: BaseException) -> None:
     """Attach `context` at the end of `error`'s context chain, where a traceback shows it first.
 
@@ -531,8 +550,10 @@ def _pending_message_text(pending: PendingMessage) -> str:
     Text-only parts join across messages. System prompts alone become a `SystemPromptText`, which the
     connection delivers on its channel for the operator's own text, as `send(SystemPromptPart(...))` does;
     next to user text they're `<system>`-tagged within the user turn, as `Model.prepare_messages` does for a
-    standard run's non-leading system prompts on a model without a system role. Anything else can't cross
-    the live input channel.
+    standard run's non-leading system prompts on a model without a system role. A
+    [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] goes as the parts it renders to, with no lookalike
+    notes, as the live channel has neither those nor their announcement for any text. Anything else can't cross the
+    live input channel.
     """
     error = UserError(
         '`RealtimeSession.enqueue()` and `RunContext.enqueue()` in a realtime session support text prompts '
@@ -542,7 +563,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
     texts: list[str] = []
     system_prompts: list[str] = []
     from_user = False
-    for message in pending.messages:
+    for message in render_capability_parts_for_live_channel(list(pending.messages)):
         if not isinstance(message, ModelRequest):
             raise error
         for part in message.parts:
@@ -561,15 +582,18 @@ def _pending_message_text(pending: PendingMessage) -> str:
 
 
 def _pending_message_record(pending: PendingMessage) -> list[ModelRequestPart] | None:
-    """The parts to record for a delivered message of system prompts alone, or one that carries `TextContent`.
+    """The parts to record for a delivered message of system prompts alone, or one that carries capability content.
 
-    System prompts alone are delivered as system prompts, so they're recorded as they were. A capability
-    recognizes content it enqueued, such as a background task's report, by its `TextContent` metadata, so
-    the history keeps those enqueued user prompt parts as they were too. Any other message is recorded as the
-    one text part it was sent as, with its system prompts `<system>`-tagged in it.
+    System prompts alone are delivered as system prompts, so they're recorded as they were. A capability recognizes
+    content it enqueued, such as a background task's report, by its type or by its `TextContent` metadata, so the
+    history keeps a message with a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] or such user prompt parts
+    as it was too. Any other message is recorded as the one text part it was sent as, with its system prompts
+    `<system>`-tagged in it.
     """
     parts = [part for message in pending.messages if isinstance(message, ModelRequest) for part in message.parts]
-    if all(isinstance(part, SystemPromptPart) for part in parts):
+    if all(isinstance(part, SystemPromptPart) for part in parts) or any(
+        isinstance(part, CapabilityPart) for part in parts
+    ):
         return parts
     if all(isinstance(part, UserPromptPart) for part in parts) and any(
         isinstance(part, UserPromptPart)
@@ -792,11 +816,8 @@ class RealtimeSession:
         self._retain_input = audio_retention in ('input_audio', 'all') and self._audio_budget.retains_audio
         self._retain_output = audio_retention in ('output_audio', 'all') and self._audio_budget.retains_audio
         self._handle_barge_in = handle_barge_in
-        if retain_images_every_n < 1:
-            raise UserError('`retain_images_every_n` must be at least 1.')
+        _check_image_retention(retain_images_every_n, retain_images_max)
         self._retain_images_every_n = retain_images_every_n
-        if retain_images_max is not None and retain_images_max < 0:
-            raise UserError('`retain_images_max` must be at least 0, or `None` for no limit.')
         self._retain_images_max = retain_images_max
         # Retained image requests in arrival order, so the cap can evict the oldest.
         self._retained_image_requests: list[ModelRequest] = []
@@ -896,14 +917,7 @@ class RealtimeSession:
         self._send_lock = Lock()
         if self._tool_manager.ctx is not None:
             self._tool_manager.ctx.pending_messages = self._pending_messages
-        # Shared by reference with every copy of the run's context, so it must be the one the run was
-        # created with (`before_run` may have emitted into it already); a session built around a context
-        # that has none gets its own.
-        ctx = self._tool_manager.ctx
-        buffer = ctx._event_stream_buffer if ctx is not None else None  # pyright: ignore[reportPrivateUsage]
-        self._event_buffer = buffer if isinstance(buffer, RealtimeEventBuffer) else RealtimeEventBuffer()
-        if ctx is not None:
-            ctx._event_stream_buffer = self._event_buffer  # pyright: ignore[reportPrivateUsage]
+        self._event_buffer = self._run_event_buffer()
         # In-flight tool tasks keyed by tool call id, so a `ToolCallCancelled` can cancel the specific
         # calls the model abandoned (e.g. on barge-in) without touching the others.
         self._pending_tool_calls: dict[str, tuple[asyncio.Task[None], ToolCallPart]] = {}
@@ -964,6 +978,18 @@ class RealtimeSession:
             usage=self.usage,
             annotate_response=self._annotate_response,
         )
+
+    def _run_event_buffer(self) -> RealtimeEventBuffer:
+        """The event buffer of the run the session belongs to, which its context then shares."""
+        # Shared by reference with every copy of the run's context, so it must be the one the run was
+        # created with (`before_run` may have emitted into it already); a session built around a context
+        # that has none gets its own.
+        ctx = self._tool_manager.ctx
+        buffer = ctx._event_stream_buffer if ctx is not None else None  # pyright: ignore[reportPrivateUsage]
+        event_buffer = buffer if isinstance(buffer, RealtimeEventBuffer) else RealtimeEventBuffer()
+        if ctx is not None:
+            ctx._event_stream_buffer = event_buffer  # pyright: ignore[reportPrivateUsage]
+        return event_buffer
 
     def _replayable_messages(self) -> Sequence[ModelMessage]:
         """The conversation for a reconnect to replay, with a system prompt sent mid-session kept where it was sent."""
@@ -1820,35 +1846,42 @@ class RealtimeSession:
         completes (see `_execute_tool`) — neither is accepted here.
         """
         self._ensure_can_send()
-        if isinstance(content, str):
-            await self._send_text(content, respond=respond is not False)
-        elif isinstance(content, SystemPromptPart):
-            await self._send_text(SystemPromptText(content.content), respond=respond is not False, parts=[content])
-        elif isinstance(content, BinaryContent):
-            if content.is_image:
-                await self._send_image(content, respond=respond is True)
-            else:
-                if respond is True and content.media_type in (_WAV_MEDIA_TYPE, 'audio/pcm'):
-                    # Audio never solicits a reply on its own (VAD or `commit_audio()` ends the turn), so
-                    # `respond=False` is a no-op for it and only `respond=True` is a mistake.
-                    raise UserError(
-                        '`respond=True` cannot be used with audio sent via `session.send()`: a spoken turn is '
-                        'ended by voice activity detection, or by `commit_audio()` and `create_response()`.'
-                    )
-                await self._send_audio_content(content)
-        elif isinstance(content, (bytes, bytearray)):
-            # `bytes` is a `Sequence[int]`, so guard it before the sequence branch below — otherwise it
-            # iterates into a confusing per-byte error. Raw input audio goes through `send_audio()`.
+        match content:
+            case str():
+                await self._send_text(content, respond=respond is not False)
+            case SystemPromptPart():
+                await self._send_text(SystemPromptText(content.content), respond=respond is not False, parts=[content])
+            case BinaryContent():
+                await self._send_binary(content, respond=respond)
+            case Sequence():
+                await self._send_sequence(content, respond=respond)
+            case _:
+                assert_never(content)
+
+    async def _send_binary(self, content: BinaryContent, *, respond: bool | None) -> None:
+        if content.is_image:
+            await self._send_image(content, respond=respond is True)
+            return
+        if respond is True and content.media_type in (_WAV_MEDIA_TYPE, 'audio/pcm'):
+            # Audio never solicits a reply on its own (VAD or `commit_audio()` ends the turn), so
+            # `respond=False` is a no-op for it and only `respond=True` is a mistake.
+            raise UserError(
+                '`respond=True` cannot be used with audio sent via `session.send()`: a spoken turn is '
+                'ended by voice activity detection, or by `commit_audio()` and `create_response()`.'
+            )
+        await self._send_audio_content(content)
+
+    async def _send_sequence(self, content: Sequence[RealtimeSessionInput], *, respond: bool | None) -> None:
+        if isinstance(content, (bytes, bytearray)):
+            # `bytes` is a `Sequence[int]`, so it is refused before it iterates into a confusing per-byte error. Raw
+            # input audio goes through `send_audio()`.
             raise UserError('Raw audio bytes cannot be sent via `session.send()`; use `session.send_audio(...)`.')
-        elif isinstance(content, Sequence):
-            if respond is None:
-                for item in content:
-                    await self.send(item)
-            else:
-                for index, item in enumerate(content):
-                    await self.send(item, respond=respond if index == len(content) - 1 else False)
+        if respond is None:
+            for item in content:
+                await self.send(item)
         else:
-            assert_never(content)
+            for index, item in enumerate(content):
+                await self.send(item, respond=respond if index == len(content) - 1 else False)
 
     async def _send_text(
         self, content: str, *, respond: bool, parts: list[ModelRequestPart] | None = None
@@ -2356,12 +2389,7 @@ class RealtimeSession:
                         )
                     )
                     if settled := await self._connection.send(content):
-                        # What the send itself settled (where the input joined the conversation, say), applied before
-                        # anything the connection reads next.
-                        for event in settled:
-                            self._core.apply(event)
-                        self._emit_effects(self._core.take_effects())
-                        self._core_advanced(self._core)
+                        self._apply_settled(settled)
                     if isinstance(content, BinaryAudio):
                         # Under the lock, so the core takes audio in the order it goes out; only once it has
                         # gone out, as a turn the provider ended while it was on its way (which the pump can
@@ -2379,6 +2407,16 @@ class RealtimeSession:
                     model_name=self._error_model_name,
                     message=f'Realtime connection failed while sending: {e}',
                 ) from e
+
+    def _apply_settled(self, settled: Sequence[LifecycleEvent]) -> None:
+        """Apply what a send itself settled (where the input joined the conversation, say).
+
+        Applied before anything the connection reads next.
+        """
+        for event in settled:
+            self._core.apply(event)
+        self._emit_effects(self._core.take_effects())
+        self._core_advanced(self._core)
 
     def _asks_reply(self, content: RealtimeInput) -> bool:
         """Whether sending `content` asks for a response the core doesn't count ahead yet (see `requests_ahead`)."""
@@ -3140,15 +3178,7 @@ class RealtimeSession:
                     if await self._handle_pump_event(event):
                         return  # a usage limit tripped: stop reading the upstream
                     continue
-                # The frame is handled. What the provider holds of tool rounds that are over can go, and queued
-                # messages waiting for a reply to be over go out now.
-                if self._tool_rounds_over:
-                    await self._prune_tool_calls()
-                if response_done:
-                    await self._drain_pending_messages('asap')
-                    await self._drain_pending_messages('when_idle')
-                elif response_closed and self._asap_drain_deferred:
-                    await self._drain_pending_messages('asap')
+                await self._after_frame(response_done=response_done, response_closed=response_closed)
                 response_done = response_closed = False
         except Exception as e:
             self._pump_error = e
@@ -3164,6 +3194,17 @@ class RealtimeSession:
             self._queue_put(self._queue_changed)
             if token is not None:
                 otel_context.detach(token)
+
+    async def _after_frame(self, *, response_done: bool, response_closed: bool) -> None:
+        # The frame is handled. What the provider holds of tool rounds that are over can go, and queued
+        # messages waiting for a reply to be over go out now.
+        if self._tool_rounds_over:
+            await self._prune_tool_calls()
+        if response_done:
+            await self._drain_pending_messages('asap')
+            await self._drain_pending_messages('when_idle')
+        elif response_closed and self._asap_drain_deferred:
+            await self._drain_pending_messages('asap')
 
     def _apply_core(self, item: CoreInput) -> None:
         """Hand the core an event or a command, stream what it makes, and wake whoever waits on what it owes."""
@@ -3277,24 +3318,7 @@ class RealtimeSession:
             async for frame in frames:  # pragma: no branch
                 # Applied a whole frame at a time, before this session handles any of it: a consumer reacting
                 # to one of its events (and reading the history, say) must find the core as far along as this one.
-                steps: list[tuple[list[Effect], RealtimeCodecEvent | None]] = []
-                effects: list[Effect] = []
-                for event in frame:
-                    if not isinstance(event, StaleEvent):
-                        core.apply(event)
-                        effects.extend(core.take_effects())
-                    report = event.event if isinstance(event, StaleEvent) else event
-                    if isinstance(report, SessionUsage) and report.context_window_used is not None:
-                        # Taken as the frame is applied, with the usage the core counts. (A stale report too: it is
-                        # still the provider's latest reading of its context, though its usage isn't counted.)
-                        self._reported_context_window_used = report.context_window_used
-                    if not isinstance(report, LifecycleEvent):
-                        steps.append((effects, report))
-                        effects = []
-                core.end_frame()
-                steps.append((effects + core.take_effects(), None))
-                self._frame_lost_response = False
-                self._core_advanced(core)
+                steps = self._apply_frame(core, frame)
                 handled = 0
                 try:
                     started = (event.response_id for event in reversed(frame) if isinstance(event, ResponseStarted))
@@ -3316,6 +3340,30 @@ class RealtimeSession:
             if isinstance(frames, AsyncGenerator):
                 await frames.aclose()
 
+    def _apply_frame(
+        self, core: SessionCore, frame: RealtimeFrame
+    ) -> list[tuple[list[Effect], RealtimeCodecEvent | None]]:
+        """Apply a frame to the core: each codec event in it, with the effects ahead of it, then the frame's tail."""
+        steps: list[tuple[list[Effect], RealtimeCodecEvent | None]] = []
+        effects: list[Effect] = []
+        for event in frame:
+            if not isinstance(event, StaleEvent):
+                core.apply(event)
+                effects.extend(core.take_effects())
+            report = event.event if isinstance(event, StaleEvent) else event
+            if isinstance(report, SessionUsage) and report.context_window_used is not None:
+                # Taken as the frame is applied, with the usage the core counts. (A stale report too: it is
+                # still the provider's latest reading of its context, though its usage isn't counted.)
+                self._reported_context_window_used = report.context_window_used
+            if not isinstance(report, LifecycleEvent):
+                steps.append((effects, report))
+                effects = []
+        core.end_frame()
+        steps.append((effects + core.take_effects(), None))
+        self._frame_lost_response = False
+        self._core_advanced(core)
+        return steps
+
     def _ensure_streamable(self) -> None:
         if not self._entered:
             raise UserError('Enter the realtime session with `async with` before streaming it.')
@@ -3331,21 +3379,7 @@ class RealtimeSession:
     def _publish_taps(self, event: RealtimeEvent) -> None:
         if isinstance(event, PartDeltaEvent) and isinstance(delta := event.delta, SpeechPartDelta):
             if delta.audio_chunk:
-                if event.index == self._interrupted_audio_part_index:
-                    # A straggler from a barge-in-flushed part, generated before the provider
-                    # processed the cancel: erased from the taps and their accounting alike, so it
-                    # neither plays as stale audio nor skews the next playback-position mapping.
-                    pass
-                else:
-                    if event.index != self._audio_part_index:
-                        # First audio of a new part: when a playback position is attributed,
-                        # everything before this offset belongs to earlier turns.
-                        self._audio_part_index = event.index
-                        self._turn_audio_start_bytes = self._emitted_audio_bytes
-                        self._audio_items.append((self._emitted_audio_bytes, self._core.part_item(event.index)))
-                    self._emitted_audio_bytes += len(delta.audio_chunk)
-                    for tap in self._audio_taps:
-                        self._audio_tap_drops += tap.put(delta.audio_chunk)
+                self._tap_audio(event.index, delta.audio_chunk)
             if self._transcript_delta_taps and delta.transcript is not None and delta.speaker is not None:
                 # Keyed on the running transcript, not on the added text: a revision adds nothing, and
                 # gating on that would drop the very correction a caption UI needs. An empty transcript
@@ -3356,14 +3390,32 @@ class RealtimeSession:
                     delta=delta.transcript_delta or '',
                     transcript=delta.transcript,
                 )
-                for queue in self._transcript_delta_taps:
-                    if _put_tap(queue, update) is not None:
-                        self._transcript_tap_drops += 1
+                self._put_transcript_taps(self._transcript_delta_taps, update)
         elif isinstance(event, PartEndEvent) and isinstance(part := event.part, SpeechPart):
             if part.transcript:
-                for queue in self._transcript_taps:
-                    if _put_tap(queue, part) is not None:
-                        self._transcript_tap_drops += 1
+                self._put_transcript_taps(self._transcript_taps, part)
+
+    def _tap_audio(self, index: int, chunk: bytes) -> None:
+        """Hand a chunk of the speech part at stream `index` to the audio taps, counting it as emitted."""
+        if index == self._interrupted_audio_part_index:
+            # A straggler from a barge-in-flushed part, generated before the provider
+            # processed the cancel: erased from the taps and their accounting alike, so it
+            # neither plays as stale audio nor skews the next playback-position mapping.
+            return
+        if index != self._audio_part_index:
+            # First audio of a new part: when a playback position is attributed,
+            # everything before this offset belongs to earlier turns.
+            self._audio_part_index = index
+            self._turn_audio_start_bytes = self._emitted_audio_bytes
+            self._audio_items.append((self._emitted_audio_bytes, self._core.part_item(index)))
+        self._emitted_audio_bytes += len(chunk)
+        for tap in self._audio_taps:
+            self._audio_tap_drops += tap.put(chunk)
+
+    def _put_transcript_taps(self, queues: Iterable[asyncio.Queue[_TapItem]], item: _TapItem) -> None:
+        for queue in queues:
+            if _put_tap(queue, item) is not None:
+                self._transcript_tap_drops += 1
 
     def _finish_taps(self, *, discard_pending: bool = False) -> None:
         if discard_pending:
@@ -3389,28 +3441,7 @@ class RealtimeSession:
 
         self._iterator_active = True
         self._start_pump()
-
-        async def queue_events() -> AsyncIterator[RealtimeEvent]:
-            while True:
-                item = await self._queue_get()
-                if item is self._queue_changed:
-                    # A pump error takes priority over stuck background tools. Their cancellation and
-                    # drain belong to `__aexit__`, which runs as this exception leaves the owner block.
-                    if self._pump_error is not None:
-                        self._stream_exhausted = True
-                        if not self._error_was_delivered(self._pump_error):
-                            self._raise_delivered(self._pump_error)
-                    if self._pump_finished and not self._background_tasks and not self._queue:
-                        self._stream_exhausted = True
-                        return
-                    continue
-                if isinstance(item, BaseException):
-                    if self._error_was_delivered(item):
-                        continue
-                    self._raise_delivered(item)
-                yield cast('RealtimeEvent', item)
-
-        source = queue_events()
+        source = self._queue_events()
         stream: AsyncIterable[RealtimeEvent] = source
         if self._wrap_event_stream is not None:
             # The wrapper vocabulary is the `AgentStreamEvent` superset, but a wrapper applied to a
@@ -3426,3 +3457,34 @@ class RealtimeSession:
             self._iterator_active = False
             self._trim_queue()
             await aclose_all((stream_iterator, stream, source))
+
+    async def _queue_events(self) -> AsyncIterator[RealtimeEvent]:
+        """The events on the session queue, raising each error on it not delivered already, until the stream ends."""
+        while True:
+            item = await self._queue_get()
+            if item is self._queue_changed:
+                if self._stream_ends():
+                    return
+                continue
+            if isinstance(item, BaseException):
+                if self._error_was_delivered(item):
+                    continue
+                self._raise_delivered(item)
+            yield cast('RealtimeEvent', item)
+
+    def _stream_ends(self) -> bool:
+        """Whether the event stream ends as the queue changes.
+
+        A pump error marks the stream exhausted, and is raised if it wasn't delivered yet. A finished pump with no
+        background tool running and nothing queued marks it exhausted too, and ends the stream.
+        """
+        # A pump error takes priority over stuck background tools. Their cancellation and
+        # drain belong to `__aexit__`, which runs as this exception leaves the owner block.
+        if self._pump_error is not None:
+            self._stream_exhausted = True
+            if not self._error_was_delivered(self._pump_error):
+                self._raise_delivered(self._pump_error)
+        if self._pump_finished and not self._background_tasks and not self._queue:
+            self._stream_exhausted = True
+            return True
+        return False
