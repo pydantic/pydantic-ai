@@ -1048,7 +1048,8 @@ agent = Agent('test', retries={'output': 3}, capabilities=[Goal(goal='Migrate th
   inside `verify` works: pass `usage=ctx.usage` to its `run()` and give it evidence, not just the answer.
 - Output functions run before the check and can run again after a rejection, so keep them idempotent.
 - Without `verify`, `Goal` only adds the goal instructions. `headless=False` drops the
-  nobody-is-available text for interactive runs; a `verify` is still enforced.
+  nobody-is-available text for interactive runs; a `verify` is still enforced. To let an interactive
+  run stop and ask, set `headless=False` and leave `verify` unset.
 - Pick `OutputGuardrail` instead for block/redact/retry policies that don't depend on a goal.
 - Default `id='goal'`: two that disagree under one `id` raise, so give each extra `Goal` its own `id`.
   `verify` runs as the durable operation `verify` under Temporal, DBOS, and Prefect: a replay reuses

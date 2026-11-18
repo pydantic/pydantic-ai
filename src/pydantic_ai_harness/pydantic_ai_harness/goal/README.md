@@ -109,7 +109,7 @@ The instructions ask the model to make reasonable decisions, but do not authoriz
 
 ## Interactive runs and composition
 
-`headless` (the default) tells the model, in the instructions and in each retry message, that nobody is available to answer questions. Set `headless=False` for an interactive run; a `verify` callable is still enforced. To let an interactive run ask a question and return control to its user, leave `verify` unset. Mode is explicit; `Goal` does not infer it from the terminal or interface.
+`headless` (the default) tells the model, in the instructions and in each retry message, that nobody is available to answer questions. Set `headless=False` for an interactive run; a `verify` callable is still enforced. To let an interactive run ask a question and return control to its user, set `headless=False` and leave `verify` unset. Mode is explicit; `Goal` does not infer it from the terminal or interface.
 
 Each `Goal` has the default `id` `'goal'`. Two sharing an `id` are one goal stated twice when they agree, and a `UserError` when they differ. To enforce several goals, give each its own `id`: each contributes its own instructions and completion check, and every check must accept. A capability instance keeps no per-run retry counter and can be reused across runs. Callable verifiers are not serializable in agent specifications.
 
