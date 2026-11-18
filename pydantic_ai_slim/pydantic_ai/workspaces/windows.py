@@ -70,8 +70,7 @@ _EPILOGUE = '\nif ($?) { exit 0 } elseif ($LASTEXITCODE) { exit $LASTEXITCODE } 
 _POWERSHELL_FLAGS = ('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-OutputFormat', 'Text')
 
 _CLIXML_HEADER = re.compile(r'^#< CLIXML\r?\n', re.MULTILINE)
-_CLIXML_OBJECTS = re.compile(r'<Objs [^>]*>(.*?)</Objs>', re.DOTALL)
-_CLIXML_STRING = re.compile(r'<S S="[^"]*">([^<]*)</S>')
+_CLIXML_STRING = re.compile(r'<S S="[^"<>]*">([^<]*)</S>')
 _CLIXML_ESCAPE = re.compile(r'_x([0-9A-Fa-f]{4})_')
 
 _PROCESS_SET_QUOTA = 0x0100
@@ -96,18 +95,28 @@ def powershell_script(script: str) -> str:
     return f'{_PREAMBLE}{script}{_EPILOGUE}'
 
 
-def _clixml_text(objects: re.Match[str]) -> str:
-    return ''.join(
+def _clixml_text(objects: str) -> str:
+    text = ''.join(
         _CLIXML_ESCAPE.sub(lambda escape: chr(int(escape[1], 16)), html.unescape(string))
-        for string in _CLIXML_STRING.findall(objects[1])
+        for string in _CLIXML_STRING.findall(objects)
     )
+    # `_xHHHH_` escapes UTF-16 code units, so a character outside the BMP arrives as a surrogate pair.
+    return text.encode('utf-16-le', 'surrogatepass').decode('utf-16-le', 'replace')
 
 
 def _decode_clixml(stderr: str) -> str:
     """`stderr` with the CLIXML records Windows PowerShell writes for its error stream replaced by their text."""
     if not _CLIXML_HEADER.search(stderr):
         return stderr
-    return _CLIXML_OBJECTS.sub(_clixml_text, _CLIXML_HEADER.sub('', stderr))
+    stderr = _CLIXML_HEADER.sub('', stderr)
+    pieces: list[str] = []
+    position = 0
+    # `str.find`, not a regex, so unclosed records can't make this quadratic.
+    while (start := stderr.find('<Objs ', position)) != -1 and (end := stderr.find('</Objs>', start)) != -1:
+        pieces += (stderr[position:start], _clixml_text(stderr[start:end]))
+        position = end + len('</Objs>')
+    pieces.append(stderr[position:])
+    return ''.join(pieces)
 
 
 def _powershell_command(executable: str, script: str) -> list[str]:

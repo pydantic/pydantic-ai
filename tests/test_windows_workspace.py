@@ -151,7 +151,7 @@ def test_clixml_stderr_is_decoded() -> None:
         '<S S="Error">   tion_x000D__x000A_</S>'
         '<S S="Error">    + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetItemCommand_x000D__x000A_</S>'
         '<S S="Error"> _x000D__x000A_</S>'
-        '<S S="Error">a &lt;b&gt; &amp; _x005F_x000A__x000D__x000A_</S>'
+        '<S S="Error">a &lt;b&gt; &amp; _x005F_x000A_ _xD83D__xDE00__x000D__x000A_</S>'
         '</Objs>'
     )
     assert WindowsWorkspaceBackend._decode_stderr(clixml.encode()) == snapshot(  # pyright: ignore[reportPrivateUsage]
@@ -165,7 +165,12 @@ At line:4 char:1\r
    tion\r
     + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetItemCommand\r
  \r
-a <b> & _x000A_\r
+a <b> & _x000A_ \U0001f600\r
 """
     )
     assert WindowsWorkspaceBackend._decode_stderr(b'plain <S S="Error">text</S>\n') == 'plain <S S="Error">text</S>\n'  # pyright: ignore[reportPrivateUsage]
+
+
+def test_unclosed_clixml_records_decode_in_linear_time() -> None:
+    unclosed = '<Objs >' * 100_000
+    assert WindowsWorkspaceBackend._decode_stderr(f'#< CLIXML\n{unclosed}'.encode()) == unclosed  # pyright: ignore[reportPrivateUsage]
