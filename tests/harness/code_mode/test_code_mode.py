@@ -2728,14 +2728,19 @@ class TestCodeMode:
         class PanicException(BaseException):
             """Match the pyo3 panic class recognized by `is_sandbox_panic`."""
 
+        class CrashedError(ValueError):
+            """Stand in for `MontyCrashedError`, which cannot be constructed from Python."""
+
+            timed_out = False
+
         errors: dict[str, BaseException] = {
-            'worker-crash': ValueError('worker crash'),
+            'worker-crash': CrashedError('worker crash'),
             'host-error': RuntimeError('host failure'),
             'sandbox-panic': PanicException('sandbox panic'),
         }
         # The native crash exception cannot be constructed from Python. Inject it after a real
         # feed so the snippet catches the refusal before the worker or host binding fails.
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', ValueError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyCrashedError', CrashedError)
         original_run = MontyExecutor.run
 
         async def fail_after_feed(
