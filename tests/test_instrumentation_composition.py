@@ -22,7 +22,7 @@ import pytest
 from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, TextPart, ToolCallPart
 from pydantic_ai._instrumentation import public_class_path
 from pydantic_ai._output import OutputToolset
-from pydantic_ai.capabilities import AbstractCapability, Capability, Thinking
+from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, DynamicCapability, Thinking
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -192,6 +192,68 @@ async def test_deferred_capability_loaded_or_not() -> None:
     )
     assert active_capabilities_per_step(exporter) == snapshot(
         [['instrumentation', 'tool_search'], ['instrumentation', 'tool_search', 'billing']]
+    )
+
+
+async def test_capabilities_a_factory_resolved_to_are_recorded_as_themselves() -> None:
+    """A factory's capability is recorded under its own class, and a combined one as its members, not the wrapper."""
+    capability, exporter = instrumentation()
+
+    def combined(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return CombinedCapability([Capability(id='billing', instructions='Bill.'), BillingGuard()])
+
+    def nothing(ctx: RunContext[Any]) -> AbstractCapability[Any] | None:
+        return None
+
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            capability,
+            lambda ctx: Thinking(),
+            DynamicCapability(lambda ctx: Capability(id='support', instructions='Help.'), id='support_factory'),
+            combined,
+            nothing,
+        ],
+    )
+
+    await agent.run('Hello')
+
+    assert run_span_composition(exporter)['capabilities'] == snapshot(
+        {
+            'pydantic_ai.capabilities.Instrumentation': [
+                {'id': 'instrumentation', 'defer_loading': False, 'active': True}
+            ],
+            'pydantic_ai.capabilities.ToolSearch': [{'id': 'tool_search', 'defer_loading': False, 'active': True}],
+            'pydantic_ai.capabilities.Thinking': [{'id': 'thinking', 'defer_loading': False, 'active': True}],
+            'pydantic_ai.capabilities.Capability': [
+                {'id': 'support', 'defer_loading': False, 'active': True},
+                {'id': 'billing', 'defer_loading': False, 'active': True},
+            ],
+            'pydantic_ai.capabilities.AbstractCapability': [
+                {
+                    'id': IsStr(regex=r'<billing_guard:[0-9a-f]{6}>'),
+                    'user_class': 'tests.test_instrumentation_composition.BillingGuard',
+                    'defer_loading': False,
+                    'active': True,
+                }
+            ],
+            'pydantic_ai.capabilities.DynamicCapability': [
+                {'id': IsStr(regex=r'<dynamic_capability:[0-9a-f]{6}>'), 'defer_loading': False, 'active': True}
+            ],
+        }
+    )
+    assert active_capabilities_per_step(exporter) == snapshot(
+        [
+            [
+                'instrumentation',
+                'tool_search',
+                'thinking',
+                'support',
+                'billing',
+                IsStr(regex=r'<billing_guard:[0-9a-f]{6}>'),
+                IsStr(regex=r'<dynamic_capability:[0-9a-f]{6}>'),
+            ]
+        ]
     )
 
 

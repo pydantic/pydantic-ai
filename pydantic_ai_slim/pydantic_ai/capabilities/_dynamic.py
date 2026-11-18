@@ -119,8 +119,6 @@ class ResolvedDynamicCapability(WrapperCapability[AgentDepsT]):
     one registered with any durable execution engine at agent construction time.
     """
 
-    _telemetry_internal = True
-
     dynamic_toolset: DynamicToolset[AgentDepsT]
 
     def get_toolset(self) -> DynamicToolset[AgentDepsT]:

@@ -572,6 +572,33 @@ def _is_framework_internal(cls: type[AbstractCapability[Any]] | type[AbstractToo
     return cls._telemetry_internal  # pyright: ignore[reportPrivateUsage]
 
 
+def _recorded_classes(
+    capabilities: Mapping[str, AbstractCapability[Any]],
+) -> dict[str, type[AbstractCapability[Any]]]:
+    """The class each of a run's recorded capabilities is recorded as, by the id it's registered under.
+
+    A capability a factory resolved to is registered as the wrapper that stands in for it, so it's
+    recorded as the class the factory returned. When that capability registers its own members, the
+    members are recorded instead of the wrapper.
+    """
+    from pydantic_ai.capabilities._dynamic import ResolvedDynamicCapability
+
+    registered = {id(capability) for capability in capabilities.values()}
+    classes: dict[str, type[AbstractCapability[Any]]] = {}
+    for capability_id, capability in capabilities.items():
+        if isinstance(capability, ResolvedDynamicCapability):
+            members: list[AbstractCapability[Any]] = []
+            capability.wrapped.apply(members.append)
+            if any(id(member) in registered for member in members):
+                continue
+            cls: type[AbstractCapability[Any]] = type(capability.wrapped)
+        else:
+            cls = type(capability)
+        if not _is_framework_internal(cls):
+            classes[capability_id] = cls
+    return classes
+
+
 def recorded_capability_ids(
     capabilities: Mapping[str, AbstractCapability[Any]], url_ids: Set[str], *, include_content: bool
 ) -> list[str]:
@@ -582,10 +609,8 @@ def recorded_capability_ids(
     """
     return [
         capability_id
-        for capability_id, capability in capabilities.items()
-        if capability_id not in url_ids
-        and (include_content or capability.id is not None)
-        and not _is_framework_internal(type(capability))
+        for capability_id in _recorded_classes(capabilities)
+        if capability_id not in url_ids and (include_content or capabilities[capability_id].id is not None)
     ]
 
 
@@ -602,15 +627,16 @@ def capability_records(
     """
     recorded = set(recorded_capability_ids(capabilities, url_ids, include_content=include_content))
     records: dict[str, list[CapabilityRecord]] = {}
-    for capability_id, capability in capabilities.items():
-        cls = type(capability)
-        if _is_framework_internal(cls):
-            continue
+    for capability_id, cls in _recorded_classes(capabilities).items():
         record = _component_record(
             cls, capability_id if capability_id in recorded else None, include_content=include_content
         )
         records.setdefault(public_class_path(cls), []).append(
-            {**record, 'defer_loading': capability.defer_loading is True, 'active': capability_id in active_ids}
+            {
+                **record,
+                'defer_loading': capabilities[capability_id].defer_loading is True,
+                'active': capability_id in active_ids,
+            }
         )
     return records
 

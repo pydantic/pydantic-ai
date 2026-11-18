@@ -346,7 +346,7 @@ Agent.instrument_all(InstrumentationSettings(use_aggregated_usage_attribute_name
 
 ### Capabilities and toolsets
 
-Agent run spans record what the run was made of: `pydantic_ai.capabilities` lists the [capabilities](capabilities/overview.md) registered for the run, and `pydantic_ai.toolsets` the [toolsets](toolsets.md) its model requests used, including whatever a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] resolved to on each step. Both are keyed by the class, so a query can find the runs that used one without unpacking the list:
+Agent run spans record what the run was made of: `pydantic_ai.capabilities` lists the [capabilities](capabilities/overview.md) registered for the run, including whatever a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability] resolved to, and `pydantic_ai.toolsets` the [toolsets](toolsets.md) its model requests used, including whatever a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] resolved to on each step. Both are keyed by the class, so a query can find the runs that used one without unpacking the list:
 
 ```json
 {
