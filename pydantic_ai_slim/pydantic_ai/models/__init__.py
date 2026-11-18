@@ -2307,7 +2307,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         _ProjectionPass(
             'lookalike_notes',
             _lookalike_notes_pass,
-            reads=frozenset({SystemPromptPart}),
+            reads=frozenset({SystemPromptPart, RetryFeedbackPart, RetryPromptPart}),  # pyright: ignore[reportDeprecated]
             consumes=frozenset({CapabilityPart}),
         ),
         _ProjectionPass(
