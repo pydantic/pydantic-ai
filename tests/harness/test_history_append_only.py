@@ -544,6 +544,9 @@ EXEMPT: dict[str, Exempt] = {
     'AWSLambdaDurability': Exempt('Durable engine: needs the AWS Lambda durable functions runtime.'),
     'DynamicWorkflow': Exempt('Runs sub-agents a caller supplies, whose requests are their own conversations.'),
     'GoogleWorkspace': Exempt('Needs Google OAuth credentials to list its tools.'),
+    'ModelRouter': Exempt(
+        "Replaces the run's model with one from its menu, so the scenario's provider model is never requested."
+    ),
     'PGTaskDurability': Exempt('Durable engine: needs Postgres.'),
     'RenderWorkflows': Exempt('Durable engine: needs a Render Workflows app.'),
     'SSHWorkspace': Exempt('Needs an SSH host to attach a workspace to.'),

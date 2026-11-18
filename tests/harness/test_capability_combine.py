@@ -61,6 +61,8 @@ from pydantic_ai_harness import (
     BenchmarkInstructions,
     Coder,
     CompactOnRequest,
+    ModelChoice,
+    ModelRouter,
     Planning,
     PruneToolResults,
     RelevanceCompaction,
@@ -168,6 +170,10 @@ def _check_skills(merged: Any) -> None:
     assert [source.directories for source in merged._sources] == [('first',), ('second',)]
 
 
+def _check_model_router(merged: ModelRouter[object]) -> None:
+    assert (list(merged.choices), merged.default) == (['fast', 'capable'], 'capable')
+
+
 def _check_planning(merged: Any) -> None:
     assert merged.inject is False
 
@@ -236,6 +242,21 @@ COMBINE_POLICY: dict[str, Policy] = {
     'Memory': Narrows(
         'one notebook per id, and its store and namespace are a tenant boundary; two that differ need their own ids',
         lambda cls: (cls(namespace='first'), cls(namespace='second')),
+    ),
+    'ModelRouter': Combines(
+        'only the last model contribution selects, so two routers become one whose menu has both sets of choices',
+        lambda: (
+            ModelRouter[object](
+                choices={'fast': ModelChoice('test', 'Use for lookups.')},
+                router_model='test',
+                default='fast',
+                mode='per_step',
+            ),
+            ModelRouter[object](
+                choices={'capable': ModelChoice('test', 'Use for hard work.')}, router_model='test', default='capable'
+            ),
+        ),
+        _check_model_router,
     ),
     'Planning': Combines(
         'one plan per agent; `PlanningToolset` registers fixed tool names',

@@ -68,6 +68,7 @@ if TYPE_CHECKING:
     from .macroscope import Macroscope
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
+    from .model_router import ModelChoice, ModelRouter
     from .opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
     from .ordinal import Ordinal
     from .peers import Peers
@@ -161,6 +162,8 @@ __all__ = [
     'Memory',
     'ModalSandbox',
     'ModalSandboxBackend',
+    'ModelChoice',
+    'ModelRouter',
     'OpenSandbox',
     'OpenSandboxBackend',
     'Ordinal',
@@ -274,6 +277,8 @@ _LAZY_EXPORTS = {
     'Memory': 'memory',
     'ModalSandbox': 'modal_sandbox',
     'ModalSandboxBackend': 'modal_sandbox',
+    'ModelChoice': 'model_router',
+    'ModelRouter': 'model_router',
     'OpenSandbox': 'opensandbox_sandbox',
     'OpenSandboxBackend': 'opensandbox_sandbox',
     'Ordinal': 'ordinal',
