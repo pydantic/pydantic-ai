@@ -46,10 +46,6 @@ from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
-
-# Private import: pydantic-ai has no public way to tell capability-contributed
-# toolsets apart from the agent's own in `agent.toolsets`.
-from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import (
     AuthorityWorkspace,
@@ -67,6 +63,7 @@ from pydantic_ai_harness._sub_agent_output import (
     unresumable_output_message,
 )
 from pydantic_ai_harness._usage import run_with_count_tokens_fallback
+from pydantic_ai_harness.deny_unanswered._capability import find_deny_unanswered
 from pydantic_ai_harness.sub_agents._control import (
     DynamicAgents,
     DynamicAgentSpec,
@@ -432,11 +429,6 @@ def _tree_has(toolset: AbstractToolset[AgentDepsT], predicate: Callable[[Abstrac
     return found
 
 
-def _is_capability_contributed(toolset: AbstractToolset[AgentDepsT]) -> bool:
-    """Whether `toolset`'s tree contains a `CapabilityOwnedToolset`."""
-    return _tree_has(toolset, lambda node: isinstance(node, CapabilityOwnedToolset))
-
-
 def _exposes(name: str, original: str) -> bool:
     """Whether `name` is `original`, or `original` with a prefix a wrapper added."""
     return name == original or name.endswith(f'_{original}')
@@ -532,8 +524,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
     Each delegation runs the child agent in a fresh run with its own message
     history, so the sub-agent never sees the parent conversation. The parent's
-    `deps` are forwarded; its `usage` is shared when enabled; its tools are
-    inherited when enabled; any `shared_capabilities` are applied to every
+    `deps` are forwarded; its `usage` is shared when enabled; any `shared_capabilities` are applied to every
     sub-agent run; and sub-agent events are streamed to `event_stream_handler`
     when one is set. Per-delegate run controls come from each `SubAgent`.
 
@@ -547,7 +538,6 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         *,
         agents: Mapping[str, SubAgent[AgentDepsT]],
         forward_usage: bool,
-        inherit_tools: bool,
         shared_capabilities: Sequence[AgentCapability[AgentDepsT]],
         event_stream_handler: EventStreamHandler[AgentDepsT] | None,
         tool_name: str,
@@ -588,7 +578,6 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         self._creating: dict[str, set[str]] = {}
         self._agents: dict[str, SubAgent[AgentDepsT]] = dict(agents)
         self._forward_usage = forward_usage
-        self._inherit_tools = inherit_tools
         self._shared_capabilities = list(shared_capabilities)
         self._event_stream_handler = event_stream_handler
         self._tool_name = tool_name
@@ -669,33 +658,6 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             properties.pop('resume', None)
         schema['properties'] = properties
         return replace(tool_def, parameters_json_schema=schema)
-
-    def _inherited_toolsets(self, ctx: RunContext[AgentDepsT]) -> list[AbstractToolset[AgentDepsT]] | None:
-        """The parent agent's own toolsets, excluding capability-contributed ones.
-
-        Capability toolsets are bound to capability instances registered in the
-        parent run; carrying them into the sub-agent's run (where their owner is
-        not registered) fails `CapabilityOwnedToolset`'s ownership resolution, and
-        the tools would arrive without the hooks and instructions that make them
-        work. Use `shared_capabilities` to share a capability with sub-agents.
-        The delegate tool itself is also filtered out by name, so delegation
-        cannot recurse. When this toolset was registered via the `SubAgents`
-        capability the capability filter already drops it; the name filter covers
-        direct registration in `Agent(toolsets=[...])`, where nothing wraps it in
-        `CapabilityOwnedToolset`.
-        """
-        agent = ctx.agent
-        if agent is None:  # pragma: no cover - the running agent is always set during a run
-            return None
-        # Capability toolsets surface as `CombinedToolset(CapabilityOwnedToolset(...))`
-        # entries, so ownership is detected by walking each tree. Only core's capability
-        # assembly constructs `CapabilityOwnedToolset`, so a tree containing one is
-        # capability-contributed in its entirety.
-        return [
-            toolset.filtered(lambda _ctx, tool_def: tool_def.name != self._tool_name)
-            for toolset in agent.toolsets
-            if not _is_capability_contributed(toolset)
-        ]
 
     def _call_budget_message(
         self, ctx: RunContext[AgentDepsT], agent_name: str, sub_agent: SubAgent[AgentDepsT]
@@ -842,7 +804,6 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             return
         if (
             self._include_self
-            or self._inherit_tools
             or self._models
             or self._shared_capabilities
             or self._event_stream_handler is not None
@@ -852,7 +813,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         ):
             raise UserError(
                 'A `SubAgents` delegate tool running as a child workflow does not support `include_self`, '
-                '`inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`, `dynamic_agents`, '
+                '`models`, `shared_capabilities`, `event_stream_handler`, `dynamic_agents`, '
                 "`task_control`, or a delegate's `max_calls`."
             )
 
@@ -1410,10 +1371,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
         `managed` applies an owner's usage rules to a task recorded in a durable unit, which has no owner.
         """
-        # A delegation to the running agent already carries the parent's tools, so inheriting them
-        # again would register every tool twice.
         is_self = self._is_self(agent_name)
-        inherit_tools = self._inherit_tools and not is_self
         # Announced before the child coroutine exists, so an emit that does not return
         # (a cancellation landing on the await) leaves no never-awaited coroutine behind.
         owner = DelegationTasks.current() if record is not None else None
@@ -1422,16 +1380,11 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
         if emits:
             text, truncated = bounded_text(task)
-            await emit(
-                DelegationStartedEvent(
-                    agent_name=agent_name, task=text, truncated=truncated, model=key, inherits_tools=inherit_tools
-                )
-            )
+            await emit(DelegationStartedEvent(agent_name=agent_name, task=text, truncated=truncated, model=key))
         started = time.perf_counter()
 
-        toolsets = self._inherited_toolsets(ctx) if inherit_tools else None
         serving_model = ServingModelRecorder()
-        capabilities = self._child_capabilities(owner, record, serving_model, extra_capabilities)
+        capabilities = self._child_capabilities(ctx, owner, record, serving_model, extra_capabilities)
         own_budget, child_usage, usage_limits = self._child_budget(ctx, sub_agent, managed=managed or owner is not None)
 
         run_model, settings = self._run_model(ctx, sub_agent, key=key, is_self=is_self)
@@ -1444,7 +1397,6 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             settings=settings,
             usage=ctx.usage if child_usage is None else child_usage,
             usage_limits=usage_limits,
-            toolsets=toolsets,
             capabilities=capabilities,
             workspace=workspace,
             owner=owner,
@@ -1495,13 +1447,22 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
     def _child_capabilities(
         self,
+        ctx: RunContext[AgentDepsT],
         owner: DelegationTasks | None,
         record: DelegationTask | None,
         serving_model: ServingModelRecorder,
         extra_capabilities: Sequence[AbstractCapability[Any]],
     ) -> list[AgentCapability[AgentDepsT]]:
-        """The capabilities a child run gets: the shared ones, task control's, then `serving_model` and the extras."""
-        capabilities = list(self._shared_capabilities)
+        """The capabilities a child run gets.
+
+        The shared ones, the parent run's `DenyUnanswered`, task control's, then `serving_model` and the extras.
+        """
+        # Interim: a general hook for capabilities to pass themselves on to child runs (#13135) replaces this.
+        deny = find_deny_unanswered(ctx)
+        capabilities: list[AgentCapability[AgentDepsT]] = [
+            *self._shared_capabilities,
+            *([deny] if deny is not None else []),
+        ]
         if owner is not None and record is not None:
             capabilities.append(DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id))
             capabilities.extend(owner.persistence_capabilities())
@@ -1565,7 +1526,6 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         settings: ModelSettings | None,
         usage: RunUsage,
         usage_limits: UsageLimits | None,
-        toolsets: list[AbstractToolset[AgentDepsT]] | None,
         capabilities: list[AgentCapability[AgentDepsT]],
         workspace: Workspace,
         owner: DelegationTasks | None,
@@ -1599,7 +1559,6 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                         model_settings=settings,
                         usage=usage,
                         usage_limits=limits,
-                        toolsets=toolsets,
                         capabilities=capabilities,
                         workspace=ReadOnlyWorkspace(workspace) if sub_agent.read_only else workspace,
                         event_stream_handler=partial(self._stream_child, owner=owner, record=record)

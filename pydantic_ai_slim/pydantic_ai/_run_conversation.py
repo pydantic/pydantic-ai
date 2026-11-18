@@ -73,6 +73,7 @@ def _copy_requests(requests: DeferredToolRequests) -> DeferredToolRequests:
         calls=list(requests.calls),
         approvals=list(requests.approvals),
         metadata=dict(requests.metadata),
+        validated_args=dict(requests.validated_args),
         _kinds=dict(requests._kinds),  # pyright: ignore[reportPrivateUsage]
     )
 

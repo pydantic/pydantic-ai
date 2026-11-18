@@ -5,7 +5,6 @@ from __future__ import annotations
 import inspect
 import logging
 import operator
-import warnings
 from typing import TYPE_CHECKING, Any, Literal
 from unittest.mock import MagicMock
 
@@ -35,7 +34,6 @@ from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
-from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
 from pydantic_ai_harness.planning import Planning
 from pydantic_ai_harness.system_reminders import (
@@ -67,10 +65,6 @@ with try_import() as anthropic_imports:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from tests.models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
-
-pytestmark = [
-    pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
-]
 
 
 def _ctx(
@@ -285,25 +279,10 @@ class TestReminderValidation:
         assert r.tag is None
         assert r.scope == 'request'
 
-    def test_unset_tag_warns_that_the_default_changed(self) -> None:
-        with pytest.warns(
-            HarnessDeprecationWarning,
-            match=r"`Reminder` now defaults to `tag=None`; it previously defaulted to `tag='system-reminder'`",
-        ):
-            r = Reminder('text')
-        assert r.tag is None
-
-    def test_unset_defaults_read_as_none_in_the_signatures(self) -> None:
+    @pytest.mark.filterwarnings('error')
+    def test_unset_tag_is_none_without_a_warning(self) -> None:
+        assert Reminder('text').tag is None
         assert str(inspect.signature(Reminder).parameters['tag']) == "tag: 'str | None' = None"
-        assert (
-            str(inspect.signature(SystemReminders).parameters['cache_ttl'])
-            == "cache_ttl: \"Literal['5m', '1h'] | None\" = None"
-        )
-
-    @pytest.mark.filterwarnings('error::pydantic_ai_harness.HarnessDeprecationWarning')
-    @pytest.mark.parametrize('tag', [None, 'system-reminder'])
-    def test_explicit_tag_does_not_warn(self, tag: str | None) -> None:
-        assert Reminder('text', tag=tag).tag == tag
 
     def test_zero_interval_raises(self) -> None:
         with pytest.raises(ValueError, match='interval must be >= 1'):
@@ -456,11 +435,12 @@ class TestMaxFires:
         # lands after this turn's eligibility snapshot, so the new reminder fires next turn.
         reminders: list[Reminder[None]] = [Reminder('first', tag=None)]
 
-        def grow(_text: str) -> None:
+        def grow(_ctx: RunContext[None]) -> str | None:
             if len(reminders) == 1:
                 reminders.append(Reminder('appended', tag=None))
+            return None
 
-        cap = SystemReminders[None](reminders=reminders, on_fire=grow)
+        cap = SystemReminders[None](reminders=reminders, dynamic_reminders=[grow])
         assert _fired_text(await _run_before(cap, _fresh_request())) == 'first'
         assert _fired_text(await _run_before(cap, _fresh_request())) == 'first\n\nappended'
 
@@ -490,23 +470,18 @@ class TestMaxFires:
         assert _fired_text(await _run_before(cap, _fresh_request())) == 'once'
 
     async def test_dynamic_error_leaves_static_fire_state_untouched(self) -> None:
-        # A raising dynamic reminder aborts the request; static fire state and on_fire are
-        # committed only after injection, so the static reminder's budget is not consumed and
-        # no false fire is reported.
-        fired: list[str] = []
-
+        # A raising dynamic reminder aborts the request; static fire state is committed only
+        # after injection, so the static reminder's budget is not consumed.
         def boom(ctx: Any) -> str | None:
             raise RuntimeError('dynamic down')
 
         cap = SystemReminders[None](
             reminders=[Reminder('s', max_fires=1, tag=None)],
             dynamic_reminders=[boom],
-            on_fire=fired.append,
         )
         with pytest.raises(RuntimeError, match='dynamic down'):
             await _run_before(cap, _fresh_request())
         assert cap._fire_counts == {}  # pyright: ignore[reportPrivateUsage]
-        assert fired == []
 
 
 # --- Dynamic reminders ---
@@ -631,50 +606,19 @@ class TestInjectionMechanics:
         assert history == [original]
 
     async def test_no_injection_when_tail_not_model_request(self) -> None:
-        fired: list[str] = []
-        cap = SystemReminders[None](reminders=[Reminder('r', max_fires=1, tag=None)], on_fire=fired.append)
+        cap = SystemReminders[None](reminders=[Reminder('r', max_fires=1, tag=None)])
         prior = ModelResponse(parts=[TextPart('prior')])
         seen = await _run_before(cap, [prior])
         assert seen[-1] is prior
-        # No ModelRequest tail: no cadence slot spent, and the fire budget and on_fire untouched.
+        # No ModelRequest tail: no cadence slot spent, and the fire budget untouched.
         assert cap._request_count == 0  # pyright: ignore[reportPrivateUsage]
         assert cap._fire_counts == {}  # pyright: ignore[reportPrivateUsage]
-        assert fired == []
 
     async def test_empty_message_list_is_a_noop(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
         seen = await _run_before(cap, [])
         assert seen == []
         assert cap._request_count == 0  # pyright: ignore[reportPrivateUsage]
-
-    def test_cache_ttl_is_deprecated(self) -> None:
-        with pytest.warns(
-            HarnessDeprecationWarning,
-            match=r'`SystemReminders\(cache_ttl=\.\.\.\)` is deprecated and ignored: configure caching on the model',
-        ):
-            SystemReminders[None](reminders=[Reminder('r', tag=None)], cache_ttl='1h')
-
-    @pytest.mark.filterwarnings('error::pydantic_ai_harness.HarnessDeprecationWarning')
-    def test_unset_or_none_cache_ttl_does_not_warn(self) -> None:
-        assert SystemReminders[None](reminders=[Reminder('r', tag=None)]).cache_ttl is None
-        assert SystemReminders[None](reminders=[Reminder('r', tag=None)], cache_ttl=None).cache_ttl is None
-
-
-# --- on_fire callback ---
-
-
-class TestOnFire:
-    async def test_static_fires_callback(self) -> None:
-        seen_texts: list[str] = []
-        cap = SystemReminders[None](reminders=[Reminder('r', tag=None)], on_fire=seen_texts.append)
-        await _run_before(cap, _fresh_request())
-        assert seen_texts == ['r']
-
-    async def test_dynamic_fires_callback(self) -> None:
-        seen_texts: list[str] = []
-        cap = SystemReminders[None](dynamic_reminders=[lambda ctx: 'd'], on_fire=seen_texts.append)
-        await _run_before(cap, _fresh_request())
-        assert seen_texts == ['d']
 
 
 # --- for_run isolation ---
@@ -1015,42 +959,8 @@ class TestLLMReminder:
         result = await reminder(_ctx(messages=[ModelRequest(parts=[UserPromptPart('g')])]))
         assert isinstance(result, GeneratedReminder)
         assert result == _generated(f'a{forged}b')
-        assert result.data == _llm_data(f'a&lt;{forged[1:]}b')
 
-    @pytest.mark.parametrize(
-        ('forged', 'escaped'),
-        [
-            ('ends with <system', 'ends with &lt;system'),
-            ('ends with </generated_reminder', 'ends with &lt;/generated_reminder'),
-            ('<systemic> and <goals> stay', '<systemic> and <goals> stay'),
-        ],
-    )
-    async def test_cut_off_and_longer_tags(self, forged: str, escaped: str) -> None:
-        # A tag cut off at the end would be completed by the frame's own closing tag; a longer name is not a tag.
-        reminder = LLMReminder(interval=1, model=_capture_model({}, output=forged))
-        result = await reminder(_ctx(messages=[ModelRequest(parts=[UserPromptPart('g')])]))
-        assert isinstance(result, GeneratedReminder)
-        assert result.data == _llm_data(escaped)
-
-    def test_renderings_are_deprecated_with_their_output_unchanged(self) -> None:
-        reminder = GeneratedReminder('refocus', 'some-model')
-        with pytest.warns(
-            HarnessDeprecationWarning, match=r'`GeneratedReminder\.note` is deprecated.*\.text'
-        ) as caught:
-            assert reminder.note == _LLM_NOTE
-        assert len(caught) == 1
-        with pytest.warns(
-            HarnessDeprecationWarning, match=r'`GeneratedReminder\.data` is deprecated.*\.text'
-        ) as caught:
-            assert reminder.data == _llm_data('refocus', 'some-model')
-        assert len(caught) == 1
-        with pytest.warns(
-            HarnessDeprecationWarning, match=r'`str\(\)` of a `GeneratedReminder` is deprecated'
-        ) as caught:
-            assert str(reminder) == _llm_reminder('refocus', 'some-model')
-        assert len(caught) == 1
-
-    async def test_firing_a_generated_reminder_reads_no_deprecated_rendering(self) -> None:
+    async def test_a_fired_generated_reminder_reports_what_the_model_was_sent(self) -> None:
         fired: list[str] = []
         hooks = Hooks[None]()
 
@@ -1061,24 +971,18 @@ class TestLLMReminder:
         def generated(ctx: RunContext[None]) -> GeneratedReminder:
             return GeneratedReminder('refocus', 'some-model')
 
-        on_fire: list[str] = []
         agent: Agent[None, str] = Agent(
             TestModel(),
             deps_type=type(None),
-            capabilities=[SystemReminders[None](dynamic_reminders=[generated], on_fire=on_fire.append), hooks],
+            capabilities=[SystemReminders[None](dynamic_reminders=[generated]), hooks],
         )
-        # In the test body: the module's `ignore` mark beats a function-level `error` mark.
-        with warnings.catch_warnings():
-            warnings.simplefilter('error', HarnessDeprecationWarning)
-            result = await agent.run('hi')
+        result = await agent.run('hi')
         assert fired == [_generated_sent_text('refocus', 'some-model')]
-        # The event reports what the model was sent; the deprecated `on_fire` keeps its earlier rendering.
         sent = sent_messages(result.all_messages())[1]
         assert isinstance(sent, ModelRequest)
         assert [part.content for part in sent.parts if isinstance(part, SystemPromptPart)] == [
             _generated_note('some-model')
         ]
-        assert on_fire == [_llm_reminder('refocus', 'some-model')]
 
     async def test_string_operations_cannot_promote_generated_text(self) -> None:
         # Provenance is the type, not a `str` subclass that `.strip()` or `+` would silently turn into operator text.
@@ -1090,7 +994,6 @@ class TestLLMReminder:
         with pytest.raises(TypeError):
             # The type checker already rejects this, which is the point; at runtime it raises too.
             operator.add('Note: ', result)  # pyright: ignore[reportCallIssue,reportArgumentType]
-        assert str(result) == _llm_reminder('refocus')
 
     async def test_a_wrapped_generated_reminder_is_still_quoted(self) -> None:
         # A cadence wrapper that passes the result through keeps it data; only a plain `str` is operator text.
@@ -1400,19 +1303,10 @@ class TestLLMReminder:
         with pytest.raises(ValueError, match='max_context_messages must be >= 1'):
             LLMReminder(interval=1, model=TestModel(), max_context_messages=0)
 
-    def test_unset_interval_warns_that_the_default_changed(self) -> None:
-        with pytest.warns(
-            HarnessDeprecationWarning,
-            match=r'`LLMReminder` now defaults to `interval=10`; it previously defaulted to `interval=1`',
-        ):
-            reminder = LLMReminder(model=TestModel())
-        assert reminder.interval == 10
+    @pytest.mark.filterwarnings('error')
+    def test_unset_interval_is_ten_without_a_warning(self) -> None:
+        assert LLMReminder(model=TestModel()).interval == 10
         assert str(inspect.signature(LLMReminder).parameters['interval']) == "interval: 'int' = 10"
-
-    @pytest.mark.filterwarnings('error::pydantic_ai_harness.HarnessDeprecationWarning')
-    @pytest.mark.parametrize('interval', [1, 10])
-    def test_explicit_interval_does_not_warn(self, interval: int) -> None:
-        assert LLMReminder(model=TestModel(), interval=interval).interval == interval
 
     def test_zero_interval_raises(self) -> None:
         with pytest.raises(ValueError, match='interval must be >= 1'):
