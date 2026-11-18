@@ -91,8 +91,9 @@ separately.
   [Load a server's tools on demand](#load-a-servers-tools-on-demand).
 
 The dashboard shows each server as `running` (connected), `ready` (enabled;
-connects once the agent loads it, or on the next prompt for an eager server), `stopped`, or `error` (a failed connection, or a
-referenced environment variable that is not set). Saved and enabled servers are
+connects once the agent loads it, or on the next prompt for an eager server),
+`stopped`, or `error` (a failed connection, or a referenced environment variable
+that is not set). Saved and enabled servers are
 available to the agent from the next prompt; `/mcp start` is not required, but
 connects now and lists the tools. Once connected, a server stays connected
 between prompts. A server that cannot connect is marked `error` and left out of
