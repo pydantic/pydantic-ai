@@ -25,7 +25,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
-from pydantic_ai_harness._shell_command import shell_command
+from pydantic_ai_harness._shell_command import shell_command, shell_command_arg
 from pydantic_ai_harness.file_system._tool_kinds import EDIT_FILE_KIND, WRITE_FILE_KIND
 from pydantic_ai_harness.require_verification._events import CompletionUnverifiedEvent
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
@@ -146,6 +146,7 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
     _reported: bool = field(default=False, init=False, repr=False, compare=False)
     _calls: int = field(default=0, init=False, repr=False, compare=False)
     _calls_at_redirect: int = field(default=0, init=False, repr=False, compare=False)
+    _command_args: dict[str, str] = field(default_factory=dict[str, str], init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.max_attempts < 0:
@@ -160,6 +161,13 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
     def get_ordering(self) -> CapabilityOrdering:
         """Run inside `ToolOutputLimits`, so results are read before it truncates, spills, or summarizes them."""
         return CapabilityOrdering(wrapped_by=(ToolOutputLimits,))
+
+    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        """Note which tools take a shell command, to read edits from the history of a resumed run."""
+        for tool_def in tool_defs:
+            if (name := shell_command_arg(tool_def)) is not None:
+                self._command_args[tool_def.name] = name
+        return tool_defs
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> RequireVerification[AgentDepsT]:
         """Return a fresh instance, so runs don't share their edits, results, or attempts."""
@@ -206,7 +214,7 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
         return isinstance(path, str) and any(fnmatch(path, pattern) for pattern in self.exempt_paths)
 
     def _edited_before_resume(self, messages: Sequence[ModelMessage], run_id: str | None) -> bool:
-        """Whether an earlier run in this turn, which paused for its caller, made a `FileSystem` edit."""
+        """Whether an earlier run in this turn, which paused for its caller, made an edit."""
         returned = {
             part.tool_call_id
             for message in messages
@@ -223,18 +231,27 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
             default=0,
         )
         return any(
-            isinstance(part, ToolCallPart)
-            and part.tool_kind in _FILE_EDIT_KINDS
-            and part.tool_call_id in returned
-            and not self._exempt(part.args_as_dict().get('path'))
+            isinstance(part, ToolCallPart) and part.tool_call_id in returned and self._is_edit(part)
             for message in messages[turn_start:]
             if isinstance(message, ModelResponse) and message.run_id != run_id
             for part in message.parts
         )
 
-    def _record_command(self, command: str, edits_before: int | None, result: object) -> None:
+    def _is_edit(self, call: ToolCallPart) -> bool:
+        """Whether a call from history was an edit: a `FileSystem` write, or a shell command matching `edit_commands`."""
+        args = call.args_as_dict()
+        if call.tool_kind in _FILE_EDIT_KINDS:
+            return not self._exempt(args.get('path'))
+        name = self._command_args.get(call.tool_name)
+        command = None if name is None else args.get(name)
+        return isinstance(command, str) and self._is_edit_command(command)
+
+    def _is_edit_command(self, command: str) -> bool:
         unquoted = _QUOTED.sub('', command)
-        if any(pattern.search(unquoted) for pattern in self._edit):
+        return any(pattern.search(unquoted) for pattern in self._edit)
+
+    def _record_command(self, command: str, edits_before: int | None, result: object) -> None:
+        if self._is_edit_command(command):
             self._mark_edit()
             return
         # A verification that an edit in a parallel call may have raced, or no verification at all, records nothing.

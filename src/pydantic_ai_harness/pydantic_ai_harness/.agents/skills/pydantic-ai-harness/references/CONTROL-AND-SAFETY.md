@@ -1007,7 +1007,7 @@ agent = Agent('test', capabilities=[FileSystem(), Shell(), RequireVerification()
 - The redirect is a `VerificationRequiredPart` (an `InstructionCapabilityPart` from
   `pydantic_ai_harness.require_verification`, with `attempt`); find it by `isinstance`, never by text.
 - State is per run (`for_run`); a run resumed after a deferred-tool pause recovers earlier `write_file`/`edit_file`
-  edits of the turn from history (not check results). An answer to a redirect with no tool call ends the redirects
+  and shell edits of the turn from history (not check results). An answer to a redirect with no tool call ends the redirects
   and emits the event. Hooks run in workflow code under Temporal, DBOS, and Prefect. Skipped like
   `RefineOutput`: deferred or pending output, output from no model request, and `run_stream()`.
 - Emits `verification required` (`require_verification.attempt`) and `completion unverified`

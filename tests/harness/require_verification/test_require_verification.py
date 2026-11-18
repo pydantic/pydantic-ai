@@ -524,6 +524,35 @@ class TestRequireVerification:
         assert result.output == 'Verified.'
         assert _attempts(result.new_messages()) == [1]
 
+    @pytest.mark.parametrize(
+        ('command', 'redirected'),
+        [pytest.param('echo 2 > app.py', True, id='edit'), pytest.param('git status', False, id='read-only')],
+    )
+    async def test_a_shell_edit_before_a_pause_is_verified_after_the_resume(
+        self, tmp_path: Path, command: str, redirected: bool
+    ) -> None:
+        agent = Agent[None, str | DeferredToolRequests](
+            _scripted(_run(command), ToolCallPart('deploy', {}), 'Done.'),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            tools=[Tool(lambda command: '(no output)', name='run_command', metadata=_SHELL)],
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), RequireVerification(max_attempts=1)],
+        )
+
+        @agent.tool_plain(requires_approval=True)
+        def deploy() -> str:
+            return 'Deployed.'
+
+        paused = await agent.run('Fix and deploy')
+        assert isinstance(paused.output, DeferredToolRequests)
+        [call] = paused.output.approvals
+        result = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
+        )
+
+        assert _attempts(result.new_messages()) == ([1] if redirected else [])
+
     async def test_a_resumed_run_without_an_earlier_edit_is_not_sent_back(self, tmp_path: Path) -> None:
         agent = Agent[None, str | DeferredToolRequests](
             _scripted(_write('README.md'), ToolCallPart('deploy', {}), 'Done.'),
