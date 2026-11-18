@@ -1143,6 +1143,34 @@ def test_every_valid_openai_action_maps_to_actions_the_tool_runs(raw: dict[str, 
     assert all(_accepted(tool_action) for tool_action, _ in mapped)
 
 
+async def test_a_claude_result_stored_as_a_json_string_keeps_its_screenshot_on_the_function_path(
+    allow_model_requests: None,
+) -> None:
+    client = MockOpenAIResponses.create_mock(_done())
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
+    content = json.dumps(['Ran 1 action.', {'kind': 'binary', 'data': 'cG5n', 'media_type': 'image/png'}])
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Look.'),
+        ModelResponse(
+            parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]}, tool_call_id='toolu_1')],
+            provider_name='anthropic',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'computer', content, tool_call_id='toolu_1', metadata={'performed': 1}, tool_kind=COMPUTER_KIND.id
+                )
+            ]
+        ),
+    ]
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    await model.request(history, None, ModelRequestParameters(function_tools=[computer], allow_text_output=True))
+
+    (request,) = get_mock_responses_kwargs(client)
+    (output,) = [item for item in request['input'] if item.get('type') == 'function_call_output']
+    assert [item['type'] for item in output['output']] == ['input_text', 'input_image']
+
+
 @settings(
     max_examples=200,
     derandomize=True,
