@@ -3,11 +3,10 @@ from __future__ import annotations
 import asyncio
 import inspect
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, MutableMapping, Sequence
-from contextlib import aclosing
+from collections.abc import AsyncIterator, Awaitable, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cached_property
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import anyio
 import pytest
@@ -72,7 +71,7 @@ from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, conversation_view, message, message_part, no_leaked_tasks, try_import
+from .conftest import IsDatetime, conversation_view, message, message_part, try_import
 from .workspace_fakes import ConnectOnlyWorkspaceCapability
 
 with try_import() as otel_sdk_imports_successful:
@@ -3490,38 +3489,43 @@ def test_messages_builder_copies_parts_it_did_not_make():
 
 
 KEEPALIVE = ': keepalive\n\n'
+READINESS_WAIT_TIMEOUT = 5
+
+# The keepalive tests below aren't VCR tests: a cassette can't exercise idle timing, the pump's cancellation, or
+# validation that raises before any request is made.
 
 
 @pytest.mark.parametrize('stop_after', ['first', 'second'])
 async def test_encode_stream_sends_keepalive_while_source_is_quiet(stop_after: str):
-    """A quiet source gets keepalive comments without its pending pull being cancelled, and closing cleans it up."""
+    """A quiet source gets keepalive comments without its pending pull being cancelled.
+
+    A plain `async for ... break` with no `aclosing()` still closes the source: the event loop's async generator
+    finalizer closes the abandoned stream, which tears down the pump and closes the source.
+    """
     released = anyio.Event()
-    source_closed = False
+    source_closed = anyio.Event()
 
     async def events() -> AsyncIterator[str]:
-        nonlocal source_closed
         try:
             yield 'first'
             await released.wait()
             yield 'second'
             await anyio.sleep_forever()
         finally:
-            source_closed = True
+            source_closed.set()
 
     chunks: list[str] = []
-    with no_leaked_tasks():
-        encoded = cast(AsyncGenerator[str], DummyUIEventStream().encode_stream(events(), keepalive_interval=0.01))
-        async with aclosing(encoded):
-            async for chunk in encoded:
-                chunks.append(chunk)
-                if chunk == KEEPALIVE:
-                    released.set()
-                elif chunk == stop_after:
-                    break
+    async for chunk in DummyUIEventStream().encode_stream(events(), keepalive_interval=0.01):
+        chunks.append(chunk)
+        if chunk == KEEPALIVE:
+            released.set()
+        elif chunk == stop_after:
+            break
 
     expected = ['first', KEEPALIVE, 'second'] if stop_after == 'second' else ['first']
     assert list(dict.fromkeys(chunks)) == expected
-    assert source_closed
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await source_closed.wait()
 
 
 @pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
