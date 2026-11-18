@@ -9,7 +9,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Callable
 from typing import Self
 
-from pydantic_ai.computer_use import MoveMouse, Point, Region
+from pydantic_ai.computer_use import MouseMove, Point, Region
 from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.computer_use import (
     DisplayAction,
@@ -67,8 +67,17 @@ class ScreenBackend(
 
     async def act(self, action: DisplayAction) -> None:
         await self._files()
-        # Everything but `hold_key`, so tests can see an action kind refused.
-        if action.type not in {'click', 'move', 'drag', 'mouse_down', 'mouse_up', 'scroll', 'type', 'keypress'}:
+        # Everything but `hold_keys`, so tests can see an action kind refused.
+        if action.type not in {
+            'click',
+            'mouse_move',
+            'drag',
+            'mouse_down',
+            'mouse_up',
+            'scroll',
+            'type_text',
+            'press_keys',
+        }:
             raise UnsupportedActionError(f'the fake display cannot perform {action.type!r}')
         self.screens.actions.append(action)
         if self.screens.lose_next_action:
@@ -81,7 +90,7 @@ class ScreenBackend(
 
     async def cursor_position(self) -> Point:
         await self._files()
-        moves = [action for action in self.screens.actions if isinstance(action, MoveMouse)]
+        moves = [action for action in self.screens.actions if isinstance(action, MouseMove)]
         return Point(x=moves[-1].x, y=moves[-1].y) if moves else Point(x=640, y=400)
 
 
