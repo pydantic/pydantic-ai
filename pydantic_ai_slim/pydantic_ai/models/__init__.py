@@ -5778,6 +5778,9 @@ a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it 
 A deprecated `RetryPromptPart` or a request-side `CompactionPart` never reaches this branch either:
 adapters map their parts through `_sendable_request_parts`, which renders each into user-facing parts. An adapter
 that maps its parts without it, as `OpenAIDecisionsModel` does, needs an arm of its own for each.
+
+`SpeechPart` is also a response part, which `prepare_messages` converts the same way, so adapters send a
+response-side one to `_unprepared_part_error` as well.
 """
 
 
@@ -5819,7 +5822,9 @@ def _sendable_request_parts(  # pyright: ignore[reportUnusedFunction]
 
 
 def _unprepared_part_error(part: _UnpreparedPart) -> UserError:  # pyright: ignore[reportUnusedFunction]
-    """The error for a request part that reached an adapter with no way to render it.
+    """The error for a part that reached an adapter with no way to render it.
+
+    That's an `_UnpreparedPart` request part, or a response-side `SpeechPart`.
 
     Running a model through an agent always runs `prepare_messages`, but
     [`Model.request`][pydantic_ai.models.Model.request] and
