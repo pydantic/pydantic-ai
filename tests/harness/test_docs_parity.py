@@ -147,6 +147,7 @@ _CAPABILITY_DOC_PAGES = _capability_doc_pages()
 _CAPABILITY_PAGE_META = {
     'advisor.md': ('advisor', 'Advisor'),
     'ask-user.md': ('ask_user', 'Ask User'),
+    'deny-unanswered.md': ('deny_unanswered', 'Deny Unanswered'),
     'aws-lambda.md': ('aws_lambda', 'AWS Lambda Durability'),
     'absurd.md': ('absurd', 'Absurd Durability'),
     'pgtask.md': ('pgtask', 'pgtask Durability'),
@@ -169,6 +170,7 @@ _CAPABILITY_PAGE_META = {
     'kubernetes-sandbox.md': ('kubernetes_sandbox', 'Kubernetes Sandbox'),
     'render-sandbox.md': ('render_sandbox', 'Render Sandbox'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
+    'model-router.md': ('model_router', 'Model Router'),
     'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
     'boxd-sandbox.md': ('boxd_sandbox', 'boxd Sandbox'),
     'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
@@ -176,6 +178,7 @@ _CAPABILITY_PAGE_META = {
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
     'bubblewrap-sandbox.md': ('bubblewrap_sandbox', 'Bubblewrapped Workspace'),
     'repo-context.md': ('repo_context', 'Repo Context'),
+    'report-stale-files.md': ('report_stale_files', 'Report Stale Files'),
     'repair-tool-arguments.md': ('repair_tool_arguments', 'Repair Tool Arguments'),
     'render-workflows.md': ('render', 'Render Workflows'),
     'researcher.md': ('researcher', 'Researcher'),
@@ -188,6 +191,7 @@ _CAPABILITY_PAGE_META = {
     'browser-use.md': ('browser_use', 'Browser Use'),
     'compaction.md': ('compaction', 'Compaction'),
     'tool-output-limits.md': ('tool_output_limits', 'Tool Output Limits'),
+    'tool-bridge.md': ('tool_bridge', 'Tool Bridge'),
     'tool-call-judge.md': ('tool_call_judge', 'Tool Call Judge'),
     'approval-reviewer.md': ('approval_reviewer', 'Approval Reviewer'),
     'permissions.md': ('permissions', 'Permissions'),
@@ -522,11 +526,15 @@ _PROBLEM_TO_SKILL_ROUTE = (
 )
 
 
+def _section(surface: str, heading: str) -> str:
+    """The text of the section under `heading` on one surface, up to the next `##` heading."""
+    text = (_ROOT / surface).read_text(encoding='utf-8')
+    return text.split(f'\n{heading}\n', 1)[1].split('\n## ', 1)[0]
+
+
 def _section_table_rows(surface: str, heading: str) -> list[str]:
     """The table rows, header included, of the section under `heading` on one surface."""
-    text = (_ROOT / surface).read_text(encoding='utf-8')
-    section = text.split(f'\n{heading}\n', 1)[1].split('\n## ', 1)[0]
-    return [line for line in section.splitlines() if line.startswith('| ')]
+    return [line for line in _section(surface, heading).splitlines() if line.startswith('| ')]
 
 
 def _without_link_targets(rows: list[str]) -> list[str]:
@@ -569,6 +577,19 @@ def test_package_comparison_matches_across_surfaces(surface: str) -> None:
         '| [CLAI] (`pydantic-clai2`)',
     ]
     assert _without_link_targets(_section_table_rows(surface, _PACKAGES_HEADING)) == canonical
+
+
+_VERSION_POLICY_HEADING = '## Version policy'
+
+
+def test_version_policy_matches_across_surfaces() -> None:
+    """The README and the docs index state the same version policy, including what stays stable after 1.0."""
+    docs, readme = (
+        _without_link_targets(_section(surface, _VERSION_POLICY_HEADING).splitlines())
+        for surface in ('../../docs/harness/index.md', 'README.md')
+    )
+    assert readme == docs
+    assert '### After 1.0' in docs
 
 
 def test_packaged_skill_routes_problem_index_needs() -> None:

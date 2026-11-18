@@ -40,7 +40,7 @@ agent = Agent('{{ openai:medium }}')
     For voice agents, use a GPT-Live or `gpt-realtime` model with a [realtime session](../realtime/openai.md) instead.
 
 To pin to the legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead, use the `'openai-chat:'` prefix, which resolves to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
-GPT-6 models reject tools, output tools included, on Chat Completions while reasoning is on, so `OpenAIChatModel` raises a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] before it sends such a request, which [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on as it would on the API's 400. Use Responses whenever you need reasoning and tools together. `gpt-6-sol`, `gpt-6-luna` and `gpt-6.1-terra` also take tools on Chat Completions with reasoning off: `thinking=False` sends `reasoning_effort='none'`, although [OpenAI documents tool calling for `gpt-6.1-terra` through Responses only](https://developers.openai.com/api/docs/models/gpt-6.1-terra). `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for tool calling with them. [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] sets [`openai_chat_function_tools_require_reasoning_off`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_function_tools_require_reasoning_off] for these models, including through a custom `base_url`, as a proxy to OpenAI needs. Another server that serves these model names and accepts tools with reasoning turns it off with `openai_chat_function_tools_require_reasoning_off=False` in the model's [profile](overview.md#models-and-providers).
+GPT-6 models reject tools, output tools included, on Chat Completions while reasoning is on, so `OpenAIChatModel` raises a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] before it sends such a request, which [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on as it would on the API's 400. Use Responses whenever you need reasoning and tools together. `gpt-6-sol`, `gpt-6-luna` and `gpt-6.1-terra` also take tools on Chat Completions with reasoning off: `thinking=False` sends `reasoning_effort='none'`, although [OpenAI documents tool calling for `gpt-6.1-terra` through Responses only](https://developers.openai.com/api/docs/models/gpt-6.1-terra). `gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for tool calling with them. [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] sets [`openai_chat_function_tools_require_reasoning_off`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_function_tools_require_reasoning_off] for these models, including through a custom `base_url`, as a proxy to OpenAI needs. Another server that serves these model names and accepts tools with reasoning turns it off with `openai_chat_function_tools_require_reasoning_off=False` in the model's [profile](overview.md#models-and-providers).
 
 Or initialise the model directly with just the model name:
 
@@ -145,6 +145,10 @@ editing, geometry, and normalized settings.
 
 GPT Image models require a verified organization on a paid usage tier: on an unverified organization every request fails
 with a rate-limit error before anything generates. Complex prompts can take up to two minutes to process.
+
+## Image input {#image-input}
+
+`OpenAIProvider` lists JPEG, PNG, GIF and WebP as the images OpenAI models read. OpenAI's API rejects others, such as HEIC, AVIF, BMP and TIFF. An image of another type that a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance). The list applies to `OpenAIProvider` only. If you point `OpenAIProvider(base_url=...)` at another server that reads more formats, use [`OpenAICompatibleProvider`](compatible-apis.md#other-endpoints) for it, or pass `profile=OpenAIModelProfile(supported_image_media_types=frozenset({...}))` to the model.
 
 ## Structured output schemas
 
@@ -738,6 +742,8 @@ Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI o
 ### Audio input {#audio-input}
 
 On Chat Completions, only OpenAI's audio models take audio input, such as `gpt-audio` and `gpt-4o-audio-preview`: the OpenAI models with `audio` in their name. With another OpenAI model, audio in the prompt raises an error, and audio a tool returns is replaced by a note saying the model can't read it. The Responses API takes no audio input. The rule applies to `OpenAIProvider`. OpenAI-compatible providers, including Azure, report audio input for every model, since their model names don't say which models take it. If you point `OpenAIProvider(base_url=...)` at another server that serves an audio model, such as vLLM with Voxtral, use [`OpenAICompatibleProvider`](compatible-apis.md#other-endpoints) for it, or pass `profile=OpenAIModelProfile(supports_audio_file_input=True)` to the model.
+
+Chat Completions takes WAV and MP3 audio only (`audio/wav`, `audio/mpeg`, and the `audio/x-wav` and `audio/mp3` spellings). Audio of another format in the prompt raises a `UserError` naming its media type, before an `AudioUrl` is downloaded, and audio of another format that a tool returns is replaced by a note.
 
 ## Decisions API {#decisions-api}
 

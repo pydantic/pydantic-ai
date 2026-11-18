@@ -31,8 +31,9 @@ a later one for the same memory supersedes them, and a
 change made during a run (including `write_memory`) reaches the model with the next user prompt,
 not after tool results (the exception: re-enqueuing the run's own snapshot when compaction drops
 it mid tool loop). It is only added before the model's first response in a run, so a deferred `Memory`
-loaded mid-run waits for the next prompt. Snapshots carry `TextContent.metadata`
-`{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ..., 'id': ...}`; list compaction before `Memory`.
+loaded mid-run waits for the next prompt. Snapshots are `MemorySnapshotPart`s (a `DataCapabilityPart` from
+`pydantic_ai_harness.memory`, `<memory>` frame, `scope_hash` and `memory_id` fields); find them by type. List
+compaction before `Memory`.
 
 ```python
 from pydantic_ai import Agent
@@ -165,6 +166,9 @@ with the model's writes.
   `max_search_result_chars=4_000`, `max_search_files=1_000`. Queries are capped at 1,000 characters
   and 32 unique terms. No semantic ranking is built in; implement `SearchableMemoryStore.search`
   for an indexed backend.
+- A nested scope (namespace `acme/main` under `acme`) is skipped by search and the injected file
+  list. A custom store implements `ChildListingMemoryStore.list_child_paths` so its files do not
+  use up those listing limits.
 - Other options: `agent_name='main'` (storage segment, never shown to the model), `heading=''`
   (labels the guidance and injected block), `guidance=None` (replace the default usage text).
 
@@ -350,10 +354,12 @@ from pydantic_ai_harness import PydanticAIDocs
 agent = Agent('test', capabilities=[PydanticAIDocs()])
 ```
 
-Parameters: `local_docs_path: Path | None = None`, `cache: bool = True` (memoize per run).
+Parameters: `local_docs_path: Path | None = None`, `cache: bool = True` (memoize per run),
+keyword-only `remote_ref: str | None = None` (git ref to fetch from; `None` is the installed
+`pydantic_ai` release's tag, `main` for a dev build).
 Resolution per call: `{local_docs_path}/{topic}.md` in the run workspace (falling back to the
 `PYDANTIC_AI_HARNESS_DOCS_PATH` env var), then
-`https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs/{topic}.md`, else an error.
+`https://raw.githubusercontent.com/pydantic/pydantic-ai/{remote_ref}/docs/{topic}.md`, else an error.
 
 Gotchas: the local path is read through the run workspace only, with no `workspace=` override (in
 a sandbox the checkout must be in the sandbox); with a local path set and no workspace, the run fails at start. With no
