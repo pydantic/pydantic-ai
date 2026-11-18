@@ -80,8 +80,8 @@ The model must accept images.
   [OpenAI](https://pydantic.dev/docs/ai/models/openai/#native-tools).
 - Every other model gets `computer` as a regular function tool.
 
-A model whose profile doesn't list its native tools, such as one served by Ollama, vLLM or a custom provider, gets the
-native computer tool too. For a server without it, use `ComputerUse(native=False)`, or leave `ComputerTool` out of the
+An `OpenAIResponsesModel` on an OpenAI-compatible server whose profile doesn't list its native tools gets the native
+computer tool too. For a server without it, use `ComputerUse(native=False)`, or leave `ComputerTool` out of the
 profile's `supported_native_tools`.
 
 Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
@@ -157,7 +157,7 @@ or below those sizes.
   counts against the tool's retries.
 - If the environment is gone, the run ends with [`WorkspaceUnavailableError`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.WorkspaceUnavailableError).
 - Agents on one screen and one event loop, such as parallel sub-agents, take turns a whole call at a time, so their clicks never interleave. Agents on separate event loops or in separate processes don't wait for each other.
-- A button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, so a drag can span calls, and each result says which buttons are still pressed. A call that fails or is cancelled releases them, and so does the end of the run however it ends, so a drag must finish within one run, which matters when calls wait for approval. A `ComputerUse` loaded mid-run with `defer_loading=True` releases them at the end of each call instead. A failed call says which buttons it released, or that a button may still be held if its release failed too.
+- A button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, so a drag can span calls, and each result says which buttons are still pressed. A call that fails or is cancelled once it reaches the display releases them, unlike one refused on a read-only workspace, and so does the end of the run however it ends, so a drag must finish within one run, which matters when calls wait for approval. A `ComputerUse` loaded mid-run with `defer_loading=True` releases them at the end of each call instead. A failed call says which buttons it released, or that a button may still be held if its release failed too.
 
 ## Watching a run
 
