@@ -6842,8 +6842,6 @@ async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
         async def on_tool_execute_error(
             self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Exception
         ) -> Any:
-            if call.tool_call_id == 'call-b':
-                call_b_done.set()
             return f'failed: {error}'
 
     agent = Agent(
