@@ -42,7 +42,7 @@ from .citations import Citations
 from .combined import CombinedCapability
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
-from .durable_operation import durable_operation
+from .durable_operation import durable_operation, durable_operation_bound
 from .file_understanding import FileUnderstanding
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
@@ -180,6 +180,7 @@ __all__ = [
     'CombinedCapability',
     'DynamicCapability',
     'durable_operation',
+    'durable_operation_bound',
     'RequestInput',
     'HandleDeferredToolCalls',
     'HistoryProcessor',

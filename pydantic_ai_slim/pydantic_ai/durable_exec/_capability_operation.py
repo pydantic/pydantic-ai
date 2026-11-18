@@ -279,13 +279,7 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
                 (value for value in bound.arguments.values() if isinstance(value, ModelRequestContext)), None
             )
 
-            # The run installs one dispatcher per bound operation on every context it builds. A
-            # context without them was never prepared by a run (or was rebuilt worker-side, past
-            # the boundary already), so the call belongs inline.
-            operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
-            dispatcher = (
-                operations.get((self.id, marker.name)) if operations is not None and self.id is not None else None
-            )
+            dispatcher = _dispatcher(ctx, self, marker.name)
             if dispatcher is None:
                 result = await target.__get__(self, type(self))(*args, **kwargs)
             else:
@@ -305,6 +299,28 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
         return cast(Callable[P, A], decorated)
 
     return decorate
+
+
+def _dispatcher(ctx: RunContext[Any], capability: AbstractCapability[Any], name: str) -> Any:
+    """The dispatcher a run bound for `capability`'s operation `name`, or `None` when the call runs inline."""
+    # The run installs one dispatcher per bound operation on every context it builds. A context
+    # without them was never prepared by a run (or was rebuilt worker-side, past the boundary
+    # already), so the call belongs inline.
+    operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
+    if operations is None or capability.id is None:
+        return None
+    return operations.get((capability.id, name))
+
+
+def durable_operation_bound(ctx: RunContext[Any], capability: AbstractCapability[Any], name: str) -> bool:
+    """Whether calling `capability`'s `@durable_operation(name)` method in this run goes through the durability backend.
+
+    `False` means the method runs inline, where it was called: the agent has no durability
+    capability, the capability has no `id`, or it was not on the agent when the agent was built,
+    as with one a `DynamicCapability` returns. A capability whose operation does I/O the workflow
+    cannot do, such as a blocking network call, checks this before taking that path.
+    """
+    return _dispatcher(ctx, capability, name) is not None
 
 
 def base_hook_durable_operation(

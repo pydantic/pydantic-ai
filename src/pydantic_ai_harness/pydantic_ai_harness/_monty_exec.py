@@ -284,19 +284,21 @@ class PrintCapture:
     def __init__(self) -> None:
         self.callback = CollectString(max_bytes=_PRINT_LIMIT_BYTES)
         self._relayed = ''
+        self._relayed_bytes = 0
 
     @property
     def joined(self) -> str:
         return self.callback.output + self._relayed
 
-    def relay(self, printed: str) -> None:
-        """Add output a turn printed in another process (see `TurnFeed`)."""
+    def relay(self, printed: str, printed_bytes: int) -> None:
+        """Add output a turn printed in another process (see `TurnFeed`), of which `printed` may be a cut."""
         self._relayed += printed
+        self._relayed_bytes += printed_bytes
 
     @property
     def unused_bytes(self) -> int:
         """How much more the next turn may print, so the whole feed stays under the cap."""
-        return _PRINT_LIMIT_BYTES - len(self._relayed.encode())
+        return _PRINT_LIMIT_BYTES - self._relayed_bytes
 
     def prepend_to(self, error_message: str) -> str:
         """Prefix captured stdout to an error message, so the model sees what printed before the error."""
@@ -372,7 +374,7 @@ class TurnFeed:
             turn = await self.run_turn(request)
         except Exception as error:
             raise MontyTurnUnavailable(error) from error
-        self.capture.relay(turn.prints)
+        self.capture.relay(turn.prints, turn.printed_bytes)
         self.run_state.suspensions += turn.suspensions
         # A turn that stored nothing failed in a way that resets the session, which clears this again.
         self.run_state.stored_state = turn.state

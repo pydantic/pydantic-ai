@@ -361,7 +361,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 monty_sandbox=self.monty_sandbox,
                 repl_store=self.repl_store,
                 capability=self,
-                monty_turn=self._monty_turn if self.id is not None else None,
+                monty_turn=self._monty_turn,
                 speculation=self._speculation,
             )
         return CodeModeToolset(
@@ -377,7 +377,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             monty_sandbox=self.monty_sandbox,
             repl_store=self.repl_store,
             capability=self,
-            monty_turn=self._monty_turn if self.id is not None else None,
+            monty_turn=self._monty_turn,
             speculation=self._speculation,
         )
 
@@ -394,13 +394,13 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 return await run_monty_turn(
                     pool, request, os_policy=session_os_policy(self.os_policy), mount=self.mount
                 )
-        except UserError:
-            raise
         except Exception as error:
             # Temporal records an activity's failure, cause included, in workflow history, and a pool
-            # or connection error's text can carry the pool's URL or credentials. The retry policy still
-            # applies, since this is not a `UserError`.
-            raise MontyServerError(type(error).__name__) from None
+            # or connection error's text can carry the pool's URL or credentials, so only the type is
+            # kept. A `UserError` stays one, which Temporal does not retry; the retry policy applies
+            # to anything else.
+            redacted = UserError if isinstance(error, UserError) else MontyServerError
+            raise redacted(type(error).__name__) from None
 
     @property
     def has_wrap_run_event_stream(self) -> bool:

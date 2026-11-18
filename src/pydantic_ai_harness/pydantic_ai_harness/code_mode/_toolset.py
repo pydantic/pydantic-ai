@@ -18,7 +18,7 @@ from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, durable_operation_bound
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature
@@ -1310,15 +1310,18 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         computes, and Temporal fails a workflow task that does not yield within 2 seconds. Turns move
         out only where they behave as they do here: an `os_access` handler may use workflow APIs, and
         Monty restarts a mount's `write_bytes_limit` count and drops its `'overlay'` writes when a
-        stored session loads. Only a durability capability binds the operation to an activity; under
-        the deprecated `TemporalAgent` it would run inline in the workflow. The answer depends only on
-        configuration, so every `run_code` call in a run takes the same path, and `workflow.patched`
-        keeps runs that started before this existed on the path they started on.
+        stored session loads. The operation must also be bound to an activity, which a `CodeMode`
+        without `id`, one a `DynamicCapability` returns, or the deprecated `TemporalAgent` lacks; it
+        would otherwise run inline in the workflow. The answer is fixed for the run, so every
+        `run_code` call takes the same path, and `workflow.patched` keeps runs that started before
+        this existed on the path they started on.
         """
         if self.monty_turn is None or self.monty_sandbox is None or self.os_access is not None:
             return None
         mounts = self.mount if isinstance(self.mount, list) else [self.mount] if self.mount is not None else []
         if any(mount.mode == 'overlay' or mount.write_bytes_limit is not None for mount in mounts):
+            return None
+        if self.capability is None or not durable_operation_bound(ctx, self.capability, 'monty_turn'):
             return None
         if not in_durable_execution(ctx) or not _workflow_patched(_DURABLE_TURNS_PATCH):
             return None
@@ -1464,6 +1467,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 'Re-run any imports, recreate any state you need, and use less memory: '
                 'process smaller batches, avoid large intermediate values, and print less output.'
             )
+        elif error.session_lost:
+            advice = (
+                'The sandbox could not keep the session after this error, so it was reset. '
+                'Re-run any imports and recreate any state you need.'
+            )
         else:
             return ''
         await run_state.reset()
@@ -1531,6 +1539,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 await run_state.reset()
                 _raise_usage_limit_exceeded(execution)
                 return ModelRetry(f'{self._worker_failure_message(failure)}{_started_calls_note(execution)}')
+            case 'not_stored':
+                # Retrying soon would meet the same refusal, so the run fails with the reason.
+                await run_state.reset()
+                raise UserError(failure.display)
             case 'other':
                 # The session may have been invalidated by a host-side binding or protocol failure.
                 # Make the reset visible so the model can rebuild state on its next attempt.

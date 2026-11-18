@@ -17,7 +17,6 @@ from __future__ import annotations
 import base64
 import math
 from collections.abc import Mapping
-from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, TypeGuard, TypeVar, get_args
 
@@ -46,7 +45,6 @@ from pydantic_monty import (
     ResourceLimits,
 )
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import is_multi_modal_content
 from pydantic_ai_harness._typeguards import is_mapping
 
@@ -65,14 +63,26 @@ def to_wire(value: object) -> object:
     Temporal's converter writes activity inputs and results as JSON, which would turn bytes into text
     and tuples into lists, and fails on bytes that are not UTF-8. Every value whose JSON form would
     differ is tagged, and every dict is tagged too, so a dict the snippet built is never read as a tag.
-    A value of any other type, such as a `datetime`, crosses as its JSON form.
+    A value of any other type, such as a `datetime`, crosses as its JSON form and comes back as that
+    form, as a tool result does when CodeMode hands it to the sandbox. Raises `TypeError` for a dict
+    whose keys would then not come back distinct and hashable, such as a `date` beside its ISO string.
     """
     if _is_list_or_tuple(value):
         items = [to_wire(item) for item in value]
         return {'tuple': items} if isinstance(value, tuple) else items
     if is_mapping(value):
-        return {'dict': [[to_wire(key), to_wire(item)] for key, item in value.items()]}
+        pairs = [[to_wire(key), to_wire(item)] for key, item in value.items()]
+        if not _keys_come_back(pairs):
+            raise TypeError('a dict whose keys would not come back distinct and hashable cannot cross as JSON')
+        return {'dict': pairs}
     return _scalar_to_wire(value)
+
+
+def _keys_come_back(pairs: list[list[object]]) -> bool:
+    try:
+        return len({from_wire(from_json(to_json(key))) for key, _ in pairs}) == len(pairs)
+    except (TypeError, PydanticSerializationError):  # unhashable after the trip, or no JSON form
+        return False
 
 
 def _scalar_to_wire(value: object) -> object:
@@ -238,7 +248,8 @@ class MontyFailure:
     and the code that turns a failure into a retry reads only this.
     """
 
-    kind: Literal['syntax', 'typing', 'runtime', 'crashed', 'disconnected', 'other', 'panic']
+    kind: Literal['syntax', 'typing', 'runtime', 'crashed', 'disconnected', 'other', 'panic', 'not_stored']
+    """`not_stored`: the server would not store the session between turns; `display` says why."""
     display: str = ''
     """The full report: `display()` for a sandbox error, `str()` for any other."""
     message: str = ''
@@ -252,6 +263,8 @@ class MontyFailure:
     """Whether a crashed worker was killed for running past its time limit."""
     cause: str | None = None
     """Why the server dropped the connection, for a disconnect."""
+    session_lost: bool = False
+    """Whether the server could not keep the session a runtime error left, so the next turn starts fresh."""
 
     @classmethod
     def from_error(cls, error: BaseException) -> MontyFailure | None:
@@ -293,6 +306,8 @@ class MontyTurn:
     Encoded here rather than typed `Base64Bytes`: Temporal's Pydantic converter serializes a value
     by its runtime types, so bytes would go out as UTF-8 text whatever this field declares."""
     prints: str = ''
+    printed_bytes: int = 0
+    """How much the snippet printed in this turn, counting any part `prints` leaves out."""
     suspensions: int = 0
     """How many times the snippet paused in this turn; each pause counts toward `max_suspensions`."""
     call: TurnCall | None = None
@@ -325,67 +340,20 @@ class MontyServerError(Exception):
 
 
 _TURN_PAYLOAD_BYTES = 1024 * 1024
-"""What a turn returns of the snippet's prints and result, half Temporal's default 2 MiB payload limit.
+"""The most a turn returns, encoded: half Temporal's default 2 MiB payload limit.
 
-The other half leaves room for the record ID, a nested call's arguments and the converter's envelope.
-Past it the activity result fails to upload, while workflow code would hand the same text on for the
-model's tool output limits to cut.
+The other half leaves room for the converter's envelope. Past the limit the activity result fails
+to upload, while workflow code would hand the same text on for the model's tool output limits to cut.
 """
 
+_NOTE_BYTES = 100
+"""Room kept for the note that says how much of a text `_fit_turn` cut."""
 
-def _fit(text: str, max_bytes: int) -> str:
-    """`text`, cut to its first `max_bytes` bytes with a note saying how much was dropped."""
-    data = text.encode()
-    if len(data) <= max_bytes:
-        return text
-    note = f'\n[{len(data) - max_bytes} more bytes not shown: a turn returns at most {max_bytes} bytes]'
-    return data[: max(max_bytes - len(note), 0)].decode(errors='ignore') + note
-
-
-def _wire_result(value: object) -> object:
-    """`to_wire(value)`, or its `repr` when that would not come back as the same mapping keys.
-
-    A key such as a `date` crosses as its JSON form, so a dict keyed by both a date and the same
-    date's ISO string would lose an entry, and a `frozenset` key would come back as an unhashable list.
-    The `repr` loses nothing, as `model_safe_result` does for keys with no JSON form. A result too large
-    for one turn is cut the same way as prints.
-    """
-    wired = to_wire(value)
-    if not _keys_survive(wired):
-        wired = repr(value)
-    if len(to_json(wired)) > _TURN_PAYLOAD_BYTES:
-        return _fit(value if isinstance(value, str) else repr(value), _TURN_PAYLOAD_BYTES // 2)
-    return wired
-
-
-def _keys_survive(wired: object) -> bool:
-    """Whether every mapping in `wired` decodes, after the JSON round trip, with as many distinct keys."""
-    if _is_list_or_tuple(wired):
-        return all(_keys_survive(item) for item in wired)
-    if not is_mapping(wired):
-        return True
-    ((tag, data),) = wired.items()
-    if tag == 'tuple':
-        return _keys_survive(data)
-    if tag != 'dict':
-        return True
-    assert _is_list_or_tuple(data)
-    keys: set[object] = set()
-    for pair in data:
-        assert _is_list_or_tuple(pair)
-        key, item = pair
-        try:
-            keys.add(from_wire(from_json(to_json(key))))
-        except TypeError:  # an unhashable key, such as a `frozenset` that came back as a list
-            return False
-        if not _keys_survive(item):
-            return False
-    return len(keys) == len(data)
-
-
-def _session_lost() -> MontyTurn:
-    """The server no longer has the session's state, which CodeMode reports as a dropped session."""
-    return MontyTurn('failed', failure=MontyFailure('disconnected'))
+_NO_STORAGE = (
+    'The Monty server stores no sessions. Inside a durable workflow, CodeMode runs a remote '
+    '`monty_sandbox` one turn at a time and needs a server that stores sessions between turns.'
+)
+_DUMP_REFUSED = "The Monty server could not store the session's state, for example because its snapshot quota is full."
 
 
 async def run_monty_turn(
@@ -397,92 +365,131 @@ async def run_monty_turn(
 ) -> MontyTurn:
     """Run one turn on a session checked out of `pool`, and store the state it leaves.
 
-    Monty errors come back as a `failed` turn rather than raising, so Temporal does not retry a
-    snippet that failed in the sandbox. Errors before the turn starts, such as a refused checkout,
-    raise and are retried by the activity's retry policy: a retry starts again from `request.state`,
-    which never changes. A server that stores no sessions, or refuses to store this one, raises
-    `UserError`, which Temporal does not retry, since retrying soon would meet the same refusal.
+    Monty errors, and a server that will not store the session, come back as a `failed` turn rather
+    than raising, so Temporal neither retries a snippet that failed in the sandbox nor records the
+    server's own text. Errors before the turn starts, such as a refused checkout, raise and are
+    retried by the activity's retry policy: a retry starts again from `request.state`, which never
+    changes.
     """
-    type_check = request.type_check_stubs is not None
+    capture = CollectString(max_bytes=request.print_bytes)
     async with pool.checkout(
         limits=request.limits,
-        type_check=type_check,
+        type_check=request.type_check_stubs is not None,
         type_check_stubs=request.type_check_stubs,
         os_policy=os_policy,
         ephemeral=False,
     ) as session:
-        if await _session_id(session) is None:
-            raise UserError(
-                'The Monty server stores no sessions. Inside a durable workflow, CodeMode runs a remote '
-                '`monty_sandbox` one turn at a time and needs a server that stores sessions between turns.'
-            )
-        capture = CollectString(max_bytes=request.print_bytes)
-        pauses = _Pauses()
-        try:
-            paused = await _load(session, request, mount=mount, capture=capture)
-        except MontyRuntimeError:
-            # The stored record could not be loaded, for example because the server let it expire.
-            # Connection errors are other `MontyError`s and raise, so the activity retry loads it again.
-            return _session_lost()
-        try:
-            if paused is None:
-                assert request.code is not None, 'a turn that resumes nothing feeds code'
-                snapshot = pauses.seen(
-                    await session.feed_start(
-                        request.code, print_callback=capture, mount=mount, skip_type_check=not type_check
-                    )
+        turn = await _run_turn(session, request, mount=mount, capture=capture)
+    printed = capture.output
+    return _fit_turn(replace(turn, prints=printed, printed_bytes=len(printed.encode())))
+
+
+async def _run_turn(
+    session: AsyncMontySession,
+    request: TurnRequest,
+    *,
+    mount: MountDir | list[MountDir] | None,
+    capture: CollectString,
+) -> MontyTurn:
+    if await _session_id(session) is None:
+        return MontyTurn('failed', failure=MontyFailure('not_stored', display=_NO_STORAGE))
+    pauses = _Pauses()
+    try:
+        paused = await _load(session, request, mount=mount, capture=capture)
+    except MontyRuntimeError:
+        # The stored record could not be loaded, for example because the server let it expire.
+        # Connection errors are other `MontyError`s and raise, so the activity retry loads it again.
+        # CodeMode reports this as a dropped session.
+        return MontyTurn('failed', failure=MontyFailure('disconnected'))
+    try:
+        if paused is None:
+            assert request.code is not None, 'a turn that resumes nothing feeds code'
+            snapshot = pauses.seen(
+                await session.feed_start(
+                    request.code,
+                    print_callback=capture,
+                    mount=mount,
+                    skip_type_check=request.type_check_stubs is None,
                 )
-            else:
-                assert request.resume is not None, 'a turn that loads a snapshot resumes it'
-                snapshot = pauses.seen(await _resume(paused, request.resume))
-            snapshot = await _answer_in_turn(snapshot, pauses)
-        except BaseException as error:
-            failure = MontyFailure.from_error(error)
-            if failure is None:  # pragma: no cover -- an activity cancelled while the snippet runs
-                raise
-            if failure.kind == 'other':
-                # A remote error's text can carry the pool's URL or credentials, and this result is
-                # kept in workflow history. CodeMode shows the model only the error's type.
-                failure = replace(failure, display='')
-            state = None
-            # Only these leave the session usable; the caller resets it after any other failure.
-            if failure.kind in ('syntax', 'runtime'):
-                # Monty finishes the checkout when the print cap fires in a snippet with later
-                # calls, so nothing is left to store, and Logfire Agent Sandboxes has refused to store
-                # a session a snippet error left. CodeMode resets the session after either.
-                with suppress(RuntimeError, MontyRuntimeError):
-                    state = await _dump(session)
-            prints = _fit(capture.output, _TURN_PAYLOAD_BYTES)
-            return MontyTurn('failed', state=state, prints=prints, suspensions=pauses.count, failure=failure)
-        try:
-            state = await _dump(session)
-        except MontyRuntimeError:
-            # `from None`: Temporal records the cause in history, and a remote error's text can carry
-            # the pool's URL or credentials.
-            raise UserError(
-                "The Monty server could not store the session's state, for example because its snapshot quota is full."
-            ) from None
-        if isinstance(snapshot, MontyComplete):
-            output = _wire_result(model_safe_result(snapshot.output))
-            prints = _fit(capture.output, _TURN_PAYLOAD_BYTES - len(to_json(output)))
-            return MontyTurn('complete', state=state, prints=prints, suspensions=pauses.count, output=output)
-        prints = _fit(capture.output, _TURN_PAYLOAD_BYTES)
-        if isinstance(snapshot, AsyncFunctionSnapshot):
-            call = TurnCall(
-                function_name=snapshot.function_name,
-                args=to_wire(snapshot.args),
-                kwargs=to_wire(snapshot.kwargs),
-                call_id=snapshot.call_id,
-                is_os_function=snapshot.is_os_function,
             )
-            return MontyTurn('call', state=state, prints=prints, suspensions=pauses.count, call=call)
+        else:
+            assert request.resume is not None, 'a turn that loads a snapshot resumes it'
+            snapshot = pauses.seen(await _resume(paused, request.resume))
+        snapshot = await _answer_in_turn(snapshot, pauses)
+    except BaseException as error:
+        failure = MontyFailure.from_error(error)
+        if failure is None:  # pragma: no cover -- an activity cancelled while the snippet runs
+            raise
+        if failure.kind == 'other':
+            # A remote error's text can carry the pool's URL or credentials, and this result is kept
+            # in workflow history. CodeMode shows the model only the error's type.
+            failure.display = ''
         return MontyTurn(
-            'waiting',
-            state=state,
-            prints=prints,
-            suspensions=pauses.count,
-            pending_call_ids=snapshot.pending_call_ids,
+            'failed', state=await _state_after(session, request, failure), suspensions=pauses.count, failure=failure
         )
+    try:
+        state = await _dump(session)
+    except MontyRuntimeError:
+        return MontyTurn('failed', failure=MontyFailure('not_stored', display=_DUMP_REFUSED))
+    if isinstance(snapshot, MontyComplete):
+        try:
+            output = to_wire(model_safe_result(snapshot.output))
+        except TypeError:  # keys that would not come back distinct; the `repr` loses nothing
+            output = repr(snapshot.output)
+        return MontyTurn('complete', state=state, suspensions=pauses.count, output=output)
+    if isinstance(snapshot, AsyncFunctionSnapshot):
+        call = TurnCall(
+            function_name=snapshot.function_name,
+            args=to_wire(snapshot.args),
+            kwargs=to_wire(snapshot.kwargs),
+            call_id=snapshot.call_id,
+            is_os_function=snapshot.is_os_function,
+        )
+        return MontyTurn('call', state=state, suspensions=pauses.count, call=call)
+    return MontyTurn('waiting', state=state, suspensions=pauses.count, pending_call_ids=snapshot.pending_call_ids)
+
+
+async def _state_after(session: AsyncMontySession, request: TurnRequest, failure: MontyFailure) -> str | None:
+    """The record to continue from after `failure`, marking the failure when the session is lost.
+
+    Only a syntax or runtime error leaves the session usable; CodeMode resets it after any other.
+    Monty finishes the checkout when the print cap fires in a snippet with later calls, and Logfire
+    Agent Sandboxes has refused to store a session a snippet error left, so there may be nothing to
+    store. A syntax error ran nothing, so the turn's starting record then still holds.
+    """
+    if failure.kind not in ('syntax', 'runtime'):
+        return None
+    try:
+        return await _dump(session)
+    except (RuntimeError, MontyRuntimeError):
+        if failure.kind == 'syntax':
+            return request.state
+        failure.session_lost = True
+        return None
+
+
+def _fit_turn(turn: MontyTurn) -> MontyTurn:
+    """`turn`, its longest text cut, pass after pass, until the encoded turn fits `_TURN_PAYLOAD_BYTES`.
+
+    Measured on the encoded turn, so JSON escaping and error text count. A nested call's arguments
+    are never cut: `_answer_in_turn` keeps them to half the budget, so the texts always hold the excess.
+    """
+    while (excess := len(to_json(turn)) - _TURN_PAYLOAD_BYTES) > 0:
+        output = turn.output if isinstance(turn.output, str) else repr(from_wire(turn.output))
+        failure = turn.failure or MontyFailure('other')
+        texts = {'prints': turn.prints, 'output': output, 'display': failure.display, 'message': failure.message}
+        name = max(texts, key=lambda name: len(texts[name]))
+        data = texts[name].encode()
+        assert len(data) > _NOTE_BYTES, 'the excess is always in a text longer than the note'
+        # At most half per pass, so a cut spreads over the texts rather than emptying the first.
+        kept = max(len(data) - excess, len(data) // 2) - _NOTE_BYTES
+        note = f'\n[{len(data) - kept} more bytes not shown: a turn returns at most {_TURN_PAYLOAD_BYTES} bytes]'
+        cut = data[:kept].decode(errors='ignore') + note
+        if name in ('display', 'message'):
+            turn = replace(turn, failure=replace(failure, **{name: cut}))
+        else:
+            turn = replace(turn, **{name: cut})
+    return turn
 
 
 async def _answer_in_turn(
@@ -493,8 +500,8 @@ async def _answer_in_turn(
     A name lookup is left undefined, so the sandbox raises `NameError`. An OS call other than a sleep
     is answered from the mounts, as CodeMode does without an `os_access` handler, which this path
     never has. Its arguments, such as a `PurePosixPath`, need not then cross the activity boundary.
-    A call whose arguments have no JSON form, or hold a mapping whose keys would not come back
-    distinct, cannot reach the tool's own activity, so it raises `TypeError` at the call site.
+    A call whose arguments `to_wire` cannot encode, or that take more than half of what a turn may
+    return, cannot reach the tool, so it raises `TypeError` at the call site.
     """
     while True:
         if isinstance(snapshot, AsyncNameLookupSnapshot):
@@ -503,13 +510,22 @@ async def _answer_in_turn(
             return snapshot
         elif snapshot.is_os_function and snapshot.function_name not in SLEEP_FUNCTIONS:
             snapshot = pauses.seen(await snapshot.resume_auto())
-        elif not _serializes(wired := (to_wire(snapshot.args), to_wire(snapshot.kwargs))) or not _keys_survive(wired):
+        elif not _args_cross(snapshot):
             message = (
-                f'{snapshot.function_name}() got an argument that has no JSON form, so it cannot be sent to the tool'
+                f'{snapshot.function_name}() got arguments that cannot be sent to the tool: they need a JSON '
+                f'form, dict keys that stay distinct as JSON, and at most {_TURN_PAYLOAD_BYTES // 2} bytes'
             )
             snapshot = pauses.seen(await snapshot.resume({'exception': TypeError(message)}))
         else:
             return snapshot
+
+
+def _args_cross(snapshot: AsyncFunctionSnapshot) -> bool:
+    try:
+        wired = to_wire((snapshot.args, snapshot.kwargs))
+        return len(to_json(wired)) <= _TURN_PAYLOAD_BYTES // 2
+    except (TypeError, PydanticSerializationError):
+        return False
 
 
 async def _load(

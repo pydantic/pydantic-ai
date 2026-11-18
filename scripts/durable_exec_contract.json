@@ -577,7 +577,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._prepare_run_context",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::durable_operation.decorate.decorated",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::_dispatcher",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field"
@@ -2764,8 +2764,8 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._invoke_capability_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_operation_capability_id",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::_dispatcher",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::collect_capability_operations",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::durable_operation.decorate.decorated",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::recover_capability",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::restore_telemetry_mcp_url_ids"
       ]

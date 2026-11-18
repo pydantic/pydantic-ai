@@ -60,7 +60,8 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
 from pydantic_ai import Agent, Tool, ToolDefinition
-from pydantic_ai.exceptions import PydanticAIDeprecationWarning, UsageLimitExceeded
+from pydantic_ai.capabilities import DynamicCapability
+from pydantic_ai.exceptions import PydanticAIDeprecationWarning, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -460,6 +461,19 @@ workflow_side_code_mode_agents = {
                 id='code',
                 monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
                 os_access=_workflow_os,
+            ),
+            TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        ],
+    ),
+    # Temporal binds operations only for capabilities on the agent when it is built.
+    'dynamic': Agent(
+        FunctionModel(_code_mode_model),
+        name='code_mode_temporal_dynamic_agent',
+        toolsets=[FunctionToolset(tools=[add], id='math')],
+        capabilities=[
+            DynamicCapability(
+                lambda ctx: CodeMode(id='code', monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType,reportUnknownLambdaType]
+                id='dynamic_code',
             ),
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
         ],
@@ -929,8 +943,8 @@ async def test_remote_turns_run_as_activities(
 async def test_remote_turns_fail_without_storage(client: Client, refusal: str, message: str) -> None:
     """A server that stores no sessions, or refuses to store one, fails the run on the first attempt.
 
-    A retry would meet the same refusal, for example a full snapshot quota, so the turn raises
-    `UserError`, which Temporal does not retry.
+    A retry would meet the same refusal, for example a full snapshot quota, so the turn reports it and
+    the run raises `UserError` with CodeMode's own text, never the server's.
     """
     stores = refusal != 'stores nothing'
     agent = storing_code_mode_agent if stores else not_storing_code_mode_agent
@@ -953,20 +967,21 @@ async def test_remote_turns_fail_without_storage(client: Client, refusal: str, m
                 )
     finally:
         SERVER.refuses_dumps = False
-    activity_error = exc_info.value.cause
-    assert isinstance(activity_error, ActivityError)
-    assert activity_error.activity_type.endswith('__monty_turn')
-    assert activity_error.retry_state == RetryState.NON_RETRYABLE_FAILURE
-    assert isinstance(activity_error.cause, ApplicationError)
-    assert activity_error.cause.type == 'UserError'
-    assert activity_error.cause.message.startswith(message)
+    cause = exc_info.value.cause
+    assert isinstance(cause, ApplicationError)
+    assert cause.type == 'UserError'
+    assert cause.message.startswith(message)
+    history = await client.get_workflow_handle(
+        f'test_code_mode_temporal_no_storage_{refusal.split()[0]}'
+    ).fetch_history()
+    assert _activity_types(history) == ['model_request', 'monty_turn']
 
 
-@pytest.mark.parametrize('reason', ['overlay', 'write_limit', 'os_access', 'no_id', 'local', 'unpatched'])
+@pytest.mark.parametrize('reason', ['overlay', 'write_limit', 'os_access', 'no_id', 'dynamic', 'local', 'unpatched'])
 async def test_remote_turns_stay_in_the_workflow(client: Client, monkeypatch: pytest.MonkeyPatch, reason: str) -> None:
     """An `'overlay'` mount (the default mode), a mount with `write_bytes_limit`, `os_access`, a `CodeMode`
-    without `id`, a local sandbox, or a workflow that started before this version of Code Mode keeps every
-    turn in the workflow.
+    without `id` or returned by a `DynamicCapability`, a local sandbox, or a workflow that started before
+    this version of Code Mode keeps every turn in the workflow.
 
     Unsandboxed for `'unpatched'`, so `workflow.patched` can be faked.
     """
@@ -996,7 +1011,7 @@ async def test_remote_turns_stay_in_the_workflow(client: Client, monkeypatch: py
 
     assert output == 'done: 70'
     history = await client.get_workflow_handle(workflow_id).fetch_history()
-    assert _activity_types(history) == ['model_request', 'call_tool', 'model_request', 'model_request']
+    assert 'monty_turn' not in _activity_types(history)
 
 
 async def _run_call_sites(client: Client, workflow_id: str, *, turn_activities: bool) -> list[object]:
@@ -1044,7 +1059,7 @@ async def test_remote_turns_resume_calls_in_place(client: Client, monkeypatch: p
     )
     assert no_json_form == [
         "MontyClassProxy(name='P', attributes={'x': 1})",
-        'add() got an argument that has no JSON form, so it cannot be sent to the tool',
+        'add() got arguments that cannot be sent to the tool: they need a JSON form, dict keys that stay distinct as JSON, and at most 524288 bytes',
     ]
     # On the workflow-side path that argument fails the tool's validation, which fails the snippet.
     assert [type_error, added, call_sites, syntax_error, values, not_utf8] == [
@@ -1174,21 +1189,26 @@ def _snippet_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo
     return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='snippet')])
 
 
-def _snippet_agent(name: str, **code_mode: Any) -> Agent:
+def _snippet_agent(name: str, monty_sandbox: Any = StoredSessionPool, **code_mode: Any) -> Agent:
     return Agent(
         FunctionModel(_snippet_model),
         name=f'code_mode_temporal_snippet_{name}_agent',
         toolsets=[FunctionToolset(tools=[echo], id='echo')],
         capabilities=[
-            CodeMode(id='code', monty_sandbox=StoredSessionPool, **code_mode),  # pyright: ignore[reportArgumentType]
+            CodeMode(id='code', monty_sandbox=monty_sandbox, **code_mode),
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
         ],
     )
 
 
+def _refusing_factory() -> StoredSessionPool:
+    raise UserError('secret-sentinel: the pool factory could not read its settings')
+
+
 snippet_agents = {
     'default': _snippet_agent('default'),
     'unlimited': _snippet_agent('unlimited', resource_limits='unlimited'),
+    'factory_error': _snippet_agent('factory_error', monty_sandbox=_refusing_factory),
 }
 
 
@@ -1229,6 +1249,7 @@ async def test_remote_turns_reset_a_session_the_server_will_not_store(client: Cl
     finally:
         SERVER.refuses_dumps = False
     assert 'ZeroDivisionError' in output
+    assert 'The sandbox could not keep the session after this error, so it was reset.' in output
     history = await client.get_workflow_handle(workflow_id).fetch_history()
     assert _activity_types(history) == ['model_request', 'monty_turn', 'model_request']
 
@@ -1238,11 +1259,45 @@ async def test_remote_turns_cut_output_to_fit_a_payload(client: Client, monkeypa
 
     The limit is lowered from 1 MiB so the snippet stays small.
     """
-    monkeypatch.setattr('pydantic_ai_harness._monty_turns._TURN_PAYLOAD_BYTES', 400)
-    output = await _run_snippet(client, 'test_code_mode_temporal_cut_output', 'print("p" * 1000)\n"r" * 1000')
-    assert 'more bytes not shown: a turn returns at most 200 bytes]' in output
-    assert 'more bytes not shown: a turn returns at most' in output.split('r' * 10)[0]
-    assert len(output) < 1000
+    monkeypatch.setattr('pydantic_ai_harness._monty_turns._TURN_PAYLOAD_BYTES', 1000)
+    output = await _run_snippet(client, 'test_code_mode_temporal_cut_output', 'print("p" * 3000)\n"r" * 3000')
+    assert output.count('more bytes not shown: a turn returns at most 1000 bytes]') == 2
+    assert len(output) < 3000
+
+
+async def test_remote_turns_cut_an_error_to_fit_a_payload(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An error message larger than a turn may return is cut too: it crosses once as the report and once alone."""
+    monkeypatch.setattr('pydantic_ai_harness._monty_turns._TURN_PAYLOAD_BYTES', 1000)
+    output = await _run_snippet(client, 'test_code_mode_temporal_cut_error', 'raise ValueError("e" * 3000)')
+    assert 'ValueError' in output
+    assert 'more bytes not shown: a turn returns at most 1000 bytes]' in output
+    assert 'e' * 1000 not in output
+
+
+async def test_remote_turns_charge_cut_prints_to_the_print_cap(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prints a turn cut to fit its payload still count toward the feed's print cap, as in workflow code."""
+    monkeypatch.setattr('pydantic_ai_harness._monty_turns._TURN_PAYLOAD_BYTES', 1000)
+    monkeypatch.setattr('pydantic_ai_harness._monty_exec._PRINT_LIMIT_BYTES', 2500)
+    code = 'import time\nprint("a" * 1500)\ntime.sleep(0)\nprint("b" * 1500)'
+    output = await _run_snippet(client, 'test_code_mode_temporal_print_cap', code)
+    assert 'MemoryError' in output
+
+
+async def test_remote_turns_record_a_pool_user_error_by_type(client: Client) -> None:
+    """A `UserError` from the `monty_sandbox` factory fails the run unretried, recorded by type only.
+
+    Its text could carry the pool's URL or credentials, and Temporal keeps an activity's failure in history.
+    """
+    workflow_id = 'test_code_mode_temporal_pool_user_error'
+    with pytest.raises(WorkflowFailureError) as exc_info:
+        await _run_snippet(client, workflow_id, '1', agent='factory_error')
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert activity_error.retry_state == RetryState.NON_RETRYABLE_FAILURE
+    assert isinstance(activity_error.cause, ApplicationError)
+    assert (activity_error.cause.type, activity_error.cause.message) == ('UserError', 'UserError')
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    assert 'secret-sentinel' not in history.to_json()
 
 
 @pytest.mark.parametrize(
@@ -1254,7 +1309,7 @@ async def test_remote_turns_cut_output_to_fit_a_payload(client: Client, monkeypa
         ),
         (
             'try:\n    await echo(value={frozenset({1}): 1})\nexcept TypeError as e:\n    error = str(e)\nerror',
-            'echo() got an argument that has no JSON form, so it cannot be sent to the tool',
+            'echo() got arguments that cannot be sent to the tool: they need a JSON form, dict keys that stay distinct as JSON, and at most 524288 bytes',
         ),
     ],
 )
