@@ -745,11 +745,12 @@ async def test_a_profile_that_turns_it_on_gets_the_native_tool(
     assert request['tools'] == [{'type': 'computer'}]
 
 
-def test_an_azure_client_and_the_gateway_keep_the_function_tool() -> None:
-    """The native computer tool isn't verified on Azure or the gateway, so both opt out."""
+def test_azure_the_gateway_and_openrouter_keep_the_function_tool() -> None:
+    """The native computer tool isn't verified on Azure or the gateway, and OpenRouter answers it with only reasoning."""
     from openai import AsyncAzureOpenAI
 
     from pydantic_ai.providers.gateway import gateway_provider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     client = AsyncAzureOpenAI(api_key='test', azure_endpoint='https://example.openai.azure.com', api_version='v1')
     azure = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
@@ -758,6 +759,8 @@ def test_an_azure_client_and_the_gateway_keep_the_function_tool() -> None:
     )
     assert ComputerTool not in (azure.profile.get('supported_native_tools') or ())
     assert ComputerTool not in (gateway.profile.get('supported_native_tools') or ())
+    openrouter = OpenAIResponsesModel('openai/gpt-5.5', provider=OpenRouterProvider(api_key='test'))
+    assert ComputerTool not in (openrouter.profile.get('supported_native_tools') or ())
 
 
 @pytest.mark.parametrize(

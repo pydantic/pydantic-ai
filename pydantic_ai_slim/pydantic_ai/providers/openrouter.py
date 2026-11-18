@@ -7,7 +7,7 @@ from typing import Literal, overload
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, ComputerTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
@@ -394,8 +394,9 @@ class OpenRouterProvider(_OpenAISDKProvider):
                 # work with any underlying model, so the upstream profile's vendor-specific tool
                 # gating (e.g. Anthropic's valid-executor list) doesn't apply. Neutralize it here;
                 # `OpenRouterModel.supported_native_tools()` caps the effective set via the
-                # intersection in `Model.profile`.
-                supported_native_tools=SUPPORTED_NATIVE_TOOLS,
+                # intersection in `Model.profile`. OpenAI's native computer tool is not one of them: OpenRouter's
+                # Responses API answers it with only a reasoning item (live, 2026-11-18).
+                supported_native_tools=SUPPORTED_NATIVE_TOOLS - {ComputerTool},
                 supports_cache=supports_cache_control,
                 # Only Anthropic routes take a TTL; Gemini caches at its 5-minute default.
                 supported_cache_retentions=('5m', '1h') if supports_anthropic_cache else (),
