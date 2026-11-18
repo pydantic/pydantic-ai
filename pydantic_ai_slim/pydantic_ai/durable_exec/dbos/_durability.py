@@ -567,6 +567,8 @@ async def _call_child_workflow(
     at the position it takes. Parallel calls can reach their positions in another order on recovery, so a call
     waits while the next position holds another call's child: that call takes it in turn, and each call takes the
     position its own child was recorded at, or a new one. The parent's history stays the same on every execution.
+    DBOS takes the position of the child's `DBOS.getResult` step together with its start, when `workflow` is called,
+    so only start positions need ordering.
     """
     from dbos._context import get_local_dbos_context
 

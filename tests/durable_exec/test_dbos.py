@@ -6789,6 +6789,46 @@ async def test_dbos_child_workflow_tool_executed_again_by_capability(dbos: DBOS)
     ]
 
 
+@dataclass
+class _ReorderChildStarts(AbstractCapability[object]):
+    """Orders two parallel `research` calls: `call-a`'s child starts first, and on recovery `call-b` arrives first."""
+
+    crash: str
+    recovering: bool = False
+    arrived: set[str | None] = field(default_factory=set[str | None])
+    both_arrived: asyncio.Event = field(default_factory=asyncio.Event)
+    call_b_arrived: asyncio.Event = field(default_factory=asyncio.Event)
+    moon_researched: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def before_tool_execute(
+        self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+    ) -> Any:
+        self.arrived.add(call.tool_call_id)
+        if len(self.arrived) == 2:
+            self.both_arrived.set()
+        if call.tool_call_id == 'call-a':
+            if self.recovering and self.crash != 'after_both_children_then_run_id_changes':
+                # On recovery, `call-b` reaches its child workflow first, when the next step position holds the
+                # child `call-a` started there.
+                async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+                    await self.call_b_arrived.wait()
+            return args
+        self.call_b_arrived.set()
+        if not self.recovering and self.crash != 'after_both_children_started_together':
+            # `call-a`'s child starts first. With `before_second_child`, the process then dies before `call-b`'s
+            # child starts.
+            async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+                await self.moon_researched.wait()
+            if self.crash == 'before_second_child':
+                raise _ProcessCrash
+        return args
+
+    async def on_tool_execute_error(
+        self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Exception
+    ) -> Any:
+        return f'failed: {error}'
+
+
 @pytest.mark.parametrize(
     ('crash', 'moon_fails'),
     [
@@ -6796,6 +6836,7 @@ async def test_dbos_child_workflow_tool_executed_again_by_capability(dbos: DBOS)
         ('after_both_children', True),
         ('before_second_child', False),
         ('after_both_children_then_run_id_changes', False),
+        ('after_both_children_started_together', False),
     ],
 )
 async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
@@ -6805,12 +6846,11 @@ async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
 
     With `after_both_children_then_run_id_changes`, the explicit `run_id=` differs on recovery, so the recorded
     children aren't the recovered calls': recovery keeps DBOS's positional match instead of waiting for them.
+    With `after_both_children_started_together`, both children start before either one's body runs.
     """
     run_id_changes = crash == 'after_both_children_then_run_id_changes'
+    reorder = _ReorderChildStarts(crash)
     researched: list[str] = []
-    recovering = False
-    moon_researched = asyncio.Event()
-    call_b_arrived = asyncio.Event()
 
     def lead_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) > 1:
@@ -6823,49 +6863,27 @@ async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
         )
 
     async def research(topic: str) -> str:
+        if crash == 'after_both_children_started_together':
+            async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+                await reorder.both_arrived.wait()
         researched.append(topic)
         if topic == 'moon':
-            moon_researched.set()
+            reorder.moon_researched.set()
             if moon_fails:
                 raise ValueError('No moon tonight.')
         return topic
-
-    class ReorderChildStarts(AbstractCapability[object]):
-        async def before_tool_execute(
-            self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
-        ) -> Any:
-            if call.tool_call_id == 'call-b':
-                call_b_arrived.set()
-                if not recovering:
-                    # `call-a`'s child starts first. With `before_second_child`, the process then dies before
-                    # `call-b`'s child starts.
-                    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
-                        await moon_researched.wait()
-                    if crash == 'before_second_child':
-                        raise _ProcessCrash
-            elif recovering and not run_id_changes:
-                # On recovery, `call-b` reaches its child workflow first, when the next step position holds the
-                # child `call-a` started there.
-                async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
-                    await call_b_arrived.wait()
-            return args
-
-        async def on_tool_execute_error(
-            self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Exception
-        ) -> Any:
-            return f'failed: {error}'
 
     agent = Agent(
         FunctionModel(lead_model),
         name='child_wf_reordered',
         tools=[Tool(research, metadata={'dbos': {'child_workflow': {}}})],
-        capabilities=[ReorderChildStarts(), DBOSDurability()],
+        capabilities=[reorder, DBOSDurability()],
     )
 
     @DBOS.workflow()
     async def run_agent() -> list[str]:
-        result = await agent.run('Research.', run_id=f'run-{recovering}' if run_id_changes else None)
-        if not recovering:
+        result = await agent.run('Research.', run_id=f'run-{reorder.recovering}' if run_id_changes else None)
+        if not reorder.recovering:
             raise _ProcessCrash
         # The model's final response replays from its step, so check what each tool call returned to it.
         return [
@@ -6884,8 +6902,8 @@ async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
         for s in await dbos.list_workflow_steps_async(workflow_id)
     ]
 
-    recovering = True
-    call_b_arrived.clear()
+    reorder.recovering = True
+    reorder.call_b_arrived.clear()
     handle = await DBOS.resume_workflow_async(workflow_id)
     returned = await handle.get_result()
     # Recovery reuses the children that finished before the crash.
@@ -6899,15 +6917,21 @@ async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
         return
     moon = 'failed: No moon tonight.' if moon_fails else 'moon'
     assert sorted(returned) == [f'call-a={moon}', 'call-b=sun']
-    # Each call's child, `call-b`'s too when it hadn't started, is a child of the parent at its own position.
+    await _assert_children_at_own_positions(workflow_id, steps)
+
+
+async def _assert_children_at_own_positions(workflow_id: str, steps: list[Any]) -> None:
+    """Each call's child is a child of the parent at a start and `getResult` position pair of its own.
+
+    DBOS takes a child's `getResult` position together with its start, even when both children start together.
+    """
     child_name = 'child_wf_reordered__function_toolset__<agent>.call_tool__child_workflow'
     child_prefix = f'{workflow_id}-{workflow_id}:1-1-0-'
-    assert [(step['function_name'], step['child_workflow_id']) for step in steps if step['child_workflow_id']] == [
-        (child_name, f'{child_prefix}call-a'),
-        ('DBOS.getResult', f'{child_prefix}call-a'),
-        (child_name, f'{child_prefix}call-b'),
-        ('DBOS.getResult', f'{child_prefix}call-b'),
-    ]
+    child_steps = [(step['function_name'], step['child_workflow_id']) for step in steps if step['child_workflow_id']]
+    assert child_steps in (
+        [(name, f'{child_prefix}{call}') for call in calls for name in (child_name, 'DBOS.getResult')]
+        for calls in (['call-a', 'call-b'], ['call-b', 'call-a'])
+    )
     children = await DBOS.list_workflows_async(workflow_id_prefix=f'{workflow_id}-')
     assert {w.workflow_id.removeprefix(child_prefix): w.parent_workflow_id for w in children} == {
         'call-a': workflow_id,
