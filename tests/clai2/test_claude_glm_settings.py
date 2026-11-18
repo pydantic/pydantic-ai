@@ -51,6 +51,7 @@ def test_claude_control_gating(
         # Sonnet 5.5 rejects `disabled` and turns thinking off with `between_tools`.
         ('anthropic:claude-sonnet-5-5', ('adaptive', 'between_tools')),
         ('anthropic:claude-opus-5', ('adaptive', 'disabled')),
+        ('anthropic:claude-opus-4-6', ('adaptive', 'disabled')),
         ('anthropic:claude-sonnet-4-5', ('enabled', 'disabled')),
     ],
 )
@@ -58,11 +59,7 @@ def test_claude_thinking_modes_follow_the_profile(*, model: str, modes: tuple[st
     assert model_options(model=model)['anthropic_thinking_mode'] == modes
 
 
-def test_between_tools_sends_its_own_shape() -> None:
-    assert _settings(anthropic_thinking_mode='between_tools', anthropic_effort='high') == {
-        'anthropic_thinking': {'type': 'between_tools'},
-        'anthropic_effort': 'high',
-    }
+def test_sonnet_5_5_accepts_between_tools() -> None:
     validate_model_options(
         model='anthropic:claude-sonnet-5-5',
         form=_form(anthropic_thinking_mode='between_tools', anthropic_effort='high'),

@@ -794,11 +794,11 @@ without a thinking mode selects adaptive thinking; neither can be combined with
 disabled or `between_tools` thinking. **Extended Thinking** offers only the
 modes the model accepts: Fable, Mythos, and Opus 5.5 always think, so they offer
 `adaptive` alone, and Sonnet 5.5 offers `between_tools`, its off switch, in place
-of `disabled`. Resetting the
-mode clears its budget, display, and binding overrides. **Interleaved Thinking**
-adds the beta header on classic Claude 4 models. CLAI adds the display beta when
-requesting updates; core adds the block-binding beta. These native controls do
-not add Anthropic protocol support to third-party Chat Completions endpoints.
+of `disabled`. Resetting the mode clears its budget, display, and binding
+overrides. **Interleaved Thinking** adds the beta header on classic Claude 4
+models. CLAI adds the display beta when requesting updates; core adds the
+block-binding beta. These native controls do not add Anthropic protocol support
+to third-party Chat Completions endpoints.
 
 GLM-4.5 and newer expose **Thinking (GLM)** and **Clear Thinking (GLM)**;
 GLM-5.2 and newer also expose **Reasoning Effort (GLM)**. Clear Thinking set to
