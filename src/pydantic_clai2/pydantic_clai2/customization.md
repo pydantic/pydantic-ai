@@ -768,7 +768,8 @@ not lower reasoning effort. Reset restores the model's default. A saved
 `service_tier` of `priority` or `default`, which older CLAI builds read and write,
 stands for fast or standard. Choosing a speed saves that tier beside it, `priority`
 for ultrafast, so an older build keeps the nearest speed; resetting **Speed** drops
-both. The speed overrides the **Service Tier** row, and a custom `service_tier`
+both. When that tier changes later, from an older build's `/fast` or the **Service
+Tier** row, the new tier picks the speed. The speed overrides the **Service Tier** row, and a custom `service_tier`
 body parameter still takes precedence over both.
 
 While the active model starts with `openai-codex:`, `/fast` toggles between

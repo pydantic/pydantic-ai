@@ -606,6 +606,35 @@ def test_codex_speed_default_keeps_saved_tiers(tmp_path: Path, stored: str, spee
     assert SettingsStore(path).model_settings(name) == json.loads(stored)
 
 
+@pytest.mark.parametrize(
+    ('stored', 'speed', 'tier'),
+    [
+        pytest.param(
+            '{"codex_speed":"ultrafast","service_tier":"default"}', 'standard', 'default', id='off-after-ultrafast'
+        ),
+        pytest.param('{"codex_speed":"fast","service_tier":"default"}', 'standard', 'default', id='off-after-fast'),
+        pytest.param(
+            '{"codex_speed":"standard","service_tier":"priority"}', 'fast', 'priority', id='on-after-standard'
+        ),
+        pytest.param('{"codex_speed":"ultrafast","service_tier":"priority"}', 'ultrafast', 'ultrafast', id='unchanged'),
+    ],
+)
+async def test_older_builds_fast_outranks_a_stale_speed(tmp_path: Path, stored: str, speed: str, tier: str) -> None:
+    """An older build's `/fast` rewrites only `service_tier`; that later choice wins over the `codex_speed` beside it."""
+    path = tmp_path / 'config.db'
+    SettingsStore(path)
+    name = 'openai-codex:gpt-6-astra'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('INSERT INTO model_settings VALUES (?, ?)', (name, stored))
+    store = SettingsStore(path)
+    settings = model_settings_from_json(store.model_settings(name), model=name).to_model_settings() or {}
+    assert settings.get('openai_service_tier') == tier
+    source = ModelSettingsSource(store, name)
+    row = FieldMenu(source).row_for('codex_speed')
+    assert row is not None and source.current(row) == speed
+    assert store.model_settings(name) == json.loads(stored)
+
+
 def test_codex_chain_keeps_its_saved_tier(tmp_path: Path) -> None:
     """A chain's tier, as an older CLAI's `/fast` saved it, picks its Codex members' speed."""
     path = tmp_path / 'config.db'

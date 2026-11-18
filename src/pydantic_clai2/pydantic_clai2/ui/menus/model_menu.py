@@ -19,7 +19,7 @@ from pydantic_clai2.models import github_copilot, openrouter, vllm
 from pydantic_clai2.models.key_profiles import key_variables
 from pydantic_clai2.models.model_catalog import CatalogModel, catalog, github_copilot_models
 from pydantic_clai2.models.model_options import model_options, validate_model_options
-from pydantic_clai2.models.model_settings import ModelSettingsForm, model_defaults, with_codex_speed
+from pydantic_clai2.models.model_settings import ModelSettingsForm, chosen_codex_speed, model_defaults, with_codex_speed
 from pydantic_clai2.models.profiles import ALL, DEFAULT, base_model, parse_model, provider_of
 from pydantic_clai2.plugins.menus import Dialogs, Option, SettingsMenu
 from pydantic_clai2.ui.menus.custom_params import edit_custom_params
@@ -108,7 +108,7 @@ class ModelSettingsSource:
     def current(self, row: FieldRow) -> str:
         """The effective value, without persisting inherited defaults."""
         saved = self._store.model_settings(self.model)
-        values = {**model_defaults(model=self._settings_as, saved=saved), **saved}
+        values = {**model_defaults(model=self._settings_as, saved=saved), **chosen_codex_speed(saved)}
         return shown(values.get(row.key))
 
     def problem(self, row: FieldRow, text: str) -> str | None:
@@ -539,7 +539,7 @@ def build_model_settings_picker(*, context: CommandContext, current: str | None)
 def model_settings_summary(*, store: SettingsStore, model: str, settings_as: str | None = None) -> str:
     """Preview effective settings without mutating the model or its saved overrides."""
     saved = store.model_settings(model)
-    values = {**model_defaults(model=settings_as or model, saved=saved), **saved}
+    values = {**model_defaults(model=settings_as or model, saved=saved), **chosen_codex_speed(saved)}
     # Never empty: every model has at least CLAI's prompt caching default.
     lines = [model, '', 'Configured settings:']
     lines.extend(f'{setting_label(key)}: {shown(value)}' for key, value in values.items())

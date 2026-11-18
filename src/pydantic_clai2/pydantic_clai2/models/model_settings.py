@@ -41,6 +41,9 @@ _CODEX_SERVICE_TIERS: dict[CodexSpeed, Literal['default', 'priority', 'ultrafast
 _TIER_SPEEDS: dict[str, CodexSpeed] = {'default': 'standard', 'priority': 'fast'}
 """The Codex speed a saved `service_tier` stands for."""
 
+_SPEED_TIERS: dict[str, str] = {'standard': 'default', 'fast': 'priority', 'ultrafast': 'priority'}
+"""The `service_tier` saved beside each Codex speed for older CLAI builds, its nearest for ultrafast."""
+
 
 class ModelSettingsForm(BaseModel):
     """Overrides for one model. Unset fields leave the provider default in place."""
@@ -311,10 +314,18 @@ def with_codex_speed(saved: Mapping[str, JsonValue], speed: CodexSpeed | None) -
     """
     row = {key: value for key, value in saved.items() if key != 'codex_speed'}
     if speed is not None:
-        return {**row, 'codex_speed': speed, 'service_tier': 'default' if speed == 'standard' else 'priority'}
+        return {**row, 'codex_speed': speed, 'service_tier': _SPEED_TIERS[speed]}
     if isinstance(tier := row.get('service_tier'), str) and tier in _TIER_SPEEDS:
         del row['service_tier']
     return row
+
+
+def chosen_codex_speed(saved: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+    """`saved` with the Codex speed last chosen: a tier an older CLAI build changed since outranks `codex_speed`."""
+    speed, tier = saved.get('codex_speed'), saved.get('service_tier')
+    if isinstance(speed, str) and isinstance(tier, str) and tier in _TIER_SPEEDS and _SPEED_TIERS.get(speed) != tier:
+        return {**saved, 'codex_speed': _TIER_SPEEDS[tier]}
+    return dict(saved)
 
 
 def model_defaults(*, model: str, saved: Mapping[str, JsonValue] | None = None) -> dict[str, JsonValue]:
@@ -373,4 +384,4 @@ def model_settings_from_json(values: dict[str, JsonValue], *, model: str | None 
     family defaults fill the fields `values` leaves unset; without it, only `values` are read.
     """
     defaults = model_defaults(model=model, saved=values) if model is not None else {}
-    return ModelSettingsForm.model_validate({**defaults, **values}, extra='ignore')
+    return ModelSettingsForm.model_validate({**defaults, **chosen_codex_speed(values)}, extra='ignore')
