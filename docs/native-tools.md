@@ -872,10 +872,11 @@ The local tool is found by its kind, not its name. The native tool is sent when 
 Here the desktop comes from a Docker container, and `ComputerUse` adds the `computer` tool and its native tool:
 
 ```py {title="computer_tool.py" test="skip"}
-from pydantic_ai import Agent
 from pydantic_ai_harness import ComputerUse, DockerContainer
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[DockerContainer(desktop=True), ComputerUse()])
+from pydantic_ai import Agent
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[DockerContainer(desktop=True), ComputerUse()])
 ```
 
 ## Advisor Tool
