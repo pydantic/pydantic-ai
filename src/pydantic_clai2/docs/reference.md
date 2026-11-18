@@ -788,12 +788,17 @@ For native Anthropic models, **Preserved Thinking** controls
 `thinking.block_binding.prefix_mismatch_behavior`: `error` rejects a mismatched
 prefix; `drop_block` continues without the mismatched reasoning block. It appears
 on adaptive-capable Claude models. Fable 5.1 also exposes **Thinking Display**:
-`updates` or `summarized`. Setting either control without a thinking mode selects
-adaptive thinking; neither can be combined with disabled thinking. Resetting the
-mode clears its budget, display, and binding overrides. **Interleaved Thinking**
-adds the beta header on classic Claude 4 models. CLAI adds the display beta when
-requesting updates; core adds the block-binding beta. These native controls do
-not add Anthropic protocol support to third-party Chat Completions endpoints.
+`updates` or `summarized`. Opus 5.5 and Sonnet 5.5 expose it with `summarized`,
+which shows the notes they write between tool calls. Setting either control
+without a thinking mode selects adaptive thinking; neither can be combined with
+disabled or `between_tools` thinking. **Extended Thinking** offers only the
+modes the model accepts: Fable, Mythos, and Opus 5.5 always think, so they offer
+`adaptive` alone, and Sonnet 5.5 offers `between_tools`, its off switch, in place
+of `disabled`. Resetting the mode clears its budget, display, and binding
+overrides. **Interleaved Thinking** adds the beta header on classic Claude 4
+models. CLAI adds the display beta when requesting updates; core adds the
+block-binding beta. These native controls do not add Anthropic protocol support
+to third-party Chat Completions endpoints.
 
 GLM-4.5 and newer expose **Thinking (GLM)** and **Clear Thinking (GLM)**;
 GLM-5.2 and newer also expose **Reasoning Effort (GLM)**. Clear Thinking set to
@@ -2019,7 +2024,11 @@ the coding tools' file writes and commands only; other tools, such as MCP server
 only reach files inside the session's folder, so `auto` lets them write. In `full` and `auto`, where code mode's
 sandbox mounts the folder read-write, `pathlib` there can also delete and rename files in it without asking; in
 `read-only`, the sandbox gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
-can be asked in, such as `clai2 -p`, denies held calls. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
+can be asked in, such as `clai2 -p` or a web session with questions turned off, uses harness
+[`DenyUnanswered`](../../../docs/harness/deny-unanswered.md): it denies the calls `Permissions` held, saying
+`/permissions full` lets them run, denies any other call that needs approval (such as an MCP tool's) with the
+harness default text, and answers questions from `AskUser` with "No one is available to answer in this run", so
+the run finishes. A session with the terminal picker or the web UI's approval cards does not deny these. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
 sub-agent, or a delegation to `self` from an agent you supply (`clai2 --agent`), which gets `/permissions`
 per run rather than bound to the agent. The model is told to do the work itself instead.
 

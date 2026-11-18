@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from importlib.metadata import distributions
-from types import ModuleType, SimpleNamespace
+from types import AsyncGeneratorType, ModuleType, SimpleNamespace
 from typing import Any, Literal, cast
 
 import anyio
@@ -172,6 +172,27 @@ def test_group_by_temporal_first_window_starts_on_first_item(monkeypatch: pytest
         loop.advance_clock(interval / 5)
         loop.run_until_idle()
         assert groups.result() == [[1, 2]]
+
+
+@pytest.mark.parametrize('interval', [None, 0.1])
+async def test_group_by_temporal_closes_groups_on_early_exit(interval: float | None):
+    """Leaving `group_by_temporal` closes the groups iterator it handed out, even when the consumer broke out early.
+
+    Left open, that iterator is closed by the garbage collector instead, in a detached `aclose()` task that can still be
+    pending when the caller expects its tasks to be done. Through `stream_text()` or `stream_response()` that depends on
+    when the collector happens to run, so the contract is pinned here: the iterator is held, so only `group_by_temporal`
+    can close it.
+    """
+
+    async def items() -> AsyncIterator[int]:
+        yield 1
+        yield 2
+
+    async with group_by_temporal(items(), soft_max_interval=interval) as groups_iter:
+        async for _ in groups_iter:  # pragma: no branch
+            break
+    assert isinstance(groups_iter, AsyncGeneratorType)
+    assert groups_iter.ag_frame is None
 
 
 def test_check_object_json_schema():
