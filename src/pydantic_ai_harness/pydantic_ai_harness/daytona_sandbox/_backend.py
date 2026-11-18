@@ -725,6 +725,9 @@ class DaytonaSandboxBackend(
             argv = command_argv(command, shell)
             # Acquiring the sandbox has its own bound; the timeout is the command's alone.
             sandbox = await self.get_sandbox()
+            if self._display is not None:
+                # Started first, so a program the command opens shows on the screen.
+                await self._display.start()
             process = _DaytonaProcess(sandbox)
             line = process.command_line(argv, cwd=self._working_dir, env={**self._env, **(env or {})})
             async with command_deadline(timeout, stop=process.kill, output=lambda: (process.stdout, process.stderr)):

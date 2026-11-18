@@ -493,6 +493,15 @@ async def test_a_proxy_refusing_traffic_for_a_moment_does_not_end_the_run(fake_d
     assert await screen(backend).screenshot() == sandbox.computer_use.png
 
 
+async def test_a_shell_command_finds_the_desktop_running(fake_daytona: FakeDaytona) -> None:
+    # The shell is told a program it starts opens on the screen, before anything has looked at the screen.
+    backend = DaytonaSandboxBackend(desktop=True)
+    await backend.run('xterm &', shell=True)
+
+    (sandbox,) = fake_daytona.sandboxes
+    assert sandbox.desktop_calls == ['start']
+
+
 async def test_a_desktop_size_is_set_on_a_new_sandbox(fake_daytona: FakeDaytona) -> None:
     await DaytonaSandboxBackend(desktop=(1440, 900), env={'A': '1'}).get_sandbox()
     await DaytonaSandboxBackend(desktop=True).get_sandbox()
