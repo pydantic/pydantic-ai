@@ -578,6 +578,9 @@ navigation:
             slug: "harness/warn-on-cache-busts"
             aliases:
               - "harness/cache-stability"
+          - page: "Label Cross Model History"
+            path: "harness/label-cross-model-history.md"
+            slug: "harness/label-cross-model-history"
       - section: "Knowledge & Memory"
         slug: ""
         contents:

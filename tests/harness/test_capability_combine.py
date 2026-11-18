@@ -61,6 +61,7 @@ from pydantic_ai_harness import (
     BenchmarkInstructions,
     Coder,
     CompactOnRequest,
+    LabelCrossModelHistory,
     ModelChoice,
     ModelRouter,
     Planning,
@@ -228,6 +229,10 @@ def _check_benchmark_instructions(merged: BenchmarkInstructions[None]) -> None:
     assert merged.id == 'benchmark_instructions'
 
 
+def _check_label_cross_model_history(merged: LabelCrossModelHistory[None]) -> None:
+    assert (merged.id, merged.notice) == ('label_cross_model_history', 'second')
+
+
 def _check_sub_agents(merged: Any) -> None:
     # Rosters union: an agent either side could reach stays reachable through one delegate tool.
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
@@ -355,6 +360,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one fixed text; two would state it twice',
         lambda: (BenchmarkInstructions[None](), BenchmarkInstructions[None]()),
         _check_benchmark_instructions,
+    ),
+    'LabelCrossModelHistory': Combines(
+        'one `notice` instruction block per agent; two would state it twice',
+        lambda: (LabelCrossModelHistory[None](notice='first'), LabelCrossModelHistory[None](notice='second')),
+        _check_label_cross_model_history,
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),
