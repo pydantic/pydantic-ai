@@ -23,6 +23,7 @@ from pydantic_ai.messages import ToolCallPart
 from pydantic_ai_harness.ask_user import AskUserAnsweredEvent, AskUserRequestedEvent
 from pydantic_ai_harness.compaction import ContextUsageMeasuredEvent
 from pydantic_ai_pax.builtin_plugins.herdr_client import SOURCE, HerdrClient
+from pydantic_ai_pax.cli.self_update import command_name
 from pydantic_ai_pax.config.settings_store import config_dir
 from pydantic_ai_pax.plugins import (
     ConversationChanged,
@@ -49,7 +50,7 @@ def _resume_argv(conversation_id: str, settings_database: Path | None, *, saved:
     """
     if settings_database is None:
         return None
-    argv = ['clai2', '--resume' if saved else '--session-id', conversation_id]
+    argv = [command_name(), '--resume' if saved else '--session-id', conversation_id]
     if settings_database.resolve() != (config_dir() / 'config.db').resolve():
         argv += ['--database', str(settings_database.resolve())]
     if any(_UNSAFE_ARGUMENT.search(argument) for argument in argv):

@@ -407,7 +407,7 @@ class Snapshot:
     queue: list[QueuedItem] = field(default_factory=list[QueuedItem])
     """The input waiting for the session's running turn or command, oldest first."""
     follows_workspace: bool = False
-    """Whether each session runs in its own directory, as under `clai2 --web`, so a new one asks where."""
+    """Whether each session runs in its own directory, as under `pax --web`, so a new one asks where."""
     version: str = ''
     """The running CLAI's version, or a `main` build's short commit; a new one after a reconnect means it updated."""
     update: UpdateInfo | None = None
@@ -991,7 +991,7 @@ class PluginRow:
     settings_menu: bool
     """Whether that menu is declared, so this page shows it; otherwise it opens in the terminal."""
     terminal: bool
-    """Whether this CLAI has a terminal for an undeclared menu to open in; `clai2 --web` has none."""
+    """Whether this CLAI has a terminal for an undeclared menu to open in; `pax --web` has none."""
     form: PluginForm | None
     """Its settings while it is on, unless it declares a menu, takes none, or its model has no JSON Schema."""
     serving: bool

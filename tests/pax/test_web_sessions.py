@@ -68,7 +68,7 @@ class Gate:
 
 @dataclass
 class Fleet:
-    """`clai2 --web` in-process: a launch session serving the web UI, which opens more in their own folders."""
+    """`pax --web` in-process: a launch session serving the web UI, which opens more in their own folders."""
 
     root: Path
     portal: BlockingPortal
@@ -97,7 +97,7 @@ class Fleet:
         serving = self.portal.call(anyio.Event)
 
         async def serve() -> None:
-            # As `clai2 --web` does: the others close as serving ends, then the launch session's plugins.
+            # As `pax --web` does: the others close as serving ends, then the launch session's plugins.
             async with self.launch.process.live.serving():
                 serving.set()
                 reason = await self.launch.run()

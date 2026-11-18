@@ -75,12 +75,12 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `--session-id UUID` | Save a new session under this ID |
 | `--fork-session` | With `--resume` or `--continue`, continue in a copy of the session |
 | `-w`, `--worktree [NAME]` | Start in a Git worktree; see [Git worktrees](#git-worktrees) |
-| `--update`, `clai2 update` | Install the newest CLAI from `updates.channel`, print how it went, and exit; see [Updating](#updating) |
+| `--update`, `pax update` | Install the newest CLAI from `updates.channel`, print how it went, and exit; see [Updating](#updating) |
 | `--request-limit N` | The full prompt's model-request budget |
 | `--database PATH` | Use another settings database (and session folder) |
-| `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell. A change that could let the agent do more, such as a wider `run.permissions`, is refused: make it with `/config` in a session, since the agent can run `clai2` too |
-| `clai2 plugins list` | List saved plugin declarations from your shell; add, enable, disable, and remove them with `/plugins` in a session |
-| `clai2 sessions` | On Unix, list live sessions by unique ID prefix, folder name, status, title, and workspace |
+| `pax config show\|get\|set\|reset` | Read or write saved settings from your shell. A change that could let the agent do more, such as a wider `run.permissions`, is refused: make it with `/config` in a session, since the agent can run `pax` too |
+| `pax plugins list` | List saved plugin declarations from your shell; add, enable, disable, and remove them with `/plugins` in a session |
+| `pax sessions` | On Unix, list live sessions by unique ID prefix, folder name, status, title, and workspace |
 
 ### Settings
 
@@ -157,7 +157,7 @@ Paths are under `$XDG_CONFIG_HOME/pydantic-clai2/`, or `~/.config/pydantic-clai2
 
 Python 3.11+ is required.
 
-Launch `clai2`. The default model is `openai-codex:gpt-6-astra`.
+Launch `pax`. The default model is `openai-codex:gpt-6-astra`.
 Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
 Type `/set model ` and press Tab to pick another provider-qualified model name.
 The choice is saved in SQLite and used for the next prompt without restarting.
@@ -168,7 +168,7 @@ run and wins.
 
 Without installing, run `uvx pydantic-ai-pax`; set `UV_COMPILE_BYTECODE=1` so uv compiles
 the bytecode while it builds the environment, instead of CLAI compiling each module the
-first time it imports it. The package also installs a `pydantic-ai-pax` command that is an alias for `clai2`.
+first time it imports it. The package also installs a `pydantic-ai-pax` command that is an alias for `pax`.
 
 From a source checkout, launch with `uv run --project pydantic-ai-pax clai2`.
 
@@ -199,7 +199,7 @@ launch directory, set **Unrestricted filesystem** to `false` in
 
 ### Startup
 
-`clai2 --help` parses arguments without loading the agent or plugins. Interactive
+`pax --help` parses arguments without loading the agent or plugins. Interactive
 startup defers model menus and provider integrations until you open those menus,
 log in, or run a prompt. Once the prompt is ready, a background thread imports
 them, so the first prompt usually finds them loaded; if it arrives sooner, it waits
@@ -269,15 +269,15 @@ back to `stable` offers the latest release. Run from a source checkout, it insta
 CLAI as a `uv tool` the same way and restarts into that.
 
 Installing replaces the files of the `uv tool` environment, which would break any other
-`clai2` process running from it. So on Linux and macOS, while another `clai2` runs from that
-install, `/update now` and `clai2 update` install nothing and name the processes' IDs: quit
-them, then update again. A `clai2` started while uv installs is not covered, so start none then.
+`pax` process running from it. So on Linux and macOS, while another `pax` runs from that
+install, `/update now` and `pax update` install nothing and name the processes' IDs: quit
+them, then update again. A `pax` started while uv installs is not covered, so start none then.
 
-`clai2 update` (or `clai2 --update`) installs the same way without starting a session: it prints uv's output
-and a last line saying what it did, then exits instead of restarting, so the next `clai2`
+`pax update` (or `pax --update`) installs the same way without starting a session: it prints uv's output
+and a last line saying what it did, then exits instead of restarting, so the next `pax`
 is the new build. It exits with status 1 when the check, uv, or finding uv failed, or
-when other `clai2` processes run from the install. On
-Windows, `clai2 --update` exits with status 1 without installing: use `/update now` in
+when other `pax` processes run from the install. On
+Windows, `pax --update` exits with status 1 without installing: use `/update now` in
 an interactive session, which installs after CLAI exits. The flag cannot be combined with
 `config`, `plugins`, `--prompt`, `--web`, `--resume`, `--continue`,
 `--session-id`, `--agent`, `--worktree`, `--model`, `--request-limit`, or
@@ -288,12 +288,12 @@ Both spellings accept `--database PATH`, including after `update`.
 typed in the page or in the terminal: the page shows uv's progress, over Settings too while
 it is open, and the result. After an install, CLAI restarts with the web UI on the same port
 and token, so the page reconnects by itself and names the new version, and Settings › About
-names the versions it updated from and to. `clai2 --web` keeps `--web`, `--port`,
+names the versions it updated from and to. `pax --web` keeps `--web`, `--port`,
 and `--token-file`; a terminal session that ran `/web` comes back with the web UI running.
 Like any command, `/update now` entered while a turn runs waits for the turn to end.
 
 Windows does not let a program replace files it is running from, so there
-an install exits CLAI first and installs in a new PowerShell window; start `clai2`
+an install exits CLAI first and installs in a new PowerShell window; start `pax`
 again when that window reports success.
 
 The reinstall keeps only CLAI's own packages, so add any extra `--with` packages
@@ -303,7 +303,7 @@ writes the overrides file and includes its path in the printed command.
 
 In the web UI, `/update` opens the same menu as the Settings window's **About** section, whose
 **Update…** button asks before it runs `/update now`. Whichever session the page shows, it runs
-`/update now` in the session CLAI restarts from: the one the terminal shows, or under `clai2 --web`
+`/update now` in the session CLAI restarts from: the one the terminal shows, or under `pax --web`
 the one CLAI started with, so the restart resumes that one. When CLAI can't restart, for
 example while another live session runs a turn, **Update…** shows the reason as an error instead and
 saves nothing; in the terminal, the menu shows the reason and stays open.
@@ -448,7 +448,7 @@ the file no longer sets, or of a file that is gone, which would otherwise apply
 again if the repository brought it back. An approval is kept in your user settings, for the folder
 that holds `.clai` and for the value you approved: once the file changes that
 value, as after a pull, it waits for your approval again. You approve at the
-prompt; `clai2` has no subcommand for it. A headless `clai2 -p` run or `clai2 --web`
+prompt; `pax` has no subcommand for it. A headless `pax -p` run or `pax --web`
 launch uses the approvals you saved and prints the keys it leaves out (on stderr
 for `-p`).
 
@@ -933,14 +933,14 @@ Use a separate OS account or isolated environment for untrusted repositories.
 
 The requested default does not guarantee model availability for a subscription.
 Custom agents supplied to `chat` retain their model unless settings explicitly
-select an override. `clai2 --agent MODULE:ATTR` keeps the agent's model over saved
+select an override. `pax --agent MODULE:ATTR` keeps the agent's model over saved
 and project models; only `-m` or `CLAI_MODEL` replaces it. `/login` is async, and plugin command handlers may also return
 an awaitable string.
 
 ### GitHub Copilot subscriptions
 
 ```bash
-uv run clai2
+uv run pax
 ```
 
 In CLAI, run `/login github-copilot`. Login adds every model your account's catalog
@@ -1285,7 +1285,7 @@ by `/resume`. Input recall stores markers, not image bytes: paste the image agai
 if you recall an expired marker. If submission is rejected because no model is
 selected, the most recently rejected prompt keeps its attachments for retry. Unsubmitted images are discarded on exit or reload.
 
-In the [web UI](../PLUGINS.md#web-this-session-in-your-browser), from `/web` or `clai2 --web`,
+In the [web UI](../PLUGINS.md#web-this-session-in-your-browser), from `/web` or `pax --web`,
 paste an image into the composer with your browser's usual paste (Cmd-V or Ctrl-V), or drop image
 files on it. Each shows as a thumbnail above your text; hover one and click its **×** to remove it.
 Text copied together with a picture of itself, as from a spreadsheet, pastes as text. The page
@@ -2019,8 +2019,8 @@ the coding tools' file writes and commands only; other tools, such as MCP server
 only reach files inside the session's folder, so `auto` lets them write. In `full` and `auto`, where code mode's
 sandbox mounts the folder read-write, `pathlib` there can also delete and rename files in it without asking; in
 `read-only`, the sandbox gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
-can be asked in, such as `clai2 -p`, denies held calls. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
-sub-agent, or a delegation to `self` from an agent you supply (`clai2 --agent`), which gets `/permissions`
+can be asked in, such as `pax -p`, denies held calls. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
+sub-agent, or a delegation to `self` from an agent you supply (`pax --agent`), which gets `/permissions`
 per run rather than bound to the agent. The model is told to do the work itself instead.
 
 ### Compacting the conversation
@@ -2417,7 +2417,7 @@ See [PLUGINS.md](../PLUGINS.md) for the plugin contract.
 
 ## Sessions
 
-On Unix, run `clai2 sessions` to see your live CLAI sessions across processes,
+On Unix, run `pax sessions` to see your live CLAI sessions across processes,
 including idle sessions and those waiting for an answer.
 
 | Column | Meaning |
@@ -2460,11 +2460,11 @@ replacement immediately, even if you exit before another prompt. `/new` switches
 to a fresh session ID; it does not delete the previous session.
 
 ```bash
-clai2 --resume                 # browse saved sessions
-clai2 --resume SESSION-ID      # restore one session
-clai2 --continue               # restore the most recent session in this directory (-c)
-clai2 --session-id UUID        # start a new session saved under this ID
-clai2 --resume SESSION-ID --fork-session [--session-id UUID]  # continue in a copy
+pax --resume                 # browse saved sessions
+pax --resume SESSION-ID      # restore one session
+pax --continue               # restore the most recent session in this directory (-c)
+pax --session-id UUID        # start a new session saved under this ID
+pax --resume SESSION-ID --fork-session [--session-id UUID]  # continue in a copy
 ```
 
 These flags take the same shapes as Claude Code's, so tools that drive several
@@ -2541,10 +2541,10 @@ saved transcripts: Claude Code's under `~/.claude/projects` (or
 `$CODEX_HOME/sessions`).
 
 ```bash
-clai2 --resume-claude              # browse Claude Code sessions
-clai2 --resume-claude SESSION-ID   # import and restore one
-clai2 --resume-codex               # browse Codex sessions
-clai2 --resume-codex SESSION-ID    # import and restore one
+pax --resume-claude              # browse Claude Code sessions
+pax --resume-claude SESSION-ID   # import and restore one
+pax --resume-codex               # browse Codex sessions
+pax --resume-codex SESSION-ID    # import and restore one
 ```
 
 The session ID is the one Claude Code or Codex shows, such as the ID in
@@ -2728,8 +2728,8 @@ asks you a question can open its picker from a fork.
 ### Git worktrees
 
 ```bash
-clai2 --worktree my-task
-clai2 -w
+pax --worktree my-task
+pax -w
 ```
 
 A Git worktree is another checkout of the same repository with its own branch
@@ -2792,7 +2792,7 @@ considers it successful only if the checkout is actually gone. The main checkout
 removed. Headless runs, piped input, and startup errors keep the worktree without
 prompting. `/new`, `/resume`, and `/reload` do not remove the checkout:
 they leave the shell using the same working directory.
-Enter a retained directory and run `clai2 --continue` or `clai2 --resume` to continue a saved session.
+Enter a retained directory and run `pax --continue` or `pax --resume` to continue a saved session.
 `--worktree` cannot be combined with `--resume`, `--continue`, `config`, or `plugins`.
 
 #### Register a worktree removal command
@@ -2941,15 +2941,15 @@ not in the web UI.
 ### Several sessions in the web UI
 
 ```bash
-clai2 --web
+pax --web
 ```
 
-The [web UI](../PLUGINS.md#web-this-session-in-your-browser), from `clai2 --web` or
+The [web UI](../PLUGINS.md#web-this-session-in-your-browser), from `pax --web` or
 `/web` in a terminal, keeps several sessions live in one CLAI. Click any session in the sidebar and it opens live, even while
 others run turns. Each live session has its own conversation, folder, plugins,
 queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
-`.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
+`.clai/settings.json`, and MCP project files. Under `pax --web`, **New session**
 asks which folder. It lists one row per project it has sessions in, which starts
 in the checkout you are in, else the main one; the row's chevron, or → and ←, shows
 and hides every worktree of its repository, to start in one of those instead. It also
@@ -2996,7 +2996,7 @@ many sessions run at once.
   one. The path is sent as you see it, and the agent reads the file with its tools.
 - **Idle closing.** A session closes after an hour with no turn, no queued input,
   no background fork or delegated task, and no browser or terminal showing it; a
-  page counts as showing the last five sessions it showed. Its conversation stays saved: click it to resume it. The session `clai2 --web`
+  page counts as showing the last five sessions it showed. Its conversation stays saved: click it to resume it. The session `pax --web`
   started with never closes this way.
 - **Settings.** `/set` in one session applies to every live session, except `model`
   and the `run.*` settings, which stay with the session that set them, and settings
@@ -3012,7 +3012,7 @@ many sessions run at once.
   session live in the browser shows that session in the terminal, even mid-turn,
   instead of copying it; the session shown before keeps running.
 - **`/update now` and `/reload`** restart CLAI, so `/update now` runs only in the session
-  the terminal shows, or under `clai2 --web` in the session it started with, and
+  the terminal shows, or under `pax --web` in the session it started with, and
   `/reload` only in the terminal. Elsewhere they refuse and say where to enter them;
   **Update…** in the web UI's About runs `/update now` in that session from any page.
   They also refuse while another session runs a turn, saying how many run, so try
@@ -3023,11 +3023,11 @@ many sessions run at once.
   stops the web UI; run `/web` again to reopen it. `/update now` brings the web UI back.
 - **Terminal menus and prompts.** A command that opens one, such as `/model add`,
   `/resume claude`, or `/set api_key`, opens it in the terminal that runs CLAI. When
-  there is none, as for `clai2 --web` started from a script or service, the command
+  there is none, as for `pax --web` started from a script or service, the command
   fails with an error saying to enter it in a terminal, and names the page's
   equivalent when there is one, such as `/model` or `/keys`. `/login openai-codex`
   and a plugin's `read_line` prompt (see `PLUGINS.md`) ask in the page instead.
-- **Quitting.** Ctrl-C in the terminal that runs `clai2 --web` quits CLAI and ends
+- **Quitting.** Ctrl-C in the terminal that runs `pax --web` quits CLAI and ends
   every session.
 
 ## Plugins and integrations
@@ -3228,7 +3228,7 @@ Register CLAI2 with AoE as a custom agent:
 ```toml
 # ~/.config/agent-of-empires/config.toml
 [session.custom_agents]
-clai2 = "clai2"
+pax = "clai2"
 ```
 
 Then `aoe add --tool clai2 -l`. The plugin does nothing outside an AoE session.
@@ -3276,7 +3276,7 @@ means no Logfire export and no interactive project setup. Logfire's
 terminal console output is disabled so it does not interfere with the editor.
 Warnings and errors Logfire and OpenTelemetry log about failed exports go to
 `telemetry.log` next to `config.db` instead of over the editor; CLAI names the
-file on exit when a session wrote to it. Headless `clai2 -p` keeps them on stderr.
+file on exit when a session wrote to it. Headless `pax -p` keeps them on stderr.
 Standard SDK configuration, including explicitly configured OTLP exporters, still
 applies; disable the plugin to stop its instrumentation altogether.
 
@@ -3307,7 +3307,7 @@ is only queried with this choice; a missing email leaves the tag out), and
 `false` turns the tag off. Choose **User tag** in
 `/plugins configure observability`, or set `user_tag` in the plugin settings.
 Everything CLAI records itself (session roots, UI records, and plugin load
-failures) uses the `clai2` instrumentation scope.
+failures) uses the `pax` instrumentation scope.
 
 Prompts, responses, tool arguments/results, and binary content such as image
 attachments are left out by default, so a Logfire token, even one set up for
@@ -3354,9 +3354,9 @@ variables), which the plugin's Logfire instance then reads
 with instead of `LOGFIRE_API_KEY`. Nothing reads them unless a capability asks the
 instance for one, so the key is only used then. A missing key is reported, and
 the SDK falls back to `LOGFIRE_API_KEY` as if none were chosen. CLAI's own agent
-is named `clai2`, so its runs are `invoke_agent clai2` spans and Logfire Agent
+is named `pax`, so its runs are `invoke_agent clai2` spans and Logfire Agent
 Control can address it by that name. `ui_events` (default `true`; set `false` to opt out) adds spans and logs in the
-`clai2` scope for UI interactions: menus, slash commands, `/set`, plugin actions,
+`pax` scope for UI interactions: menus, slash commands, `/set`, plugin actions,
 `/keys`, prompt submissions, steering, interrupts, completions, and session start,
 clear, and resume. They record names and listed choices, never typed values or
 secrets. The one exception: while `include_content` is on, a submitted prompt also
@@ -3431,8 +3431,8 @@ See [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) for attribution.
 ### Your own agent
 
 ```bash
-clai2 --agent pydantic_ai.main:my_cool_agent
-clai2 -a my_agents:reviewer -p "Review the staged diff"
+pax --agent pydantic_ai.main:my_cool_agent
+pax -a my_agents:reviewer -p "Review the staged diff"
 ```
 
 `--agent MODULE:ATTR` (short form `-a`) chats with an existing Pydantic AI `Agent`
@@ -3445,7 +3445,7 @@ not found". `ATTR` must
 name an instance, not a class; the agent runs with `deps=None`. For that session
 only, no plugins load: no built-ins (including the stock coder tools), no saved or
 drop-in user plugins, and no project plugins, and `/plugins` reports that they are
-off. Nothing saved changes, so plain `clai2` loads plugins as before. The agent
+off. Nothing saved changes, so plain `pax` loads plugins as before. The agent
 keeps its own model unless `-m` or `CLAI_MODEL` selects another, and code mode
 starts off, whatever is saved; `/set run.code_mode true` turns it on. `-p`, `--resume`,
 and `--worktree` still apply; `config` and `plugins` subcommands reject `--agent`.
@@ -3455,8 +3455,8 @@ To pass deps or plugins, write a launcher that calls `chat` (see
 ### Headless mode
 
 ```bash
-clai2 -p "Explain this repository" -m anthropic:claude-sonnet-4-6
-clai2 -p "Continue the task" --resume SESSION-ID
+pax -p "Explain this repository" -m anthropic:claude-sonnet-4-6
+pax -p "Continue the task" --resume SESSION-ID
 ```
 
 `-p` / `--prompt` requires prompt text as an argument, never reads stdin,
@@ -3500,19 +3500,19 @@ asyncio.run(main())
 ```
 
 The agent has the `coder`, `repo_context`, and `compaction` built-ins,
-configured as in `clai2`, except that `coder`'s `task_control` is off: pass
+configured as in `pax`, except that `coder`'s `task_control` is off: pass
 `plugin_settings={'coder': {'task_control': True}}` to give the model the task
 tools and background delegation. The file and shell tools work in `workspace`,
 and the instruction files (`AGENTS.md`, else `CLAUDE.md`) of `workspace` and its
 ancestors are read, plus a subdirectory's as the agent works there. A capability you pass that
 supplies a workspace, such as a sandbox, takes its place, and a run's own
 `workspace=` replaces it for that run. Commands get this process's environment
-minus LLM provider API keys. Model names resolve as in `clai2`, the agent's own
+minus LLM provider API keys. Model names resolve as in `pax`, the agent's own
 and any a run passes, so `openai-codex:` and `github-copilot:` use the sign-ins
 saved with `/login`. CLAI's per-model defaults apply too, such as prompt
 caching. Without `model`, every run must pass one.
 
-Nothing else you saved for `clai2` applies: no saved, drop-in, or project plugins, no
+Nothing else you saved for `pax` applies: no saved, drop-in, or project plugins, no
 `.clai/settings.json`, no `/model settings`, and no `chain:` fallback chains. `ask_user`
 and the other terminal plugins stay out, as do `observability` and `mcp`, which read
 your CLAI configuration, and the CLAI customization guide. Plugins close when the

@@ -88,7 +88,7 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 async def turn(workspace: Path, script: Script, text: str, **launch: str | bool) -> None:
-    """One headless prompt in a fresh shell, as each `clai2 -p` would run it."""
+    """One headless prompt in a fresh shell, as each `pax -p` would run it."""
     result = await headless.run_headless(
         text=text,
         settings=Settings(model=None, code_mode=True),

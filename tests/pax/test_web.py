@@ -510,7 +510,7 @@ def test_a_terminal_menu_or_prompt_fails_without_a_terminal(
 ) -> None:
     """With no terminal anywhere, a command that would read the terminal's keys fails, naming an alternative.
 
-    A menu would read EOF from stdin and close as cancelled, saying nothing useful, as under `clai2 --web` from a
+    A menu would read EOF from stdin and close as cancelled, saying nothing useful, as under `pax --web` from a
     script; that is so whether the command waits for its turn or opens over a running one.
     """
     monkeypatch.setattr(sys, 'stdin', None)  # As Python leaves it when CLAI starts with stdin closed.
@@ -569,7 +569,7 @@ class _Terminal(io.StringIO):
 def test_a_terminal_menu_opens_in_the_terminal_that_runs_clai(
     make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`clai2 --web` started in a terminal shows no session there, but its menus still open in it, as before."""
+    """`pax --web` started in a terminal shows no session there, but its menus still open in it, as before."""
     monkeypatch.setattr(sys, 'stdin', _Terminal())
     web_ = make_web(Agent(TestModel()))
     assert web_.shell.terminal is None
@@ -1179,7 +1179,7 @@ def test_new_session_offers_every_worktree_of_a_known_repository(
 
 
 def test_new_session_checks_out_a_new_worktree(make_web: 'MakeWeb', tmp_path: Path) -> None:
-    """`POST /api/worktrees` checks out a new branch in `.worktrees/`, as `clai2 --worktree` does, and New session lists it.
+    """`POST /api/worktrees` checks out a new branch in `.worktrees/`, as `pax --worktree` does, and New session lists it.
 
     Without a branch the name is generated as `--worktree` generates it; Git's refusals come back as the error.
     """
@@ -1922,7 +1922,7 @@ async def test_web_command_serves_on_a_free_port(tmp_path: Path, monkeypatch: py
 
 
 async def test_stopping_the_only_interface_is_refused(tmp_path: Path) -> None:
-    """With no terminal prompt, as under `clai2 --web`, stopping the web UI would leave nothing to type at."""
+    """With no terminal prompt, as under `pax --web`, stopping the web UI would leave nothing to type at."""
     shell = web_shell(tmp_path, {'open_browser': False}, terminal=False)
     await shell.loader.load_all()
     await shell.commands.execute_async('/web')
@@ -2176,7 +2176,7 @@ def test_stopping_the_web_ui_backs_out_of_open_dialogs(make_web: 'MakeWeb', tmp_
 def follow_workspaces(
     web_: Web, settings: Callable[[ProjectSettings], Settings] = lambda project: resolve_settings(project.overrides)
 ) -> SessionWorkspace:
-    """Wire the shell as `clai2 --web` does, so each session runs in its own directory."""
+    """Wire the shell as `pax --web` does, so each session runs in its own directory."""
     shell = web_.shell
     workspace = SessionWorkspace(
         session=shell.session,
@@ -2200,7 +2200,7 @@ REPO_CONTEXT = PluginSettings(id='repo_context', factory='pydantic_ai_pax.builti
 def test_sessions_continue_in_their_own_directories(
     make_web: 'MakeWeb', tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Under `clai2 --web`, opening a session moves it to its directory, and a new one asks where it runs.
+    """Under `pax --web`, opening a session moves it to its directory, and a new one asks where it runs.
 
     The process's working directory stays where CLAI started; plugins read the session's from `host.workspace`.
     """
@@ -2324,7 +2324,7 @@ def test_a_session_moves_only_between_turns(
 
 
 def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path: Path) -> None:
-    """Without `clai2 --web`, CLAI works where it started: no `/workspace`, and a session saved elsewhere is read-only."""
+    """Without `pax --web`, CLAI works where it started: no `/workspace`, and a session saved elsewhere is read-only."""
     web_ = make_web(Agent(TestModel()))
     shell = web_.shell
     elsewhere = saved_in(web_, tmp_path, 'Elsewhere')

@@ -208,7 +208,7 @@ def _clai2(monkeypatch: pytest.MonkeyPatch, store: SettingsStore, *args: str) ->
 def test_clai2_from_a_shell_cannot_widen_what_the_agent_may_do(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], args: list[str]
 ) -> None:
-    """The agent can run `clai2` from its shell, so a change that lets it do more needs a `/command` in a session."""
+    """The agent can run `pax` from its shell, so a change that lets it do more needs a `/command` in a session."""
     store = SettingsStore(tmp_path / 'config.db')
     store.set('run.permissions', 'auto')
     store.save_plugin(PluginSettings(id='mine', factory='module:Factory', enabled=False))

@@ -30,5 +30,4 @@ class _Alias(MetaPathFinder, Loader):
         sys.modules[module.__name__] = importlib.import_module(target)
 
 
-if not any(isinstance(finder, _Alias) for finder in sys.meta_path):
-    sys.meta_path.insert(0, _Alias())
+sys.meta_path.insert(0, _Alias())

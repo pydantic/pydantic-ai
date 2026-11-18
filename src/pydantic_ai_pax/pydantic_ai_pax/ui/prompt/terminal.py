@@ -51,7 +51,7 @@ class Terminal(Generic[DepsT, OutputT]):
         """`transcript` is the output retained for redrawing, kept across `/reload`; `history` the prompts recalled."""
         self.console = console
         self.shows_others = shows_others
-        """Whether `/resume` shows another live session here; `clai2 --web` keeps its first one."""
+        """Whether `/resume` shows another live session here; `pax --web` keeps its first one."""
         self.lines = not console.is_terminal
         """Whether it reads lines, decided once: a command that holds the terminal makes the console no terminal."""
         self.transcript = transcript

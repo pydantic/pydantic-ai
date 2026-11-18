@@ -46,7 +46,7 @@ class _LogFile(RotatingFileHandler):
 def _writes(logger: logging.Logger) -> bool:
     """Whether the logger has a handler that writes records out.
 
-    A `NullHandler`, such as the one the `clai2` entry point adds for the whole process, only discards them.
+    A `NullHandler`, such as the one the `pax` entry point adds for the whole process, only discards them.
     """
     return any(not isinstance(handler, logging.NullHandler) for handler in logger.handlers)
 

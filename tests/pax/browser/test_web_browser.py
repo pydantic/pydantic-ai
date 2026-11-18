@@ -1565,7 +1565,7 @@ def git(*args: str) -> str:
 
 
 async def stay(workspace: str) -> None:
-    """A session's relocation that `clai2 --web` wires, which this test never reaches; only the dialog depends on it."""
+    """A session's relocation that `pax --web` wires, which this test never reaches; only the dialog depends on it."""
 
 
 async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, tmp_path: Path) -> None:
@@ -1588,7 +1588,7 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
     )
     assert opened.ok, await opened.text()
     root = repo / '.worktrees' / 'feature-x'
-    # As under `clai2 --web`, so New session asks where; the fixture's sessions stay where they are.
+    # As under `pax --web`, so New session asks where; the fixture's sessions stay where they are.
     runtimes = web_ui.fleet.runtimes
     runtimes['repo'].sessions.relocate = stay
     try:

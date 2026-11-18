@@ -1,6 +1,6 @@
-"""`clai2 --web`'s session directories: each live session works in its own, moved to between turns.
+"""`pax --web`'s session directories: each live session works in its own, moved to between turns.
 
-The terminal shell stays in the directory it started in. Under `clai2 --web`, a session that moves
+The terminal shell stays in the directory it started in. Under `pax --web`, a session that moves
 records its new directory as its workspace, then loads its plugins again there: the coding tools,
 `repo_context`, skills, and MCP project files read it through `PluginHost.workspace`. The process's
 working directory stays where CLAI started, as other live sessions work in other directories.
@@ -35,7 +35,7 @@ def workspace_directory(path: str) -> Path:
 
 @dataclass(kw_only=True)
 class SessionWorkspace:
-    """Moves `clai2 --web`'s live session into another directory, as if CLAI had started there.
+    """Moves `pax --web`'s live session into another directory, as if CLAI had started there.
 
     Never while a turn, a background fork, or a delegated task runs: their tools still use the plugins loaded now.
     """

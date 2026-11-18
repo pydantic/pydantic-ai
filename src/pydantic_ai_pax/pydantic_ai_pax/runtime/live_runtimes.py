@@ -1,7 +1,7 @@
 """The live sessions of one CLAI process: which session holds which conversation, opening, closing, idle closing.
 
 Every `SessionRuntime` joins its process's `LiveRuntimes` when it is built and leaves it when it closes.
-The terminal's session and the session `clai2 --web` starts with run under their own driver. Sessions
+The terminal's session and the session `pax --web` starts with run under their own driver. Sessions
 opened with `open` or `new` run here, each as a task of `serving`, and close after an idle hour.
 """
 

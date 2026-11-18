@@ -334,7 +334,7 @@ class WebService:
         return self.choose(session)
 
     async def add_worktree(self, repo: str, *, branch: str, base: str) -> str:
-        """Check out a new `branch` from `base` in the repository `repo` is in, as `clai2 --worktree` does; its folder.
+        """Check out a new `branch` from `base` in the repository `repo` is in, as `pax --worktree` does; its folder.
 
         New session then starts a session there, and lists it among the repository's worktrees from then on.
         """

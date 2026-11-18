@@ -373,7 +373,7 @@ def asked(socket: WebSocketTestSession) -> Dialog:
 def test_login_typed_in_the_page_asks_there_when_clai_has_no_terminal(
     make_web: MakeWeb, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Under `clai2 --web` from a script, stdin reads EOF, which a terminal paste prompt takes as a cancel."""
+    """Under `pax --web` from a script, stdin reads EOF, which a terminal paste prompt takes as a cancel."""
     called_back = asyncio.Event()
 
     async def exchange(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:

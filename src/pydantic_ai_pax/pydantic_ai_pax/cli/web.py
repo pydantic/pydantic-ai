@@ -1,4 +1,4 @@
-"""`clai2 --web`: CLAI with no terminal prompt, driven only from the web UI, logging the conversation as it goes."""
+"""`pax --web`: CLAI with no terminal prompt, driven only from the web UI, logging the conversation as it goes."""
 
 import os
 from collections.abc import Callable
@@ -106,7 +106,7 @@ def _web_session(
     store: SettingsStore | None = None,
     process: ClaiProcess[None] | None = None,
 ) -> SessionRuntime[None, str]:
-    """A session of `clai2 --web` in `workspace`: over a new process with `store`, or joining `process`."""
+    """A session of `pax --web` in `workspace`: over a new process with `store`, or joining `process`."""
     settings = settings_for(project)
     shell = create_shell(
         create_stock_agent(),

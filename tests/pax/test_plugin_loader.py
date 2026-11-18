@@ -836,6 +836,22 @@ def test_saved_builtin_factory_paths_upgrade_without_losing_toggles(tmp_path: Pa
     )
 
 
+def test_saved_pydantic_clai2_factories_follow_the_rename(tmp_path: Path) -> None:
+    """Databases from before the rename to `pydantic-ai-pax` name its modules under `pydantic_clai2`."""
+    web = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'web')
+    harness = Harness(tmp_path, builtin=(web,))
+    harness.store.save_plugin(web.model_copy(update={'factory': 'pydantic_clai2.builtin_plugins.web', 'enabled': True}))
+    harness.store.save_plugin(
+        PluginSettings(id='client', factory='pydantic_clai2.builtin_plugins.web.client:WebClient')
+    )
+    harness.store.save_plugin(PluginSettings(id='drop_in', factory='pydantic_clai2_plugins.mine'))
+    assert {entry.name: entry.declaration.factory for entry in harness.loader.entries()} == {
+        'web': 'pydantic_ai_pax.builtin_plugins.web',
+        'client': 'pydantic_ai_pax.builtin_plugins.web.client:WebClient',
+        'drop_in': 'pydantic_clai2_plugins.mine',
+    }
+
+
 def test_saved_activate_factory_upgrades_to_the_plugin_module(tmp_path: Path) -> None:
     """`ask_user` was declared as `module:activate` before plugins were `Plugin` classes."""
     builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'ask_user')

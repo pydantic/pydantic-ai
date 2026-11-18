@@ -116,7 +116,7 @@ async def test_uv_draws_on_the_terminal_until_a_page_watches(tmp_path: Path, mon
 
 
 async def test_run_web_restarts_on_the_same_port_and_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`/update` under `clai2 --web` raises `Relaunch` with the web UI's port and token, for the new build to serve."""
+    """`/update` under `pax --web` raises `Relaunch` with the web UI's port and token, for the new build to serve."""
     monkeypatch.chdir(tmp_path)
     opened: list[str] = []
     monkeypatch.setattr('pydantic_ai_pax.builtin_plugins.web.open_browser', opened.append)

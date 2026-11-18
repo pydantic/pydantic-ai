@@ -6,7 +6,7 @@ and core sdists from the same commit, whose exact dev pins are not on PyPI. Rele
 API requests, so neither the check nor the install needs `git` or meets the unauthenticated API rate limit. A
 source checkout is updated the same way: the install becomes a `uv tool` CLAI. CLAI then restarts as the new build and resumes the conversation,
 serving its web UI again on the same port with the same token when one ran.
-The install replaces the environment's files, so it is refused while another `clai2` process runs from it; one
+The install replaces the environment's files, so it is refused while another `pax` process runs from it; one
 started while uv installs is not covered.
 On Windows, which locks the files of a running program, the install runs in a new PowerShell window after
 CLAI exits.
@@ -41,8 +41,12 @@ if TYPE_CHECKING:
     import httpx
 
 DISTRIBUTION = 'pydantic-ai-pax'
+LEGACY_DISTRIBUTION = 'pydantic-clai2'
+"""CLAI's former name: a `uv tool` environment installed under it keeps updating under it, keeping `clai2`."""
+_COMMANDS = {DISTRIBUTION: 'pax', LEGACY_DISTRIBUTION: 'clai2'}
 PACKAGES = (
     'pydantic-ai-pax',
+    'pydantic-clai2',
     'pydantic-ai-harness[coder,skills]',
     'pydantic-ai-slim[anthropic,mcp,openai]',
     'pydantic-graph',
@@ -85,6 +89,16 @@ class _Manifest(TypedDict):
 _DIRECT_URL = TypeAdapter(_DirectURL)
 _PYPI_PROJECT = TypeAdapter(_PyPIProject)
 _MANIFEST = TypeAdapter(_Manifest)
+
+
+def tool_distribution() -> str:
+    """The package this `uv tool` environment was installed from, which uv names the environment after."""
+    return LEGACY_DISTRIBUTION if Path(sys.prefix).name == LEGACY_DISTRIBUTION else DISTRIBUTION
+
+
+def command_name() -> str:
+    """The command this install provides: `clai2` from a `pydantic-clai2` environment, otherwise `pax`."""
+    return _COMMANDS[tool_distribution()]
 
 
 def bleeding_url(*, environ: Mapping[str, str] = os.environ) -> str:
@@ -163,10 +177,11 @@ class Update:
         does not compile every module it imports.
         """
         install = [uv, 'tool', 'install', '--force', '--compile-bytecode']
+        distribution = tool_distribution()
         if self.channel == 'stable':
-            return [*install, f'{DISTRIBUTION}=={self.target}']
+            return [*install, f'{distribution}=={self.target}']
         assert overrides is not None, 'a main install needs the overrides file'
-        return [*install, '--overrides', str(overrides), DISTRIBUTION]
+        return [*install, '--overrides', str(overrides), distribution]
 
 
 def find_update(channel: UpdateChannel, current: Installed, target: str) -> Update | None:
@@ -214,7 +229,7 @@ def after_exit_script(command: Sequence[str], *, pid: int, overrides: Path | Non
         powershell(command),
         '$code = $LASTEXITCODE',
         *([f'Remove-Item -LiteralPath {_powershell_quote(str(overrides))}'] if overrides is not None else []),
-        'if ($code -eq 0) { \'Updated CLAI. Start clai2 again.\' } else { "uv exited with status $code." }',
+        f'if ($code -eq 0) {{ \'Updated CLAI. Start {command_name()} again.\' }} else {{ "uv exited with status $code." }}',
         "Read-Host 'Press Enter to close'",
     ]
     return '\n'.join(lines)
@@ -277,14 +292,14 @@ async def _tool_dir(uv: str, *options: str) -> Path | None:
 
 
 async def tool_executable(uv: str) -> str | None:
-    """The `clai2` that `uv tool install` just wrote to uv's tool bin directory, if it is there."""
+    """The command that `uv tool install` just wrote to uv's tool bin directory, if it is there."""
     directory = await _tool_dir(uv, '--bin')
-    path = None if directory is None else directory / 'clai2'
+    path = None if directory is None else directory / command_name()
     return str(path) if path is not None and await to_thread.run_sync(path.is_file) else None
 
 
 RUNNING = 'clai2-running'
-"""The folder in a `uv tool` environment where each `clai2` running from it locks a `PID-NAMESPACE-TOKEN.lock` file."""
+"""The folder in a `uv tool` environment where each `pax` running from it locks a `PID-NAMESPACE-TOKEN.lock` file."""
 
 
 def _process_prefix() -> str:
@@ -322,7 +337,7 @@ def hold_environment(prefix: Path = Path(sys.prefix)) -> IO[bytes] | None:
 
 
 def running_elsewhere(environment: Path) -> list[str]:
-    """The PIDs of the other `clai2` processes running from `environment`; removes the files of ones that exited."""
+    """The PIDs of the other `pax` processes running from `environment`; removes the files of ones that exited."""
     if sys.platform == 'win32':  # pragma: no cover -- `fcntl` is POSIX only, and Windows installs after CLAI exits.
         return []
     import fcntl
@@ -344,9 +359,9 @@ def running_elsewhere(environment: Path) -> list[str]:
 
 
 async def sibling_processes(uv: str) -> list[str]:
-    """The PIDs of other `clai2` processes running from the `uv tool` environment an install would replace."""
+    """The PIDs of other `pax` processes running from the `uv tool` environment an install would replace."""
     directory = await _tool_dir(uv)
-    return [] if directory is None else await to_thread.run_sync(running_elsewhere, directory / DISTRIBUTION)
+    return [] if directory is None else await to_thread.run_sync(running_elsewhere, directory / tool_distribution())
 
 
 def _in_thread(work: Callable[[], None]) -> None:
@@ -425,35 +440,35 @@ class Updates:
     capture: Callable[[], bool] = lambda: False
     """Whether to read uv's lines for `report`, which turns uv's progress bars into plain lines: only for a page."""
     serving: Callable[[], WebHandoff | None] = lambda: None
-    """The web UI served now, for the new `clai2` to serve again once `/update` restarts CLAI."""
+    """The web UI served now, for the new `pax` to serve again once `/update` restarts CLAI."""
     find_uv: Callable[[], str | None] = find_uv
     windows: bool = os.name == 'nt'
     hand_off: Callable[[str], None] = install_after_exit
     """Starts the Windows install that runs after CLAI exits."""
     locate: Callable[[str], Awaitable[str | None]] = tool_executable
-    """Finds the installed `clai2` from the uv executable."""
+    """Finds the installed `pax` from the uv executable."""
     others: Callable[[str], Awaitable[list[str]]] = sibling_processes
-    """Finds the other `clai2` processes the install would break, from the uv executable."""
+    """Finds the other `pax` processes the install would break, from the uv executable."""
     restart_required: bool = False
     """Set after a successful install: the running environment was replaced, so the shell exits."""
     relaunch: str | None = None
-    """The new `clai2` to start once the shell has exited, when the install found one."""
+    """The new `pax` to start once the shell has exited, when the install found one."""
     failed: bool = False
-    """Set when an update was found but not installed: uv failed, is not on `PATH`, or other `clai2`s run from it."""
+    """Set when an update was found but not installed: uv failed, is not on `PATH`, or other `pax`s run from it."""
     web: WebHandoff | None = None
-    """The web UI for the new `clai2` to serve again, read before uv replaced the installed code."""
+    """The web UI for the new `pax` to serve again, read before uv replaced the installed code."""
     _checked: UpdateChannel | None = field(default=None, init=False)
     _result: UpdateCheck | None = field(default=None, init=False)
     _done: threading.Event = field(default_factory=threading.Event, init=False)
     _started: float = field(default=0.0, init=False)
 
     async def _in_use(self, uv: str | None, update: Update) -> str | None:
-        """Why `update` cannot replace the install now: other `clai2` processes run from it and would break."""
+        """Why `update` cannot replace the install now: other `pax` processes run from it and would break."""
         if uv is None or self.windows or not (others := await self.others(uv)):
             return None
         self.failed = True
         return (
-            f'Not updating to {update.label}: other clai2 processes run from the install it would replace, '
+            f'Not updating to {update.label}: other {command_name()} processes run from the install it would replace, '
             f'and would break (PID {", ".join(others)}). Quit them, then update again.'
         )
 
@@ -503,7 +518,7 @@ class Updates:
     async def command(self, args: list[str]) -> str:
         """Install the newest CLAI on the current channel with `uv tool install`, then restart into it.
 
-        `/update now` in a session, where bare `/update` opens the menu; `clai2 --update` passes no arguments.
+        `/update now` in a session, where bare `/update` opens the menu; `pax --update` passes no arguments.
         """
         if args not in ([], ['now']):
             raise ValueError(
@@ -533,7 +548,7 @@ class Updates:
             self.restart_required = True
             return (
                 f'Installing CLAI {update.label} ({channel}) in a new window once CLAI exits. '
-                'Exiting; start clai2 again when it finishes.'
+                f'Exiting; start {command_name()} again when it finishes.'
             )
         report = self.report()
 
@@ -567,5 +582,5 @@ class Updates:
         self.web = served if self.relaunch is not None else None
         await tell('installed' if self.relaunch is None else 'restarting')
         if self.relaunch is None:
-            return f'Updated CLAI to {update.label} ({channel}). Exiting; start clai2 again to use it.'
+            return f'Updated CLAI to {update.label} ({channel}). Exiting; start {command_name()} again to use it.'
         return f'Updated CLAI to {update.label} ({channel}). Restarting...'

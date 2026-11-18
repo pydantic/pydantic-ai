@@ -50,7 +50,7 @@ def find_queued(entries: list[QueuedPrompt], input_id: str) -> QueuedPrompt:
 
 
 class PromptInbox:
-    """Input entered while no editor reads the session's keys, as in `clai2 --web`, read in order."""
+    """Input entered while no editor reads the session's keys, as in `pax --web`, read in order."""
 
     def __init__(self) -> None:
         self._entries: deque[QueuedPrompt] = deque()

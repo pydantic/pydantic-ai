@@ -103,7 +103,7 @@ four retry rows until both main and delegated runs consume their values.
 - Repository Ruff check/format and strict Pyright on modified source/tests passed.
 - Combined full-suite and final regression coverage reached 100% of CLAI
   statements and branches using its own coverage configuration.
-- Fresh tmux sessions running `uv run clai2` with isolated settings verified the
+- Fresh tmux sessions running `uv run pax` with isolated settings verified the
   model picker, GPT defaults, choice edits and reset, editing a different Claude
   model without changing the active GPT model, numeric input, return navigation,
   and `/set` cancellation. No live model calls were made.

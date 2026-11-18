@@ -18,7 +18,7 @@ staging=$(mktemp -d)
 trap 'rm -rf "$staging"' EXIT
 
 # Keep in sync with `PACKAGES` in `pydantic_ai_pax/cli/self_update.py`; a test compares them.
-for package in pydantic-ai-pax pydantic-ai-harness pydantic-ai-slim pydantic-graph; do
+for package in pydantic-ai-pax pydantic-clai2 pydantic-ai-harness pydantic-ai-slim pydantic-graph; do
   uv build --sdist --no-sources --package "$package" --out-dir "$staging"
   mv "$staging"/*.tar.gz "$out/${package//-/_}-$commit.tar.gz"
 done

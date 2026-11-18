@@ -224,6 +224,7 @@ def test_install_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     ]
     assert update.overrides() == (
         f'pydantic-ai-pax @ {release}/pydantic_ai_pax-{NEWER}.tar.gz\n'
+        f'pydantic-clai2 @ {release}/pydantic_clai2-{NEWER}.tar.gz\n'
         f'pydantic-ai-harness[coder,skills] @ {release}/pydantic_ai_harness-{NEWER}.tar.gz\n'
         f'pydantic-ai-slim[anthropic,mcp,openai] @ {release}/pydantic_ai_slim-{NEWER}.tar.gz\n'
         f'pydantic-graph @ {release}/pydantic_graph-{NEWER}.tar.gz\n'
@@ -253,7 +254,7 @@ def test_archive_overrides_preserve_declared_extras() -> None:
         for requirement in map(Requirement, metadata.requires(name) or []):
             if requirement.name in overrides and (requirement.marker is None or requirement.marker.evaluate()):
                 declared_extras.setdefault(requirement.name, set()).update(requirement.extras)
-    assert declared_extras == {name: extras for name, extras in overrides.items() if name != 'pydantic-ai-pax'}
+    assert declared_extras == {name: extras for name, extras in overrides.items() if name != 'pydantic-clai2'}
 
 
 def test_skills_dependency_survives_overrides_from_older_builds() -> None:
@@ -383,7 +384,7 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
     assert await source.command([]) == 'Updated CLAI to 9e08a34ee (main). Restarting...'
     assert len(installs) == 1
     lost, _ = _updates(['stable'], executable=None)
-    assert await lost.command([]) == 'Updated CLAI to 0.53.0 (stable). Exiting; start clai2 again to use it.'
+    assert await lost.command([]) == 'Updated CLAI to 0.53.0 (stable). Exiting; start pax again to use it.'
     assert lost.restart_required
     assert lost.relaunch is None
     manual, _ = _updates(['main'], uv=None)
@@ -496,7 +497,7 @@ async def test_failed_install_removes_the_overrides_file() -> None:
 
 
 async def test_command_refuses_while_other_processes_run_from_the_install(tmp_path: Path) -> None:
-    """Replacing the `uv tool` environment breaks other `clai2` processes running from it (#13398)."""
+    """Replacing the `uv tool` environment breaks other `pax` processes running from it (#13398)."""
     import fcntl
 
     uv = tmp_path / 'uv'
@@ -529,7 +530,7 @@ async def test_command_refuses_while_other_processes_run_from_the_install(tmp_pa
         refused, ran = updates()
         pids = ', '.join(sorted(['4343', '4545', str(os.getpid())]))
         assert await refused.command([]) == (
-            'Not updating to 9e08a34ee: other clai2 processes run from the install it would replace, '
+            'Not updating to 9e08a34ee: other pax processes run from the install it would replace, '
             f'and would break (PID {pids}). Quit them, then update again.'
         )
         assert ran == [], 'nothing is installed under a running sibling'
@@ -537,7 +538,7 @@ async def test_command_refuses_while_other_processes_run_from_the_install(tmp_pa
         assert not (running / '4242-0a1b2c3d.lock').exists(), 'the check removes files nobody holds'
     # Once the siblings have exited, the kernel has released their locks and the install goes ahead.
     updated, ran = updates()
-    assert await updated.command([]) == 'Updated CLAI to 9e08a34ee (main). Exiting; start clai2 again to use it.'
+    assert await updated.command([]) == 'Updated CLAI to 9e08a34ee (main). Exiting; start pax again to use it.'
     assert len(ran) == 1
     assert sorted(path.name for path in running.iterdir()) == ['1.lock', Path(held.name).with_suffix('.lock').name]
     held.close()
@@ -626,7 +627,7 @@ async def test_windows_hands_the_install_off_and_exits() -> None:
     updates.hand_off = scripts.append
     message = await updates.command([])
     assert message == (
-        'Installing CLAI 9e08a34ee (main) in a new window once CLAI exits. Exiting; start clai2 again when it finishes.'
+        'Installing CLAI 9e08a34ee (main) in a new window once CLAI exits. Exiting; start pax again when it finishes.'
     )
     assert updates.restart_required
     assert ran == []
@@ -666,10 +667,27 @@ async def test_tool_executable_asks_uv_for_its_bin_directory(tmp_path: Path) -> 
     uv.write_text(f'#!/bin/sh\n[ "$*" = "tool dir --bin" ] && echo {tmp_path}\n')
     uv.chmod(0o755)
     assert await tool_executable(str(uv)) is None
-    (tmp_path / 'clai2').write_text('')
-    assert await tool_executable(str(uv)) == str(tmp_path / 'clai2')
+    (tmp_path / 'pax').write_text('')
+    assert await tool_executable(str(uv)) == str(tmp_path / 'pax')
     uv.write_text('#!/bin/sh\nexit 2\n')
     assert await tool_executable(str(uv)) is None
+
+
+async def test_a_pydantic_clai2_environment_keeps_updating_as_clai2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `uv tool install pydantic-clai2` from before the rename reinstalls the shim, so its `clai2` command stays."""
+    monkeypatch.setattr(sys, 'prefix', str(tmp_path / 'tools' / 'pydantic-clai2'))
+    assert Update(channel='stable', target='0.53.0').command(uv='uv', overrides=None)[-1] == 'pydantic-clai2==0.53.0'
+    assert Update(channel='main', target=NEWER).command(uv='uv', overrides=tmp_path)[-1] == 'pydantic-clai2'
+    assert 'Start clai2 again.' in after_exit_script(['uv'], pid=42, overrides=None)
+    uv = tmp_path / 'uv'
+    uv.write_text(f'#!/bin/sh\n[ "$*" = "tool dir --bin" ] && echo {tmp_path}\n')
+    uv.chmod(0o755)
+    (tmp_path / 'pax').write_text('')
+    assert await tool_executable(str(uv)) is None, 'the shim environment has no `pax` command'
+    (tmp_path / 'clai2').write_text('')
+    assert await tool_executable(str(uv)) == str(tmp_path / 'clai2')
 
 
 async def _relaunch_after(
@@ -831,7 +849,7 @@ WEB_TOKEN = 'k' * 43
 
 
 def test_cli_hands_the_web_ui_to_the_new_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`clai2 --web` restarts as `clai2 --web`, with its port and token in the environment, never in `ps`."""
+    """`pax --web` restarts as `pax --web`, with its port and token in the environment, never in `ps`."""
     token = tmp_path / 'token'
     token.write_text(WEB_TOKEN)
     token.chmod(0o600)
@@ -919,7 +937,7 @@ async def test_shell_exits_after_an_install(tmp_path: Path, monkeypatch: pytest.
     )
     text = output.getvalue()
     assert channels == ['main']
-    assert 'Updated CLAI to 0.53.0 (stable). Exiting; start clai2 again to use it.' in text
+    assert 'Updated CLAI to 0.53.0 (stable). Exiting; start pax again to use it.' in text
     assert 'Goodbye.' not in text
     assert len(ran) == 1
 
@@ -1100,7 +1118,7 @@ async def test_bare_update_opens_the_menu_and_installs_once_it_closes(
 @pytest.mark.parametrize(
     ('code', 'exit_code', 'printed'),
     [
-        (0, 0, 'Updated CLAI to 9e08a34ee (main). Exiting; start clai2 again to use it.'),
+        (0, 0, 'Updated CLAI to 9e08a34ee (main). Exiting; start pax again to use it.'),
         (2, 1, 'uv exited with status 2; see its output above.'),
     ],
 )
@@ -1113,9 +1131,9 @@ def test_update_flag_installs_and_exits_without_restarting(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """`clai2 --update` installs from the saved channel, prints how it went, and exits: no shell, no relaunch.
+    """`pax --update` installs from the saved channel, prints how it went, and exits: no shell, no relaunch.
 
-    `clai2 update` is the same command, and takes `--database` after it.
+    `pax update` is the same command, and takes `--database` after it.
     """
     context, _ = make_context(tmp_path)
     context.set_setting(['updates.channel', 'main'])
@@ -1163,9 +1181,7 @@ def test_update_flag_refuses_windows_before_scheduling_an_install(
     assert exited.value.code == 1
     output = capsys.readouterr()
     assert output.out == ''
-    assert (
-        output.err == '`clai2 --update` cannot install on Windows. Use `/update now` in an interactive clai2 session.\n'
-    )
+    assert output.err == '`pax --update` cannot install on Windows. Use `/update now` in an interactive session.\n'
     fetch.assert_not_called()
 
 

@@ -3,7 +3,7 @@
 Nothing is recorded until a sink subscribes. The built-in `observability` plugin subscribes its own instance when
 it starts, and unsubscribes before it shuts that instance down. UI records and spans need its `ui_events`
 setting; `handled_error`, for failures CLAI shows the user and recovers from, does not. Every span and log uses
-the `clai2` instrumentation scope, like everything else CLAI emits itself.
+the `pax` instrumentation scope, like everything else CLAI emits itself.
 
 Instrument the shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the plugin loader,
 `/keys`, the prompt editor) rather than individual menus, so a new menu is covered without extra code.

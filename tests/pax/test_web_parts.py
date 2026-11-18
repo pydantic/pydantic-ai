@@ -621,7 +621,7 @@ async def test_windows_keeps_its_port_exclusive(monkeypatch: pytest.MonkeyPatch)
 
 
 class _Output(io.StringIO):
-    """Console output that tells when `clai2 --web` is ready for its user."""
+    """Console output that tells when `pax --web` is ready for its user."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -635,7 +635,7 @@ class _Output(io.StringIO):
 
 @pytest.mark.parametrize('resume', [False, True])
 async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`clai2 --web` loads `web` for this launch unless it is enabled already, starts it, and quits on Ctrl-C."""
+    """`pax --web` loads `web` for this launch unless it is enabled already, starts it, and quits on Ctrl-C."""
     opened: list[str] = []
     monkeypatch.setattr('pydantic_ai_pax.builtin_plugins.web.open_browser', opened.append)
 
@@ -672,7 +672,7 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
 
 
 async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`clai2 --web` works where a session runs: `--resume` starts in its directory, `/workspace` starts one elsewhere.
+    """`pax --web` works where a session runs: `--resume` starts in its directory, `/workspace` starts one elsewhere.
 
     The process's working directory never changes.
     """

@@ -86,7 +86,7 @@ class Sessions(Generic[DepsT, OutputT]):
         self.on_resume: Callable[[Sequence[ModelMessage]], Awaitable[None]] | None = None
         """Told the restored history after each resume, so the shell can show it."""
         self.relocate: Callable[[str], Awaitable[None]] | None = None
-        """Moves the session into a directory, so `/resume ID` continues one where it was saved; `clai2 --web` only."""
+        """Moves the session into a directory, so `/resume ID` continues one where it was saved; `pax --web` only."""
         self.show_live: Callable[[str], Awaitable[str | None]] = _not_shown
         """Shows in the terminal another live session holding a conversation, with the notice; `None` when none does."""
 

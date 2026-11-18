@@ -11,7 +11,7 @@ the provider then reported for it.
 The audit and replay come from #9929. The tables and findings were last checked against the code on
 `main` on 2026-10-16. Since #9929, #9969 removed `WarnNearLimits` from harness `Coder`. #9930 (open)
 would replace `Coder`'s `ClearToolResults(max_fraction=0.7)` with a summarizing compaction chain,
-and `clai2`'s `coder` plugin would bind `Coder(compaction=False)`; the notes below say where that
+and `pax`'s `coder` plugin would bind `Coder(compaction=False)`; the notes below say where that
 would change a finding.
 
 ## Where tokens come from

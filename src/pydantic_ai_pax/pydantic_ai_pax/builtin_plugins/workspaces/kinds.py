@@ -35,7 +35,7 @@ class WorktreeKind(BaseModel):
         default='',
         description=(
             'The folder checkouts go in, as an absolute path. Empty: `.worktrees/` in the repository, '
-            'where `clai2 --worktree` puts them.'
+            'where `pax --worktree` puts them.'
         ),
     )
     branch_prefix: str = Field(

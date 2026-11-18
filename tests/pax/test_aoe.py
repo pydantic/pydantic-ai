@@ -267,7 +267,7 @@ async def test_inert_outside_an_aoe_agent_session(env: Fixture, monkeypatch: pyt
         system.processes = (
             f'{os.getpid()} {FAKE_PID + 300} python\n'
             f'{FAKE_PID + 300} {FAKE_PID + 200} /bin/sh -c pytest\n'
-            f'{FAKE_PID + 200} {PANE_PID} /usr/bin/python3 /usr/bin/clai2\n'
+            f'{FAKE_PID + 200} {PANE_PID} /usr/bin/python3 /usr/bin/pax\n'
         )
     loaded = await load()
     assert not reporting(loaded)

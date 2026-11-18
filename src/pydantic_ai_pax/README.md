@@ -43,7 +43,7 @@ Three packages, each built on the one before it. Start with the one that matches
 |---|---|---|
 | [Pydantic AI](https://pydantic.dev/docs/ai/) (`pydantic-ai`) | The agent framework: the agent loop, models from every major provider, tools, structured output, and the capability system | You are building an agent, or an LLM feature in your own application |
 | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) (`pydantic-ai-harness`) | Capabilities for a Pydantic AI agent: workspaces, file and shell tools, memory, sub-agents, context management, and complete agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
-| [CLAI](#install) (`pydantic-ai-pax`) | A coding agent for your terminal, run as `clai2`, built on the Harness's `Coder` and extended with plugins | You want to use a coding agent rather than build one, or chat with your own agent in a terminal |
+| [CLAI](#install) (`pydantic-ai-pax`) | A coding agent for your terminal, run as `pax`, built on the Harness's `Coder` and extended with plugins | You want to use a coding agent rather than build one, or chat with your own agent in a terminal |
 
 Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. CLAI is not the [`clai` chat CLI](https://pydantic.dev/docs/ai/integrations/cli/) that ships with Pydantic AI.
 
@@ -55,7 +55,9 @@ CLAI needs Python 3.11 or newer. Install it with [uv](https://docs.astral.sh/uv/
 uv tool install --compile-bytecode pydantic-ai-pax
 ```
 
-This gives you the `clai2` command (and `pydantic-ai-pax`, which does the same).
+This gives you the `pax` command (and `pydantic-ai-pax`, which does the same).
+The package used to be `pydantic-clai2`, with the command `clai2`. Those names still work and print a note
+pointing here; your settings, sessions, and plugins carry over.
 `--compile-bytecode` makes the install take a little longer so the first start doesn't, and
 `/update now` uses it too. To try CLAI without installing, run `uvx pydantic-ai-pax`; set
 `UV_COMPILE_BYTECODE=1` to compile the bytecode up front there too.
@@ -74,7 +76,7 @@ Open a terminal in your project and start CLAI:
 
 ```bash
 cd my-project
-clai2
+pax
 ```
 
 You get the CLAI banner, a prompt at the bottom, and a status row under it with the
@@ -123,15 +125,15 @@ in the reference.
 ## Updating
 
 Run `/update` to see whether a newer CLAI is out, and choose **Update…** to install it.
-`/update now` installs without asking, and `clai2 update` (or `clai2 --update`) does it from your shell and exits
+`/update now` installs without asking, and `pax update` (or `pax --update`) does it from your shell and exits
 (on Windows, use `/update now` instead).
 CLAI installs the newest build, then restarts into it with the same conversation open.
 In the web UI, **Update…** in Settings › About installs from any session's page, and the
-restart reopens the session the terminal shows, or under `clai2 --web`, the one CLAI started with.
+restart reopens the session the terminal shows, or under `pax --web`, the one CLAI started with.
 While other live sessions run turns, as ones the browser opened can, `/update now`
 and `/reload` ask you to try again when they finish; bare `/update` still shows the
 menu. Installs and reloads restart CLAI in the folder it started in, so a session
-from another folder shown in the terminal cannot run them. While another `clai2` process
+from another folder shown in the terminal cannot run them. While another `pax` process
 runs from the same install, updating would break it, so CLAI asks you to quit it first.
 
 When a newer build is out, the status row tells you, for example
@@ -150,7 +152,7 @@ There are two channels. Pick one with `/set updates.channel`:
 ```
 
 `/update now` works when CLAI was installed with `uv tool install`. On Windows, CLAI closes
-first and installs in a new PowerShell window; start `clai2` again when it is done.
+first and installs in a new PowerShell window; start `pax` again when it is done.
 `/update now` reinstalls `pydantic-ai-pax` without extras or `--with` packages, so add those
 again afterwards. See
 [Updating](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#updating)
@@ -287,7 +289,7 @@ them, using your current model. Press <kbd>/</kbd> to search, <kbd>→</kbd> to 
 
 ![The /resume session browser with projects and named sessions](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/resume.png)
 
-From your shell, `clai2 --resume` opens the same browser, and `clai2 --continue` (`-c`)
+From your shell, `pax --resume` opens the same browser, and `pax --continue` (`-c`)
 restores the most recent session in the current directory. `/resume claude` and
 `/resume codex` continue a session you started in Claude Code or Codex.
 
@@ -295,7 +297,7 @@ With `/web` running, the browser can open other sessions while this one runs. `/
 of one of them shows it here, even mid-turn, instead of copying it; the session you
 left keeps running in the browser.
 
-On Unix, `clai2 sessions` lists live sessions across your terminal tabs and processes,
+On Unix, `pax sessions` lists live sessions across your terminal tabs and processes,
 including idle sessions and those waiting for an answer. It shows unique session-ID
 prefixes and folder names without opening a session or starting a turn. See
 [Sessions](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#sessions).
@@ -308,9 +310,9 @@ and the session to resume if you want to continue it.
 
 ![The answer of a background fork, printed when it finished](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/fork.png)
 
-### Several sessions at once: `clai2 --web`
+### Several sessions at once: `pax --web`
 
-`clai2 --web` drives CLAI from your browser. Click any session in the sidebar and it
+`pax --web` drives CLAI from your browser. Click any session in the sidebar and it
 opens live, even while others run: each works in its own folder, with its own queued
 prompts and running turn, and a dot shows which ones are running or waiting for you.
 Esc stops only the session you are looking at. A session left idle for an hour
@@ -417,8 +419,8 @@ that adds a `/standup` command".
 
 ## CLAI in your own code
 
-- `clai2 -p "Explain this repository"` runs one prompt and prints only the answer.
-- `clai2 --agent my_module:agent` chats with your own Pydantic AI agent.
+- `pax -p "Explain this repository"` runs one prompt and prints only the answer.
+- `pax --agent my_module:agent` chats with your own Pydantic AI agent.
 - `open_stock_agent(...)` gives your Python code CLAI's coding agent, without the terminal.
 - `chat(agent, deps=...)` opens the CLAI terminal on any agent.
 
