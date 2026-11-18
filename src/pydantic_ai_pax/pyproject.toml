@@ -100,8 +100,7 @@ pax = "pydantic_ai_pax.__main__:main"
 pydantic-ai-pax = "pydantic_ai_pax.__main__:main"
 
 [tool.hatch.build.targets.wheel]
-# `pydantic_clai2` keeps imports and saved plugin paths from before the rename working.
-packages = ["pydantic_ai_pax", "pydantic_clai2"]
+packages = ["pydantic_ai_pax"]
 
 # The docs `read_clai_docs` serves; `clai_docs._CLAI_DOCS` lists them. An editable install reads them from the checkout.
 [tool.hatch.build.targets.wheel.force-include]
@@ -113,7 +112,6 @@ packages = ["pydantic_ai_pax", "pydantic_clai2"]
 [tool.hatch.build.targets.sdist]
 include = [
     "/pydantic_ai_pax",
-    "/pydantic_clai2",
     "/README.md",
     "/LICENSE",
     "/THIRD_PARTY_NOTICES.md",

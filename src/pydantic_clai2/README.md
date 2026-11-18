@@ -8,5 +8,5 @@ uv tool install pydantic-ai-pax
 ```
 
 This package installs `pydantic-ai-pax` and keeps the `clai2` and `pydantic-clai2` commands, which print a
-deprecation note and run `pax`. Your settings, sessions, and plugins carry over. It will stop being released
+deprecation note and run `pax`, and `pydantic_clai2` imports, which warn and import from `pydantic_ai_pax`. Your settings, sessions, and plugins carry over. It will stop being released
 in a future version.

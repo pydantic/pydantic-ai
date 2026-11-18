@@ -49,17 +49,17 @@ Homepage = "https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pa
 Source = "https://github.com/pydantic/pydantic-ai"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
-# `pydantic_clai2.__main__` ships in `pydantic-ai-pax`; this package adds only the old command names.
 [project.scripts]
 clai2 = "pydantic_clai2.__main__:main"
 # Matches the distribution name so `uvx pydantic-clai2` works without `--from`.
 pydantic-clai2 = "pydantic_clai2.__main__:main"
 
+# The deprecated `pydantic_clai2` import alias, owned by this distribution alone so upgrading it never removes it.
 [tool.hatch.build.targets.wheel]
-bypass-selection = true
+packages = ["pydantic_clai2"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/README.md", "/LICENSE"]
+include = ["/pydantic_clai2", "/README.md", "/LICENSE"]
 
 [tool.uv.sources]
 pydantic-ai-pax = { workspace = true }
