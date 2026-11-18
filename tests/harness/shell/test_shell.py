@@ -621,6 +621,15 @@ class TestDurableCwd:
             await persist_toolset.start_command(ctx, 'pwd')
         assert not state_file.exists()
 
+    async def test_removed_cwd_retries_through_extra_output(
+        self, persist_toolset: ShellToolset[None], shell_dir: Path
+    ) -> None:
+        ctx = _run_context(Workspace(_NoisyStreams(shell_dir)))
+        await persist_toolset.run_command(ctx, 'cd subdir')
+        (shell_dir / 'subdir').rename(shell_dir / 'moved-subdir')
+        with pytest.raises(ModelRetry, match='The previous directory was removed'):
+            await persist_toolset.run_command(ctx, 'pwd')
+
     async def test_clearing_the_run_cwd_outside_a_run_resets_the_directory(
         self, persist_toolset: ShellToolset[None], shell_dir: Path
     ) -> None:
@@ -2323,6 +2332,21 @@ class TestEnvControlPropagation:
         assert isinstance(toolset, ShellToolset)
         # None of the provider-credential prefixes survive.
         assert toolset._resolve_env() == {'PATH': '/usr/bin'}  # pyright: ignore[reportPrivateUsage]
+
+
+class _NoisyStreams(LocalWorkspaceBackend):
+    """Adds output the wrapper didn't write, like an SSH server banner or a shell profile."""
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        result = await super().run(command, shell=shell, env=env, timeout=timeout)
+        return replace(result, stdout=f'profile\n{result.stdout}', stderr=f'banner\n{result.stderr}')
 
 
 class _RefusesRemove(LocalWorkspaceBackend):

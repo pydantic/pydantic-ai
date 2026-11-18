@@ -352,10 +352,11 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         """Turn the wrapper's `removed` or `lost` report into a retry, or note that this run saved a directory."""
         if not self._persist_cwd:
             return
-        reported = result.exit_code == 1 and not result.stderr
-        if reported and result.stdout == f'{marker}removed':
+        # The marker is random per call and the command never ran, so stray output (an SSH banner, a profile) is fine.
+        reported = result.exit_code == 1
+        if reported and result.stdout.endswith(f'{marker}removed'):
             await self._removed_cwd(ctx)
-        if reported and result.stdout == f'{marker}lost':
+        if reported and result.stdout.endswith(f'{marker}lost'):
             self._lost_cwd()
         if result.exit_code == 0:
             self._saved_cwd_run = self._run_key(ctx)
