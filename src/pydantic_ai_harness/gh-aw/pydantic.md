@@ -88,8 +88,7 @@ engine:
       // protecting itself against /proc access.
       // The capture descriptor can arrive non-blocking, and its open file description is
       // shared with the processes that started the engine, so the recorder leaves that flag
-      // alone. A frame can be larger than the pipe, as a reasoning part at the output-token
-      // cap or a tool result at the output cap is, so each line is written in a loop that
+      // alone. A frame can be larger than the pipe, so each line is written in a loop that
       // takes partial writes and waits for the reader to make room when the pipe is full.
       const RECORDING_MODULE = `import ctypes
       import json
