@@ -1730,6 +1730,68 @@ class TestInjection:
         assert isinstance(put_back.source, WorkspaceSource)
         assert put_back.source.authority == 'none'
 
+    async def test_a_legacy_latest_snapshot_is_put_back_as_the_agents(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The latest snapshot is a legacy one, which recorded no source, after an older one attributed to a file:
+        # the put-back carries the legacy content and the agent's source, not the older part's.
+        (tmp_path / '.memory' / 'main').mkdir(parents=True)
+        (tmp_path / '.memory' / 'main' / 'MEMORY.md').write_text('- a planted fact')
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), authority='none')
+        first = await Agent(TestModel(call_tools=[]), capabilities=[Memory(store=FileMemoryStore('.memory'))]).run(
+            'go', workspace=workspace
+        )
+        [older] = _snapshot_parts(first.all_messages())
+        assert isinstance(older.source, WorkspaceSource)
+        history = [
+            *first.all_messages(),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        [TextContent('<memory>\n- a legacy fact\n</memory>', metadata='pydantic-ai-harness.memory.v1')]
+                    )
+                ]
+            ),
+            ModelResponse(parts=[TextPart('ok')]),
+        ]
+
+        async def unreadable(self: FileMemoryStore, path: str, *, max_chars: int) -> MemoryFile | None:
+            raise OSError('the store is unreachable')
+
+        monkeypatch.setattr(FileMemoryStore, 'read', unreadable)
+
+        @dataclass
+        class CompactMidRun(AbstractCapability[None]):
+            async def before_model_request(
+                self, ctx: RunContext[None], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                if ctx.run_step == 2:
+                    compaction = CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'x'})
+                    ctx.messages[:] = [ModelResponse(parts=[compaction]), ctx.messages[-1]]
+                    request_context.messages = list(ctx.messages)
+                return request_context
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if not any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='call-1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(model),
+            deps_type=type(None),
+            capabilities=[CompactMidRun(), Memory(store=FileMemoryStore('.memory'))],
+        )
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'found'
+
+        result = await agent.run('next', message_history=history, workspace=workspace)
+
+        [put_back] = _snapshot_parts(post_compaction_window(result.all_messages()))
+        assert put_back.content == '- a legacy fact'
+        assert put_back.source == ModelSource('agent in an earlier run')
+
     async def test_snapshot_from_a_store_of_its_own_stays_the_agents(self, tmp_path: Path) -> None:
         # The run's workspace is untrusted, but the store keeps its files in an operator workspace of its own.
         (tmp_path / 'memory' / 'main').mkdir(parents=True)
