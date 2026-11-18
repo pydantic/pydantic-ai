@@ -101,16 +101,27 @@ def test_get_first_param_type_annotation_type_error():
 
 
 @pytest.mark.parametrize(
-    'interval,expected',
+    'anyio_backend,interval,expected',
     [
-        (None, snapshot([[1], [2], [3]])),
-        (0, snapshot([[1], [2], [3]])),
-        (0.02, snapshot([[1], [2], [3]])),
-        (0.04, snapshot([[1, 2], [3]])),
-        (0.1, snapshot([[1, 2, 3]])),
+        pytest.param('asyncio', None, snapshot([[1], [2], [3]]), id='None'),
+        pytest.param('asyncio', 0, snapshot([[1], [2], [3]]), id='0'),
+        pytest.param(('asyncio', {'loop_factory': SimulatedLoop}), 0.01, snapshot([[1], [2], [3]]), id='0.01'),
+        pytest.param(('asyncio', {'loop_factory': SimulatedLoop}), 0.03, snapshot([[1, 2], [3]]), id='0.03'),
+        pytest.param(('asyncio', {'loop_factory': SimulatedLoop}), 0.1, snapshot([[1, 2, 3]]), id='0.1'),
     ],
 )
-async def test_group_by_temporal(interval: float | None, expected: list[list[int]]):
+async def test_group_by_temporal(interval: float | None, expected: list[list[int]], monkeypatch: pytest.MonkeyPatch):
+    """Items 20 ms apart group by the window that opens on each group's first item.
+
+    The window's deadline is soft, so an item due exactly on it may join either group. Each window therefore
+    ends at least 10 ms from any arrival, and runs on a virtual clock that the window reads too, so items
+    arrive exactly when the producer says: on the real clock, a slow runner can move an arrival across a
+    deadline. `None` and `0` hold no item back, and a zero window polls with a zero timeout, which never lets
+    a virtual clock move, so those two run on the real clock.
+    """
+    # The window reads the loop's clock: on the real loop that is `time.monotonic()` already.
+    monkeypatch.setattr('pydantic_ai._utils.time', SimpleNamespace(monotonic=asyncio.get_running_loop().time))
+
     async def yield_groups() -> AsyncIterator[int]:
         yield 1
         await asyncio.sleep(0.02)
