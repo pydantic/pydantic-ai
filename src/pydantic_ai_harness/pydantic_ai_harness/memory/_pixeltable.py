@@ -183,7 +183,14 @@ class PixeltableMemoryStore:
         )
 
     async def list_paths(self, prefix: str = '', *, limit: int) -> list[str]:
-        return await anyio.to_thread.run_sync(self._locked, functools.partial(self._list_paths_sync, prefix, limit))
+        return await anyio.to_thread.run_sync(
+            self._locked, functools.partial(self._list_paths_sync, prefix, limit, nested=True)
+        )
+
+    async def list_child_paths(self, prefix: str, *, limit: int) -> list[str]:
+        return await anyio.to_thread.run_sync(
+            self._locked, functools.partial(self._list_paths_sync, prefix, limit, nested=False)
+        )
 
     async def search(
         self,
@@ -469,15 +476,20 @@ class PixeltableMemoryStore:
         assert isinstance(selected, pxt.Query)
         return list(selected.collect())
 
-    def _list_paths_sync(self, prefix: str, limit: int) -> list[str]:
+    @staticmethod
+    def _below(t: pxt.Table, prefix: str, *, nested: bool) -> Expr:
+        where = t.path.slice(0, len(prefix)) == prefix
+        # Paths in a deeper scope nested under `prefix` belong to another namespace or agent.
+        return where if nested else where & ~t.path.slice(len(prefix)).contains('/')
+
+    def _list_paths_sync(self, prefix: str, limit: int, *, nested: bool) -> list[str]:
         validate_store_prefix(prefix)
         if limit <= 0:
             raise ValueError('limit must be positive')
         t = self._ensure_table()
-        return [str(row['path']) for row in self._file_rows(t, t.path.slice(0, len(prefix)) == prefix, limit)]
+        return [str(row['path']) for row in self._file_rows(t, self._below(t, prefix, nested=nested), limit)]
 
     def _search_files_sync(self, prefix: str, max_files: int, max_file_chars: int) -> list[dict[str, Any]]:
         t = self._ensure_table()
-        where = (t.path.slice(0, len(prefix)) == prefix) & ~t.path.slice(len(prefix)).contains('/')
         # One extra file/character lets search report each truncation bound.
-        return self._file_rows(t, where, max_files + 1, content_chars=max_file_chars + 1)
+        return self._file_rows(t, self._below(t, prefix, nested=False), max_files + 1, content_chars=max_file_chars + 1)
