@@ -18,11 +18,12 @@ pip/uv-add "pydantic-ai-slim[mcp]"
 ```
 
 !!! note "FastMCP 4"
-    The command above installs FastMCP 4, which `MCPToolset` supports alongside FastMCP 3. Its
-    modern protocol mode does not support server-initiated sampling or elicitation, and cannot
-    apply `log_level`. `MCPToolset` warns when these options are configured; filter logs in
-    `log_handler` instead. For these options, FastMCP 4's legacy protocol mode retains the
-    FastMCP 3 behavior.
+    The command above installs FastMCP 4, which `MCPToolset` supports alongside FastMCP 3. By
+    default FastMCP 4 connects with the 2026-07-28 MCP protocol, which has no request for setting
+    a server's log level, so `log_level` isn't applied: `MCPToolset` warns, and you can filter by
+    level in `log_handler` instead. That protocol also changes how a server asks for
+    [sampling](#mcp-sampling) and [elicitation](#elicitation); see
+    [how the server asks](#how-the-server-asks).
 
     FastMCP 4 is also built on [`httpx2`](https://httpx2.pydantic.dev/) rather than legacy HTTPX.
     `MCPToolset` hands the [`auth`](#http-authentication) and
@@ -693,42 +694,6 @@ toolset = MCPToolset(
 
 Pydantic AI supports sampling as both a client and server. See the [server](./server.md#mcp-sampling) documentation for details on how to use sampling within a server.
 
-!!! warning "Server-initiated requests need a legacy session on FastMCP 4"
-    Sampling and elicitation are requests the *server* makes back to the client, and FastMCP 4's
-    default modern session has no back-channel for them — the server's call fails with
-    `NoBackChannelError`. A legacy session still has one, but `MCPToolset` can only negotiate it
-    through a pre-built client, which rules out the `sampling_model` and `elicitation_handler`
-    shortcuts below. The client then needs its own FastMCP sampling handler, written by you, which
-    calls your model:
-
-    ```python {title="legacy_session.py" test="skip"}
-    from fastmcp.client import Client
-    from fastmcp.client.transports import StdioTransport
-    from mcp.types import CreateMessageRequestParams, SamplingMessage
-
-    from pydantic_ai.mcp import MCPToolset
-
-
-    async def sampling_handler(
-        messages: list[SamplingMessage], params: CreateMessageRequestParams, context: object
-    ) -> str:
-        return 'The reply from your model.'
-
-
-    client = Client(
-        StdioTransport(command='python', args=['mcp_server.py']),
-        mode='legacy',
-        sampling_handler=sampling_handler,
-    )
-    toolset = MCPToolset(client)
-    ```
-
-    The same back-channel carries `list_changed` notifications, so on a modern session the toolset's
-    cached tools, resources and prompts aren't refreshed when the server changes them mid-session.
-
-    The shortcuts work as written on FastMCP 3. Tracking the gap in
-    [#8477](https://github.com/pydantic/pydantic-ai/issues/8477).
-
 To use sampling as a client, an `MCPToolset` needs to have a [`sampling_model`][pydantic_ai.mcp.MCPToolset.sampling_model] set. This can be done either directly on the toolset using the `sampling_model=` constructor keyword argument, or by using [`agent.set_mcp_sampling_model()`][pydantic_ai.agent.Agent.set_mcp_sampling_model] to use the agent's model (or one specified as an argument) as the sampling model on all `MCPToolset`s registered with the agent.
 
 Let's say we have an MCP server that wants to use sampling (in this case to generate an SVG as per the tool arguments):
@@ -792,6 +757,29 @@ async def main():
 
 _(This example is complete, it can be run "as is")_
 
+### How the server asks
+
+Sampling and elicitation are requests a server makes while one of its tools is running. A server can make them in two ways, and which one it uses decides what the client needs:
+
+- **By ending the tool call** with an `InputRequiredResult` that lists what it needs. This is how the 2026-07-28 MCP protocol does it: the FastMCP 4 client answers through `sampling_model` and `elicitation_handler`, then calls the tool again with the answers.
+- **In the middle of the tool call**, like `ctx.session.create_message()` and `ctx.elicit()` in this page's examples, or [`MCPSamplingModel`][pydantic_ai.models.mcp_sampling.MCPSamplingModel]. The 2026-07-28 protocol forbids this, so on FastMCP 4's default connection the server's call fails with `NoBackChannelError`. It works with FastMCP 3, or with a FastMCP 4 `Client` you build in legacy mode and pass to `MCPToolset`:
+
+```python {title="legacy_session.py" test="skip"}
+from fastmcp.client import Client
+from fastmcp.client.transports import StdioTransport
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPToolset
+
+client = Client(StdioTransport(command='python', args=['generate_svg.py']), mode='legacy')
+agent = Agent('{{ openai:medium }}', toolsets=[MCPToolset(client)])
+agent.set_mcp_sampling_model()
+```
+
+`MCPToolset` doesn't accept `sampling_model=` or `elicitation_handler=` together with a client you built, so set the sampling model with `set_mcp_sampling_model()` as above, and pass an elicitation handler to the `Client` itself.
+
+On the 2026-07-28 protocol, a server's `list_changed` notifications reach a client only on a subscription stream it opens, which `MCPToolset` doesn't do, so the toolset's cached tools, resources and prompts aren't refreshed when the server changes them mid-session.
+
 ## Elicitation
 
 In MCP, [elicitation](https://modelcontextprotocol.io/docs/concepts/elicitation) allows a server to request [structured input](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#supported-schema-types) from the client for missing or additional context during a session.
@@ -818,7 +806,7 @@ This allows for a more interactive and user-friendly experience, especially for 
 
 To enable elicitation, provide an `elicitation_handler` when creating your `MCPToolset`:
 
-(On FastMCP 4 this needs a legacy session — see the warning under [MCP Sampling](#mcp-sampling).)
+(The server below asks in the middle of the tool call; on FastMCP 4 see [how the server asks](#how-the-server-asks).)
 
 ```python {title="restaurant_server.py"}
 from fastmcp import Context, FastMCP

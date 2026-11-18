@@ -178,8 +178,8 @@ CAUSES: list[Any] = [
         id='mcp-list-changed',
         marks=pytest.mark.skipif(
             MCP_SDK_V2,
-            reason='FastMCP 4 modern sessions have no back-channel for `list_changed` notifications: '
-            'https://github.com/pydantic/pydantic-ai/issues/8477',
+            reason='On a FastMCP 4 modern session, `list_changed` reaches the client only on a '
+            '`subscriptions/listen` stream, which `MCPToolset` does not open',
         ),
     ),
     pytest.param(_prepare_tools_agent, id='prepare-tools'),

@@ -75,6 +75,8 @@ if __name__ == '__main__':
 
 When Pydantic AI agents are used within MCP servers, they can use sampling via [`MCPSamplingModel`][pydantic_ai.models.mcp_sampling.MCPSamplingModel].
 
+`MCPSamplingModel` sends its request in the middle of the tool call, so it works when the client connects with FastMCP 3 or the MCP SDK v1, or with FastMCP 4 in legacy mode. On the 2026-07-28 MCP protocol, the FastMCP 4 default, the request fails with `NoBackChannelError`; see [how the server asks](./client.md#how-the-server-asks).
+
 You can continue a conversation from another model by passing its `message_history` to the sampling agent.
 Function tool calls, results, and retry feedback in that history are preserved using MCP's native tool content blocks,
 which require a client supporting the 2025-11-25 sampling format or later.

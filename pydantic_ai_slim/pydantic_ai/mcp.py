@@ -930,7 +930,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _exit_stack: AsyncExitStack | None
     _user_message_handler: MessageHandlerT | None
     _call_tool_task: _CallToolTask | None
-    _server_initiated_handlers: list[str]
     _telemetry_url_derived_id: str | None
     # Defaulted at class level so a subclass that doesn't call `MCPToolset.__init__` (like a test double
     # with canned results) is an ordinary toolset rather than missing them.
@@ -1070,10 +1069,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self._call_tool_task = _load_call_tool_task() if _MCP_SDK_V2 else None
         self._telemetry_url_derived_id = None
 
-        # Names the options whose handlers a modern session can never call, so `__aenter__` can warn.
-        # Only options passed here are recorded: handlers configured on a pre-built `fastmcp.Client`
-        # are stored in a private attribute with no public accessor, so that path stays silent.
-        self._server_initiated_handlers = []
         # Assigned before the client is built: `_build_client` reads it to install the sampling handler.
         self.sampling_model = sampling_model
         if isinstance(client, FastMCPClient):
@@ -1160,10 +1155,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             self._static_headers = static_headers
             self.client = self._build_client(auth=static_auth, headers=static_headers)
             self._user_message_handler = message_handler
-            if sampling_handler is not None or sampling_model is not None:
-                self._server_initiated_handlers.append('sampling_model' if sampling_model else 'sampling_handler')
-            if elicitation_handler is not None:
-                self._server_initiated_handlers.append('elicitation_handler')
 
         self._set_id(id)
         self.max_retries = max_retries
@@ -1272,13 +1263,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         existing session continue using the previously configured handler.
         """
         self.sampling_model = model
-        # The callback this installs replaces any handler passed to `__init__`, and the two options
-        # are mutually exclusive, so the recorded name is swapped rather than added alongside.
-        handlers = self._server_initiated_handlers
-        if 'sampling_handler' in handlers:
-            handlers[handlers.index('sampling_handler')] = 'sampling_model'
-        elif 'sampling_model' not in handlers:
-            handlers.append('sampling_model')
         self.client.set_sampling_callback(_build_sampling_handler(model))  # pyright: ignore[reportUnknownMemberType]
 
     def _build_client(
@@ -1344,7 +1328,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         vars(run_toolset).pop('_enter_lock', None)
         run_toolset._auth_func = None
         run_toolset._headers_func = None
-        run_toolset._server_initiated_handlers = list(self._server_initiated_handlers)
         run_toolset.client = run_toolset._build_client(auth=auth, headers=headers)
         return run_toolset
 
@@ -1420,28 +1403,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                         capabilities = init_result.capabilities
                         instructions = init_result.instructions
                     server_capabilities = ServerCapabilities.from_mcp_sdk(capabilities)
-                    # SEP-2575 made MCP stateless, so a modern session holds no connection for the
-                    # server to issue requests back over: it refuses sampling and elicitation, and
-                    # `logging/setLevel` is handshake-era only.
+                    # `logging/setLevel` is handshake-era only: the modern protocol has no such request.
                     modern_session = init_result is None
-                    if self._server_initiated_handlers and modern_session:
-                        # With `fastmcp-tasks` loaded, a task parked on `input_required` is answered
-                        # through the elicitation handler (`tasks/get` polling + `tasks/update`), so
-                        # on a modern session that handler can still fire — for task input only.
-                        dead_handlers = [
-                            name
-                            for name in self._server_initiated_handlers
-                            if name != 'elicitation_handler' or self._call_tool_task is None
-                        ]
-                        if dead_handlers:
-                            names = ', '.join(f'`{name}`' for name in dead_handlers)
-                            warnings.warn(
-                                f'{names} will never be called: {self.label} negotiated a modern MCP session, '
-                                'which holds no connection for the server to issue sampling or elicitation '
-                                'requests over.',
-                                UserWarning,
-                                stacklevel=2,
-                            )
                     if self.log_level is not None:
                         if modern_session:
                             warnings.warn(
