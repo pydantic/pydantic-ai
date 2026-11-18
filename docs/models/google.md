@@ -212,6 +212,8 @@ When a Google error carries no `retry-after-ms` or `Retry-After` header, [`Model
 
 `GoogleModel` supports multi-modal input, including documents, images, audio, and video.
 
+Gemini reads JPEG, PNG, GIF, WebP, HEIC, HEIF, AVIF and BMP images. On Google Cloud it also reads TIFF, which the Gemini API rejects. Gemini 2.5 models don't read Word or Excel documents; Gemini 3 models do. A file of another type that a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance).
+
 YouTube video URLs can be passed directly to Google models:
 
 ```py {title="youtube_input.py" test="skip" lint="skip"}
@@ -390,6 +392,10 @@ anyway.
 
 On Google Cloud, `gemini-4-argon` rejects a `thinking_budget` in `google_thinking_config` with a 400 error: use
 `thinking_level` instead.
+
+Gemma 4 (`gemma-4-31b-it`, `gemma-4-26b-a4b-it`) supports only the `minimal` and `high` levels on the Gemini API and
+rejects any `thinking_budget`, so `thinking=False` and `'low'` resolve to `minimal`, and `'medium'` and above to
+`high`. Without a `thinking` setting it thinks by default there.
 
 `thinking=False` turns thinking off where the model allows it. The Pro models can't turn it off, so they think as
 little as they allow instead: Gemini 3 Pro models use their lowest thinking level (`low` on `gemini-3.1-pro-preview`),

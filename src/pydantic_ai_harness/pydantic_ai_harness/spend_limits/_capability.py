@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import inspect
 import warnings
-from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -24,17 +23,24 @@ from pydantic_ai.models._continuation import (
     resumed_response,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
-from pydantic_ai_harness.spend_limits._budget import Budget, BudgetSpec, bucket, delimited, scope_key, store_key
+from pydantic_ai_harness.spend_limits._budget import (
+    Budget,
+    BudgetSpec,
+    Ceilings,
+    bucket,
+    delimited,
+    plain_ceilings,
+    resolve_ceilings,
+    scope_key,
+    store_key,
+)
 from pydantic_ai_harness.spend_limits._events import SpendBudgetStatus, SpendRecordedEvent
 from pydantic_ai_harness.spend_limits._exceptions import SpendLimitExceeded, UnpricedModelError, UnpricedModelWarning
-from pydantic_ai_harness.spend_limits._snapshot import BudgetStatus, SpendSnapshot, Spent, money_precision
+from pydantic_ai_harness.spend_limits._snapshot import BudgetStatus, Spent, money_precision
 from pydantic_ai_harness.spend_limits._store import (
     BatchSpendStore,
     InMemorySpendStore,
     SpendEntry,
-    SpendStore,
-    as_batch_store,
     utc_now,
 )
 
@@ -43,9 +49,6 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.toolsets import AgentToolset
 
-
-SpendCallback = Callable[[SpendSnapshot], None | Awaitable[None]]
-"""Called after each response `SpendLimits` records."""
 
 PriceFunc = Callable[[ModelResponse], Decimal | None]
 """Prices a response. Return `None` to fall back to the `genai-prices` registry."""
@@ -88,19 +91,13 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     operations. Their recorded results are replayed without re-entering the store. A
     shared store is still required when recovery can move to another worker: the default
     `InMemorySpendStore` loses its counters and deduplication markers with the process.
-    A deprecated `SpendStore` also loses token-based deduplication outside the journal
-    because its single-key `add` method has nowhere to receive `SpendEntry.token`.
     """
 
     budgets: Sequence[Budget[AgentDepsT]] = ()
     """Windows to accumulate against, and which of them can refuse a request."""
 
-    store: SpendStore | BatchSpendStore = field(default_factory=InMemorySpendStore)
-    """Where counters live. The default holds them for the lifetime of the process.
-
-    A store implementing only the deprecated `SpendStore` pair is driven one window per
-    call through an adapter, which warns once at construction about what that costs.
-    """
+    store: BatchSpendStore = field(default_factory=InMemorySpendStore)
+    """Where counters live. The default holds them for the lifetime of the process."""
 
     price: PriceFunc | None = None
     """Prices a response before the registry is consulted.
@@ -116,13 +113,6 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     Under durable execution this callable must return the same result when replayed
     for the same response. It runs in orchestration after the durable model request,
     outside the journaled accrual.
-    """
-
-    on_spend: SpendCallback | None = None
-    """Deprecated callback after each response. Subscribe to `SpendRecordedEvent` instead.
-
-    Durable replay can invoke this callback again after the response's journaled
-    accrual has run only once, so the callback must be idempotent.
     """
 
     on_unpriced: Literal['zero', 'raise'] = 'zero'
@@ -162,19 +152,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     outlives a run: a per-run set would warn again on every run for the same model.
     """
 
-    _store: BatchSpendStore = field(init=False, repr=False, compare=False)
-    """`store` as something that takes every window at once, adapting a legacy one."""
-
     def __post_init__(self) -> None:
-        """Validate the configuration and adapt `store` to `BatchSpendStore`."""
-        if self.on_spend is not None:
-            warnings.warn(
-                '`SpendLimits.on_spend` is deprecated; subscribe to `SpendRecordedEvent` with `@agent.on_event` '
-                'instead, or with `@on_event` on a capability of your own.',
-                HarnessDeprecationWarning,
-                stacklevel=2,
-            )
-
+        """Validate the configuration."""
         if self.defer_loading is True:
             raise UserError(
                 '`defer_loading` is not supported on `SpendLimits`: the enforcement and accounting '
@@ -224,9 +203,6 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f'SpendLimits.on_unpriced must be one of {sorted(_UNPRICED_POLICIES)}; got {self.on_unpriced!r}.'
             )
-        # Resolved once, and last, so a configuration that was going to be refused is
-        # refused before a deprecated store is reported.
-        self._store = as_batch_store(self.store)
 
     def _check_duplicate_ceilings(self) -> None:
         # One counter can carry a USD and a token ceiling, but two ceilings of the same kind
@@ -268,10 +244,11 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Refuse the request if any budget with a ceiling is already spent."""
-        enforcing = [(budget, key) for budget, key in await self._keyed(ctx) if budget.enforces]
-        read = await self._read(list(dict.fromkeys(key for _, key in enforcing)))
-        for budget, key in enforcing:
-            self._check(budget, read[key], ctx)
+        resolved = [(budget, key, resolve_ceilings(budget, ctx)) for budget, key in await self._keyed(ctx)]
+        enforcing = [entry for entry in resolved if entry[2].enforces]
+        read = await self._read(list(dict.fromkeys(key for _, key, _ in enforcing)))
+        for budget, key, limits in enforcing:
+            self._check(budget, limits, read[key], ctx)
         return request_context
 
     async def wrap_model_request(
@@ -336,10 +313,10 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 for billed in _billed_attempts(unanswered, partial(_attempt_token, unanswered_token)):
                     errors.append(await self._accrue_safely(ctx, *billed, failed_attempt=True))
             first_error = next((error for error in errors if error is not None), None)
-            # Only on the success path: pricing-policy and callback errors have never been
-            # able to outrank the request's own exception, and a retryable failure such as
-            # `ModelRetry` must keep propagating so the run retries instead of dying on a
-            # reporting error. The responses are accrued above either way.
+            # Only on the success path: a pricing-policy error never outranks the request's own
+            # exception, and a retryable failure such as `ModelRetry` must keep propagating so
+            # the run retries instead of dying on an accrual error. The responses are accrued
+            # above either way.
             if first_error is not None and response is not None:
                 raise first_error
         assert response is not None
@@ -409,29 +386,22 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         usd, priced, price_error = self._price_of(response, failed_attempt=failed_attempt)
         keyed = await self._keyed(ctx)
         accrued = await self._accrue_boundaries(keyed, response, token, boundaries, usd=usd, priced=priced)
-        statuses = [_status(budget, key, accrued[key]) for budget, key in keyed]
+        # Resolved only once the response is accrued, so a failing ceiling callable cannot drop the spend.
+        statuses = [_status(budget, key, accrued[key], resolve_ceilings(budget, ctx)) for budget, key in keyed]
 
-        error: Exception | None = None
-        snapshot = SpendSnapshot(
-            model=response.model_name,
-            usage=response.usage,
-            usd=usd,
-            priced=priced,
-            budgets=tuple(statuses),
-        )
         await ctx.emit(
             SpendRecordedEvent(
-                model=snapshot.model,
-                usage=snapshot.usage,
-                usd=snapshot.usd,
-                priced=snapshot.priced,
+                model=response.model_name,
+                usage=response.usage,
+                usd=usd,
+                priced=priced,
                 failed_attempt=failed_attempt,
                 budgets=tuple(
                     SpendBudgetStatus(
                         name=status.budget.name,
                         window=status.budget.window,
-                        usd_limit=status.budget.usd,
-                        token_limit=status.budget.tokens,
+                        usd_limit=status.usd_limit,
+                        token_limit=status.token_limit,
                         key=status.key,
                         spent_usd=status.spent.usd,
                         spent_tokens=status.spent.tokens,
@@ -442,30 +412,17 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                         warning=status.warning,
                         exhausted=status.exhausted,
                     )
-                    for status in snapshot.budgets
+                    for status in statuses
                 ),
             )
         )
-        if self.on_spend is not None:
-            try:
-                result = self.on_spend(snapshot)
-                if inspect.isawaitable(result):
-                    await result
-            except Exception as exc:
-                error = exc
-
         if price_error is not None:
-            # Raised after the store and `on_spend` have seen the response, for the reason
-            # `_price_of` gives. Ahead of the `on_unpriced` handling below, which would
-            # otherwise report a broken pricing function as an unknown model. Raising from
-            # a wrapper rather than from `after_model_request` does not change that: the
-            # accrual is already committed above.
-            if error is None:
-                error = UserError(f'`SpendLimits.price` {price_error} for a response.')
-
-        if not priced and error is None:
-            error = self._handle_unpriced(response, usd)
-        return error
+            # Raised after the store has seen the response, for the reason `_price_of` gives.
+            # Ahead of the `on_unpriced` handling below, which would otherwise report a broken
+            # pricing function as an unknown model. Raising from a wrapper rather than from
+            # `after_model_request` does not change that: the accrual is already committed above.
+            return UserError(f'`SpendLimits.price` {price_error} for a response.')
+        return None if priced else self._handle_unpriced(response, usd)
 
     async def _accrue_boundaries(
         self,
@@ -546,11 +503,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                     )
                 warnings.warn(warning_message, UnpricedModelWarning, stacklevel=3)
             return None
-        # Raised last, after the store is updated and `on_spend` has seen the
-        # response. The request happened and its tokens were really spent, so
-        # dropping them would leave a token ceiling understating what the
-        # model was asked to do, and an audit that skipped exactly the
-        # unpriced responses would be missing the ones worth knowing about.
+        # Raised last, after the store has recorded the response. The request happened and its tokens were really
+        # spent, so dropping them would leave a token ceiling understating what the model was asked to do, and an
+        # audit that skipped exactly the unpriced responses would be missing the ones worth knowing about.
         if response.usage.unmeasured_requests:
             return UnpricedModelError(
                 f'Usage was incomplete for model {model}; only the known subtotal ${usd} was recorded, and known '
@@ -572,8 +527,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
         Inside a run, pass `ctx` and every budget resolves. Without one, budgets on a
         `run` or `conversation` window are omitted, since those periods have no meaning
-        outside a run, and a budget declaring a `scope` is omitted unless `scope` names
-        the partition to read.
+        outside a run, a budget whose ceiling is a callable is omitted, since only a run
+        resolves it, and a budget declaring a `scope` is omitted unless `scope` names the
+        partition to read.
 
         Use [`exhausted`][pydantic_ai_harness.spend_limits.SpendLimits.exhausted] when the answer
         gates something.
@@ -596,15 +552,19 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 'Drop `scope=` to read the run, or drop `ctx` to read another partition.'
             )
         now = await self._now()
-        keyed: list[tuple[Budget[AgentDepsT], str]] = []
+        keyed: list[tuple[Budget[AgentDepsT], str, Ceilings]] = []
         unresolved: list[str] = []
         for budget in self.budgets:
-            if ctx is None and (budget.window in _RUN_SCOPED_WINDOWS or (budget.scope is not None and scope is None)):
+            limits = plain_ceilings(budget) if ctx is None else resolve_ceilings(budget, ctx)
+            if limits is None or (
+                ctx is None and (budget.window in _RUN_SCOPED_WINDOWS or (budget.scope is not None and scope is None))
+            ):
                 unresolved.append(budget.name)
                 continue
-            keyed.append((budget, self._key(budget, ctx, now, scope)))
-        read = await self._read(list(dict.fromkeys(key for _, key in keyed)))
-        return tuple(_status(budget, key, read[key]) for budget, key in keyed), tuple(unresolved)
+            keyed.append((budget, self._key(budget, ctx, now, scope), limits))
+        read = await self._read(list(dict.fromkeys(key for _, key, _ in keyed)))
+        statuses = tuple(_status(budget, key, read[key], limits) for budget, key, limits in keyed)
+        return statuses, tuple(unresolved)
 
     async def exhausted(
         self,
@@ -625,7 +585,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         if unresolved:
             raise UserError(
                 f'Cannot read budget(s) {sorted(unresolved)} without a run context or a `scope`, so this check '
-                'would pass having inspected nothing. Pass `scope=` for a scoped budget, or call it inside a run.'
+                'would pass having inspected nothing. Pass `scope=` for a scoped budget, or call it inside a run, '
+                'which a run or conversation window and a callable ceiling need.'
             )
         return any(status.exhausted for status in statuses)
 
@@ -654,7 +615,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         rather than dropped. `**unsupported` keeps that rejection naming the field;
         core drops it from the schema.
         """
-        callables = sorted({'store', 'price', 'on_spend', 'clock'} & unsupported.keys())
+        callables = sorted({'store', 'price', 'clock'} & unsupported.keys())
         if callables:
             raise UserError(
                 f'SpendLimits cannot be built from a spec with {callables}: these take callables or a live '
@@ -741,12 +702,13 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         # Preserve existing single-response replay keys; distinguish subsequent provider responses.
         return delimited(token, str(response_index)) if response_index else token
 
-    def _check(self, budget: Budget[AgentDepsT], spent: Spent, ctx: RunContext[AgentDepsT]) -> None:
+    def _check(self, budget: Budget[AgentDepsT], limits: Ceilings, spent: Spent, ctx: RunContext[AgentDepsT]) -> None:
         """Raise if `spent` has reached either of the budget's ceilings."""
-        if budget.usd is not None and spent.usd >= budget.usd:
-            self._refuse(budget, ctx, f'spent ${spent.usd} of ${budget.usd}')
-        if budget.tokens is not None and spent.tokens >= budget.tokens:
-            self._refuse(budget, ctx, f'used {spent.tokens} of {budget.tokens} tokens')
+        usd, tokens = limits
+        if usd is not None and spent.usd >= usd:
+            self._refuse(budget, ctx, f'spent ${spent.usd} of ${usd}')
+        if tokens is not None and spent.tokens >= tokens:
+            self._refuse(budget, ctx, f'used {spent.tokens} of {tokens} tokens')
 
     def _refuse(self, budget: Budget[AgentDepsT], ctx: RunContext[AgentDepsT], detail: str) -> None:
         """Record the refusal as a span and raise."""
@@ -765,12 +727,12 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         A store may treat an empty batch as a caller error, so neither `get_many` nor
         `add_many` is called with one.
         """
-        return await self._store.get_many(keys) if keys else {}
+        return await self.store.get_many(keys) if keys else {}
 
     @durable_operation('accrue')
     async def _accrue(self, entries: list[SpendEntry]) -> Mapping[str, Spent]:
         """Apply one response, or a continuation boundary's growth, and journal the store's totals."""
-        return await self._store.add_many(entries) if entries else {}
+        return await self.store.add_many(entries) if entries else {}
 
     async def _keyed(self, ctx: RunContext[AgentDepsT]) -> list[tuple[Budget[AgentDepsT], str]]:
         """Each budget paired with the store key it accumulates under right now."""
@@ -914,41 +876,45 @@ def _continuation_boundaries(
     return boundaries
 
 
-def _status(budget: Budget[Any], key: str, spent: Spent) -> BudgetStatus:
+def _status(budget: Budget[Any], key: str, spent: Spent, limits: Ceilings) -> BudgetStatus:
     """Pair a budget with what its window has accumulated.
 
     `remaining_usd` under `money_precision` for the same reason the counter itself is: an
     application that lowered `Decimal` precision for its own arithmetic would otherwise be
     told a rounded number by a store that holds an exact one.
     """
+    usd, tokens = limits
     with money_precision():
-        remaining_usd = None if budget.usd is None else budget.usd - spent.usd
-    remaining_tokens = None if budget.tokens is None else budget.tokens - spent.tokens
+        remaining_usd = None if usd is None else usd - spent.usd
+    remaining_tokens = None if tokens is None else tokens - spent.tokens
     return BudgetStatus(
         budget=budget,
         key=key,
         spent=spent,
+        usd_limit=usd,
+        token_limit=tokens,
         remaining_usd=remaining_usd,
         remaining_tokens=remaining_tokens,
-        warning=_warning(budget, spent),
+        warning=_warning(budget.warn_at, limits, spent),
         exhausted=(remaining_usd is not None and remaining_usd <= 0)
         or (remaining_tokens is not None and remaining_tokens <= 0),
     )
 
 
-def _warning(budget: Budget[Any], spent: Spent) -> bool:
-    """Whether spend has crossed the budget's warning fraction.
+def _warning(warn_at: float | None, limits: Ceilings, spent: Spent) -> bool:
+    """Whether spend has crossed the budget's warning fraction of its ceilings.
 
     The USD product is taken under `money_precision`: rounded at the application's, a
     crossing near the fraction reports the wrong side of it.
     """
-    if budget.warn_at is None:
+    if warn_at is None:
         return False
-    fraction = Decimal(str(budget.warn_at))
+    fraction = Decimal(str(warn_at))
+    usd, tokens = limits
     with money_precision():
-        if budget.usd is not None and spent.usd >= budget.usd * fraction:
+        if usd is not None and spent.usd >= usd * fraction:
             return True
-    return budget.tokens is not None and spent.tokens >= budget.tokens * fraction
+    return tokens is not None and spent.tokens >= tokens * fraction
 
 
 def _is_spec_mapping(entry: object) -> TypeGuard[Mapping[str, Any]]:
@@ -967,6 +933,9 @@ def _budget_from_spec(entry: Any) -> Budget[Any]:
     fields = dict(entry)
     if 'scope' in fields:
         raise UserError('A SpendLimits budget scope is a callable and cannot be expressed in a spec.')
+    for name in ('usd', 'tokens'):
+        if callable(fields.get(name)):
+            raise UserError(f'A SpendLimits budget {name!r} callable cannot be expressed in a spec.')
     # Every number a spec can carry, not just `usd`: the others reached
     # `Budget.__post_init__` as strings and compared str to int there, which
     # surfaces as a bare TypeError naming no field.

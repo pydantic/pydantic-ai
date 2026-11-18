@@ -8,7 +8,6 @@ import json
 import logging
 import posixpath
 import uuid
-import warnings
 from copy import copy
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -18,7 +17,6 @@ import anyio
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import FileEntry, Workspace, WorkspaceBackend, WorkspaceError, WorkspaceUnavailableError
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness._workspace import secondary_workspace, supports_commands, workspace_path
 from pydantic_ai_harness.memory._store import (
     MAX_RECEIPTS,
@@ -128,14 +126,6 @@ class FileMemoryStore:
         """
         self.directory = workspace_path(directory) if isinstance(directory, Path) else directory
         self.workspace = workspace
-        if workspace is None and (posixpath.isabs(self.directory) or Path(directory).is_absolute()):
-            warnings.warn(
-                f"`FileMemoryStore({str(directory)!r})` now keeps memory in the run's workspace, at that path inside it. "
-                f'To keep it in that directory on this machine, pass '
-                f"`FileMemoryStore('.', workspace=LocalWorkspaceBackend({str(directory)!r}))`.",
-                category=HarnessDeprecationWarning,
-                stacklevel=2,
-            )
         self._own = secondary_workspace(workspace, 'FileMemoryStore')
         self._run: Workspace | None = None
         self._real_root: tuple[str, str] | None = None
@@ -358,6 +348,9 @@ class FileMemoryStore:
 
     async def list_paths(self, prefix: str = '', *, limit: int) -> list[str]:
         return await self._list_paths(prefix, limit=limit, nested=True)
+
+    async def list_child_paths(self, prefix: str, *, limit: int) -> list[str]:
+        return await self._list_paths(prefix, limit=limit, nested=False)
 
     async def _list_paths(self, prefix: str, *, limit: int, nested: bool) -> list[str]:
         """List paths below `prefix`; with `nested=False`, only those directly below it."""

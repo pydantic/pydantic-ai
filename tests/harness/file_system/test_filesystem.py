@@ -47,7 +47,6 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness._workspace import READ_ONLY_FAILURE
 from pydantic_ai_harness.file_system import (
     FILE_SYSTEM_TOOL_NAMES,
@@ -850,6 +849,17 @@ class TestReadFile:
         assert walked == 'feed.c:3:needle = 3;'
         assert 'lines: 3' in await toolset.file_info('feed.c', workspace=ws)
 
+    async def test_window_deep_into_a_file(self, tmp_path: Path) -> None:
+        # About 30 KB of short lines, so the offset lies several 4 KiB blocks into the file.
+        (tmp_path / 'long.txt').write_bytes(''.join(f'line {i}\n' for i in range(3000)).encode())
+        result = await _unhashed_toolset().read_file(
+            'long.txt', offset=2500, limit=2, workspace=LocalWorkspaceBackend(tmp_path)
+        )
+        assert result == (
+            '[long.txt | 3000 lines]\n  2501\tline 2500\n  2502\tline 2501\n'
+            '... (498 more lines. Use offset=2502 to continue reading.)\n'
+        )
+
     async def test_crlf_lines_match_without_their_carriage_return(self, tmp_path: Path) -> None:
         (tmp_path / 'dos.txt').write_bytes(b'first\r\nneedle\r\n')
         walked = await _unhashed_toolset().search_files(
@@ -1105,7 +1115,7 @@ class HeldWriteWorkspace:
 
     @property
     def ref(self) -> WorkspaceRef | None:
-        return None
+        return None  # pragma: no cover
 
     async def working_dir(self) -> str:
         return '/work'
@@ -1150,35 +1160,64 @@ class HeldWriteWorkspace:
 class TestConcurrentChanges:
     """Calls changing one file take turns, so none is computed from content another is about to replace."""
 
-    async def test_parallel_edit_calls_to_one_file_both_land(self) -> None:
-        """Two `edit_file` calls in one model response, as a model batching its edits sends them."""
-        workspace = HeldWriteWorkspace({'/work/a.py': b'import old\nold()\n'}, held='/work/a.py')
+    @pytest.mark.parametrize(
+        ('files', 'calls', 'expected'),
+        [
+            pytest.param(
+                {},
+                [
+                    ToolCallPart('create_directory', {'path': 'pkg/sub'}),
+                    ToolCallPart('write_file', {'path': 'pkg/sub/a.py', 'content': 'import old\n'}),
+                ],
+                {'pkg/sub/a.py': 'import old\n'},
+                id='write-into-new-directory',
+            ),
+            pytest.param(
+                {},
+                [
+                    ToolCallPart('write_file', {'path': 'a.py', 'content': 'import old\n'}),
+                    ToolCallPart('edit_file', {'path': 'a.py', 'old_text': 'old', 'new_text': 'new'}),
+                ],
+                {'a.py': 'import new\n'},
+                id='edit-new-file',
+            ),
+            pytest.param(
+                {'pkg/sub/a.py': 'import old\n'},
+                [
+                    ToolCallPart('edit_file', {'path': 'pkg/sub/a.py', 'old_text': 'old', 'new_text': 'new'}),
+                    ToolCallPart('edit_file', {'path': 'pkg/sub/a.py', 'old_text': 'new', 'new_text': 'newer'}),
+                ],
+                {'pkg/sub/a.py': 'import newer\n'},
+                id='edit-edited-text',
+            ),
+        ],
+    )
+    async def test_changes_in_one_response_run_in_order(
+        self, tmp_path: Path, files: dict[str, str], calls: list[ToolCallPart], expected: dict[str, str]
+    ) -> None:
+        """Each change depends on the one sent before it in the same response.
+
+        Uses `content_hashes=False` because the edit cases reproduce the race far more often without hashes. Keep it
+        unhashed so this test still guards `sequential` for edits.
+        """
+        for path, content in files.items():
+            (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / path).write_text(content)
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) > 1:
                 return ModelResponse(parts=[TextPart('done')])
-            return ModelResponse(
-                parts=[
-                    ToolCallPart('edit_file', {'path': 'a.py', 'old_text': 'import old', 'new_text': 'import new'}),
-                    ToolCallPart('edit_file', {'path': 'a.py', 'old_text': 'old()', 'new_text': 'new()'}),
-                ]
-            )
+            return ModelResponse(parts=calls)
 
-        async def release_after_the_other_edit_stops() -> None:
-            await workspace.writing.wait()
-            # The other edit either finishes or waits its turn before the held write goes ahead.
-            await anyio.wait_all_tasks_blocked()
-            workspace.release.set()
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[LocalWorkspace(tmp_path), FileSystem[object](content_hashes=False)],
+        )
+        messages = (await agent.run('change the file')).all_messages()
 
-        agent = Agent(FunctionModel(respond), capabilities=[FileSystem()])
-        messages: list[ModelMessage] = []
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(release_after_the_other_edit_stops)
-            messages = (await agent.run('Rename old to new', workspace=workspace)).all_messages()
-
-        returns = [part.content for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
-        assert len(returns) == 2 and all(str(content).startswith('Edited a.py.') for content in returns)
-        assert workspace.files['/work/a.py'] == b'import new\nnew()\n'
+        returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        assert [part.tool_name for part in returns] == [call.tool_name for call in calls]
+        assert {path: (tmp_path / path).read_text() for path in expected} == expected
 
     async def test_edits_through_a_symlink_and_its_target_take_turns(self) -> None:
         toolset = FileSystem[None]().get_toolset()
@@ -2386,6 +2425,11 @@ class TestMutationKillers:
         # Verify hash is a real hex hash not None
         assert 'hash:None' not in result
 
+    async def test_write_file_counts_a_final_line_without_a_line_feed(
+        self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend
+    ) -> None:
+        assert 'Wrote 3 chars (2 lines) to f.txt.' in await toolset.write_file('f.txt', 'a\nb', workspace=ws)
+
     async def test_edit_file_output_format(
         self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
     ) -> None:
@@ -2548,7 +2592,7 @@ class TestFileSystemCapability:
         assert exc_info.value.message == READ_ONLY_FAILURE
         assert list(tmp_path.iterdir()) == []
 
-    def test_search_files_description_has_string_return_type(self) -> None:
+    def test_search_files_description_returns_text_when_return_annotated(self) -> None:
         toolset = FileSystem().get_toolset()
         assert isinstance(toolset, FileSystemToolset)
         description = toolset.tools['search_files'].description
@@ -2556,7 +2600,6 @@ class TestFileSystemCapability:
         assert description == (
             '<summary>Search file contents using a regular expression.</summary>\n'
             '<returns>\n'
-            '<type>str</type>\n'
             '<description>Matching lines formatted as file:line_number:text, with paths relative to the working directory.</description>\n'
             '</returns>'
         )
@@ -2565,32 +2608,10 @@ class TestFileSystemCapability:
         assert FileSystem().max_read_chars == 50_000
         assert FileSystem(max_read_chars=None).max_read_chars is None
 
-    def test_deprecated_cwd_is_ignored(self) -> None:
-        with pytest.warns(Warning, match='cwd'):
-            assert FileSystem(cwd='elsewhere').root_dir is None
-
     def test_read_only_defaults(self) -> None:
         fs = FileSystem()
         assert '**/.git' in fs.read_only_patterns
         assert '**/.env' in fs.read_only_patterns
-
-    def test_protected_patterns_is_a_deprecated_alias(self) -> None:
-        with pytest.warns(
-            HarnessDeprecationWarning, match=r'`FileSystem\(protected_patterns=\.\.\.\)` has been renamed'
-        ):
-            fs = FileSystem(protected_patterns=['*.lock'])
-        assert fs.read_only_patterns == ['*.lock']
-        assert replace(fs, read_only_patterns=[]).read_only_patterns == []
-
-    def test_protected_patterns_with_read_only_patterns_rejected(self) -> None:
-        with pytest.raises(TypeError, match='`protected_patterns` is its deprecated name'):
-            FileSystem(read_only_patterns=['*.lock'], protected_patterns=['*.lock'])
-
-    def test_toolset_protected_patterns_is_a_deprecated_alias(self) -> None:
-        with pytest.warns(HarnessDeprecationWarning, match=r'`FileSystemToolset\(protected_patterns=\.\.\.\)`'):
-            _toolset_with_patterns(None, ['*.lock'])
-        with pytest.raises(TypeError, match='`protected_patterns` is its deprecated name'):
-            _toolset_with_patterns([], ['*.lock'])
 
     def test_non_positive_max_read_lines_rejected(self) -> None:
         with pytest.raises(ValueError, match='max_read_lines must be a positive integer'):
@@ -2977,19 +2998,6 @@ class TestWalkBounds:
                 workspace=FilesystemOnlyWorkspace(loop_root),
             )
         assert [event.truncated for event in seen] == [True]
-
-
-def _toolset_with_patterns(read_only: list[str] | None, protected: list[str]) -> FileSystemToolset[None]:
-    return FileSystemToolset[None](
-        allowed_patterns=[],
-        denied_patterns=[],
-        read_only_patterns=read_only,
-        protected_patterns=protected,
-        max_read_lines=1,
-        max_list_results=1,
-        max_search_results=1,
-        max_find_results=1,
-    )
 
 
 class TestUsedAsAToolset:

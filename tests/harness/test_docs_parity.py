@@ -19,18 +19,9 @@ from tests.docs_model_aliases import resolve_model_aliases
 _ROOT = Path(__file__).parents[2] / 'src' / 'pydantic_ai_harness'
 _PACKAGE = _ROOT / 'pydantic_ai_harness'
 
-# The `experimental` package is a namespace/warning shim, not a capability, so it
+# The `experimental` package is a namespace for ACP, not a capability, so it
 # has no standalone README and is not listed in the top-level tables.
 _NAMESPACE_PACKAGES = {_PACKAGE / 'experimental'}
-
-
-def _is_deprecation_shim(package: Path) -> bool:
-    """A package left at a moved or renamed capability's old path re-exports it and warns.
-
-    Such shims carry no docs of their own, so they are excluded from the capability tables.
-    """
-    source = (package / '__init__.py').read_text(encoding='utf-8')
-    return 'warn_moved(' in source or 'warn_module_renamed(' in source
 
 
 # Packages that are supporting infrastructure rather than capabilities, kept out of the README
@@ -50,7 +41,7 @@ def _capability_packages() -> list[Path]:
             # A non-package dir under the capability roots does not occur in a clean tree, so this guard stays uncovered.
             if not (child / '__init__.py').exists():  # pragma: no cover
                 continue
-            if child.name in _NOT_A_CAPABILITY or child in _NAMESPACE_PACKAGES or _is_deprecation_shim(child):
+            if child.name in _NOT_A_CAPABILITY or child in _NAMESPACE_PACKAGES:
                 continue
             candidates.append(child)
     return candidates
@@ -147,6 +138,7 @@ _CAPABILITY_DOC_PAGES = _capability_doc_pages()
 _CAPABILITY_PAGE_META = {
     'advisor.md': ('advisor', 'Advisor'),
     'ask-user.md': ('ask_user', 'Ask User'),
+    'deny-unanswered.md': ('deny_unanswered', 'Deny Unanswered'),
     'aws-lambda.md': ('aws_lambda', 'AWS Lambda Durability'),
     'absurd.md': ('absurd', 'Absurd Durability'),
     'pgtask.md': ('pgtask', 'pgtask Durability'),
@@ -166,8 +158,10 @@ _CAPABILITY_PAGE_META = {
     'docker-container.md': ('docker_container', 'Docker Container'),
     'opensandbox-sandbox.md': ('opensandbox_sandbox', 'OpenSandbox'),
     'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
+    'kubernetes-sandbox.md': ('kubernetes_sandbox', 'Kubernetes Sandbox'),
     'render-sandbox.md': ('render_sandbox', 'Render Sandbox'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
+    'model-router.md': ('model_router', 'Model Router'),
     'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
     'boxd-sandbox.md': ('boxd_sandbox', 'boxd Sandbox'),
     'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
@@ -175,6 +169,7 @@ _CAPABILITY_PAGE_META = {
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
     'bubblewrap-sandbox.md': ('bubblewrap_sandbox', 'Bubblewrapped Workspace'),
     'repo-context.md': ('repo_context', 'Repo Context'),
+    'report-stale-files.md': ('report_stale_files', 'Report Stale Files'),
     'repair-tool-arguments.md': ('repair_tool_arguments', 'Repair Tool Arguments'),
     'render-workflows.md': ('render', 'Render Workflows'),
     'researcher.md': ('researcher', 'Researcher'),
@@ -187,20 +182,27 @@ _CAPABILITY_PAGE_META = {
     'browser-use.md': ('browser_use', 'Browser Use'),
     'compaction.md': ('compaction', 'Compaction'),
     'tool-output-limits.md': ('tool_output_limits', 'Tool Output Limits'),
+    'tool-bridge.md': ('tool_bridge', 'Tool Bridge'),
     'tool-call-judge.md': ('tool_call_judge', 'Tool Call Judge'),
     'approval-reviewer.md': ('approval_reviewer', 'Approval Reviewer'),
     'permissions.md': ('permissions', 'Permissions'),
     'warn-on-cache-busts.md': ('warn_on_cache_busts', 'Warn On Cache Busts'),
+    'label-cross-model-history.md': ('label_cross_model_history', 'Label Cross Model History'),
     'step-persistence.md': ('step_persistence', 'Step Persistence'),
     'conversation-search.md': ('conversation_search', 'Conversation Search'),
+    'current-time.md': ('current_time', 'Current Time'),
     'subagents.md': ('sub_agents', 'Subagents'),
     'peers.md': ('peers', 'Peers'),
     'dynamic-workflow.md': ('dynamic_workflow', 'Dynamic Workflow'),
     'planning.md': ('planning', 'Planning'),
     'system-reminders.md': ('system_reminders', 'System Reminders'),
     'detect-loops.md': ('detect_loops', 'Detect Loops'),
+    'tool-budgets.md': ('tool_budgets', 'Tool Budgets'),
+    'report-remaining-budget.md': ('report_remaining_budget', 'Report Remaining Budget'),
+    'report-tool-errors.md': ('report_tool_errors', 'Report Tool Errors'),
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
     'refine-output.md': ('refine_output', 'Refine Output'),
+    'wrap-up-at-limits.md': ('wrap_up_at_limits', 'Wrap Up At Limits'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),
     'github.md': ('github', 'GitHub'),
@@ -516,14 +518,28 @@ _PROBLEM_TO_SKILL_ROUTE = (
     ('spend ceiling', 'spend limits'),
     ('without making progress', 'loop detection'),
     ('malformed JSON', 'repair malformed tool arguments'),
+    ('the whole run ends', 'report tool exceptions to the model'),
 )
+
+
+def _section(surface: str, heading: str) -> str:
+    """The text of the section under `heading` on one surface, up to the next `##` heading."""
+    text = (_ROOT / surface).read_text(encoding='utf-8')
+    return text.split(f'\n{heading}\n', 1)[1].split('\n## ', 1)[0]
+
+
+def _section_table_rows(surface: str, heading: str) -> list[str]:
+    """The table rows, header included, of the section under `heading` on one surface."""
+    return [line for line in _section(surface, heading).splitlines() if line.startswith('| ')]
+
+
+def _without_link_targets(rows: list[str]) -> list[str]:
+    return [re.sub(r'\]\([^)\s]+\)', ']', row) for row in rows]
 
 
 def _problem_to_capability_rows(surface: str) -> list[str]:
     """The data rows of the curated problem-first table on one capability index surface."""
-    text = (_ROOT / surface).read_text(encoding='utf-8')
-    section = text.split(_PROBLEM_TO_CAPABILITY_HEADING, 1)[1].split('\n## ', 1)[0]
-    lines = [line for line in section.splitlines() if line.startswith('| ')]
+    lines = _section_table_rows(surface, _PROBLEM_TO_CAPABILITY_HEADING)
     return [line for line in lines if not line.startswith('| If your problem')]
 
 
@@ -539,11 +555,37 @@ def test_problem_to_capability_links_resolve(surface: str) -> None:
 
 def test_problem_to_capability_rows_match_across_surfaces() -> None:
     """The README and the docs index carry the same problem-first rows; only link targets differ."""
+    docs, readme = (_without_link_targets(_problem_to_capability_rows(s)) for s in _PROBLEM_TO_CAPABILITY_SURFACES)
+    assert readme == docs
+
+
+_PACKAGES_HEADING = '## Pydantic AI, the Harness, and CLAI'
+_PACKAGES_SURFACES = ('../../docs/harness/index.md', 'README.md', '../pydantic_clai2/README.md')
+
+
+@pytest.mark.parametrize('surface', _PACKAGES_SURFACES[1:])
+def test_package_comparison_matches_across_surfaces(surface: str) -> None:
+    """The Harness docs index and the Harness and CLAI READMEs compare the three packages the same way."""
+    canonical = _without_link_targets(_section_table_rows(_PACKAGES_SURFACES[0], _PACKAGES_HEADING))
+    assert [row.split(' | ', 1)[0] for row in canonical[1:]] == [
+        '| [Pydantic AI] (`pydantic-ai`)',
+        '| [Pydantic AI Harness] (`pydantic-ai-harness`)',
+        '| [CLAI] (`pydantic-clai2`)',
+    ]
+    assert _without_link_targets(_section_table_rows(surface, _PACKAGES_HEADING)) == canonical
+
+
+_VERSION_POLICY_HEADING = '## Version policy'
+
+
+def test_version_policy_matches_across_surfaces() -> None:
+    """The README and the docs index state the same version policy, including what stays stable after 1.0."""
     docs, readme = (
-        [re.sub(r'\]\([^)\s]+\)', ']', row) for row in _problem_to_capability_rows(surface)]
-        for surface in _PROBLEM_TO_CAPABILITY_SURFACES
+        _without_link_targets(_section(surface, _VERSION_POLICY_HEADING).splitlines())
+        for surface in ('../../docs/harness/index.md', 'README.md')
     )
     assert readme == docs
+    assert '### After 1.0' in docs
 
 
 def test_packaged_skill_routes_problem_index_needs() -> None:

@@ -12,8 +12,14 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, PendingModelResponse
-from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, HandleDeferredToolCalls, LocalWorkspace
-from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    BatchModelRequests,
+    HandleDeferredToolCalls,
+    LocalWorkspace,
+    WrapperCapability,
+)
+from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -27,7 +33,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
@@ -37,11 +42,12 @@ from pydantic_ai.workspaces import (
     WorkspaceReadOnlyError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness import HarnessDeprecationWarning
+from pydantic_ai_harness import DenyUnanswered
+from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE
 from pydantic_ai_harness.sub_agents import ModelOption, SubAgent, SubAgents, SubAgentToolset
 
 from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
-from .._deferred_tools import deferring_agent, pending_agent
+from .._deferred_tools import asking_agent, deferring_agent, pending_agent
 from ..conftest import CountingModel
 
 
@@ -68,7 +74,6 @@ async def test_workspace_free_temporal_delegate() -> None:
     toolset = SubAgentToolset[object](
         agents={'worker': SubAgent(Agent[object, str](TestModel(custom_output_text='worker'), name='worker'))},
         forward_usage=False,
-        inherit_tools=False,
         shared_capabilities=[],
         event_stream_handler=None,
         tool_name='delegate_task',
@@ -91,7 +96,6 @@ async def test_temporal_delegate_with_its_own_model_does_not_read_the_parent_mod
     toolset = SubAgentToolset[object](
         agents={'worker': SubAgent(Agent[object, str](TestModel(custom_output_text='worker'), name='worker'))},
         forward_usage=False,
-        inherit_tools=False,
         shared_capabilities=[],
         event_stream_handler=None,
         tool_name='delegate_task',
@@ -380,103 +384,6 @@ class TestDelegation:
         assert captured['deps'] == 'PARENT'  # deps always forwarded
         assert captured['usage_is_parent'] is True  # usage shared by default
 
-    async def test_inherit_tools_exposes_parent_tools_but_not_delegate(self) -> None:
-        offered: list[str] = []
-
-        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if not offered:
-                offered.extend(tool.name for tool in info.function_tools)
-                # Call the inherited tool to prove it's actually usable, not just listed.
-                return ModelResponse(parts=[ToolCallPart('parent_tool', {}, tool_call_id='p1')])
-            return ModelResponse(parts=[TextPart('sub done')])
-
-        worker = Agent(FunctionModel(worker_fn), name='worker')
-        with pytest.warns(HarnessDeprecationWarning, match='inherit_tools'):
-            capability: SubAgents[object] = SubAgents(agents=[SubAgent(worker)], inherit_tools=True)
-        parent: Agent[object, str] = Agent(_delegate_then_finish('worker'), capabilities=[capability])
-
-        @parent.tool_plain
-        def parent_tool() -> str:
-            return 'PT'
-
-        result = await parent.run('go')
-        assert result.output == 'all done'
-        assert 'parent_tool' in offered  # the parent's tool is inherited by the sub-agent
-        assert 'delegate_task' not in offered  # the delegate tool is filtered out, so no recursion
-
-    async def test_directly_registered_toolset_still_filters_delegate_tool(self) -> None:
-        """`SubAgentToolset` used without the `SubAgents` capability must not recurse.
-
-        Registered directly in `Agent(toolsets=[...])` it is not wrapped in
-        `CapabilityOwnedToolset`, so only the name filter keeps `delegate_task`
-        out of inherited toolsets.
-        """
-        offered: list[str] = []
-
-        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            offered.extend(tool.name for tool in info.function_tools)
-            return ModelResponse(parts=[TextPart('sub done')])
-
-        worker = Agent(FunctionModel(worker_fn), name='worker')
-        toolset: SubAgentToolset[object] = SubAgentToolset(
-            agents={'worker': SubAgent(worker)},
-            forward_usage=True,
-            inherit_tools=True,
-            shared_capabilities=[],
-            event_stream_handler=None,
-            tool_name='delegate_task',
-            tool_retries=1,
-            contain_errors=False,
-            call_counts={},
-        )
-        parent: Agent[object, str] = Agent(_delegate_then_finish('worker'), toolsets=[toolset])
-
-        @parent.tool_plain
-        def parent_tool() -> str:
-            return 'PT'  # pragma: no cover - listed but not called in this test
-
-        result = await parent.run('go')
-        assert result.output == 'all done'
-        assert 'parent_tool' in offered  # the parent's own tool is still inherited
-        assert 'delegate_task' not in offered  # the delegate tool is filtered by name
-
-    async def test_inherit_tools_excludes_capability_contributed_tools(self) -> None:
-        """Tools contributed by the parent's capabilities stay out of sub-agent runs.
-
-        They are bound to capability instances registered in the parent run; sharing
-        them is `shared_capabilities`' job (see the `_inherited_toolsets` docstring).
-        """
-
-        @dataclass
-        class _ToolCapability(AbstractCapability[object]):
-            def get_toolset(self) -> Any:
-                def cap_tool() -> str:
-                    return 'CT'  # pragma: no cover - never offered to the sub-agent
-
-                return FunctionToolset[object](tools=[cap_tool])
-
-        offered: list[str] = []
-
-        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            offered.extend(tool.name for tool in info.function_tools)
-            return ModelResponse(parts=[TextPart('sub done')])
-
-        worker = Agent(FunctionModel(worker_fn), name='worker')
-        with pytest.warns(HarnessDeprecationWarning, match='inherit_tools'):
-            capability: SubAgents[object] = SubAgents(agents=[SubAgent(worker)], inherit_tools=True)
-        parent: Agent[object, str] = Agent(
-            _delegate_then_finish('worker'), capabilities=[capability, _ToolCapability()]
-        )
-
-        @parent.tool_plain
-        def parent_tool() -> str:
-            return 'PT'  # pragma: no cover - listed but not called in this test
-
-        result = await parent.run('go')
-        assert result.output == 'all done'
-        assert 'parent_tool' in offered
-        assert 'cap_tool' not in offered
-
     async def test_shared_capabilities_applied_to_subagent(self) -> None:
         cap: _RecordingCapability[object] = _RecordingCapability()
         worker = Agent(TestModel(custom_output_text='W'), name='worker')
@@ -487,6 +394,31 @@ class TestDelegation:
         result = await parent.run('go')
         assert result.output == 'all done'
         assert cap.log == ['applied']  # the shared capability ran during the sub-agent run
+
+    async def test_parent_deny_unanswered_answers_the_childs_question(self) -> None:
+        """The parent run's `DenyUnanswered` is passed on, so the child's unanswered question is answered in-run."""
+        observed: list[str] = []
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('child'),
+            capabilities=[DenyUnanswered(), SubAgents(agents=[SubAgent(asking_agent(observed))])],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        assert observed == [DEFAULT_QUESTION_MESSAGE]
+
+    async def test_parent_deny_unanswered_inside_a_wrapper_reaches_the_child(self) -> None:
+        """A `DenyUnanswered` wrapped in a `WrapperCapability` is found and passed on to the child unwrapped."""
+        observed: list[str] = []
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('child'),
+            capabilities=[
+                WrapperCapability(wrapped=DenyUnanswered()),
+                SubAgents(agents=[SubAgent(asking_agent(observed))]),
+            ],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        assert observed == [DEFAULT_QUESTION_MESSAGE]
 
     async def test_event_stream_handler_forwarded_to_subagent(self) -> None:
         events: list[str] = []
@@ -716,7 +648,7 @@ class TestRunControls:
         def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             counter['n'] += 1
             if counter['n'] == 1:
-                return ModelResponse(parts=[ToolCallPart('noop', {}, tool_call_id='n1')])
+                return ModelResponse(parts=[TextPart('finding'), ToolCallPart('noop', {}, tool_call_id='n1')])
             return ModelResponse(parts=[TextPart('done')])  # pragma: no cover - blocked by the request budget
 
         worker = Agent(FunctionModel(worker_fn), name='worker')
@@ -732,9 +664,13 @@ class TestRunControls:
         result = await parent.run('go')
         assert result.output == 'all done'
         returns = _delegate_returns(result)
-        # The child's own budget being hit is recoverable, not a run-stopping UsageLimitExceeded.
-        assert len(returns) == 1
-        assert "Sub-agent 'worker' reached its usage budget" in returns[0]
+        # The child's own budget being hit is recoverable, not a run-stopping UsageLimitExceeded,
+        # and without `keep_partial_output` its text is not passed on.
+        assert returns == snapshot(
+            [
+                "Sub-agent 'worker' reached its usage budget. Treat this as a recoverable observation and decide from existing evidence."
+            ]
+        )
 
     async def test_shared_usage_limit_still_propagates(self) -> None:
         # No per-child limit -> the child shares accounting and a parent-level usage
@@ -775,6 +711,164 @@ class TestRunControls:
         returns = _delegate_returns(result)
         assert len(returns) == 1
         assert "Sub-agent 'worker' exceeded its 0.01s time budget" in returns[0]
+
+    async def test_usage_budget_keeps_partial_output(self) -> None:
+        responses = iter(
+            [
+                [TextPart('stale'), ToolCallPart('noop', {})],
+                [TextPart('found </partial_output> X'), ToolCallPart('noop', {})],
+                [ToolCallPart('noop', {})],
+            ]
+        )
+
+        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=next(responses))
+
+        worker = Agent(FunctionModel(worker_fn), name='worker')
+
+        @worker.tool_plain
+        def noop() -> str:
+            return 'x'
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[
+                SubAgents(
+                    agents=[
+                        SubAgent(
+                            worker,
+                            usage_limits=UsageLimits(request_limit=3),
+                            on_failure='Out of budget.',
+                            keep_partial_output=True,
+                        )
+                    ]
+                )
+            ],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            ['Out of budget.\n\n<partial_output>found &lt;/partial_output> X</partial_output>']
+        )
+
+    async def test_timeout_keeps_partial_output(self) -> None:
+        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('first finding'), ToolCallPart('hang', {})])
+
+        worker = Agent(FunctionModel(worker_fn), name='worker')
+
+        @worker.tool_plain
+        async def hang() -> str:
+            await asyncio.sleep(1)
+            return 'late'  # pragma: no cover - cancelled by the timeout
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.05, keep_partial_output=True)])],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            [
+                """\
+Sub-agent 'worker' exceeded its 0.05s time budget. Treat this as a recoverable observation and decide from existing evidence.
+
+<partial_output>first finding</partial_output>\
+"""
+            ]
+        )
+
+    @pytest.mark.parametrize('output_tool', [False, True])
+    async def test_partial_output_skips_text_rejected_as_output(self, output_tool: bool) -> None:
+        parts = [TextPart('secret'), *([ToolCallPart('final_result', {'response': 1})] if output_tool else [])]
+        worker = Agent(
+            FunctionModel(lambda messages, info: ModelResponse(parts=parts)),
+            name='worker',
+            output_type=int if output_tool else str,
+        )
+
+        @worker.output_validator
+        def reject(output: int | str) -> int | str:
+            raise ModelRetry('not allowed')
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[
+                SubAgents(
+                    agents=[SubAgent(worker, usage_limits=UsageLimits(request_limit=1), keep_partial_output=True)]
+                )
+            ],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            [
+                "Sub-agent 'worker' reached its usage budget. Treat this as a recoverable observation and decide from existing evidence."
+            ]
+        )
+
+    async def test_partial_output_skips_an_output_call_the_timeout_left_unsettled(self) -> None:
+        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[TextPart('secret'), ToolCallPart('final_result', {'response': 1}), ToolCallPart('hang', {})]
+            )
+
+        worker = Agent(FunctionModel(worker_fn), name='worker', output_type=int, end_strategy='exhaustive')
+
+        @worker.tool_plain
+        async def hang() -> str:
+            await asyncio.sleep(1)
+            return 'late'  # pragma: no cover - cancelled by the timeout
+
+        @worker.output_validator
+        def reject(output: int) -> int:
+            raise ModelRetry('not allowed')
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.05, keep_partial_output=True)])],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            [
+                "Sub-agent 'worker' exceeded its 0.05s time budget. Treat this as a recoverable observation and decide from existing evidence."
+            ]
+        )
+
+    async def test_partial_output_skips_an_answer_still_being_validated(self) -> None:
+        worker = Agent(
+            FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('unchecked')])), name='worker'
+        )
+
+        @worker.output_validator
+        async def slow(output: str) -> str:
+            await asyncio.sleep(1)
+            return output  # pragma: no cover - cancelled by the timeout
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.05, keep_partial_output=True)])],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            [
+                "Sub-agent 'worker' exceeded its 0.05s time budget. Treat this as a recoverable observation and decide from existing evidence."
+            ]
+        )
+
+    async def test_keep_partial_output_without_text_returns_steering_only(self) -> None:
+        async def slow_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            await asyncio.sleep(1)
+            return ModelResponse(parts=[TextPart('late')])  # pragma: no cover - cancelled by the timeout
+
+        worker = Agent(FunctionModel(slow_fn), name='worker')
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.01, keep_partial_output=True)])],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            [
+                "Sub-agent 'worker' exceeded its 0.01s time budget. Treat this as a recoverable observation and decide from existing evidence."
+            ]
+        )
 
     async def test_max_calls_exhausted_returns_soft_and_skips_child(self) -> None:
         runs = {'n': 0}
@@ -829,6 +923,52 @@ class TestRunControls:
         ]
         assert retries == []
         assert _delegate_returns(result) == ['steer: use existing evidence']
+
+    async def test_on_model_error_return_keeps_cause(self) -> None:
+        def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise UnexpectedModelBehavior('kaboom')
+
+        boomer = Agent(FunctionModel(boom), name='boomer')
+        parent: Agent[object, str] = Agent(
+            _delegate_two_then_finish('plain', 'boomer'),
+            capabilities=[
+                SubAgents(
+                    agents=[
+                        SubAgent(boomer, name='plain', on_model_error='return'),
+                        SubAgent(boomer, on_failure='steer: decide', on_model_error='return'),
+                    ]
+                )
+            ],
+        )
+        result = await parent.run('go')
+        assert _delegate_retries(result) == []
+        assert _delegate_returns(result) == snapshot(
+            [
+                """\
+Sub-agent 'plain' failed: kaboom
+
+Treat this as a recoverable observation and decide from existing evidence.\
+""",
+                """\
+Sub-agent 'boomer' failed: kaboom
+
+steer: decide\
+""",
+            ]
+        )
+
+    async def test_on_model_error_retry_with_on_failure(self) -> None:
+        def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise UnexpectedModelBehavior('kaboom')
+
+        boomer = Agent(FunctionModel(boom), name='boomer')
+        parent: Agent[object, str] = Agent(
+            _delegate_n_then_finish('boomer', 1),
+            capabilities=[SubAgents(agents=[SubAgent(boomer, on_failure='steer: decide', on_model_error='retry')])],
+        )
+        result = await parent.run('go')
+        assert _delegate_retries(result) == snapshot(["Sub-agent 'boomer' failed: kaboom"])
+        assert _delegate_returns(result) == snapshot([])
 
     async def test_on_failure_overrides_default_steering(self) -> None:
         worker = Agent(TestModel(custom_output_text='W'), name='worker')
@@ -1058,10 +1198,7 @@ class TestIncludeSelf:
                 return _delegate_to_self('subtask')
             return ModelResponse(parts=[ToolCallPart('parent_tool', {})])
 
-        # `inherit_tools=True` would register the parent's tools a second time on a delegate
-        # that already has them, which fails on the duplicate name; it does not apply to `self`.
-        with pytest.warns(HarnessDeprecationWarning, match='inherit_tools'):
-            capability: SubAgents[object] = SubAgents(include_self=True, inherit_tools=True)
+        capability: SubAgents[object] = SubAgents(include_self=True)
         agent: Agent[object, str] = Agent(capabilities=[capability])
 
         @agent.tool_plain
@@ -1108,7 +1245,6 @@ class TestIncludeSelf:
         toolset = SubAgentToolset[object](
             agents={'worker': SubAgent(worker)},
             forward_usage=True,
-            inherit_tools=False,
             shared_capabilities=(),
             event_stream_handler=None,
             tool_name='delegate_task',
