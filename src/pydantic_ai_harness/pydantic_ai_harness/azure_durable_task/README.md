@@ -193,6 +193,19 @@ class Venue(TypedDict):
     room: Annotated[str, Field(alias='roomName')]
 ```
 
+A field whose serialization alias is not a name it validates by crosses under a name the second validation
+doesn't read, with the same result. That covers a `serialization_alias` alone, a `validation_alias` that differs
+from it, an `alias_generator` that sets only serialization aliases, and any alias under `validate_by_alias=False`.
+Keep `validate_by_alias` on, and add the serialization alias to the names the field validates by:
+
+```python
+from pydantic import AliasChoices, BaseModel, Field
+
+
+class Room(BaseModel):
+    room: str = Field(serialization_alias='roomOut', validation_alias=AliasChoices('room', 'roomOut'))
+```
+
 ## Approvals and deferred calls
 
 Approvals belong to your orchestrator. Include `DeferredToolRequests`
