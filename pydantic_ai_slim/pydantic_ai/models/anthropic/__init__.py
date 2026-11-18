@@ -23,7 +23,7 @@ from ..._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivate
 from ..._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict, is_str_mapping
 from ..._warnings import PydanticAIDeprecationWarning
 from ...capabilities.abstract import AbstractCapability
-from ...computer_use import COMPUTER_KIND, ComputerResult, ComputerReturnPart
+from ...computer_use import ComputerResult, ComputerReturnPart
 from ...exceptions import UserError
 from ...messages import (
     ERROR_OUTCOMES,
@@ -100,6 +100,7 @@ from .. import (
     ModelRequestParameters,
     StreamedResponse,
     ToolVisibility,
+    _computer_tool_names,  # pyright: ignore[reportPrivateUsage]
     _declare_lone_newcomers,  # pyright: ignore[reportPrivateUsage]
     _effort_window_baseline,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
@@ -4450,8 +4451,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         computer = next((t for t in model_request_parameters.native_tools if isinstance(t, ComputerTool)), None)
         if version is None or computer is None:
             return None
-        name = model_request_parameters.tool_name_for_kind(COMPUTER_KIND)
-        return NativeComputer(name, version, computer.display_size) if name is not None else None
+        names = _computer_tool_names(model_request_parameters)
+        return NativeComputer(names[0], version, computer.display_size) if names else None
 
     def _sent_computer(
         self, model_settings: AnthropicModelSettings, model_request_parameters: ModelRequestParameters
