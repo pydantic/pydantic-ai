@@ -122,6 +122,7 @@ def test_a_removed_positional_argument_cannot_shift_onto_the_next_field(construc
         ('repo_context', 'RepoContext', {'traversal_tool_names': frozenset({'read_file'})}),
         ('sub_agents', 'SubAgents', {'inherit_tools': True}),
         ('spend_limits', 'SpendLimits', {'on_spend': print}),
+        ('stackone', 'StackOne', {'account_id': '1', 'api_key': 'key'}),
         ('compaction', 'ReportContextUsage', {'on_usage': print}),
         ('system_reminders', 'SystemReminders', {'on_fire': print}),
         ('system_reminders', 'SystemReminders', {'cache_ttl': '5m'}),
@@ -141,6 +142,6 @@ def test_a_removed_keyword_argument_is_rejected(module: str, name: str, kwargs: 
     capability: Callable[..., object] = getattr(
         pytest.importorskip(f'pydantic_ai_harness.{module}', exc_type=ImportError), name
     )
-    removed = next(key for key in kwargs if key != 'model')
+    removed = list(kwargs)[-1]
     with pytest.raises(TypeError, match=f"unexpected keyword argument '{removed}'"):
         capability(**kwargs)
