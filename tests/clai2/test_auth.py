@@ -26,7 +26,7 @@ from pydantic_clai2.auth import CodexAuth, CodexCredentials, code_from_paste, lo
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.api_keys import forget_connection
-from pydantic_clai2.config.credential_store import has_credentials, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.credential_store import has_credentials, load_codex_credentials
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import codex as codex_models
 from pydantic_clai2.models.model_catalog import CODEX_MODELS
@@ -41,7 +41,6 @@ from tests.clai2.surface_terminal import SurfaceTerminal
 CREDENTIALS = OpenAICodexCredentials(
     access_token='fake-access', refresh_token='fake-refresh', account_id='fake-account'
 )
-CREDENTIALS_JSON = '{"access_token":"fake-access","refresh_token":"fake-refresh","account_id":"fake-account"}'
 
 
 def fake_browser(url: str) -> bool:
@@ -433,7 +432,7 @@ async def test_codex_discovery_rejects_an_unexpected_catalog() -> None:
 
 async def test_cancelled_codex_login_adds_no_models(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     requests = serve_codex_models(monkeypatch)
-    save_codex_credentials(account='openai-codex', value=CREDENTIALS_JSON)
+    await CodexCredentials().save_login(CREDENTIALS)
     store = SettingsStore(tmp_path / 'config.db')
     message = await login_command(
         ['codex'], codex=CodexAuth(Console(file=io.StringIO())), store=store, dialogs=ScriptedDialogs([Back()])
