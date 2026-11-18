@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from opensandbox.constants import DEFAULT_EGRESS_PORT, DEFAULT_EXECD_PORT
 
@@ -15,6 +17,8 @@ from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBack
 from .._fake_x_display import FakeDisplay
 from ..display_fakes import FAKE_SCREENSHOT, look_click_then_finish, screen
 from .fake_opensandbox import FakeOpenSandbox
+
+pytestmark = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 @pytest.fixture
