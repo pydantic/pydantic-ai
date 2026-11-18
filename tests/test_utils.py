@@ -116,11 +116,11 @@ _VIRTUAL_CLOCK = ('asyncio', {'loop_factory': SimulatedLoop})
 async def test_group_by_temporal(interval: float | None, expected: list[list[int]], monkeypatch: pytest.MonkeyPatch):
     """Items 50 ms apart group by the window that opens on each group's first item.
 
-    The window's deadline is soft, so an item due exactly on it may join either group. The cases run on a virtual
-    clock that the window reads too, so items arrive exactly when the producer says, and each window ends at least
-    25 ms from any arrival: asyncio runs every timer due within its clock's resolution of now together, and that
-    resolution is 15.6 ms on Windows before Python 3.13. `0` stays on the real clock: a zero window polls with a
-    zero timeout, which never lets a virtual clock move.
+    The window's deadline is soft, so an item due exactly on it may join either group. Every case but `0` runs on a
+    virtual clock that the window reads too, so items arrive exactly when the producer says, and each window ends at
+    least 25 ms from any arrival: asyncio runs every timer due within its clock's resolution of now together, and
+    that resolution is 15.6 ms on Windows before Python 3.13. `0` stays on the real clock: a zero window polls with
+    a zero timeout, which never lets a virtual clock move.
     """
     # The window reads the loop's clock: on the real loop that is `time.monotonic()` already.
     monkeypatch.setattr('pydantic_ai._utils.time', SimpleNamespace(monotonic=asyncio.get_running_loop().time))
