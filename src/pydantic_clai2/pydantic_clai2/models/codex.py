@@ -10,6 +10,7 @@ CLIENT_VERSION = '0.170.0'
 """The Codex CLI release the catalog is asked for: it requires one, and hides models that need a newer client."""
 
 TIMEOUT = 20
+"""Seconds, as for Copilot model discovery: a sign-in waits on it once, unlike usage, which `/accounts` reloads."""
 
 
 class _CodexModel(BaseModel):
