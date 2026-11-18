@@ -28,7 +28,13 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -45,7 +51,9 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness import BackgroundTools
 from pydantic_ai_harness._workspace import READ_ONLY_FAILURE
+from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
 from pydantic_ai_harness.shell._jobs import Job
@@ -2323,6 +2331,175 @@ class TestEnvControlPropagation:
         assert isinstance(toolset, ShellToolset)
         # None of the provider-credential prefixes survive.
         assert toolset._resolve_env() == {'PATH': '/usr/bin'}  # pyright: ignore[reportPrivateUsage]
+
+
+_SECRET = 'sk-secret-123abc'
+
+
+def _secret_toolset(
+    *,
+    env: Mapping[str, str] | None = None,
+    denied_env_patterns: Sequence[str] = (),
+    max_output_chars: int = 50_000,
+    secret_env: Mapping[str, str] | None = None,
+) -> ShellToolset[None]:
+    return ShellToolset(
+        allowed_commands=[],
+        denied_commands=[],
+        denied_operators=[],
+        default_timeout=10.0,
+        max_output_chars=max_output_chars,
+        persist_cwd=False,
+        allow_interactive=False,
+        env=env,
+        denied_env_patterns=denied_env_patterns,
+        secret_env={'TMP_TOKEN': _SECRET, 'EMPTY': ''} if secret_env is None else secret_env,
+    )
+
+
+class TestShellSecretEnv:
+    """`secret_env` reaches commands and is masked in what the tools return to the model."""
+
+    async def test_run_command_output_is_masked(self, tmp_path: Path) -> None:
+        output = await call_tool(
+            [Shell(secret_env={'TMP_TOKEN': _SECRET}), LocalWorkspace(tmp_path)],
+            'run_command',
+            {'command': 'printf "token=%s" "$TMP_TOKEN"'},
+        )
+        assert output == '[stdout]\ntoken=[REDACTED:TMP_TOKEN]'
+
+    async def test_background_output_is_masked(self, shell_dir: Path) -> None:
+        ts = _secret_toolset()
+        command_id = _parse_command_id(
+            await _call_shell_tool(ts, shell_dir, 'start_command', command='printf "%s" "$TMP_TOKEN"')
+        )
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
+        stopped = await _call_shell_tool(ts, shell_dir, 'stop_command', command_id=command_id)
+        assert stopped.startswith('[stdout]\n[REDACTED:TMP_TOKEN]\n')
+
+    async def test_persistent_output_is_masked(self, tmp_path: Path) -> None:
+        output = await call_tool(
+            [Shell(tools=['shell'], secret_env={'TMP_TOKEN': _SECRET}), LocalWorkspace(tmp_path)],
+            'shell',
+            {'command': 'printf "%s\\n" "$TMP_TOKEN"'},
+        )
+        assert output.startswith('[REDACTED:TMP_TOKEN]\n')
+        assert _SECRET not in output
+
+    async def test_masked_before_output_cap(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(max_output_chars=30)
+        output = await _call_shell_tool(ts, shell_dir, 'run_command', command=f'printf "%s{"y" * 20}" "$TMP_TOKEN"')
+        assert output.endswith('y' * 20)
+        assert '123abc' not in output
+
+    async def test_masking_reads_only_the_end_of_long_output(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(secret_env={'Q': 'q'}, max_output_chars=200)
+        output = await _call_shell_tool(ts, shell_dir, 'run_command', command='printf "%10000s" | tr " " q')
+        assert output.startswith('[... output truncated, showing last ')
+        assert output.endswith('[REDACTED:Q]')
+        assert 'q' not in output
+
+    async def test_capped_output_masks_a_chain_of_overlapping_secrets_whole(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(secret_env={'TOKEN': _SECRET, 'JOIN': 'abcsk-'}, max_output_chars=100)
+        command = 'printf "hello "; for i in $(seq 1000); do printf %s "$TOKEN"; done; echo'
+        output = await _call_shell_tool(ts, shell_dir, 'run_command', command=command)
+        assert output == '[stdout]\nhello [REDACTED:TOKEN]\n'
+
+    async def test_persistent_tail_does_not_split_a_secret(self, tmp_path: Path) -> None:
+        # One line, so the tail keeps the line it cuts: 16,003 bytes after the secret's first three.
+        output = await call_tool(
+            [Shell(tools=['shell'], secret_env={'TMP_TOKEN': _SECRET}), LocalWorkspace(tmp_path)],
+            'shell',
+            {'command': f'printf "%s%s" "$TMP_TOKEN" "$(printf "%{16_003 - len(_SECRET) + 3}s")"'},
+        )
+        assert output.startswith('[... output truncated, ')
+        assert '123abc' not in output
+
+    async def test_persistent_tail_does_not_split_overlapping_secrets(self, tmp_path: Path) -> None:
+        # The cut lands after `X`; moving it past `SHORT` lands inside `LONG`, which also starts before it.
+        secret_env = {'LONG': 'abcdefghijk', 'SHORT': 'XYZabc'}
+        output = await call_tool(
+            [Shell(tools=['shell'], secret_env=secret_env), LocalWorkspace(tmp_path)],
+            'shell',
+            {'command': 'printf "XYZabcdefghijk%15976sabcdefghijk"'},
+        )
+        assert output.startswith('[... output truncated, 14 earlier bytes omitted]\n')
+        assert 'defghijk' not in output
+        assert output.count('[REDACTED:LONG]') == 1
+
+    async def test_persistent_tail_line_start_does_not_split_a_secret(self, tmp_path: Path) -> None:
+        # The byte cut lands where the secret starts; the line it then drops ends inside the secret.
+        output = await call_tool(
+            [Shell(tools=['shell'], secret_env={'KEY': 'AAAA\nBBBB'}), LocalWorkspace(tmp_path)],
+            'shell',
+            {'command': 'printf "%100s" | tr " " z; printf "pre%s\\n" "$KEY"; printf "%15990s" | tr " " w'},
+        )
+        assert output.startswith('[... output truncated, 112 earlier bytes omitted]\n\nwww')
+        assert 'BBBB' not in output
+
+    def test_repr_hides_secret_env(self) -> None:
+        assert _SECRET not in repr(Shell(secret_env={'TMP_TOKEN': _SECRET}))
+
+    async def test_longer_secret_is_masked_whole(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(secret_env={'SHORT': 'abc', 'LONG': 'abcdef'})
+        output = await _call_shell_tool(ts, shell_dir, 'run_command', command='echo abcdef abc')
+        assert output == '[stdout]\n[REDACTED:LONG] [REDACTED:SHORT]\n'
+
+    async def test_overlapping_secrets_are_masked_as_one(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(secret_env={'LONG': 'abcdefghijk', 'SHORT': 'XYZabc'})
+        output = await _call_shell_tool(ts, shell_dir, 'run_command', command='echo XYZabcdefghijk XYZabc')
+        assert output == '[stdout]\n[REDACTED:SHORT] [REDACTED:SHORT]\n'
+
+    async def test_retry_message_is_masked(self, shell_dir: Path) -> None:
+        with pytest.raises(ModelRetry) as exc_info:
+            await _call_shell_tool(_secret_toolset(), shell_dir, 'run_command', command=f'vi {_SECRET}')
+        assert exc_info.value.message == "Interactive commands are not allowed. Command: 'vi [REDACTED:TMP_TOKEN]'"
+        assert exc_info.value.__suppress_context__
+
+    async def test_failure_message_is_masked(self, shell_dir: Path) -> None:
+        ts = _secret_toolset()
+        with patch.object(ShellToolset, '_job', side_effect=WorkspaceError(f'refused {_SECRET}')):
+            with pytest.raises(ToolFailed) as exc_info:
+                await _call_shell_tool(ts, shell_dir, 'check_command', command_id='0' * 32)
+        assert exc_info.value.message == 'refused [REDACTED:TMP_TOKEN]'
+
+    async def test_retry_message_without_a_secret_is_unchanged(self, shell_dir: Path) -> None:
+        with pytest.raises(ModelRetry, match='Interactive commands are not allowed') as exc_info:
+            await _call_shell_tool(_secret_toolset(), shell_dir, 'run_command', command='vi x')
+        assert isinstance(exc_info.value.__cause__, PermissionError)
+
+    def test_secret_env_is_added_unfiltered(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(env={'FOO': 'bar', 'TMP_X': 'drop'}, denied_env_patterns=['TMP_*'])
+        assert ts._resolve_env() == {'FOO': 'bar', 'TMP_TOKEN': _SECRET, 'EMPTY': ''}  # pyright: ignore[reportPrivateUsage]
+
+    async def test_for_run_and_capability_carry_secret_env(self, shell_dir: Path) -> None:
+        toolset = Shell(secret_env={'TMP_TOKEN': _SECRET}, persist_cwd=True).get_toolset()
+        run_ts = await toolset.for_run(_ctx(shell_dir))
+        assert isinstance(run_ts, ShellToolset)
+        assert run_ts._resolve_env() == {'TMP_TOKEN': _SECRET}  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_background_tools_push_run_command_output(tmp_path: Path) -> None:
+    """With `BackgroundTools`, a `run_command` result reaches the model when the command ends, without polling."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('run_command', {'command': 'echo built'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[LocalWorkspace(tmp_path), Shell(), BackgroundTools(tools=['run_command'])],
+    )
+    result = await agent.run('build')
+    pushed = [
+        part.content
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, BackgroundToolResultPart)
+    ]
+    assert pushed == ['[stdout]\nbuilt\n']
 
 
 class _RefusesRemove(LocalWorkspaceBackend):

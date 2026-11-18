@@ -240,11 +240,13 @@ How the agent spends its context window over a long run, and how often it pays f
 |---|---|---|
 | [Code Mode](code-mode.md) | Harness | The model writes one Python script that calls many tools inside a [Monty](https://github.com/pydantic/monty) sandbox: one round-trip instead of N, and intermediate results never enter the context window |
 | [IPython Code Mode](ipython-code-mode.md) | Harness | Code Mode with a persistent [IPython](https://ipython.org/) kernel in place of the Monty sandbox: full CPython and any installed package, with state kept between calls. For local agents only; not a sandbox |
+| [Tool Bridge](tool-bridge.md) | Harness | Keep the tool list the model sees fixed behind `tool_search`, `tool_describe` and `tool_call`, so the prompt cache holds however many tools sit behind them |
 | [Tool Search](../capabilities/tool-search.md) | Core | Load tool definitions on demand instead of carrying hundreds in every prompt |
 | [Compaction](../capabilities/compaction.md) | Core | Provider-native compaction on OpenAI and Anthropic; the provider summarizes history server-side |
 | [Compaction](compaction.md) | Harness | Model-agnostic strategies: tool-result clearing, sliding-window trimming, LLM summarization, tiered; all window-relative, with live usage reporting |
 | [Tool Output Limits](tool-output-limits.md) | Harness | Truncate, spill to a queryable file, or summarize oversized tool returns at the source |
 | [Warn On Cache Busts](warn-on-cache-busts.md) | Harness | Detect prompt-cache prefix collapses between requests, from the provider's own numbers |
+| [Label Cross Model History](label-cross-model-history.md) | Harness | Tell the model when earlier assistant turns came from another model, after a model switch or handoff |
 
 ### Knowledge & memory
 
@@ -257,6 +259,7 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | [Conversation Search](conversation-search.md) | Harness | BM25 search over stored history, including turns compaction dropped |
 | [Skills](skills.md) | Harness | Load [Agent Skill](../capabilities/on-demand.md) (`SKILL.md`) instructions on demand |
 | [Repo Context](repo-context.md) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
+| [Report Stale Files](report-stale-files.md) | Harness | Tell the model when a file it read or wrote has since changed or been deleted in the workspace |
 | [Pydantic AI Docs](pydantic-ai-docs.md) | Harness | On-demand Pydantic AI documentation lookup |
 
 ### Control & safety
@@ -282,6 +285,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Tool Budgets](tool-budgets.md) | Harness | Cap calls per tool and per run, and refuse exact repeats, with a tool result the model can act on instead of an exception |
 | [Trajectory Judge](trajectory-judge.md) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
 | [Refine Output](refine-output.md) | Harness | Send the agent back to review and revise its output before the run ends |
+| [Wrap Up At Limits](wrap-up-at-limits.md) | Harness | End the run with a final answer, not `UsageLimitExceeded`, when a usage limit would stop it |
 
 ### Self-extension
 
@@ -303,6 +307,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 | [Render Workflows](render-workflows.md) | Harness | Run model requests and tool calls as chained task runs with separate retries, timeouts, and compute settings; retrying the task that runs the agent can repeat completed work |
 | [Step Persistence](step-persistence.md) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
 | [Model Fallback](../capabilities/model-fallback.md) | Core | Fall back to other models when a model request fails or its response is rejected, within the run's own request step |
+| [Model Router](model-router.md) | Harness | Let another model pick the run's model from a named menu, once per run or per step, with a declared default |
 | [Instrumentation](../capabilities/instrumentation.md) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |
 | [Managed Prompt](managed-prompt.md) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt; version and roll out without redeploying |
 | [Thread Executor](../capabilities/thread-executor.md) | Core | Run sync tools on a shared thread pool |

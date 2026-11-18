@@ -80,14 +80,15 @@ agent = Agent(
 ```
 
 Non-matching tools remain regular tool calls. Some tools always stay native even with `tools='all'`:
-framework control tools, undiscovered deferred (`defer_loading=True`) tools, native fallbacks, and other
+framework control tools, undiscovered deferred (`defer_loading=True`) tools, `requires_approval=True` and external tools, native fallbacks, and other
 code-execution tools (any tool with `code_arg_name` metadata) -- including `Shell`'s `run_command`, `start_command`, and `shell`, and `CapabilityCreation`'s
 `author_capability`. `Shell`'s `check_command`/`stop_command` and all `FileSystem` tools are folded in.
 Provider-native tools (`native=True`) execute server-side and never reach `run_code`.
 
-With the default `tools='all'`, approval-gated tools and every tool from MCP or hosted-integration
-capabilities (for example `GitHub` or `Linear` write tools) move behind `run_code` too, where an
-approval-gated call fails as a retry unless a `HandleDeferredToolCalls` capability resolves it inline. When only some tools should be batched, tag those tools'
+With the default `tools='all'`, every tool from MCP or hosted-integration capabilities (for example
+`GitHub` or `Linear` write tools) moves behind `run_code` too. Only tools registered with `requires_approval=True` and external tools stay
+native: tools gated with `.approval_required()` are still sandboxed, where a gated call fails as a retry
+unless a `HandleDeferredToolCalls` capability resolves it inline. When only some tools should be batched, tag those tools'
 toolset with `.with_metadata(code_mode=True)` and use `CodeMode(tools={'code_mode': True})`, so
 approval-gated and integration tools stay regular tool calls.
 
@@ -169,7 +170,7 @@ Key restrictions:
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` require an `os_access` handler (or, for the clock, `os_policy`); `time.sleep` and `asyncio.sleep` really wait, within the sleep allowance
 - Filesystem I/O requires an `os_access` handler or a `mount`; `os.getenv` and `os.environ` require an `os_access` handler
 - A sandboxed tool named after a Python builtin (`list`, `open`, `print`, ...) raises `UserError`; rename it or use `toolset.prefixed(...)`
-- Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
+- Approval-required (`requires_approval=True`) and external (`kind='external'`) tools stay native under `tools='all'`, so their deferred calls pause the run as usual. An explicit selector can still sandbox them. A sandboxed call that needs approval or is deferred, including one from a toolset wrapped with `.approval_required()` or a tool that raises `ApprovalRequired` or `CallDeferred` from its body (both keep `kind='function'`), needs a `HandleDeferredToolCalls` (or equivalent) capability to resolve it inline; without one, it raises an error that surfaces to the model as a retry
 
 The sandbox constrains the model-generated Python, not the implementation of the tools it calls.
 Wrapped tools retain their normal host and network access, so expose only tools with the authority and

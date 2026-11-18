@@ -278,7 +278,9 @@ class TestIPythonCodeMode:
                 returns = await _run(
                     IPythonCodeMode(kernel=kernel, timeout=0.5),
                     "survives_timeout = 'yes'",
-                    f"print('working')\nopen({str(running)!r}, 'w').close()\nimport time\ntime.sleep(30)",
+                    # An interrupt that lands just before a `time.sleep` starts is raised only once it returns, and the
+                    # standing clock never lets the kernel restart, so one long sleep would run in full.
+                    f"print('working')\nopen({str(running)!r}, 'w').close()\nimport time\nfor _ in range(300):\n    time.sleep(0.1)",
                     'survives_timeout',
                 )
             finally:

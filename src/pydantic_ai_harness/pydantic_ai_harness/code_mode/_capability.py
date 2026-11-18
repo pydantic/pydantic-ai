@@ -39,6 +39,7 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeToolset,
     in_durable_execution,
 )
+from pydantic_ai_harness.tool_bridge import ToolBridge
 
 if TYPE_CHECKING:
     from pydantic_monty import AsyncMontyRemote
@@ -76,8 +77,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     By default (`tools='all'`) every eligible regular tool the agent has is wrapped
     behind a single `run_code` tool -- the model writes Python that calls them as
     functions instead of issuing tool calls directly. Framework control tools,
-    undiscovered deferred tools, native fallbacks, and other code-execution tools
-    remain native.
+    undiscovered deferred tools, `requires_approval=True` and external tools, native
+    fallbacks, and other code-execution tools remain native.
 
     Pass a list of tool names or a callable predicate to `tools` to split the
     toolset: matching tools become callables inside the sandbox, and the rest
@@ -119,9 +120,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     """Which wrapped tools should be sandboxed inside `run_code`.
 
     - `'all'` (default): every eligible regular tool the agent has is sandboxed.
+      Tools registered with `requires_approval=True` and external tools stay native,
+      so their deferred calls pause the run as usual. Tools gated by `.approval_required()`
+      keep `kind='function'` and are still sandboxed.
     - `Sequence[str]`: only tools whose names are listed are sandboxed.
     - Callable `(ctx, tool_def) -> bool | Awaitable[bool]`: tools where the
       callable returns `True` are sandboxed; the rest stay as native tool calls.
+
+    An explicit selector can sandbox `requires_approval=True` and external tools, but calling one
+    from `run_code` then needs a `HandleDeferredToolCalls` capability to resolve it inline.
     """
 
     max_retries: int = 3
@@ -308,8 +315,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         )
 
     def get_ordering(self) -> CapabilityOrdering:
-        """CodeMode wraps around ToolSearch so that search_tools stays native."""
-        return CapabilityOrdering(position='outermost', wraps=[_ToolSearch])
+        """CodeMode wraps around ToolSearch, so that `search_tools` stays native, and ToolBridge, so that its dispatchers are sandboxed."""
+        return CapabilityOrdering(position='outermost', wraps=[_ToolSearch, ToolBridge])
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> CodeMode[AgentDepsT]:
         """Return a fresh instance so concurrent runs don't share announcement or speculation state."""

@@ -22,7 +22,7 @@ listed here, use core `MCP` (see the end of this page).
 | `DayAI` | `pydantic_ai_harness.day_ai` | `day-ai` | `DAY_AI_ACCESS_TOKEN`, `'oauth'` | no `read_only` (server has no annotations) |
 | `PostHog` | `pydantic_ai_harness.posthog` | `posthog` | `POSTHOG_PERSONAL_API_KEY`, `'oauth'` | `features`, server-side `read_only` |
 | `Pylon` | `pydantic_ai_harness.pylon` | `pylon` | `PYLON_ACCESS_TOKEN` (OAuth only), `'oauth'` | `read_only` |
-| `StackOne` | `pydantic_ai_harness.stackone` | `stackone` | `api_key=` or `STACKONE_API_KEY` | `account_id` (required), `actions`, `tool_mode` |
+| `StackOne` | `pydantic_ai_harness.stackone` | `stackone` | `STACKONE_API_KEY` | `account_id` (required), `actions`, `tool_mode` |
 
 Every class imports from its submodule. `Ordinal`, `Grain`, `DayAI`, `PostHog`, `Pylon`, and
 `StackOne` are also exported from top-level `pydantic_ai_harness`; the others are submodule-only. Every extra installs `pydantic-ai-slim[mcp]`.
@@ -217,8 +217,11 @@ annotate its tools. Note the underscore in the default `id`, `'day_ai'`.
 
 **StackOne** is the odd one out: HTTP Basic auth plus an account header, not bearer auth.
 
-- `StackOne(account_id, *, api_key=None, base_url='https://api.stackone.com', actions=(), tool_mode=None,
-  include_instructions=True, metadata=None, client=None)`. There is no `auth` and no `read_only`.
+- `StackOne(account_id, *, auth=None, base_url='https://api.stackone.com', actions=(), tool_mode=None,
+  include_instructions=True, metadata=None, client=None)`. `auth` resolves as in the table above, except
+  that a string `'oauth'` is sent as the key; a function returning `'oauth'` raises `UserError`. `api_key=`
+  is its deprecated alias; passing both raises `UserError`. There is no `read_only` or `tool_prefix`. A URL
+  `client` still receives the `auth` key; a prebuilt client keeps its own auth.
 - `tool_mode='search_execute'` (the default when `actions` is empty) exposes two meta-tools: a search tool
   that returns runtime `action_id`s and an execute tool that takes them. `'individual'` registers one
   tool per action. Passing `actions` (case-insensitive `fnmatch` globs over `{connector}_{action}_{entity}`
@@ -236,7 +239,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import StackOne
 from pydantic_ai_harness.stackone import StackOneToolset
 
-hr = StackOne('hr-account', api_key='sk-example', actions=['*_list_*'])
+hr = StackOne('hr-account', auth='sk-example', actions=['*_list_*'])
 writes = StackOneToolset(
     account_id='hr-account', api_key='sk-example', actions=['workday_create_worker']
 ).approval_required()
@@ -248,7 +251,8 @@ print(hr.id)
 ## Agent specs
 
 All twelve classes can be loaded from YAML or JSON. Pass the class in `custom_capability_types`, and
-keep secrets out of the file by leaving `auth`/`api_key` unset so the env var is used. Install each
+keep secrets out of the file by leaving `auth` unset so the env var is used. `StackOne` specs take no `auth`,
+and their `api_key` option is deprecated. Install each
 integration's extra, plus `pydantic-ai-slim[spec]` for YAML files:
 
 ```yaml
