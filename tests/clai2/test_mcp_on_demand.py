@@ -116,11 +116,11 @@ def call(tool: str, **args: str) -> ModelResponse:
     ],
 )
 def test_settings_accept_on_demand_for_every_type(config: dict[str, JsonValue]) -> None:
-    eager = MCPSettings.model_validate({'servers': {'a': config}}).servers['a']
-    assert not eager.defer_loading and eager.description is None, 'eager stays the default'
-    on_demand = {**config, 'defer_loading': True, 'description': 'Docs.'}
-    parsed = MCPSettings.model_validate({'servers': {'a': on_demand}}).servers['a']
-    assert parsed.defer_loading and parsed.description == 'Docs.'
+    default = MCPSettings.model_validate({'servers': {'a': config}}).servers['a']
+    assert default.defer_loading and default.description is None, 'on demand is the default'
+    eager = {**config, 'defer_loading': False, 'description': 'Docs.'}
+    parsed = MCPSettings.model_validate({'servers': {'a': eager}}).servers['a']
+    assert not parsed.defer_loading and parsed.description == 'Docs.'
     with pytest.raises(ValidationError):
         MCPSettings.model_validate({'servers': {'a': {**config, 'description': ''}}})
 
@@ -170,6 +170,20 @@ async def test_eager_and_on_demand_servers(tmp_path: Path, monkeypatch: pytest.M
 
     plugin.host.conversation.replace_messages([])
     assert 'on demand (not loaded)' in await run('/mcp status docs'), 'loading belongs to the conversation'
+
+
+async def test_servers_are_on_demand_unless_opted_out(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    in_process(monkeypatch, docs_and_lint())
+    plugin = make_plugin(tmp_path)
+    plugin.store.put('docs', StdioServer(type='stdio', command='unused'))
+    plugin.store.put('lint', StdioServer(type='stdio', command='unused', defer_loading=False))
+    model = Scripted()
+    await plugin.agent(model).run('Hi.')
+    assert model.tools == [['lint_check', 'load_capability']], 'only the opted-out server is eager'
+    assert '- mcp_docs: Tools from the docs MCP server.' in model.instructions[0]
+    form = ServerForm(plugin.store)
+    assert form.on_demand and 'On demand: on' in [option.label for option in form.options()]
+    await plugin.servers.close()
 
 
 async def test_a_loaded_server_that_cannot_connect_does_not_fail_the_prompt(
@@ -251,21 +265,23 @@ async def test_changing_on_demand_settings_keeps_the_connection(
 def test_form_toggles_on_demand_and_its_description(tmp_path: Path) -> None:
     store = MCPStore(tmp_path / 'config')
     form = ServerForm(store)
-    assert 'Turn on On demand' in form.preview()
-    assert 'Description: (from the server)' not in [option.label for option in form.options()]
-    form.toggle_on_demand()
     labels = [option.label for option in form.options()]
     assert 'On demand: on' in labels and 'Description: (from the server)' in labels
-    assert json.loads(form.config)['defer_loading'] is True and 'until the agent loads them' in form.preview()
+    assert 'defer_loading' not in json.loads(form.config), 'on is the default, so the JSON leaves it out'
+    assert 'until the agent loads them' in form.preview()
     form.set_description('  Team docs.  ')
     assert form.description == 'Team docs.' and 'Description: Team docs.' in [option.label for option in form.options()]
     form.set_description('')
     assert 'description' not in json.loads(form.config), "empty uses the server's own"
     form.toggle_on_demand()
-    assert 'defer_loading' not in json.loads(form.config), 'off is the default, so the JSON leaves it out'
+    labels = [option.label for option in form.options()]
+    assert 'On demand: off' in labels and 'Description: (from the server)' not in labels
+    assert json.loads(form.config)['defer_loading'] is False and 'turn on On demand' in form.preview()
+    form.toggle_on_demand()
+    assert 'defer_loading' not in json.loads(form.config)
     form.config = 'broken'
     form.toggle_on_demand()
-    assert form.status == 'Fix the JSON before changing on-demand loading' and not form.on_demand
+    assert form.status == 'Fix the JSON before changing on-demand loading' and form.on_demand
     assert form.description == ''
 
 
@@ -279,7 +295,6 @@ async def test_install_and_edit_round_trip_on_demand(tmp_path: Path) -> None:
             Pick(value='http'),
             Pick(value='target'),
             Type(text='https://mcp.example.com/mcp'),
-            Pick(value='on_demand'),
             Pick(value='description'),
             Type(text='Issue tracker: search and update tickets.'),
             Pick(value='name'),
@@ -291,13 +306,14 @@ async def test_install_and_edit_round_trip_on_demand(tmp_path: Path) -> None:
     saved = store.load().servers['tracker']
     assert isinstance(saved, HTTPServer) and saved.url == HttpUrl('https://mcp.example.com/mcp')
     assert saved.defer_loading and saved.description == 'Issue tracker: search and update tickets.'
-    assert json.loads(store.path.read_text())['servers']['tracker']['defer_loading'] is True
+    assert 'defer_loading' not in json.loads(store.path.read_text())['servers']['tracker']
 
     edit = ScriptedDialogs([Pick(value='description'), Back(), Pick(value='on_demand'), Pick(value='save')])
     assert (await command.run(['edit', 'tracker'], dialogs=edit, editor=None)).startswith('Updated tracker.')
-    assert '"defer_loading": true' in edit.asked[0].description, 'the edit form starts from the saved JSON'
+    assert '"description": "Issue tracker' in edit.asked[0].description, 'the edit form starts from the saved JSON'
     edited = store.load().servers['tracker']
     assert not edited.defer_loading and edited.description == 'Issue tracker: search and update tickets.'
+    assert json.loads(store.path.read_text())['servers']['tracker']['defer_loading'] is False
 
 
 async def test_menu_rows_show_the_on_demand_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

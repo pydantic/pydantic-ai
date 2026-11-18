@@ -3175,8 +3175,9 @@ with tool names prefixed by the server name. A server connects on the first
 prompt that needs it (or `/mcp start`) and stays connected; one that cannot
 connect is marked `error` and left out rather than failing the prompt. An OAuth
 server signs in only with `/mcp auth NAME`, never in the middle of a prompt.
-Switch on **On demand** (`"defer_loading": true`) to keep a server's tools out of
-prompts until the agent loads them by the server's description; see
+Servers are on demand by default: their tools stay out of prompts until the agent
+loads them by the server's description. Switch off **On demand**
+(`"defer_loading": false`) to put a server's tools in every prompt; see
 [Load a server's tools on demand](../PLUGINS.md#load-a-servers-tools-on-demand). A
 repository's Claude Code-style `.mcp.json` (or `.clai/mcp_servers.json`) loads
 once you review it and run `/mcp trust accept`. See
