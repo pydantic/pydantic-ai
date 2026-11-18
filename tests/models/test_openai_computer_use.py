@@ -553,6 +553,40 @@ async def test_an_unfinished_call_runs_nothing(allow_model_requests: None) -> No
     assert _is_a_valid_png(output['output']['image_url'])
 
 
+@pytest.mark.parametrize('streamed', [False, True], ids=['response', 'stream'])
+async def test_a_finished_call_in_a_filtered_response_runs_nothing(allow_model_requests: None, streamed: bool) -> None:
+    """OpenAI says to stop when a response is incomplete, even when the call itself finished.
+
+    The call's arguments don't parse, so, as `test_an_unfinished_call_runs_nothing` shows, none of it runs.
+    """
+    response = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
+    incomplete = response.model_copy(
+        update={'status': 'incomplete', 'incomplete_details': resp.response.IncompleteDetails(reason='content_filter')}
+    )
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=response_message([]), type='response.created', sequence_number=0),
+        resp.ResponseOutputItemDoneEvent(
+            item=response.output[0], output_index=0, type='response.output_item.done', sequence_number=1
+        ),
+        resp.ResponseIncompleteEvent(response=incomplete, type='response.incomplete', sequence_number=2),
+    ]
+    client = MockOpenAIResponses.create_mock_stream(stream) if streamed else MockOpenAIResponses.create_mock(incomplete)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Go.')]
+    params = ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True)
+    if streamed:
+        async with model.request_stream(messages, None, params) as stream_response:
+            async for _ in stream_response:
+                pass
+        stored = stream_response.get()
+    else:
+        stored = await model.request(messages, None, params)
+
+    (call,) = stored.tool_calls
+    assert isinstance(call, ComputerCallPart) and call.actions is None
+
+
 async def test_an_action_with_a_field_that_does_not_map_runs_nothing(allow_model_requests: None) -> None:
     # A long press would otherwise run as a plain click, and the value would be stored in the history.
     client = MockOpenAIResponses.create_mock(
