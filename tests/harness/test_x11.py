@@ -17,8 +17,8 @@ from pydantic_ai.computer_use import (
     Drag,
     HoldKeys,
     MouseDown,
+    MouseMove,
     MouseUp,
-    MoveMouse,
     Point,
     PressKeys,
     Region,
@@ -122,7 +122,7 @@ class ScriptedDesktop(DockerContainerBackend):
             ['xdotool', 'keydown', 'ctrl', 'shift', 'mousemove', '1', '2', 'click', '--repeat', '1', '8']
             + ['keyup', 'shift', 'ctrl'],
         ),
-        (MoveMouse(x=5, y=6), ['xdotool', 'mousemove', '5', '6']),
+        (MouseMove(x=5, y=6), ['xdotool', 'mousemove', '5', '6']),
         (
             Drag(path=(Point(x=0, y=0), Point(x=500, y=0), Point(x=500, y=10))),
             # Each leg is moved along in steps of at most 200 pixels, and at least two.
@@ -204,7 +204,7 @@ async def test_x11_computer_refuses_characters_outside_ascii(action: DisplayActi
 @pytest.mark.parametrize(
     'action',
     [Click(count=2**31), Scroll(direction='down', amount=2**31), PressKeys(keys=('a',), repeat=10**400)],
-    ids=['click', 'scroll', 'keypress'],
+    ids=['click', 'scroll', 'press_keys'],
 )
 async def test_x11_computer_refuses_a_count_xdotool_cannot_take(action: DisplayAction) -> None:
     desktop = ScriptedDesktop()
@@ -235,7 +235,7 @@ async def test_x11_computer_refuses_a_count_xdotool_cannot_take(action: DisplayA
         ),
         # A click can stop between pressing and releasing its button.
         pytest.param(Click(x=1, y=2, button='right'), stops_then(['xdotool', 'mouseup', '3']), id='click'),
-        pytest.param(MoveMouse(x=1, y=2), stops_then(), id='move'),
+        pytest.param(MouseMove(x=1, y=2), stops_then(), id='mouse_move'),
     ],
 )
 async def test_x11_computer_releases_what_a_failed_action_held(
