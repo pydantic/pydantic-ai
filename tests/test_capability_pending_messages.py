@@ -2302,18 +2302,78 @@ async def test_enqueue_at_deferred_tool_pause_keeps_the_pause(case: str, priorit
     assert run.result is not None
     assert isinstance(run.result.output, DeferredToolRequests)
     assert call_count == 1
-    last = run.result.all_messages()[-1]
+    queued = [message for pending in run.pending_messages for message in pending.messages]
     if case == 'queued_response':
-        assert isinstance(last, ModelRequest)
-        assert [type(part) for part in last.parts] == [ToolReturnPart]
-        assert [message for pending in run.pending_messages for message in pending.messages] == [
-            ModelResponse(parts=[TextPart(content='synthetic turn')], timestamp=IsDatetime()),
-            ModelRequest(parts=[UserPromptPart(content='late content', timestamp=IsDatetime())]),
-        ]
+        assert run.result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='lookup', tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='gated', tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='lookup',
+                            content='found',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
+                ),
+            ]
+        )
+        assert queued == snapshot(
+            [
+                ModelResponse(parts=[TextPart(content='synthetic turn')], timestamp=IsDatetime()),
+                ModelRequest(parts=[UserPromptPart(content='late content', timestamp=IsDatetime())]),
+            ]
+        )
     else:
-        assert isinstance(last, ModelRequest)
-        assert [part.content for part in last.parts if isinstance(part, UserPromptPart)] == ['late content']
-        assert run.pending_messages == []
+        assert run.result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='gated', tool_call_id=IsStr())],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[UserPromptPart(content='late content', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
+                ),
+            ]
+        )
+        assert queued == []
 
 
 @pytest.mark.parametrize('priority', ['asap', 'when_idle'])
@@ -2495,11 +2555,13 @@ async def test_content_recorded_at_a_deferred_pause_reaches_listeners_when_the_h
     assert listener.seen == enqueue_ids
 
 
-async def test_run_that_ends_normally_leaves_events_emitted_after_its_last_stream_buffered():
-    """Only a deferred-tool pause delivers the events emitted after the run's last node stream closed.
+@pytest.mark.parametrize('pauses', [False, True], ids=['ends', 'pauses_with_nothing_queued'])
+async def test_run_that_records_nothing_at_its_end_leaves_events_emitted_after_its_last_stream_buffered(pauses: bool):
+    """Only a pause that recorded queued content delivers the events emitted after the run's last node stream.
 
-    Delivery there exists for the content recorded at the pause. An event a capability emits once a normal run's
-    final node has finished stays buffered, as it always has, instead of reaching the handler in an extra call.
+    Delivery there exists for that content. An event a capability emits once the final node has finished, at a
+    normal end or a pause with nothing queued, stays buffered, as it always has, instead of reaching the handler
+    in an extra call.
     """
 
     @dataclass(kw_only=True)
@@ -2515,7 +2577,20 @@ async def test_run_that_ends_normally_leaves_events_emitted_after_its_last_strea
                 await ctx.emit(Finished())
             return result
 
-    agent = Agent(TestModel(), capabilities=[EmitAtEnd()])
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if pauses:
+            yield {0: DeltaToolCall(name='gated', json_args='{}', tool_call_id='call-gated')}
+        else:
+            yield 'done'
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_fn), output_type=[str, DeferredToolRequests], capabilities=[EmitAtEnd()]
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def gated() -> str:
+        return 'ran'  # pragma: no cover
+
     seen: list[AgentStreamEvent] = []
 
     async def handler(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
@@ -2523,7 +2598,7 @@ async def test_run_that_ends_normally_leaves_events_emitted_after_its_last_strea
 
     result = await agent.run('Hello', event_stream_handler=handler)
 
-    assert result.output == 'success (no tool calls)'
+    assert isinstance(result.output, DeferredToolRequests) if pauses else result.output == 'done'
     assert seen
     assert not any(isinstance(event, Finished) for event in seen)
 
@@ -2574,17 +2649,44 @@ async def test_content_recorded_when_run_stream_finds_a_deferred_result_reaches_
     assert listener.seen == enqueue_ids
     assert streamed == enqueue_ids
     # The streamed result's history carries the recorded content, after the step's results, marked as the pause.
-    history = result.all_messages()
-    assert [type(message).__name__ for message in history] == [
-        'ModelRequest',
-        'ModelResponse',
-        'ModelRequest',
-        'ModelRequest',
-    ]
-    recorded = history[-1]
-    assert isinstance(recorded, ModelRequest)
-    assert recorded.metadata == {'__pydantic_ai__': {'deferred_pause': True}}
-    assert [part.content for part in recorded.parts if isinstance(part, UserPromptPart)] == ['noted at the pause']
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='note', args='{}', tool_call_id='call-note'),
+                    ToolCallPart(tool_name='gated', args='{}', tool_call_id='call-gated'),
+                ],
+                usage=RequestUsage(input_tokens=50, output_tokens=2),
+                model_name='function::stream_fn',
+                model_id='function:function::stream_fn',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='note', content='noted', tool_call_id='call-note', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='noted at the pause', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
+            ),
+        ]
+    )
 
 
 async def test_interrupted_request_queued_at_a_deferred_pause_stays_queued():
@@ -2607,7 +2709,25 @@ async def test_interrupted_request_queued_at_a_deferred_pause_stays_queued():
 
     assert run.result is not None
     assert isinstance(run.result.output, DeferredToolRequests)
-    assert isinstance(run.result.all_messages()[-1], ModelResponse)
+    assert run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='gated', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
     assert [message for pending in run.pending_messages for message in pending.messages] == [interrupted]
 
 

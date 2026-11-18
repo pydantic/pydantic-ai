@@ -717,23 +717,24 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]],
         events_handler: EventStreamHandler[AgentDepsT] | None,
     ) -> None:
-        """At a deferred-tool pause, deliver the events emitted after the run's last node stream closed.
+        """When a deferred-tool pause recorded queued content, deliver the events emitted after the last node stream.
 
-        The `EnqueuedMessagesEvent` for content recorded at the pause is one: listeners such as a capability's
-        `@on_event` method see it through the capability chain, as they see a node's events, and so does
-        `events_handler`, the run's stream handler. Without either, the events stay buffered, as a node's events do
-        when nothing streams it. A run that ends any other way records nothing after its last stream, so it leaves
-        the buffer as it always has.
+        The `EnqueuedMessagesEvent` for the recorded content is one: listeners such as a capability's `@on_event`
+        method see it through the capability chain, as they see a node's events, and so does `events_handler`, the
+        run's stream handler. Without either, the events stay buffered, as a node's events do when nothing streams
+        it. A run that ends any other way, or pauses with nothing queued, leaves the buffer as it always has.
 
         Listeners see every event before `events_handler` sees the first: `SubAgents` acknowledges a recorded
         report on its event, so a handler that stops partway must not leave later reports unacknowledged.
         """
-        if not (isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests)):
+        if not (
+            isinstance(result, End)
+            and isinstance(result.data.output, DeferredToolRequests)
+            and any(isinstance(event, _messages.EnqueuedMessagesEvent) for event in self.ctx.state.event_stream_buffer)
+        ):
             return
         capability = self.ctx.deps.root_capability
-        if not self.ctx.state.event_stream_buffer or (
-            events_handler is None and not (capability.has_wrap_run_event_stream or capability.has_on_event)
-        ):
+        if events_handler is None and not (capability.has_wrap_run_event_stream or capability.has_on_event):
             return
         stream = _agent_graph.leftover_event_stream(self.ctx)
         try:

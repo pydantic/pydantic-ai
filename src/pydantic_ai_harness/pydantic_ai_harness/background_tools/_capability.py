@@ -438,10 +438,9 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     ) -> NodeResult[AgentDepsT]:
         from pydantic_graph import End
 
-        if isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests | PendingModelResponse):
+        if isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests):
             # A pause ends the run without another model request, so no later step would take a result that
-            # arrives after it: wait for every live task here. The end-of-run drain records their results
-            # after a deferred-tool pause, and leaves them queued at a `PendingModelResponse` pause.
+            # arrives after it: wait for every live task here, and the end-of-run drain records their results.
             # An error, or a retry past the tool's budget, ends the run at once, so the run's task group cancels
             # the tasks still live.
             arrived = [self._completed_at_pause(ctx, outcome) for outcome in self._arrived()]
@@ -456,9 +455,15 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
 
         for outcome in self._arrived():
             self._deliver(ctx, outcome)
-        if isinstance(result, End) and self._live and not ctx.pending_messages:
+        if (
+            isinstance(result, End)
+            and self._live
+            and not ctx.pending_messages
+            and not isinstance(result.data.output, PendingModelResponse)
+        ):
             # The model is ending the run while tasks are still live: wait for the next outcome, so
-            # that the end-of-run drain turns its follow-up into another model request.
+            # that the end-of-run drain turns its follow-up into another model request. A run that ends with a
+            # `PendingModelResponse` ends once its request is submitted, so `wrap_run` cancels its live tasks.
             self._deliver(ctx, await self._outcomes.receive())
         return result
 

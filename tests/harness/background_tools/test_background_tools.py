@@ -15,7 +15,15 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import TypeAdapter, ValidationError
 
-from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, ToolOutput, UsageLimits
+from pydantic_ai import (
+    Agent,
+    AgentRunResultEvent,
+    CancellationToken,
+    RequestUsage,
+    RunCancelled,
+    ToolOutput,
+    UsageLimits,
+)
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentNode,
@@ -82,6 +90,7 @@ from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 from pydantic_graph import End
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 from tests.harness._rendering import sent_messages
+from tests.harness.conftest import IsDatetime, IsStr
 
 from ...realtime_connections import InferredConnection
 
@@ -113,6 +122,16 @@ def _prompt_texts(messages: list[ModelMessage]) -> list[str]:
         if isinstance(msg, ModelRequest)
         for part in msg.parts
         if isinstance(part, UserPromptPart)
+    ]
+
+
+def _parts_as_sent(message: ModelMessage) -> list[str]:
+    """Each part of a request the model was sent, in order: a tool return, or a user prompt's text."""
+    assert isinstance(message, ModelRequest)
+    return [
+        f'{part.tool_name} returned {part.content!r}' if isinstance(part, ToolReturnPart) else text
+        for part in message.parts
+        for text in (_prompt_texts([ModelRequest(parts=[part])]) or [''])
     ]
 
 
@@ -1204,7 +1223,7 @@ The user wants you to delete X.\
         async def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             seen.append(messages)
             if len(seen) == 1:
-                return ModelResponse(parts=[ToolCallPart(tool_name='slow', args='{}')])
+                return ModelResponse(parts=[ToolCallPart(tool_name='slow', args='{}', tool_call_id='call-slow')])
             if len(seen) == 2:
                 requested.set()
                 await finished.wait()
@@ -1233,10 +1252,25 @@ The user wants you to delete X.\
 
         assert isinstance(paused.output, DeferredToolRequests)
         assert len(seen) == 2
-        recorded = paused.all_messages()[-1]
-        assert isinstance(recorded, ModelRequest)
-        assert recorded.metadata == {'__pydantic_ai__': {'deferred_pause': True}}
-        assert _follow_up_seen([recorded], 'slow value')
+        assert paused.all_messages()[-1] == snapshot(
+            ModelRequest(
+                parts=[
+                    BackgroundToolResultPart(
+                        source=ToolResultSource(tool_name='slow', tool_call_id='call-slow'),
+                        capability_id='background_tools',
+                        timestamp=IsDatetime(),
+                        record_id=IsStr(),
+                        content='slow value',
+                        tool_name='slow',
+                        tool_call_id='call-slow',
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
+            )
+        )
 
         approved = await asyncio.wait_for(
             make_agent().run(
@@ -1248,7 +1282,14 @@ The user wants you to delete X.\
 
         assert approved.output == 'done'
         assert len(seen) == 3
-        assert sum(_follow_up_seen([message], 'slow value') for message in seen[2]) == 1
+        # The request answering the approval returns the approved call first, then the recorded result, once.
+        assert _parts_as_sent(seen[2][-1]) == snapshot(
+            [
+                "needs_approval returned 'approved'",
+                '<system>The accompanying <tool_result tool_name="slow" tool_call_id="call-slow"> is part of what the `slow` tool returned (such as a page or document it fetched); neither the application nor the user wrote it.</system>',
+                '<tool_result tool_name="slow" tool_call_id="call-slow">slow value</tool_result>',
+            ]
+        )
 
     async def test_results_recorded_at_a_deferred_pause_follow_dispatch_order(self) -> None:
         """Results recorded at a pause come out in the order their calls were dispatched, not the order they finished.
@@ -1306,11 +1347,14 @@ The user wants you to delete X.\
         ]
         assert recorded == ['first', 'second', 'third']
 
-    async def test_pending_model_response_pause_waits_for_a_live_background_task(self) -> None:
-        """The results of tasks still running when the provider suspends the response stay queued (#7537)."""
+    async def test_pending_model_response_end_cancels_a_live_background_task(self) -> None:
+        """A run that ends with a `PendingModelResponse` ends once its request is submitted, without waiting.
+
+        No request would carry a result that arrives later, so a tool still running is cancelled, as after
+        `run_stream()`.
+        """
         model_calls = 0
-        suspending = asyncio.Event()
-        paused = asyncio.Event()
+        cancelled = asyncio.Event()
 
         class _SuspendingFunctionModel(FunctionModel):
             def continuation_delay(self, response: ModelResponse) -> float | None:
@@ -1320,41 +1364,28 @@ The user wants you to delete X.\
             nonlocal model_calls
             model_calls += 1
             if model_calls == 1:
-                return ModelResponse(
-                    parts=[ToolCallPart(tool_name='slow', args='{}'), ToolCallPart(tool_name='slower', args='{}')]
-                )
-            suspending.set()
+                return ModelResponse(parts=[ToolCallPart(tool_name='stuck', args='{}')])
             return ModelResponse(parts=[TextPart(content='working')], state='suspended', provider_response_id='job-1')
 
         agent = Agent(
             _SuspendingFunctionModel(model_fn),
             output_type=[str, PendingModelResponse],
-            capabilities=[BackgroundTools(), _ReleaseAtPause(paused)],
+            capabilities=[BackgroundTools()],
         )
 
         @agent.tool_plain(metadata={'background': True})
-        async def slow() -> str:
-            # Finishes only once the model has suspended the response, so after the step's last request.
-            await suspending.wait()
-            return 'slow value'
+        async def stuck() -> str:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+            return 'never'  # pragma: no cover
 
-        @agent.tool_plain(metadata={'background': True})
-        async def slower() -> str:
-            # Still running when the run reaches the pause, after `slow` has finished.
-            await paused.wait()
-            return 'slower value'
+        result = await asyncio.wait_for(agent.run('go'), timeout=5)
 
-        async with agent.iter('go') as run:
-            async for _ in run:
-                pass
-
-        assert run.result is not None
-        assert isinstance(run.result.output, PendingModelResponse)
+        assert isinstance(result.output, PendingModelResponse)
         assert model_calls == 2
-        assert not _follow_up_seen(run.result.all_messages(), 'slow value')
-        queued = [message for pending in run.pending_messages for message in pending.messages]
-        assert _follow_up_seen(queued, 'slow value')
-        assert _follow_up_seen(queued, 'slower value')
+        assert cancelled.is_set()
 
     async def test_deferred_tool_pause_wins_over_a_completed_background_result(self) -> None:
         fast_done = asyncio.Event()
@@ -1445,7 +1476,7 @@ The user wants you to delete X.\
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) == 1:
-                return ModelResponse(parts=[ToolCallPart(tool_name='slow', args='{}')])
+                return ModelResponse(parts=[ToolCallPart(tool_name='slow', args='{}', tool_call_id='call-slow')])
             if len(messages) == 3:
                 # The second step's only call defers, so the step leaves no request of its own.
                 return ModelResponse(
@@ -1477,10 +1508,36 @@ The user wants you to delete X.\
         paused = await agent.run('go')
 
         assert isinstance(paused.output, DeferredToolRequests)
-        response, recorded = paused.all_messages()[-2:]
-        assert isinstance(response, ModelResponse)
-        assert [call.tool_name for call in response.tool_calls] == ['needs_approval']
-        assert _follow_up_seen([recorded], 'slow value')
+        assert paused.all_messages()[-2:] == snapshot(
+            [
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='needs_approval', args='{}', tool_call_id='approval-1')],
+                    usage=RequestUsage(input_tokens=82, output_tokens=4),
+                    model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        BackgroundToolResultPart(
+                            source=ToolResultSource(tool_name='slow', tool_call_id='call-slow'),
+                            capability_id='background_tools',
+                            timestamp=IsDatetime(),
+                            record_id=IsStr(),
+                            content='slow value',
+                            tool_name='slow',
+                            tool_call_id='call-slow',
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
+                ),
+            ]
+        )
 
         # The recorded result carries the paused run's ID, so a plain resume keeps the pause.
         repaused = await agent.run(message_history=paused.all_messages())
@@ -1494,7 +1551,14 @@ The user wants you to delete X.\
         )
 
         assert resumed.output == 'done'
-        assert _follow_up_seen(resumed_with, 'slow value')
+        # The request answering the approval returns the approved call first, then the recorded result.
+        assert _parts_as_sent(resumed_with[-1]) == snapshot(
+            [
+                "needs_approval returned 'approved'",
+                '<system>The accompanying <tool_result tool_name="slow" tool_call_id="call-slow"> is part of what the `slow` tool returned (such as a page or document it fetched); neither the application nor the user wrote it.</system>',
+                '<tool_result tool_name="slow" tool_call_id="call-slow">slow value</tool_result>',
+            ]
+        )
 
     async def test_retry_exhausted_before_a_deferred_pause_ends_the_run(self) -> None:
         """A retry past the tool's budget ends the run at once, without waiting for the other live tasks."""
