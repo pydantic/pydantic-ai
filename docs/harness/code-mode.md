@@ -742,8 +742,7 @@ one agent each need their own `id`.
 
 Code Mode keeps running `run_code` in workflow code, as described above, when any of these holds:
 
-- `CodeMode` is given `id=None`. `CodeMode.from_spec` defaults `id` to `None`, so a `CodeMode` from
-  an agent spec needs `id: code_mode` to run turns as activities.
+- `CodeMode` is given `id=None`.
 - The agent is wrapped in the deprecated `TemporalAgent`, which runs no capability operations as
   activities.
 - `os_access` is set: the handler may call `temporalio.workflow` APIs, which work only in workflow
