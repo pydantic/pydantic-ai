@@ -113,8 +113,8 @@ class AskUserToolset(FunctionToolset[AgentDepsT]):
             request = AskUserRequest(questions=tuple(questions))
         else:
             request = AskUserRequest(questions=tuple(questions), id=ctx.tool_call_id or '')
-        # Under Temporal the tool runs in an activity, which can't emit events yet, so the question is
-        # still deferred and answered, without the event.
+        # Inside a durable unit, such as a Temporal or Azure Durable Task activity, the tool can't emit events
+        # yet (#7971), so the question is still deferred and answered, without the event.
         if (events := event_ctx(ctx, 'AskUser')) is not None:
             await events.emit(AskUserRequestedEvent(request=request))
         # The questions as the tool received them, so `AskUser` asks those even when a hook such as an
