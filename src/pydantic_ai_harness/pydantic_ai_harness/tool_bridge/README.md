@@ -51,7 +51,7 @@ Tools with `defer_loading=True` are bridged and found with `tool_search`, so [`T
 
 ## Composition
 
-Two `ToolBridge` capabilities on one agent merge into one; the later one's settings win. The bridge sits just inside tool search and outside every other capability that wraps the toolset, whatever order the capabilities are listed in, so wrappers such as `SetToolMetadata` and `PrefixTools` apply to the bridged tools. With [`CodeMode`](../code_mode/) too, Code Mode exposes the three dispatchers as sandbox functions rather than the bridged tools; use Code Mode alone to put many tools behind `run_code`.
+Two `ToolBridge` capabilities on one agent merge into one; the later one's settings win. One bridge per agent is supported: given distinct `id`s, the outer bridge refuses the inner one's reserved tool names with a `UserError`. The bridge sits just inside tool search and outside every other capability that wraps the toolset, whatever order the capabilities are listed in, so wrappers such as `SetToolMetadata` and `PrefixTools` apply to the bridged tools. With [`CodeMode`](../code_mode/) too, Code Mode exposes the three dispatchers as sandbox functions rather than the bridged tools; use Code Mode alone to put many tools behind `run_code`.
 
 ## Telemetry
 

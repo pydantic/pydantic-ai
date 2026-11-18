@@ -108,7 +108,7 @@ def _tokenize(text: str) -> set[str]:
     return set(_SEARCH_TOKEN_RE.findall(text.lower()))
 
 
-def keywords_search(_ctx: RunContext[Any], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+def keywords_search(ctx: RunContext[Any], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
     """Rank tools by how many of the query words appear in their name or description.
 
     Matching is case-insensitive and word by word. Returns the names of the tools that match at least one

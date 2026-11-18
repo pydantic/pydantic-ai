@@ -21,6 +21,7 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.capabilities.abstract import ValidatedToolArgs
 from pydantic_ai.exceptions import (
     ApprovalRequired,
+    CallDeferred,
     ModelRetry,
     ToolFailed,
     UnexpectedModelBehavior,
@@ -586,3 +587,31 @@ class TestToolBridge:
 
         with pytest.raises(UnexpectedModelBehavior, match="Tool 'tool_call' exceeded max retries count of 2"):
             await agent.run('go')
+
+    async def test_external_call_resolved_by_a_handler(self):
+        def track(order_id: str) -> str:
+            """Track an order."""
+            raise CallDeferred
+
+        def answer(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
+            return requests.build_results(
+                calls={call.tool_call_id: f'{call.tool_name}: shipped' for call in requests.calls}
+            )
+
+        model = _scripted([_call('tool_call', name='track', args_json='{"order_id": "42"}')])
+        agent = Agent(model, tools=[track], capabilities=[HandleDeferredToolCalls(answer), ToolBridge()])
+
+        result = await agent.run('where is my order?')
+
+        assert _returns(result.all_messages()) == ['track: shipped']
+
+    async def test_unresolved_external_call_raises(self):
+        def track(order_id: str) -> str:
+            """Track an order."""
+            raise CallDeferred
+
+        model = _scripted([_call('tool_call', name='track', args_json='{"order_id": "42"}')])
+        agent = Agent(model, tools=[track], capabilities=[ToolBridge()], output_type=[str, DeferredToolRequests])
+
+        with pytest.raises(UserError, match=r"Tool 'track' raised `CallDeferred` behind `ToolBridge`"):
+            await agent.run('where is my order?')

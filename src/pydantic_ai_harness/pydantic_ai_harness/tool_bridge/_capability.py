@@ -53,7 +53,10 @@ class ToolBridge(AbstractCapability[AgentDepsT]):
     """
 
     id: str | None = 'tool_bridge'
-    """An agent has one bridge, so two of them merge into one by default."""
+    """An agent has one bridge, so two of them merge into one.
+
+    Two with distinct ids aren't supported: the outer one refuses the inner one's reserved tool names.
+    """
 
     def get_ordering(self) -> CapabilityOrdering:
         """Sit just inside `ToolSearch` and outside every other wrapper.
