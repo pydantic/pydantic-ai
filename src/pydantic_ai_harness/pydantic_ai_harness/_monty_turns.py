@@ -104,6 +104,10 @@ _WIRE_CLASSES: dict[tuple[str, str], type] = {
         dict,
         set,
         frozenset,
+        int,
+        float,
+        str,
+        bytes,
         complex,
         type(...),
         date,
@@ -128,6 +132,15 @@ class _WirePickler(pickle.Pickler):
         for container in _CONTAINERS:
             if isinstance(obj, container):
                 return container, (container(cast(Any, obj)),)
+        # A live session takes an `IntEnum` or `StrEnum` as the plain value, so the wire does too.
+        if isinstance(obj, int):
+            return int, (int(obj),)
+        if isinstance(obj, str):
+            return str, (str.__str__(obj),)
+        if isinstance(obj, float):
+            return float, (float(obj),)
+        if isinstance(obj, bytes):
+            return bytes, (bytes(obj),)
         if is_mapping(obj):
             return dict, (dict(obj),)
         cls = type(obj)
@@ -529,26 +542,57 @@ def _fit_turn(turn: MontyTurn) -> MontyTurn:
     Measured on the encoded turn, so JSON escaping and error text count. A nested call's arguments
     are never cut: `_answer_in_turn` keeps them to half the budget, so the texts always hold the excess.
     """
+    shown: str | None = None  # the result as text, rendered once so cutting it always shrinks it
     while (excess := len(to_json(turn)) - TURN_PAYLOAD_BYTES) > 0:
-        output = '' if turn.output is None else repr(from_wire(turn.output))
+        if shown is None:
+            shown = '' if turn.output is None else _shown(from_wire(turn.output))
         failure = turn.failure or MontyFailure('other')
-        texts = {'prints': turn.prints, 'output': output, 'display': failure.display, 'message': failure.message}
-        name = max(texts, key=lambda name: len(texts[name]))
+        texts: dict[str, str] = {
+            'prints': turn.prints,
+            'output': shown,
+            'display': failure.display,
+            'message': failure.message,
+        }
+        name = _longest(texts)
         data = texts[name].encode()
+        if name == 'output' and len(data) <= _NOTE_BYTES:
+            # A short text standing for a large value, such as a huge integer: it replaces the value.
+            turn = replace(turn, output=to_wire(shown))
+            continue
         assert len(data) > _NOTE_BYTES, 'the excess is always in a text longer than the note'
         # At most half per pass, so a cut spreads over the texts rather than emptying the first.
         kept = max(len(data) - excess, len(data) // 2) - _NOTE_BYTES
         note = f'\n[{len(data) - kept} more bytes not shown: a turn returns at most {TURN_PAYLOAD_BYTES} bytes]'
         cut = data[:kept].decode(errors='ignore') + note
-        if name == 'message' and failure.message_sha256 is None:
-            turn = replace(turn, failure=replace(failure, message=cut, message_sha256=_sha256(failure.message)))
-        elif name in ('display', 'message'):
-            turn = replace(turn, failure=replace(failure, **{name: cut}))
-        elif name == 'output':
-            turn = replace(turn, output=to_wire(cut))
-        else:
-            turn = replace(turn, prints=cut)
+        if name == 'output':
+            shown = cut
+        turn = _with_cut(turn, failure, name, cut)
     return turn
+
+
+def _with_cut(turn: MontyTurn, failure: MontyFailure, name: str, cut: str) -> MontyTurn:
+    """`turn` with its text `name` replaced by `cut`."""
+    if name == 'message' and failure.message_sha256 is None:
+        return replace(turn, failure=replace(failure, message=cut, message_sha256=_sha256(failure.message)))
+    if name in ('display', 'message'):
+        return replace(turn, failure=replace(failure, **{name: cut}))
+    if name == 'output':
+        return replace(turn, output=to_wire(cut))
+    return replace(turn, prints=cut)
+
+
+def _longest(texts: dict[str, str]) -> str:
+    return max(texts, key=lambda key: len(texts[key]))
+
+
+def _shown(value: object) -> str:
+    """`value` as the model would read it: a string as itself, anything else as its `repr`."""
+    if isinstance(value, str):
+        return value
+    try:
+        return repr(value)
+    except ValueError:  # an integer with more digits than Python converts to text
+        return f'[a {type(value).__name__} too large to show]'
 
 
 def _sha256(text: str) -> str:

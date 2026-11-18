@@ -25,6 +25,7 @@ import base64
 import contextvars
 import csv
 import dataclasses
+import enum
 import json
 import pickle
 import re
@@ -38,6 +39,7 @@ from typing import Any, Literal
 
 import pytest
 from anyio.from_thread import start_blocking_portal
+from pydantic_core import to_json
 from pydantic_monty import MontyRefusedError, MountDir
 
 try:
@@ -78,7 +80,12 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
-from pydantic_ai_harness._monty_turns import from_wire, to_wire
+from pydantic_ai_harness._monty_turns import (
+    MontyTurn,
+    _fit_turn,  # pyright: ignore[reportPrivateUsage]
+    from_wire,
+    to_wire,
+)
 from tests.harness._temporal import ignore_source_reads_left_open
 from tests.harness.code_mode.grpc_relay import serve_monty_relay
 from tests.harness.code_mode.stored_sessions import SERVER, StoredSessionPool
@@ -1642,3 +1649,28 @@ def test_turn_values_load_only_wire_types() -> None:
     data = base64.b64encode(pickle.dumps(subprocess.run)).decode()
     with pytest.raises(pickle.UnpicklingError, match=r'subprocess\.run is not a wire type'):
         from_wire(data)
+
+
+class Colour(enum.StrEnum):
+    RED = 'red'
+
+
+class Level(enum.IntEnum):
+    HIGH = 3
+
+
+def test_turn_values_send_enum_members_as_their_values() -> None:
+    """A live session takes an `IntEnum` or `StrEnum` tool result as its plain value; so does a turn."""
+    back = from_wire(to_wire([Colour.RED, Level.HIGH]))
+    assert back == ['red', 3]
+    assert [type(value) for value in back] == [str, int]
+
+
+@pytest.mark.parametrize('output', ['\\\n' * 4000, 10**5000], ids=['escaped_text', 'huge_int'])
+def test_cutting_a_turn_result_always_shrinks_it(monkeypatch: pytest.MonkeyPatch, output: object) -> None:
+    """A result is rendered as text once and that text is cut, so text that `repr` escapes still fits."""
+    monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 2000)
+    turn = _fit_turn(MontyTurn('complete', output=to_wire(output)))
+    assert turn.output is not None
+    assert len(to_json(turn)) <= 2000
+    assert 'more bytes not shown' in from_wire(turn.output) or 'too large to show' in from_wire(turn.output)
