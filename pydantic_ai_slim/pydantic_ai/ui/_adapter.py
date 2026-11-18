@@ -1050,6 +1050,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         allow_uploaded_files: bool = False,
         strip_workspace_refs: bool = True,
         allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
+        keepalive_interval: float | None = DEFAULT_KEEPALIVE_INTERVAL,
         **kwargs: Any,
     ) -> Self:
         """Create an adapter from a request.
@@ -1083,6 +1084,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 (`application/json`); anything else is rejected with a `415` before the body is read.
                 Pass a wider set to admit another media type your frontend sends, or `None` to skip the
                 check entirely when the route is already covered by CSRF protection of your own.
+            keepalive_interval: Seconds without an event after which the SSE stream sends a `: keepalive` comment, or
+                `None` to send none. See [`UIAdapter.keepalive_interval`][pydantic_ai.ui.UIAdapter.keepalive_interval].
             **kwargs: Additional keyword arguments forwarded to the adapter constructor.
         """
         _check_content_type(request, allowed_content_types)
@@ -1099,6 +1102,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
             strip_workspace_refs=strip_workspace_refs,
+            keepalive_interval=keepalive_interval,
             **kwargs,
         )
 
@@ -1751,6 +1755,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         allow_uploaded_files: bool = False,
         strip_workspace_refs: bool = True,
         allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
+        keepalive_interval: float | None = DEFAULT_KEEPALIVE_INTERVAL,
         **kwargs: Any,
     ) -> Response:
         """Handle a protocol-specific HTTP request by running the agent and returning a streaming response of protocol-specific events.
@@ -1809,6 +1814,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`UIAdapter.strip_workspace_refs`][pydantic_ai.ui.UIAdapter.strip_workspace_refs].
             allowed_content_types: Request media types to accept, as a CSRF control. See
                 [`from_request`][pydantic_ai.ui.UIAdapter.from_request].
+            keepalive_interval: Seconds without an event after which the SSE stream sends a `: keepalive` comment, or
+                `None` to send none. See [`UIAdapter.keepalive_interval`][pydantic_ai.ui.UIAdapter.keepalive_interval].
             **kwargs: Additional keyword arguments forwarded to [`from_request`][pydantic_ai.ui.UIAdapter.from_request].
 
         Returns:
@@ -1838,6 +1845,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     allow_uploaded_files=allow_uploaded_files,
                     strip_workspace_refs=strip_workspace_refs,
                     allowed_content_types=allowed_content_types,
+                    keepalive_interval=keepalive_interval,
                     **kwargs,
                 ),
             )

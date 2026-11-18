@@ -89,6 +89,7 @@ from .._adapter import (
     tool_availability_delta_payload,
     warn_dropped_tool_results,
 )
+from .._event_stream import DEFAULT_KEEPALIVE_INTERVAL
 from .._utils import MCP_APPS_UI_TYPE, client_error_text, get_ui_message_id, mcp_app_ui_payload, set_ui_message_id
 
 try:
@@ -469,6 +470,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
         allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
+        keepalive_interval: float | None = DEFAULT_KEEPALIVE_INTERVAL,
         include_usage: bool = False,
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
@@ -486,6 +488,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
             allowed_content_types=allowed_content_types,
+            keepalive_interval=keepalive_interval,
             include_usage=include_usage,
             **kwargs,
         )
