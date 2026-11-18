@@ -783,13 +783,14 @@ With `'unlimited'`, nothing stops a long turn.
 Tool results and nested call arguments keep their types and shared values, since they cross as one
 string, and the model sees the same snippet result as in workflow code. Each turn takes and returns
 at most 1 MiB, half Temporal's default payload limit. Longer prints, results and error text are cut
-with a note saying how much was left out, and tool results that would make a turn's input longer
-fail the snippet with a `ValueError` that gives the size and resets the session. If the server will
-not store the session a snippet error left, Code Mode also resets the session. A nested call whose
-arguments are of a type Monty does not hand the host, such as an instance of a class the snippet
-defined, raises `TypeError` in the snippet: its arguments cannot reach the tool. If the server no
-longer has a run's stored state, for example because it expired, Code Mode resets the session and
-tells the model the connection was lost, as for a dropped connection outside Temporal.
+with a note that the rest is not shown and the 1 MiB limit, and tool results that would make a
+turn's input longer fail the snippet with a `ValueError` that gives the size and resets the session.
+If the server will not store the session a snippet error left, Code Mode also resets the session. A
+nested call whose arguments are of a type Monty does not hand the host, such as an instance of a
+class the snippet defined, raises `TypeError` in the snippet: its arguments cannot reach the tool.
+If the server no longer has a run's stored state, for example because it expired, Code Mode resets
+the session and tells the model the connection was lost, as for a dropped connection outside
+Temporal.
 
 ## Observability
 
