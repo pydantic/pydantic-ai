@@ -39,6 +39,12 @@ class Server:
     """How many more `dump()` calls succeed before the rest raise `MontyRuntimeError`, as on a server
     whose snapshot quota fills, or that refuses to store a session a snippet error left; `None` is no limit."""
 
+    def reset(self) -> None:
+        """Forget every record and planned failure, as a fresh server would."""
+        self.records.clear()
+        self.drops_next_feed = self.drops_next_dump = None
+        self.dumps_left = None
+
     def load(self, record_id: bytes) -> bytes:
         # Empty bytes are not a Monty dump, so loading a lost record raises Monty's own error.
         return self.records.get(record_id, b'')
@@ -66,7 +72,8 @@ class StoredSession:
             raise error
         if SERVER.dumps_left is not None:
             if SERVER.dumps_left == 0:
-                # `MontyRuntimeError` cannot be built directly; Monty raises it for bytes that are not a dump.
+                # `MontyRuntimeError` cannot be built directly; Monty raises it for bytes that are not a dump,
+                # but only on a fresh session.
                 async with self.pool.checkout() as fresh:
                     await fresh.load_session(b'')
             SERVER.dumps_left -= 1
@@ -131,15 +138,9 @@ class StoredSessionPool:
         async with self._pool.checkout(
             limits=limits, type_check=type_check, type_check_stubs=type_check_stubs, os_policy=os_policy
         ) as session:
-            # As on a storing server, an ephemeral session is never stored.
-            yield StoredSession(session, self.stores and ephemeral is not True, self._pool)
+            yield StoredSession(session, self.stores, self._pool)
 
 
-def as_remote(pool: StoredSessionPool) -> AsyncMontyRemote:
-    """Type the double as the `AsyncMontyRemote` it stands in for, so `CodeMode(monty_sandbox=...)` accepts it."""
-    return pool  # pyright: ignore[reportReturnType]
-
-
-def stored_session_pool() -> AsyncMontyRemote:
-    """A `monty_sandbox` factory for a server that stores sessions."""
-    return as_remote(StoredSessionPool())
+def stored_session_pool(stores: bool = True) -> AsyncMontyRemote:
+    """A `monty_sandbox` factory for the double, typed as the `AsyncMontyRemote` it stands in for."""
+    return StoredSessionPool(stores=stores)  # pyright: ignore[reportReturnType]

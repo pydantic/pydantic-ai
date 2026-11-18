@@ -331,8 +331,8 @@ _MONTY_DEFAULT_MAX_SUSPENSIONS = 1000
 """The `max_suspensions` Monty applies when none is set; it cannot be turned off (see `ResourceLimits`)."""
 
 
-def _host_error(type_name: str, message: str) -> MontyTurnFailed:
-    """Results the turn cannot carry, failing the snippet as a live session fails it, and resetting it.
+def _unsendable_turn(type_name: str, message: str) -> MontyTurnFailed:
+    """A turn the host could not send, failing the snippet with `type_name` as a live session would.
 
     The stored record is the paused snippet, which cannot continue, so the session is reset.
     """
@@ -371,8 +371,8 @@ class TurnFeed:
         """Resume with what `encode` returns: the results, as data a turn can carry."""
         try:
             resume = encode()
-        except TypeError as error:  # a type the sandbox has none for, such as `bytearray`
-            raise _host_error('TypeError', str(error)) from None
+        except TypeError as error:  # a value the wire cannot carry, such as a class instance
+            raise _unsendable_turn('TypeError', str(error)) from None
         limits = self._limits(restored_pauses=1)
         request = TurnRequest(self.run_state.stored_state, limits, self.capture.unused_bytes, resume=resume)
         return await self._turn(request)
@@ -391,7 +391,7 @@ class TurnFeed:
 
     async def _turn(self, request: TurnRequest) -> TurnSnapshot:
         if (message := oversized(request)) is not None:
-            raise _host_error('ValueError', message)
+            raise _unsendable_turn('ValueError', message)
         try:
             turn = await self.run_turn(request)
         except Exception as error:

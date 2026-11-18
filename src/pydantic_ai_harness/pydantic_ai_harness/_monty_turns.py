@@ -76,11 +76,11 @@ def to_wire(value: object) -> str:
     refuses deep nesting and very large integers. So a value crosses as one string: its pickle, which
     keeps every type Monty hands the host and the values a snippet shares, in base64.
 
-    Only the types in `_WIRE_CLASSES` are written, and `from_wire` loads only those, so loading a
-    recorded turn never imports or calls anything else. A subclass of a container crosses as the
-    container, as Monty itself hands it to the host, and a named tuple as a plain tuple. Raises `TypeError` for any other type, with the
-    message a live session gives for a host value it cannot convert, and for a value nested too
-    deeply to write.
+    The pickle names only the classes in `_WIRE_CLASSES`, and `from_wire` loads only those, so loading
+    a recorded turn never imports or calls anything else. A subclass of a container crosses as the
+    container, as Monty itself hands it to the host, and a named tuple as a plain tuple. Raises
+    `TypeError` for any other type, with the message a live session gives for a host value it cannot
+    convert, and for a value nested too deeply to write.
     """
     buffer = io.BytesIO()
     try:
@@ -124,9 +124,9 @@ _CONTAINERS = (tuple, list, dict, set, frozenset)
 
 class _WirePickler(pickle.Pickler):
     def reducer_override(self, obj: object, /) -> Any:
-        # Called for every value except `None`, `bool`, and exact `int`, `float`, `str`, `bytes` and
-        # containers, and for each class the pickle names.
-        if obj is ... or type(obj) in _WIRE_CLASSES.values() or obj in _WIRE_CLASSES.values():
+        # Called for every value except `None`, `bool`, and exact `int`, `float`, `str`, `bytes`,
+        # `bytearray` and containers, and for each class the pickle names.
+        if type(obj) in _WIRE_CLASSES.values() or obj in _WIRE_CLASSES.values():
             return NotImplemented
         for container in _CONTAINERS:
             if isinstance(obj, container):
@@ -148,7 +148,7 @@ class _WirePickler(pickle.Pickler):
 
 class _WireUnpickler(pickle.Unpickler):
     def find_class(self, module: str, name: str) -> Any:
-        if module == 'builtins' and name == 'Ellipsis':
+        if (module, name) == ('builtins', 'Ellipsis'):
             return ...
         if (cls := _WIRE_CLASSES.get((module, name))) is None:
             raise pickle.UnpicklingError(f'{module}.{name} is not a wire type')
@@ -264,7 +264,7 @@ class TurnRequest:
     state: str | None
     """The stored record to start from, base64-encoded; `None` starts a fresh session."""
     limits: ResourceLimits
-    """The run's configured limits, applied to this turn."""
+    """The run's limits, with `max_suspensions` lowered by what earlier turns of the feed used."""
     print_bytes: int
     """How much this turn may print: what earlier turns of the feed left of the feed's print cap."""
     code: str | None = None
@@ -386,21 +386,15 @@ class _Pauses:
         return snapshot
 
 
-class MontyServerError(Exception):
-    """A turn could not reach the Monty server, named by the type of the error it met.
-
-    The error's own text is left out because it can carry the pool's URL or credentials.
-    """
-
-
 @cache
-def redacted_error_type(type_name: str) -> type[MontyServerError]:
-    """A `MontyServerError` subclass named `type_name`.
+def redacted_error_type(type_name: str) -> type[Exception]:
+    """An exception class named `type_name`, for a turn that could not reach the Monty server.
 
     Temporal records a failure's type as its class name, so a retry policy's
-    `non_retryable_error_types` that names the original type still matches.
+    `non_retryable_error_types` that names the original type still matches. The original error's
+    text is left out because it can carry the pool's URL or credentials.
     """
-    return type(type_name, (MontyServerError,), {})
+    return type(type_name, (Exception,), {})
 
 
 TURN_PAYLOAD_BYTES = 1024 * 1024

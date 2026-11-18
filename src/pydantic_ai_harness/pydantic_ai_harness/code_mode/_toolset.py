@@ -203,13 +203,6 @@ def as_os_handler(os_access: CodeModeOS | None) -> AbstractOS | OsHandler | None
 _DURABLE_TURNS_PATCH = 'pydantic_ai_harness.code_mode.durable_turns'
 
 
-def _workflow_patched(patch_id: str) -> bool:
-    """`temporalio.workflow.patched`, imported only once a workflow is known to be running."""
-    from temporalio import workflow
-
-    return workflow.patched(patch_id)
-
-
 def in_durable_execution(ctx: RunContext[object]) -> bool:
     """Whether a durable executor is active, where streamed execution tiers must stay disabled."""
     return any(
@@ -1322,7 +1315,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         mounts = self.mount if isinstance(self.mount, list) else [self.mount] if self.mount is not None else []
         if any(mount.mode == 'overlay' or mount.write_bytes_limit is not None for mount in mounts):
             return None
-        if not _workflow_patched(_DURABLE_TURNS_PATCH):
+        from temporalio import workflow  # only once a workflow is known to be running
+
+        if not workflow.patched(_DURABLE_TURNS_PATCH):
             return None
         return partial(capability._monty_turn, ctx)  # pyright: ignore[reportPrivateUsage]
 
