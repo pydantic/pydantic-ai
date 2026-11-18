@@ -746,6 +746,9 @@ BLOCKBUSTER_LIBRARY_SETUP: tuple[tuple[str, str], ...] = (
     # `/sandbox render` builds one in its synchronous `reopen`, which cannot offload it, so that the key
     # can come from `/keys`.
     ('render/version.py', 'get_version'),
+    # MCP SDK v2 imports `jsonschema` on its first tool-result validation, which happens inside a call
+    # on the event loop; the import loads `jsonschema_specifications`' bundled schema files from disk once.
+    ('jsonschema_specifications/_core.py', '_schemas'),
 )
 
 

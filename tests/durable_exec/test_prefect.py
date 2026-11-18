@@ -197,8 +197,9 @@ try:
     from fastmcp.client.transports import StdioTransport
     from fastmcp.server.dependencies import get_http_request
 
-    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
+    from pydantic_ai._mcp_compat import MCP_SDK_V2
     from pydantic_ai.mcp import MCPToolset
+    from tests.mcp_task_server import TASK_SERVER_UNAVAILABLE
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -222,6 +223,9 @@ from ..workspace_fakes import ref_workspace
 from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 from .preamble_text import RunAndStreamResult, plain_run_and_stream, preamble_text_agents, run_and_stream
+from .span_utils import drop_fastmcp_client_spans
+
+_OPTIONAL_TASK_ROUTING = 'optional_task' if MCP_SDK_V2 else 'optional_sync'
 
 
 def test_durability_codecs() -> None:
@@ -723,6 +727,9 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
             parent_span = basic_spans_by_id[parent_id]
             parent_span.children.append(basic_span)
 
+    assert root_span is not None
+    drop_fastmcp_client_spans(root_span)
+
     assert root_span == snapshot(
         BasicSpan(
             content=IsStr(regex=r'\w+-\w+'),  # Random Prefect flow run name
@@ -1211,11 +1218,15 @@ def test_prefect_mcp_wrappers_of_same_host_servers_keep_their_derived_id() -> No
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_task_server` over stdio')
+@pytest.mark.skipif(TASK_SERVER_UNAVAILABLE, reason='fastmcp-tasks not installed')
 async def test_prefect_mcptoolset_preserves_task_routing() -> None:
     """Effective task routing forwards through Prefect task wrappers end-to-end.
 
     Unlike Temporal/DBOS, Prefect passes live `ToolsetTool` objects through without serializing
-    `ToolDefinition`, so this pins wrapper forwarding rather than serialization round-tripping."""
+    `ToolDefinition`, so this pins wrapper forwarding rather than serialization round-tripping.
+
+    `prefer_tasks=False` is the client's say under FastMCP 3's SEP-1686, so the optional tool runs
+    inline there; FastMCP 4's SEP-2663 hands that decision to the server, which takes it up."""
     agent = PrefectAgent(  # pyright: ignore[reportDeprecated]
         Agent(
             TestModel(call_tools=['required_task_tool', 'optional_task_tool']),
@@ -1235,7 +1246,10 @@ async def test_prefect_mcptoolset_preserves_task_routing() -> None:
     async def run_agent() -> str:
         return (await agent.run('Call both tools')).output
 
-    assert await run_agent() == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
+    assert (
+        await run_agent()
+        == f'{{"required_task_tool":"required_completed","optional_task_tool":"{_OPTIONAL_TASK_ROUTING}"}}'
+    )
 
 
 async def test_capability_contributed_toolset_id_from_capability():
@@ -1633,7 +1647,8 @@ async def test_prefect_agent_run_with_runtime_external_toolset() -> None:
     )
 
     assert result.output == DeferredToolRequests(
-        calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
+        calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')],
+        validated_args={'call-1': {'query': 'runtime'}},
     )
 
 
@@ -6079,7 +6094,7 @@ async def test_prefect_mcp_auth_function_connects_each_run_as_its_own_user(block
     # A `localhost` URL keeps the module's VCR cassettes from intercepting the in-process requests.
     # Each run of the CI matrix installs one FastMCP generation, so it covers only one of the branches.
     client: httpx.AsyncClient | httpx2.AsyncClient
-    if is_mcp_sdk_v2():
+    if MCP_SDK_V2:
         client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))  # pragma: lax no cover
     else:
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))  # pragma: lax no cover
@@ -6136,7 +6151,7 @@ async def test_prefect_mcp_server_keeps_one_session_per_flow(blockbuster_enabled
         return (await agent.run('go')).output
 
     assert await run_flow() == 'done'
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
     # The run closed the session it held; nothing keeps the server connected between runs.
     assert not toolset.is_running
 
