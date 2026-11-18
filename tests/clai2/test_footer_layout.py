@@ -278,7 +278,7 @@ async def test_shell_saves_last_streamed_text_time_and_restores_it_on_resume(tmp
         assert shell.status.text() == 'last text: 58s'
         shell.show_model()
         assert shell.status.text() == 'last text: 58s'
-        await shell.session._fork()  # pyright: ignore[reportPrivateUsage]
+        await shell.sessions.start(resume=conversation_id, fork=True)
         assert shell.status.text() == 'last text: 58s'
         retained = list(shell.session.messages)
         result = await shell.run_turn(TurnStart(text='another turn'))
