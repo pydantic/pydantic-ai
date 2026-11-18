@@ -49,6 +49,10 @@ def count_lines(raw: bytes) -> int:
 
 def skip_lines(raw: bytes, count: int, start: int = 0) -> int:
     """The byte index `count` lines past `start` in `raw`, or `len(raw)` when fewer lines remain."""
+    # Skip whole blocks with one count each, so a deep offset into short lines is not one `find` per line.
+    while start < len(raw) and (in_block := raw.count(b'\n', start, start + 4096)) < count:
+        start += 4096
+        count -= in_block
     for _ in range(count):
         start = raw.find(b'\n', start) + 1
         if not start:
