@@ -23,6 +23,7 @@ Run locally:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator
@@ -301,3 +302,20 @@ def test_docs_example(example: CodeExample, sprites_token: str) -> None:
     _, runs = run_block(example, cleanup=documented_cleanup(_DOCS_BLOCKS, 'delete_sprite'))
     assert all(run.used_sandbox for run in runs), runs
     assert len({run.ref for run in runs}) <= 1, runs
+
+
+async def test_probe_concurrent_creates_of_one_name_make_one_sprite(client: AsyncSpritesClient) -> None:
+    """Temporary probe, not for merge: two creates of one name in flight at once."""
+    import asyncio as _asyncio
+
+    for round_ in range(3):
+        name = f'pydantic-ai-probe-{uuid.uuid4().hex}'
+        results = await _asyncio.gather(client.create_sprite(name), client.create_sprite(name), return_exceptions=True)
+        print(f'round {round_}:', [type(r).__name__ + ('' if not isinstance(r, Exception) else f' {r}') for r in results])
+        try:
+            assert sum(not isinstance(r, BaseException) for r in results) == 1
+            [error] = [r for r in results if isinstance(r, BaseException)]
+            assert '(status 409)' in str(error)
+        finally:
+            with contextlib.suppress(NotFoundError):
+                await (await client.get_sprite(name)).delete()
