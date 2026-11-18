@@ -24,7 +24,7 @@ from pydantic_ai import (
     ModelRequestNode,
 )
 from pydantic_ai._deferred_capabilities import LoadExchanges, parse_loaded_capabilities
-from pydantic_ai._run_context import RunContext
+from pydantic_ai._run_context import AnchoredEvidence, RunContext
 from pydantic_ai.agent import Agent, EndStrategy
 from pydantic_ai.capabilities import (
     Capability,
@@ -383,6 +383,49 @@ async def test_deferred_hooks_do_not_fire_until_capability_is_loaded() -> None:
 
     assert result.output == 'done'
     assert seen_loaded == [True]
+
+
+async def test_loading_one_deferred_capability_activates_only_its_hooks() -> None:
+    """Each deferred capability's hooks are gated by its own `id`, not by whether anything was loaded.
+
+    The gate looks the `id` up rather than building `_dispatch_active_capability_ids` for every capability, so an
+    always-on observer also checks the two agree, for loaded, not loaded and anchored-evidence ids.
+    """
+    fired: list[str] = []
+    # (the lookup's answer, set membership) for every id at every step, with and without anchored evidence.
+    answers: list[tuple[bool, bool]] = []
+    observer = Hooks[object]()
+
+    @observer.on.before_model_request
+    async def compare(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+        anchored = replace(ctx, _anchored_evidence=AnchoredEvidence(loaded_capability_ids=frozenset({'gamma'})))
+        for run_ctx in (ctx, anchored):
+            active = run_ctx._dispatch_active_capability_ids  # pyright: ignore[reportPrivateUsage]
+            for capability_id in ('alpha', 'beta', 'gamma'):
+                lookup = run_ctx._is_deferred_capability_dispatch_active(capability_id)  # pyright: ignore[reportPrivateUsage]
+                answers.append((lookup, capability_id in active))
+        return request_context
+
+    def recording_hooks(capability_id: str) -> Hooks[object]:
+        hooks = Hooks[object](id=capability_id, description=f'{capability_id} hooks.', defer_loading=True)
+
+        @hooks.on.before_model_request
+        async def record(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+            fired.append(capability_id)
+            return request_context
+
+        return hooks
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'beta'})])
+        return make_text_response('done')
+
+    capabilities = [recording_hooks(capability_id) for capability_id in ('alpha', 'beta', 'gamma')]
+    await Agent(FunctionModel(model_fn), capabilities=[*capabilities, observer]).run('hello')
+
+    assert fired == ['beta']
+    assert set(answers) == {(False, False), (True, True)}
 
 
 def test_toolset_capability_get_toolset():
