@@ -59,7 +59,7 @@ When the run's `UsageLimits` leave room for one more model request but not for a
 
 ## Telling a wrapped-up answer from a finished one
 
-The final prompt is a `SystemPromptPart` whose `metadata` holds `'origin': 'pydantic-ai-harness.wrap_up_at_limits.v1'` and the `'limit'` that triggered it. `wrapped_up_by()` reads it back as a `LimitName`:
+The final prompt is a request-scoped `WrapUpPart`, an instruction capability part whose `limit` is the `LimitName` that triggered it. `wrapped_up_by()` reads it back:
 
 ```python
 from pydantic_ai import AgentRunResult

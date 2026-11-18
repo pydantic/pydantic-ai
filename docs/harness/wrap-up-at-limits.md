@@ -54,7 +54,7 @@ When the run's [`UsageLimits`][pydantic_ai.usage.UsageLimits] leave room for one
 
 ## Telling a wrapped-up answer from a finished one
 
-The final prompt is a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] whose `metadata` holds `'origin': 'pydantic-ai-harness.wrap_up_at_limits.v1'` and the `'limit'` that triggered it. `wrapped_up_by()` reads it back as a [`LimitName`][pydantic_ai_harness.wrap_up_at_limits.LimitName]:
+The final prompt is a request-scoped [`WrapUpPart`][pydantic_ai_harness.wrap_up_at_limits.WrapUpPart], an [instruction capability part][pydantic_ai.messages.InstructionCapabilityPart] whose `limit` is the [`LimitName`][pydantic_ai_harness.wrap_up_at_limits.LimitName] that triggered it. `wrapped_up_by()` reads it back:
 
 ```python
 from pydantic_ai import AgentRunResult
@@ -95,6 +95,8 @@ See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_
 ::: pydantic_ai_harness.WrapUpAtLimits
 
 ::: pydantic_ai_harness.wrap_up_at_limits.wrapped_up_by
+
+::: pydantic_ai_harness.wrap_up_at_limits.WrapUpPart
 
 ::: pydantic_ai_harness.wrap_up_at_limits.LimitName
 

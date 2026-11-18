@@ -6,13 +6,15 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
+from pydantic_ai._capability_parts import check_operator_text
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
+    InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
-    ModelRequestPart,
     ModelResponse,
-    SystemPromptPart,
+    OperatorSource,
+    OperatorText,
 )
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -34,8 +36,16 @@ DEFAULT_WRAP_UP_PROMPT = (
 )
 """What `WrapUpAtLimits` tells the model on the final request, unless `prompt` is set."""
 
-_ORIGIN = 'pydantic-ai-harness.wrap_up_at_limits.v1'
-"""The `origin` in the `metadata` of the final prompt."""
+
+@dataclass(kw_only=True)
+class WrapUpPart(InstructionCapabilityPart, namespace='wrap_up_at_limits', name='wrap_up'):
+    """The request-scoped prompt `WrapUpAtLimits` adds to the final request.
+
+    Its `content` is the capability's `prompt`, in the application's voice. Find it in history by this type.
+    """
+
+    limit: LimitName
+    """The limit that made the request the last. Never sent to the model."""
 
 
 @dataclass
@@ -45,8 +55,8 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
     When the run's [`UsageLimits`][pydantic_ai.usage.UsageLimits] leave room for only one more model
     request, that request is made the last: it keeps the tool definitions with `tool_choice='none'`, so
     the cached tools and instructions still match, and gets a request-scoped system prompt asking the
-    model to answer now. The prompt's `metadata` holds the `'origin'`
-    `'pydantic-ai-harness.wrap_up_at_limits.v1'` and the `'limit'` that triggered it, which
+    model to answer now. That prompt is a
+    [`WrapUpPart`][pydantic_ai_harness.wrap_up_at_limits.WrapUpPart] carrying the `limit` that triggered it, which
     [`wrapped_up_by`][pydantic_ai_harness.wrap_up_at_limits.wrapped_up_by] reads back.
 
     ```python
@@ -59,6 +69,9 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
 
     prompt: str = DEFAULT_WRAP_UP_PROMPT
     """What the model is told on the final request."""
+
+    def __post_init__(self) -> None:
+        check_operator_text(self.prompt, what='`WrapUpAtLimits.prompt`')
 
     async def before_model_request(
         self,
@@ -76,7 +89,9 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
         if limit is None:
             return request_context
         ctx.tracer.start_span('run wrapped up', attributes={'wrap_up_at_limits.limit': limit}).end()
-        ctx.enqueue(SystemPromptPart(self.prompt, scope='request', metadata={'origin': _ORIGIN, 'limit': limit}))
+        ctx.enqueue(
+            WrapUpPart(content=OperatorText(self.prompt), source=OperatorSource(), scope='request', limit=limit)
+        )
         settings = ModelSettings(**(request_context.model_settings or {}))
         settings['tool_choice'] = 'none'
         return replace(request_context, model_settings=settings)
@@ -87,15 +102,8 @@ def wrapped_up_by(messages: Sequence[ModelMessage]) -> LimitName | None:
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
-                if (limit := _wrap_up_limit(part)) is not None:
-                    return limit
-    return None
-
-
-def _wrap_up_limit(part: ModelRequestPart) -> LimitName | None:
-    """The limit on a final prompt `WrapUpAtLimits` added, or `None` for any other part."""
-    if isinstance(part, SystemPromptPart) and part.metadata and part.metadata.get('origin') == _ORIGIN:
-        return part.metadata['limit']
+                if isinstance(part, WrapUpPart):
+                    return part.limit
     return None
 
 
