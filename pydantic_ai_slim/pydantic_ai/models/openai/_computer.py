@@ -3,24 +3,32 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Annotated, Any, Literal, assert_never
 
 from openai.types import responses
+from openai.types.responses.response_status import ResponseStatus
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
-from ..._framing import TOOL_RESULT_TAG, wrap
-from ...computer_use import (
-    _SAFETY_CHECKS,  # pyright: ignore[reportPrivateUsage]
-    ComputerCallPart,
-    ComputerResult,
-    ComputerReturnPart,
-    SafetyCheck,
-    _safety_checks,  # pyright: ignore[reportPrivateUsage]
+from ..._framing import TOOL_RESULT_TAG, frame
+from ..._utils import is_str_dict
+from ...computer_use import COMPUTER_KIND, ComputerCallPart, ComputerResult, ComputerReturnPart
+from ...messages import (
+    BinaryImage,
+    ModelMessage,
+    ModelResponse,
+    ModelResponsePart,
+    ToolCallPart,
+    ToolReturnPart,
+    _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
-from ...messages import BinaryImage, ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart
+from .. import ModelRequestParameters, _computer_tool_names  # pyright: ignore[reportPrivateUsage]
 
-_SCROLL_PIXELS_PER_CLICK = 100
-"""OpenAI scrolls by pixels and the `computer` tool by wheel clicks; one click scrolls about this far."""
+_SCROLL_PIXELS_PER_CLICK = 114
+"""OpenAI scrolls by pixels and the `computer` tool by wheel clicks; one click scrolls about this far.
+
+Measured in Firefox ESR 153 on `DockerContainer(desktop=True)`'s 1280x800 desktop: every click scrolled 114 pixels.
+"""
 
 _BLANK_SCREENSHOT = (
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGP4DwABAQEAsTj2FAAAAABJRU5ErkJggg=='
@@ -87,7 +95,7 @@ class _OpenAIScreenshot(_Strict):
     type: Literal['screenshot']
 
 
-_OPENAI_ACTION: TypeAdapter[
+_OpenAIAction = (
     _OpenAIClick
     | _OpenAIDoubleClick
     | _OpenAIMove
@@ -97,23 +105,10 @@ _OPENAI_ACTION: TypeAdapter[
     | _OpenAIType
     | _OpenAIWait
     | _OpenAIScreenshot
-] = TypeAdapter(
-    Annotated[
-        _OpenAIClick
-        | _OpenAIDoubleClick
-        | _OpenAIMove
-        | _OpenAIScroll
-        | _OpenAIDrag
-        | _OpenAIKeypress
-        | _OpenAIType
-        | _OpenAIWait
-        | _OpenAIScreenshot,
-        Field(discriminator='type'),
-    ]
 )
 """The OpenAI computer actions the `computer` tool can run, each with only the fields it maps."""
 
-_LIST = TypeAdapter(list[Any], config={'strict': True})
+_OPENAI_ACTION: TypeAdapter[_OpenAIAction] = TypeAdapter(Annotated[_OpenAIAction, Field(discriminator='type')])
 
 
 def _map_computer_action(raw: Any) -> list[tuple[dict[str, Any], str | None]]:
@@ -132,22 +127,31 @@ def _map_computer_action(raw: Any) -> list[tuple[dict[str, Any], str | None]]:
         case _OpenAIDoubleClick():
             return [({'type': 'click', 'x': action.x, 'y': action.y, 'count': 2, 'modifiers': action.keys}, None)]
         case _OpenAIMove():
-            return [({'type': 'move', 'x': action.x, 'y': action.y, 'modifiers': action.keys}, None)]
+            return [({'type': 'mouse_move', 'x': action.x, 'y': action.y, 'modifiers': action.keys}, None)]
         case _OpenAIDrag():
             path = [{'x': point.x, 'y': point.y} for point in action.path]
             return [({'type': 'drag', 'path': path, 'modifiers': action.keys}, None)]
         case _OpenAIScroll():
             return _map_scroll(action)
         case _OpenAIKeypress():
-            return [({'type': 'keypress', 'keys': action.keys}, None)]
+            return [({'type': 'press_keys', 'keys': action.keys}, None)]
         case _OpenAIType():
-            return [({'type': 'type', 'text': action.text}, None)]
+            return [({'type': 'type_text', 'text': action.text}, None)]
         case _OpenAIWait():
             return [({'type': 'wait'}, None)]
         case _OpenAIScreenshot():
             return [({'type': 'screenshot'}, None)]
         case _:
             assert_never(action)
+
+
+_TOOL_TYPES: dict[object, str] = {
+    'double_click': 'click',
+    'move': 'mouse_move',
+    'keypress': 'press_keys',
+    'type': 'type_text',
+}
+"""The `computer` tool's action type for each OpenAI action type spelled differently."""
 
 
 def _refused_action(error: ValidationError) -> dict[str, Any]:
@@ -158,7 +162,7 @@ def _refused_action(error: ValidationError) -> dict[str, Any]:
     fields = sorted({str(detail['loc'][1]) for detail in details if len(detail['loc']) > 1})
     kind = details[0]['loc'][0] if details[0]['loc'] else (details[0].get('ctx') or {}).get('tag')
     # Under the tool's own type, so the retry names the fields rather than refusing the type.
-    return {'type': 'click' if kind == 'double_click' else kind, 'unsupported_fields': fields}
+    return {'type': _TOOL_TYPES.get(kind, kind), 'unsupported_fields': fields}
 
 
 def _map_scroll(action: _OpenAIScroll) -> list[tuple[dict[str, Any], str | None]]:
@@ -172,7 +176,7 @@ def _map_scroll(action: _OpenAIScroll) -> list[tuple[dict[str, Any], str | None]
         if pixels
     ]
     # A scroll by nothing only moves the pointer there.
-    return scrolls or [({'type': 'move', 'x': action.x, 'y': action.y, 'modifiers': action.keys}, None)]
+    return scrolls or [({'type': 'mouse_move', 'x': action.x, 'y': action.y, 'modifiers': action.keys}, None)]
 
 
 def _scroll(action: _OpenAIScroll, axis: str, pixels: int, direction: str) -> tuple[dict[str, Any], str | None]:
@@ -192,73 +196,108 @@ def _scroll(action: _OpenAIScroll, axis: str, pixels: int, direction: str) -> tu
     return scroll, f'{axis}={pixels} ran as {clicks} wheel clicks of about {_SCROLL_PIXELS_PER_CLICK} pixels each.'
 
 
-_SCROLL_NOTES = 'computer_scroll_notes'
-"""The `provider_details` key of a note per `computer` tool action, on how a pixel scroll ran in wheel clicks."""
+_COMPUTER_CALL_KEYS = (
+    responses.ResponseComputerToolCallParam.__required_keys__
+    | responses.ResponseComputerToolCallParam.__optional_keys__
+)
+"""The keys a `computer_call` input item has; any other stored key is dropped before the item is sent back."""
 
-_SCROLL_NOTES_TA = TypeAdapter(list[str | None])
 
-_STORED_ITEM_TA = TypeAdapter(dict[str, Any])
+_UNFINISHED_ARGS = '{"actions": ['
+"""The arguments of a call that must not run: like a truncated function call's, they don't parse."""
 
 
 def stored_computer_call(part: ToolCallPart) -> dict[str, Any] | None:
-    """The `computer_call` item a call came as, to send back unchanged, or `None` to send the call back plain.
+    """The `computer_call` item a call came as, to send back, or `None` to send the call back plain.
 
-    A history may come from storage or a UI, so only that the item is an object is checked; the API judges the rest.
+    A history may come from storage or a UI, so an item of another type is not sent, nor is any key a `computer_call`
+    doesn't have: otherwise a forged item could be a message from the developer. The API judges the values. Nor is an
+    item whose actions aren't the call's, such as after a hook changed them: sent back, it would say they ran.
     """
-    try:
-        return _STORED_ITEM_TA.validate_python((part.provider_details or {}).get('computer_call')) or None
-    except ValidationError:
+    stored = (part.provider_details or {}).get('computer_call')
+    if not is_str_dict(stored) or stored.get('type') != 'computer_call':
         return None
+    # A call that stopped with its response keeps its item, which is replayed as it came.
+    if part.args != _UNFINISHED_ARGS and _call_args(stored) not in (part.args, part.args_as_dict()):
+        return None
+    return {key: value for key, value in stored.items() if key in _COMPUTER_CALL_KEYS}
 
 
 def map_computer_call(
-    item: responses.ResponseComputerToolCall, tool_name: str, tool_call_id: str, provider_name: str
-) -> ComputerCallPart:
-    """A `computer_call` as a call of the `computer` tool, keeping the item to send back as it was."""
+    item: responses.ResponseComputerToolCall,
+    model_request_parameters: ModelRequestParameters,
+    tool_call_id: str,
+    provider_name: str,
+) -> ComputerCallPart | None:
+    """A `computer_call` as a call of the `computer` tool, keeping the item to send back as it was.
+
+    `None` when the request has no `computer` tool to run it.
+    """
+    # A request always has it, but recorded streams are replayed without tools by the stream parity test.
+    if not (tool_names := _computer_tool_names(model_request_parameters)):
+        return None
+    tool_name = tool_names[0]
     # The SDK doesn't validate a response, so the item can hold anything; it is kept as sent, without a warning.
     dumped = item.model_dump(mode='json', exclude_none=True, warnings=False)
-    provider_details: dict[str, Any] = {'computer_call': dumped}
-    if checks := dumped.get('pending_safety_checks'):
-        # Read by `ComputerCallPart.safety_checks`, and sent back as acknowledged once the call is approved.
-        provider_details[_SAFETY_CHECKS] = checks
-    args: dict[str, Any] | str
-    if item.status == 'incomplete':
-        # Cut off mid-generation: like a truncated function call, its arguments don't parse, so none of it runs.
-        args = '{"actions": ['
-    else:
-        args = _map_actions(dumped, provider_details)
     return ComputerCallPart(
         tool_name,
-        args,
+        _call_args(dumped),
         tool_call_id=tool_call_id,
         id=item.id,
         provider_name=provider_name,
-        provider_details=provider_details,
+        provider_details={'computer_call': dumped},
     )
 
 
-def _map_actions(dumped: dict[str, Any], provider_details: dict[str, Any]) -> dict[str, Any]:
-    """A `computer_call` item's actions as the `computer` tool's arguments, noting scrolls in `provider_details`."""
-    raw = dumped['actions'] if 'actions' in dumped else [dumped['action']] if 'action' in dumped else []
-    try:
-        actions = _LIST.validate_python(raw)
-    except ValidationError:
+def stop_computer_calls_unless_completed(
+    parts: Sequence[ModelResponsePart],
+    model_request_parameters: ModelRequestParameters,
+    *,
+    status: ResponseStatus | None,
+    refused: bool,
+) -> list[ModelResponsePart]:
+    """The parts of a response, with no `computer` call left to run unless the response completed without a refusal.
+
+    OpenAI says to stop when a response is incomplete, failed or refused, even when a call in it finished. A stream
+    knows that only after it announced its calls, so this is decided on the final parts, for both paths and both the
+    native and the function `computer` call: the call keeps its place, with arguments that don't parse, as a cut-off
+    call's. Other function calls are left as they came. A response without a status, as some compatible APIs send,
+    counts as completed. A deferred `computer` tool counts too: tool search may reveal it in this same response.
+    """
+    if status in (None, 'completed') and not refused:
+        return list(parts)
+    tool_names = {tool.name for tool in model_request_parameters.function_tools if tool.tool_kind == COMPUTER_KIND.id}
+    return [
+        replace(part, args=_UNFINISHED_ARGS)
+        if isinstance(part, ToolCallPart) and part.tool_name in tool_names
+        else part
+        for part in parts
+    ]
+
+
+def _call_args(dumped: dict[str, Any]) -> dict[str, Any] | str:
+    """The `computer` call's arguments for a `computer_call` item."""
+    if dumped.get('status') != 'completed':
+        # Cut off or still being generated: like a truncated function call, its arguments don't parse, so none of it
+        # runs. OpenAI says not to run a partially generated action.
+        return _UNFINISHED_ARGS
+    return {'actions': [action for action, _ in _map_actions(dumped)]}
+
+
+def _map_actions(dumped: dict[str, Any]) -> list[tuple[dict[str, Any], str | None]]:
+    """A `computer_call` item's actions as `computer` tool actions, each with its note on how a pixel scroll runs."""
+    actions: list[Any] = dumped.get('actions', [])
+    if not isinstance(actions, list):
         # Not a list, even if it is one action: the call is malformed, so none of it runs.
         actions = [None]
-    mapped = [tool_action for action in actions for tool_action in _map_computer_action(action)]
-    notes = [note for _, note in mapped]
-    if any(notes):
-        # Written now, while what the model asked for is known, and read when the result is sent back.
-        provider_details[_SCROLL_NOTES] = notes
-    # A call with no actions only asks to look.
-    return {'actions': [tool_action for tool_action, _ in mapped] or [{'type': 'screenshot'}]}
+    return [tool_action for action in actions for tool_action in _map_computer_action(action)]
 
 
-def computer_calls_by_id(messages: list[ModelMessage]) -> dict[str, ToolCallPart]:
-    """Each `computer_call` this API made, by tool call ID, so its output can read it.
+def computer_calls_by_id(messages: Sequence[ModelMessage]) -> dict[str, ToolCallPart]:
+    """The `computer_call`s this API made, by tool call ID, so their outputs can read them.
 
-    Found by the item it came as, not by valid arguments: a call whose actions didn't map was still a `computer_call`,
-    and its output must be a `computer_call_output`.
+    A call is found by the item it came as, not by valid arguments: a call whose actions didn't map was still a
+    `computer_call`, and its output must be a `computer_call_output`.
     """
     return {
         part.tool_call_id: part
@@ -269,18 +308,16 @@ def computer_calls_by_id(messages: list[ModelMessage]) -> dict[str, ToolCallPart
     }
 
 
-def _scroll_notes(call: ToolCallPart | None, result: ComputerResult | None) -> list[str]:
-    """The notes on the pixel scrolls that ran, kept on the call when it was made.
+def _scroll_notes(call: ToolCallPart, result: ComputerResult | None) -> list[str]:
+    """The notes on the pixel scrolls that ran, made again from the stored item's validated numbers.
 
-    Only the first `performed` actions ran. Nothing is said for a call changed before it ran (its summary covers it),
-    a result without its outcome, or notes that don't validate, since a history may come from storage or a UI.
+    Not kept as text on the call, where a history from storage or a UI could put any text. Only the first `performed`
+    actions ran. Nothing is said for a call changed before it ran (its summary covers it) or a result without its
+    outcome.
     """
-    if call is None or result is None or result.get('changed'):
+    if result is None or result.get('changed') or not (stored := stored_computer_call(call)):
         return []
-    try:
-        notes = _SCROLL_NOTES_TA.validate_python((call.provider_details or {}).get(_SCROLL_NOTES, []))
-    except ValidationError:
-        return []
+    notes = [note for _, note in _map_actions(stored)]
     return [note for note in notes[: result['performed']] if note]
 
 
@@ -294,12 +331,13 @@ def _needs_summary(result: ComputerResult | None) -> bool:
 
 
 def map_computer_call_output(
-    part: ToolReturnPart, call_id: str, call: ToolCallPart | None
+    part: ToolReturnPart, call_id: str, call: ToolCallPart, *, changed: bool
 ) -> list[responses.ResponseInputItemParam]:
     """A `computer` result as a `computer_call_output`, followed by a message when it needs more than an image.
 
-    The API needs a screenshot in every output, so a result without one sends a blank image instead. The call's
-    safety checks are acknowledged only when it ran, which means it was approved.
+    The API needs a screenshot in every output, so a result without one sends a blank image instead. A `changed` call,
+    one a hook renamed or gave other actions after the API stored it, is answered by its ID all the same, with a note
+    saying what ran when it ran: the API's item still says what it made.
     """
     # A failed or denied call is a base part, without a screenshot.
     computer_return = part if isinstance(part, ComputerReturnPart) else None
@@ -315,35 +353,23 @@ def map_computer_call_output(
             'detail': 'original',  # pyright: ignore[reportAssignmentType]
         },
     }
-    # Read from the stored details, as the approval gate does: a restored call whose arguments didn't validate is a
-    # plain `ToolCallPart`, and may still have run with corrected arguments.
-    if computer_return and call is not None and (checks := _safety_checks(call.provider_details)):
-        output['acknowledged_safety_checks'] = _acknowledged(checks)
     items: list[responses.ResponseInputItemParam] = [output]
     # A successful result is read as validated content, so content stored as a JSON string reads the same as a list.
     content = (computer_return.typed_content if computer_return else None) or part.content_items()
     # Images before the closing screenshot, such as a zoom, can't go in the output.
     images = [item for item in content if isinstance(item, BinaryImage)]
-    others = images[:-1] if image is not None else images
-    conversions = _scroll_notes(call, computer_return.result) if computer_return else []
-    if image is None or computer_return is None or _needs_summary(computer_return.result) or others or conversions:
-        items.append(_summary_message(part, content, others, conversions))
+    extra_images = images[:-1] if image is not None else images
+    notes = _scroll_notes(call, computer_return.result) if computer_return else []
+    # A denied or interrupted call didn't run, so its note would be wrong.
+    if changed and part.outcome in ('success', 'failed'):
+        notes.append(f'The call ran as {call.tool_name} with the arguments {call.args_as_json_str()}.')
+    if computer_return is None or image is None or _needs_summary(computer_return.result) or extra_images or notes:
+        items.append(_summary_message(part, content, extra_images, notes))
     return items
 
 
-def _acknowledged(
-    checks: list[SafetyCheck],
-) -> list[responses.response_input_param.ComputerCallOutputAcknowledgedSafetyCheck]:
-    return [
-        responses.response_input_param.ComputerCallOutputAcknowledgedSafetyCheck(
-            id=check.id or '', code=check.code, message=check.message
-        )
-        for check in checks
-    ]
-
-
 def _summary_message(
-    part: ToolReturnPart, content: Sequence[object], others: list[BinaryImage], conversions: list[str]
+    part: ToolReturnPart, content: Sequence[object], extra_images: list[BinaryImage], notes: list[str]
 ) -> responses.EasyInputMessageParam:
     """The output can only carry an image: say what didn't run, or why the image is blank.
 
@@ -351,15 +377,24 @@ def _summary_message(
     natively.
     """
     texts = [item for item in content if isinstance(item, str)]
-    note = ' '.join([*texts, *conversions]) if texts or conversions else part.model_response_str(wrap_if_error=False)
-    framed = wrap(TOOL_RESULT_TAG, note, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
-    if not others:
+    references = [f'See file {image.identifier}.' for image in extra_images]
+    note = (
+        ' '.join([*texts, *notes, *references])
+        if texts or notes or references
+        else part.model_response_str(wrap_if_error=False)
+    )
+    framed = frame(TOOL_RESULT_TAG, note, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+    if not extra_images:
         return responses.EasyInputMessageParam(role='user', content=framed)
     message_content: list[responses.ResponseInputContentParam] = [
-        responses.ResponseInputTextParam(type='input_text', text=framed),
-        *(
-            responses.ResponseInputImageParam(type='input_image', image_url=other.data_uri, detail='original')
-            for other in others
-        ),
+        responses.ResponseInputTextParam(type='input_text', text=framed)
     ]
+    # Each image is framed on its own, as core frames a tool's files on the user channel.
+    for image in extra_images:
+        open_tag, close_tag = _tool_result_provenance_tags(part.tool_name, part.tool_call_id, image.identifier)
+        message_content += [
+            responses.ResponseInputTextParam(type='input_text', text=open_tag),
+            responses.ResponseInputImageParam(type='input_image', image_url=image.data_uri, detail='original'),
+            responses.ResponseInputTextParam(type='input_text', text=close_tag),
+        ]
     return responses.EasyInputMessageParam(role='user', content=message_content)

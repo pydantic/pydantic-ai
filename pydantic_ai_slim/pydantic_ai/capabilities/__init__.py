@@ -60,6 +60,7 @@ from .process_history import ProcessHistory
 from .reinject_system_prompt import ReinjectSystemPrompt
 from .request_input import RequestInput  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RequestInput
 from .resolve_model_id import ModelIdResolver, ResolveModelId
+from .retry_on_model_errors import TRANSIENT_MODEL_ERRORS, RetryOnModelErrors
 from .select_model import SelectModel
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
@@ -67,6 +68,7 @@ from .thread_executor import UseThreadExecutor
 from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
+from .windows_workspace import WindowsWorkspace
 from .wrapper import WrapperCapability
 from .x_search import XSearch
 
@@ -97,12 +99,14 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         PrepareTools,
         ProcessHistory,
         ReinjectSystemPrompt,
+        RetryOnModelErrors,
         SetToolMetadata,
         Thinking,
         ToolSearch,
         Toolset,
         WebFetch,
         WebSearch,
+        WindowsWorkspace,
         XSearch,
     )
     if (name := cls.get_serialization_name()) is not None
@@ -145,6 +149,7 @@ __all__ = [
     'Capability',
     'Citations',
     'CAPABILITY_TYPES',
+    'TRANSIENT_MODEL_ERRORS',
     'FileUnderstanding',
     'ImageGeneration',
     'Instrumentation',
@@ -159,6 +164,7 @@ __all__ = [
     'ProcessHistory',
     'ReinjectSystemPrompt',
     'ResolveModelId',
+    'RetryOnModelErrors',
     'ModelFallback',
     'SelectModel',
     'SetToolMetadata',
@@ -172,6 +178,7 @@ __all__ = [
     'UseThreadExecutor',
     'WebFetch',
     'WebSearch',
+    'WindowsWorkspace',
     'WrapperCapability',
     'XSearch',
     'CombinedCapability',

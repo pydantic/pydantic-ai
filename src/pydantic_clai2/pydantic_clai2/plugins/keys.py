@@ -33,7 +33,8 @@ async def choose_key(
     `check` raises `ValueError` for a value the service would reject, whether picked or typed. Replacing an
     existing `name` asks first, because every plugin and connection naming that key would change with it.
     """
-    with telemetry.span('key prompt', label=label) as span:
+    # The key's name, not `label`: a caller's label can hold free text, such as the reason a model gave.
+    with telemetry.span('key prompt', key_name=name) as span:
         choice = await _ask(name=name, label=label, dialogs=dialogs)
         span.set('answer', _answer(choice))
     if not choice:

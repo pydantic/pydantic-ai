@@ -22,6 +22,7 @@ from collections.abc import (
     Generator,
     Iterable,
     Iterator,
+    Mapping,
 )
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
@@ -42,6 +43,7 @@ from typing import (
     get_origin,
     overload,
 )
+from urllib.parse import urlparse
 
 import anyio
 from anyio.to_thread import run_sync
@@ -1294,6 +1296,18 @@ def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     return isinstance(obj, dict)
 
 
+def is_str_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
+    """Whether a value is a mapping whose keys are all strings."""
+    if not isinstance(value, Mapping):
+        return False
+    return all(isinstance(key, str) for key in value)  # pyright: ignore[reportUnknownVariableType]
+
+
+def is_list(obj: Any) -> TypeGuard[list[Any]]:
+    """Check if obj is a list, narrowing the type to `list[Any]`."""
+    return isinstance(obj, list)
+
+
 def is_google_files_api_url(url: str) -> bool:
     """Whether a URL uses the Google Files API prefix recognized by the Google adapters.
 
@@ -1301,6 +1315,16 @@ def is_google_files_api_url(url: str) -> bool:
     suffixes without a path separator also match.
     """
     return url.startswith('https://generativelanguage.googleapis.com/v1beta/files')
+
+
+def host_derived_id(url: str) -> str | None:
+    """An id taken from `url`'s hostname, or `None` when it has none.
+
+    `:` delimits instruction id segments, so an IPv6 literal such as `::1` is spelled `--1`.
+    Shared by `MCPToolset` and the `MCP` capability so both derive the same id from one URL.
+    """
+    host = urlparse(url).hostname
+    return host.replace(':', '-') if host else None
 
 
 def is_text_like_media_type(media_type: str) -> bool:

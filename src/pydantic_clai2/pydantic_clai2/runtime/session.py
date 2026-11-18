@@ -30,6 +30,7 @@ from pydantic_ai.capabilities import (
     LocalWorkspace,
     ModelFallback,
     ResolveModelId,
+    WindowsWorkspace,
     WrapperCapability,
 )
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserContent, UserPromptPart
@@ -54,7 +55,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     SqliteConversationStore,
     ensure_inactive,
 )
-from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+from pydantic_ai_harness.sub_agents import DelegationReports, DelegationTasks
 from pydantic_clai2.plugins import ConversationChanged
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
 from pydantic_clai2.runtime.monty_cells import MONTY_CELL, MontyCell
@@ -133,12 +134,22 @@ FamilyDefaults = Callable[[str], ModelSettings | None]
 
 
 def supports_local_workspace() -> bool:
-    """Whether CLAI can give runs a `LocalWorkspace` on this platform; it has none on Windows."""
+    """Whether CLAI can give runs a `LocalWorkspace` on this platform; on Windows, it gives them a `WindowsWorkspace`."""
     return sys.platform != 'win32'
 
 
-def _supplies_workspace(plugins: Sequence[AgentCapability[DepsT]], *, include_dynamic: bool = True) -> bool:
-    """Whether a plugin, such as a sandbox, supplies the run's workspace, so clai adds no `LocalWorkspace`.
+def local_workspace_provider() -> str:
+    """The `WorkspaceRef.provider` of the folder workspace CLAI gives runs on this platform."""
+    return 'local' if supports_local_workspace() else 'windows'
+
+
+def _supplies_workspace(
+    plugins: Sequence[AgentCapability[DepsT]],
+    *,
+    include_dynamic: bool = True,
+    messages: Sequence[ModelMessage] = (),
+) -> bool:
+    """Whether a plugin, such as a sandbox, supplies the workspace of a run over `messages`, so clai adds no `LocalWorkspace`.
 
     A plugin counts when it has a leaf, loaded up front, that overrides `get_workspace`. With
     `include_dynamic`, a capability function counts too, as its capability is known only once the run starts.
@@ -158,11 +169,14 @@ def _supplies_workspace(plugins: Sequence[AgentCapability[DepsT]], *, include_dy
         elif include_dynamic:
             return True
     return any(
-        not leaf.defer_loading and _overrides_get_workspace(leaf, include_dynamic=include_dynamic) for leaf in leaves
+        not leaf.defer_loading and _overrides_get_workspace(leaf, include_dynamic=include_dynamic, messages=messages)
+        for leaf in leaves
     )
 
 
-def _overrides_get_workspace(leaf: AbstractCapability[DepsT], *, include_dynamic: bool) -> bool:
+def _overrides_get_workspace(
+    leaf: AbstractCapability[DepsT], *, include_dynamic: bool, messages: Sequence[ModelMessage]
+) -> bool:
     while isinstance(leaf, WrapperCapability):
         if type(leaf).get_workspace is not WrapperCapability.get_workspace:
             return True
@@ -172,10 +186,25 @@ def _overrides_get_workspace(leaf: AbstractCapability[DepsT], *, include_dynamic
             # A wrapped tree's leaves are visited on their own; only a lone wrapped capability hides behind its wrapper.
             return False
         leaf = leaf.wrapped
+    if isinstance(leaf, ConversationWorkspace):
+        return leaf.supplies(messages)
     if isinstance(leaf, DynamicCapability):
         # A capability function's capability, and so its workspace, is known only once the run starts.
         return include_dynamic and not isinstance(leaf, WorkspacelessCapability)
     return type(leaf).get_workspace is not AbstractCapability.get_workspace
+
+
+class ConversationWorkspace(AbstractCapability[DepsT]):
+    """A capability that supplies the run's workspace in some conversations only, such as the `sandbox` plugin's.
+
+    CLAI asks `supplies` before each run, with the history the run continues. While it is false, CLAI attaches
+    the session's directory as it would without this capability; while it is true, `get_workspace` supplies
+    the run's workspace instead.
+    """
+
+    def supplies(self, messages: Sequence[ModelMessage]) -> bool:
+        """Whether the workspace of a run continuing `messages` comes from this capability."""
+        return False
 
 
 class WorkspacelessCapability(DynamicCapability[DepsT]):
@@ -210,6 +239,11 @@ class _LocalFallback(LocalWorkspace[DepsT]):
         finally:
             self._asking = False
         return None if other is not None else super().get_workspace(ctx, ref=ref)
+
+
+@dataclass
+class _WindowsFallback(_LocalFallback[DepsT], WindowsWorkspace[DepsT]):
+    """`_LocalFallback` on Windows."""
 
 
 def _requested_model(ctx: RunContext[DepsT]) -> str:
@@ -363,20 +397,26 @@ def _command_env() -> dict[str, str]:
 
 
 def local_workspace(
-    configured: Sequence[AgentCapability[DepsT]], directory: str | Path
+    configured: Sequence[AgentCapability[DepsT]], directory: str | Path, messages: Sequence[ModelMessage] = ()
 ) -> AgentCapability[DepsT] | None:
-    """The `LocalWorkspace` at `directory` that CLAI adds beside `configured`; `None` when it adds none.
+    """The workspace at `directory` that CLAI adds beside `configured`; `None` when it adds none.
 
-    None is added on platforms without a local workspace, or when a capability loaded up front supplies
-    the workspace, such as a sandbox. When only a capability function might, the local one defers to it.
+    That is a `LocalWorkspace`, or a `WindowsWorkspace` on Windows. None is added when a capability loaded
+    up front supplies the workspace of a run continuing `messages`, such as a sandbox. When only a capability
+    function might, the local one defers to it.
     """
-    if not supports_local_workspace() or _supplies_workspace(configured, include_dynamic=False):
+    if _supplies_workspace(configured, include_dynamic=False, messages=messages):
         return None
+    local, fallback_type = (
+        (LocalWorkspace[DepsT], _LocalFallback[DepsT])
+        if supports_local_workspace()
+        else (WindowsWorkspace[DepsT], _WindowsFallback[DepsT])
+    )
     if _supplies_workspace(configured):
         # No id: a function's `LocalWorkspace` shares the default id and would replace this whole.
-        fallback = _LocalFallback[DepsT](directory, env=_command_env(), id=None)
+        fallback = fallback_type(directory, env=_command_env(), id=None)
         return DynamicCapability[DepsT](lambda ctx: fallback)
-    return LocalWorkspace[DepsT](directory, env=_command_env())
+    return local(directory, env=_command_env())
 
 
 def interrupted_history(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
@@ -468,7 +508,8 @@ def _stale_local_workspace(messages: Sequence[ModelMessage], workspace: str) -> 
     """
     response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
     ref = response.workspace_ref if response is not None else None
-    return ref is not None and ref.provider == 'local' and ref != WorkspaceRef(provider='local', id=workspace)
+    local = local_workspace_provider()
+    return ref is not None and ref.provider == local and ref != WorkspaceRef(provider=local, id=workspace)
 
 
 def _report_context_usage(messages: Sequence[ModelMessage], report: Callable[[int], None]) -> None:
@@ -1034,7 +1075,7 @@ class Session(Generic[DepsT, OutputT]):
     def _add_local_workspace(self, capabilities: list[AgentCapability[DepsT]]) -> bool:
         """Add CLAI's `LocalWorkspace` to a run's `capabilities` unless a configured one supplies it; whether it did."""
         configured = [*(agent_capabilities(self.agent) or ()), *self.plugins]
-        if (local := local_workspace(configured, self.workspace)) is None:
+        if (local := local_workspace(configured, self.workspace, self._messages)) is None:
             return False
         capabilities.append(local)
         return True

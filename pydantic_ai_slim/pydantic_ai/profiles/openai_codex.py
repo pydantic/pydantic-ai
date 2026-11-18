@@ -13,6 +13,7 @@ def openai_codex_model_profile(model_name: str) -> ModelProfile:
     rejects the explicit prompt caching fields, and does not expose server-side input-token counting or the Batch API.
     """
     return merge_profile(
+        # Its native tools leave out the `ComputerTool` `OpenAIProvider` adds: unverified on the Codex backend.
         openai_model_profile(model_name),
         OpenAIModelProfile(
             # Drop unsupported generic settings for portability. Forward explicit `openai_*`
@@ -25,8 +26,6 @@ def openai_codex_model_profile(model_name: str) -> ModelProfile:
             openai_responses_requires_streaming=True,
             openai_responses_requires_store_false=True,
             openai_supports_input_token_counting=False,
-            # Unverified on the Codex backend, so the `computer` tool stays a function tool.
-            openai_supports_computer_tool=False,
             openai_supports_batch_api=False,
             # The backend rejects `prompt_cache_options` and `prompt_cache_breakpoint` with a 400 on every
             # model it serves, and caches prompts implicitly instead, so the unified `cache` setting has

@@ -11,10 +11,11 @@ from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.google import google_cloud_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
@@ -56,8 +57,9 @@ class VercelProvider(_OpenAISDKProvider):
             'deepseek': deepseek_model_profile,
             'groq': groq_model_profile,
             'mistral': mistral_model_profile,
+            'moonshotai': moonshotai_model_profile,
             'openai': openai_model_profile,
-            'vertex': google_model_profile,
+            'vertex': google_cloud_model_profile,
             'xai': grok_model_profile,
             'zai': _glm_5_3_schema_profile,
         }

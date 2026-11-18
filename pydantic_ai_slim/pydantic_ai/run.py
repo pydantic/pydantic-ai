@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from copy import copy, deepcopy
+from copy import deepcopy
 from datetime import datetime
 from functools import cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, NotRequired, Required, cast, overload
@@ -24,13 +24,13 @@ from . import (
     messages as _messages,
     usage as _usage,
 )
-from ._conversation_marks import mark_stored
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from ._instrumentation import current_otel_traceparent
 from ._run_context import (
     CustomEventT,
     no_workspace,
 )
+from ._run_conversation import conversation_from_state
 from .capabilities._pending_messages import drain_pending_messages_at_end
 from .conversation import Conversation
 from .output import OutputDataT
@@ -113,34 +113,6 @@ def _output_field_schema(schema: CoreSchema) -> CoreSchema:
     while schema['type'] != 'dataclass-args':
         schema = cast('CoreSchema', schema['schema'])  # pyright: ignore[reportGeneralTypeIssues,reportTypedDictNotRequiredAccess]
     return next(field['schema'] for field in schema['fields'] if field['name'] == 'output')
-
-
-_STAMPED_FIELDS = ('timestamp', 'instructions', 'run_id', 'conversation_id')
-"""The fields a run fills in on a message it sends, when the message has them but they aren't set yet."""
-
-
-def _rewritten(message: _messages.ModelMessage, original: _messages.ModelMessage) -> bool:
-    """Whether `message` differs from `original` other than by what a run adds to a request it sends.
-
-    A run fills in the fields the request lacks, and adds parts to it, like the system prompt it reinjects
-    when the request opens the history it sends, or a `ModelSettingsDeltaPart` recording a settings change.
-    Any part added around the request's own parts, by the run or a capability, is saved with the request as
-    it was sent. Changing or dropping one of the request's own parts rewrites it.
-    """
-    filled = {name: getattr(message, name, None) for name in _STAMPED_FIELDS if getattr(original, name, False) is None}
-    if (
-        isinstance(message, _messages.ModelRequest)
-        and isinstance(original, _messages.ModelRequest)
-        and _keeps_in_order(message.parts, original.parts)
-    ):
-        filled['parts'] = message.parts
-    return message != dataclasses.replace(original, **filled)
-
-
-def _keeps_in_order(parts: Sequence[object], kept: Sequence[object]) -> bool:
-    """Whether `parts` holds each of `kept`, in the same order, with only other parts added around them."""
-    remaining = iter(parts)
-    return all(part in remaining for part in kept)
 
 
 _STATE_KEYS = (
@@ -1201,50 +1173,18 @@ class AgentRunResult(Generic[OutputDataT]):
         hadn't saved before the run.
         """
         output = self.output
-        conversation = Conversation(
+        return conversation_from_state(
+            self._state,
+            self._new_message_index,
             messages=list(self.all_messages()),
-            usage=copy(self.usage),
-            conversation_id=self.conversation_id,
-            deferred_tool_requests=(
-                DeferredToolRequests(
-                    calls=list(output.calls),
-                    approvals=list(output.approvals),
-                    metadata=dict(output.metadata),
-                    _kinds=dict(output._kinds),  # pyright: ignore[reportPrivateUsage]
-                )
-                if isinstance(output, DeferredToolRequests)
-                else None
-            ),
-            revision=self._state.conversation_revision,
+            deferred_tool_requests=output if isinstance(output, DeferredToolRequests) else None,
         )
-        index = self._conversation_new_message_index()
-        if index is not None and self._state.conversation_unchecked:
-            # Its store compares the messages before the index with the stored ones instead.
-            conversation.new_message_index = index
-        elif index is not None:
-            mark_stored(conversation, conversation.messages[:index])
-        return conversation
 
     def _conversation_saved(self, revision: str) -> None:
         """Record that a store saved this result's conversation, so its `conversation` continues from the new revision."""
         self._state.conversation_revision = revision
         self._state.conversation_unchecked = False
         self._state.conversation_saved = True
-
-    def _conversation_new_message_index(self) -> int | None:
-        if self._state.conversation_saved:
-            return len(self._state.message_history)
-        unsaved = self._state.conversation_unsaved
-        if unsaved is None:
-            return None
-        # The unsaved messages the run was given come just before the ones it added, unless a capability rewrote
-        # them, in which case the store compares the whole history instead. Filling in what a request it sends
-        # lacks doesn't count as a rewrite.
-        start = self._new_message_index - len(unsaved)
-        carried = self._state.message_history[start : self._new_message_index] if start >= 0 else []
-        if len(carried) != len(unsaved) or any(map(_rewritten, carried, unsaved)):
-            return None
-        return start
 
     @property
     def timestamp(self) -> datetime:

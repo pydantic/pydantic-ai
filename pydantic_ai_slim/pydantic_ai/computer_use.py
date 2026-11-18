@@ -8,8 +8,8 @@ Coordinates are pixels of the latest screenshot, from the top left, unless the c
 [`coordinate_grid`][pydantic_ai.computer_use.ComputerCallPart.coordinate_grid] puts them on a grid. A click or scroll
 without coordinates happens at the pointer.
 
-Actions follow the providers' computer tools: each is picked by `type` and named as OpenAI's are (`click`,
-`keypress`). A key is a single character or one of a fixed set of names. Common spellings, such as the X keysym
+Actions follow the providers' computer tools. Each is picked by `type`, its class name in snake case (`click`,
+`press_keys`). A key is a single character or one of a fixed set of names. Common spellings, such as the X keysym
 `KP_Enter` or the browser name `NumpadAdd`, are normalized, and `ctrl+s` is split into its keys. A character presses
 whatever the keyboard layout needs to type it; an upper-case letter is its lower-case key.
 
@@ -39,7 +39,6 @@ from __future__ import annotations as _annotations
 import re
 from typing import Annotated, Any, Literal, NotRequired, TypeAlias
 
-import pydantic
 from pydantic import AfterValidator, ConfigDict, Field
 from pydantic.dataclasses import dataclass
 from typing_extensions import TypedDict
@@ -49,9 +48,7 @@ from .messages import BinaryImage, ToolCallPart, ToolKind, ToolReturnPart
 __all__ = (
     'COMPUTER_KIND',
     'Click',
-    'ComputerArgs',
     'ComputerCallPart',
-    'ComputerContent',
     'ComputerResult',
     'ComputerReturnPart',
     'ComputerToolAction',
@@ -60,12 +57,11 @@ __all__ = (
     'HoldKeys',
     'MouseButton',
     'MouseDown',
+    'MouseMove',
     'MouseUp',
-    'MoveMouse',
     'Point',
     'PressKeys',
     'Region',
-    'SafetyCheck',
     'Screenshot',
     'Scroll',
     'TypeText',
@@ -264,17 +260,6 @@ def _normalize_modifiers(modifiers: tuple[str, ...]) -> tuple[str, ...]:
 _Keys: TypeAlias = Annotated[tuple[str, ...], Field(min_length=1), AfterValidator(_normalize_keys)]
 _Modifiers: TypeAlias = Annotated[tuple[str, ...], AfterValidator(_normalize_modifiers)]
 
-_CONTROL_CHARACTER = re.compile('[\x00-\x08\x0b-\x1f\x7f-\x9f]')
-
-
-def _check_text(text: str) -> str:
-    if match := _CONTROL_CHARACTER.search(text):
-        raise ValueError(
-            f'text must not contain the control character U+{ord(match.group()):04X}: only `\\n` (Enter) and '
-            '`\\t` (Tab) are typed as keys; write a line break as `\\n`, and press other keys with `keypress`'
-        )
-    return text
-
 
 def _check_position(x: int | None, y: int | None) -> None:
     if (x is None) != (y is None):
@@ -316,7 +301,7 @@ class Click:
     y: _Coordinate | None = None
     """From the top edge of the screenshot."""
     button: MouseButton = 'left'
-    count: Annotated[int, Field(ge=1, le=3)] = 1
+    count: Annotated[int, Field(ge=1)] = 1
     """1 for a click, 2 for a double click, 3 for a triple click."""
     modifiers: _Modifiers = ()
     """Modifier keys held during the click: `ctrl`, `shift`, `alt` or `super`."""
@@ -326,10 +311,10 @@ class Click:
 
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
-class MoveMouse:
+class MouseMove:
     """Move the pointer, for example to reveal a hover menu."""
 
-    type: Literal['move'] = 'move'
+    type: Literal['mouse_move'] = 'mouse_move'
     x: _Coordinate
     """From the left edge of the screenshot."""
     y: _Coordinate
@@ -390,21 +375,17 @@ class Scroll:
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
 class TypeText:
-    r"""Type text at the keyboard focus. Use `keypress` for shortcuts and special keys.
+    """Type text at the keyboard focus. Use `press_keys` for shortcuts and special keys."""
 
-    `\n` presses Enter and `\t` presses Tab. Other control characters, including `\r`, are refused when the action
-    is validated, so every backend types the same keys.
-    """
-
-    type: Literal['type'] = 'type'
-    text: Annotated[str, Field(min_length=1), AfterValidator(_check_text)]
+    type: Literal['type_text'] = 'type_text'
+    text: Annotated[str, Field(min_length=1)]
 
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
 class PressKeys:
     """Press keys together as one combination, then release them."""
 
-    type: Literal['keypress'] = 'keypress'
+    type: Literal['press_keys'] = 'press_keys'
     keys: _Keys
     """One key per entry, pressed together: `["enter"]`, `["ctrl", "a"]`, `["super", "shift", "t"]`."""
     repeat: Annotated[int, Field(ge=1)] = 1
@@ -415,7 +396,7 @@ class PressKeys:
 class HoldKeys:
     """Hold keys down for a while, then release them."""
 
-    type: Literal['hold_key'] = 'hold_key'
+    type: Literal['hold_keys'] = 'hold_keys'
     keys: _Keys
     """One key per entry, held together."""
     seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)]
@@ -456,7 +437,7 @@ class CursorPosition:
 
 ComputerToolAction: TypeAlias = Annotated[
     Click
-    | MoveMouse
+    | MouseMove
     | Drag
     | MouseDown
     | MouseUp
@@ -473,14 +454,14 @@ ComputerToolAction: TypeAlias = Annotated[
 """What the `computer` tool accepts: mouse and keyboard actions, plus waiting and looking."""
 
 
-class ComputerArgs(TypedDict):
+class _ComputerArgs(TypedDict):
     """The `computer` tool's arguments."""
 
     actions: list[ComputerToolAction]
     """The actions to perform, in order."""
 
 
-ComputerContent: TypeAlias = list[str | BinaryImage]
+_ComputerContent: TypeAlias = list[str | BinaryImage]
 """What the model sees from a `computer` call; see the module docstring for its order."""
 
 
@@ -493,52 +474,9 @@ class ComputerResult(TypedDict):
     error: NotRequired[str]
     """Why the action after the performed ones failed; the rest did not run."""
 
-    screenshot_size: NotRequired[tuple[int, int]]
-    """The `(width, height)` of this result's screenshot as the model saw it, which may be smaller than the display.
-    The model's next coordinates are in this space."""
-
     changed: NotRequired[bool]
     """Set when the actions that ran differ from those the model asked for, such as after an approval changed them.
     A model adapter then sends the summary instead of reporting the model's own actions as run."""
-
-
-@dataclass(frozen=True, kw_only=True)
-class SafetyCheck:
-    """A check a provider asks a person to make before a `computer` call runs, such as OpenAI's `pending_safety_checks`.
-
-    A call with safety checks waits for [approval](../deferred-tools.md#human-in-the-loop-tool-approval), whichever
-    tool runs it. If that tool is external or deferred, the call raises a `UserError`, since approval can't reach it.
-    """
-
-    message: str | None = None
-    """What the person should check, in the provider's words."""
-
-    code: str | None = None
-    """The provider's identifier for the kind of check, such as `'malicious_instructions'`."""
-
-    id: str | None = None
-    """The provider's identifier for this check, which it needs back when the call is approved."""
-
-
-_SAFETY_CHECKS = 'safety_checks'
-"""The `provider_details` key under which a model adapter keeps a call's safety checks, as `SafetyCheck` dicts."""
-
-_SAFETY_CHECKS_TA = pydantic.TypeAdapter(list[SafetyCheck])
-
-
-def _safety_checks(provider_details: dict[str, Any] | None) -> list[SafetyCheck]:
-    """The safety checks kept on a call.
-
-    Checks in a shape that can't be read, such as from a history a UI rebuilt, count as one empty check, so the call
-    still waits for approval.
-    """
-    checks = (provider_details or {}).get(_SAFETY_CHECKS)
-    if not checks:
-        return []
-    try:
-        return _SAFETY_CHECKS_TA.validate_python(checks)
-    except pydantic.ValidationError:
-        return [SafetyCheck()]
 
 
 _COORDINATE_GRID = 'coordinate_grid'
@@ -562,13 +500,13 @@ def _label(part: ToolCallPart, key: str, *, minimum: int = 1) -> int | None:
 
 
 COMPUTER_KIND = ToolKind(
-    'computer_use', 'computer', args=ComputerArgs, content=ComputerContent, metadata=ComputerResult
+    'computer_use', 'computer', args=_ComputerArgs, content=_ComputerContent, metadata=ComputerResult
 )
 """The kind of the `computer` tool, whose calls a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends to a
 provider's native computer tool."""
 
 
-class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
+class ComputerCallPart(ToolCallPart[_ComputerArgs], kind=COMPUTER_KIND):
     """A call of the `computer` tool."""
 
     @property
@@ -578,16 +516,12 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         return typed['actions'] if typed is not None else None
 
     @property
-    def safety_checks(self) -> list[SafetyCheck]:
-        """The checks the provider asks a person to make before this call runs; empty when there are none."""
-        return _safety_checks(self.provider_details)
-
-    @property
     def coordinate_grid(self) -> int | None:
         """The size of the grid the call's positions are on, such as `1000` for 0 to 999, or `None` for pixels.
 
-        The agent sets it from the model profile's `computer_use_coordinate_grid`. A history that lost the call's
-        `provider_details`, such as one a UI rebuilt, reads `None`.
+        This is the answering model's profile value, `computer_use_coordinate_grid`: a convention of the model's maker.
+        The agent records it on the call, because under `ModelFallback` the tool can't otherwise tell which model made
+        the call. A history that lost the call's `provider_details`, such as one a UI rebuilt, reads `None`.
         """
         return _label(self, _COORDINATE_GRID, minimum=2)
 
@@ -595,9 +529,11 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
     def screenshot_max_side(self) -> int | None:
         """The longest side, in pixels, of a screenshot the call's model takes, or `None` for no limit.
 
-        The agent sets it from the profile's `computer_use_screenshot_max_side`, using the smallest when a capability
-        like `ModelFallback` can switch models. A computer use capability can then refuse a screen the model can't see
-        before the call acts. A history a UI rebuilt reads `None`.
+        This is the answering model's profile value, `computer_use_screenshot_max_side`: a limit set by the model's
+        maker. The agent records it on the call, because under `ModelFallback` the tool can't otherwise tell which
+        model made the call. A `FallbackModel`'s calls get the smallest limit across its models: its response is matched
+        to one of them only by provider, which doesn't tell two models on one provider apart. A computer use capability
+        can then refuse a screen the model can't see before the call acts. A history a UI rebuilt reads `None`.
         """
         return _label(self, _SCREENSHOT_MAX_SIDE)
 
@@ -605,13 +541,13 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
     def screenshot_max_pixels(self) -> int | None:
         """The most pixels in a screenshot the call's model takes, or `None` for no limit.
 
-        Set from the profile's `computer_use_screenshot_max_pixels`; see
-        [`screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side].
+        The answering model's profile value, `computer_use_screenshot_max_pixels`, recorded as
+        [`screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side] is.
         """
         return _label(self, _SCREENSHOT_MAX_PIXELS)
 
 
-class ComputerReturnPart(ToolReturnPart[ComputerContent, ComputerResult], kind=COMPUTER_KIND):
+class ComputerReturnPart(ToolReturnPart[_ComputerContent, ComputerResult], kind=COMPUTER_KIND):
     """A successful result of the `computer` tool."""
 
     @property

@@ -126,6 +126,8 @@ _ACQUIRE_TIMEOUT = 150.0
 # Seconds before each retry of an exec handshake that failed before its socket opened: three
 # attempts over about five seconds. A single retry after 0.1 seconds ended 4 of 14 live eval runs.
 _HANDSHAKE_RETRY_DELAYS = (1.0, 4.0)
+# Bounds each exec handshake attempt, matching websockets' default `open_timeout`; a stalled attempt is retried.
+_HANDSHAKE_TIMEOUT = 10.0
 # Bounds the internal `pwd` probe behind `working_dir()`, which may first wake a sleeping Sprite.
 _INTERNAL_EXEC_TIMEOUT = 30
 # Bounds the control-plane lookup that confirms, after each command, the Sprite was not deleted while it ran.
@@ -322,7 +324,8 @@ async def _start_or_back_off(command: _ExecCommand, delay: float | None) -> bool
     A failure after the socket opened, or on the last attempt (`delay` is `None`), raises.
     """
     try:
-        await command.start()
+        with anyio.fail_after(_HANDSHAKE_TIMEOUT):
+            await command.start()
     except (TimeoutError, InvalidMessage, InvalidHandshake) as error:
         if command.ws is not None:
             raise WorkspaceUnavailableError('Sprites exec connection failed; command may have run') from error
@@ -443,6 +446,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
     With `desktop`, `True` or a `(width, height)` (1280x800 by default), the Sprite gets a display for
     [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse] on first use, which installs the programs it needs.
+    A cold wake stops the display and the programs on it; it starts again empty.
     """
 
     def __init__(
@@ -475,7 +479,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             # Commands see the desktop too, so a program the agent starts from the shell opens on it.
             self._env = {'DISPLAY': DISPLAY, **self._env}
         self._display = desktop_display(
-            self,
+            self._run_argv,
             self._desktop_size,
             lambda: f'Sprite {self._ref.id if self._ref else "(not created)"}',
         )
@@ -706,8 +710,17 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
+        _check_command_timeout(timeout)
+        if self._display is not None:
+            # Started first, so a program the command opens shows on the screen.
+            await self._display.start()
         async with self._operation():
             return await self._run(command, shell=shell, env=env, timeout=timeout)
+
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        """Run `argv` without starting the display, as the display's own commands do."""
+        async with self._operation():
+            return await self._run(argv, env=env, timeout=timeout)
 
     async def _run(
         self,
@@ -736,10 +749,11 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         # identifiers from the environment it passes on.
         args = _ending_with(marker, capture, self._command_args(command, shell, env))
 
-        # Acquiring the Sprite has its own bound; the command's deadline starts after it.
+        # Acquiring the Sprite and each exec handshake attempt have their own bounds: the command's deadline
+        # starts once its socket is open, so a slow handshake or a retry does not use it up.
         if sandbox is None:
             sandbox = await self._get_sandbox()
-        deadline = anyio.CancelScope(deadline=math.inf if timeout is None else anyio.current_time() + timeout)
+        deadline = anyio.CancelScope()
         exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
         code = -1
         interrupted = False
@@ -751,6 +765,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     if await _start_or_back_off(exec_command, delay):
                         break
                     exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
+                if timeout is not None:
+                    deadline.deadline = anyio.current_time() + timeout
                 try:
                     code = await exec_command.wait()
                 except NetworkError as error:
@@ -784,12 +800,10 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self, exec_command: _ExecCommand, marker: str, capture: str, timeout: float, *, capture_stderr: bool
     ) -> WorkspaceTimeoutError:
         """Close a command that ran past `timeout` and build its timeout error with the output it left."""
-        # A handshake that never opened started no command, so there is no capture to read.
-        started = exec_command.ws is not None
         await _close_command(exec_command)
         partial = _split_output(exec_command.get_stdout(), exec_command.get_stderr(), marker)
         # Not shielded: nothing is cancelled here, and a live exec round trip takes seconds.
-        stderr = await self._collect_stderr(capture) if capture_stderr and started else ''
+        stderr = await self._collect_stderr(capture) if capture_stderr else ''
         return WorkspaceTimeoutError(
             f'Command timed out after {timeout:g} seconds', stdout=partial[0], stderr=stderr + partial[1]
         )
