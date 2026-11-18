@@ -38,11 +38,9 @@ from .tools import AgentDepsT, DeferredToolRequests
 
 if TYPE_CHECKING:
     from ._run_context import RunContext
+    from .agent.abstract import EventStreamHandler
     from .result import FinalResult
     from .workspaces import Workspace
-
-    EventsHandler = Callable[[RunContext[Any], AsyncIterator[_messages.AgentStreamEvent]], Awaitable[None]]
-    """Where a run streams its events: a run's `event_stream_handler`."""
 
 
 @with_config(ConfigDict(title='AgentRunResult'))
@@ -519,7 +517,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             [_agent_graph.AgentNode[AgentDepsT, Any]],
             Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
-        events_handler: EventsHandler | None = None,
+        events_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         """Run the post-stream portion of the node lifecycle.
 
@@ -571,7 +569,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             [_agent_graph.AgentNode[AgentDepsT, Any]],
             Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
-        events_handler: EventsHandler | None = None,
+        events_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         """Run the complete node lifecycle inside `wrap_node_run`.
 
@@ -717,7 +715,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     async def _deliver_leftover_events(
         self,
         result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]],
-        events_handler: EventsHandler | None,
+        events_handler: EventStreamHandler[AgentDepsT] | None,
     ) -> None:
         """At a deferred-tool pause, deliver the events emitted after the run's last node stream closed.
 

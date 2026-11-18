@@ -121,13 +121,6 @@ _Outcome = _Completion | BaseException
 """What a finished background task hands to the run: the completed call, or the error that ends the run."""
 
 
-def _completed(outcome: _Outcome) -> _Completion:
-    """The completed call, or raise the error that ends the run."""
-    if isinstance(outcome, BaseException):
-        raise outcome
-    return outcome
-
-
 def _raise_if_retries_exhausted(tool_manager: ToolManager[Any], completion: _Completion) -> None:
     """Raise if a retry would take the tool past its `max_retries`, which ends the run as for a sequential call."""
     assert tool_manager.ctx is not None  # Set once the run has started.
@@ -473,6 +466,9 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], *, node: AgentNode[AgentDepsT]
     ) -> AgentNode[AgentDepsT]:
         self._settle(ctx)
+        # Keep only the results a pause could still take back, so a long run doesn't hold every delivered one.
+        still_queued = {message.enqueue_id for message in ctx.pending_messages or ()}
+        self._queued = {enqueue_id: c for enqueue_id, c in self._queued.items() if enqueue_id in still_queued}
         return node
 
     def _deliver(self, ctx: RunContext[AgentDepsT], outcome: _Outcome) -> None:
@@ -487,11 +483,12 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         self._queued[enqueue_id] = completion
 
     def _completed_at_pause(self, ctx: RunContext[AgentDepsT], outcome: _Outcome) -> _Completion:
-        completion = _completed(outcome)
-        if completion.retry is not None:
+        if isinstance(outcome, BaseException):
+            raise outcome
+        if outcome.retry is not None:
             assert ctx.tool_manager is not None  # Set once the run has started.
-            _raise_if_retries_exhausted(ctx.tool_manager, completion)
-        return completion
+            _raise_if_retries_exhausted(ctx.tool_manager, outcome)
+        return outcome
 
     def _requeue_in_dispatch_order(self, ctx: RunContext[AgentDepsT], arrived: list[_Completion]) -> None:
         """Queue the results no request has carried yet in the order their calls were dispatched.
