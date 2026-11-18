@@ -471,7 +471,7 @@ Run the deterministic recorder fixture.
             '--target',
             str(packages),
             f'pydantic-ai-harness[coder]=={engine_version}',
-            f'pydantic-ai-pax=={engine_version}',
+            f'pydantic-clai2=={engine_version}',
             f'pydantic-ai-slim[anthropic,openai,mcp,spec]>={slim_version}',
             f'cryptography>={cryptography_version}',
             'logfire>=4.39.0',
