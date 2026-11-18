@@ -60,11 +60,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=91
+      - x-originResponse;dur=80
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-2e4a766a3c9a5088a4627688f03ded59-96d3fa8e913ad942-01
+      - 00-db54df8123379a78d14d40ae08b4d3e4-9f74a85c6df8f462-01
       transfer-encoding:
       - chunked
       vary:
@@ -73,54 +73,54 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011ChAKuJiFZNG9jyFmurvaX","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":0,"cache_read_input_tokens":4643,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
-
+        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011ChAoVjzdJwgRM8bYQV1Fu","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":109,"cache_read_input_tokens":4534,"cache_creation":{"ephemeral_5m_input_tokens":109,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
+        
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_014AaB7SxE1xBPriDe2SLHW5","name":"screenshot","input":{},"toolset_name":"computer","caller":{"type":"direct"}}         }
-
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01PLsULt3f5XXpotLW1kGq9a","name":"screenshot","input":{},"toolset_name":"computer","caller":{"type":"direct"}} }
+        
         event: ping
         data: {"type": "ping"}
-
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}              }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}         }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}            }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}
+        
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0     }
-
+        data: {"type":"content_block_stop","index":0      }
+        
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_015FhSyCMKAH4heWr5h7rqiy","name":"left_click","input":{},"toolset_name":"computer","caller":{"type":"direct"}}     }
-
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01Ff8ii9JwwidzSDJEpLztNV","name":"left_click","input":{},"toolset_name":"computer","caller":{"type":"direct"}}          }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}              }
-
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}  }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"coordinate\":[100,200]}"}     }
-
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"coordinate\":[100,200]}"}   }
+        
         event: content_block_stop
         data: {"type":"content_block_stop","index":1    }
-
+        
         event: content_block_start
-        data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_01TP8jCbaV1pbTETTnnhHExe","name":"type","input":{},"toolset_name":"computer","caller":{"type":"direct"}}             }
-
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_01Wh8PyGobD4umavirhcKwFB","name":"type","input":{},"toolset_name":"computer","caller":{"type":"direct"}}    }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}    }
-
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}}
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"text\":\"hello\"}"}      }
-
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"text\":\"hello\"}"} }
+        
         event: content_block_stop
-        data: {"type":"content_block_stop","index":2         }
-
+        data: {"type":"content_block_stop","index":2           }
+        
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":0,"cache_read_input_tokens":4643,"output_tokens":98,"output_tokens_details":{"thinking_tokens":0}}   }
-
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":109,"cache_read_input_tokens":4534,"output_tokens":98,"output_tokens_details":{"thinking_tokens":0}}   }
+        
         event: message_stop
-        data: {"type":"message_stop"         }
-
-  recorded_at: 2026-11-18T11:37:34.480455+00:00
+        data: {"type":"message_stop"}
+        
+  recorded_at: 2026-11-18T17:39:25.854868+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -150,12 +150,12 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_014AaB7SxE1xBPriDe2SLHW5
+          - id: toolu_01PLsULt3f5XXpotLW1kGq9a
             type: tool_use
             name: screenshot
             input: {}
             toolset_name: computer
-          - id: toolu_015FhSyCMKAH4heWr5h7rqiy
+          - id: toolu_01Ff8ii9JwwidzSDJEpLztNV
             type: tool_use
             name: left_click
             input:
@@ -163,7 +163,7 @@ interactions:
               - 100
               - 200
             toolset_name: computer
-          - id: toolu_01TP8jCbaV1pbTETTnnhHExe
+          - id: toolu_01Wh8PyGobD4umavirhcKwFB
             type: tool_use
             name: type
             input:
@@ -171,21 +171,21 @@ interactions:
             toolset_name: computer
         - role: user
           content:
-          - tool_use_id: toolu_014AaB7SxE1xBPriDe2SLHW5
+          - tool_use_id: toolu_01PLsULt3f5XXpotLW1kGq9a
             type: tool_result
             content:
             - text: OK
               type: text
             is_error: false
             toolset_name: computer
-          - tool_use_id: toolu_015FhSyCMKAH4heWr5h7rqiy
+          - tool_use_id: toolu_01Ff8ii9JwwidzSDJEpLztNV
             type: tool_result
             content:
             - text: OK
               type: text
             is_error: false
             toolset_name: computer
-          - tool_use_id: toolu_01TP8jCbaV1pbTETTnnhHExe
+          - tool_use_id: toolu_01Wh8PyGobD4umavirhcKwFB
             type: tool_result
             content:
             - text: Ran 3 actions. Screenshot attached (1280x800).
@@ -237,11 +237,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=91
+      - x-originResponse;dur=169
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-a05e142ae44ad132498c4720155b1f6e-766509a965ed5516-01
+      - 00-57d4496060b6fbee4a361af316d543c0-57b37fa982286c2a-01
       transfer-encoding:
       - chunked
       vary:
@@ -250,27 +250,27 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011ChAKuNTyKZduzqGLZKUpL","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":7507,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}           }
-
+        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011ChAoVp5h47yG8oYq5XQwh","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":2973,"cache_read_input_tokens":4534,"cache_creation":{"ephemeral_5m_input_tokens":2973,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
+        
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}     }
-
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}       }
+        
         event: ping
         data: {"type": "ping"}
-
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}  }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"} }
+        
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0 }
-
+        data: {"type":"content_block_stop","index":0            }
+        
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":7507,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}     }
-
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":2973,"cache_read_input_tokens":4534,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}  }
+        
         event: message_stop
-        data: {"type":"message_stop"           }
-
-  recorded_at: 2026-11-18T11:37:35.000258+00:00
+        data: {"type":"message_stop"    }
+        
+  recorded_at: 2026-11-18T17:39:26.461058+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -282,7 +282,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "10890"
+      - "10895"
       content-type:
       - application/json
       host:
@@ -300,7 +300,7 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_014AaB7SxE1xBPriDe2SLHW5
+          - id: toolu_01PLsULt3f5XXpotLW1kGq9a
             type: tool_use
             name: computer
             input:
@@ -312,11 +312,11 @@ interactions:
                 button: left
                 count: 1
                 modifiers: []
-              - type: type
+              - type: type_text
                 text: hello
         - role: user
           content:
-          - tool_use_id: toolu_014AaB7SxE1xBPriDe2SLHW5
+          - tool_use_id: toolu_01PLsULt3f5XXpotLW1kGq9a
             type: tool_result
             content:
             - text: Ran 3 actions. Screenshot attached (1280x800).
@@ -381,11 +381,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=87
+      - x-originResponse;dur=94
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-c0163b2fb80efacf29dbbb99b32fb855-67efc2ec48d75222-01
+      - 00-41cc427e14ced01bd2aa6db4781f0788-969dfe8f81a784b9-01
       transfer-encoding:
       - chunked
       vary:
@@ -394,51 +394,51 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011ChAKuQXkJyrJwfGBDPuFy","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":3,"cache_creation_input_tokens":3212,"cache_read_input_tokens":1966,"cache_creation":{"ephemeral_5m_input_tokens":3212,"ephemeral_1h_input_tokens":0},"output_tokens":26,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}   }
-
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011ChAoVrDgCknuPgRmS2Hvv","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":3,"cache_creation_input_tokens":5180,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":5180,"ephemeral_1h_input_tokens":0},"output_tokens":26,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}   }
+        
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01SihXybgA2B19gQovKSMVHY","name":"computer","input":{},"caller":{"type":"direct"}}          }
-
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01DZF8Q6sqFSuwcvGfS4tFCe","name":"computer","input":{},"caller":{"type":"direct"}}}
+        
         event: ping
         data: {"type": "ping"}
-
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}   }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""} }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"actio"}     }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"actio"} }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"n\": \"le"}        }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"n\": \"le"}  }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ft_clic"}       }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ft_clic"}     }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"k\""}               }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"k\""}  }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"coor"}             }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"coor"}      }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"dinate\""}  }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"dinate\""}        }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": [10,1"} }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": [10,1"}         }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"0]}"}              }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"0]}"}}
+        
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0               }
-
+        data: {"type":"content_block_stop","index":0      }
+        
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":3,"cache_creation_input_tokens":3212,"cache_read_input_tokens":1966,"output_tokens":76}   }
-
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":3,"cache_creation_input_tokens":5180,"cache_read_input_tokens":0,"output_tokens":76}             }
+        
         event: message_stop
-        data: {"type":"message_stop"     }
-
-  recorded_at: 2026-11-18T11:37:36.449326+00:00
+        data: {"type":"message_stop"   }
+        
+  recorded_at: 2026-11-18T17:39:27.951582+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -450,7 +450,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "15405"
+      - "15410"
       content-type:
       - application/json
       host:
@@ -468,7 +468,7 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_014AaB7SxE1xBPriDe2SLHW5
+          - id: toolu_01PLsULt3f5XXpotLW1kGq9a
             type: tool_use
             name: computer
             input:
@@ -480,11 +480,11 @@ interactions:
                 button: left
                 count: 1
                 modifiers: []
-              - type: type
+              - type: type_text
                 text: hello
         - role: user
           content:
-          - tool_use_id: toolu_014AaB7SxE1xBPriDe2SLHW5
+          - tool_use_id: toolu_01PLsULt3f5XXpotLW1kGq9a
             type: tool_result
             content:
             - text: Ran 3 actions. Screenshot attached (1280x800).
@@ -512,7 +512,7 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_01SihXybgA2B19gQovKSMVHY
+          - id: toolu_01DZF8Q6sqFSuwcvGfS4tFCe
             type: tool_use
             name: computer
             input:
@@ -522,7 +522,7 @@ interactions:
               - 10
         - role: user
           content:
-          - tool_use_id: toolu_01SihXybgA2B19gQovKSMVHY
+          - tool_use_id: toolu_01DZF8Q6sqFSuwcvGfS4tFCe
             type: tool_result
             content:
             - text: Ran 1 action. Screenshot attached (1280x800).
@@ -573,11 +573,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=161
+      - x-originResponse;dur=94
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-a3235af2d66ef348558d40ecea9dcd1b-7f4943a650e3e7cd-01
+      - 00-6ea4c3c738a5adebb200a58c0e527113-b0e08cb6865eb8b7-01
       transfer-encoding:
       - chunked
       vary:
@@ -586,24 +586,24 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011ChAKuXH4L1EMRBWSzUacH","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1,"cache_creation_input_tokens":1460,"cache_read_input_tokens":5178,"cache_creation":{"ephemeral_5m_input_tokens":1460,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}   }
-
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011ChAoVxmpcJytfRbdBB7G1","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1,"cache_creation_input_tokens":1460,"cache_read_input_tokens":5180,"cache_creation":{"ephemeral_5m_input_tokens":1460,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}      }
+        
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}       }
-
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}         }
+        
         event: ping
         data: {"type": "ping"}
-
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}              }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"} }
+        
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0          }
-
+        data: {"type":"content_block_stop","index":0           }
+        
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1,"cache_creation_input_tokens":1460,"cache_read_input_tokens":5178,"output_tokens":4}  }
-
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1,"cache_creation_input_tokens":1460,"cache_read_input_tokens":5180,"output_tokens":4}             }
+        
         event: message_stop
-        data: {"type":"message_stop"               }
-
-  recorded_at: 2026-11-18T11:37:37.374921+00:00
+        data: {"type":"message_stop"              }
+        
+  recorded_at: 2026-11-18T17:39:28.901093+00:00
