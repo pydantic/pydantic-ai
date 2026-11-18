@@ -1335,7 +1335,8 @@ def host_derived_id(url: str) -> str | None:
 def is_text_like_media_type(media_type: str) -> bool:
     """Check if a media type represents text-like content.
 
-    Returns True for `text/*`, JSON, XML, YAML, TOML, and their structured syntax suffixes.
+    Returns True for `text/*`, JSON, XML, YAML and TOML, and the `+json` and `+xml` structured syntax suffixes.
+    `+yaml` types aren't included: see `has_yaml_structured_suffix`.
     """
     # Media types may carry parameters (RFC 2045); classify on the bare type.
     media_type = media_type.split(';', 1)[0].strip()
