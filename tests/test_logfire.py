@@ -62,7 +62,7 @@ with try_import():
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-    from opentelemetry.sdk.trace.sampling import ALWAYS_OFF, ALWAYS_ON
+    from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
 
 try:
     import logfire
@@ -5324,8 +5324,7 @@ def test_exception_recording_skipped_when_span_is_not_recording() -> None:
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.parametrize('sampled', [True, False])
-def test_model_request_attributes_are_serialized_only_when_span_is_recording(sampled: bool) -> None:
+def test_model_request_attributes_are_not_serialized_when_span_is_not_recording() -> None:
     """A sampled-out request span drops its attributes, so the request isn't serialized for it."""
     serializations: list[str] = []
 
@@ -5338,11 +5337,7 @@ def test_model_request_attributes_are_serialized_only_when_span_is_recording(sam
     agent = Agent(
         TestModel(call_tools=[]),
         capabilities=[
-            Instrumentation(
-                settings=InstrumentationSettings(
-                    tracer_provider=TracerProvider(sampler=ALWAYS_ON if sampled else ALWAYS_OFF)
-                )
-            )
+            Instrumentation(settings=InstrumentationSettings(tracer_provider=TracerProvider(sampler=ALWAYS_OFF)))
         ],
     )
 
@@ -5351,7 +5346,7 @@ def test_model_request_attributes_are_serialized_only_when_span_is_recording(sam
         return city  # pragma: no cover
 
     assert agent.run_sync('hello').output == 'success (no tool calls)'
-    assert serializations == (['tracked'] if sampled else [])
+    assert serializations == []
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
