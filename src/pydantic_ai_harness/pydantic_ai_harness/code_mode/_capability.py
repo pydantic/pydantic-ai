@@ -310,7 +310,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         tools: Literal['all'] | Sequence[str] | dict[str, Any] = 'all',
         max_retries: int = 3,
         *,
-        id: str | None = 'code_mode',
+        id: str | None = None,
         description: str | None = None,
         defer_loading: bool = False,
         max_tool_calls: int = 100,
