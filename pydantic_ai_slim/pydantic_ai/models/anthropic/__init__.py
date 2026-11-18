@@ -1713,7 +1713,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         model_request_parameters = self._only_the_computer_when_forced(
-            cast(AnthropicModelSettings, prepared_settings or {}), model_request_parameters
+            AnthropicModelSettings(**(prepared_settings or {})), model_request_parameters
         )
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
