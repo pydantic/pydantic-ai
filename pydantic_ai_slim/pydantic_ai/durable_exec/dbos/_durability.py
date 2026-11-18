@@ -94,7 +94,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         codec=IDENTITY_CODEC,
         unsupported_runtime_toolset_kinds=frozenset({'mcp', 'dynamic'}),
         wrapped_toolset_kinds=frozenset({'mcp', 'dynamic'}),
-        toolset_lifecycles={'mcp': 'enter-in-durable-unit', 'dynamic': 'enter-in-durable-unit'},
+        toolset_lifecycles={'mcp': 'enter-in-durable-unit', 'dynamic': 'enter-never'},
         tool_call_result_upgrade_lenient=True,
         journal_discovery=True,
         sequential_tools_in_durable_context=False,

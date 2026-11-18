@@ -224,8 +224,6 @@ class JournalDurability(BaseDurabilityCapability[Any]):
         durable_unit_noun='unit',
         durable_container_noun='journal',
         codec=JSON_CODEC,
-        # Units run in this process, so a run-held dynamic toolset reaches them, as on DBOS and Prefect.
-        toolset_lifecycles={'function': 'enter-always', 'mcp': 'enter-always', 'dynamic': 'enter-in-durable-unit'},
     )
 
     @property
@@ -1857,6 +1855,7 @@ async def test_legacy_dynamic_execution_unit_preserves_argument_validation_retry
         call_tool_operation=call_tool,
         resolve_tool_config=lambda tool, name: {},
         lifecycle='enter-never',
+        units_share_run_context=True,
     )
 
     def model(messages: list[Any], info: AgentInfo) -> ModelResponse:
@@ -1911,6 +1910,7 @@ async def test_dynamic_validator_without_durable_unit_is_a_hard_error() -> None:
         call_tool_operation=never_called,
         resolve_tool_config=lambda tool, name: {},
         lifecycle='enter-never',
+        units_share_run_context=True,
     )
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     with pytest.raises(UserError, match=r"Tool 'guarded'.*has an `args_validator`"):
@@ -1990,6 +1990,7 @@ async def test_legacy_validation_fallbacks_remain_inline() -> None:
         call_tool_operation=unused_operation,
         resolve_tool_config=lambda tool, name: False,
         lifecycle='enter-never',
+        units_share_run_context=True,
     )
     dynamic_tools = await dynamic.get_tools(ctx)
     dynamic_validator = dynamic_tools['tool'].args_validator_func

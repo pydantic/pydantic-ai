@@ -62,10 +62,13 @@ the run, which the durable container closes: that is the deliberate exception to
 it is what lets an `MCPToolset` hold one session per run instead of one per unit. Declare it with the
 `'enter-in-durable-unit'` lifecycle, which is only for engines whose units run in the container's own
 process; connecting still happens inside a unit, so the engine retries it. A `DynamicToolset` built
-with `per_run_step=False` is held the same way, on engines that declare `'dynamic':
-'enter-in-durable-unit'`, except that the run resolves it first: that factory, and the `for_run` of
-the toolset it returns, run in container code, so they carry the same determinism requirement as
-every other factory that runs there.
+with `per_run_step=False` is held the same way, except that the run resolves it first: that factory,
+and the `for_run` of the toolset it returns, run in container code, so they carry the same
+determinism requirement as every other factory that runs there. It needs no lifecycle declaration:
+`_build_dynamic_toolset` holds it when the engine's dynamic toolset transports are the default
+`IdentityParameterTransport`, which hands each unit the run's own `RunContext`. An engine whose
+`ParameterTransports` carry the context to another process gets per-unit resolution without declaring
+anything.
 
 Workspaces are routed by the base, not by engines: when a construction-time capability overrides
 `get_workspace`, `_bind_workspace_operation` binds one operation, `CapabilityOperationId('workspace',

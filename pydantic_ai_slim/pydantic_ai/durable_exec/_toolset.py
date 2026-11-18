@@ -165,7 +165,9 @@ class RunHeldToolset(Generic[AgentDepsT]):
 
     Only used where the durable unit runs in the same process as the container. Engines that
     serialize the run context across the boundary never see one and each unit enters its own, as
-    they always have.
+    they always have. A dynamic toolset is held only when its operations use the default
+    [`ParameterTransports`][pydantic_ai.durable_exec.ParameterTransports] transports, which hand each
+    unit the run's own context.
     """
 
     def __init__(self, id: str, toolset: AbstractToolset[AgentDepsT]):
@@ -907,6 +909,7 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
         call_tool_operation: CallToolOperation,
         resolve_tool_config: ResolveToolConfig,
         lifecycle: Lifecycle,
+        units_share_run_context: bool,
         validate_args_operation: CallToolOperation | None = None,
         resolve_validation_config: ResolveToolConfig | None = None,
         durable_registrations: list[Any] | None = None,
@@ -920,6 +923,7 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
             durable_config=durable_config,
         )
         self._dynamic_toolset = wrapped
+        self._units_share_run_context = units_share_run_context
         self._get_tools_operation = get_tools_operation
         self._call_tool_operation = call_tool_operation
         self._resolve_tool_config = resolve_tool_config
@@ -943,7 +947,7 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
         run_copy._run_tool_name_path = ()
         run_copy._run_held = None
         if (
-            self._lifecycle == 'enter-in-durable-unit'
+            self._units_share_run_context
             and not self._dynamic_toolset.per_run_step
             and (toolset_id := self._dynamic_toolset.id) is not None
         ):
@@ -952,9 +956,9 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
             # durable unit that needs the toolset. This runs the factory and the `for_run` of the
             # toolset it returns in container code, where both must be deterministic and leave
             # their I/O to the units, which use the toolset as `RunHeldToolset.stepped` prepares it
-            # once per run step. Only `enter-in-durable-unit` engines run their units in this
-            # process, where a unit can reach what the run holds; elsewhere every unit resolves its
-            # own, so nothing is resolved here. A `per_run_step=True` factory is re-evaluated per
+            # once per run step. Only units handed the run's own `RunContext` can reach what the run
+            # holds; where the engine's transports carry the context to the unit in another form,
+            # every unit resolves its own, so nothing is resolved here. A `per_run_step=True` factory is re-evaluated per
             # unit as before: its `for_run_step` swaps the inner toolset in place, which parallel
             # tool-call units must not share.
             run_copy._run_held = RunHeldToolset(toolset_id, await self._dynamic_toolset.for_run(ctx))
@@ -963,7 +967,7 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         # The per-run copy is stable across steps: a `per_run_step=True` factory is re-evaluated
         # inside the durable units, not in workflow/flow code here, and a `per_run_step=False` one
-        # was resolved once in `for_run`. (Outside the durable context this wrapper isn't in the
+        # was resolved once in `for_run` or is resolved by each unit. (Outside the durable context this wrapper isn't in the
         # run's tree at all — `for_run` above replaced it with the resolved toolset.)
         return self
 
