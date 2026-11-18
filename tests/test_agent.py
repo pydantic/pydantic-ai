@@ -130,8 +130,10 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.otari import OtariProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
+    from pydantic_ai.providers.stav import StavProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
     from pydantic_ai.providers.vllm import VLLMProvider
@@ -151,8 +153,10 @@ else:
         from pydantic_ai.providers.ollama import OllamaProvider
         from pydantic_ai.providers.openai import OpenAIProvider
         from pydantic_ai.providers.openrouter import OpenRouterProvider
+        from pydantic_ai.providers.otari import OtariProvider
         from pydantic_ai.providers.ovhcloud import OVHcloudProvider
         from pydantic_ai.providers.sambanova import SambaNovaProvider
+        from pydantic_ai.providers.stav import StavProvider
         from pydantic_ai.providers.together import TogetherProvider
         from pydantic_ai.providers.vercel import VercelProvider
         from pydantic_ai.providers.vllm import VLLMProvider
@@ -160,7 +164,7 @@ else:
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None
         CrusoeProvider = FireworksProvider = GitHubProvider = HerokuProvider = None
         MetaProvider = MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
-        OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None
+        OpenRouterProvider = OtariProvider = OVHcloudProvider = SambaNovaProvider = StavProvider = None
         TogetherProvider = VercelProvider = VLLMProvider = None
 
     try:
@@ -6475,7 +6479,7 @@ class TestMultipleToolCalls:
             assert info.output_tools is not None
             return ModelResponse(
                 parts=[
-                    ToolCallPart('deferred_tool'),
+                    ToolCallPart('deferred_tool', tool_call_id='deferred_tool'),
                     ToolCallPart('regular_tool', {'x': 1}),
                 ],
             )
@@ -6497,7 +6501,10 @@ class TestMultipleToolCalls:
 
         result = agent.run_sync('test early strategy with deferred tool call')
         assert result.output == snapshot(
-            DeferredToolRequests(calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())])
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())],
+                validated_args={'deferred_tool': {}},
+            )
         )
         messages = result.all_messages()
 
@@ -6543,6 +6550,7 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
             ]
         )
@@ -10182,8 +10190,10 @@ async def test_azure_provider_lifecycle_closes_client():
             lambda: OllamaProvider(base_url='http://localhost:11434/v1'), marks=[requires_openai], id='ollama'
         ),
         pytest.param(lambda: OpenRouterProvider(api_key='t'), marks=[requires_openai], id='openrouter'),
+        pytest.param(lambda: OtariProvider(api_key='t'), marks=[requires_openai], id='otari'),
         pytest.param(lambda: OVHcloudProvider(api_key='t'), marks=[requires_openai], id='ovhcloud'),
         pytest.param(lambda: SambaNovaProvider(api_key='t'), marks=[requires_openai], id='sambanova'),
+        pytest.param(lambda: StavProvider(api_key='t'), marks=[requires_openai], id='stav'),
         pytest.param(lambda: TogetherProvider(api_key='t'), marks=[requires_openai], id='together'),
         pytest.param(lambda: VercelProvider(api_key='t'), marks=[requires_openai], id='vercel'),
         pytest.param(lambda: AlibabaProvider(api_key='t'), marks=[requires_openai], id='alibaba'),
@@ -11513,7 +11523,7 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
                 ToolCallPart(tool_name='call_first'),
                 ToolCallPart(tool_name='call_first'),
                 ToolCallPart(tool_name='increment_integer_holder'),
-                ToolCallPart(tool_name='requires_approval'),
+                ToolCallPart(tool_name='requires_approval', tool_call_id='requires_approval'),
                 ToolCallPart(tool_name='call_second'),
                 ToolCallPart(tool_name='call_second'),
                 ToolCallPart(tool_name='call_second'),
@@ -11562,7 +11572,10 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
         result = agent.run_sync(user_prompt)
 
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())],
+            validated_args={'requires_approval': {}},
+        )
     )
     assert integer_holder == 2
 
@@ -12078,6 +12091,7 @@ async def test_hitl_tool_approval(serialize_history: bool):
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
         ]
     )
@@ -12086,7 +12100,8 @@ async def test_hitl_tool_approval(serialize_history: bool):
             approvals=[
                 ToolCallPart(tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'),
                 ToolCallPart(tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'),
-            ]
+            ],
+            validated_args={'ok_to_delete': {'path': 'ok_to_delete.py'}, 'never_delete': {'path': 'never_delete.py'}},
         )
     )
 
@@ -12147,6 +12162,7 @@ async def test_hitl_tool_approval(serialize_history: bool):
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
             ModelRequest(
                 parts=[
@@ -13494,14 +13510,17 @@ async def test_run_with_unapproved_tool_call_in_history():
 
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='delete_file')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='delete_file', tool_call_id='delete_file')]),
     ]
 
     result = await agent.run(message_history=messages)
 
     assert result.all_messages() == messages
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='delete_file', tool_call_id=IsStr())])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='delete_file', tool_call_id=IsStr())],
+            validated_args={'delete_file': {}},
+        )
     )
 
 

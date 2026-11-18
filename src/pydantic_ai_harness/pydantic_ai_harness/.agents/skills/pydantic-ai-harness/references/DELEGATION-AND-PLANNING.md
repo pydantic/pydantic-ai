@@ -267,22 +267,26 @@ reports = DelegationReports(tasks, conversation_id='conversation-1')
 
 ## Peers
 
-Use `Peers` for independently run sessions, not delegated child runs. The host provides a
-`PeerNetwork` for discovery and delivery, and an optional `PeerInbox` for receiving messages.
-`InMemoryPeerNetwork` and `LocalPeerInbox` connect sessions within one application. Bind the same inbox to
-`network.join(handle=..., inbox=inbox)` and `Peers(network=view, inbox=inbox)` on the recipient.
+Use `Peers` for independently run sessions, not delegated child runs. `InMemoryPeerNetwork` connects
+sessions within one application: `Peers(network)` joins it when the agent is built, under the agent's
+`name` (or `handle=`), receiving in a new `LocalPeerInbox` (or `inbox=`). An agent with no `name` raises
+`UserError`, and handles are unique within a network.
 
 ```python
 from pydantic_ai import Agent
 
 from pydantic_ai_harness import Peers
-from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox
+from pydantic_ai_harness.peers import InMemoryPeerNetwork
 
 network = InMemoryPeerNetwork()
-inbox = LocalPeerInbox()
-view = network.join(handle='reviewer', inbox=inbox)
-agent = Agent('test', capabilities=[Peers(network=view, inbox=inbox)])
+reviewer = Agent('test', name='reviewer', capabilities=[Peers(network)])
+author = Agent('test', name='author', capabilities=[Peers(network)])
 ```
+
+A host network instead gives each peer a `PeerConnection` for discovery and delivery, plus an optional
+`PeerInbox` its transport delivers to: `Peers(connection, inbox=inbox)`. Call
+`InMemoryPeerNetwork.join(handle=..., inbox=..., workspace=..., title=...)` yourself to set the workspace
+or title `list_peers` shows; pass the returned connection and the same inbox to `Peers`.
 
 - Tools: `list_peers(query='')` lists other sessions, filtering handle, title, workspace,
   or branch; `send_message(to, text, reply_to=None)` addresses a listed handle or ID.
@@ -292,13 +296,13 @@ agent = Agent('test', capabilities=[Peers(network=view, inbox=inbox)])
 - A peer with no active run holds the message; `InMemoryPeerNetwork` never starts its run, and a
   host network's own policy decides whether a message wakes it. A running peer reads the message
   at its next model request. Sending never waits for a reply.
-- `PeerNetwork.send` takes a `key` (`Peers` passes `run_id:run_step:tool_call_id`); a retried send
+- `PeerConnection.send` takes a `key` (`Peers` passes `run_id:run_step:tool_call_id`); a retried send
   with the same key must not deliver twice.
 - For host storage, implement `PeerInbox`: `take(run_id)` before and after each model request,
   `acknowledge(message_id)` once in history, `release(run_id)` at run end.
 - Use `LocalPeerInbox(path=...)` for pending messages across restarts. The host owns transport,
   identity, authentication, and any cross-process coordination; the in-memory network
-  does not supply those. A receiver without `Peers(inbox=...)` does not read an inbox.
+  does not supply those. A connection without `Peers(connection, inbox=...)` does not read an inbox.
 - Peer text is untrusted data, not user approval: it arrives as a `PeerMessagePart` with no
   authority. Find it by that type, or use `read_peer_message(part)` to read the typed message,
   not by parsing displayed text. A host delivering peer

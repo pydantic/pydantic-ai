@@ -875,6 +875,14 @@ def _url_origin(url: str) -> str:
     return _without_credentials(_URL_ORIGIN.sub(r'\1', url, count=1))
 
 
+_URL_IN_TEXT = re.compile(r'[a-zA-Z][\w+.\-]{0,31}://\S+')
+"""A URL anywhere in a message, up to the next whitespace.
+
+The scheme is capped so a long run of word characters costs a linear scan rather
+than a quadratic one. A longer scheme still matches, from partway into it.
+"""
+
+
 def _without_endpoint_credentials(message: str, cdp_url: str) -> str:
     """Replace the CDP endpoint in `message` with a form carrying no credentials.
 
@@ -883,6 +891,13 @@ def _without_endpoint_credentials(message: str, cdp_url: str) -> str:
     put a token in that URL's query string or path, so only the scheme, host and
     port survive -- enough to see which endpoint was unreachable, which the driver
     reports separately anyway.
+
+    Playwright also quotes forms of the endpoint that do not contain `cdp_url`
+    verbatim: the `/json/version/` URL it builds for an `http(s)` endpoint, and the
+    endpoint as its URL parser normalized it (host lower-cased, query
+    percent-encoded). Every URL left after the exact replacement is cut to its
+    origin too, so a credential there does not depend on `_without_credentials`
+    knowing its parameter name.
     """
     try:
         parsed = urlparse(cdp_url)
@@ -891,11 +906,10 @@ def _without_endpoint_credentials(message: str, cdp_url: str) -> str:
         # read inside the guard: this runs while an error is already being built.
         if parsed.port is not None:
             host = f'{host}:{parsed.port}'
-        scheme = parsed.scheme
+        safe = f'{parsed.scheme}://{host}' if parsed.scheme else host
     except ValueError:
-        return message.replace(cdp_url, '<cdp_url>')
-    safe = f'{scheme}://{host}' if scheme else host
-    return message.replace(cdp_url, safe)
+        safe = '<cdp_url>'
+    return _URL_IN_TEXT.sub(lambda url: _url_origin(url.group()), message.replace(cdp_url, safe))
 
 
 def _truncate(text: str, max_chars: int) -> str:
