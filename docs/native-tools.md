@@ -779,7 +779,7 @@ The local tool is found by its kind, not its name. The native tool is sent when 
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI Responses | ✅ | On models whose profile sets [`openai_supports_computer_tool`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_computer_tool]. OpenAI's tool can't zoom, triple-click, hold a key, press or release a mouse button, or read the pointer position. |
+| OpenAI Responses | ✅ | On models whose profile sets [`openai_responses_supports_computer_tool`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_computer_tool]. OpenAI's tool can't zoom, triple-click, hold a key, press or release a mouse button, or read the pointer position. |
 
 ## Memory Tool
 

@@ -913,7 +913,7 @@ class ComputerTool(AbstractNativeTool):
 
     Supported by:
 
-    * OpenAI Responses, on models whose profile sets `openai_supports_computer_tool`
+    * OpenAI Responses, on models whose profile sets `openai_responses_supports_computer_tool`
     """
 
     display_size: tuple[int, int]
