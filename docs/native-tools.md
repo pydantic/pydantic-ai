@@ -16,7 +16,6 @@ Pydantic AI supports the following native tools:
 - **[`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool]**: Enables agents to generate images
 - **[`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool]**: Enables agents to fetch web pages
 - **[`MemoryTool`][pydantic_ai.native_tools.MemoryTool]**: Enables agents to use memory
-- **[`ComputerTool`][pydantic_ai.native_tools.ComputerTool]**: Sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool as the provider's native computer use tool
 - **[`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
 - **[`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]**: Enables agents to search through uploaded files using vector search (RAG)
 - **[`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]**: Lets a faster executor model consult a stronger advisor model mid-generation (Anthropic, OpenRouter)
@@ -851,26 +850,6 @@ print(result.output)
 ```
 
 _(This example is complete, it can be run "as is")_
-
-## Computer Tool
-
-The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends a tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind, such as the one Pydantic AI Harness's `ComputerUse` capability adds, as the provider's native computer use tool, which models are trained to use. Like the [Memory Tool](#memory-tool), the provider doesn't run its calls: the model adapter turns them into calls of the local tool, and the results back into the provider's format.
-
-The local tool is found by its kind, not its name. The native tool is sent when the request has exactly one tool of that kind that the model can call: not deferred, or revealed by history. With none, the native tool is left out when it is `optional`, and the request is refused when it isn't. With more than one, the request is refused.
-
-`ComputerUse` adds it for you, with the size of the screenshots the model sees, and leaves it out with `native=False`.
-
-### Usage
-
-Here the desktop comes from a Docker container, and `ComputerUse` adds the `computer` tool and its native tool:
-
-```py {title="computer_tool.py" test="skip" typecheck="skip - ComputerUse and a desktop DockerContainer come with later PRs"}
-from pydantic_ai_harness import ComputerUse, DockerContainer
-
-from pydantic_ai import Agent
-
-agent = Agent('{{ anthropic:medium }}', capabilities=[DockerContainer(desktop=True), ComputerUse()])
-```
 
 ## Advisor Tool
 
