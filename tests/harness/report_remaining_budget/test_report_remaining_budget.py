@@ -11,7 +11,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
 )
@@ -20,6 +19,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai_harness import ReportRemainingBudget, SpendLimits
+from pydantic_ai_harness.report_remaining_budget import RemainingBudgetPart
 from pydantic_ai_harness.spend_limits import Budget
 from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
 
@@ -55,7 +55,7 @@ def _reports(messages: list[ModelMessage]) -> list[str]:
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, SystemPromptPart) and part.scope == 'request'
+        if isinstance(part, RemainingBudgetPart) and part.scope == 'request'
     ]
 
 

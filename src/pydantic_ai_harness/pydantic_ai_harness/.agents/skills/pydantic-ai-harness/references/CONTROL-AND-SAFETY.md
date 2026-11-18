@@ -894,7 +894,7 @@ print([part.metadata for part in parts if isinstance(part, ToolReturnPart) and p
 
 ## ReportRemainingBudget
 
-In `before_model_request`, enqueues a request-scoped `SystemPromptPart` with what is left of the run's
+In `before_model_request`, enqueues a request-scoped `RemainingBudgetPart` (`InstructionCapabilityPart`) with what is left of the run's
 `UsageLimits` (read from `ctx.usage_limits` and `ctx.usage`) and, given `spend_limits=`, of each
 `SpendLimits` budget with a ceiling (read with `status(ctx)`). Disclosure only; enforcement stays with
 `UsageLimits` and `SpendLimits`.

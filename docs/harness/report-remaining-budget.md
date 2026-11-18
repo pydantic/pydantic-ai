@@ -48,7 +48,7 @@ A run without `usage_limits=` still has core's default `request_limit=50`, so th
 
 ## Caching
 
-The status is enqueued from `before_model_request` as a [request-scoped system prompt](../message-history.md#request-scoped-system-prompts), the same channel [Warn Near Limits](compaction.md) uses. It stays in the message history, so history records what each request was told. Anthropic is sent every earlier status and clears them with `clear_at`, so the prefix holds; other providers get each status at the end of its own request only, behind the cache breakpoints, so the prefix before it is still read from cache.
+The status is enqueued from `before_model_request` as a `RemainingBudgetPart`, a request-scoped [capability part](../capabilities/custom.md#capability-parts) in the application's voice, which the model sees as a [request-scoped system prompt](../message-history.md#request-scoped-system-prompts), the same channel [Warn Near Limits](compaction.md) uses. Find statuses in history with `isinstance(part, RemainingBudgetPart)`, imported from `pydantic_ai_harness.report_remaining_budget`. It stays in the message history, so history records what each request was told. Anthropic is sent every earlier status and clears them with `clear_at`, so the prefix holds; other providers get each status at the end of its own request only, behind the cache breakpoints, so the prefix before it is still read from cache.
 
 ## Composition
 
@@ -65,3 +65,5 @@ See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_
 ## API reference
 
 ::: pydantic_ai_harness.ReportRemainingBudget
+
+::: pydantic_ai_harness.report_remaining_budget.RemainingBudgetPart

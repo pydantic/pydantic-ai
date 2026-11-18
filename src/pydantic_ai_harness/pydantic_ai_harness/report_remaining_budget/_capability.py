@@ -7,7 +7,7 @@ from decimal import ROUND_DOWN, Decimal
 from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelRequest, SystemPromptPart
+from pydantic_ai.messages import InstructionCapabilityPart, ModelRequest, OperatorSource, OperatorText
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.spend_limits import BudgetStatus, SpendLimits, Window
 
@@ -21,6 +21,11 @@ _WINDOW_LABELS: dict[Window, str] = {
     'month': 'this month',
     'total': 'in total',
 }
+
+
+@dataclass(kw_only=True)
+class RemainingBudgetPart(InstructionCapabilityPart, namespace='report_remaining_budget', name='remaining_budget'):
+    """The request-scoped status `ReportRemainingBudget` enqueues. Find statuses in history by this type."""
 
 
 def _count(count: int, noun: str) -> str:
@@ -84,9 +89,9 @@ class ReportRemainingBudget(AbstractCapability[AgentDepsT]):
     of each of its budgets that has a ceiling, labelled by window so a daily remainder is not read as
     the run's.
 
-    The report is enqueued as a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system
-    prompt: the model sees it for the request it's part of only, and it stays in the message history,
-    so the cached prefix stays valid. This only discloses the budget; `UsageLimits` and `SpendLimits`
+    The report is enqueued as a [request-scoped][pydantic_ai.messages.CapabilityPart.scope]
+    `RemainingBudgetPart` in the application's voice: the model sees it for the request it's part of
+    only, and it stays in the message history, so the cached prefix stays valid. This only discloses the budget; `UsageLimits` and `SpendLimits`
     still enforce it.
 
     Example:
@@ -121,5 +126,12 @@ class ReportRemainingBudget(AbstractCapability[AgentDepsT]):
         if self.spend_limits is not None:
             lines.extend(_budget_line(status) for status in await self.spend_limits.status(ctx))
         if present := [line for line in lines if line is not None]:
-            ctx.enqueue(SystemPromptPart('\n'.join(['Budget remaining:', *present]), scope='request'))
+            ctx.enqueue(
+                RemainingBudgetPart(
+                    # The capability's own wording, with counts and configured budget names filled in.
+                    content=OperatorText('\n'.join(['Budget remaining:', *present])),
+                    source=OperatorSource(),
+                    scope='request',
+                )
+            )
         return request_context
