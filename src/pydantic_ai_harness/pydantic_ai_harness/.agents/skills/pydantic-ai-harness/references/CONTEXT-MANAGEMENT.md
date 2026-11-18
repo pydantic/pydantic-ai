@@ -432,9 +432,10 @@ it can't tell a moved prefix from an expired cache.
 
 ## LabelCrossModelHistory
 
-Adds a fixed instruction (`notice=`, default `DEFAULT_CROSS_MODEL_NOTICE`) to each request whose history has a
-`ModelResponse` whose `model_id` differs from the model the request goes to. It is a dynamic instruction, not
-a message part, so the history is not changed, and it never names the other model.
+States a fixed instruction (`notice=`, default `DEFAULT_CROSS_MODEL_NOTICE`) while the request's history has a
+`ModelResponse` whose `model_id` differs from the model the request goes to. It's an `on_change='append'`
+block named `notice`, so the notice and its later withdrawal are appended as `InstructionDeltaPart`s instead of
+rewriting the instructions, and it never names the other model.
 
 ```python
 from pydantic_ai import Agent
@@ -445,9 +446,9 @@ agent = Agent('test', capabilities=[LabelCrossModelHistory()])
 ```
 
 Gotchas: responses without a `model_id` (old saved history) are not counted; a `FallbackModel`'s candidates
-all count as the current model; under `ModelFallback` the notice is decided again for each candidate tried.
-Returning to an earlier model adds the notice to its instructions, which moves that model's cached prompt prefix
-once.
+all count as the current model, but history a `FallbackModel` wrote carries its composite `model_id`, so a
+candidate continuing it on its own is told; under `ModelFallback` the notice is decided again for each candidate
+tried.
 
 ## Media externalization (not a capability)
 

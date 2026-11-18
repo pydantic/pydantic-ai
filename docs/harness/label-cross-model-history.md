@@ -1,6 +1,6 @@
 ---
 title: Label Cross Model History
-description: "Tell a Pydantic AI agent's model when earlier assistant turns in its history came from another model, with an ephemeral instruction that leaves the history unchanged."
+description: "Tell a Pydantic AI agent's model when earlier assistant turns in its history came from another model, with an appended instruction that leaves earlier messages and the cached prompt prefix unchanged."
 ---
 
 # Label Cross Model History
@@ -26,7 +26,7 @@ async def main():
 
 ## How it decides
 
-Before each model request, `LabelCrossModelHistory` compares the `model_id` of every `ModelResponse` in the request's history with the model the request is about to go to. While any of them came from another model, it adds a notice to that request's instructions:
+Before each model request, `LabelCrossModelHistory` compares the `model_id` of every `ModelResponse` in the request's history with the model the request is about to go to. While any of them came from another model, it states this notice:
 
 > Some earlier assistant turns in this conversation were written by a different model, not by you. Treat them as inherited context: check their claims and commitments instead of assuming you made them.
 
@@ -34,21 +34,20 @@ Before each model request, `LabelCrossModelHistory` compares the `model_id` of e
 
 - **Fresh or single-model history**: no notice.
 - **Responses without a `model_id`**, such as history saved before the field existed or a response a capability returned without a model request: not counted, since they don't say which model wrote them.
-- **[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]**: responses from any of its candidates count as the current model's own. Which candidate will serve a request isn't known before it is sent, so a switch between candidates isn't labeled.
+- **[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]**: responses from any of its candidates count as the current model's own. Which candidate will serve a request isn't known before it is sent, so a switch between candidates isn't labeled. The responses a `FallbackModel` writes carry its own composite `model_id`, not the candidate that served them, so continuing that history on one of its candidates, or on a `FallbackModel` with other candidates, states the notice.
 - **[`ModelFallback`][pydantic_ai.capabilities.ModelFallback]**: the notice is decided again for each candidate a request falls back to, so a candidate that wrote the earlier turns itself gets none.
 
-The notice stays on every request while a turn from another model is in the history, and goes away once compaction or a sliding window drops the last one. It never names the other model: model identifiers from replayed or client-supplied history are not put into the prompt.
+The notice is an instruction block named `notice` with `on_change='append'`, returned empty from the first request on. When it starts to apply, it is appended to the history at that point as an `InstructionDeltaPart`, and it stays in effect while a turn from another model is in the history. When compaction or a sliding window drops the last one, an appended change withdraws it. It never names the other model: model identifiers from replayed or client-supplied history are not put into the prompt.
 
 ## Options
 
-- `notice` (default `DEFAULT_CROSS_MODEL_NOTICE`): the instruction added while the history has a turn from another model.
+- `notice` (default `DEFAULT_CROSS_MODEL_NOTICE`): the text stated while the history has a turn from another model.
 
 ## Composition
 
-- The notice is a dynamic instruction, not a message part. Each request computes its own, so the message history you pass in is not changed and a later model only sees the notice its own request carries. A request records the instructions it was sent with, as with any instructions.
-- Adding the notice changes the instructions, which moves the prompt-cache prefix. Switching models already starts a new cache, but returning to an earlier model adds a notice its cached requests didn't have, so that one request reads less from the cache.
-- It adds no tools, model settings, or spans. Core's model request span records the instructions each request was sent with, notice included, when content is included in traces.
-- It has no default `id`: two instances each add their own notice.
+- The notice and its withdrawal are appended where they apply instead of rewriting the instructions, so the cached prompt prefix doesn't move, including when a conversation returns to an earlier model. Models also follow an appended change more reliably than one rewritten into a prompt they continue their own history under. The message history you pass in is not changed; the run's new messages carry the appended change.
+- It adds no tools, model settings, or spans. The appended change is part of the recorded message history, which core's spans include when content is included in traces.
+- Its default `id` is `'label_cross_model_history'`, which qualifies the block's id as `capability:label_cross_model_history:notice`. Two instances merge into one, so the notice is stated once.
 
 ## API reference
 
