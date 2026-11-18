@@ -74,52 +74,52 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011ChAoVjzdJwgRM8bYQV1Fu","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":109,"cache_read_input_tokens":4534,"cache_creation":{"ephemeral_5m_input_tokens":109,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01PLsULt3f5XXpotLW1kGq9a","name":"screenshot","input":{},"toolset_name":"computer","caller":{"type":"direct"}} }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}         }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0      }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01Ff8ii9JwwidzSDJEpLztNV","name":"left_click","input":{},"toolset_name":"computer","caller":{"type":"direct"}}          }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}  }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"coordinate\":[100,200]}"}   }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":1    }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_01Wh8PyGobD4umavirhcKwFB","name":"type","input":{},"toolset_name":"computer","caller":{"type":"direct"}}    }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"text\":\"hello\"}"} }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":2           }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":109,"cache_read_input_tokens":4534,"output_tokens":98,"output_tokens_details":{"thinking_tokens":0}}   }
-        
+
         event: message_stop
         data: {"type":"message_stop"}
-        
+
   recorded_at: 2026-11-18T17:39:25.854868+00:00
 - request:
     method: POST
@@ -251,25 +251,25 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011ChAoVp5h47yG8oYq5XQwh","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":2973,"cache_read_input_tokens":4534,"cache_creation":{"ephemeral_5m_input_tokens":2973,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}       }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"} }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0            }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":2973,"cache_read_input_tokens":4534,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}  }
-        
+
         event: message_stop
         data: {"type":"message_stop"    }
-        
+
   recorded_at: 2026-11-18T17:39:26.461058+00:00
 - request:
     method: POST
@@ -395,49 +395,49 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011ChAoVrDgCknuPgRmS2Hvv","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":3,"cache_creation_input_tokens":5180,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":5180,"ephemeral_1h_input_tokens":0},"output_tokens":26,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}   }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01DZF8Q6sqFSuwcvGfS4tFCe","name":"computer","input":{},"caller":{"type":"direct"}}}
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""} }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"actio"} }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"n\": \"le"}  }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ft_clic"}     }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"k\""}  }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"coor"}      }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"dinate\""}        }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": [10,1"}         }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"0]}"}}
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0      }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":3,"cache_creation_input_tokens":5180,"cache_read_input_tokens":0,"output_tokens":76}             }
-        
+
         event: message_stop
         data: {"type":"message_stop"   }
-        
+
   recorded_at: 2026-11-18T17:39:27.951582+00:00
 - request:
     method: POST
@@ -587,23 +587,23 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011ChAoVxmpcJytfRbdBB7G1","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1,"cache_creation_input_tokens":1460,"cache_read_input_tokens":5180,"cache_creation":{"ephemeral_5m_input_tokens":1460,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}      }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}         }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"} }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0           }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1,"cache_creation_input_tokens":1460,"cache_read_input_tokens":5180,"output_tokens":4}             }
-        
+
         event: message_stop
         data: {"type":"message_stop"              }
-        
+
   recorded_at: 2026-11-18T17:39:28.901093+00:00
