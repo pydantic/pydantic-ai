@@ -1277,25 +1277,19 @@ class TestSafeDownload:
         assert response.content == httpx2.Response(200, content=encoded, headers={'content-encoding': coding}).content
 
     @pytest.mark.parametrize(
-        ('max_bytes', 'headers', 'expected'),
+        ('headers', 'expected'),
         [
-            pytest.param(64, None, 'identity, gzip', id='bounded'),
-            pytest.param(64, {'accept-encoding': 'identity'}, 'identity', id='caller-lowercase'),
-            pytest.param(64, {'ACCEPT-ENCODING': 'gzip'}, 'gzip', id='caller-uppercase'),
-            pytest.param(None, None, None, id='unbounded'),
+            pytest.param(None, 'identity, gzip', id='bounded'),
+            pytest.param({'accept-encoding': 'identity'}, 'identity', id='caller-lowercase'),
+            pytest.param({'ACCEPT-ENCODING': 'gzip'}, 'gzip', id='caller-uppercase'),
         ],
     )
     async def test_max_bytes_sets_bounded_accept_encoding(
-        self,
-        serve_requests: Callable[[RequestHandler], None],
-        max_bytes: int | None,
-        headers: dict[str, str] | None,
-        expected: str | None,
+        self, serve_requests: Callable[[RequestHandler], None], headers: dict[str, str] | None, expected: str
     ) -> None:
         """Bounded downloads negotiate only encodings that can be size-limited while streaming.
 
-        A caller's own `Accept-Encoding`, in any case, is sent instead, and an unbounded download
-        sends the client's default (`expected=None`).
+        A caller's own `Accept-Encoding`, in any case, is sent instead.
         """
         seen: list[str] = []
 
@@ -1303,14 +1297,28 @@ class TestSafeDownload:
             seen.extend(request.headers.get_list('accept-encoding'))
             return stream_response(b'ok')(request)
 
-        if expected is None:
-            async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request)) as default_client:
-                expected = default_client.headers['accept-encoding']
         serve_requests(handle_request)
 
-        response = await safe_download('https://example.com/file.txt', headers=headers, max_bytes=max_bytes)
+        response = await safe_download('https://example.com/file.txt', headers=headers, max_bytes=64)
         assert response.content == b'ok'
         assert seen == [expected]
+
+    async def test_unbounded_download_sends_the_client_default_accept_encoding(
+        self, serve_requests: Callable[[RequestHandler], None]
+    ) -> None:
+        """Without `max_bytes`, the client's default `Accept-Encoding` goes out unchanged."""
+        seen: list[str] = []
+
+        def handle_request(request: httpx2.Request) -> httpx2.Response:
+            seen.extend(request.headers.get_list('accept-encoding'))
+            return stream_response(b'ok')(request)
+
+        serve_requests(handle_request)
+
+        response = await safe_download('https://example.com/file.txt')
+        assert response.content == b'ok'
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request)) as default_client:
+            assert seen == [default_client.headers['accept-encoding']]
 
     async def test_max_bytes_rejects_oversized_preloaded_body(
         self, serve_requests: Callable[[RequestHandler], None]
