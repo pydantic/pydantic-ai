@@ -1858,9 +1858,9 @@ async def test_reinject_system_prompt_capability_spares_request_only_system_part
     """
 
     @dataclass
-    class AddRequestPrompt(AbstractCapability[None]):
+    class AddRequestPrompt(AbstractCapability[Any]):
         async def before_model_request(
-            self, ctx: RunContext[None], request_context: ModelRequestContext
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
             first_request = message(request_context.messages, ModelRequest)
             request_context.messages = [
@@ -1870,8 +1870,8 @@ async def test_reinject_system_prompt_capability_spares_request_only_system_part
             return request_context
 
     @dataclass
-    class CaptureRequestPrompts(AbstractCapability[None]):
-        seen: list[str] = field(default_factory=list)
+    class CaptureRequestPrompts(AbstractCapability[Any]):
+        seen: list[str] = field(default_factory=list[str])
 
         async def before_model_request(
             self, ctx: RunContext[None], request_context: ModelRequestContext
