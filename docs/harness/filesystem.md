@@ -385,6 +385,11 @@ applies the same rule to absolute symlink targets.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
   rather than overwriting newer content.
+- **Ordered changes.** `write_file`, `edit_file` and `create_directory` are
+  [sequential tools](../tools-advanced.md#parallel-tool-calls-concurrency): when a
+  model sends several tool calls in one response, each change runs after the calls
+  before it, so a write into a directory created earlier in the response finds it.
+  The read tools still run in parallel.
 - **Text encodings.** Text is read as UTF-8, and a byte that isn't valid UTF-8
   is shown as U+FFFD. `edit_file` writes such bytes back unchanged when an edit
   matches only the text around them; `write_file` replaces the whole file with
@@ -534,7 +539,9 @@ or a workspace capability in Python).
 
 ## Durable execution
 
-`FileSystem` works under Temporal, DBOS, and Prefect; the [workspace guide](../workspace.md#durable-execution) shows how to attach it. On Temporal only file-change requests and write events reach listeners live; see [live events on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
+`FileSystem` works under Temporal, DBOS, Prefect, [Azure Durable Task](azure-durable-task.md), and [Render Workflows](render-workflows.md); the [workspace guide](../workspace.md#durable-execution) shows what works on each engine. On Temporal only file-change requests and write events reach listeners live; see [live events on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
+
+On Azure Durable Task and Render, `write_file`, `edit_file` and `create_directory` run in the orchestrator or parent task, so file-change requests and write events reach listeners live. On Azure, events from the other tools are dropped, and listeners run in orchestrator code: they re-run on every replay, so keep them deterministic and idempotent, and they can't do I/O, so interactive approval of file changes through a UI or external service isn't supported on Azure yet. On Render, listeners run in the parent task, and events from the other tools are carried back to the run.
 
 ## Further reading
 

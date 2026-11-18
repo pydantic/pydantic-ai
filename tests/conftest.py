@@ -10,7 +10,7 @@ import secrets
 import socket
 import sys
 import warnings
-from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Coroutine, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -138,6 +138,11 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         'markers',
         'realtime_ws_hold_open: keep a replay WebSocket open after its last recorded frame',
+    )
+    config.addinivalue_line(
+        'markers',
+        'realtime_ws_unsent_heartbeat(reason): a replay may end before its final recorded `pong` or idle-audio frame '
+        'goes out; reason required',
     )
 
 
@@ -560,9 +565,14 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.path.abspath', 'render/experimental/sandbox/files.py', ('parent_dir', '__init__')),
     ('io.BufferedWriter.write', 'render/experimental/sandbox/files.py', 'write'),
     ('os.remove', 'render/experimental/sandbox/files.py', '__exit__'),
-    ('os.stat', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
-    ('os.listdir', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
-    ('io.TextIOWrapper.read', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    # The harness reads its own package metadata once per process (the lookup is cached) to name its version in
+    # client attribution metadata: the You.com `X-Client-Info` header and the MongoDB connection handshake.
+    ('os.stat', 'pydantic_ai_harness/_version.py', 'harness_version'),
+    ('os.listdir', 'pydantic_ai_harness/_version.py', 'harness_version'),
+    ('io.TextIOWrapper.read', 'pydantic_ai_harness/_version.py', 'harness_version'),
+    # PyMongo checks for `/.dockerenv` with a sync `Path.exists` whenever it builds pool options, including when an
+    # `AsyncMongoClient` opens its topology on the event loop, and offers no way to skip the check.
+    ('os.stat', 'pymongo/pool_options.py', 'get_container_env_info'),
     # Each `browse_web` call builds browser-use's `Agent`, which imports its LLM adapters, reads its prompt
     # templates, and sets up a scratch file system and screenshot directory. The build stays on the event loop
     # because it goes through `BrowserAgentFactory`, which users can replace and which may need the running loop.
@@ -732,6 +742,10 @@ BLOCKBUSTER_LIBRARY_SETUP: tuple[tuple[str, str], ...] = (
     # use: `kubernetes_asyncio` reads the kubeconfig and writes its embedded certificates to temporary
     # files synchronously (its exec credential plugins run as asyncio subprocesses and stay covered).
     ('k8s_agent_sandbox/async_k8s_helper.py', '_ensure_initialized'),
+    # Render's SDK reads its own package metadata for the User-Agent of each client it builds. CLAI's
+    # `/sandbox render` builds one in its synchronous `reopen`, which cannot offload it, so that the key
+    # can come from `/keys`.
+    ('render/version.py', 'get_version'),
 )
 
 
@@ -985,6 +999,32 @@ def no_leaked_tasks(loop: asyncio.AbstractEventLoop | None = None) -> Generator[
     before = asyncio.all_tasks(loop)
     yield
     assert asyncio.all_tasks(loop) - before == set()
+
+
+async def assert_cancellation_leaks_no_tasks(
+    start: Callable[[], Coroutine[Any, Any, object]], *, max_ticks: int = 500
+) -> None:
+    """Cancel `start()` after 0, 1, 2, ... event loop ticks, failing if a cancelled run leaves a task it started pending.
+
+    Stops at the first run that completes before its cancellation arrives, by which point every tick of it has been
+    covered.
+    """
+    for ticks in range(max_ticks):  # pragma: no branch
+        with no_leaked_tasks():
+            task = asyncio.create_task(start())
+            for _ in range(ticks):
+                await asyncio.sleep(0)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                completed = False
+            else:
+                completed = True
+            await asyncio.sleep(0)
+        if completed:
+            return
+    pytest.fail(f'run never completed within {max_ticks} ticks')  # pragma: no cover
 
 
 @pytest.fixture(autouse=True)
@@ -1247,6 +1287,32 @@ def gave_up_on(
         raise httpx2.HTTPStatusError(f'Error status {response.status_code}', request=request, response=response)
 
     return gave_up
+
+
+def retrying_client(handler: Callable[[httpx2.Request], httpx2.Response]) -> httpx2.AsyncClient:
+    """A client with a retrying transport like the retries guide's: 3 attempts, rejecting every error status.
+
+    Once it gives up, it raises the transport's `HTTPStatusError` rather than return the status to the provider SDK.
+    """
+    # Imported here rather than at module scope: `tenacity` is an optional dependency.
+    from tenacity import retry_if_exception_type, stop_after_attempt, wait_none
+
+    from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
+
+    def validate_response(response: httpx2.Response) -> None:
+        response.raise_for_status()
+
+    transport = AsyncHTTPX2TenacityTransport(
+        config=RetryConfig(
+            retry=retry_if_exception_type(httpx2.HTTPStatusError),
+            wait=wait_none(),
+            stop=stop_after_attempt(3),
+            reraise=True,
+        ),
+        wrapped=httpx2.MockTransport(handler),
+        validate_response=validate_response,
+    )
+    return httpx2.AsyncClient(transport=transport)
 
 
 def decode_request_body(content: bytes, headers: httpx2.Headers) -> bytes:
@@ -1596,6 +1662,7 @@ def _patch_hf_provider_mappings():
         ('together', 'meta-llama/Llama-4-Scout-17B-16E-Instruct', 'conversational'),
         ('nebius', 'Qwen/Qwen2.5-VL-72B-Instruct', 'conversational'),
         ('nebius', 'Qwen/Qwen2.5-72B-Instruct', 'conversational'),
+        ('groq', 'openai/gpt-oss-120b', 'conversational'),
     ]
 
     for provider, model_id, task in models:
@@ -1646,6 +1713,11 @@ def crusoe_api_key() -> str:
 @pytest.fixture(scope='session')
 def fireworks_api_key() -> str:
     return os.getenv('FIREWORKS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def deepinfra_api_key() -> str:
+    return os.getenv('DEEPINFRA_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')

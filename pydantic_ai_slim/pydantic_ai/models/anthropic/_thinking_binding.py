@@ -5,7 +5,7 @@ from __future__ import annotations as _annotations
 import warnings
 from typing import cast
 
-from anthropic import APIStatusError, Omit, omit as OMIT
+from anthropic import Omit, omit as OMIT
 from anthropic.types.beta import BetaThinkingBlockBindingParam, BetaThinkingConfigParam
 
 from ... import _utils
@@ -64,7 +64,8 @@ def can_add_drop_block(thinking: dict[str, object] | Omit) -> bool:
 def is_stale_thinking_block_error(
     profile: ModelProfile,
     thinking: dict[str, object] | Omit,
-    error: APIStatusError,
+    status_code: int,
+    body: object | None,
 ) -> bool:
     """Whether Anthropic rejected a replayed thinking block that the request can be retried without.
 
@@ -73,11 +74,11 @@ def is_stale_thinking_block_error(
     fail, and an explicit `'drop_block'` cannot produce this error. A thinking type other than
     `adaptive` is out too; see `can_add_drop_block`.
     """
-    if error.status_code != 400 or not profile.get('anthropic_binds_thinking_blocks', False):
+    if status_code != 400 or not profile.get('anthropic_binds_thinking_blocks', False):
         return False
     if not can_add_drop_block(thinking):
         return False
-    reported = reported_error_body(error.body)
+    reported = reported_error_body(body)
     return (
         _utils.is_str_dict(reported)
         and isinstance(message := reported.get('message'), str)

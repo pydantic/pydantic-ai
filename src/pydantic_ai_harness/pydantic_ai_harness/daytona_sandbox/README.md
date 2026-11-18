@@ -159,6 +159,41 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[DaytonaSandbox(), Coder
 A sandbox you don't delete is stopped after 15 idle minutes (`auto_stop_interval=`; `0` keeps it running), keeps its disk, and is archived after 7 days. A sandbox from a VM snapshot is paused after 60 idle minutes instead, and is never archived. Either way a later run starts it again.
 
 A run that ends before its ref is stored, such as a crash, Ctrl-C or a killed worker, leaves the sandbox behind. Every sandbox the backend creates is labelled `created-by=pydantic-ai`, and its id is logged as `Created Daytona sandbox <id>` at INFO on the `pydantic_ai_harness.daytona_sandbox._backend` logger; delete it with `await DaytonaSandbox().destroy(WorkspaceRef(provider='daytona', id=...))`.
+## Keep a token out of the sandbox
+
+Pass `secrets` to give a new sandbox Daytona [Secrets](https://www.daytona.io/docs/en/secrets), as a map from environment variable name to Secret name. The variable holds a placeholder, and Daytona swaps in the real value as requests leave for the Secret's `hosts`. Create the Secret once, then use it:
+
+```python {test="skip"}
+from daytona import AsyncDaytona, CreateSecretParams
+
+from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox
+
+
+async def create_github_secret(token: str) -> None:  # a GitHub token, such as the output of `gh auth token`
+    async with AsyncDaytona() as daytona:
+        await daytona.secret.create(
+            CreateSecretParams(
+                name='github-token',
+                value=token,
+                hosts=['github.com', 'api.github.com', 'uploads.github.com'],
+            )
+        )
+
+
+sandbox = DaytonaSandbox(secrets={'GH_TOKEN': 'github-token'})
+```
+
+`gh` then works as the token's owner, while `echo $GH_TOKEN` in the sandbox prints the placeholder. For `git push`, have git send the placeholder as its password:
+
+```bash
+git config --global credential.https://github.com.helper '!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f'
+```
+
+- Always set `hosts` on the Secret. Without them, Daytona sends the real value to any host.
+- Daytona swaps the value only in HTTPS request headers, including git's password. Request bodies, query strings and plain HTTP keep the placeholder. Use `https://` remotes, not `git@github.com:owner/repo.git`.
+- The agent can't see the token, but it can use it for anything the token allows.
+- An attached sandbox keeps the Secrets it was created with. To swap the token, call `daytona.secret.update` with the Secret's ID; running sandboxes pick it up within seconds.
+- To change which Secrets a running sandbox has, call `update_secrets` on `await backend.get_sandbox()`. It replaces the whole set, new variables reach only commands started after it, and a sandbox created without Secrets must restart first.
 
 ## Configuration
 
@@ -170,8 +205,11 @@ A run that ends before its ref is stored, such as a crash, Ctrl-C or a killed wo
 | `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. When `False`, Tier 3 and 4 organizations block everything, while lower tiers keep package registries, GitHub and AI APIs reachable, so there it is not an exfiltration boundary. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/). |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/daytona`. Created on a new sandbox; on an attached one it must exist. |
 | `env` | Environment variables every command gets. Default: `None`; nothing from your machine reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. |
+| `secrets` | Daytona's `secrets` for a new sandbox, passed to `AsyncDaytona.create` unchanged: environment variable name to the name of an existing organization Secret. Default: `None`. An attached sandbox keeps the ones it was created with. See [Keep a token out of the sandbox](#keep-a-token-out-of-the-sandbox). |
+| `authority` | Who wrote the sandbox's files, for capabilities that check [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority): `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
-`client`, `working_dir` and `env` also apply when you reattach, and `destroy` uses `client`; the other options only shape a new sandbox.
+`client`, `working_dir`, `env`, `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`; the other options only shape a new sandbox.
 
 ## Limits
 

@@ -159,6 +159,39 @@ agent = Agent('{{ anthropic:large }}', capabilities=[BoxdSandbox(), Coder(), hoo
 A machine you don't delete is suspended, and later hibernated, after your organization's idle time; set `auto_suspend_timeout=` in seconds for new machines, or `0` to turn it off. `BoxdSandbox` sets no delete timer, so boxd deletes the machine only if your organization's defaults give new machines one; `boxd machine get` shows a machine's timers.
 
 A run that ends before its ref is stored, such as a crash, Ctrl-C or a killed worker, leaves the machine behind. Machines the backend creates are named `pydantic-ai-<hex>` and logged as `Created boxd machine <id> (<name>)`, or `Forked boxd machine ...` for a copy, at INFO on the `pydantic_ai_harness.boxd_sandbox._backend` logger. Find leftovers with `boxd list` and delete one with `await BoxdSandbox().destroy(WorkspaceRef(provider='boxd', id=...))`.
+## Keep a token out of the machine
+
+Pass `secrets` to give a new machine boxd secrets by name. If a secret is tied to domains, the machine gets only a placeholder starting with `bxds_`, and boxd swaps in the real value as requests leave for those domains. Create the secret first, since boxd won't create a machine that names a missing one:
+
+```python {test="skip"}
+import boxd
+
+from pydantic_ai_harness.boxd_sandbox import BoxdSandbox
+
+
+async def set_github_secret(token: str) -> None:  # a fine-grained GitHub token, as below
+    async with boxd.AsyncBoxd() as client:
+        await client.secrets.set(
+            'GH_TOKEN',
+            token,
+            scope='private-unattached',  # your own, reaching only machines whose spec names it
+            domains=['github.com', 'api.github.com', 'uploads.github.com'],
+        )
+
+
+sandbox = BoxdSandbox(secrets=['GH_TOKEN'])
+```
+
+`gh` then works as the token's owner, while `echo $GH_TOKEN` in the machine prints the placeholder. For `git push`, have git send the placeholder as its password:
+
+```bash
+git config --global credential.https://github.com.helper '!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f'
+```
+
+- Only HTTPS requests get the real value. Use `https://` remotes, not `git@github.com:owner/repo.git`.
+- boxd swaps the value into the whole request, body included, so a command can still write the real token into something GitHub stores, such as an issue or a gist, and read it back. Use a fine-grained token that reaches only the repositories the agent works on and can't create gists, not your `gh auth token`.
+- boxd turns the real value back into the placeholder in responses, but may miss an encoded copy. List only hosts that never send request headers back.
+- An attached machine keeps the secrets it was created with. Calling `secrets.set` again swaps the value right away, and the placeholder stays the same.
 
 ## Fork a machine
 
@@ -212,8 +245,11 @@ Destroy each machine when you are done; the copy isn't tied to the original.
 | `auto_suspend_timeout` | Seconds without network activity before boxd suspends a new machine; `0` disables it. Default: `None`, the organization's default. A command wakes a suspended machine. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/boxd`. Created on a new machine; on an attached one it must exist. |
 | `env` | Environment variables every command gets. Default: `None`; nothing from your machine reaches the boxd machine. The agent's commands can read these, so leave out secrets it shouldn't see. |
+| `secrets` | Names of existing boxd secrets a new machine gets, applied as `boxd.spec.secrets(*secrets)` in its spec. Default: `None`. An attached machine keeps the ones it was created with. See [Keep a token out of the machine](#keep-a-token-out-of-the-machine). |
+| `authority` | Who wrote the sandbox's files, for capabilities that check [authority](../workspace-custom.md#workspace-authority): `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
-`client`, `working_dir` and `env` also apply when you reattach, and `destroy` uses `client`; the other options only shape a new machine.
+`client`, `working_dir`, `env`, `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`; the other options only shape a new machine, and an attached machine keeps the `secrets` it was created with.
 
 ## Limits
 

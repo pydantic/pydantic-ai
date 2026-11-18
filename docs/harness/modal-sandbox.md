@@ -224,6 +224,8 @@ agent = Agent('{{ anthropic:large }}', deps_type=User, capabilities=[UsersModal(
 | `env` | Environment variables every command gets. Default: `None`; nothing from your machine reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. |
 | `client` | A `modal.Client`, such as one from `modal.Client.from_credentials`. Default: `None`, Modal's client from the environment or config. |
 | `warn_if_no_tools` | Warn when the agent has no `Shell` or `FileSystem` tool. Default: `True`. |
+| `authority` | The [authority](../workspace-custom.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
 `client`, `working_dir` and `env` also apply when you reattach, and `destroy` uses `client`. `warn_if_no_tools` only controls the warning; the other options only shape a new sandbox.
 

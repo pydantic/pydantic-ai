@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, 
 from weakref import WeakValueDictionary
 
 import anyio
+import pydantic_core
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar
 
@@ -93,6 +94,7 @@ from . import (
     usage as _usage,
 )
 from ._cancel import RunCancellation
+from ._capability_parts import has_capability_parts
 from ._context_size import context_input_tokens
 from ._conversation_marks import stored_boundary
 from ._deferred_capabilities import (
@@ -148,9 +150,10 @@ from .models._continuation import (
 from .models._request_timeout import enforce_request_deadline, start_request_deadline, without_carried_deadline
 from .models.wrapper import WrapperModel, serving_wrapper_scope
 from .output import OutputDataT, OutputSpec, PendingModelResponse, StructuredOutputMode
-from .settings import ModelSettings
+from .settings import ModelSettings, ThinkingEffort
 from .tools import (
     AgentNativeTool,
+    DeferredToolRequests,
     DeferredToolResult,
     DeferredToolResults,
     NativeToolFunc,
@@ -545,9 +548,13 @@ class _AttemptBaseline:
         """
         if model is self.model:
             return self.model_settings
+        return self.with_hook_changes(self.layered_settings)
+
+    def with_hook_changes(self, layered_settings: ModelSettings | None) -> ModelSettings | None:
+        """`layered_settings`, the agent, capability and run settings, with what the hooks changed applied on top."""
         settings = {
             key: value
-            for key, value in {**(self.layered_settings or {}), **self.hook_settings}.items()
+            for key, value in {**(layered_settings or {}), **self.hook_settings}.items()
             if key not in self.hook_removed_settings
         }
         return cast(ModelSettings, settings) if settings else None
@@ -575,7 +582,7 @@ class _AttemptBaseline:
         """
         if not self.native_tool_factories or _unwrap_model(request_context.model) is _unwrap_model(self.model):
             return
-        attempt_context = replace(run_context, model=request_context.model)
+        attempt_context = _attempt_run_context(run_context, request_context)
         parameters = request_context.model_request_parameters
         native_tools: list[AbstractNativeTool | None] = list(parameters.native_tools)
         for factory, index in self.native_tool_factories:
@@ -595,12 +602,7 @@ class _AttemptBaseline:
         # definitions, the native tools and the output object, unless a `prepare_model_request` hook could edit them
         # in place.
         request_context.messages = list(self.messages)
-        settings = self.settings_for(request_context.model)
-        request_context.model_settings = (
-            cast(ModelSettings, {key: _copy_container(value) for key, value in settings.items()})
-            if settings is not None
-            else None
-        )
+        request_context.model_settings = _copy_settings(self.settings_for(request_context.model))
         parameters = self.model_request_parameters
         copy_tools = _copy_tool_definition if self.copy_tool_definitions else _same_tool_definition
         output_object = parameters.output_object
@@ -621,6 +623,143 @@ class _AttemptBaseline:
             output_tools=[copy_tools(tool) for tool in parameters.output_tools],
             instruction_parts=_copy_container(parameters.instruction_parts),
         )
+
+
+@dataclasses.dataclass
+class _StepRecording:
+    """The instructions and model settings changes the step recorded on its request, to record again for another model.
+
+    An attempt at another model than the step's is sent the instructions and settings resolved for that model, so
+    history records those instead: the changes recorded for the step's model are replaced by the ones recorded, the
+    same way, for the model serving the attempt. Whichever attempt is accepted, history holds what it was sent.
+    """
+
+    messages: list[_messages.ModelMessage]
+    """The request's messages, as the before-chain left them, which the changes are recorded against."""
+    targets: list[_messages.ModelRequest]
+    """The requests the changes are recorded on: see `_history_recording_targets`."""
+    instruction_targets: list[_messages.ModelRequest]
+    """The requests the instructions sent are rendered onto."""
+    starts: list[int]
+    """Where on each target the instruction changes start."""
+    instructions: list[str | None]
+    """The `instructions` of each target, then each instruction target, before the instructions were recorded."""
+    parameters: models.ModelRequestParameters | None
+    """The request parameters the before-chain left, whose `instruction_parts` are replaced by another model's.
+
+    `None` when a hook changed the instruction parts it was given: those stay as the hook left them for every
+    attempt, as there's no telling how the hook would have changed another model's.
+    """
+    loaded_parts: list[_messages.InstructionPart]
+    """The loaded capabilities' instruction parts the request was built with, which the prefix is split from."""
+    resolved_loaded_parts: list[_messages.InstructionPart]
+    """The loaded capabilities' instruction parts as of the before-chain, which the prefix is split from."""
+    loaded_capability_ids: Collection[str]
+    instruction_records: list[Sequence[_messages.ModelRequestPart]]
+    """The instruction changes currently recorded on each target."""
+    settings_records: list[Sequence[_messages.ModelRequestPart]]
+    """The model settings changes currently recorded on each target."""
+    resolved: list[_messages.InstructionPart] | None
+    """The instruction parts currently recorded, as resolved before the hooks."""
+    sent: list[_messages.InstructionPart] | None
+    """The instruction parts currently sent."""
+    effort: ThinkingEffort | None
+    """The thinking effort currently recorded, as `_record_model_settings_changes` resolves it."""
+
+    def record(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+        model: models.Model,
+        model_settings: ModelSettings | None,
+        resolved: list[_messages.InstructionPart] | None,
+    ) -> None:
+        """Record the instructions resolved for `model`, and `model_settings`, in place of what's recorded now.
+
+        `resolved` is ignored when a hook changed the instruction parts (see `parameters`). Afterwards, `sent` holds the
+        instruction parts to send.
+        """
+        record_instructions = self.parameters is not None and resolved != self.resolved
+        effort = model._unified_effort(model_settings)  # pyright: ignore[reportPrivateUsage]
+        record_settings = effort != self.effort
+        if not record_instructions and not record_settings:
+            return
+        tails = self._take_records(
+            [
+                [
+                    *(self.instruction_records[index] if record_instructions else ()),
+                    *(self.settings_records[index] if record_settings else ()),
+                ]
+                for index in range(len(self.targets))
+            ]
+        )
+        if record_instructions:
+            for target, instructions in zip([*self.targets, *self.instruction_targets], self.instructions):
+                target.instructions = instructions
+            self.resolved = resolved
+            self.sent = self._record_instructions(resolved)
+            self.instruction_records = [target.parts[start:] for target, start in zip(self.targets, self.starts)]
+        for target, tail in zip(self.targets, tails):
+            target.parts = [*target.parts, *tail]
+        if record_settings:
+            self._withdraw_settings_events(ctx)
+            ends = [len(target.parts) for target in self.targets]
+            self.effort = _record_model_settings_changes(ctx, model, model_settings, self.messages, self.targets)
+            self.settings_records = [target.parts[end:] for target, end in zip(self.targets, ends)]
+
+    def _withdraw_settings_events(self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
+        """Take the events for the settings changes about to be replaced out of the run's event buffer.
+
+        Each `ModelSettingsDeltaEvent` carries a part history records, so one whose part is replaced must not reach a
+        consumer that rebuilds history from the events. Attempts are made before the step's events are streamed, so
+        they're still buffered.
+        """
+        replaced = [part for records in self.settings_records for part in records]
+        buffer = ctx.state.event_stream_buffer
+        buffer[:] = [
+            event
+            for event in buffer
+            if not (
+                isinstance(event, _messages.ModelSettingsDeltaEvent) and any(event.part is part for part in replaced)
+            )
+        ]
+
+    def _take_records(self, replaced: list[list[_messages.ModelRequestPart]]) -> list[list[_messages.ModelRequestPart]]:
+        """Cut each target back to where the instruction changes start, returning what followed without `replaced`."""
+        tails: list[list[_messages.ModelRequestPart]] = []
+        for target, start, old_parts in zip(self.targets, self.starts, replaced):
+            tails.append([part for part in target.parts[start:] if not any(part is old for old in old_parts)])
+            target.parts = target.parts[:start]
+        return tails
+
+    def _record_instructions(
+        self, resolved: list[_messages.InstructionPart] | None
+    ) -> list[_messages.InstructionPart] | None:
+        """Record `resolved` as the step recorded its own, and render what's sent onto the instruction targets."""
+        assert self.parameters is not None
+        parameters = replace(self.parameters, instruction_parts=_request_instruction_parts(resolved, self.loaded_parts))
+        prefix_parts, _ = _split_loaded_instruction_parts(
+            parameters, self.resolved_loaded_parts, self.loaded_capability_ids
+        )
+        sent = update_instruction_history(self.messages, prefix_parts, self.targets)
+        for target in self.instruction_targets:
+            if sent is None:
+                # As the step left the request when it resolved no instructions.
+                target.instructions = None
+            else:
+                _apply_instruction_parts(target, sent)
+        return sent
+
+
+def _attempt_run_context(run_context: RunContext[DepsT], request_context: ModelRequestContext) -> RunContext[DepsT]:
+    """The run context the hooks resolved again for an attempt at another model see: that model as `ctx.model`."""
+    return replace(run_context, model=request_context.model, _model_id=request_context.model_id)
+
+
+def _copy_settings(settings: ModelSettings | None) -> ModelSettings | None:
+    """A copy of `settings` whose values can be edited in place without sharing, as `_copy_container` copies them."""
+    if settings is None:
+        return None
+    return cast(ModelSettings, {key: _copy_container(value) for key, value in settings.items()})
 
 
 def _copy_tool_definition(tool: ToolDefinition) -> ToolDefinition:
@@ -706,8 +845,13 @@ class _FailedAttempts:
         request_context: ModelRequestContext,
         failure: Exception | _messages.ModelResponse,
         start: AttemptStart,
+        retry: exceptions.RetryModelRequest | None = None,
     ) -> None:
-        """Record that the attempt started at `start` failed with `failure`, an error or a rejected response."""
+        """Record that the attempt started at `start` failed with `failure`, an error or a rejected response.
+
+        `retry` is what a hook raised to move on from it, if it asked for another attempt: one without a model
+        retried the same model, and is recorded as a retry rather than a fallback.
+        """
         ledger = request_context._usage_response_ledger  # pyright: ignore[reportPrivateUsage]
         if isinstance(failure, _messages.ModelResponse):
             # Described by what the provider billed for it, recorded just before the hook rejected it: a copy
@@ -721,6 +865,7 @@ class _FailedAttempts:
             start,
             parent=policy.span if policy else None,
             tracer=policy.tracer if policy else None,
+            kind='retry' if retry is not None and retry.model is None else 'fallback',
         )
         if isinstance(failure, _messages.ModelResponse):
             # The rejected response now has its own span, which reports its usage, so the `chat` span
@@ -786,6 +931,11 @@ class GraphAgentState:
     [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index]. The result's
     `conversation` finds them in the history to tell its store where the unsaved messages start.
     """
+    conversation_deferred_tool_requests: DeferredToolRequests | None = None
+    """The [`deferred_tool_requests`][pydantic_ai.conversation.Conversation.deferred_tool_requests] of the conversation this run was given, if any.
+
+    A run that fails before it adds a message leaves them waiting, so its failed conversation keeps them.
+    """
     conversation_unchecked: bool = False
     """Whether the messages before `conversation_unsaved` may have changed since they were stored, say after the conversation was serialized.
 
@@ -828,21 +978,26 @@ class GraphAgentState:
         # thread-safe list subclass. Pydantic deserialization also runs this hook.
         self.pending_messages = _enqueue.PendingMessageQueue(self.pending_messages)
 
-    def check_incomplete_tool_call(self) -> None:
-        """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
+    def check_incomplete_tool_call(self, call: _messages.ToolCallPart | None = None) -> None:
+        """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call.
+
+        When `call` is given, only raise if it is the tool call that was truncated.
+        """
         if (
             self.message_history
             and isinstance(model_response := self.message_history[-1], _messages.ModelResponse)
             and model_response.finish_reason == 'length'
             and model_response.parts
             and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
+            and (call is None or call.tool_call_id == tool_call.tool_call_id)
+            and isinstance(tool_call.args, str)
+            and tool_call.args
         ):
+            # Only JSON that doesn't parse was cut off: complete JSON the schema rejects is retried like any other.
             try:
-                tool_call.args_as_dict(raise_if_invalid=True)
-            except Exception:
-                raise exceptions.IncompleteToolCall(
-                    f'Model token limit ({self.last_max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
-                )
+                pydantic_core.from_json(tool_call.args)
+            except ValueError:
+                raise exceptions.IncompleteToolCall(_output.incomplete_tool_call_message(self.last_max_tokens))
 
     def consume_output_retry(
         self,
@@ -1613,12 +1768,18 @@ async def _prepare_request_parameters(
         prompted_output_template=prompted_output_template,
         allow_text_output=output_schema.allows_text,
         allow_image_output=output_schema.allows_image,
-        instruction_parts=[*(instruction_parts or []), *loaded_instruction_parts]
-        if loaded_instruction_parts
-        else instruction_parts,
+        instruction_parts=_request_instruction_parts(instruction_parts, loaded_instruction_parts),
         instruction_visibility={str(part.id): 'via_history' for part in loaded_instruction_parts if part.id is not None}
         or None,
     )
+
+
+def _request_instruction_parts(
+    instruction_parts: list[_messages.InstructionPart] | None,
+    loaded_instruction_parts: Sequence[_messages.InstructionPart],
+) -> list[_messages.InstructionPart] | None:
+    """The instruction parts a request is built with: the resolved ones, then the loaded capabilities'."""
+    return [*(instruction_parts or []), *loaded_instruction_parts] if loaded_instruction_parts else instruction_parts
 
 
 def _keep_default_output_mode(
@@ -2311,6 +2472,28 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         repr=False, init=False, default_factory=dict[str, list[_messages.InstructionPart]]
     )
     """The loaded capabilities' instruction parts this request resolved, before the hooks ran, by capability id."""
+    _step_instruction_parts: list[_messages.InstructionPart] | None = field(repr=False, init=False, default=None)
+    """The instruction parts this request step resolved for its model, before the hooks ran, without the loaded ones."""
+    _step_toolset_instruction_parts: list[_messages.InstructionPart] = field(
+        repr=False, init=False, default_factory=list[_messages.InstructionPart]
+    )
+    """The toolsets' instruction parts this request step resolved, which an attempt at another model reuses."""
+    _step_instruction_window: bool = field(repr=False, init=False, default=False)
+    """Whether the history had an instruction window when this request step resolved its instructions."""
+    _step_loaded_parts: list[_messages.InstructionPart] = field(
+        repr=False, init=False, default_factory=list[_messages.InstructionPart]
+    )
+    """The loaded capabilities' instruction parts this request step was built with."""
+    _step_request_instruction_parts: list[_messages.InstructionPart] | None = field(
+        repr=False, init=False, default=None
+    )
+    """The instruction parts this request step was built with, to tell whether a hook changed them."""
+    _step_recording: _StepRecording | None = field(repr=False, init=False, default=None)
+    """How this request step recorded its instructions and model settings, to record them again for another model.
+
+    `None` when resuming a suspended response, which records neither."""
+    _recorded_for_other_model: bool = field(repr=False, init=False, default=False)
+    """Whether the step's request currently records what an attempt at another model than the step's was sent."""
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -2489,9 +2672,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ready_waiter = asyncio.create_task(stream_ready.wait())
         try:
             await _serve_stream_offers(handoff, ready_waiter, wrap.task)
+            # Inside the `try`: on Python 3.11, draining even a finished `ready_waiter` yields to the event loop, so a
+            # cancellation can land here after `_streaming_handler` has parked on `stream_done.wait()`. Nothing has
+            # reached the consumer yet, so it needs the same cleanup as one that lands before the handoff.
+            await cancel_and_drain(ready_waiter)
         except BaseException as exc:
-            # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
-            # so both tasks are still ours; drain them so cleanup runs before we re-raise.
+            # `BaseException` to also catch `CancelledError`. The stream hasn't been yielded to the
+            # consumer, so both tasks are still ours; drain them so cleanup runs before we re-raise.
             #
             # Unblock `_streaming_handler` before draining: if `wrap.task`'s model
             # absorbed the CancelledError (e.g. Temporal's cooperative cancellation),
@@ -2510,10 +2697,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 request_messages = (_handler_request_context or wrap_request_context).messages
                 self._commit_interrupted_response(ctx, partial, recorded, request_messages)
             raise
-        else:
-            # Handoff succeeded: `wrap.task` is owned by the rest of the streaming
-            # lifecycle below. Only the throwaway readiness waiter is ours to clean up.
-            await cancel_and_drain(ready_waiter)
 
         # `_prepare_request` ran in this task before wrap hooks were added. Preserve that
         # behavior by carrying ContextVar writes from its new location in the wrap task back
@@ -2799,6 +2982,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         while True:
             baseline.restore(request_context)
             await baseline.resolve_native_tools(run_context, request_context)
+            await self._prepare_for_attempt_model(ctx, run_context, request_context, baseline)
             state.response = None
             state.usage_recorded = False
             try:
@@ -2884,8 +3068,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 return await ctx.deps.root_capability.after_model_request(
                     run_context, request_context=request_context, response=response
                 )
-        except exceptions.RetryModelRequest:
-            failed.record(request_context, outcome, start)
+        except exceptions.RetryModelRequest as retry:
+            failed.record(request_context, outcome, start, retry)
             await self._cancel_rejected_job(request_context, outcome, state)
             raise
         except exceptions.FallbackExceptionGroup as unrecovered:
@@ -2916,6 +3100,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         streaming: bool,
     ) -> tuple[ModelRequestContext, RunContext[DepsT]]:
+        self._step_recording = None
+        self._recorded_for_other_model = False
         if self._resume_suspended is not None:
             return await self._prepare_resume_request(ctx, streaming=streaming)
 
@@ -2951,13 +3137,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         _display_first_run_banner(ctx)
 
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.
-        instruction_parts = await _get_instructions(ctx, run_context)
-        if instruction_parts:
-            instruction_parts = _messages.InstructionPart.sorted(instruction_parts) or None
+        self._step_instruction_window = instruction_window(ctx.state.message_history) is not None
+        instruction_parts = await self._resolve_step_instructions(ctx, run_context)
         self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
-        if instruction_parts is None and instruction_window(ctx.state.message_history) is not None:
-            # An empty source set withdraws tracked blocks; hooks can still explicitly unset parts.
-            instruction_parts = []
+        self._step_instruction_parts = instruction_parts
 
         # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
@@ -2967,11 +3150,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx, run_context, LoadedInstructionValues.of(ctx.state.message_history).values
         )
         self._native_tool_factories = []
+        self._step_loaded_parts = [part for parts in self._resolved_loaded_parts.values() for part in parts]
         model_request_parameters = await _prepare_request_parameters(
-            ctx,
-            instruction_parts,
-            [part for parts in self._resolved_loaded_parts.values() for part in parts],
-            native_tool_factories=self._native_tool_factories,
+            ctx, instruction_parts, self._step_loaded_parts, native_tool_factories=self._native_tool_factories
+        )
+        # A copy of the list and its parts, so a hook editing them in place, like redacting a part, counts as a change.
+        self._step_request_instruction_parts = (
+            [replace(part) for part in model_request_parameters.instruction_parts]
+            if model_request_parameters.instruction_parts is not None
+            else None
         )
         model_settings = self._resolve_step_model_settings(ctx, run_context)
 
@@ -2989,6 +3176,31 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.usage_limits.check_before_request(ctx.state.usage)
         return request_context, run_context
 
+    async def _resolve_step_instructions(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        *,
+        for_attempt: bool = False,
+    ) -> list[_messages.InstructionPart] | None:
+        """Resolve the step's instruction parts for `run_context.model`, sorted, without the loaded capabilities'.
+
+        For an attempt at another model, only the agent's and capabilities' instructions are resolved again: the
+        toolsets' are the ones the step resolved. A toolset's instructions can come from a durable unit, like an MCP
+        server's under durable execution, and asking for them again per attempt would schedule a unit a replay of a
+        run recorded before doesn't have.
+        """
+        if not for_attempt:
+            self._step_toolset_instruction_parts = await collect_toolset_instructions(
+                ctx.deps.tool_manager.toolset, run_context
+            )
+        parts = [*(await ctx.deps.get_instructions(run_context) or ()), *self._step_toolset_instruction_parts]
+        instruction_parts = _messages.InstructionPart.sorted(parts) or None
+        if instruction_parts is None and self._step_instruction_window:
+            # An empty source set withdraws tracked blocks; hooks can still explicitly unset parts.
+            instruction_parts = []
+        return instruction_parts
+
     def _resolve_step_model_settings(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
@@ -2996,8 +3208,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> ModelSettings:
         """Resolve the step's model settings, keeping the layers alone for an attempt at another model."""
         self._step_model_settings = ctx.deps.get_model_settings(run_context)
-        # A copy, so a hook editing the request's settings in place leaves the resolved ones to compare against.
-        model_settings = ModelSettings(**(self._step_model_settings.merged or {}))
+        # A copy, down to the containers inside it, so a hook editing the request's settings in place, like removing a
+        # header from `extra_headers`, leaves the resolved ones to compare against: the edit then counts as the
+        # hook's, and still applies when the settings are resolved again for another model.
+        model_settings = _copy_settings(self._step_model_settings.merged) or ModelSettings()
         run_context.model_settings = model_settings
         return model_settings
 
@@ -3143,62 +3357,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx, request_context.model_request_parameters, messages, _history_recording_targets(ctx, messages)
             )
 
-            # Instruction parts are request configuration, but the message recording the current step
-            # must still reflect what was sent. Recorded as the before-chain left them: what
-            # `prepare_model_request` changes for one attempt stays out of history. Append-on-change blocks are
-            # resolved against the processed history: only a baseline that survived processing can anchor the
-            # prefix.
-            # Loaded capabilities' instructions reach the model through history: changes to them are appended
-            # after the prefix's, and they leave the parts the model is sent.
-            loaded_capability_ids = LoadedInstructionValues.of(messages).values
-            # A hook that added a `load_capability` exchange loaded a capability after the instructions were
-            # resolved. Its instructions are resolved now, so they're stated on the request that reveals its tools.
-            self._resolved_loaded_parts |= await _get_loaded_instructions(
-                ctx,
-                run_context,
-                [
-                    capability_id
-                    for capability_id in loaded_capability_ids
-                    if capability_id not in self._resolved_loaded_parts
-                ],
-            )
-            prefix_parts, loaded_parts = _split_loaded_instruction_parts(
-                request_context.model_request_parameters,
-                [part for parts in self._resolved_loaded_parts.values() for part in parts],
-                loaded_capability_ids,
-            )
-            recording_targets = _history_recording_targets(ctx, messages)
-            request_context.model_request_parameters = replace(
-                request_context.model_request_parameters,
-                instruction_parts=update_instruction_history(messages, prefix_parts, recording_targets),
-                instruction_visibility=None,
-            )
-            update_loaded_instruction_history(
-                messages,
-                loaded_parts,
-                recording_targets,
-                history=ctx.state.message_history,
-                keep_without_parts={
-                    capability_id
-                    for capability_id, capability in ctx.deps.capabilities.items()
-                    if capability.defer_loading is not True
-                },
-            )
-            # A hook that rewrote the history (`ctx.messages[:] = ...`) with a copy of this request left
-            # `self.request` out of it, so the instructions sent are recorded where the history now holds them.
-            for target in (
-                [self.request]
-                if any(message is self.request for message in ctx.state.message_history)
-                else recording_targets
-            ):
-                _apply_instruction_parts(target, request_context.model_request_parameters.instruction_parts)
-            _record_model_settings_changes(
-                ctx,
-                request_context.model,
-                request_context.model_settings,
-                messages,
-                _history_recording_targets(ctx, messages),
-            )
+            await self._record_instructions_and_settings(ctx, run_context, request_context)
 
             if self.is_resuming_without_prompt:
                 # No separate user-prompt request this run: the trailing request that arrived via
@@ -3277,6 +3436,144 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         return request_context
 
+    async def _record_instructions_and_settings(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        request_context: ModelRequestContext,
+    ) -> None:
+        """Record the instructions and model settings the request is sent on the request that records the step.
+
+        Keeps how they were recorded in `_step_recording`, so an attempt at another model can record its own instead.
+        """
+        messages = request_context.messages
+        # Instruction parts are request configuration, but the message recording the current step
+        # must still reflect what was sent. Recorded as the before-chain left them: what
+        # `prepare_model_request` changes for one attempt stays out of history. Append-on-change blocks are
+        # resolved against the processed history: only a baseline that survived processing can anchor the
+        # prefix.
+        # Loaded capabilities' instructions reach the model through history: changes to them are appended
+        # after the prefix's, and they leave the parts the model is sent.
+        loaded_capability_ids = LoadedInstructionValues.of(messages).values
+        # A hook that added a `load_capability` exchange loaded a capability after the instructions were
+        # resolved. Its instructions are resolved now, so they're stated on the request that reveals its tools.
+        self._resolved_loaded_parts |= await _get_loaded_instructions(
+            ctx,
+            run_context,
+            [
+                capability_id
+                for capability_id in loaded_capability_ids
+                if capability_id not in self._resolved_loaded_parts
+            ],
+        )
+        hook_parameters = request_context.model_request_parameters
+        resolved_loaded_parts = [part for parts in self._resolved_loaded_parts.values() for part in parts]
+        prefix_parts, loaded_parts = _split_loaded_instruction_parts(
+            hook_parameters, resolved_loaded_parts, loaded_capability_ids
+        )
+        recording_targets = _history_recording_targets(ctx, messages)
+        instructions_before = {id(target): target.instructions for target in [*recording_targets, self.request]}
+        starts = [len(target.parts) for target in recording_targets]
+        request_context.model_request_parameters = replace(
+            hook_parameters,
+            instruction_parts=update_instruction_history(messages, prefix_parts, recording_targets),
+            instruction_visibility=None,
+        )
+        instruction_records = [target.parts[start:] for target, start in zip(recording_targets, starts)]
+        update_loaded_instruction_history(
+            messages,
+            loaded_parts,
+            recording_targets,
+            history=ctx.state.message_history,
+            keep_without_parts={
+                capability_id
+                for capability_id, capability in ctx.deps.capabilities.items()
+                if capability.defer_loading is not True
+            },
+        )
+        # A hook that rewrote the history (`ctx.messages[:] = ...`) with a copy of this request left
+        # `self.request` out of it, so the instructions sent are recorded where the history now holds them.
+        instruction_targets = (
+            [self.request]
+            if any(message is self.request for message in ctx.state.message_history)
+            else recording_targets
+        )
+        for target in instruction_targets:
+            _apply_instruction_parts(target, request_context.model_request_parameters.instruction_parts)
+        settings_starts = [len(target.parts) for target in recording_targets]
+        effort = _record_model_settings_changes(
+            ctx, request_context.model, request_context.model_settings, messages, recording_targets
+        )
+        self._step_recording = _StepRecording(
+            messages=messages,
+            targets=recording_targets,
+            instruction_targets=instruction_targets,
+            starts=starts,
+            instructions=[instructions_before[id(target)] for target in [*recording_targets, *instruction_targets]],
+            # Compared by value, as a hook may return the parts it was given in a new list.
+            parameters=hook_parameters
+            if hook_parameters.instruction_parts == self._step_request_instruction_parts
+            else None,
+            loaded_parts=self._step_loaded_parts,
+            resolved_loaded_parts=resolved_loaded_parts,
+            loaded_capability_ids=loaded_capability_ids,
+            instruction_records=instruction_records,
+            settings_records=[target.parts[start:] for target, start in zip(recording_targets, settings_starts)],
+            resolved=self._step_instruction_parts,
+            sent=request_context.model_request_parameters.instruction_parts,
+            effort=effort,
+        )
+
+    async def _prepare_for_attempt_model(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        request_context: ModelRequestContext,
+        baseline: _AttemptBaseline,
+    ) -> None:
+        """Resolve the instructions and model settings again for an attempt at another model than the step's.
+
+        The agent and capabilities may tailor them to `ctx.model`, so what they resolved for the step's model may not
+        be what another model should be sent, like when `ModelFallback` moves the request on. The toolsets'
+        instructions are the step's (see `_resolve_step_instructions`). Only the instructions and model settings see
+        the model serving the attempt as `ctx.model`; to everything else,
+        `RunContext.model` stays the step's model. A `before_model_request` hook's changes to the settings still
+        apply on top, and instruction parts a hook changed are kept as the hook left them. History records what
+        the attempt was sent, so the accepted attempt's instructions and settings are the ones in history.
+        """
+        recording = self._step_recording
+        if _unwrap_model(request_context.model) is _unwrap_model(baseline.model):
+            if recording is not None and self._recorded_for_other_model:
+                # Back at the step's model after an attempt at another: record what the step resolved for it again.
+                recording.record(
+                    ctx, request_context.model, request_context.model_settings, self._step_instruction_parts
+                )
+                self._recorded_for_other_model = False
+            return
+        attempt_context = _attempt_run_context(run_context, request_context)
+        # A resumed suspended response is continued with the instructions it was sent (see `_prepare_resume_request`),
+        # and instruction parts a hook changed stay as it left them.
+        resolve_instructions = recording is not None and recording.parameters is not None
+        resolved = (
+            await self._resolve_step_instructions(ctx, attempt_context, for_attempt=True)
+            if resolve_instructions
+            else None
+        )
+        request_context.model_settings = _copy_settings(
+            baseline.with_hook_changes(ctx.deps.get_model_settings(attempt_context).layered)
+        )
+        if recording is None:
+            return
+        recording.record(ctx, request_context.model, request_context.model_settings, resolved)
+        self._recorded_for_other_model = True
+        if resolve_instructions:
+            # Explicitly none rather than unset: unset parts make the model fall back to the instructions recorded
+            # on the request it's sent, which may be the step model's. A copy, like `restore` makes, so a hook editing
+            # them in place for one attempt doesn't change the next attempt's.
+            request_context.model_request_parameters = replace(
+                request_context.model_request_parameters, instruction_parts=_copy_container(recording.sent or [])
+            )
+
     async def _prepare_attempt(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
@@ -3318,6 +3615,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             (wrapped for wrapped in wrappers if wrapped[0] is request_context.model), None
         )
         request_context.messages = list(processed_context.messages)
+        request_context._hooked_messages = list(request_context.messages)  # pyright: ignore[reportPrivateUsage]
         request_context.model_settings = processed_context.model_settings or None
         request_context.model_request_parameters = processed_context.model_request_parameters
         request_context.model_id = processed_context.model_id
@@ -3411,7 +3709,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         else:
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, list(messages))
             request_context.model_request_parameters = model_request_parameters
-            if _has_instruction_state(messages):
+            if _continuation_needs_prepare(messages):
                 # Projection can split a foreign native tool-search exchange into a trailing
                 # `ModelRequest` next to an existing one. Only merge: the suspended tail is the live
                 # frontier, so its tool calls must not get synthesized returns.
@@ -3456,6 +3754,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         while True:
             baseline.restore(request_context)
             await baseline.resolve_native_tools(run_context, request_context)
+            await self._prepare_for_attempt_model(ctx, run_context, request_context, baseline)
             try:
                 request_context, attempt_model = await self._prepare_attempt(ctx, run_context, request_context)
             except exceptions.RetryModelRequest as retry:
@@ -3680,8 +3979,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return await root_capability.on_model_request_error(
                 run_context, request_context=request_context, error=error
             )
-        except exceptions.RetryModelRequest:
-            failed.record(request_context, error, start)
+        except exceptions.RetryModelRequest as retry:
+            failed.record(request_context, error, start, retry)
             raise
         except exceptions.FallbackExceptionGroup as unrecovered:
             failed.record_exhausted(request_context, error, start, unrecovered)
@@ -4705,7 +5004,7 @@ def _record_model_settings_changes(
     model_settings: ModelSettings | None,
     messages: list[_messages.ModelMessage],
     requests: Sequence[_messages.ModelRequest],
-) -> None:
+) -> ThinkingEffort | None:
     """Record a change to the recorded model settings as a `ModelSettingsDeltaPart` at the end of this step's request.
 
     The only key recorded today is `thinking`, as an effort level (see `RecordedModelSettings`). The effort wanted is the unified `thinking` setting this request resolves to, after `before_model_request`
@@ -4714,7 +5013,7 @@ def _record_model_settings_changes(
     opens a window (`top_level=True`), as does any change to or from a `thinking` that names no level, which no
     mid-conversation channel can express. A change from one level to another is recorded with `top_level=False`,
     which a model with a mid-conversation channel sends in place. Nothing is recorded while `thinking` never
-    names a level.
+    names a level. Returns the effort wanted.
 
     Reading history makes this idempotent, like `_record_tool_population_changes`: a retried request finds the
     part it already recorded. A part no response has answered yet (on this step's own request, when the run continues
@@ -4739,12 +5038,22 @@ def _record_model_settings_changes(
     )
     current_effort = current.settings.get('thinking') if current is not None else None
     if current_effort == wanted:
-        return
+        return wanted
     top_level = current is None or current_effort is None or wanted is None
     delta = _messages.ModelSettingsDeltaPart(settings={'thinking': wanted}, top_level=top_level)
     for request in requests:
         request.parts = [*request.parts, delta]
     ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
+    return wanted
+
+
+def _continuation_needs_prepare(messages: list[_messages.ModelMessage]) -> bool:
+    """Whether a continuation's history must go through `Model.prepare_messages` before it is sent.
+
+    Instruction state needs rendering, and so do capability parts: `prepare_messages` renders them, so a
+    continuation never hands one to a model's adapter.
+    """
+    return _has_instruction_state(messages) or has_capability_parts(messages)
 
 
 def _with_outgoing_reveal_state(
@@ -4897,6 +5206,104 @@ def capture_run_messages() -> Generator[list[_messages.ModelMessage]]:
         yield messages
     finally:
         _messages_ctx_var.reset(token)
+
+
+class CapturedConversation:
+    """What [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation] captured."""
+
+    def __init__(self) -> None:
+        self._build: Callable[[], Conversation] | None = None
+        self._ended = False
+        self._conversation: Conversation | None = None
+
+    @property
+    def conversation(self) -> Conversation | None:
+        """The conversation of the first run started in the context, as far as it got, or `None` if none started.
+
+        Built when read, so read it after the run raised: it holds the messages the run got to,
+        including a partial response with `state='interrupted'`, and saving it to a
+        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] appends just
+        what the run added. After a run that finished, prefer its result's
+        [`conversation`][pydantic_ai.agent.AgentRunResult.conversation], which also carries the
+        tool calls a paused run waits on.
+
+        Once the run has ended, it's built on the first read and the same instance is returned after
+        that, so a [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] that saves
+        it advances the revision every later read sees. A read while the run is still going returns a
+        new snapshot of it so far.
+        """
+        if self._conversation is not None or self._build is None:
+            return self._conversation
+        conversation = self._build()
+        if self._ended:
+            self._conversation = conversation
+        return conversation
+
+
+_captured_conversation: ContextVar[CapturedConversation | None] = ContextVar('_captured_conversation', default=None)
+
+
+@contextmanager
+def capture_run_conversation() -> Generator[CapturedConversation]:
+    """Context manager to get the conversation of a run that raised, so it can still be stored.
+
+    Like [`capture_run_messages`][pydantic_ai.agent.capture_run_messages], it captures the first
+    [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync],
+    [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] or
+    [`iter`][pydantic_ai.agent.Agent.iter] call started inside it, but as a
+    [`Conversation`][pydantic_ai.conversation.Conversation] a
+    [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] can save, whatever the
+    run raised, including an exception from a tool's own code. For errors Pydantic AI raises, an
+    [`AgentRunError`][pydantic_ai.exceptions.AgentRunError] carries the same as its
+    [`conversation`][pydantic_ai.exceptions.AgentRunError.conversation].
+
+    ```python
+    from pydantic_ai import Agent, capture_run_conversation
+    from pydantic_ai.conversation_store import InMemoryConversationStore
+
+    agent = Agent('test')
+    store = InMemoryConversationStore()
+
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise ConnectionError('The database is down.')
+
+
+    async def main():
+        with capture_run_conversation() as captured:
+            try:
+                await agent.run('Look it up')
+            except ConnectionError:
+                conversation = captured.conversation
+                assert conversation is not None
+                entries = await store.save(conversation)
+                print(len(entries))
+                #> 3
+    ```
+
+    Contexts can be nested: a run is captured by the innermost active context.
+    """
+    captured = CapturedConversation()
+    token = _captured_conversation.set(captured)
+    try:
+        yield captured
+    finally:
+        _captured_conversation.reset(token)
+
+
+def capture_conversation_of(build: Callable[[], Conversation]) -> None:
+    """Let the innermost [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation] context capture a run starting now, unless it already captured one."""
+    captured = _captured_conversation.get()
+    if captured is not None and captured._build is None:  # pyright: ignore[reportPrivateUsage]
+        captured._build = build  # pyright: ignore[reportPrivateUsage]
+
+
+def end_captured_run(build: Callable[[], Conversation]) -> None:
+    """Tell the context that captured the run with `build` that the run has ended, so its conversation can be kept."""
+    captured = _captured_conversation.get()
+    if captured is not None and captured._build is build:  # pyright: ignore[reportPrivateUsage]
+        captured._ended = True  # pyright: ignore[reportPrivateUsage]
 
 
 def get_captured_run_messages() -> _RunMessages:

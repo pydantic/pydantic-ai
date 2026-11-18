@@ -2394,7 +2394,7 @@ async def test_temporal_agent_sync_tool_activity_disabled(allow_model_requests: 
         with workflow_raises(
             UserError,
             snapshot(
-                "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
+                "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled by `durable=False`, its Temporal metadata or `tool_activity_config`), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
             ),
         ):
             await client.execute_workflow(

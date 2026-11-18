@@ -84,6 +84,8 @@ Passwords aren't supported. `ssh` runs with `BatchMode=yes`, so a host that asks
 
 `SSHWorkspace` has the full authority of the remote user. Choose the variables commands need with `env=`; don't pass your local environment through.
 
+That's what commands can do. What the host's files can *say* is separate: for a checkout the operator didn't write, pass `authority='none'` (or `'user'` for the user's own files), with `path_authority` for single paths on the host (`~` isn't expanded). The workspace reports the level through `authority_of`, and a capability that checks it sends a file's text to the model with no more [authority](../workspace-custom.md#workspace-authority) than that. Default: `'operator'`.
+
 `env=` values travel inside the script `ssh` sends, which this machine passes to a local `sh` as arguments, so while a command runs they are visible in process listings (`ps`) to other users on this machine, and on the host too when `ssh` doesn't forward its input (`-n` or `-f` in `ssh_args`, or `StdinNull` in your SSH configuration). Don't put secrets in `env=` on a shared machine: keep them in a file only the remote user can read, or in the remote user's login environment.
 
 ## Limits

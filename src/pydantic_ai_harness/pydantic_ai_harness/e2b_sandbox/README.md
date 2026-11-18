@@ -204,6 +204,37 @@ agent = Agent('anthropic:claude-opus-5-5', deps_type=User, capabilities=[UsersE2
 - E2B's client falls back to `E2B_API_KEY` when its key is empty, so check for a key first, as above, or a user without one runs on that account.
 - Destroy a user's sandbox with that user's key: `await E2BSandbox(client=E2B(api_key=user.e2b_api_key)).destroy(ref)`. With another account's client the sandbox isn't found, `destroy` returns without an error, and the sandbox keeps billing.
 - Under [Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/), `deps` are stored in the workflow's history. Put a user ID there, and look the key up in `get_workspace` on the worker.
+## Keep a token out of the sandbox
+
+Pass `network` to have E2B add a token to the sandbox's requests itself, so the token is never inside the sandbox. `network` takes E2B's own network options and passes them on unchanged. Here `gh` and `git push` work as the token's owner, while `echo $GH_TOKEN` in the sandbox prints `placeholder`:
+
+```python {names="defined"}
+import base64
+
+from pydantic_ai_harness.e2b_sandbox import E2BSandbox
+
+token = '...'  # a GitHub token, such as the output of `gh auth token`
+basic = base64.b64encode(f'x-access-token:{token}'.encode()).decode()
+sandbox = E2BSandbox(
+    env={'GH_TOKEN': 'placeholder'},  # `gh` sends a token only when one is set; the proxy replaces it
+    network={
+        'rules': {
+            'github.com': [{'transform': {'headers': {'Authorization': f'Basic {basic}'}}}],  # git over HTTPS
+            'api.github.com': [{'transform': {'headers': {'Authorization': f'token {token}'}}}],  # gh
+            'uploads.github.com': [{'transform': {'headers': {'Authorization': f'token {token}'}}}],
+        }
+    },
+)
+```
+
+E2B adds the header as each request leaves the sandbox, replacing any header with the same name. E2B calls this [public beta](https://docs.e2b.dev/sandbox/internet-access), so it may change.
+
+- Only HTTPS requests get the header. Use `https://` remotes, not `git@github.com:owner/repo.git`.
+- If you also set `allow_out` or `allow_internet_access=False`, add each host in `rules` to `allow_out`, or its requests are blocked.
+- The agent can't see the token, but it can use it for anything the token allows.
+- List only hosts that never send request headers back in a response, or a command could read the token there.
+- An attached sandbox keeps its rules. To change them, for example to swap the token, call `update_network` on `await backend.get_sandbox()`. It replaces all network options at once.
+- To keep the token out of the request that creates the sandbox too, save the whole header value as an E2B secret and use `e2b.Secret.fill(name)` as the value.
 
 ## Preview a dev server
 
@@ -226,8 +257,11 @@ The preview is public. Stop it with `stop_command` while the workspace is attach
 | `sandbox_timeout` | Seconds until E2B pauses the sandbox, set on create and on reattach. Default: `3_600`. Over your plan's limit raises `WorkspaceUnavailableError`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/user` on the default template. Created on a new sandbox; on an attached one it must exist. |
 | `env` | Environment variables every command gets. Default: `None`; nothing from your machine reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. The default locale is POSIX; pass `{'LC_ALL': 'C.UTF-8'}` for tools that should count characters rather than bytes. |
+| `network` | E2B's network options for a new sandbox, passed to `Sandbox.create` unchanged. Default: `None`. See [Keep a token out of the sandbox](#keep-a-token-out-of-the-sandbox). A spec cannot set it. |
+| `authority` | Who wrote the sandbox's files, for capabilities that check [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority): `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
-`template` and `allow_internet_access` only shape a new sandbox; the other options also apply when you reattach, and `destroy` uses `client`.
+`template`, `allow_internet_access` and `network` only shape a new sandbox; the other options also apply when you reattach, and `destroy` uses `client`.
 
 ## Limits
 

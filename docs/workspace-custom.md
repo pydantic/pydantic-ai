@@ -103,12 +103,20 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('./checkout
 ```
 
 Tools work as before. The setting is for capabilities that put the workspace's files into the prompt: the
-model treats instructions as the operator speaking, so such a capability asks
-[`ctx.workspace.authority_of(path)`][pydantic_ai.workspaces.Workspace.authority_of] and sends the text with
-no more [authority][pydantic_ai.messages.Authority] than that, in the user's turn for `'user'` and as tool
-output for `'none'`.
+model treats instructions as the operator speaking, so such a capability sends a file's text with no more
+[authority][pydantic_ai.messages.Authority] than
+[`ctx.workspace.authority_of(path)`][pydantic_ai.workspaces.Workspace.authority_of] gives it. It does that
+in a [capability part](capabilities/custom.md#capability-parts) whose source is
+[`await WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace],
+which Pydantic AI renders in the application's voice for `'operator'`, in the user's turn for `'user'` and as
+framed data for `'none'`.
 
-- No built-in capability reads authority yet. It's the setting your own capabilities check.
+- What a tool returns, such as a file `read_file` read, is tool output whatever the authority. Built-in
+  capabilities that load workspace files into instructions check `authority` as they adopt it.
+- Harness workspaces such as [`E2BSandbox`](harness/e2b-sandbox.md),
+  [`DockerContainer`](harness/docker-container.md) and [`SSHWorkspace`](harness/ssh-workspace.md) take the
+  same `authority` and `path_authority`. Their paths are on the sandbox, container or host, so `~` isn't
+  expanded.
 - Authority doesn't limit what the agent can do; use
   [tool approval](deferred-tools.md#human-in-the-loop-tool-approval) or a sandbox for that.
 - It's checked when a file is read. Text already in a conversation keeps its level, so start a new

@@ -214,6 +214,8 @@ Whoever passes a ref runs commands in the box it names, and BoxLite can open any
 | `allowed_hosts` | With `allow_internet_access`, the only hostnames, IP addresses and CIDR ranges a new box can connect to. Default: `None`, any. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created if missing. Default: `/workspace`; `None` uses the box's own (`/` on Alpine). |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the box. The agent's commands can read these, so leave out secrets it shouldn't see. |
+| `authority` | Who wrote the sandbox's files, for capabilities that check [authority](../workspace-custom.md#workspace-authority): `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 | `box_options` | Other `boxlite.BoxOptions` arguments for a new box, such as `volumes`, `ports`, `secrets` or `disk_size_gb`. Default: `None`. |
 
 ## Limits

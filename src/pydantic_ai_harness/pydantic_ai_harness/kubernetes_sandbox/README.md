@@ -260,8 +260,10 @@ sandbox = KubernetesSandbox(
 | `sandbox_timeout` | Seconds after which a newly claimed sandbox is deleted. Default: `86_400` (24 hours); `None` keeps it until `destroy(ref)`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, sandboxd's root directory. Created on a new claim; on an attached one it must exist. |
 | `env` | Environment variables every command gets, on top of the container's own. Default: `None`. The agent's commands can read these, so leave out secrets it shouldn't see. |
+| `authority` | Who wrote the sandbox's files, for capabilities that check [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority): `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
-`connection`, `working_dir` and `env` also apply when you reattach; the other options only shape a new claim.
+`connection`, `working_dir`, `env`, `authority` and `path_authority` also apply when you reattach; the other options only shape a new claim.
 
 ## Limits
 

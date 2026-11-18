@@ -365,7 +365,12 @@ the [engine guides](durable_execution/overview.md) show where each run starts. T
 in a plain run, and harness tools such as `Coder`, `Shell` and `FileSystem` work on all three engines,
 background jobs, sticky `cd` and [`FileChangeRequestedEvent`](harness/filesystem.md#events) approval
 included, with the [Temporal limits](durable_execution/temporal.md#harness-workspace-capabilities) on live
-events and delegation.
+events and delegation. `FileSystem` and the `shell` tool also work under
+[Azure Durable Task](harness/azure-durable-task.md) and [Render Workflows](harness/render-workflows.md).
+
+A tool that must run its orchestration in the workflow, for example to approve a file change before
+writing, can set [`durable=False`](durable_execution/overview.md#running-a-tool-outside-the-durable-unit);
+the workspace calls it makes still run as the engine's activities, steps or tasks.
 
 - A durable run creates or attaches its environment when it starts, even if no tool uses it, and retries,
   replays and recovery reattach to it. If a worker dies after creating a sandbox but before that is
@@ -392,8 +397,8 @@ events and delegation.
   the run doesn't apply its own settings, such as a sandbox image, for the same reason.
 - Workspace calls made from workflow code store their arguments, `env=` and file contents included, in
   durable history. Keep secrets in the capability's `env=` or use them inside a tool.
-- `workspace.backend` is not available in workflow code. Reach the provider's own API from a tool that
-  runs as an activity or step.
+- `workspace.backend` is not available in workflow code, which includes DBOS function tools and tools with
+  `durable=False`. Reach the provider's own API from a tool that runs as an activity or step.
 - The deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` refuse a workspace; use the durability
   capability.
 - On Temporal, `LocalWorkspace` calls run on whichever worker picks them up, so every worker needs the
