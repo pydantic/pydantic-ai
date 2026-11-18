@@ -205,6 +205,9 @@ def build_response(
     finish_reasons: dict[str, FinishReason] = {
         'completed': 'stop',
         'requires_action': 'tool_call',
+        # A long decode stopped at the per-request output cap with a continuation token. google-genai continues it
+        # itself from 2.34.0; an earlier SDK returns the partial output with this status.
+        'requires_continuation': 'length',
         'incomplete': 'length',
         'budget_exceeded': 'length',
         'failed': 'error',

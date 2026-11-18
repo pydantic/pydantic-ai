@@ -275,7 +275,9 @@ this stateless adapter's scope. URI-only output raises an error.
 ### Unsupported Interactions features
 
 Interactions has no token-counting endpoint, batch support, or explicit prompt caching. Implicit
-caching is provider-managed. Sampling settings absent from this API are ignored; its settings class
+caching is provider-managed. With `google-genai` earlier than 2.34, which doesn't continue an Interactions
+[long decode](#long-decode), a request that reaches the model's per-request output cap returns its partial output with
+finish reason `length` and `provider_details['status']` set to `requires_continuation`. Sampling settings absent from this API are ignored; its settings class
 describes them. Finish reasons are derived from interaction status, which has less detail than
 GenerateContent's finish reasons. Raw status and usage remain available in `provider_details`.
 

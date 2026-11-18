@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import math
 from collections.abc import AsyncGenerator, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
@@ -82,6 +83,8 @@ try:
     # Interactions uses separate compatibility errors that the public google.genai.errors does not export.
     from google.genai._gaos.lib.compat_errors import APIConnectionError, APIError, APIStatusError, APITimeoutError
     from google.genai.types import MediaResolution
+
+    from ...providers.google import _LONG_DECODE_TIMEOUT  # pyright: ignore[reportPrivateUsage]
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google Interactions API: `pip install "pydantic-ai-slim[google]"`'
@@ -394,6 +397,12 @@ class GoogleInteractionsModel(Model[Client]):
             if caller_user_agents
             else f'{sdk_user_agent} {get_user_agent()}'
         )
+        # The server ends a request at its own deadline unless `X-Server-Timeout` asks for longer, which the
+        # Interactions SDK never sends, so a long decode would be cut off mid-stream. Ask for at least Google's
+        # long-decode figure, as `GoogleModel` does, unless the caller sent their own.
+        if not any(name.lower() == 'x-server-timeout' for name in headers):
+            client_timeout_ms = self.client._api_client._http_options.timeout or 0  # pyright: ignore[reportPrivateUsage]
+            headers['X-Server-Timeout'] = str(math.ceil(max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)))
         options: _HttpOptions = {'extra_headers': headers}
         if (timeout := settings.get('timeout')) is not None:
             options['timeout'] = (

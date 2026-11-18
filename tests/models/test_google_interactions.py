@@ -17,6 +17,7 @@ from pydantic_ai import (
     ImageUrl,
     ModelRetry,
     VideoUrl,
+    capture_run_messages,
 )
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request, model_request_stream
@@ -4545,3 +4546,47 @@ async def test_minimal_thinking_resolves_to_supported_level(
         'thinking_level': 'low',
         'thinking_summaries': 'none' if thinking is False else 'auto',
     }
+
+
+async def test_long_decode_stops_at_the_request_cap(
+    gemini_api_key: str, request_capture: RequestCapture, allow_model_requests: None
+):
+    """A streamed long decode reaches Google's per-request output cap and ends as a `length` finish.
+
+    Recorded with google-genai 2.32, which returns the `requires_continuation` interaction as is; from 2.34 the SDK
+    continues it in further requests. Without `X-Server-Timeout` the server cut this stream off at its own deadline
+    before the cap. The prompt and size are those `tests/models/google/test_long_decode.py` streams on
+    `generateContent`.
+    """
+    model = GoogleInteractionsModel(
+        'gemini-4-argon',
+        provider=GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=20 * 60)),
+    )
+    settings: GoogleInteractionsModelSettings = {'max_tokens': 100_000, 'thinking': 'low'}
+    agent = Agent(
+        model,
+        instructions=(
+            'Very long outputs are supported and expected here: they are continued automatically across requests. '
+            'Never refuse, shorten or summarize because of length. Follow the requested format exactly.'
+        ),
+        model_settings=settings,
+    )
+    lines = 14_000
+    with capture_run_messages() as messages:
+        async with agent.run_stream(
+            f'Print the integers from 1 to {lines} in ascending order, one per line. '
+            'Output only the numbers: no code, no commentary, no ellipses, no markdown, no skipped numbers.'
+        ) as result:
+            output = await result.get_output()
+
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert (response.finish_reason, (response.provider_details or {}).get('status')) == (
+        'length',
+        'requires_continuation',
+    )
+    assert request_capture.headers[0].get_list('x-server-timeout') == ['1200']
+    # The cap can cut the last number short.
+    numbers = output.split()
+    assert 1 < len(numbers) < lines
+    assert numbers[:-1] == [str(number) for number in range(1, len(numbers))]

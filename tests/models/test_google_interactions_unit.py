@@ -160,6 +160,31 @@ async def test_one_user_agent(
     )
 
 
+@pytest.mark.parametrize(
+    ('extra_headers', 'expected'),
+    [
+        pytest.param({}, ['1200'], id='long-decode default'),
+        pytest.param({'x-server-timeout': '90'}, ['90'], id='caller'),
+    ],
+)
+async def test_server_timeout(
+    allow_model_requests: None,
+    mock_google: MockGoogle,
+    mock_model: GoogleInteractionsModel,
+    extra_headers: dict[str, str],
+    expected: list[str],
+):
+    """A request asks the server for Google's 20-minute long-decode deadline, unless the caller set their own.
+
+    Not recorded: the claim is about a request header; `test_long_decode_stops_at_the_request_cap` records its effect.
+    """
+    await model_request(
+        mock_model, [ModelRequest.user_text_prompt('hello')], model_settings={'extra_headers': extra_headers}
+    )
+
+    assert mock_google.headers[-1].get_list('x-server-timeout') == expected
+
+
 def test_inference_preserves_instance(monkeypatch: pytest.MonkeyPatch):
     """Resolve the explicit prefix and preserve model identity without a provider request."""
     monkeypatch.setenv('GOOGLE_API_KEY', 'test-key')
