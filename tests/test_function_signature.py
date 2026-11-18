@@ -9,7 +9,7 @@ from typing import Any, Optional, Union
 
 import pytest
 import typing_extensions
-from pydantic import BaseModel, RootModel, create_model
+from pydantic import BaseModel, RootModel, TypeAdapter, create_model
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.function_signature import (
@@ -1075,6 +1075,102 @@ def t7(*, config: T7Config | None) -> Any:
             """\
 class T7Config(TypedDict):
     enabled: bool\
+"""
+        ]
+    )
+
+
+def test_schema_signature_prefix_items_tuple():
+    """A 2020-12 `prefixItems` array that pins its length stays a fixed-length tuple."""
+    sig = FunctionSignature.from_schema(
+        name='t',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'point': {
+                    'type': 'array',
+                    'prefixItems': [{'type': 'number'}, {'type': 'number'}],
+                    'minItems': 2,
+                    'maxItems': 2,
+                },
+                'label': {
+                    'type': 'array',
+                    'prefixItems': [{'type': 'string'}, {'type': 'integer'}],
+                    'items': False,
+                    'minItems': 2,
+                },
+                'rows': {
+                    'type': 'array',
+                    'items': {
+                        'type': 'array',
+                        'prefixItems': [{'type': 'integer'}, {'type': 'boolean'}],
+                        'minItems': 2,
+                        'maxItems': 2,
+                    },
+                },
+            },
+            'required': ['point', 'label', 'rows'],
+        },
+    )
+    assert sig.render('...', name='t') == snapshot("""\
+def t(*, point: tuple[float, float], label: tuple[str, int], rows: list[tuple[int, bool]]) -> Any:
+    ...\
+""")
+
+
+def test_schema_signature_prefix_items_keeps_it_a_list_when_open():
+    """An open `prefixItems` array - or an empty one - is a list, not a tuple of unknown arity."""
+    sig = FunctionSignature.from_schema(
+        name='t',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                # more items than prefixItems are allowed, so the length is not pinned
+                'open_tail': {
+                    'type': 'array',
+                    'prefixItems': [{'type': 'integer'}],
+                    'minItems': 1,
+                    'maxItems': 3,
+                },
+                # a shorter array is allowed
+                'open_head': {
+                    'type': 'array',
+                    'prefixItems': [{'type': 'integer'}, {'type': 'string'}],
+                    'maxItems': 2,
+                },
+                'empty': {'type': 'array', 'prefixItems': [], 'minItems': 0, 'maxItems': 0},
+            },
+            'required': ['open_tail', 'open_head', 'empty'],
+        },
+    )
+    assert sig.render('...', name='t') == snapshot("""\
+def t(*, open_tail: list[Any], open_head: list[Any], empty: list[Any]) -> Any:
+    ...\
+""")
+
+
+def test_schema_signature_prefix_items_from_pydantic_tuple():
+    """Pydantic emits `prefixItems` for a tuple field, nullable or not."""
+
+    class _Vertex(typing_extensions.TypedDict):
+        point: tuple[float, float]
+        offset: tuple[float, float] | None
+
+    sig = FunctionSignature.from_schema(
+        name='place',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'v': {'$ref': '#/$defs/Vertex'}},
+            'required': ['v'],
+            '$defs': {'Vertex': TypeAdapter(_Vertex).json_schema()},
+        },
+    )
+    assert FunctionSignature.render_type_definitions([sig], set()) == snapshot(
+        [
+            """\
+class Vertex(TypedDict):
+    point: tuple[float, float]
+    offset: tuple[float, float] | None\
 """
         ]
     )

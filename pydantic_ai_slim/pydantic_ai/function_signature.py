@@ -844,6 +844,17 @@ def _array_to_expr(
     path: str,
 ) -> TypeExpr:
     """Convert an array schema to a TypeExpr."""
+    # JSON Schema 2020-12 writes a fixed-length tuple as `prefixItems` plus minItems/maxItems,
+    # while draft-7 used a list of schemas in `items`. Pydantic emits the 2020-12 shape, so
+    # without this branch a `tuple[float, float]` reached the model as `list[Any]`. Only claim a
+    # tuple when the schema really pins the length: an open `prefixItems` array is still a list.
+    prefix_items = schema.get('prefixItems')
+    if prefix_items and _pins_item_count(schema, len(prefix_items)):
+        tuple_exprs = [
+            _schema_to_type_expr(item, defs, referenced_types, tool_name, f'{path}.{i}')
+            for i, item in enumerate(cast(list[dict[str, Any]], prefix_items))
+        ]
+        return GenericTypeExpr(base='tuple', args=tuple_exprs)
     items = schema.get('items', {})
     if items:
         # Handle tuple schemas (items as list)
@@ -857,6 +868,18 @@ def _array_to_expr(
         item_expr = _schema_to_type_expr(cast(dict[str, Any], items), defs, referenced_types, tool_name, f'{path}Item')
         return GenericTypeExpr(base='list', args=[item_expr])
     return GenericTypeExpr(base='list', args=[_ANY])
+
+
+def _pins_item_count(schema: dict[str, Any], count: int) -> bool:
+    """Whether an array schema admits exactly `count` items, no fewer and no more.
+
+    `prefixItems` alone only fixes the head of the array. The tail is bounded by `maxItems` or by
+    `items: false`, and `minItems` has to rule out a shorter array - otherwise `tuple[...]` would
+    overstate what the model may send.
+    """
+    if count == 0 or schema.get('minItems') != count:
+        return False
+    return schema.get('maxItems') == count or schema.get('items') is False
 
 
 def _object_to_expr(
