@@ -760,31 +760,34 @@ answered by Monty from the mounts first and reach the handler on another thread.
 
 ### Remote turns as activities
 
-With a remote `monty_sandbox`, Code Mode runs each turn as its own
-activity. A turn is the part of a snippet between two points where it waits on the host: a nested
-tool call, a sleep, or deferred calls. The server saves the session
-after each turn and returns an ID, and the next turn starts from that ID in whichever worker runs it.
-Computation in the sandbox then no longer counts against the workflow task's 2-second limit, and
-replay reads each turn's result from history instead of connecting to the server.
+With a remote `monty_sandbox`, Code Mode runs each turn as its own activity. A turn is the part of a
+snippet between two points where it waits on the host: a nested tool call, a sleep, or deferred
+calls. The server saves the session after each turn and returns an ID, and the next turn starts from
+that ID in whichever worker runs it. Computation in the sandbox then no longer counts against the
+workflow task's 2-second limit, and replay reads each turn's result from history instead of
+connecting to the server.
 
-Turns run as activities only on a Monty server that stores sessions, as Logfire Agent Sandboxes does.
-On a server that stores none, the first turn finds this before running any code, and the run's
+Turns run as activities only on a Monty server that stores sessions, as Logfire Agent Sandboxes
+does. On a server that stores none, the first turn finds this before running any code, and the run's
 snippets then run in workflow code as described above. If a storing server cannot store a session's
 state, for example because its snapshot quota is full, the turn raises `UserError` and the workflow
 fails without retrying the turn.
 
-The turn activity is named after the capability's `id`, `'code_mode'` by default. Two `CodeMode`
-on one agent each need their own `id`.
+The turn activity is named after the capability's `id`, `'code_mode'` by default. Two `CodeMode` on
+one agent each need their own `id`.
 
 Code Mode keeps running `run_code` in workflow code, as described above, when any of these holds:
 
-- `CodeMode` is given `id=None`.
-- The agent is wrapped in the deprecated `TemporalAgent`, which runs no capability operations as activities.
-- `os_access` is set: the handler may call `temporalio.workflow` APIs, which work only in workflow code.
+- `CodeMode` is given `id=None`. `CodeMode.from_spec` defaults `id` to `None`, so a `CodeMode` from
+  an agent spec needs `id: code_mode` to run turns as activities.
+- The agent is wrapped in the deprecated `TemporalAgent`, which runs no capability operations as
+  activities.
+- `os_access` is set: the handler may call `temporalio.workflow` APIs, which work only in workflow
+  code.
 - A `mount` uses `'overlay'` mode, the default, or sets `write_bytes_limit`. Monty does not keep
-  overlay writes, or the count of bytes written, in a stored session.
-  Use `'read-only'` or `'read-write'` mounts to run turns as activities. The activity worker reads
-  them, so their directories must exist wherever turn activities run.
+  overlay writes, or the count of bytes written, in a stored session. Use `'read-only'` or
+  `'read-write'` mounts to run turns as activities. The activity worker reads them, so their
+  directories must exist wherever turn activities run.
 - The workflow started before this version of Code Mode, so its history replays as it was recorded.
 
 A `CodeMode` that a `DynamicCapability` returns keeps its turns in workflow code, because Temporal
@@ -796,27 +799,28 @@ bounds one turn, and its retry policy retries a turn that failed to reach the se
 from the same stored ID, so it runs the turn again from the same state. Writes the turn made to a
 `'read-write'` mount are not undone, so a retried turn makes them again. The recorded failure keeps
 the original error's type name but not its text, which can carry the pool's URL or credentials, so
-`non_retryable_error_types` such as `'ConnectionRefusedError'` still apply. When the retries run out,
-the workflow fails with Temporal's `ActivityError`. Errors in the snippet itself, such as syntax errors,
-exceptions, and time limits, are returned to the model as model retries, as they are outside Temporal.
+`non_retryable_error_types` such as `'ConnectionRefusedError'` still apply. When the retries run
+out, the workflow fails with Temporal's `ActivityError`. Errors in the snippet itself, such as
+syntax errors, exceptions, and time limits, are returned to the model as model retries, as they are
+outside Temporal.
 
-`max_memory` and `max_duration_seconds` apply to each turn; workflow code turns `max_duration_seconds`
-off. `max_suspensions` and the 10 MiB print cap count across a session's turns, as in workflow code.
-Keep `start_to_close_timeout` above `max_duration_seconds`: Temporal's timeout does not stop a running
-turn, it retries the turn while the first attempt keeps running, whereas `max_duration_seconds` stops
-the turn and Code Mode reports the time limit to the model. With `'unlimited'`, nothing stops a long
-turn.
+`max_memory` and `max_duration_seconds` apply to each turn; workflow code turns
+`max_duration_seconds` off. `max_suspensions` and the 10 MiB print cap count across a session's
+turns, as in workflow code. Keep `start_to_close_timeout` above `max_duration_seconds`: Temporal's
+timeout does not stop a running turn, it retries the turn while the first attempt keeps running,
+whereas `max_duration_seconds` stops the turn and Code Mode reports the time limit to the model.
+With `'unlimited'`, nothing stops a long turn.
 
 Tool results and nested call arguments keep their types and shared values, since they cross as one
-string, and the model sees the same snippet result as in workflow code. Each
-turn takes and returns at most 1 MiB, half Temporal's default payload limit. Longer prints, results and
-error text are cut with a note saying how much was left out, and tool results that would make a turn's
-input longer fail the snippet with a `ValueError` that gives the size and resets the session. If the
-server will not store the session a snippet error left, Code Mode also resets the session. A nested call whose arguments are of a type Monty does not
-hand the host, such as an instance of a class the snippet defined, raises `TypeError` in the snippet:
-its arguments cannot reach the tool. If the server no longer has a run's stored state, for example
-because it expired, Code Mode resets the session and tells the model the connection was lost, as for
-a dropped connection outside Temporal.
+string, and the model sees the same snippet result as in workflow code. Each turn takes and returns
+at most 1 MiB, half Temporal's default payload limit. Longer prints, results and error text are cut
+with a note saying how much was left out, and tool results that would make a turn's input longer
+fail the snippet with a `ValueError` that gives the size and resets the session. If the server will
+not store the session a snippet error left, Code Mode also resets the session. A nested call whose
+arguments are of a type Monty does not hand the host, such as an instance of a class the snippet
+defined, raises `TypeError` in the snippet: its arguments cannot reach the tool. If the server no
+longer has a run's stored state, for example because it expired, Code Mode resets the session and
+tells the model the connection was lost, as for a dropped connection outside Temporal.
 
 ## Observability
 
