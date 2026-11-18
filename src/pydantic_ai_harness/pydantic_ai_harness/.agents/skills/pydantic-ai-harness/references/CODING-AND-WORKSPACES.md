@@ -417,7 +417,8 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 - `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`, or pass
   `desktop=(w, h)`; the size is fixed at creation. It can't press F13 to F24, keypad Enter, the keypad operators,
   print screen, pause, scroll lock, the menu key or media keys, use side mouse buttons, or type characters beyond
-  U+FFFF (most emoji). Anyone with the sandbox's preview link can see and control its desktop.
+  U+FFFF (most emoji). Anyone with the sandbox's preview link can see and control its desktop, so a public
+  sandbox gets no desktop: its first desktop use or shell command raises `UserError`.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
 
