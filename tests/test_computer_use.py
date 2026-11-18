@@ -105,8 +105,6 @@ def test_computer_tool_is_sent_with_a_computer_tool_to_run_its_calls() -> None:
     deferred = ToolDefinition(name='deferred_computer', tool_kind=COMPUTER_KIND, defer_loading=True)
     params = _prepare(ModelRequestParameters(function_tools=[deferred, _computer_tool_def()], native_tools=[computer]))
     assert params.native_tools == [computer]
-    assert params.tool_name_for_kind(COMPUTER_KIND) == 'my_computer'
-    assert params.tool_name_for_kind('computer_use.other') is None
 
 
 def test_computer_tool_is_sent_once_history_reveals_its_deferred_computer_tool() -> None:
@@ -120,7 +118,6 @@ def test_computer_tool_is_sent_once_history_reveals_its_deferred_computer_tool()
         )
     )
     assert params.native_tools == [computer]
-    assert params.tool_name_for_kind(COMPUTER_KIND) == 'my_computer'
 
 
 @pytest.mark.parametrize(
@@ -160,7 +157,8 @@ def test_computer_tool_does_not_count_a_computer_tool_another_native_tool_replac
     replaced = ToolDefinition(name='memory_computer', tool_kind=COMPUTER_KIND, unless_native='memory')
     natives: list[AbstractNativeTool] = [ComputerTool(display_size=(1, 1)), MemoryTool()]
     params = _prepare(ModelRequestParameters(function_tools=[replaced, _computer_tool_def()], native_tools=natives))
-    assert params.tool_name_for_kind(COMPUTER_KIND) == 'my_computer'
+    assert params.native_tools == natives
+    assert [t.name for t in params.function_tools] == ['my_computer']
     with pytest.raises(UserError, match=r'needs a tool of each of the kinds .* has none the model can call'):
         _prepare(ModelRequestParameters(function_tools=[replaced], native_tools=natives))
 
@@ -170,7 +168,8 @@ def test_computer_tool_counts_a_computer_tool_kept_because_an_empty_tool_search_
     stand_in = ToolDefinition(name='search_computer', tool_kind=COMPUTER_KIND, unless_native='tool_search')
     natives: list[AbstractNativeTool] = [ToolSearchTool(optional=True), ComputerTool(display_size=(1, 1))]
     params = _prepare(ModelRequestParameters(function_tools=[stand_in], native_tools=natives))
-    assert params.tool_name_for_kind(COMPUTER_KIND) == 'search_computer'
+    assert params.native_tools == [ComputerTool(display_size=(1, 1))]
+    assert [t.name for t in params.function_tools] == ['search_computer']
     with pytest.raises(UserError, match=r'needs one tool of each of the kinds .* more than one the model can call'):
         _prepare(ModelRequestParameters(function_tools=[stand_in, _computer_tool_def()], native_tools=natives))
 
