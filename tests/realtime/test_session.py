@@ -9872,7 +9872,7 @@ async def test_tools_from_one_response_share_a_run_step() -> None:
 def _ordered_events_agent(quick_landed: asyncio.Event) -> Agent[None, str]:
     """Two tools where the *second* call finishes first, so completion order != call order.
 
-    `slow` returns only once `quick_landed` is set, rather than after a timer a stalled runner can outlast.
+    `slow` returns only once `quick_landed` is set.
     """
     agent: Agent[None, str] = Agent()
 
