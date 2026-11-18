@@ -2598,6 +2598,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             ],
         )
 
+        # The stale-thinking recovery below marks the caller's history: `_effort_delta_request` copies each request
+        # it drops a `ModelSettingsDeltaPart` from, and a mark on that copy would be lost.
+        history = messages
         # standalone function to make it easier to override
         messages, effort_request_parameters = self._effort_delta_request(
             messages, model_settings, model_request_parameters
@@ -2721,7 +2724,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 betas | {ANTHROPIC_THINKING_BINDING_BETA},
                 drop_stale_thinking_blocks(effective_thinking),
             )
-            mark_history_to_drop_stale_thinking_blocks_for_count_tokens(messages)
+            mark_history_to_drop_stale_thinking_blocks_for_count_tokens(history)
             warn_stale_thinking_block_recovery(self.model_name)
             return result
 
