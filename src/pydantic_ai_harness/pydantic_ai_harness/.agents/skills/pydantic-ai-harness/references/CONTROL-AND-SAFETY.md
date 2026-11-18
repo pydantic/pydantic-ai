@@ -911,7 +911,8 @@ print(agent.run_sync('Explain the change').output)
 
 When the run's `UsageLimits` leave room for one more model request but not another, makes that request
 the last: `tool_choice='none'` with the tool definitions kept (cached tools and instructions match), plus a
-request-scoped `SystemPromptPart` with `prompt` (default `DEFAULT_WRAP_UP_PROMPT`). The answer is the
+request-scoped `WrapUpPart` (an `InstructionCapabilityPart` from `pydantic_ai_harness.wrap_up_at_limits`)
+with `prompt` (default `DEFAULT_WRAP_UP_PROMPT`). The answer is the
 run's output instead of `UsageLimitExceeded`.
 
 ```python
@@ -946,7 +947,7 @@ print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).outp
   `cost_limit` and `per_request_input_tokens_limit` are not projected. A larger batch that goes over
   `tool_calls_limit` still raises. With no `usage_limits`, the default `request_limit=50` applies.
 - `wrapped_up_by(result.new_messages())` returns the `LimitName` that cut the run short, or `None`; it reads
-  the request-scoped `WrapUpPart` (`.wrap_up_at_limits`) on the final request, found by type.
+  the `WrapUpPart` on the final request, found by type.
 - With tool output, `tool_choice='none'` sends only the output tools; Anthropic caches messages per
   `tool_choice`.
 - List it after capabilities that spend from the run's usage before a request, so it sees what they spent.
