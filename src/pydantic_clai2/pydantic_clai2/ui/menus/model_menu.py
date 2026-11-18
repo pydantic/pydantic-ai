@@ -75,7 +75,9 @@ class ModelSettingsSource:
                     label=setting_label(key),
                     allow_custom=False,
                     description=info.description or '',
-                    default=shown(model_defaults(model=self._settings_as, saved=saved).get(key)),
+                    default=shown(
+                        model_defaults(model=self._settings_as, saved=with_codex_speed(saved, None)).get(key)
+                    ),
                     choices=options.get(key, ()) or _choices(info.annotation),
                     note=self._environment_key() if key == 'api_key' and 'api_key' not in saved else '',
                 )

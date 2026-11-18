@@ -263,6 +263,16 @@ async def test_service_tier_row_decides_over_a_saved_speed(tmp_path: Path, tier:
     assert (settings.get('openai_service_tier') or settings.get('service_tier')) == sent
 
 
+@pytest.mark.parametrize('command', ['/fast on', '/fast off'])
+async def test_speed_row_default_ignores_the_saved_mirror(tmp_path: Path, command: str) -> None:
+    """The tier saved beside a chosen speed doesn't move the default that Reset restores."""
+    context, _ = make_context(tmp_path)
+    model = 'openai-codex:gpt-6-astra'
+    await _shell(context.store, model).commands.execute_async(command)
+    row = FieldMenu(ModelSettingsSource(context.store, model)).row_for('codex_speed')
+    assert row is not None and row.default == 'ultrafast'
+
+
 @pytest.mark.parametrize('command', ['/fast ultrafast', '/fast on', '/fast off'])
 async def test_resetting_speed_restores_the_default(tmp_path: Path, command: str) -> None:
     """Resetting the Speed row also drops the tier `/fast` saved beside it for older builds."""
