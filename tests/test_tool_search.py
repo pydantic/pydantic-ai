@@ -84,7 +84,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai.toolsets._tool_search import (
     ToolSearchToolset,
-    keywords_search_fn,
+    keywords_search,
     parse_discovered_tools,
 )
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
@@ -7888,17 +7888,17 @@ async def test_openai_promotes_mixed_native_and_local_history_a_b_c_chain() -> N
     )
 
 
-def test_keywords_search_fn_returns_empty_for_no_tokens() -> None:
+def test_keywords_search_returns_empty_for_no_tokens() -> None:
     """The shared keyword algorithm returns `[]` when the queries tokenize to nothing
     (whitespace / punctuation only), instead of raising. Callers (`_run_search_fn`
     in the toolset) translate that into the empty-discoveries `_empty_return` shape.
     """
 
     ctx = _build_run_context(None)
-    assert keywords_search_fn(ctx, ['   '], []) == []
+    assert keywords_search(ctx, ['   '], []) == []
     # Punctuation-only queries also produce no tokens — `_SEARCH_TOKEN_RE` matches
     # `[a-z0-9]+` only.
-    assert keywords_search_fn(ctx, ['!!!'], []) == []
+    assert keywords_search(ctx, ['!!!'], []) == []
 
 
 async def test_tool_search_strategy_keywords_runs_keyword_algorithm_via_search_fn() -> None:

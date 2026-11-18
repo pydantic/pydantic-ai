@@ -10,7 +10,7 @@ from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai import ToolDefinition
-from pydantic_ai.capabilities import ToolSearchFunc, keywords_search_fn
+from pydantic_ai.capabilities import ToolSearchFunc, keywords_search
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, ToolFailedError, ToolRetryError, UserError
 from pydantic_ai.messages import ToolCallPart, ToolKind, ToolReturnPart
 from pydantic_ai.tool_manager import ToolManager
@@ -182,7 +182,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
     async def _search(
         self, ctx: RunContext[AgentDepsT], query: str, bridged: dict[str, ToolsetTool[AgentDepsT]]
     ) -> list[_Match]:
-        search = self.search or keywords_search_fn
+        search = self.search or keywords_search
         names = search(ctx, [query], [tool.tool_def for tool in bridged.values()])
         if inspect.isawaitable(names):
             names = await names

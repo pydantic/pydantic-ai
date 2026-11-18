@@ -24,7 +24,7 @@ from ..tools import (
     ToolDefinition,  # pyright: ignore[reportUnusedImport]  # noqa: F401  (resolves forward ref)
 )
 from ..toolsets import AbstractToolset
-from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
+from ..toolsets._tool_search import ToolSearchToolset, keywords_search
 from ._deferred_capabilities import record_loaded_capability_tools
 from .abstract import AbstractCapability, CapabilityOrdering
 
@@ -154,7 +154,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # (Anthropic) — no local implementation today — and `None` falls through to
         # the toolset's default keyword-overlap algorithm.
         if self.strategy == 'keywords':
-            self._search_fn = keywords_search_fn
+            self._search_fn = keywords_search
         elif callable(self.strategy):
             self._search_fn = self.strategy
         else:

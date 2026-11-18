@@ -68,3 +68,7 @@ Two `ToolBridge` capabilities on one agent merge into one; the later one's setti
 - [Pydantic AI toolsets](../toolsets.md)
 
 ::: pydantic_ai_harness.ToolBridge
+
+::: pydantic_ai_harness.tool_bridge.TOOL_CALL_KIND
+
+::: pydantic_ai_harness.tool_bridge.ToolCallArgs
