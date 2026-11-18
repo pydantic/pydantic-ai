@@ -2076,7 +2076,7 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
             return f'{poem.content.text}, by {name.content["name"]}'
 
         async def elicitation_handler(message: str, response_type: Any, params: Any, ctx: Any) -> Any:
-            return mcp_types.ElicitResult(action='accept', content={'name': 'Ada'})
+            return {'name': 'Ada'}  # FastMCP accepts plain content; FastMCP 4.0.0 re-wraps a returned `ElicitResult`
 
         toolset = MCPToolset(
             server,
