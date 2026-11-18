@@ -61,6 +61,7 @@ from pydantic_ai_harness import (
     BenchmarkInstructions,
     Coder,
     CompactOnRequest,
+    CurrentTime,
     LabelCrossModelHistory,
     ModelChoice,
     ModelRouter,
@@ -234,6 +235,10 @@ def _check_benchmark_instructions(merged: BenchmarkInstructions[None]) -> None:
     assert merged.id == 'benchmark_instructions'
 
 
+def _check_current_time(merged: CurrentTime[None]) -> None:
+    assert (merged.timezone, merged.precision) == ('Asia/Tokyo', 'hour')
+
+
 def _check_label_cross_model_history(merged: LabelCrossModelHistory[None]) -> None:
     assert (merged.id, merged.notice) == ('label_cross_model_history', 'second')
 
@@ -365,6 +370,14 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one fixed text; two would state it twice',
         lambda: (BenchmarkInstructions[None](), BenchmarkInstructions[None]()),
         _check_benchmark_instructions,
+    ),
+    'CurrentTime': Combines(
+        'one statement of the time per id; the later configuration wins',
+        lambda: (
+            CurrentTime[None](timezone='Europe/Amsterdam'),
+            CurrentTime[None](timezone='Asia/Tokyo', precision='hour'),
+        ),
+        _check_current_time,
     ),
     'LabelCrossModelHistory': Combines(
         'one `notice` instruction block per agent; two would state it twice',
