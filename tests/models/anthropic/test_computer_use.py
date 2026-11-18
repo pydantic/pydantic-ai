@@ -476,7 +476,7 @@ async def test_a_profile_that_lists_it_gets_the_computer_use_tool(
     assert [tool['type'] for tool in request['tools']] == [sent]
 
 
-def test_the_computer_use_tool_is_sent_only_on_the_clients_it_is_recorded_on() -> None:
+def test_the_computer_use_tool_is_sent_by_default_only_on_the_clients_it_is_recorded_on() -> None:
     from anthropic import (
         AsyncAnthropicAWS,
         AsyncAnthropicBedrock,
@@ -505,6 +505,14 @@ def test_the_computer_use_tool_is_sent_only_on_the_clients_it_is_recorded_on() -
         'foundry': False,
         'aws': False,
     }
+    # The gate is a default, so a user who has checked the tool on one of these clients can turn it on.
+    vertex = AsyncAnthropicVertex(project_id='p', region='us-central1', access_token='x')
+    opted_in = AnthropicModel(
+        'claude-opus-5-5',
+        provider=AnthropicProvider(anthropic_client=vertex),
+        profile={'supported_native_tools': frozenset({ComputerTool})},
+    )
+    assert ComputerTool in opted_in.profile.get('supported_native_tools', ())
 
 
 async def test_a_required_computer_tool_on_a_model_without_one_is_refused(allow_model_requests: None) -> None:
