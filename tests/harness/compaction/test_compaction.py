@@ -771,6 +771,24 @@ class TestSlidingWindowCompaction:
         result = await sw.compact(messages, _make_ctx(messages))
         assert result == messages[cutoff:]
 
+    async def test_keep_tokens_does_not_tokenize_history_it_drops(self):
+        # The recent messages hold the target, so the oldest one, which this tokenizer rejects, is never counted
+        # (compaction would raise), and each message the search reaches is counted once.
+        counted: list[str] = []
+
+        def tokenizer(text: str) -> int:
+            if 'REJECTED' in text:
+                raise ValueError('disallowed text')  # pragma: no cover - the point is it never runs
+            counted.append(text)
+            return len(text)
+
+        messages: list[ModelMessage] = [_user('REJECTED'), *(_user(f'msg{i}') for i in range(7))]
+        sw = SlidingWindowCompaction(
+            max_messages=1, keep_tokens=8, tokenizer=tokenizer, preserve_first_user_message=False
+        )
+        await sw.compact(messages, _make_ctx(messages))
+        assert len(counted) == len(set(counted))
+
     async def test_keep_zero_keeps_the_request_being_answered(self):
         sw = SlidingWindowCompaction(max_messages=1, keep_messages=0)
         messages: list[ModelMessage] = [_user('first'), _assistant('ok'), _user('the question now')]

@@ -107,16 +107,14 @@ def _message_segments(messages: Sequence[ModelMessage]) -> list[list[str]]:
     # except a loaded capability's statements, which it keeps sending until a compaction ends the load.
     baseline_index = instruction_window_start(messages)
     loads_start = _post_compaction_window_start(messages)
-    per_message: list[list[str]] = []
-    for index, message in enumerate(messages):
-        if isinstance(message, ModelRequest):
-            per_message.append(_request_segments(message, index, baseline_index, loads_start))
-        else:
-            segments: list[str] = []
-            for response_part in message.parts:
-                segments.extend(_response_part_text(response_part))
-            per_message.append(segments)
-    return per_message
+    return [_segments_at(message, index, baseline_index, loads_start) for index, message in enumerate(messages)]
+
+
+def _segments_at(message: ModelMessage, index: int, baseline_index: int, loads_start: tuple[int, int]) -> list[str]:
+    """The text segments of *message*, at *index* in its history, as `_message_segments` gives them."""
+    if isinstance(message, ModelRequest):
+        return _request_segments(message, index, baseline_index, loads_start)
+    return [text for part in message.parts for text in _response_part_text(part)]
 
 
 def _request_segments(
@@ -304,11 +302,18 @@ def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = Non
     return _count_segments([text], tokenizer)
 
 
+def _segment_tokens(segment: str, tokenizer: Callable[[str], int] | None) -> float:
+    """Token count of one segment with *tokenizer* or the text estimate, not yet truncated."""
+    if tokenizer is not None:
+        return tokenizer(segment)
+    return len(segment) / CHARS_PER_TOKEN + _dense_surcharge(segment)
+
+
 def _count_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
     """Token count of text segments: per segment with *tokenizer* or the text estimate, truncated once over the sum."""
     if tokenizer is not None:
         return sum(tokenizer(s) for s in segments)
-    return int(sum(len(s) / CHARS_PER_TOKEN + _dense_surcharge(s) for s in segments))
+    return int(sum(_segment_tokens(s, None) for s in segments))
 
 
 def estimate_token_count(
@@ -971,9 +976,10 @@ def find_token_cutoff(
         def tail_tokens(start: int) -> int:
             return sum(counts[start:])
     elif target_tokens > 0:
+        cached_tail_tokens = _cached_tail_tokens(messages, tokenizer)
 
         def tail_tokens(start: int) -> int:
-            return _count_segments(_collect_message_text(messages[start:]), tokenizer)
+            return cached_tail_tokens(start)
     else:
 
         def tail_tokens(start: int) -> int:
@@ -989,6 +995,25 @@ def find_token_cutoff(
                 hi = mid
         return _include_tool_dependencies(messages, max(0, lo - 1))
     return _legacy_token_cutoff(messages, target_tokens, tail_tokens)
+
+
+def _cached_tail_tokens(messages: list[ModelMessage], tokenizer: Callable[[str], int] | None) -> Callable[[int], int]:
+    """The text estimate of `messages[start:]`, reading and counting each message once, when a call first reaches it.
+
+    The suffix is summed in the same order as `_count_segments`, so float rounding, and with it the cutoff, stays
+    exactly the same, and a message older than every `start` asked for is never read or counted.
+    """
+    baseline_index = instruction_window_start(messages)
+    loads_start = _post_compaction_window_start(messages)
+    costs: list[list[float]] = []  # per message, newest first
+
+    def tail_tokens(start: int) -> int:
+        for index in range(len(messages) - len(costs) - 1, start - 1, -1):
+            segments = _segments_at(messages[index], index, baseline_index, loads_start)
+            costs.append([_segment_tokens(segment, tokenizer) for segment in segments])
+        return int(sum(cost for message_costs in reversed(costs[: len(messages) - start]) for cost in message_costs))
+
+    return tail_tokens
 
 
 def _legacy_token_cutoff(messages: list[ModelMessage], target_tokens: int, tail_tokens: Callable[[int], int]) -> int:
