@@ -97,6 +97,12 @@ def _prepare(params: ModelRequestParameters) -> ModelRequestParameters:
     return model.prepare_request(None, params)[1]
 
 
+@pytest.mark.parametrize('display_size', [(0, 800), (1280, -1)])
+def test_computer_tool_refuses_a_display_size_that_is_not_positive(display_size: tuple[int, int]) -> None:
+    with pytest.raises(UserError, match='display_size` must be positive'):
+        ComputerTool(display_size=display_size)
+
+
 def test_computer_tool_is_sent_with_a_computer_tool_to_run_its_calls() -> None:
     computer = ComputerTool(display_size=(1280, 800))
     # A deferred tool of the kind can't run the calls, so the one that isn't deferred does.
