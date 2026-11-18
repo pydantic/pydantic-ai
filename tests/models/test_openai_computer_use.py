@@ -20,7 +20,8 @@ from hypothesis import HealthCheck, given, settings, strategies as st
 from inline_snapshot import snapshot
 from pydantic import TypeAdapter, ValidationError
 
-from pydantic_ai import Agent, ToolCallPart
+from pydantic_ai import Agent, RunContext, ToolCallPart
+from pydantic_ai.capabilities import Hooks
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     ComputerCallPart,
@@ -295,6 +296,33 @@ async def test_the_native_tool_is_sent_and_its_call_is_answered_with_a_screensho
     assert second['input'][-1] is output
 
 
+async def test_a_call_a_hook_changed_goes_back_as_a_function_call(allow_model_requests: None) -> None:
+    """Sent back as the `computer_call` GPT made, the call would say its click ran, when the screenshot ran instead."""
+    hooks = Hooks[object]()
+
+    @hooks.on.after_model_request
+    async def look_instead(
+        ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        for part in response.parts:
+            if isinstance(part, ComputerCallPart):
+                part.args = {'actions': [{'type': 'screenshot'}]}
+        return response
+
+    client = MockOpenAIResponses.create_mock(
+        [_computer_call({'type': 'click', 'x': 1, 'y': 2, 'button': 'left'}), _done()]
+    )
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    await Agent(model, capabilities=[FakeComputer(), InMemoryProvider().capability(), hooks]).run('Click.')
+
+    _, second = get_mock_responses_kwargs(client)
+    sent = [(item['type'], item.get('arguments')) for item in second['input'] if item.get('call_id') == 'call_1']
+    assert sent == [
+        ('function_call', '{"actions":[{"type":"screenshot"}]}'),
+        ('function_call_output', None),
+    ]
+
+
 async def test_a_refused_action_reaches_gpt_beside_the_screenshot(allow_model_requests: None) -> None:
     # Otherwise GPT would take the click on the read-only workspace to have run.
     provider, computer = InMemoryProvider(), FakeComputer()
@@ -396,7 +424,7 @@ async def test_a_result_goes_out_as_a_computer_call_output_and_a_note_when_the_s
         'id': 'cu_1',
         'call_id': 'call_1',
         'status': 'completed',
-        'actions': [],
+        'actions': [{'type': 'screenshot'}],
     }
     call = ToolCallPart(
         'computer',
@@ -462,11 +490,11 @@ async def test_a_call_the_model_is_asked_to_fix_goes_out_with_a_blank_screen_and
         'id': 'cu_1',
         'call_id': 'call_1',
         'status': 'completed',
-        'actions': [],
+        'actions': [{'type': 'click', 'x': 5000, 'y': 1, 'button': 'left'}],
     }
     call = ToolCallPart(
         'computer',
-        {'actions': [{'type': 'click', 'x': 5000, 'y': 1}]},
+        {'actions': [{'type': 'click', 'x': 5000, 'y': 1, 'button': 'left', 'modifiers': []}]},
         tool_call_id='call_1',
         tool_kind=COMPUTER_KIND.id,
         provider_name='openai',
