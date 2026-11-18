@@ -313,8 +313,8 @@ jobs:
           # reviewer is responsible for. Left empty — and the step below then
           # no-ops — for the skips where a marker would claim a reviewer that was
           # never going to run: a CI run that is not a PR run or did not pass, a
-          # review or label that is not a request, and a fork, which `douwebot`
-          # covers instead. A fork head is not unmarkable (it resolves in this
+          # review or label that is not a request, and a fork, which no workflow
+          # reviews. A fork head is not unmarkable (it resolves in this
           # repository through `refs/pull/<n>/head`, so the check run would post
           # and show); it is deliberately unmarked.
           MARKER_SHA=''
@@ -422,8 +422,8 @@ jobs:
           [ "$(printf '%s' "$PR_JSON" | jq -r '.isDraft')" = 'false' ] || skip "PR #${PR_NUMBER} is a draft"
           # The checkout step fetches the head commit from this repository, where a
           # fork head is reachable too, and runs workspace scripts over it with
-          # repository secrets in scope; forks go through the `douwebot` label path
-          # instead.
+          # repository secrets in scope. No workflow reviews a fork PR: a maintainer
+          # recreates it as a same-repository PR.
           [ "$(printf '%s' "$PR_JSON" | jq -r '.isCrossRepository')" = 'false' ] \
             || skip "PR #${PR_NUMBER} is from a fork"
 

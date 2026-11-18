@@ -525,8 +525,8 @@ if the head changes, capture the new SHA and restart the loop.
      is the source of truth). Do not add that label or dispatch the workflow unless the person
      driving you asks. When `CI Review` posts on your PR, triage its findings in step 4 like any
      other review.
-   - **Douwebot:** required for both same-repository and fork PRs, except an obviously trivial S PR.
-     `CI Review` deliberately skips forks without leaving a head check. First apply the
+   - **Douwebot:** required for every same-repository PR, except an obviously trivial S PR.
+     A fork PR gets no douwebot review: recreate it as a same-repository PR. First apply the
      agent-config guard from `.github/workflows/bots.yml` to the captured base-to-head diff. If the
      PR changes an `AGENTS.md` or `CLAUDE.md` at any depth, `CLAUDE.local.md`, `.mcp.json`,
      `.claude/`, `.agents/`, or `agent_docs/`, check whether the PR author has write or admin access.
@@ -633,8 +633,8 @@ if the head changes, capture the new SHA and restart the loop.
 
 Skip this choice for prose-only documentation, mechanical text/data refreshes defined above, and [flake fixes](#flake-fixes).
 
-The required reviews are not on this menu. Step 3 applies the merge bar to both same-repository
-and fork PRs. `CI Review` starts on a write-access approval of the head, a `final-review` label,
+The required reviews are not on this menu. Step 3 applies the merge bar to them.
+`CI Review` starts on a write-access approval of the head, a `final-review` label,
 or a dispatch. Green CI alone never starts `CI Review`.
 
 What this section chooses is a second opinion on top of the required reviews, and the choice belongs to the
