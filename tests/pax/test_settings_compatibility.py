@@ -50,7 +50,7 @@ async def test_logfire_user_tag_settings_survive_older_builds(
     # Saved by a build before user tags: set up with a token, but no sign-in email was recorded.
     previous = PluginSettings(
         id='observability',
-        factory='pydantic_ai_pax.builtin_plugins.logfire',
+        factory='pydantic_clai2.builtin_plugins.logfire',
         settings={
             'send_to_logfire': False,
             'include_content': False,
@@ -167,7 +167,7 @@ async def test_logfire_ui_events_default_preserves_saved_overrides(
     # Historical declarations either omitted UI events (then default off), or saved an explicit choice.
     previous = PluginSettings(
         id='observability',
-        factory='pydantic_ai_pax.builtin_plugins.logfire',
+        factory='pydantic_clai2.builtin_plugins.logfire',
         settings={'send_to_logfire': False, 'include_content': False, 'service_name': 'shared-project'},
     )
     if ui_events is not None:
@@ -203,7 +203,7 @@ async def test_logfire_content_default_is_off_and_keeps_saved_opt_ins(
     # Declarations that omitted the content flags were saved when they defaulted on; they now leave content out,
     # deliberately, so an ambient `LOGFIRE_TOKEN` alone never exports prompts. An explicit choice is kept.
     previous = PluginSettings(
-        id='observability', factory='pydantic_ai_pax.builtin_plugins.logfire', settings={'send_to_logfire': False}
+        id='observability', factory='pydantic_clai2.builtin_plugins.logfire', settings={'send_to_logfire': False}
     )
     if include_content is not None:
         previous.settings['include_content'] = include_content
@@ -239,7 +239,7 @@ async def test_an_older_build_changing_the_token_retires_the_sign_in_email(
     supported = features.SUPPORTED_FEATURES
     store.save_plugin(
         PluginSettings(
-            id='observability', factory='pydantic_ai_pax.builtin_plugins.logfire', settings={'send_to_logfire': False}
+            id='observability', factory='pydantic_clai2.builtin_plugins.logfire', settings={'send_to_logfire': False}
         )
     )
     try:
@@ -772,7 +772,7 @@ def test_saved_spinner_from_a_removed_plugin_is_kept(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize('enabled', [False, True])
-@pytest.mark.parametrize('factory', ['pydantic_ai_pax.logfire', 'pydantic_ai_pax.builtin_plugins.logfire'])
+@pytest.mark.parametrize('factory', ['pydantic_clai2.logfire', 'pydantic_clai2.builtin_plugins.logfire'])
 def test_logfire_preferences_follow_the_observability_name(tmp_path: Path, enabled: bool, factory: str) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     legacy = (
@@ -808,7 +808,7 @@ def test_new_observability_preferences_remain_readable_by_older_builds(tmp_path:
     store = SettingsStore(tmp_path / 'config.db')
     plugin = PluginSettings(id='observability', factory='my_custom_tracing', enabled=False)
     store.save_plugin(plugin)
-    store.save_plugin(PluginSettings(id='mcp', factory='pydantic_ai_pax.mcp'))
+    store.save_plugin(PluginSettings(id='mcp', factory='pydantic_clai2.mcp'))
     assert [saved.id for saved in store.plugins()] == ['mcp', 'observability']
     with closing(sqlite3.connect(store.path)) as connection:
         stored = connection.execute('SELECT declaration FROM plugins WHERE id = ?', ('logfire',)).fetchone()
@@ -826,7 +826,7 @@ def test_existing_observability_rows_are_coalesced(tmp_path: Path, with_legacy: 
     with closing(sqlite3.connect(store.path)) as connection, connection:
         connection.execute('INSERT INTO plugins VALUES (?, ?)', (current.id, current.model_dump_json()))
         if with_legacy:
-            legacy = PluginSettings(id='logfire', factory='pydantic_ai_pax.builtin_plugins.logfire', enabled=False)
+            legacy = PluginSettings(id='logfire', factory='pydantic_clai2.builtin_plugins.logfire', enabled=False)
             connection.execute('INSERT INTO plugins VALUES (?, ?)', (legacy.id, legacy.model_dump_json()))
     assert store.plugins() == [current]
     if action == 'disable':
@@ -874,7 +874,7 @@ def test_logfire_mcp_settings_from_older_builds_load_under_the_same_id(tmp_path:
     """
     store = SettingsStore(tmp_path / 'config.db')
     legacy = (
-        '{"id":"logfire_mcp","factory":"pydantic_ai_pax.builtin_plugins.logfire_mcp","enabled":true,'
+        '{"id":"logfire_mcp","factory":"pydantic_clai2.builtin_plugins.logfire_mcp","enabled":true,'
         f'"settings":{{"key":null,"url":"{url}","oauth":true,"read_only":false,"include_instructions":true}}}}'
     )
     with closing(sqlite3.connect(store.path)) as connection, connection:
@@ -886,7 +886,7 @@ def test_logfire_mcp_settings_from_older_builds_load_under_the_same_id(tmp_path:
     )
     assert (settings.url, settings.read_only) == (url, False)
     # A `logfire` row still means `observability`, as in older builds.
-    store.save_plugin(PluginSettings(id='logfire', factory='pydantic_ai_pax.builtin_plugins.logfire', enabled=False))
+    store.save_plugin(PluginSettings(id='logfire', factory='pydantic_clai2.builtin_plugins.logfire', enabled=False))
     assert {plugin.id: plugin.enabled for plugin in store.plugins()} == {'logfire_mcp': True, 'observability': False}
 
 
@@ -901,7 +901,7 @@ async def test_saved_skill_folders_load_in_builds_with_and_without_the_feature(
             'INSERT INTO plugins VALUES (?, ?)',
             (
                 'coder',
-                '{"id": "coder", "factory": "pydantic_ai_pax.builtin_plugins.coder", "enabled": true, '
+                '{"id": "coder", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
                 '"settings": {"repo_context": false, "sub_agents": false, "skill_folders": ["team-skills"]}}',
             ),
         )
@@ -909,7 +909,7 @@ async def test_saved_skill_folders_load_in_builds_with_and_without_the_feature(
             'INSERT INTO plugins VALUES (?, ?)',
             (
                 'older',
-                '{"id": "older", "factory": "pydantic_ai_pax.builtin_plugins.coder", "enabled": true, '
+                '{"id": "older", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
                 '"settings": {"repo_context": false, "sub_agents": false}}',
             ),
         )
@@ -964,7 +964,7 @@ async def test_saved_background_compaction_loads_in_builds_with_and_without_the_
             'INSERT INTO plugins VALUES (?, ?)',
             (
                 'compaction',
-                '{"id": "compaction", "factory": "pydantic_ai_pax.builtin_plugins.compaction", "enabled": true, '
+                '{"id": "compaction", "factory": "pydantic_clai2.builtin_plugins.compaction", "enabled": true, '
                 f'"settings": {stored}}}',
             ),
         )
@@ -1014,7 +1014,7 @@ async def test_saved_aoe_titles_load_in_builds_with_and_without_the_feature(
             'INSERT INTO plugins VALUES (?, ?)',
             (
                 'aoe',
-                '{"id": "aoe", "factory": "pydantic_ai_pax.builtin_plugins.aoe", "enabled": true, '
+                '{"id": "aoe", "factory": "pydantic_clai2.builtin_plugins.aoe", "enabled": true, '
                 f'"settings": {stored}}}',
             ),
         )
@@ -1050,7 +1050,7 @@ async def test_saved_on_demand_mcp_servers_load_in_builds_with_and_without_the_f
             'INSERT INTO plugins VALUES (?, ?)',
             (
                 'mcp',
-                '{"id": "mcp", "factory": "pydantic_ai_pax.mcp", "enabled": true, "settings": '
+                '{"id": "mcp", "factory": "pydantic_clai2.mcp", "enabled": true, "settings": '
                 '{"servers": {"docs": {"type": "stdio", "command": "docs", "defer_loading": true}}}}',
             ),
         )
@@ -1094,7 +1094,7 @@ async def test_saved_disabled_skills_load_in_builds_with_and_without_the_feature
             'INSERT INTO plugins VALUES (?, ?)',
             (
                 'coder',
-                '{"id": "coder", "factory": "pydantic_ai_pax.builtin_plugins.coder", "enabled": true, '
+                '{"id": "coder", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
                 '"settings": {"repo_context": false, "sub_agents": false, "skill_folders": ["team-skills"], '
                 '"disabled_skills": ["pre-push-review"]}}',
             ),
@@ -1103,7 +1103,7 @@ async def test_saved_disabled_skills_load_in_builds_with_and_without_the_feature
             'INSERT INTO plugins VALUES (?, ?)',
             (
                 'older',
-                '{"id": "older", "factory": "pydantic_ai_pax.builtin_plugins.coder", "enabled": true, '
+                '{"id": "older", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
                 '"settings": {"repo_context": false, "sub_agents": false}}',
             ),
         )
@@ -1155,7 +1155,7 @@ async def test_saved_task_control_loads_in_builds_with_and_without_the_feature(
             'INSERT INTO plugins VALUES (?, ?)',
             (
                 'coder',
-                '{"id": "coder", "factory": "pydantic_ai_pax.builtin_plugins.coder", "enabled": true, '
+                '{"id": "coder", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
                 '"settings": {"repo_context": false, "task_control": false}}',
             ),
         )
@@ -1163,7 +1163,7 @@ async def test_saved_task_control_loads_in_builds_with_and_without_the_feature(
             'INSERT INTO plugins VALUES (?, ?)',
             (
                 'older',
-                '{"id": "older", "factory": "pydantic_ai_pax.builtin_plugins.coder", "enabled": true, '
+                '{"id": "older", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
                 '"settings": {"repo_context": false}}',
             ),
         )
@@ -1271,7 +1271,7 @@ async def test_delegate_models_survive_feature_downgrade_and_unrelated_edits(
             'INSERT INTO plugins VALUES (?, ?)',
             (
                 'coder',
-                '{"id":"coder","factory":"pydantic_ai_pax.builtin_plugins.coder","enabled":true,'
+                '{"id":"coder","factory":"pydantic_clai2.builtin_plugins.coder","enabled":true,'
                 '"settings":{"repo_context":false,"skill_folders":[],"review_agent":true,"delegate_models":'
                 '{"review-light":{"model":"chain:review-light","settings":{"thinking":"high"}}}}}',
             ),
@@ -1280,7 +1280,7 @@ async def test_delegate_models_survive_feature_downgrade_and_unrelated_edits(
             'INSERT INTO plugins VALUES (?, ?)',
             (
                 'older',
-                '{"id":"older","factory":"pydantic_ai_pax.builtin_plugins.coder","enabled":true,'
+                '{"id":"older","factory":"pydantic_clai2.builtin_plugins.coder","enabled":true,'
                 '"settings":{"repo_context":false,"skill_folders":[]}}',
             ),
         )

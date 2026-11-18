@@ -332,7 +332,7 @@ async def test_load_all_skips_missing_plugin_modules_quietly(tmp_path: Path, mon
     monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
     harness = Harness(tmp_path)
     # Saved by a CLAI version that shipped a `retired` built-in; this one does not.
-    harness.store.save_plugin(PluginSettings(id='retired', factory='pydantic_ai_pax.retired'))
+    harness.store.save_plugin(PluginSettings(id='retired', factory='pydantic_clai2.retired'))
     harness.store.save_plugin(PluginSettings(id='gone', factory='clai_gone.plugin:activate'))
     harness.store.save_plugin(PluginSettings(id='broken', factory='clai_broken.plugin'))
     await harness.loader.load_all()
