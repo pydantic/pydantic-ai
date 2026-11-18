@@ -416,92 +416,48 @@ class TestCommandValidation:
 
 
 class TestCwdCapture:
-    """The persistent-cwd mechanism records `pwd` out-of-band to a private file inside the
+    """The persistent-cwd mechanism saves the final directory out-of-band to a private file inside the
     workspace, so command output can never spoof the tracked directory."""
 
-    async def test_capture_disabled_returns_command_unchanged(
-        self, toolset: ShellToolset[None], tmp_path: Path
+    @pytest.mark.parametrize(
+        'junk',
+        [
+            "printf ''",
+            "printf '\\377\\376'",
+            'echo subdir',
+            'echo /does/not/exist',
+            'echo "$PWD/test.txt"',
+            f'echo /{"x" * 300}',
+        ],
+        ids=['empty', 'not-utf8', 'relative', 'missing', 'file', 'too-long'],
+    )
+    async def test_pwd_printing_junk_keeps_cwd(
+        self, persist_toolset: ShellToolset[None], shell_dir: Path, junk: str
     ) -> None:
-        wrapped, cwd_file = await toolset._build_cwd_capture(_ctx(tmp_path), 'echo hi')  # pyright: ignore[reportPrivateUsage]
-        assert wrapped == 'echo hi'
-        assert cwd_file is None
-
-    async def test_capture_records_pwd_out_of_band(self, persist_toolset: ShellToolset[None], tmp_path: Path) -> None:
-        wrapped, cwd_file = await persist_toolset._build_cwd_capture(_ctx(tmp_path), 'echo hi')  # pyright: ignore[reportPrivateUsage]
-        assert cwd_file is not None
-        # pwd is redirected to the private capture file, never echoed to stdout
-        assert f'pwd > {shlex.quote(cwd_file)}' in wrapped
-        assert wrapped.startswith('echo hi')
-
-    async def test_apply_valid_dir_updates_cwd(
-        self, persist_toolset: ShellToolset[None], shell_dir: Path, tmp_path: Path
-    ) -> None:
-        capture = tmp_path / 'cwd'
-        capture.write_text(f'{shell_dir / "subdir"}\n')
-        await persist_toolset._apply_captured_cwd(_ctx(shell_dir), str(capture))  # pyright: ignore[reportPrivateUsage]
-        assert persist_toolset._cwd == str(shell_dir / 'subdir')  # pyright: ignore[reportPrivateUsage]
-
-    async def test_apply_empty_file_keeps_cwd(self, persist_toolset: ShellToolset[None], tmp_path: Path) -> None:
-        capture = tmp_path / 'cwd'
-        capture.write_text('')
-        await persist_toolset._apply_captured_cwd(_ctx(tmp_path), str(capture))  # pyright: ignore[reportPrivateUsage]
-        assert persist_toolset._cwd is None  # pyright: ignore[reportPrivateUsage]
-
-    async def test_apply_non_dir_keeps_cwd(self, persist_toolset: ShellToolset[None], tmp_path: Path) -> None:
-        capture = tmp_path / 'cwd'
-        capture.write_text(str(tmp_path / 'does_not_exist'))
-        await persist_toolset._apply_captured_cwd(_ctx(tmp_path), str(capture))  # pyright: ignore[reportPrivateUsage]
-        assert persist_toolset._cwd is None  # pyright: ignore[reportPrivateUsage]
-
-    async def test_apply_file_keeps_cwd(
-        self, persist_toolset: ShellToolset[None], shell_dir: Path, tmp_path: Path
-    ) -> None:
-        capture = tmp_path / 'cwd'
-        capture.write_text(str(shell_dir / 'test.txt'))
-        await persist_toolset._apply_captured_cwd(_ctx(shell_dir), str(capture))  # pyright: ignore[reportPrivateUsage]
-        assert persist_toolset._cwd is None  # pyright: ignore[reportPrivateUsage]
-
-    async def test_capture_not_utf8_keeps_cwd(self, persist_toolset: ShellToolset[None], shell_dir: Path) -> None:
-        # The wrapper runs `pwd` in the same shell as the model's command, so a
-        # shell function named `pwd` decides the bytes written to the capture
-        # file. Decoding them raises `UnicodeDecodeError`, a `ValueError` and
-        # not an `OSError`, so the guard has to cover both.
-        result = await persist_toolset.run_command(_ctx(shell_dir), r"""pwd() { printf '\377\376'; }""")
+        # The wrapper runs `pwd` in the same shell as the model's command, so a shell function
+        # named `pwd` decides what it reports; anything but an existing absolute directory is dropped.
+        ctx = _ctx(shell_dir)
+        await persist_toolset.run_command(ctx, 'cd subdir')
+        result = await persist_toolset.run_command(ctx, f'pwd() {{ {junk}; }}')
         assert '[exit code' not in result
-        assert persist_toolset._cwd is None  # pyright: ignore[reportPrivateUsage]
+        assert await persist_toolset.run_command(ctx, 'echo "$PWD"') == f'[stdout]\n{shell_dir / "subdir"}\n'
 
-    async def test_capture_path_too_long_keeps_cwd(
-        self, persist_toolset: ShellToolset[None], shell_dir: Path, tmp_path: Path
+    async def test_command_that_exits_early_keeps_cwd(
+        self, persist_toolset: ShellToolset[None], shell_dir: Path
     ) -> None:
-        # The recorded path is junk the workspace refuses to stat (ENAMETOOLONG); the
-        # tracked cwd must survive.
-        capture = tmp_path / 'cwd'
-        capture.write_text(f'/{"x" * 300}')
-        await persist_toolset._apply_captured_cwd(_ctx(shell_dir), str(capture))  # pyright: ignore[reportPrivateUsage]
-        assert persist_toolset._cwd is None  # pyright: ignore[reportPrivateUsage]
-
-    async def test_relative_capture_keeps_cwd(self, persist_toolset: ShellToolset[None], tmp_path: Path) -> None:
-        # A `pwd` function can print anything; a relative path names no workspace directory.
-        result = await persist_toolset.run_command(_ctx(tmp_path), 'pwd() { echo subdir; }')
-        assert '[exit code' not in result
-        assert persist_toolset._cwd is None  # pyright: ignore[reportPrivateUsage]
-
-    async def test_command_that_exits_early_writes_no_capture(
-        self, persist_toolset: ShellToolset[None], tmp_path: Path
-    ) -> None:
-        # `exit` skips the capture line; the tracked cwd and the cleanup both tolerate its absence.
-        result = await persist_toolset.run_command(_ctx(tmp_path), 'cd subdir && exit 0')
+        # `exit` skips the save; the next command starts where this one did.
+        ctx = _ctx(shell_dir)
+        result = await persist_toolset.run_command(ctx, 'cd subdir && exit 0')
         assert result == '(no output)'
-        assert persist_toolset._cwd is None  # pyright: ignore[reportPrivateUsage]
+        assert await persist_toolset.run_command(ctx, 'pwd') == f'[stdout]\n{shell_dir}\n'
 
-    async def test_capture_file_is_removed(self, persist_toolset: ShellToolset[None], tmp_path: Path) -> None:
-        # The capture lives in the workspace's job directory and is removed after each command,
-        # including one that deletes it first.
-        await persist_toolset.run_command(_ctx(tmp_path), 'true')
-        base = Path(await persist_toolset._jobs_base(_ctx(tmp_path)))  # pyright: ignore[reportPrivateUsage]
-        assert not list(base.glob('cwd-*'))
-        await persist_toolset.run_command(_ctx(tmp_path), f'rm -f {shlex.quote(str(base))}/cwd-*')
-        assert not list(base.glob('cwd-*'))
+    async def test_only_the_saved_directory_is_left(self, persist_toolset: ShellToolset[None], shell_dir: Path) -> None:
+        # The wrapper writes a temporary file and renames it over the saved one, leaving nothing else behind.
+        ctx = _ctx(shell_dir)
+        await persist_toolset.run_command(ctx, 'cd subdir')
+        await persist_toolset.run_command(ctx, 'true')
+        state_dir = shell_dir / '.pydantic-ai-harness/shell/run-state'
+        assert [path.read_text() for path in state_dir.iterdir()] == [str(shell_dir / 'subdir')]
 
 
 class TestForRunIsolation:
@@ -536,12 +492,13 @@ class TestForRunIsolation:
     async def test_persist_cwd_isolated_across_runs(self, persist_toolset: ShellToolset[None], shell_dir: Path) -> None:
         run1 = await persist_toolset.for_run(_ctx(shell_dir))
         assert isinstance(run1, ShellToolset)
-        await run1.run_command(_ctx(shell_dir), 'cd subdir')
-        assert run1._cwd == str(shell_dir / 'subdir')  # pyright: ignore[reportPrivateUsage]
+        ctx = _ctx(shell_dir)
+        await run1.run_command(ctx, 'cd subdir')
+        assert await run1.run_command(ctx, 'pwd') == f'[stdout]\n{shell_dir / "subdir"}\n'
         # A second run must start back at the configured root, not inherit run1's cd.
-        run2 = await persist_toolset.for_run(_ctx(shell_dir))
+        run2 = await persist_toolset.for_run(ctx)
         assert isinstance(run2, ShellToolset)
-        assert run2._cwd is None  # pyright: ignore[reportPrivateUsage]
+        assert await run2.run_command(ctx, 'pwd') == f'[stdout]\n{shell_dir}\n'
 
 
 class TestDurableJob:
@@ -706,7 +663,7 @@ class TestPersistCwdHardening:
         # sentinel string could redirect the tracked cwd with no real cd.
         spoof = f'true ; echo __HARNESS_PWD__{shell_dir / "subdir"}'
         await persist_toolset.run_command(_ctx(shell_dir), spoof)
-        assert persist_toolset._cwd == str(shell_dir)  # pyright: ignore[reportPrivateUsage]
+        assert await persist_toolset.run_command(_ctx(shell_dir), 'pwd') == f'[stdout]\n{shell_dir}\n'
 
 
 class TestSpawnFailures:
@@ -949,8 +906,7 @@ class TestRunCommand:
         ctx = _ctx(shell_dir)
         await persist_toolset.run_command(ctx, command="cd 'trailing '")
         result = await persist_toolset.run_command(ctx, command='pwd')
-        assert 'trailing ' in result
-        assert persist_toolset._cwd == str(shell_dir / 'trailing ')  # pyright: ignore[reportPrivateUsage]
+        assert result == f'[stdout]\n{shell_dir / "trailing "}\n'
 
     async def test_persist_cwd_only_on_success(self, shell_dir: Path) -> None:
         ts = ShellToolset(
@@ -962,9 +918,8 @@ class TestRunCommand:
             persist_cwd=True,
             allow_interactive=False,
         )
-        original = ts._cwd  # pyright: ignore[reportPrivateUsage]
-        await ts.run_command(_ctx(shell_dir), 'cd nonexistent_dir_xyz && false')
-        assert ts._cwd == original  # pyright: ignore[reportPrivateUsage]
+        await ts.run_command(_ctx(shell_dir), 'cd subdir && false')
+        assert await ts.run_command(_ctx(shell_dir), 'pwd') == f'[stdout]\n{shell_dir}\n'
 
     async def test_denied_command_in_run(self, toolset: ShellToolset[None], tmp_path: Path) -> None:
         # B2: a denied command is model-correctable, so it surfaces as ModelRetry
@@ -1016,9 +971,8 @@ class TestRunCommand:
             persist_cwd=False,
             allow_interactive=False,
         )
-        original = ts._cwd  # pyright: ignore[reportPrivateUsage]
         await ts.run_command(_ctx(shell_dir), 'cd subdir')
-        assert ts._cwd == original  # pyright: ignore[reportPrivateUsage]
+        assert await ts.run_command(_ctx(shell_dir), 'pwd') == f'[stdout]\n{shell_dir}\n'
 
     async def test_nonzero_exit_shows_code(self, toolset: ShellToolset[None], tmp_path: Path) -> None:
         result = await toolset.run_command(_ctx(tmp_path), 'exit 1')
@@ -1113,7 +1067,24 @@ class TestRunCommand:
             allow_interactive=False,
         )
         await ts.run_command(_ctx(shell_dir), 'cd subdir')
-        assert ts._cwd == str(shell_dir / 'subdir')  # pyright: ignore[reportPrivateUsage]
+        assert await ts.run_command(_ctx(shell_dir), 'pwd') == f'[stdout]\n{shell_dir / "subdir"}\n'
+
+    async def test_persist_cwd_without_standard_path(self, shell_dir: Path) -> None:
+        """The saved directory survives a `PATH` that has no standard tools, whether set by `env` or the command."""
+        ts = ShellToolset(
+            allowed_commands=[],
+            denied_commands=[],
+            denied_operators=[],
+            default_timeout=10.0,
+            max_output_chars=50_000,
+            persist_cwd=True,
+            allow_interactive=False,
+            env={'PATH': '/nonexistent'},
+        )
+        (shell_dir / 'subdir' / 'nested').mkdir()
+        await ts.run_command(_ctx(shell_dir), 'cd subdir')
+        await ts.run_command(_ctx(shell_dir), 'PATH=/nonexistent; cd nested')
+        assert await ts.run_command(_ctx(shell_dir), 'echo "$PWD"') == f'[stdout]\n{shell_dir / "subdir" / "nested"}\n'
 
     async def test_persist_cwd_not_updated_on_failure(self, shell_dir: Path) -> None:
         """CWD should not update if command fails (exit code non-zero)."""
@@ -1126,9 +1097,8 @@ class TestRunCommand:
             persist_cwd=True,
             allow_interactive=False,
         )
-        original = ts._cwd  # pyright: ignore[reportPrivateUsage]
-        await ts.run_command(_ctx(shell_dir), 'false')
-        assert ts._cwd == original  # pyright: ignore[reportPrivateUsage]
+        await ts.run_command(_ctx(shell_dir), 'cd subdir; false')
+        assert await ts.run_command(_ctx(shell_dir), 'pwd') == f'[stdout]\n{shell_dir}\n'
 
 
 class TestProcessGroupKill:
@@ -1526,7 +1496,7 @@ class TestEdgeCases:
         )
         # Successful echo -- sentinel shows same dir, cwd should remain valid
         await ts.run_command(_ctx(shell_dir), 'echo hi')
-        assert ts._cwd == str(shell_dir)  # pyright: ignore[reportPrivateUsage]
+        assert await ts.run_command(_ctx(shell_dir), 'pwd') == f'[stdout]\n{shell_dir}\n'
 
 
 class TestShellCapability:

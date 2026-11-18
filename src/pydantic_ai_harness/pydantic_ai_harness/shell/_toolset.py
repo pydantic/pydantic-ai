@@ -14,7 +14,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import anyio
 
@@ -26,7 +26,7 @@ from pydantic_ai.workspaces import Workspace, WorkspaceError, WorkspaceTimeoutEr
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import metadata_dir, require_workspace, supports_commands
-from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, Job
+from pydantic_ai_harness.shell._jobs import Job
 from pydantic_ai_harness.shell._limits import (
     file_limit_status,
     limited_script,
@@ -98,9 +98,10 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         super().__init__(id=id)
         if cwd is not None:
             warn_argument_ignored('ShellToolset', 'cwd', SET_WORKING_DIR_ON_THE_WORKSPACE, stacklevel=3)
-        # The absolute workspace path `persist_cwd` last recorded; `None` means the working directory.
-        self._cwd: str | None = None
-        self._cwd_run_id: str | None = None
+        # Names this instance's saved directory when the run context has no run ID.
+        self._instance_key = uuid.uuid4().hex
+        # The run whose directory this instance last saved, to tell a lost state file from a fresh run.
+        self._saved_cwd_run: str | None = None
         self._allowed_commands = list(allowed_commands)
         self._denied_commands = list(denied_commands)
         self._denied_operators = list(denied_operators)
@@ -165,7 +166,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         """
         if not self._persist_cwd:
             return self
-        return ShellToolset(
+        toolset = ShellToolset(
             allowed_commands=self._allowed_commands,
             denied_commands=self._denied_commands,
             denied_operators=self._denied_operators,
@@ -180,6 +181,9 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             tools=self._tools,
             id=self.id,
         )
+        # Shared, so the run-end cleanup on this instance finds the job directory without looking it up again.
+        toolset._jobs_dirs = self._jobs_dirs
+        return toolset
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """Offer no tools when the workspace cannot execute commands; fail a run with no workspace."""
@@ -234,45 +238,42 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         }
 
     async def _cwd_for(self, ctx: RunContext[AgentDepsT]) -> str:
-        """The absolute workspace directory the next `run_command` or `start_command` command starts in."""
-        state: str | None = None
-        recorded: str | None
-        if self._persist_cwd and ctx.run_id is not None:
-            state = await self._cwd_state_path(ctx)
-            recorded = await self._read_cwd_state(ctx, state)
-        else:
-            recorded = self._cwd
-        if recorded is not None:
-            try:
-                entry = await ctx.workspace.stat(recorded) if posixpath.isabs(recorded) else None
-            except (FileNotFoundError, NotADirectoryError):
-                entry = None
-            if entry is None or not entry.is_dir:
-                # Remote shells may report a missing cwd as an exit code; tell the model to retry elsewhere.
-                if state is not None:
-                    await ctx.workspace.remove(state)
-                self._cwd = None
-                raise ModelRetry(f'The previous directory was removed; now in {await ctx.workspace.working_dir()}.')
-            return recorded
-        return await ctx.workspace.working_dir()
-
-    async def _read_cwd_state(self, ctx: RunContext[AgentDepsT], state: str) -> str | None:
-        """The directory the run's state file at `state` holds, or `None` when it holds none."""
+        """The absolute workspace directory the next `start_command` command starts in."""
+        if not self._persist_cwd:
+            return await ctx.workspace.working_dir()
+        state = await self._cwd_state_path(ctx)
         try:
-            return (await ctx.workspace.read_bytes(state)).decode('utf-8')
+            recorded = (await ctx.workspace.read_bytes(state)).decode('utf-8')
         except FileNotFoundError:
-            if self._cwd is not None and self._cwd_run_id == ctx.run_id:
-                # This worker saw a saved cwd for this run; a missing file now is lost state.
-                self._cwd = None
-                raise ModelRetry('The saved working directory was lost; now in the workspace working directory.')
+            if self._saved_cwd_run == self._run_key(ctx):
+                self._lost_cwd()
+            return await ctx.workspace.working_dir()
         except UnicodeDecodeError:
-            pass
-        return None
+            return await ctx.workspace.working_dir()
+        try:
+            entry = await ctx.workspace.stat(recorded) if posixpath.isabs(recorded) else None
+        except (FileNotFoundError, NotADirectoryError):
+            entry = None
+        if entry is None or not entry.is_dir:
+            await ctx.workspace.remove(state)
+            await self._removed_cwd(ctx)
+        return recorded
+
+    def _lost_cwd(self) -> NoReturn:
+        self._saved_cwd_run = None
+        raise ModelRetry('The saved working directory was lost; now in the workspace working directory.')
+
+    async def _removed_cwd(self, ctx: RunContext[AgentDepsT]) -> NoReturn:
+        # Remote shells may report a missing cwd as an exit code; tell the model to retry elsewhere.
+        self._saved_cwd_run = None
+        raise ModelRetry(f'The previous directory was removed; now in {await ctx.workspace.working_dir()}.')
+
+    def _run_key(self, ctx: RunContext[AgentDepsT]) -> str:
+        return self._instance_key if ctx.run_id is None else ctx.run_id
 
     async def _cwd_state_path(self, ctx: RunContext[AgentDepsT]) -> str:
         # A run ID can contain path separators; hash it rather than letting it choose a filename.
-        assert ctx.run_id is not None
-        run_key = hashlib.sha256(ctx.run_id.encode('utf-8')).hexdigest()
+        run_key = hashlib.sha256(self._run_key(ctx).encode('utf-8')).hexdigest()
         return ctx.workspace.paths.join(await self._jobs_base(ctx), 'run-state', run_key)
 
     async def clear_run_cwd(self, ctx: RunContext[AgentDepsT]) -> None:
@@ -346,57 +347,45 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         if self._allowed_commands and executable not in self._allowed_commands:
             raise PermissionError(f'Command {executable!r} is not in the allowed list.')
 
-    async def _build_cwd_capture(self, ctx: RunContext[AgentDepsT], command: str) -> tuple[str, str | None]:
-        """Wrap a command to record its final working directory out-of-band.
+    async def _command_script(self, ctx: RunContext[AgentDepsT], marker: str) -> Callable[[str], str]:
+        """Wrap a `run_command` command to start in the working directory, or with `persist_cwd` in the run's saved one.
 
-        `pwd` is written to a file inside the workspace, so command output can
-        never spoof the tracked cwd -- unlike parsing a sentinel out of stdout,
-        where any command that prints the sentinel string (or one using `;` to
-        skip success-gating) could redirect the cwd. The random file name keeps
-        concurrent commands from colliding. Returns the wrapped command plus the
-        capture path, or the command unchanged and `None` when cwd tracking is off.
+        With `persist_cwd` one workspace command reads the saved directory, runs the command there, and saves
+        its final directory when it exits `0` in a directory that still exists. The wrapper writes the file
+        itself, so command output cannot spoof it, and replaces it with `mv`, so a parallel call never reads it
+        half-written; the last successful call to finish wins. A saved directory that is gone, or a saved file that is lost,
+        prints `marker` (random per call) instead of running the command.
         """
+        working_dir = shlex.quote(await ctx.workspace.working_dir())
         if not self._persist_cwd:
-            return command, None
-        name = posixpath.join(await self._jobs_base(ctx), f'cwd-{uuid.uuid4().hex}')
-        wrapped = f'{command}\n__harness_ec=$?\npwd > {shlex.quote(name)}\nexit $__harness_ec'
-        return wrapped, name
-
-    async def _apply_captured_cwd(self, ctx: RunContext[AgentDepsT], cwd_file: str) -> None:
-        """Update the persistent cwd from the capture file, ignoring junk.
-
-        The whole read-and-check is guarded, not just the read: the command it
-        belongs to already succeeded, so a capture that isn't UTF-8 (a
-        `UnicodeDecodeError`, which is a `ValueError` rather than an `OSError`)
-        or a recorded path the workspace refuses to stat (`ENAMETOOLONG`) is
-        bookkeeping the toolset can drop, not a tool failure to report.
-        """
-        try:
-            recorded = (await ctx.workspace.read_bytes(cwd_file)).decode('utf-8').removesuffix('\n')
-            if not posixpath.isabs(recorded):
-                return
-            if (await ctx.workspace.stat(recorded)).is_dir:
-                if ctx.run_id is None:
-                    self._cwd = posixpath.normpath(recorded)
-                else:
-                    state = await self._cwd_state_path(ctx)
-                    await ctx.workspace.make_dir(posixpath.dirname(state))
-                    # Parallel calls in one run each use their starting cwd; last completion wins.
-                    # Workspace backends do not provide a cross-worker compare-and-swap for this state.
-                    await ctx.workspace.write_bytes(state, posixpath.normpath(recorded).encode('utf-8'))
-                    self._cwd = posixpath.normpath(recorded)
-                    self._cwd_run_id = ctx.run_id
-        except (OSError, ValueError):
-            return
-
-    async def _remove_capture(self, ctx: RunContext[AgentDepsT], cwd_file: str | None) -> None:
-        if cwd_file is None:
-            return
-        with anyio.move_on_after(CONTROL_TIMEOUT, shield=True):
-            try:
-                await ctx.workspace.remove(cwd_file)
-            except FileNotFoundError:
-                pass
+            return lambda command: f'cd {working_dir} || exit\n{limited_script(command, self._max_file_bytes)}'
+        state = shlex.quote(await self._cwd_state_path(ctx))
+        lost = 'true' if self._saved_cwd_run == self._run_key(ctx) else 'false'
+        # One line, so the shell numbers the command's lines as before. `$(...)` drops a path's trailing
+        # newlines; the `x` sentinel keeps them. `command -p` finds the tools whatever the command's `PATH` is.
+        # A run's first command saves the working directory with `ln`, which never replaces a parallel save.
+        start = (
+            f'__harness_state={state}; '
+            '__harness_put() { { command -p mkdir -p -- "${__harness_state%/*}" && '
+            'printf %s "$__harness_cwd" > "$__harness_state.$$" && '
+            'command -p "$@" -- "$__harness_state.$$" "$__harness_state"; '
+            'command -p rm -f -- "$__harness_state.$$"; } 2>/dev/null; }; '
+            'if test -e "$__harness_state"; then '
+            '__harness_cwd=$(command -p cat -- "$__harness_state" 2>/dev/null; printf x); '
+            '__harness_cwd=${__harness_cwd%x}; '
+            'case $__harness_cwd in /*) test -d "$__harness_cwd" ;; *) false ;; esac || '
+            f'{{ command -p rm -f -- "$__harness_state"; printf %s {marker}removed; exit 1; }}; '
+            f'elif {lost}; then printf %s {marker}lost; exit 1; '
+            f'else __harness_cwd={working_dir}; __harness_put ln; '
+            'fi; cd "$__harness_cwd" || exit\n'
+        )
+        save = (
+            '\n__harness_ec=$?; if [ "$__harness_ec" -eq 0 ]; then '
+            '__harness_cwd=$(pwd 2>/dev/null; printf x); __harness_cwd=${__harness_cwd%?x}; '
+            'case $__harness_cwd in /*) test -d "$__harness_cwd" && __harness_put mv -f ;; esac; '
+            'fi; exit $__harness_ec'
+        )
+        return lambda command: f'{start}{command}{save}'
 
     @recoverable
     async def run_command(
@@ -415,32 +404,32 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         self._check_command(command)
         timeout = timeout_seconds if timeout_seconds is not None else self._default_timeout
 
-        actual_command, cwd_file = await self._build_cwd_capture(ctx, command)
+        marker = f'__harness_cwd_{uuid.uuid4().hex}_'
         try:
-            try:
-                cwd = shlex.quote(await self._cwd_for(ctx))
-                result = await run_model_command(
-                    ctx.workspace,
-                    lambda cmd: f'cd {cwd} || exit\n{limited_script(cmd, self._max_file_bytes)}',
-                    actual_command,
-                    env=self._resolve_env(),
-                    timeout=timeout,
-                )
-            except WorkspaceTimeoutError as exc:
-                return _labelled(exc.stdout, exc.stderr, empty=None, trailer=f'[Command timed out after {timeout}s]')
+            result = await run_model_command(
+                ctx.workspace,
+                await self._command_script(ctx, marker),
+                command,
+                env=self._resolve_env(),
+                timeout=timeout,
+            )
+        except WorkspaceTimeoutError as exc:
+            return _labelled(exc.stdout, exc.stderr, empty=None, trailer=f'[Command timed out after {timeout}s]')
 
-            output = _labelled(result.stdout, result.stderr, empty='(no output)')
-            exit_code = result.exit_code
+        exit_code = result.exit_code
+        if self._persist_cwd:
+            if exit_code == 1 and not result.stderr and result.stdout == f'{marker}removed':
+                await self._removed_cwd(ctx)
+            if exit_code == 1 and not result.stderr and result.stdout == f'{marker}lost':
+                self._lost_cwd()
+            if exit_code == 0:
+                self._saved_cwd_run = self._run_key(ctx)
 
-            if cwd_file is not None and exit_code == 0:
-                await self._apply_captured_cwd(ctx, cwd_file)
-
-            if exit_code != 0:
-                output = f'{output}\n[exit code: {exit_code}]'
-                output += file_limit_status(exit_code, self._max_file_bytes)
-            return output
-        finally:
-            await self._remove_capture(ctx, cwd_file)
+        output = _labelled(result.stdout, result.stderr, empty='(no output)')
+        if exit_code != 0:
+            output = f'{output}\n[exit code: {exit_code}]'
+            output += file_limit_status(exit_code, self._max_file_bytes)
+        return output
 
     @recoverable
     async def shell(
