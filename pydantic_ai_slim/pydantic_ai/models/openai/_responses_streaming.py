@@ -19,6 +19,7 @@ from pydantic_core import to_json
 
 from ... import _utils, usage
 from ..._utils import now_utc as _now_utc, number_to_datetime
+from ...computer_use import ComputerCallPart
 from ...exceptions import ModelConnectionError
 from ...messages import BinaryImage, FilePart, ModelResponse, ModelResponseStreamEvent, TextPart, ToolCallPart
 from .. import StreamedResponse
@@ -209,11 +210,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 ),
             ):
                 self._handle_terminal_response(chunk.response)
-                if not isinstance(chunk, responses.ResponseCompletedEvent):
-                    # OpenAI says to stop when a response is incomplete or failed, which is known only after its
-                    # computer calls were mapped, so they're mapped again to run nothing.
-                    for item in self._computer_calls:
-                        yield from self._map_computer_call_done(item, response_completed=False)
         match chunk:
             # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
             case responses.ResponseCompletedEvent():
@@ -354,6 +350,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         self._store_conversation_id(chunk.response)
 
     def _map_failed(self, chunk: responses.ResponseFailedEvent) -> None:
+        self._refuse_computer_calls()
         self._record_usage(chunk.response)
         # Record the terminal state first, so a failed background job isn't cancelled after the raise.
         self._set_state(chunk.response.status)
@@ -370,8 +367,19 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             self.provider_details = {**(self.provider_details or {}), 'finish_reason': 'failed'}
             self.finish_reason = RESPONSES_FINISH_REASON_MAP.get('failed')
 
+    def _refuse_computer_calls(self) -> None:
+        """Make the computer calls announced so far run nothing, as the response turned out incomplete or failed.
+
+        OpenAI says to stop then, which is known only after the calls were announced complete. They're replaced in the
+        response without starting them a second time.
+        """
+        for item in self._computer_calls:
+            if call := self._computer_call(item, response_completed=False):
+                self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
+
     def _map_incomplete(self, chunk: responses.ResponseIncompleteEvent) -> None:
         self._record_usage(chunk.response)
+        self._refuse_computer_calls()
         # Parity with the non-streaming `_process_response`: map the incomplete
         # reason when the provider sends one, leave the finish reason unset otherwise.
         raw_finish_reason = details.reason if (details := chunk.response.incomplete_details) else None
@@ -610,11 +618,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             case _:
                 pass
 
-    def _map_computer_call_done(
-        self, item: responses.ResponseComputerToolCall, *, response_completed: bool = True
-    ) -> Iterator[ModelResponseStreamEvent]:
+    def _map_computer_call_done(self, item: responses.ResponseComputerToolCall) -> Iterator[ModelResponseStreamEvent]:
         # Its actions arrive whole in the done event, and OpenAI finishes each item before adding the next, so the
         # call starts complete here and keeps its place among the other parts.
+        if call := self._computer_call(item, response_completed=True):
+            yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
+
+    def _computer_call(
+        self, item: responses.ResponseComputerToolCall, *, response_completed: bool
+    ) -> ComputerCallPart | None:
         # The ID is stored as `_map_function_call_done` stores a function call's.
         call_id = stored_tool_call_id(
             item.call_id,
@@ -622,10 +634,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             provider_response_id=self.provider_response_id,
             timestamp=self.timestamp,
         )
-        if call := map_computer_call(
+        return map_computer_call(
             item, self.model_request_parameters, call_id, self.provider_name, response_completed=response_completed
-        ):
-            yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
+        )
 
     def _map_function_call_done(
         self, item: responses.ResponseFunctionToolCall, item_id: str
