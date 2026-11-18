@@ -14,9 +14,12 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Too
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    InstructionCapabilityPart,
     ModelMessage,
     ModelResponse,
     NativeToolSearchReturnPart,
+    OperatorSource,
+    OperatorText,
     SystemPromptPart,
     post_compaction_window,
 )
@@ -39,6 +42,7 @@ from pydantic_ai_harness.code_mode._toolset import (
     in_durable_execution,
     monty_sandbox_from_url,
 )
+from pydantic_ai_harness.tool_bridge import ToolBridge
 
 if TYPE_CHECKING:
     from pydantic_monty import AsyncMontyRemote
@@ -53,7 +57,20 @@ _DISCOVERY_ANNOUNCEMENT_PREFIX = (
     'added to the available-functions catalog in the system prompt'
 )
 _DISCOVERY_ANNOUNCEMENT_ORIGIN = 'pydantic-ai-harness.code_mode.discovery.v1'
-"""`SystemPromptPart.metadata['origin']` of a discovery announcement, whose `metadata['tools']` lists the names it announced."""
+"""`SystemPromptPart.metadata['origin']` of a discovery announcement an earlier version recorded, whose
+`metadata['tools']` lists the names it announced."""
+
+
+@dataclass(kw_only=True)
+class DiscoveryAnnouncementPart(InstructionCapabilityPart, namespace='code_mode', name='discovery_announcement'):
+    """The notice `CodeMode(dynamic_catalog=True)` enqueues when a tool search makes new functions callable in `run_code`.
+
+    Its text names each new function by the Python identifier `run_code` calls it by. Find announcements in history
+    by this type.
+    """
+
+    tools: tuple[str, ...] = ()
+    """The names of the tools it announces, as the search found them. Never sent to the model."""
 
 
 @dataclass
@@ -63,8 +80,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     By default (`tools='all'`) every eligible regular tool the agent has is wrapped
     behind a single `run_code` tool -- the model writes Python that calls them as
     functions instead of issuing tool calls directly. Framework control tools,
-    undiscovered deferred tools, native fallbacks, and other code-execution tools
-    remain native.
+    undiscovered deferred tools, `requires_approval=True` and external tools, native
+    fallbacks, and other code-execution tools remain native.
 
     Pass a list of tool names or a callable predicate to `tools` to split the
     toolset: matching tools become callables inside the sandbox, and the rest
@@ -106,9 +123,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     """Which wrapped tools should be sandboxed inside `run_code`.
 
     - `'all'` (default): every eligible regular tool the agent has is sandboxed.
+      Tools registered with `requires_approval=True` and external tools stay native,
+      so their deferred calls pause the run as usual. Tools gated by `.approval_required()`
+      keep `kind='function'` and are still sandboxed.
     - `Sequence[str]`: only tools whose names are listed are sandboxed.
     - Callable `(ctx, tool_def) -> bool | Awaitable[bool]`: tools where the
       callable returns `True` are sandboxed; the rest stay as native tool calls.
+
+    An explicit selector can sandbox `requires_approval=True` and external tools, but calling one
+    from `run_code` then needs a `HandleDeferredToolCalls` capability to resolve it inline.
     """
 
     max_retries: int = 3
@@ -304,8 +327,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         )
 
     def get_ordering(self) -> CapabilityOrdering:
-        """CodeMode wraps around ToolSearch so that search_tools stays native."""
-        return CapabilityOrdering(position='outermost', wraps=[_ToolSearch])
+        """CodeMode wraps around ToolSearch, so that `search_tools` stays native, and ToolBridge, so that its dispatchers are sandboxed."""
+        return CapabilityOrdering(position='outermost', wraps=[_ToolSearch, ToolBridge])
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> CodeMode[AgentDepsT]:
         """Return a fresh instance so concurrent runs don't share announcement or speculation state."""
@@ -454,13 +477,12 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         # identifier `run_code` calls it by, which can't carry markup or prose. The tool names as found are
         # kept in the metadata, which the model never sees.
         listing = ', '.join(f'`{function}`' for function in functions.values())
-        # Enqueue a `SystemPromptPart` so the announcement is framed as system-level context.
-        # Mid-conversation `SystemPromptPart`s are rendered inline (not hoisted to the top-level
-        # system prompt) on all providers since pydantic/pydantic-ai#5509, so this is cache-safe.
+        # The framework's own wording, naming each function by the identifier `run_code` calls it by.
         ctx.enqueue(
-            SystemPromptPart(
-                content=f'{_DISCOVERY_ANNOUNCEMENT_PREFIX}: {listing}.',
-                metadata={'origin': _DISCOVERY_ANNOUNCEMENT_ORIGIN, 'tools': list(functions)},
+            DiscoveryAnnouncementPart(
+                content=OperatorText(f'{_DISCOVERY_ANNOUNCEMENT_PREFIX}: {listing}.'),
+                source=OperatorSource(),
+                tools=tuple(functions),
             )
         )
 
@@ -468,16 +490,19 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 def _visible_announced_tools(messages: Sequence[ModelMessage]) -> set[str]:
     """Read the names announced after the latest compaction boundary.
 
-    An announcement is identified only by its `SystemPromptPart.metadata` (`origin` and the `tools` it lists),
-    which survives serialization and the merging of adjacent requests; its text never counts, so a system
-    prompt that merely reads like one, or a name shaped like a list of names, adds nothing. An announcement a
-    history processor or a UI round trip dropped no longer counts, so the tool is announced again when it's
-    next discovered, and so is a tool from a history recorded before announcements were marked.
+    An announcement is a `DiscoveryAnnouncementPart`, identified by its type and the `tools` it lists, which survive
+    serialization and the merging of adjacent requests; its text never counts, so a system prompt that merely reads
+    like one adds nothing. An earlier version recorded it as a `SystemPromptPart` marked by its `metadata` (`origin`
+    and `tools`), which still counts. An announcement a history processor or a UI round trip dropped no longer
+    counts, so the tool is announced again when it's next discovered, and so is a tool from a history recorded before
+    announcements were marked.
     """
     announced: set[str] = set()
     for message in post_compaction_window(messages):
         for part in message.parts:
-            if (
+            if isinstance(part, DiscoveryAnnouncementPart):
+                announced.update(part.tools)
+            elif (
                 isinstance(part, SystemPromptPart)
                 and part.metadata is not None
                 and part.metadata.get('origin') == _DISCOVERY_ANNOUNCEMENT_ORIGIN

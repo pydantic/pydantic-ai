@@ -121,35 +121,12 @@ members = [
 # `exclude-newer` relative durations need >= 0.9.17, `exclude-newer-package` `false` needs >= 0.9.25
 required-version = ">=0.9.25"
 default-groups = ["dev", "lint"]
-# No patched `soupsieve` (>= 4.0.0, see the floor below) supports Python < 3.11.5, so the lock
-# leaves those patch versions out. Lock-only: the published `requires-python` stays `>=3.11`.
-environments = ["python_full_version >= '3.11.5'"]
+# The lock leaves out these environments. Lock-only: the published `requires-python` stays `>=3.11`.
+# - Python < 3.11.5: no patched `soupsieve` (>= 4.0.0, see the floor below) supports it.
+# - emscripten: wheel-only dependencies such as `psycopg-binary` ship no emscripten wheels, so a
+#   lock that forks on `sys_platform == 'emscripten'` has no solution.
+environments = ["python_full_version >= '3.11.5' and sys_platform != 'emscripten'"]
 exclude-newer = "7 days"
-conflicts = [
-    # The `mcp-tasks` extra lives in the FastMCP 4 / MCP SDK v2 universe, while the dev group
-    # deliberately locks FastMCP 3 (the FastMCP 4 CI job layers `--with` overrides onto the
-    # frozen lock). Lock-side forks only: pip resolves `[mcp,mcp-tasks]` together fine — in the
-    # mcp-tasks fork the extra's pre-release floor opts the shared `fastmcp-slim` range into the
-    # FastMCP 4 betas. Every `--all-extras` invocation in CI and the Makefile carries
-    # `--no-extra mcp-tasks` to stay on the dev side of the fork.
-    [
-        { package = "pydantic-ai-slim", extra = "mcp-tasks" },
-        { group = "dev" },
-    ],
-    [
-        { package = "pydantic-ai", extra = "mcp-tasks" },
-        { group = "dev" },
-    ],
-    # `pydantic-ai-harness[stackone]` needs FastMCP 3.
-    [
-        { package = "pydantic-ai-slim", extra = "mcp-tasks" },
-        { package = "pydantic-ai-harness", extra = "stackone" },
-    ],
-    [
-        { package = "pydantic-ai", extra = "mcp-tasks" },
-        { package = "pydantic-ai-harness", extra = "stackone" },
-    ],
-]
 constraint-dependencies = [
     "ray>=2.55.0",
     "authlib>=1.6.7",
@@ -227,40 +204,11 @@ genai-prices = false
 pydantic-ai-harness = false
 logfire = false
 logfire-api = false
-# certifi 2026.10.19 is the `certifi` floor above: it keeps out the compromised eMudhra
-# `emSign ECC Root CA - G3` and restores the unaffected emSign roots 2026.10.18 dropped.
-# TODO(dsfaccini): Remove after 2026-10-27 02:25 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-certifi = "2026-10-20T02:25:00Z"
-# pillow 13.0.0 is the `pillow` floor above: it is the first release with the fixes.
-# TODO(dsfaccini): Remove after 2026-10-23 22:19 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-pillow = "2026-10-16T22:19:00Z"
-# boxlite 0.10.7 is the `boxlite` floor: 0.10.6 has no wheels for Python 3.13 or 3.14.
-# TODO(adtyavrdhn): Remove after 2026-10-25 01:35 UTC.
-boxlite = "2026-10-18T01:35:01Z"
-# prefect 3.9.0 is the `prefect` floor: it is the first release that imports on a current FastAPI.
-# TODO(DouweM): Remove after 2026-10-28 03:46 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-prefect = "2026-10-21T03:46:00Z"
-# boxd 0.2.20 is the `boxd` floor: it is the first release with `machines.fs`.
-# TODO(adtyavrdhn): Remove after 2026-11-03 23:56 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-boxd = "2026-10-27T23:56:00Z"
-# render 1.6.0 provides the stable Sandbox API used by RenderSandbox.
-# TODO(adtyavrdhn): Remove after 2026-11-06 01:06 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-render = "2026-10-30T01:06:03Z"
+logfire-sdk = false
 # k8s-agent-sandbox 1.0.11 is the `kubernetes` extra's floor: the release the backend is verified against.
 # TODO(adtyavrdhn): Remove after 2026-11-19 19:37 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 k8s-agent-sandbox = "2026-11-12T19:37:00Z"
-# durabletask and durabletask-azuremanaged 1.13.0 are the floors for the `azure-durable-task` extra
-# of pydantic-ai-harness: they are the first releases that close a dispatch's orchestrator generator.
-# TODO(adtyavrdhn): Remove after 2026-11-09 22:34 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-durabletask = "2026-11-02T22:34:00Z"
-durabletask-azuremanaged = "2026-11-02T22:34:00Z"
 
 [dependency-groups]
 dev = [
@@ -305,7 +253,7 @@ dev = [
     # https://github.com/beartype/beartype/issues/618
     "beartype>=0.23.0rc2; python_version >= '3.15'",
     # The MCP SDK v2 wire types as a standalone pure-Pydantic distribution, so the tests can check
-    # the compat readers' field-name pairs against the real v2 models while running against v1.
+    # the compat readers' field-name pairs against the real v2 models in the FastMCP 3 CI job too.
     "mcp-types>=2.0.0",
     # BlockBuster minor releases may add breaking detection rules; keep this test detector on 1.5.x.
     "blockbuster>=1.5.28,<1.6",
@@ -314,7 +262,8 @@ dev = [
     "azure-identity>=1.25.3",
     # Storage backends `pydantic-ai-harness` supports, faked or run against a live server.
     "mongomock-motor>=0.0.36",
-    "redis>=8.1.0",
+    # Floor below 8.1.0, which `fastmcp-tasks` excludes; the only release after it is a beta.
+    "redis>=8.0.1",
     # Records and replays provider traffic: its pytest plugin owns `@pytest.mark.vcr` and the `vcr` fixture.
     "cassetter>=0.13.0",
     # Drives the deterministic realtime session simulator in `tests/realtime/simulation/`: randomized
@@ -708,6 +657,7 @@ omit = [
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
     "tests/mcp_server.py",  # MCP test server; mostly run over stdio, where coverage doesn't follow, and each test calls only some of its tools
+    "tests/mcp_task_server.py",  # MCP task test server; its tools run only over stdio, where coverage doesn't follow
     "tests/kw_only_walker.py",  # pauses coverage while importing modules with excluded dependency guards
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
     "tests/harness/**/*_live.py",  # live sandbox tiers; run only with provider credentials

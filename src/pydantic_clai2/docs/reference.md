@@ -648,9 +648,9 @@ without changing anything.
 `/model add` opens a searchable provider list, then a model picker for that provider.
 Esc from the model list returns to providers. Providers are unique prefixes from
 the merged catalog, including `openai-codex`. Its suggestions include
-`gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-luna`,
-`gpt-5.6-terra`, and `gpt-5.6-sol`; availability depends on your account.
-Unknown prices and context limits are not inferred.
+`gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`,
+`gpt-6-luna`, `gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.6-sol`; availability
+depends on your account. Unknown prices and context limits are not inferred.
 
 The model catalog combines genai-prices' catalog
 filtered to providers Pydantic AI can run, plus core's own model list, plus
@@ -883,7 +883,8 @@ model-request budget.
 ### Codex authentication
 
 The built-in model catalog and `/set model` completions include
-`openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
+`openai-codex:gpt-6.2-sol`, `openai-codex:gpt-6.2-astra`, `openai-codex:gpt-6.1-sol`,
+`openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
 `/login openai-codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
 authorization code with PKCE, state validation, and a callback at
@@ -2018,7 +2019,11 @@ the coding tools' file writes and commands only; other tools, such as MCP server
 only reach files inside the session's folder, so `auto` lets them write. In `full` and `auto`, where code mode's
 sandbox mounts the folder read-write, `pathlib` there can also delete and rename files in it without asking; in
 `read-only`, the sandbox gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
-can be asked in, such as `clai2 -p`, denies held calls. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
+can be asked in, such as `clai2 -p` or a web session with questions turned off, uses harness
+[`DenyUnanswered`](../../../docs/harness/deny-unanswered.md): it denies the calls `Permissions` held, saying
+`/permissions full` lets them run, denies any other call that needs approval (such as an MCP tool's) with the
+harness default text, and answers questions from `AskUser` with "No one is available to answer in this run", so
+the run finishes. A session with the terminal picker or the web UI's approval cards does not deny these. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
 sub-agent, or a delegation to `self` from an agent you supply (`clai2 --agent`), which gets `/permissions`
 per run rather than bound to the agent. The model is told to do the work itself instead.
 
@@ -2145,7 +2150,7 @@ arriving during a turn use that run's queue; completed reports are not replayed.
 Nested children join their descendants and receive their reports before settling.
 
 The model also manages its tasks: `list_tasks` lists them, `check_task` shows what a
-running one is doing, `message_task` steers a running one, and `cancel_task` stops
+running one is doing, `message_task` steers a running one or resumes a finished one, and `cancel_task` stops
 one. A child that needs a decision calls `ask_parent` and waits; the question shows
 as a `?` task row, and the parent answers it with `answer_task`. Like a report, a
 question continues an idle parent without a user prompt, and one queued on a turn
@@ -2572,14 +2577,21 @@ CLAI's own tools handle what comes next.
 
 CLAI also keeps what the other agent's harness added to the conversation. From
 Claude Code: messages you typed while the model worked, attached files,
-reminders, skill bodies, task notifications, and its compaction summary. From
-Codex: its developer instructions, environment, `AGENTS.md` and other context,
-and messages between its agents. They are marked as the harness's, so the
-transcript doesn't show them as your prompts and compaction doesn't treat them
-as your requests. A note opens the history saying it ran in the other agent, and
-another closes it saying it continues in CLAI, whose tools and instructions now
-apply. A Claude Code session keeps the name you or Claude Code gave it, and a
-Codex session the name in Codex's index.
+reminders, skill bodies, and task notifications. From Codex: its developer
+instructions, environment, `AGENTS.md` and other context, and messages between
+its agents. They are marked as the harness's, so the transcript doesn't show
+them as your prompts and compaction doesn't treat them as your requests. A note
+opens the history saying it ran in the other agent, and another closes it saying
+it continues in CLAI, whose tools and instructions now apply. A Claude Code
+session keeps the name you or Claude Code gave it, and a Codex session the name
+in Codex's index.
+
+A compaction summary Claude Code or Codex wrote is imported as a summary like
+the ones CLAI's own compaction writes, so CLAI's compaction later builds on it
+rather than summarizing it again. A Claude Code session starts at its latest
+compaction: the summary, then the messages Claude Code kept from before it, as
+Claude Code sent them. A Codex session keeps the history the summary replaced
+ahead of it.
 
 Codex encrypts some of what its models see so that only OpenAI's models can
 read it: reasoning, its compaction summaries, and messages between its agents.

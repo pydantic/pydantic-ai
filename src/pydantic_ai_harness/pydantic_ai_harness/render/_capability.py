@@ -24,6 +24,7 @@ from pydantic_ai.durable_exec import (
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.toolsets import ToolsetTool
 
 try:
     from render import Options, Retry, TaskContext, Workflows
@@ -127,7 +128,8 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
                 function-tool opt-out. The framework asks for a toolset default with
                 `tool=None`; each statically known function tool is then resolved with its
                 concrete tool and name. `None` keeps `tool_options`, and `False` executes that
-                function tool inline. Render fixes task options at registration, so returning
+                function tool inline, as `metadata={'render_workflows': False}` on the tool
+                does. Render fixes task options at registration, so returning
                 different `Options` for an individual tool raises a `UserError`. Put tools
                 needing different settings in separate named toolsets.
         """
@@ -136,34 +138,12 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
         self._deps_type = deps_type
         base_tool_options = tool_options or Options()
 
-        def resolve_options(
-            operation_id: DurableOperationId, tool: object | None, tool_name: str
-        ) -> Options | Literal[False]:
-            if resolve_tool_options is None:  # pragma: no cover - resolver is installed only when provided
-                return base_tool_options
-            static_name = function_tool_original_name(tool) if tool is not None else None
-            resolved = resolve_tool_options(operation_id, tool, static_name or tool_name)
-            # Binding asks for the task definition's options before a concrete
-            # tool is known. `False` remains a per-invocation function-tool
-            # opt-out, so it cannot suppress registration of the shared task.
-            if tool is None and resolved is False:
-                return base_tool_options
-            if resolved is False and (
-                not isinstance(operation_id, ToolsetCallToolId | ToolsetValidateToolArgumentsId)
-                or operation_id.toolset_kind != 'function'
-            ):
-                raise UserError(
-                    '`resolve_tool_options` may return `False` only for function tools; '
-                    'MCP and dynamic tools must run as Render child tasks.'
-                )
-            return base_tool_options if resolved is None else resolved
-
         self._operation_config = RoleBasedOperationConfig[Options | None](
             model=model_options or Options(),
             tool=base_tool_options,
             event=event_options or Options(),
             capability=capability_options or Options(),
-            resolve_tool=resolve_options if resolve_tool_options is not None else None,
+            resolve_tool=functools.partial(_resolve_tool_options, resolve_tool_options, base_tool_options),
         )
         self._operation_backend: RenderOperationBackend[AgentDepsT] | None = None
         self._context_codec: RenderRunContextCodec[Any] | None = None
@@ -304,3 +284,46 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
         """Resolve a child task's model from this worker's model registry."""
         registry_key = model_id or 'default'
         return self._models_by_id.get(registry_key)
+
+
+def _resolve_tool_options(
+    resolve_tool_options: ToolOptionsResolver | None,
+    base_tool_options: Options,
+    operation_id: DurableOperationId,
+    tool: object | None,
+    tool_name: str,
+) -> Options | Literal[False]:
+    from_metadata = _opted_out_by_metadata(tool)
+    if from_metadata:
+        resolved = False
+    elif resolve_tool_options is None:
+        return base_tool_options
+    else:
+        static_name = function_tool_original_name(tool) if tool is not None else None
+        resolved = resolve_tool_options(operation_id, tool, static_name or tool_name)
+    # Binding asks for the task definition's options before a concrete
+    # tool is known. `False` remains a per-invocation function-tool
+    # opt-out, so it cannot suppress registration of the shared task.
+    if tool is None and resolved is False:
+        return base_tool_options
+    if resolved is False and not _is_function_tool_operation(operation_id):
+        source = "`metadata={'render_workflows': False}`" if from_metadata else '`resolve_tool_options`'
+        raise UserError(
+            f'{source} can be `False` only for function tools; MCP and dynamic tools must run as Render child tasks.'
+        )
+    return base_tool_options if resolved is None else resolved
+
+
+def _opted_out_by_metadata(tool: object | None) -> bool:
+    return (
+        isinstance(tool, ToolsetTool)
+        and tool.tool_def.metadata is not None
+        and tool.tool_def.metadata.get('render_workflows') is False
+    )
+
+
+def _is_function_tool_operation(operation_id: DurableOperationId) -> bool:
+    return (
+        isinstance(operation_id, ToolsetCallToolId | ToolsetValidateToolArgumentsId)
+        and operation_id.toolset_kind == 'function'
+    )
