@@ -1,10 +1,14 @@
+"""The MCP server the documentation examples spawn.
+
+Written against the `fastmcp` server API rather than `mcp.server.fastmcp`, which is the MCP SDK v1
+server that SDK v2 removed; see the note in `tests/mcp_server.py`.
+"""
+
 from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
-from mcp.server.session import ServerSessionT
-from mcp.shared.context import LifespanContextT, RequestT
+from fastmcp.server import Context, FastMCP
 
-mcp = FastMCP('Pydantic AI MCP Server')
+mcp: FastMCP[None] = FastMCP('Pydantic AI MCP Server')
 
 
 @mcp.tool()
@@ -14,7 +18,7 @@ async def get_weather_forecast(location: str) -> str:
 
 
 @mcp.tool()
-async def echo_deps(ctx: Context[ServerSessionT, LifespanContextT, RequestT]) -> dict[str, Any]:
+async def echo_deps(ctx: Context) -> dict[str, Any]:
     """Echo the run context.
 
     Args:
@@ -24,7 +28,7 @@ async def echo_deps(ctx: Context[ServerSessionT, LifespanContextT, RequestT]) ->
         Dictionary with an echo message and the deps.
     """
 
-    deps: Any = getattr(ctx.request_context.meta, 'deps')
+    deps: Any = getattr(getattr(ctx.request_context, 'meta', None), 'deps')
     return {'echo': 'This is an echo message', 'deps': deps}
 
 

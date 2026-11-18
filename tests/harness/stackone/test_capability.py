@@ -22,7 +22,7 @@ from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.stackone import StackOne, StackOneToolset
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from .._mcp_server import MCPServer
 
 DepsT = TypeVar('DepsT')
 
@@ -145,12 +145,12 @@ class TestStackOne:
             Agent.from_spec(spec, custom_capability_types=[StackOne], model=TestModel())
 
     @pytest.mark.parametrize('actions', [['*_list_*'], '*_LIST_*'])
-    async def test_agent_calls_only_matching_actions(self, stackone_server: FastMCP, actions: list[str] | str):
+    async def test_agent_calls_only_matching_actions(self, stackone_server: MCPServer, actions: list[str] | str):
         capability = StackOne(account_id='45320', auth='key', client=stackone_server, actions=actions)
         result = await Agent(TestModel(), capabilities=[capability]).run('list employees')
         assert tool_call_names(result.all_messages()) == {'bamboohr_list_employees'}
 
-    async def test_metadata_overrides_server_metadata(self, stackone_server: FastMCP, run_context: RunContext[None]):
+    async def test_metadata_overrides_server_metadata(self, stackone_server: MCPServer, run_context: RunContext[None]):
         # `task` collides with a server-provided key: user metadata must win, matching `.with_metadata()`.
         toolset = StackOne(
             account_id='45320', auth='key', client=stackone_server, metadata={'task': 'hr'}
@@ -230,7 +230,7 @@ class TestStackOneAuth:
     def test_per_run_toolset_keeps_the_derived_id(self):
         assert StackOne[str | None](account_id='45320', auth=per_user_key).get_toolset().id == 'stackone-45320'
 
-    async def test_agent_runs_with_per_run_key(self, stackone_server: FastMCP):
+    async def test_agent_runs_with_per_run_key(self, stackone_server: MCPServer):
         capability = StackOne[str | None](
             account_id='45320', auth=per_user_key, client=stackone_server, actions=['*_list_*']
         )
@@ -243,7 +243,7 @@ class TestStackOneAuth:
             False,
         )
 
-    async def test_per_run_instructions_can_be_disabled(self, stackone_server: FastMCP):
+    async def test_per_run_instructions_can_be_disabled(self, stackone_server: MCPServer):
         capability = StackOne[str | None](
             account_id='45320',
             auth=per_user_key,
