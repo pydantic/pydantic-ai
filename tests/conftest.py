@@ -10,7 +10,7 @@ import secrets
 import socket
 import sys
 import warnings
-from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Coroutine, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -746,6 +746,9 @@ BLOCKBUSTER_LIBRARY_SETUP: tuple[tuple[str, str], ...] = (
     # `/sandbox render` builds one in its synchronous `reopen`, which cannot offload it, so that the key
     # can come from `/keys`.
     ('render/version.py', 'get_version'),
+    # MCP SDK v2 imports `jsonschema` on its first tool-result validation, which happens inside a call
+    # on the event loop; the import loads `jsonschema_specifications`' bundled schema files from disk once.
+    ('jsonschema_specifications/_core.py', '_schemas'),
 )
 
 
@@ -999,6 +1002,32 @@ def no_leaked_tasks(loop: asyncio.AbstractEventLoop | None = None) -> Generator[
     before = asyncio.all_tasks(loop)
     yield
     assert asyncio.all_tasks(loop) - before == set()
+
+
+async def assert_cancellation_leaks_no_tasks(
+    start: Callable[[], Coroutine[Any, Any, object]], *, max_ticks: int = 500
+) -> None:
+    """Cancel `start()` after 0, 1, 2, ... event loop ticks, failing if a cancelled run leaves a task it started pending.
+
+    Stops at the first run that completes before its cancellation arrives, by which point every tick of it has been
+    covered.
+    """
+    for ticks in range(max_ticks):  # pragma: no branch
+        with no_leaked_tasks():
+            task = asyncio.create_task(start())
+            for _ in range(ticks):
+                await asyncio.sleep(0)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                completed = False
+            else:
+                completed = True
+            await asyncio.sleep(0)
+        if completed:
+            return
+    pytest.fail(f'run never completed within {max_ticks} ticks')  # pragma: no cover
 
 
 @pytest.fixture(autouse=True)

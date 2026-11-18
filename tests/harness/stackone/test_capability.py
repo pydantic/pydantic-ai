@@ -16,7 +16,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.stackone import StackOne
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from .._mcp_server import MCPServer
 
 
 def tool_call_names(messages: list[ModelMessage]) -> set[str]:
@@ -93,12 +93,12 @@ class TestStackOne:
             Agent.from_spec(spec, custom_capability_types=[StackOne], model=TestModel())
 
     @pytest.mark.parametrize('actions', [['*_list_*'], '*_LIST_*'])
-    async def test_agent_calls_only_matching_actions(self, stackone_server: FastMCP, actions: list[str] | str):
+    async def test_agent_calls_only_matching_actions(self, stackone_server: MCPServer, actions: list[str] | str):
         capability = StackOne(account_id='45320', api_key='key', client=stackone_server, actions=actions)
         result = await Agent(TestModel(), capabilities=[capability]).run('list employees')
         assert tool_call_names(result.all_messages()) == {'bamboohr_list_employees'}
 
-    async def test_metadata_overrides_server_metadata(self, stackone_server: FastMCP, run_context: RunContext[None]):
+    async def test_metadata_overrides_server_metadata(self, stackone_server: MCPServer, run_context: RunContext[None]):
         # `task` collides with a server-provided key: user metadata must win, matching `.with_metadata()`.
         toolset = StackOne(
             account_id='45320', api_key='key', client=stackone_server, metadata={'task': 'hr'}

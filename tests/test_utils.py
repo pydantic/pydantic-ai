@@ -100,24 +100,38 @@ def test_get_first_param_type_annotation_type_error():
     assert get_first_param_type(function) is None
 
 
+_VIRTUAL_CLOCK = ('asyncio', {'loop_factory': SimulatedLoop})
+
+
 @pytest.mark.parametrize(
-    'interval,expected',
+    'anyio_backend,interval,expected',
     [
-        (None, snapshot([[1], [2], [3]])),
-        (0, snapshot([[1], [2], [3]])),
-        (0.02, snapshot([[1], [2], [3]])),
-        (0.04, snapshot([[1, 2], [3]])),
-        (0.1, snapshot([[1, 2, 3]])),
+        pytest.param(_VIRTUAL_CLOCK, None, snapshot([[1], [2], [3]]), id='None'),
+        pytest.param('asyncio', 0, snapshot([[1], [2], [3]]), id='0'),
+        pytest.param(_VIRTUAL_CLOCK, 0.025, snapshot([[1], [2], [3]]), id='0.025'),
+        pytest.param(_VIRTUAL_CLOCK, 0.075, snapshot([[1, 2], [3]]), id='0.075'),
+        pytest.param(_VIRTUAL_CLOCK, 0.25, snapshot([[1, 2, 3]]), id='0.25'),
     ],
 )
-async def test_group_by_temporal(interval: float | None, expected: list[list[int]]):
+async def test_group_by_temporal(interval: float | None, expected: list[list[int]], monkeypatch: pytest.MonkeyPatch):
+    """Items 50 ms apart group by the window that opens on each group's first item.
+
+    The window's deadline is soft, so an item due exactly on it may join either group. Every case but `0` runs on a
+    virtual clock that the window reads too, so items arrive exactly when the producer says, and each window ends at
+    least 25 ms from any arrival: asyncio runs every timer due within its clock's resolution of now together, and
+    that resolution is 15.6 ms on Windows before Python 3.13. `0` stays on the real clock: a zero window polls with
+    a zero timeout, which never lets a virtual clock move.
+    """
+    # The window reads the loop's clock: on the real loop that is `time.monotonic()` already.
+    monkeypatch.setattr('pydantic_ai._utils.time', SimpleNamespace(monotonic=asyncio.get_running_loop().time))
+
     async def yield_groups() -> AsyncIterator[int]:
         yield 1
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(0.05)
         yield 2
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(0.05)
         yield 3
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(0.05)
 
     async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
         groups: list[list[int]] = [g async for g in groups_iter]
