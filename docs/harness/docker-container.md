@@ -198,23 +198,19 @@ async def main():
 
 Without an `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, a window manager, Firefox and a terminal), and later runs reuse it. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. An existing container whose screen is already running keeps its size. The agent also gets the container's shell and files, so `Coder` and `ComputerUse` can share it.
 
-That image is tagged `pydantic-ai-desktop:` plus the first 12 hex digits of the Dockerfile's SHA-256 (`docker images pydantic-ai-desktop` lists it), and runs keep reusing it. To pick up security updates, rebuild it under that tag, with those 12 digits for `<hash>`. Keep `--no-cache`: after only `docker rmi`, a rebuild reuses Docker's cached layers.
+That image is kept and reused, so it doesn't get security updates. For an image you control, build your own from `DESKTOP_DOCKERFILE` under a tag of your choice, and pass it as `image`. Rebuild it the same way to update it; `--no-cache` keeps Docker from reusing its cached layers. Under [durable execution](../durable_execution/overview.md), build it before the first run, so the build doesn't count against a step's timeout.
 
 ```bash
-python -c "from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE; print(DESKTOP_DOCKERFILE)" | docker build --pull --no-cache --tag pydantic-ai-desktop:<hash> -
+python -c "from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE; print(DESKTOP_DOCKERFILE)" | docker build --pull --no-cache --tag my-desktop -
 ```
+
+Then pass `DockerContainer(image='my-desktop', desktop=True)`.
 
 A custom `image` needs Xvfb, `xdotool`, `xwininfo` (Debian's `x11-utils`), `scrot` and `setsid`, plus `fluxbox` and `xprop` for a window manager. Start from `DESKTOP_DOCKERFILE`.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
 There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](computer-use.md#watching-a-run).
-
-Under [durable execution](../durable_execution/overview.md), build the image before the first run and pass it as `image`, so the build doesn't count against a step's timeout:
-
-```bash
-python -c "from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE; print(DESKTOP_DOCKERFILE)" | docker build --tag my-desktop -
-```
 
 ## Clean up
 
