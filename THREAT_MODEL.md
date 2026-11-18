@@ -206,6 +206,8 @@ Code Mode pool creation, connection, and checkout errors go to the application c
 When a remote sandbox's turns run as durable activities, the activity worker reads and writes the
 configured mounts, and each turn's prints and result, cut to 1 MiB, are kept in workflow history before
 any model-facing output limit applies. Errors from building or reaching the pool are recorded there by type only.
+Values cross a turn as a pickle whose unpickler loads only listed builtin value types, so a turn read
+back from history, including on replay, cannot import or call code.
 Remote host-side execution failures omit error details from model retries because pool URLs and
 credentials may appear in them. Sandbox diagnostics and nested tool results still reach the model;
 applications must keep secrets out of those outputs.
