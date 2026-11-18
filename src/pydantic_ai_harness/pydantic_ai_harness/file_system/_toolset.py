@@ -964,7 +964,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         header = self._read_header(path, total, content_hash)
         # Decode only the lines shown: a large file is paged through one window at a time.
         start = skip_lines(raw, offset)
-        window = split_lines(raw[start : skip_lines(raw, limit, start)].decode('utf-8', errors='replace'))
+        end = len(raw) if offset + limit >= total else skip_lines(raw, limit, start)
+        window = split_lines(raw[start:end].decode('utf-8', errors='replace'))
         # Format before emitting: an out-of-range offset is a failed read, and
         # a failed read must not look like a successful one to subscribers.
         body = format_lines(window, offset, total, self._body_budget(header))
