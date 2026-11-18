@@ -1262,7 +1262,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         provider_response_id=response.id,
                         timestamp=timestamp,
                     )
-                    if computer_call := map_computer_call(item, model_request_parameters, call_id, self.system):
+                    if computer_call := map_computer_call(
+                        item,
+                        model_request_parameters,
+                        call_id,
+                        self.system,
+                        # A response without a status, as some compatible APIs send, counts as completed.
+                        response_completed=response.status in (None, 'completed'),
+                    ):
                         items.append(computer_call)
                 case responses.ResponseCustomToolCall():  # pragma: lax no cover
                     # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
