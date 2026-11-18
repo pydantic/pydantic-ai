@@ -1374,6 +1374,35 @@ async def test_an_update_with_expected_title_keeps_a_rename_made_after_it_read_t
     assert record.title == 'Prod outage'
 
 
+async def test_write_details_writes_only_while_every_expected_value_is_stored() -> None:
+    """`write_details` is the primitive backends copy, so it checks every key in `expected`, not just the title."""
+    store = InMemoryConversationStore()
+    conversation = Conversation()
+    await store.save(conversation)
+    conversation_id = conversation.conversation_id
+    assert conversation.revision is not None
+    await store.update(conversation_id, metadata={'model': 'a'})
+
+    with pytest.raises(ConversationConflict):
+        await store.write_details(
+            conversation_id,
+            {'metadata': {'model': 'c'}},
+            expected_revision=conversation.revision,
+            expected={'metadata': {'model': 'b'}},
+        )
+    record = await store.read_record(conversation_id)
+    assert record is not None
+    assert record.metadata == {'model': 'a'}
+
+    written = await store.write_details(
+        conversation_id,
+        {'metadata': {'model': 'c'}},
+        expected_revision=conversation.revision,
+        expected={'metadata': {'model': 'a'}},
+    )
+    assert written.metadata == {'model': 'c'}
+
+
 async def test_updating_a_conversation_the_store_does_not_have_or_another_scope_s_raises() -> None:
     store = InMemoryConversationStore()
     conversation = Conversation()

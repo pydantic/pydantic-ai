@@ -150,10 +150,10 @@ class ConversationRecord:
 class ConversationConflict(UserError):
     """Raised when a conversation changed in the store since it was read, so writing it would lose those changes.
 
-    It's an expected outcome when more than one writer changes the same conversation. Whether to load
-    it again and retry depends on what changed: retry a save, but not an
-    [`update`][pydantic_ai.conversation_store.ConversationStore.update] whose `expected_title` no
-    longer matched. It subclasses [`UserError`][pydantic_ai.exceptions.UserError], so a broad
+    It's an expected outcome when more than one writer changes the same conversation. Load it again
+    and decide what to do: after a save, run the turn again only if repeating its tool calls is safe;
+    after an [`update`][pydantic_ai.conversation_store.ConversationStore.update] whose
+    `expected_title` no longer matched, don't retry. It subclasses [`UserError`][pydantic_ai.exceptions.UserError], so a broad
     `except UserError` catches it too.
     """
 
@@ -870,7 +870,7 @@ class InMemoryConversationStore(ConversationStore):
         stored = self._records.get(conversation_id)
         if stored is None or stored.revision != expected_revision:
             raise ConversationConflict(conversation_id)
-        if expected and 'title' in expected and stored.title != expected['title']:
+        if expected and any(getattr(stored, key) != value for key, value in expected.items()):
             raise ConversationConflict(conversation_id)
         if 'title' in details:
             stored.title = details['title']
