@@ -188,7 +188,7 @@ jobs:
       # for pyright: nothing here typechecks.
       - name: Install
         id: install
-        run: uv sync --all-extras --no-extra mcp-tasks --all-packages
+        run: uv sync --all-extras --all-packages
 
       # So a red run's log answers "which upgrade did this" without a bisect. The package list
       # is read off the installed metadata for `pydantic-ai-slim`, base requirements and extras
