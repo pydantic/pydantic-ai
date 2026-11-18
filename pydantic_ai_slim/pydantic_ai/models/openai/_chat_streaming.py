@@ -64,7 +64,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _refusal_text: str = field(default='', init=False)
     _has_finish_reason: bool = field(default=False, init=False)
     _logprobs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
-    _raw_text_content: str = field(default='', init=False)
+    _raw_text_chunks: list[str] = field(default_factory=list[str], init=False)
     _pending_raw_annotations: list[object] = field(default_factory=list[object], init=False)
     _unmapped_chunks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
 
@@ -196,7 +196,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         # still equals it: not split by reasoning, and not changed by removing thinking tags or whitespace.
         citations = (
             map_chat_citations(annotations, part.content)
-            if len(text_part_ids) == 1 and part.content == self._raw_text_content
+            if len(text_part_ids) == 1 and part.content == ''.join(self._raw_text_chunks)
             else None
         )
         provider_details: dict[str, Any] = {}
@@ -293,7 +293,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         # Handle the text part of the response. Some OpenAI-compatible servers stream it as a list of parts.
         content, _ = split_content_parts(choice.delta.content)
         if isinstance(content, str) and content:
-            self._raw_text_content += content
+            self._raw_text_chunks.append(content)
             emitted = False
             for event in self._parts_manager.handle_text_delta(
                 vendor_part_id=('content', self._content_generation),
