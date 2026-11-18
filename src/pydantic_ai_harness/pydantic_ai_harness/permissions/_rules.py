@@ -128,9 +128,12 @@ def _quotes_an_operator(command: str) -> bool:
 def _expands(command: str) -> bool:
     """Whether the shell expands part of `command`, which could hide a rule's words from a scan of its text.
 
-    That is `$` or a backtick outside single quotes, or an unquoted `{` (brace expansion).
+    That is `$` or a backtick outside single quotes, an unquoted `{` (brace expansion), or a line continuation.
     """
-    return any((char in '$`' and how in ('', '"')) or (char == '{' and not how) for char, how in _chars(command))
+    return any(
+        (char in '$`' and how in ('', '"')) or (char == '{' and not how) or (char == '\n' and how == '\\')
+        for char, how in _chars(command)
+    )
 
 
 def _tokens(command: str) -> list[str] | None:

@@ -462,7 +462,7 @@ Gotchas:
   must not reach something. An allow rule trusts everything after its words (`find` allows `find . -delete`).
 - Commands with `$`, backticks, quoted operators, brace expansion, globbed command names, subshells, here-documents, or line breaks, and every command on a `'windows'`
   workspace, cannot be split: no `command` rule allows them. Their quote-stripped text is still checked against ask and deny
-  rules, and when the shell expands part of them (`$`, backticks, braces, globbed command names) they ask if an ask or
+  rules, and when the shell expands part of them (`$`, backticks, braces, line continuations, globbed command names) they ask if an ask or
   deny command rule applies.
 
 ## SpendLimits

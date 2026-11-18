@@ -561,6 +561,7 @@ class TestPermissionRules:
             ('ls\ngit status', [PermissionRule('deny', command='rm -rf')], 'allow'),
             ("python -c 'a(); rm -rf'", [PermissionRule('deny', command='rm -rf')], 'deny'),
             ('echo "$HOME"', [PermissionRule('deny', command='rm -rf')], 'ask'),
+            ('r\\\nm -rf build', [PermissionRule('deny', command='rm -rf')], 'ask'),
             ('rm -{rf,} build', [PermissionRule('deny', command='rm -rf')], 'ask'),
             ('/bin/r[m] -rf build', [PermissionRule('deny', command='rm -rf')], 'ask'),
             ('ls *.py', [PermissionRule('deny', command='rm -rf')], 'allow'),
