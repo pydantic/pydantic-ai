@@ -36,7 +36,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeGuard
 from uuid import uuid4
 
 import pytest
@@ -66,6 +66,7 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
+import pydantic_ai_harness
 from pydantic_ai import Agent, Tool, ToolDefinition
 from pydantic_ai.capabilities import DynamicCapability
 from pydantic_ai.exceptions import PydanticAIDeprecationWarning, ToolFailed, UsageLimitExceeded, UserError
@@ -294,12 +295,19 @@ not_storing_code_mode_agent = _code_mode_agent(
 
 # Runs that keep the workflow-side path although the server stores sessions.
 workflow_side_code_mode_agents = {
+    # One overlay mount, the default mode, in a list beside a read-only one is enough. Monty needs their
+    # host directories disjoint, so the read-only one is the installed package's.
     'overlay': _code_mode_agent(
         'overlay',
         CodeMode(
             id='code',
             monty_sandbox=stored_session_pool,
-            mount=MountDir(virtual_path='/tests', host_path=str(Path(__file__).parent)),
+            mount=[
+                MountDir(
+                    virtual_path='/data', host_path=str(Path(pydantic_ai_harness.__file__).parent), mode='read-only'
+                ),
+                MountDir(virtual_path='/tests', host_path=str(Path(__file__).parent)),
+            ],
         ),
     ),
     'os_access': _code_mode_agent(
@@ -477,6 +485,14 @@ async def raw_bytes() -> object:
     return bytearray(b'hi')
 
 
+def _is_object_tuple(value: object) -> TypeGuard[tuple[object, ...]]:
+    return isinstance(value, tuple)
+
+
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
 def test_turn_values_keep_what_temporal_json_cannot() -> None:
     """Deep nesting, huge integers and shared values come back as they went in, as one short string.
 
@@ -493,7 +509,10 @@ def test_turn_values_keep_what_temporal_json_cannot() -> None:
     assert isinstance(data, str)
     back = from_wire(data)
     assert back == values
-    assert back[2][0] is back[2][1]
+    assert _is_object_tuple(back)
+    back_shared = back[2]
+    assert _is_object_list(back_shared)
+    assert back_shared[0] is back_shared[1]
 
 
 def test_turn_values_load_only_wire_types() -> None:
@@ -1197,14 +1216,7 @@ async def test_remote_turns_report_a_lost_session(client: Client, workflow_id: s
     assert first == 1
     assert second.startswith(reported)
     history = await _history(client, workflow_id)
-    activity_results = [
-        payload.data
-        for event in history.events
-        if event.HasField('activity_task_completed_event_attributes')
-        for payload in event.activity_task_completed_event_attributes.result.payloads
-    ]
-    assert activity_results
-    assert not [result for result in activity_results if b'secret-token' in result]
+    assert 'secret-token' not in history.to_json()
 
 
 _NOT_KEPT = 'The sandbox could not keep the session after this error, so it was reset.'
@@ -1293,13 +1305,6 @@ async def test_remote_turns_record_a_pool_user_error_by_type(client: Client, wor
     assert 'secret-sentinel' not in history.to_json()
 
 
-async def test_remote_turns_return_a_note_for_a_result_nested_too_deeply(client: Client, workflow_id: str) -> None:
-    """A result too deep to convert returns as a note, rather than failing the turn after the snippet ran."""
-    code = 'value = 0\nfor i in range(1050):\n    value = [value]\nvalue'
-    output = await _run(client, workflow_id, snippet_agents['default'], code)
-    assert output == '[the result is nested too deeply to show]'
-
-
 async def test_remote_turns_count_a_shared_argument_as_it_is_sent(
     client: Client, workflow_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1314,26 +1319,6 @@ async def test_remote_turns_count_a_shared_argument_as_it_is_sent(
         'same() got arguments that cannot be sent to the tool: they need types the sandbox can hand'
         ' the host and at most 1000 bytes'
     )
-
-
-async def test_remote_turns_keep_the_types_monty_hands_the_host(client: Client, workflow_id: str) -> None:
-    """Dates, times, durations, decimals and sets reach a tool as themselves, as on the workflow-side path.
-
-    So a `date | str` parameter still validates to `date`. The tools run in the workflow, so only the turn
-    boundary is between them and the snippet.
-    """
-    code = (
-        'import datetime, decimal\n'
-        'values = [datetime.date(2026, 11, 19), datetime.datetime(2026, 11, 19, 10, 30, tzinfo=datetime.timezone.utc),\n'
-        '    datetime.time(10, 30), datetime.timedelta(days=1, microseconds=5), decimal.Decimal("1.50"), {1}, frozenset({2})]\n'
-        'names = await type_names(values=values)\n'
-        'back = await echo_here(value=values)\n'
-        'f"{names} {[type(v).__name__ for v in back]}"'
-    )
-    output = await _run(client, workflow_id, snippet_agents['types'], code)
-    names = "['date', 'datetime', 'time', 'timedelta', 'Decimal', 'set', 'frozenset']"
-    # A tool's result reaches the sandbox in its JSON form on both paths (`_jsonable_for_sandbox`).
-    assert output == f"{names} ['str', 'str', 'str', 'str', 'str', 'list', 'list']"
 
 
 async def test_remote_turns_keep_the_default_suspension_cap(
@@ -1401,13 +1386,14 @@ async def test_remote_turns_refuse_results_too_large_for_one_turn(
     assert 'so it was reset' in output
 
 
-async def test_remote_turns_keep_module_exception_types(client: Client, workflow_id: str) -> None:
-    """A tool's `csv.Error` reaches the sandbox as `csv.Error`, not as `binascii.Error` or `Exception`."""
-    code = (
-        'import csv\ntry:\n    await bad_csv()\n    caught = "no"\nexcept csv.Error:\n    caught = "csv.Error"\ncaught'
-    )
+async def test_remote_turns_keep_the_session_when_a_snippet_is_too_large_to_send(
+    client: Client, workflow_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A snippet too large to send fails without running, and the session keeps what earlier snippets defined."""
+    monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 3000)
+    code = f'x = 41{NEXT_SNIPPET}pad = "{"z" * 4000}"{NEXT_SNIPPET}x + 1'
     output = await _run(client, workflow_id, snippet_agents['default'], code)
-    assert output == 'csv.Error'
+    assert output == '42'
 
 
 @pytest.mark.parametrize(
@@ -1439,28 +1425,73 @@ async def test_remote_turns_report_storage_lost_after_the_first_turn(client: Cli
     assert len(forgetful_pool_calls) == 2
 
 
-async def test_remote_turns_refuse_a_bytearray_tool_result(client: Client, workflow_id: str) -> None:
-    """A `bytearray` result fails with the error a live session gives instead of reaching the snippet as text."""
-    code = 'try:\n    r = await raw_bytes()\n    got = type(r).__name__\nexcept TypeError as e:\n    got = "TypeError"\ngot'
-    output = await _run(client, workflow_id, snippet_agents['types'], code)
-    # A live session raises it on the host, so the snippet cannot catch it.
-    assert output == (
-        'Runtime error:\nTypeError: Cannot convert builtins.bytearray to Monty value'
-        ' — wrap class instances in pydantic_monty.ClassInstance(...)'
-    )
+_TYPES_CODE = (
+    'import datetime, decimal\n'
+    'values = [datetime.date(2026, 11, 19), datetime.datetime(2026, 11, 19, 10, 30, tzinfo=datetime.timezone.utc),\n'
+    '    datetime.time(10, 30), datetime.timedelta(days=1, microseconds=5), decimal.Decimal("1.50"), {1}, frozenset({2})]\n'
+    'names = await type_names(values=values)\n'
+    'back = await echo_here(value=values)\n'
+    'f"{names} {[type(v).__name__ for v in back]}"'
+)
+_VALUES_CODE = (
+    'import dataclasses\n'
+    'names = await type_names(values=[1j, {1}])\n'
+    'try:\n    await frozen()\n    caught = "no"\nexcept dataclasses.FrozenInstanceError:\n    caught = "FrozenInstanceError"\n'
+    'members = await enum_members()\n'
+    '[names, ..., 1j, caught, members, [type(m).__name__ for m in members]]'
+)
 
 
-async def test_remote_turns_keep_every_value_monty_holds(client: Client, workflow_id: str) -> None:
-    """Values JSON cannot carry cross a turn both ways, and a tool's error keeps its `dataclasses` type.
-
-    Enum members reach the sandbox as their plain values, as from a live session.
-    """
-    code = (
-        'import dataclasses\n'
-        'names = await type_names(values=[1j, {1}])\n'
-        'try:\n    await frozen()\n    caught = "no"\nexcept dataclasses.FrozenInstanceError:\n    caught = "FrozenInstanceError"\n'
-        'members = await enum_members()\n'
-        '[names, ..., 1j, caught, members, [type(m).__name__ for m in members]]'
-    )
-    output = await _run(client, workflow_id, snippet_agents['types'], code)
-    assert output == "[['complex', 'set'], 'Ellipsis', '1j', 'FrozenInstanceError', ['red', 3], ['str', 'int']]"
+@pytest.mark.parametrize(
+    ('agent', 'code', 'expected'),
+    [
+        # Dates, times, durations, decimals and sets reach a tool as themselves, so a `date | str` parameter
+        # still validates to `date`. A tool's result reaches the sandbox in its JSON form on both paths.
+        pytest.param(
+            'types',
+            _TYPES_CODE,
+            "['date', 'datetime', 'time', 'timedelta', 'Decimal', 'set', 'frozenset'] "
+            "['str', 'str', 'str', 'str', 'str', 'list', 'list']",
+            id='host_types',
+        ),
+        # Values JSON cannot carry cross both ways, a tool's error keeps its `dataclasses` type, and enum
+        # members reach the sandbox as their plain values, as from a live session.
+        pytest.param(
+            'types',
+            _VALUES_CODE,
+            "[['complex', 'set'], 'Ellipsis', '1j', 'FrozenInstanceError', ['red', 3], ['str', 'int']]",
+            id='values_json_cannot_carry',
+        ),
+        # A tool's `csv.Error` reaches the sandbox as `csv.Error`, not as `binascii.Error` or `Exception`.
+        pytest.param(
+            'default',
+            'import csv\ntry:\n    await bad_csv()\n    caught = "no"\nexcept csv.Error:\n    caught = "csv.Error"\ncaught',
+            'csv.Error',
+            id='module_exception_type',
+        ),
+        # A `bytearray` result fails as on a live session, which raises it on the host, so the snippet
+        # cannot catch it.
+        pytest.param(
+            'types',
+            'try:\n    r = await raw_bytes()\n    got = type(r).__name__\nexcept TypeError as e:\n    got = "TypeError"\ngot',
+            'Runtime error:\nTypeError: Cannot convert builtins.bytearray to Monty value'
+            ' — wrap class instances in pydantic_monty.ClassInstance(...)',
+            id='bytearray_tool_result',
+        ),
+        # A result too deep to convert returns as a note, rather than failing the turn after the snippet ran.
+        pytest.param(
+            'default',
+            'value = 0\nfor i in range(1050):\n    value = [value]\nvalue',
+            '[the result is nested too deeply to show]',
+            id='nested_too_deeply',
+        ),
+    ],
+)
+async def test_remote_turns_carry_values_as_a_live_session_does(
+    client: Client, workflow_id: str, agent: str, code: str, expected: str
+) -> None:
+    """Values crossing a turn reach tools and the snippet as they do from a live session."""
+    output = await _run(client, workflow_id, snippet_agents[agent], code)
+    assert output == expected
+    history = await _history(client, workflow_id)
+    assert 'monty_turn' in _activity_types(history)

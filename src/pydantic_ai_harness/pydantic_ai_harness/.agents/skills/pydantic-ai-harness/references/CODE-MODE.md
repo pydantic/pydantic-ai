@@ -252,7 +252,7 @@ the workflow with `ActivityError`. In a turn activity `max_duration_seconds` app
 repeats its `'read-write'` mount writes. Recorded pool errors keep their type name, so
 `non_retryable_error_types` still match. A `CodeMode` a `DynamicCapability` returns keeps its turns
 in workflow code. Tool results and call arguments keep their types across turns, and the model sees the
-same result; nested-call arguments of a type Monty does not hand the host raise `TypeError`.
+same result; nested-call arguments of a type Monty does not hand the host, or over 512 KiB, raise `TypeError`.
 
 Setup errors reach workflow code with their original types. `PydanticAIPlugin` treats `UserError`
 as a workflow failure. Uncaught `RuntimeError`, `MontyRefusedError`, and other unclassified factory

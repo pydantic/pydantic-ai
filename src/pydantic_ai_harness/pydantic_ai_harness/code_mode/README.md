@@ -291,10 +291,10 @@ pending, and one that would exceed the limit ends the run with `UsageLimitExceed
 call does. Catching the error inside the snippet does not prevent this.
 
 When `CodeMode` runs snippets in Temporal workflow code, it disables `max_duration_seconds`, including an
-explicit override; turns that run as activities keep it (see
-[Remote turns as activities](#remote-turns-as-activities)). `run_code` is replayed in workflow code, so measuring elapsed time there could
-make replay choose a different path from the recorded workflow. The memory and suspension caps still apply. Put
-time-bounded work behind a Temporal activity instead.
+explicit override; turns that run as activities keep it (see [Remote turns as
+activities](#remote-turns-as-activities)). `run_code` is replayed in workflow code, so measuring elapsed time
+there could make replay choose a different path from the recorded workflow. The memory and suspension caps
+still apply. Put time-bounded work behind a Temporal activity instead.
 
 ## Concurrent tool calls
 
@@ -772,8 +772,9 @@ does. On a server that stores none, the first turn finds this before running any
 snippets then run in workflow code as described above. If a storing server cannot store a session's
 state, the turn raises `UserError` and the workflow fails without retrying the turn.
 
-The turn activity is named after the capability's `id`, `'code_mode'` by default. Two `CodeMode` on
-one agent each need their own `id`.
+The turn activity is named after the capability's `id`, `'code_mode'` by default. Two identical
+`CodeMode` on one agent merge into one. To keep two that differ, give each its own `id` and wrap
+them in `PrefixTools`, since both add a `run_code` tool.
 
 Code Mode keeps running `run_code` in workflow code, as described above, when any of these holds:
 
@@ -803,11 +804,12 @@ syntax errors, exceptions, and time limits, are returned to the model as model r
 outside Temporal.
 
 `max_memory` and `max_duration_seconds` apply to each turn; workflow code turns
-`max_duration_seconds` off. `max_suspensions` and the 10 MiB print cap count across a session's
-turns, as in workflow code. Keep `start_to_close_timeout` above `max_duration_seconds`: Temporal's
-timeout does not stop a running turn, it retries the turn while the first attempt keeps running,
-whereas `max_duration_seconds` stops the turn and Code Mode reports the time limit to the model.
-With `'unlimited'`, nothing stops a long turn.
+`max_duration_seconds` off. `max_suspensions` counts across a session's turns and the 10 MiB print
+cap across one snippet's turns, as in workflow code. Keep `start_to_close_timeout` above
+`max_duration_seconds`: Temporal's timeout does not stop a running turn, it retries the turn while
+the first attempt keeps running, whereas `max_duration_seconds` stops the turn and Code Mode reports
+the time limit to the model. With `'unlimited'`, only a pool factory's own `request_timeout` stops a
+long turn.
 
 Tool results and nested call arguments keep their types and shared values, since they cross as one
 string, and the model sees the same snippet result as in workflow code. Each turn takes and returns
@@ -815,11 +817,11 @@ at most 1 MiB, half Temporal's default payload limit. Longer prints, results and
 with a note that the rest is not shown and the 1 MiB limit, and tool results that would make a
 turn's input longer fail the snippet with a `ValueError` that gives the size and resets the session.
 If the server will not store the session a snippet error left, Code Mode also resets the session. A
-nested call whose arguments are of a type Monty does not hand the host, such as an instance of a
-class the snippet defined, raises `TypeError` in the snippet: its arguments cannot reach the tool.
-If the server no longer has a run's stored state, for example because it expired, Code Mode resets
-the session and tells the model the connection was lost, as for a dropped connection outside
-Temporal.
+nested call whose arguments are of a type Monty does not hand the host, or that take more than 512
+KiB, such as an instance of a class the snippet defined, raises `TypeError` in the snippet: its
+arguments cannot reach the tool. If the server no longer has a run's stored state, for example
+because it expired, Code Mode resets the session and tells the model the connection was lost, as for
+a dropped connection outside Temporal.
 
 ## Observability
 

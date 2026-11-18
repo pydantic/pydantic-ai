@@ -205,7 +205,7 @@ Canonical guidance: [workflow rules](.github/workflows/AGENTS.md) and [securing 
 Code Mode pool creation, connection, and checkout errors go to the application caller, not the model.
 When a remote sandbox's turns run as durable activities, the activity worker reads and writes the
 configured mounts, and each turn's prints and result, cut to 1 MiB, are kept in workflow history before
-any model-facing output limit applies. Errors reaching the pool are recorded there by type only.
+any model-facing output limit applies. Errors from building or reaching the pool are recorded there by type only.
 Remote host-side execution failures omit error details from model retries because pool URLs and
 credentials may appear in them. Sandbox diagnostics and nested tool results still reach the model;
 applications must keep secrets out of those outputs.

@@ -333,10 +333,11 @@ _MONTY_DEFAULT_MAX_SUSPENSIONS = 1000
 """The `max_suspensions` Monty applies when none is set; it cannot be turned off (see `ResourceLimits`)."""
 
 
-def _unsendable_turn(type_name: str, message: str) -> MontyTurnFailed:
+def _unsendable_turn(type_name: str, message: str, *, resuming: bool) -> MontyTurnFailed:
     """A turn the host could not send, failing the snippet with `type_name` as a live session would.
 
-    The stored record is the paused snippet, which cannot continue, so the session is reset.
+    When `resuming`, the stored record is the paused snippet, which cannot continue, so the session is
+    reset. A snippet that could not start ran nothing, so the session keeps its state.
     """
     failure = MontyFailure(
         'runtime',
@@ -344,7 +345,7 @@ def _unsendable_turn(type_name: str, message: str) -> MontyTurnFailed:
         message=message,
         type_name=type_name,
         exception_types=(type_name, 'Exception', 'BaseException'),
-        session_lost=True,
+        session_lost=resuming,
     )
     return MontyTurnFailed(failure)
 
@@ -374,7 +375,7 @@ class TurnFeed:
         try:
             resume = encode()
         except TypeError as error:  # a value the wire cannot carry, such as a class instance
-            raise _unsendable_turn('TypeError', str(error)) from None
+            raise _unsendable_turn('TypeError', str(error), resuming=True) from None
         limits = self._limits(restored_pauses=1)
         request = TurnRequest(self.run_state.stored_state, limits, self.capture.unused_bytes, resume=resume)
         return await self._turn(request)
@@ -393,7 +394,7 @@ class TurnFeed:
 
     async def _turn(self, request: TurnRequest) -> TurnSnapshot:
         if (message := oversized(request)) is not None:
-            raise _unsendable_turn('ValueError', message)
+            raise _unsendable_turn('ValueError', message, resuming=request.resume is not None)
         try:
             turn = await self.run_turn(request)
         except Exception as error:

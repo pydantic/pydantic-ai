@@ -23,7 +23,8 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from functools import cache
-from typing import Any, Literal, get_args
+from types import EllipsisType, NotImplementedType
+from typing import Literal, assert_never, get_args
 
 from pydantic_core import PydanticSerializationError, to_json
 from pydantic_monty import (
@@ -129,7 +130,7 @@ _WIRE_CLASSES: dict[tuple[str, str], type] = {
 
 
 class _WirePickler(pickle.Pickler):
-    def reducer_override(self, obj: object, /) -> Any:
+    def reducer_override(self, obj: object, /) -> tuple[type, tuple[object]] | NotImplementedType:
         # Called for every value except `None`, `bool`, and exact `int`, `float`, `str`, `bytes`,
         # `bytearray` and containers, and for each class the pickle names.
         if type(obj) in _WIRE_CLASSES.values() or obj in _WIRE_CLASSES.values():
@@ -160,7 +161,7 @@ class _WirePickler(pickle.Pickler):
 
 
 class _WireUnpickler(pickle.Unpickler):
-    def find_class(self, module: str, name: str) -> Any:
+    def find_class(self, module: str, name: str) -> type | EllipsisType:
         if (module, name) == ('builtins', 'Ellipsis'):
             return ...
         if (cls := _WIRE_CLASSES.get((module, name))) is None:
@@ -680,6 +681,11 @@ async def _resume(snapshot: AsyncSnapshot, resume: TurnResume) -> AsyncSnapshot:
     match resume.kind:
         case 'deferred':
             return await snapshot.resume({'future': ...})
-        case _:
+        case 'call':
             assert resume.result is not None
             return await snapshot.resume(_settled(resume.result))
+        # Settled results resume deferred calls, which pause at a future snapshot, handled above.
+        case 'settled':  # pragma: no cover
+            raise AssertionError('settled results cannot resume a call')
+        case _:
+            assert_never(resume.kind)
