@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import math
 import re
 import warnings
@@ -16,7 +15,7 @@ from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
-from typing_extensions import TypedDict, TypeIs
+from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.capabilities import AbstractCapability
@@ -47,7 +46,6 @@ try:
         MontySyntaxError,
         MontyTypingError,
         MountDir,
-        OsFunction,
         OsHandler,
         OSPolicy,
         ResourceLimits,
@@ -75,18 +73,14 @@ from pydantic_ai_harness._monty_exec import (
     is_sandbox_panic,
 )
 from pydantic_ai_harness._typeguards import is_mapping
-from pydantic_ai_harness._warn import HarnessDeprecationWarning, renamed_duration_limit, warn_argument_renamed
 from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RUN_CODE_TOOL_NAME, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.code_mode._speculation import SpeculationCoordinator
 
-# Deprecated: a positional `(name, args, kwargs)` OS callback. Pass Monty's keyword-only `OsHandler`
-# instead; this form is still accepted and will be removed in the next breaking release.
-CodeModeOSCallback = Callable[[OsFunction, tuple[object, ...], dict[str, object]], object]
 # Accepted by `CodeMode.os_access`: a ready-made OS implementation or a handler that decides each call.
-CodeModeOS = AbstractOS | OsHandler | CodeModeOSCallback
+CodeModeOS = AbstractOS | OsHandler
 # Accepted by `CodeMode.os_policy`: Monty's session policies, merged key by key over the defaults.
 CodeModeOSPolicy = OSPolicy
 # Accepted by `CodeMode.mount`: one or more host-directory mounts.
@@ -133,69 +127,6 @@ def _check_monty_sandbox_url(url: str) -> None:
             '`monty_sandbox` must be the server root, such as `https://sandbox.example.com`, '
             'without a path, query, or fragment.'
         )
-
-
-def monty_sandbox_from_url(
-    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None,
-    monty_sandbox_url: str | None,
-    owner: str,
-) -> str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None:
-    """The `monty_sandbox` to use, moving the deprecated `monty_sandbox_url` into it."""
-    if monty_sandbox_url is None:
-        return monty_sandbox
-    if monty_sandbox is not None:
-        raise UserError('Pass `monty_sandbox` only; `monty_sandbox_url` is its deprecated form.')
-    warn_argument_renamed(owner, 'monty_sandbox_url', 'monty_sandbox', stacklevel=5)
-    return monty_sandbox_url
-
-
-def _is_os_handler(os_access: CodeModeOS) -> TypeIs[AbstractOS | OsHandler]:
-    """Whether `os_access` takes Monty's keyword call, rather than the deprecated positional one.
-
-    Only a callable that takes `(name, args, kwargs)` positionally and cannot take Monty's keyword
-    call counts as positional. Anything else is passed to Monty unchanged, so a malformed handler
-    gets Monty's own error rather than a deprecation warning.
-    """
-    if isinstance(os_access, AbstractOS):
-        return True
-    try:
-        signature = inspect.signature(os_access)
-    except (TypeError, ValueError):  # pragma: no cover - builtins and some C callables have no signature
-        return True
-    return _binds(signature, name='os.getenv', args=(), kwargs={}, is_async=False) or not _binds(
-        signature, 'os.getenv', (), {}
-    )
-
-
-def _binds(signature: inspect.Signature, *args: object, **kwargs: object) -> bool:
-    try:
-        signature.bind(*args, **kwargs)
-    except TypeError:
-        return False
-    return True
-
-
-def as_os_handler(os_access: CodeModeOS | None) -> AbstractOS | OsHandler | None:
-    """Return `os_access` in the keyword-only shape Monty calls, warning once for the positional form.
-
-    Called from the `__post_init__` of the dataclasses that take `os_access`, which store the result:
-    their per-run copies re-run `__post_init__` and then see a handler that needs no warning.
-    """
-    if os_access is None or _is_os_handler(os_access):
-        return os_access
-    warnings.warn(
-        'A positional `os_access(name, args, kwargs)` callback is deprecated. Accept keyword arguments '
-        'instead, as `pydantic_monty.OsHandler` does: `def handler(*, name, args, kwargs, **_): ...`. '
-        'The positional form will be removed in the next breaking release.',
-        category=HarnessDeprecationWarning,
-        stacklevel=4,  # this function, `__post_init__`, the dataclass `__init__`, then the caller
-    )
-    callback: Callable[..., object] = os_access
-
-    def handler(*, name: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any], **_: Any) -> object:
-        return callback(name, args, kwargs)
-
-    return handler
 
 
 def in_durable_execution(ctx: RunContext[object]) -> bool:
@@ -340,8 +271,6 @@ class CodeModeResourceLimits(TypedDict, total=False):
 
     Sleeping is not execution time, so each snippet may also sleep for up to this long in total.
     """
-    max_duration_secs: float
-    """Deprecated: renamed to `max_duration_seconds`."""
     max_memory: int
     max_suspensions: int
     """Cumulative host-interaction budget per session, not a per-snippet tool-call count.
@@ -351,8 +280,7 @@ class CodeModeResourceLimits(TypedDict, total=False):
     """
 
 
-# Without the deprecated key, which `__post_init__` renames.
-_RESOURCE_LIMIT_KEYS = frozenset(CodeModeResourceLimits.__annotations__) - {'max_duration_secs'}
+_RESOURCE_LIMIT_KEYS = frozenset(CodeModeResourceLimits.__annotations__)
 
 
 def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited'] | None) -> ResourceLimits:
@@ -943,9 +871,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     )
     """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`."""
 
-    monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
-    """Deprecated: pass `monty_sandbox=url` instead."""
-
     dynamic_catalog: bool = False
     """Move the sandboxed-tool catalog out of `run_code.description` and into instructions.
 
@@ -997,13 +922,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     # Tools already named in a `CodeModeReturnSchemaWarning`, so the warning is not repeated every
     # step. Reset on `for_run` because each run gets a fresh instance.
     _warned_missing_return_schema: set[str] = field(default_factory=set[str], init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        # Converted once here, so the copies `for_run` and `for_run_step` make do not warn again.
-        self.os_access = as_os_handler(self.os_access)
-        self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeModeToolset')
-        self.monty_sandbox_url = None
-        self.resource_limits = renamed_duration_limit(self.resource_limits, 'CodeModeToolset')
 
     @property
     def id(self) -> str | None:
@@ -1365,8 +1283,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             in_temporal_workflow=in_workflow,
         )
         try:
-            # Already converted in `__post_init__`; this narrows the field's type.
-            os_handler = as_os_handler(self.os_access)
             completed = await MontyExecutor(
                 dispatch=partial(self._dispatch_tool_call, ctx, execution, tool_manager, tool),
                 valid_names=callable_defs,
@@ -1376,13 +1292,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # The configured limit, kept inside a Temporal workflow too: Monty's elapsed-time
                 # check is dropped there for replay, but sleeps are charged what they request.
                 max_sleep_seconds=configured.get('max_feed_duration_secs'),
-                os_handler=os_handler,
+                os_handler=self.os_access,
             ).run(
                 partial(
                     session.feed_start,
                     code,
                     print_callback=capture.callback,
-                    os=os_handler,
+                    os=self.os_access,
                     mount=self.mount,
                     skip_type_check=not type_check,
                 )

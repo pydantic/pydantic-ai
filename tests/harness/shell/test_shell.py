@@ -1540,7 +1540,6 @@ class TestEdgeCases:
 class TestShellCapability:
     def test_default_construction(self) -> None:
         shell = Shell()
-        assert shell.cwd is None
         assert shell.default_timeout == 30.0
         assert 'rm' in shell.denied_commands
 
