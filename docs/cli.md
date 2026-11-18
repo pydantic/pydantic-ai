@@ -21,13 +21,12 @@ Unlike `clai`, pax is a coding agent by default: without `-a`, it loads the Harn
 | `clai "prompt"` | `pax -p "prompt"` |
 | `clai -m <model>` | `pax -m <model>` |
 | `clai -a module:agent` | `pax -a module:agent` |
-| `clai web -a module:agent` | `pax --web -a module:agent` |
 | `clai --mcp-config <file>` | `/mcp` without `-a`, or [MCP toolsets](mcp/client.md) on your own agent with `-a` |
 
 pax doesn't cover these `clai` features yet:
 
 - `-a` with a YAML or JSON agent spec file: `pax -a` takes only `module:variable`, so load the spec in a module with [`Agent.from_file()`][pydantic_ai.agent.Agent.from_file] and pass that.
-- `clai web` options for several models (repeated `-m`), native tools (`-t`), extra instructions (`-i`), the bind host (`--host`, `--allowed-host`) and the UI source (`--html-source`): [`Agent.to_web()`][pydantic_ai.agent.Agent.to_web] takes `models`, `instructions`, `allowed_hosts` and `html_source`, and you choose the host when you run the app with uvicorn.
+- `clai web`: `pax --web` drives a pax session from the browser, but can't serve an agent you pass with `-a`. Serve your agent with [`Agent.to_web()`][pydantic_ai.agent.Agent.to_web] instead: it takes `models`, `instructions`, `allowed_hosts` and `html_source`, and you choose the host when you run the app with uvicorn.
 - `--no-stream`, `-l`/`--list-models` and `-t`/`--code-theme`.
 
 [`Agent.to_cli()`][pydantic_ai.agent.AbstractAgent.to_cli], [`Agent.to_cli_sync()`][pydantic_ai.agent.AbstractAgent.to_cli_sync] and [`Agent.to_web()`][pydantic_ai.agent.Agent.to_web] are not deprecated.
