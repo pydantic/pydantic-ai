@@ -312,7 +312,7 @@ interactions:
                 additionalProperties: false
                 description: |-
                   A rectangle on the screenshot, from its top left corner to its bottom right one.
-                  
+
                   `right` and `bottom` are just outside it: `left=0, right=10` is 10 pixels wide.
                 properties:
                   left:
@@ -387,7 +387,7 @@ interactions:
                     default: []
                     description: |-
                       Modifier keys held while scrolling: `ctrl`, `shift`, `alt` or `super`.
-                      
+
                       `shift` scrolls sideways in some applications.
                     items:
                       type: string
@@ -473,34 +473,34 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011ChAoVF1r1Wt7K72sDTTVE","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":740,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}              }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01MiXSGxEWwUvdPkgwLRNWnE","name":"load_capability","input":{},"caller":{"type":"direct"}} }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}      }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"id\": "}              }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"comput"}               }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"er_use\"}"}             }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0               }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":740,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":51,"output_tokens_details":{"thinking_tokens":0}}       }
-        
+
         event: message_stop
         data: {"type":"message_stop"            }
-        
+
   recorded_at: 2026-11-18T17:39:19.236723+00:00
 - request:
     method: POST
@@ -618,52 +618,52 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011ChAoVKVy7jPjejR6hfvuG","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":5371,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":5371,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01HUHz19x2n4izyVVwq9nfP5","name":"screenshot","input":{},"toolset_name":"computer","caller":{"type":"direct"}}             }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}    }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}            }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0              }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01XC4T5BRchXz8U1yNHC52RS","name":"left_click","input":{},"toolset_name":"computer","caller":{"type":"direct"}}             }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}              }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"coordinate\":[100,200]}"}         }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":1      }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_017XHKtFpYwcQFT65zXqvqKb","name":"type","input":{},"toolset_name":"computer","caller":{"type":"direct"}}          }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""} }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"text\":\"hello\"}"}        }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":2              }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":5371,"cache_read_input_tokens":0,"output_tokens":93,"output_tokens_details":{"thinking_tokens":0}}      }
-        
+
         event: message_stop
         data: {"type":"message_stop"      }
-        
+
   recorded_at: 2026-11-18T17:39:20.283656+00:00
 - request:
     method: POST
@@ -837,23 +837,23 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011ChAoVQ4KCDKQxXULtQVbg","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":3175,"cache_read_input_tokens":5060,"cache_creation":{"ephemeral_5m_input_tokens":3175,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}           }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}      }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}    }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0}
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":3175,"cache_read_input_tokens":5060,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}              }
-        
+
         event: message_stop
         data: {"type":"message_stop"              }
-        
+
   recorded_at: 2026-11-18T17:39:21.660802+00:00
