@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import struct
 import threading
 from collections.abc import AsyncIterator, Callable, Coroutine
@@ -259,8 +260,13 @@ class TestComputerUse:
         assert slept == pauses
 
     def test_a_negative_settle_time_is_refused(self) -> None:
-        with pytest.raises(UserError, match=r'`ComputerUse.settle_seconds` must be 0 or more, got -1'):
+        with pytest.raises(UserError, match=r'`ComputerUse.settle_seconds` must be finite and 0 or more, got -1'):
             ComputerUse(settle_seconds=-1)
+
+    def test_an_endless_settle_time_is_refused(self) -> None:
+        # A screen that never stops changing would hold the screen for every other call on it, forever.
+        with pytest.raises(UserError, match=r'`ComputerUse.settle_seconds` must be finite and 0 or more, got inf'):
+            ComputerUse(settle_seconds=math.inf)
 
     @pytest.mark.parametrize(
         'settle,frames,settles',
@@ -579,6 +585,27 @@ The `computer` tool shows and controls this computer's screen.
         )
         await later.run('Thanks.', message_history=first.all_messages())
         assert reads == []
+
+    async def test_the_display_starts_before_the_first_request_without_the_native_tool(self) -> None:
+        # The shell is told a program it starts opens on the screen, so the screen must be up before the model's first
+        # command, as it is when the native tool reads its size.
+        reads: list[None] = []
+
+        class Counted(ScreenBackend):
+            async def display_size(self) -> tuple[int, int]:
+                reads.append(None)
+                return await super().display_size()
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return Counted(self, ref)
+
+        agent = Agent(
+            FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])),
+            capabilities=[Provider().capability(), ComputerUse(native=False)],
+        )
+        await agent.run('Open the editor from the shell.')
+        assert reads
 
     async def test_each_call_emits_what_it_did(self, durability: list[AbstractCapability[object]]) -> None:
         model = _scripted([{'type': 'screenshot'}], [{'type': 'click', 'x': 1, 'y': 1}])
@@ -1664,6 +1691,37 @@ The `computer` tool shows and controls this computer's screen.
         )
         await agent.run('Go.')
         assert provider.actions == [MouseUp()]
+
+    async def test_a_replayed_run_whose_environment_was_lost_takes_the_same_durable_steps(self) -> None:
+        # A durable engine replays a run by its steps' order, so the replay must schedule the steps the run did, such
+        # as the run end's release of a button pressed before the environment was lost.
+        class Lost(ScreenBackend):
+            async def screenshot(self) -> bytes:
+                if any(isinstance(action, MouseDown) for action in self.screens.actions):
+                    raise WorkspaceUnavailableError('the environment is gone')
+                return await super().screenshot()
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return Lost(self, ref)
+
+        provider = Provider()
+
+        async def steps(durability: RecordingDurability) -> list[str]:
+            agent = Agent(
+                _scripted([{'type': 'mouse_down'}]),
+                name='computer',
+                capabilities=[provider.capability(), ComputerUse(), durability],
+            )
+            with pytest.raises(WorkspaceUnavailableError, match='the environment is gone'):
+                await agent.run('Go.')
+            return [name for name, _ in durability.calls]
+
+        recorded = RecordingDurability()
+        first = await steps(recorded)
+        journal = {name: result for name, result in recorded.results if name.endswith('.call')}
+        # As on a fresh worker: a new capability, and an engine that replays the call without acting.
+        assert await steps(RecordingDurability(journal=journal, isolated=True)) == first
 
     async def test_a_button_whose_press_took_effect_but_failed_is_released(self) -> None:
         class LostReply(ScreenBackend):
