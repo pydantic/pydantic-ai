@@ -54,10 +54,11 @@ class TestWindowsCommands:
         assert 'missing.txt' in result.stderr
 
     async def test_windows_powershell_errors_are_text(self, tmp_path: Path) -> None:
+        """Windows PowerShell 5.1 writes its error stream as CLIXML when the script comes from `-EncodedCommand`."""
         backend = WindowsWorkspaceBackend(tmp_path, powershell='powershell.exe')
-        result = await backend.run('Get-Item missing.txt', shell=True)
+        result = await backend.run("Write-Error 'a <b> & _x000A_ \U0001f600'", shell=True)
         assert result.exit_code == 1
-        assert 'missing.txt' in result.stderr
+        assert 'a <b> & _x000A_ \U0001f600' in result.stderr
         assert 'CLIXML' not in result.stderr
 
     async def test_timeout_ends_the_whole_process_tree(self, tmp_path: Path) -> None:
@@ -137,8 +138,12 @@ class TestWindowsCommands:
         assert result.workspace.platform == 'windows'
 
 
+def _decode_stderr(stderr: str) -> str:
+    return WindowsWorkspaceBackend._decode_stderr(stderr.encode())  # pyright: ignore[reportPrivateUsage]
+
+
 def test_clixml_stderr_is_decoded() -> None:
-    """Windows PowerShell 5.1 writes its error stream as CLIXML when the script comes from `-EncodedCommand`."""
+    """Real Windows PowerShell 5.1 error output, decoded where it can't be produced: on non-Windows CI runners."""
     clixml = (
         '[Console]::Error output\r\n'
         '#< CLIXML\r\n'
@@ -154,7 +159,7 @@ def test_clixml_stderr_is_decoded() -> None:
         '<S S="Error">a &lt;b&gt; &amp; _x005F_x000A_ _xD83D__xDE00__x000D__x000A_</S>'
         '</Objs>'
     )
-    assert WindowsWorkspaceBackend._decode_stderr(clixml.encode()) == snapshot(  # pyright: ignore[reportPrivateUsage]
+    assert _decode_stderr(clixml) == snapshot(
         """\
 [Console]::Error output\r
 Get-Item : Cannot find path 'C:\\work\\missing.txt' because it does not exist.\r
@@ -168,9 +173,7 @@ At line:4 char:1\r
 a <b> & _x000A_ \U0001f600\r
 """
     )
-    assert WindowsWorkspaceBackend._decode_stderr(b'plain <S S="Error">text</S>\n') == 'plain <S S="Error">text</S>\n'  # pyright: ignore[reportPrivateUsage]
-
-
-def test_unclosed_clixml_records_decode_in_linear_time() -> None:
-    unclosed = '<Objs >' * 100_000
-    assert WindowsWorkspaceBackend._decode_stderr(f'#< CLIXML\n{unclosed}'.encode()) == unclosed  # pyright: ignore[reportPrivateUsage]
+    assert _decode_stderr('plain <S S="Error">text</S>\n') == 'plain <S S="Error">text</S>\n'
+    record = '<Objs Version="1.1.0.1"><S S="Error">boom</S></Objs>'
+    unclosed = '<Objs ><S S="Error">cut</S><Objs >'
+    assert _decode_stderr(f'#< CLIXML\n{record}{unclosed}') == f'boom{unclosed}'
