@@ -1928,7 +1928,7 @@ The user wants you to delete X.\
         )
         capability = await BackgroundTools().for_run(ctx)
 
-        async def tool_handler(args: dict[str, Any]) -> str:
+        async def tool_handler(args: ValidatedToolArgs) -> str:
             return 'resumed'
 
         async def run_handler() -> AgentRunResult[str]:
