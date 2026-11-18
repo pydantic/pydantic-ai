@@ -313,7 +313,7 @@ def _count_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | N
     """Token count of text segments: per segment with *tokenizer* or the text estimate, truncated once over the sum."""
     if tokenizer is not None:
         return sum(tokenizer(s) for s in segments)
-    return int(sum(_segment_tokens(s, None) for s in segments))
+    return int(sum(len(s) / CHARS_PER_TOKEN + _dense_surcharge(s) for s in segments))
 
 
 def estimate_token_count(
