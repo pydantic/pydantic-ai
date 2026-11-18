@@ -4399,6 +4399,7 @@ _RouteProvider = Literal[
     'nebius',
     'ollama',
     'openrouter',
+    'otari',
     'snowflake',
     'together',
     'vercel',
@@ -4406,7 +4407,7 @@ _RouteProvider = Literal[
 """The provider names the forced-tool-choice route tests use."""
 
 
-def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:
+def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:  # noqa: C901
     """The provider class behind a route name in the forced-tool-choice route tests below.
 
     Only the requested class is looked up, so a test needs only the extras of the routes it uses.
@@ -4434,6 +4435,8 @@ def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:
             return OllamaProvider
         case 'openrouter':
             return OpenRouterProvider
+        case 'otari':
+            return OtariProvider
         case 'snowflake':
             return SnowflakeProvider
         case 'together':
@@ -4454,6 +4457,7 @@ def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:
         ('heroku', 'claude-opus-5-5'),
         ('litellm', 'anthropic/claude-opus-5-5'),
         ('snowflake', 'claude-opus-5-5'),
+        ('otari', 'anthropic:claude-opus-5-5'),
     ],
 )
 def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_name: _RouteProvider, model_name: str):
@@ -4588,6 +4592,12 @@ _GPT_OSS: tuple[_RouteProvider, str] = ('cerebras', 'gpt-oss-120b')
             marks=_diverges('#12104', 'Vercel allows forcing while DeepSeek V4 thinks'),
         ),
         pytest.param(
+            _DEEPSEEK_V4,
+            ('otari', 'together:deepseek-ai/DeepSeek-V4-Pro'),
+            id='deepseek-v4-otari',
+            marks=_diverges('#12104', 'Otari allows forcing while DeepSeek V4 thinks'),
+        ),
+        pytest.param(
             _DEEPSEEK_V4_1,
             ('together', 'deepseek-ai/DeepSeek-V4.1-Flash'),
             id='deepseek-v4.1-together',
@@ -4658,6 +4668,7 @@ def test_forced_tool_choice_guard_agrees_across_routes(
         ('ollama', 'deepseek-v4.1-flash:1017', True),
         ('fireworks', 'accounts/fireworks/models/deepseek-v4p1-flash', True),
         ('crusoe', 'deepseek-ai/DeepSeek-V4.1-Flash', True),
+        ('otari', 'together:deepseek-ai/DeepSeek-V4.1-Flash', True),
         ('together', 'deepseek-ai/DeepSeek-V3.2', False),
     ],
 )

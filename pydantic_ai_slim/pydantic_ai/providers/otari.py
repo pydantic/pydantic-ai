@@ -6,11 +6,15 @@ from typing import Literal, overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles._family import ModelProfileFunc, vendor_family_model_profile
+from pydantic_ai.profiles._family import (
+    ModelProfileFunc,
+    _openai_family_profile,  # pyright: ignore[reportPrivateUsage]
+    vendor_family_model_profile,
+)
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 
 try:
     from openai import AsyncOpenAI
@@ -36,7 +40,7 @@ _REGION_BASE_URLS: dict[OtariRegion, str] = {
 }
 
 _OTARI_VENDOR_PROFILES: dict[str, ModelProfileFunc] = {
-    'azureopenai': openai_model_profile,
+    'azureopenai': _openai_family_profile,
     'gemini': google_model_profile,
     'moonshot': moonshotai_model_profile,
 }
@@ -44,27 +48,6 @@ _OTARI_VENDOR_PROFILES: dict[str, ModelProfileFunc] = {
 
 Hosts of many vendors' models, like `azure`, `bedrock`, `groq` or `vertexai`, have no entry: the model after them decides.
 """
-
-
-_OPEN_WEIGHT_BACKENDS: frozenset[str] = frozenset(
-    {
-        # Self-hosted servers render the model's own chat template.
-        'huggingface',
-        'llamacpp',
-        'llamafile',
-        'lmstudio',
-        'ollama',
-        'vllm',
-        # Hosts of open-weight models, as `_special_tokens._EVERY_MODEL` classifies them.
-        'cerebras',
-        'groq',
-        'nebius',
-        'sambanova',
-        'together',
-        'zai',
-    }
-)
-"""Otari provider ids that only serve open-weight models, so special tokens are escaped whatever the model's name."""
 
 
 def _vendor_model_name(model_name: str) -> str:
@@ -102,19 +85,11 @@ class OtariProvider(_OpenAISDKProvider):
             # A host of many vendors' models names the vendor after it, as in `together:qwen/qwen3.8-27b`.
             profile = vendor_family_model_profile(vendor_model_name.partition('/')[2])
 
-        # The backend in the name decides first: `ollama:command-r` is open weights, though `command` names Cohere's API.
-        vendor = vendor_model_name.partition('/')[0].lower() if '/' in vendor_model_name else ''
-        if vendor in _OPEN_WEIGHT_BACKENDS:
-            special_tokens = ModelProfile(may_tokenize_special_tokens_in_content=True)
-        else:
-            special_tokens = special_token_route_profile('otari', vendor_model_name)
-
-        # As OtariProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly.
+        # `OpenAIJsonSchemaTransformer` is the fallback for the OpenAI-compatible API; a family's own transformer wins.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
-            special_tokens,
+            special_token_route_profile('otari', vendor_model_name),
         )
 
     @overload
@@ -151,9 +126,9 @@ class OtariProvider(_OpenAISDKProvider):
 
         Args:
             api_key: An Otari API key. Defaults to the `OTARI_API_KEY` environment variable.
-            base_url: The API root of a self-hosted gateway, its URL plus `/api/v1`. Defaults to otari.ai in
+            base_url: The `/api/v1` URL of a self-hosted gateway. Defaults to otari.ai in
                 `region` when that is set, else to the `OTARI_BASE_URL` environment variable, else to otari.ai's US region.
-            region: The otari.ai region to send requests to, `'us'` (the default) or `'eu'`.
+            region: The otari.ai region to send requests to, `'us'` or `'eu'`.
                 Cannot be combined with `base_url`.
             openai_client: An existing `AsyncOpenAI` client to use. Cannot be combined with `base_url` or `region`.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
@@ -168,7 +143,7 @@ class OtariProvider(_OpenAISDKProvider):
         assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
         if region is not None:
             if base_url is not None or openai_client is not None:
-                raise UserError('Pass either `region` or `base_url`/`openai_client` to `OtariProvider`, not both.')
+                raise UserError('Cannot set `region` together with `base_url` or `openai_client`.')
             base_url = _REGION_BASE_URLS[region]
 
         if openai_client is not None:
