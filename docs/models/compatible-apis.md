@@ -202,7 +202,7 @@ print(result.output)
 
 [Otari](https://otari.ai) is Mozilla.ai's open-source LLM gateway, which adds API key management, budgets, usage tracking and fallback routing in front of the providers it routes to. Use the hosted gateway at [otari.ai](https://otari.ai), or [run your own](https://github.com/mozilla-ai/otari).
 
-Create an API key on the **API keys** page of the otari.ai dashboard, set the `OTARI_API_KEY` environment variable and use [`OtariProvider`][pydantic_ai.providers.otari.OtariProvider] by name. Otari names a model `<provider>:<model>`, or by the name of one of your routing policies or aliases:
+Create an API key on the **API keys** page of the otari.ai dashboard, set the `OTARI_API_KEY` environment variable and use [`OtariProvider`][pydantic_ai.providers.otari.OtariProvider] by name. Name the model as `<provider>:<model>`, or use the name of one of your routing policies or aliases:
 
 ```python
 from pydantic_ai import Agent

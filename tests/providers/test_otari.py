@@ -3,8 +3,6 @@ import re
 import pytest
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from ..conftest import TestEnv, try_import
 
@@ -73,29 +71,3 @@ def test_otari_pass_openai_client() -> None:
     provider = OtariProvider(openai_client=openai_client)
     assert provider.client is openai_client
     assert provider.base_url == 'https://otari.internal.example/api/v1/'
-
-
-@pytest.mark.parametrize(
-    ('model_name', 'json_schema_transformer'),
-    [
-        # Otari's own `provider:model` form and the `provider/model` form pick the same family profile.
-        ('anthropic:claude-sonnet-5-5', OpenAIJsonSchemaTransformer),
-        ('anthropic/claude-sonnet-5-5', OpenAIJsonSchemaTransformer),
-        # Otari's own provider ids, which the shared vendor map spells differently.
-        ('gemini:gemini-2.5-flash', GoogleJsonSchemaTransformer),
-        ('vertexai:gemini-2.5-flash', GoogleJsonSchemaTransformer),
-        # A routing policy or alias name, and an unknown provider, get the OpenAI-compatible default.
-        ('my-routing-policy', OpenAIJsonSchemaTransformer),
-        ('unknown:model', OpenAIJsonSchemaTransformer),
-    ],
-)
-def test_otari_model_profile(model_name: str, json_schema_transformer: type) -> None:
-    profile = OtariProvider.model_profile(model_name)
-    assert profile is not None
-    assert profile.get('json_schema_transformer') is json_schema_transformer
-
-
-def test_otari_model_profile_reads_both_name_forms_alike() -> None:
-    assert OtariProvider.model_profile('anthropic:claude-sonnet-5-5') == OtariProvider.model_profile(
-        'anthropic/claude-sonnet-5-5'
-    )

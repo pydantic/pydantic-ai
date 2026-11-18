@@ -125,6 +125,7 @@ with try_import() as openai_imports:
         # OpenRouter installs its own Google transformer; importable so inline_snapshot can name it.
         _OpenRouterGoogleJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.providers.otari import OtariProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
@@ -4033,6 +4034,104 @@ def test_nebius_moonshotai():
             'ignore_streamed_leading_whitespace': True,
             'may_tokenize_special_tokens_in_content': True,
         }
+    )
+
+
+# =============================================================================
+# Otari — multi-provider gateway, `provider:model` names
+# =============================================================================
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_routing_policy_name():
+    profile = OtariProvider.model_profile('my-routing-policy')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_anthropic():
+    """`provider:model` and the catalogue's `creator/model` name the same family."""
+    profile = OtariProvider.model_profile('anthropic:claude-sonnet-5-5')
+    assert profile == OtariProvider.model_profile('anthropic/claude-sonnet-5-5')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+            'thinking_enabled_by_default': True,
+            'forced_tool_choice_disables_thinking': True,
+            'anthropic_supports_adaptive_thinking': True,
+            'anthropic_supports_effort': True,
+            'anthropic_supports_dynamic_filtering': True,
+            'anthropic_supports_xhigh_effort': True,
+            'anthropic_supports_max_effort': True,
+            'anthropic_disallows_budget_thinking': True,
+            'anthropic_disallows_sampling_settings': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': True,
+            'anthropic_disables_thinking_with_between_tools': True,
+            'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': True,
+            'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_supports_task_budgets': True,
+            'supports_forced_tool_choice': False,
+            'anthropic_binds_thinking_blocks': True,
+            'anthropic_max_output_tokens': 128000,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'supported_native_tools': frozenset(
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+            ),
+            'tool_deferral_mode': 'standalone',
+            'may_tokenize_special_tokens_in_content': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_gemini():
+    """Otari's own `gemini` provider id gets the Google family profile."""
+    profile = OtariProvider.model_profile('gemini:gemini-2.5-flash')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_tool_return_schema': True,
+            'supports_video_input': True,
+            'supports_thinking': True,
+            'google_supports_thinking_level': False,
+            'google_supports_strict_tool_definition': True,
+            'google_web_search_billed_per_prompt': True,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
+            'supported_document_media_types': frozenset(
+                {'application/pdf', 'text/csv', 'text/html', 'text/markdown', 'text/plain'}
+            ),
+            'may_tokenize_special_tokens_in_content': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_open_weight_model():
+    profile = OtariProvider.model_profile('together:qwen/qwen3.8-27b')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
     )
 
 
