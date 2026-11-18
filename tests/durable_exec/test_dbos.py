@@ -7139,8 +7139,7 @@ async def _force_sequential(ctx: RunContext[None], tool_def: ToolDefinition) -> 
 
 
 _shared_first = Tool(first)
-# Applies `sequential` to its own copy of `_shared_first`, which the `shared_sequential` agent holds through a toolset
-# without it.
+# Turns on `sequential` for `_shared_first`, which the `shared_sequential` agent holds through a toolset without it.
 _sequential_toolset = FunctionToolset([_shared_first], sequential=True)
 
 _tool_instances_agents = {
@@ -7183,17 +7182,16 @@ async def _start_tool_instances_workflow(flag: str) -> None:
 
 _in_parallel = ['__model.request', 'first_step_one', 'second_step', 'first_step_two', '__model.request']
 _one_at_a_time = ['__model.request', 'first_step_one', 'first_step_two', 'second_step', '__model.request']
-_patch_step = 'DBOS.patch-pydantic_ai:function_toolset_defaults_on_tool_instances'
 
 
 @pytest.mark.parametrize(
     ('flag', 'unpatched_steps', 'patched_steps'),
     [
-        ('sequential', _in_parallel, [_patch_step, *_one_at_a_time]),
-        ('defer_loading', _in_parallel, [_patch_step, '__model.request', '__model.request']),
-        ('shared_sequential', _in_parallel, _in_parallel),
-        ('prepare_sequential', _one_at_a_time, [_patch_step, *_one_at_a_time]),
-        ('dbos_agent', _in_parallel, [_patch_step, *_one_at_a_time]),
+        ('sequential', _in_parallel, _one_at_a_time),
+        ('defer_loading', _in_parallel, ['__model.request', '__model.request']),
+        ('shared_sequential', _in_parallel, _one_at_a_time),
+        ('prepare_sequential', _one_at_a_time, _one_at_a_time),
+        ('dbos_agent', _in_parallel, _one_at_a_time),
     ],
 )
 async def test_dbos_function_toolset_defaults_on_tool_instances_recover(
@@ -7202,10 +7200,9 @@ async def test_dbos_function_toolset_defaults_on_tool_instances_recover(
     """A workflow started before `FunctionToolset` applied `sequential` or `defer_loading` to `Tool` instances recovers.
 
     Without the patch marker, the workflow lists the tools the way it did before: both calls start at once
-    and neither tool is deferred, while a tool whose own `prepare` makes it sequential stays sequential. A new
-    workflow gets the toolset's value. A `Tool` that a sequential toolset also holds runs at once in a toolset
-    without `sequential`, and its workflow records no patch. Faking `DBOS.patch_async` stands in for the code
-    before the upgrade, which never called it.
+    and neither tool is deferred, including a `Tool` that another toolset made sequential, while a tool whose
+    own `prepare` makes it sequential stays sequential. A new workflow gets the toolset's value. Faking
+    `DBOS.patch_async` stands in for the code before the upgrade, which never called it.
 
     Not a VCR test: it pins the steps DBOS records and replays; the model is a `FunctionModel`.
     """
@@ -7230,7 +7227,10 @@ async def test_dbos_function_toolset_defaults_on_tool_instances_recover(
     patched_id = await start_and_crash()
 
     assert await recorded_steps(unpatched_id) == unpatched_steps[:-1]
-    assert await recorded_steps(patched_id) == patched_steps[:-1]
+    assert await recorded_steps(patched_id) == [
+        'DBOS.patch-pydantic_ai:function_toolset_defaults_on_tool_instances',
+        *patched_steps[:-1],
+    ]
 
     await asyncio.sleep(0.01)
     for workflow_id in (unpatched_id, patched_id):
@@ -7238,7 +7238,7 @@ async def test_dbos_function_toolset_defaults_on_tool_instances_recover(
         result = await handle.get_result()
         assert (result if isinstance(result, str) else result.output) == 'done'
     assert await recorded_steps(unpatched_id) == unpatched_steps
-    assert await recorded_steps(patched_id) == patched_steps
+    assert (await recorded_steps(patched_id))[1:] == patched_steps
 
 
 _per_run_toolset_dbos_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]

@@ -794,11 +794,10 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
 
 
 def holds_tool_instance_defaults(toolset: FunctionToolset[AgentDepsT]) -> bool:
-    """Whether `toolset` holds a `Tool` instance it lists as sequential or deferred from its own value."""
+    """Whether `toolset` holds a `Tool` that a `FunctionToolset` made sequential or deferred."""
     return any(
-        (listed := toolset._listed_tool(name, tool))._sequential_from_toolset  # pyright: ignore[reportPrivateUsage]
-        or listed._defer_loading_from_toolset  # pyright: ignore[reportPrivateUsage]
-        for name, tool in toolset.tools.items()
+        tool._sequential_from_toolset or tool._defer_loading_from_toolset  # pyright: ignore[reportPrivateUsage]
+        for tool in toolset.tools.values()
     )
 
 

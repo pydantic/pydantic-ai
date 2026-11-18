@@ -74,7 +74,7 @@ Functions can be added as tools in four different ways:
 
 The `add_function()` and `add_tool()` methods can also be used from a tool function to dynamically register new tools during a run to be available in future run steps.
 
-A toolset's `strict`, `include_return_schema`, `sequential` and `defer_loading` apply to a [`Tool`][pydantic_ai.tools.Tool] instance when the toolset lists it, without changing the `Tool`, so another toolset or agent holding the same `Tool` lists it with its own values.
+A toolset's `strict` and `include_return_schema` apply to a [`Tool`][pydantic_ai.tools.Tool] instance when the toolset lists it, without changing the `Tool`, so another toolset or agent holding the same `Tool` lists it with its own values.
 
 ```python {title="function_toolset.py"}
 from datetime import datetime

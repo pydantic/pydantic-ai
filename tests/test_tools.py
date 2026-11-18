@@ -2226,7 +2226,7 @@ def test_function_toolset_defaults_apply_to_tool(added_with: Literal['constructo
 
 
 async def test_function_toolset_defaults_stay_off_a_shared_tool():
-    """A `Tool` held by several toolsets and agents is listed with each one's `strict`, `include_return_schema`, `sequential` and `defer_loading`.
+    """A `Tool` held by several toolsets and agents is listed with each one's `strict` and `include_return_schema`.
 
     A toolset applies those when it lists the tool, without changing the `Tool`, so the order the toolsets are built in
     doesn't matter either. `add_function` returns the tool the toolset holds.
@@ -2243,29 +2243,27 @@ async def test_function_toolset_defaults_stay_off_a_shared_tool():
 
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
 
-    async def listed(toolset: FunctionToolset[None], name: str) -> tuple[bool | None, bool | None, bool, bool]:
+    async def listed(toolset: FunctionToolset[None], name: str) -> tuple[bool | None, bool | None]:
         tool_def = (await toolset.get_tools(ctx))[name].tool_def
-        return tool_def.strict, tool_def.include_return_schema, tool_def.sequential, tool_def.defer_loading
+        return tool_def.strict, tool_def.include_return_schema
 
     tool = Tool(my_tool)
-    toolset = FunctionToolset([tool], strict=True, include_return_schema=True, sequential=True, defer_loading=True)
+    toolset = FunctionToolset([tool], strict=True, include_return_schema=True)
     other = FunctionToolset([tool], strict=False, include_return_schema=False)
 
-    assert (tool.strict, tool.include_return_schema, tool.sequential, tool.defer_loading) == (None, None, False, False)
-    assert await listed(toolset, 'my_tool') == (True, True, True, True)
-    assert await listed(other, 'my_tool') == (False, False, False, False)
-    stored = toolset.add_function(added, sequential=False)
+    assert (tool.strict, tool.include_return_schema) == (None, None)
+    assert await listed(toolset, 'my_tool') == (True, True)
+    assert await listed(other, 'my_tool') == (False, False)
+    stored = toolset.add_function(added)
     assert stored is toolset.tools['added']
-    assert await listed(toolset, 'added') == (True, True, False, True)
+    assert await listed(toolset, 'added') == (True, True)
 
-    # The example from #12617: a toolset with `defer_loading=True` doesn't hide the `Tool` from an agent holding it.
     test_model = TestModel(call_tools=[])
     await Agent(test_model, tools=[tool]).run('Hello')
     assert test_model.last_model_request_parameters is not None
     assert [
-        (d.name, d.strict, d.include_return_schema, d.sequential, d.defer_loading)
-        for d in test_model.last_model_request_parameters.function_tools
-    ] == [('my_tool', None, None, False, False)]
+        (d.name, d.strict, d.include_return_schema) for d in test_model.last_model_request_parameters.function_tools
+    ] == [('my_tool', None, None)]
 
 
 async def test_function_toolset_lists_a_tool_it_leaves_unchanged_as_is():

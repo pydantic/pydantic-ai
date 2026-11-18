@@ -45,8 +45,6 @@ class _ToolInstanceDefaults:
 
     strict: bool | None
     include_return_schema: bool | None
-    sequential: bool
-    defer_loading: bool
 
 
 @dataclass(kw_only=True)
@@ -180,9 +178,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         ]
 
         self.tools = {}
-        # This toolset's `strict`, `include_return_schema`, `sequential` and `defer_loading` when it added each `Tool`
-        # instance, which the instance gets when the toolset lists it. A function added with `add_function` already has
-        # them.
+        # This toolset's `strict` and `include_return_schema` when it added each `Tool` instance, which the instance
+        # gets when the toolset lists it. A function added with `add_function` already has them.
         self._tool_instance_defaults: dict[str, _ToolInstanceDefaults] = {}
         for tool in tools:
             if isinstance(tool, Tool):
@@ -772,18 +769,24 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         )
         self.add_tool(tool)
         del self._tool_instance_defaults[tool.name]
-        # `add_tool` applies the toolset's `requires_approval=True`; an explicit `False` passed here overrides it.
+        # `add_tool` applies the toolset's `sequential`, `requires_approval`, and `defer_loading` when they're
+        # `True`; a `Tool`'s plain booleans can't distinguish an explicit `False`, so restore the overrides
+        # passed here.
+        tool.sequential = sequential
         tool.requires_approval = requires_approval
+        tool.defer_loading = defer_loading
+        tool._sequential_from_toolset = False  # pyright: ignore[reportPrivateUsage]
+        tool._defer_loading_from_toolset = False  # pyright: ignore[reportPrivateUsage]
         return tool
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Add a tool to the toolset.
 
-        The toolset's `requires_approval=True` and `metadata` apply to the tool, and so do its `max_retries` when the
-        tool sets none and its `durable` when the tool leaves it unset. Its `strict` and `include_return_schema`
-        apply when the tool leaves them unset, and its `sequential` and `defer_loading` when they're `True`. Those
-        four are the toolset's values when the tool is added, and apply when the toolset lists it, so another toolset
-        or agent holding the same `Tool` lists it with its own.
+        The toolset's `durable` applies to the tool when the tool leaves it unset, its `sequential`,
+        `requires_approval`, and `defer_loading` apply when they're set to `True`, its `metadata` is merged into the
+        tool's, and its `max_retries` applies when the tool sets none. Its `strict` and `include_return_schema`, as
+        they are when the tool is added, apply when the toolset lists the tool and the tool leaves them unset,
+        without changing the tool, so another toolset or agent holding the same `Tool` lists it with its own.
 
         Args:
             tool: The tool to add.
@@ -794,24 +797,27 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tool.max_retries = self.max_retries
         if tool.durable is None:
             tool.durable = self.durable
+        if self.sequential and not tool.sequential:
+            tool.sequential = True
+            tool._sequential_from_toolset = True  # pyright: ignore[reportPrivateUsage]
         if self.requires_approval:
             tool.requires_approval = True
+        if self._defer_loading and not tool.defer_loading:
+            tool.defer_loading = True
+            tool._defer_loading_from_toolset = True  # pyright: ignore[reportPrivateUsage]
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool
         self._tool_instance_defaults[tool.name] = _ToolInstanceDefaults(
-            strict=self.strict,
-            include_return_schema=self.include_return_schema,
-            sequential=self.sequential,
-            defer_loading=self._defer_loading,
+            strict=self.strict, include_return_schema=self.include_return_schema
         )
 
     def _listed_tool(self, name: str, tool: Tool[AgentDepsT]) -> Tool[AgentDepsT]:
         """`tool` as this toolset lists it under `name`.
 
-        A `Tool` instance gets the toolset's `strict`, `include_return_schema`, `sequential` and `defer_loading` from
-        when it was added, on a copy, so the `Tool` itself keeps its own values for every other toolset and agent
-        holding it. When they change nothing, the toolset lists the `Tool` itself.
+        A `Tool` instance that leaves `strict` or `include_return_schema` unset gets the toolset's value from when it
+        was added, on a copy, so the `Tool` itself keeps its own value for every other toolset and agent holding it.
+        When that changes nothing, the toolset lists the `Tool` itself.
         """
         defaults = self._tool_instance_defaults.get(name)
         if defaults is None:
@@ -820,24 +826,11 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         include_return_schema = (
             tool.include_return_schema if tool.include_return_schema is not None else defaults.include_return_schema
         )
-        sequential = defaults.sequential and not tool.sequential
-        defer_loading = defaults.defer_loading and not tool.defer_loading
-        if (strict, include_return_schema, sequential, defer_loading) == (
-            tool.strict,
-            tool.include_return_schema,
-            False,
-            False,
-        ):
+        if (strict, include_return_schema) == (tool.strict, tool.include_return_schema):
             return tool
         listed = copy(tool)
         listed.strict = strict
         listed.include_return_schema = include_return_schema
-        if sequential:
-            listed.sequential = True
-            listed._sequential_from_toolset = True  # pyright: ignore[reportPrivateUsage]
-        if defer_loading:
-            listed.defer_loading = True
-            listed._defer_loading_from_toolset = True  # pyright: ignore[reportPrivateUsage]
         return listed
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[InstructionPart] | None:
