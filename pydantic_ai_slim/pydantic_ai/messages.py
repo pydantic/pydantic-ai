@@ -2346,10 +2346,14 @@ def _check_declared_shape(
     # A call part is parameterized with the args shape; a return part with the content and metadata shapes.
     shapes = {'args': kind.args} if payload_field == 'args' else {'content': kind.content, 'metadata': kind.metadata}
     for orig_base in cls.__dict__.get('__orig_bases__', ()):
-        # Only the base's own arguments map to these shapes; an intermediate generic subclass's arguments are its own.
-        if get_origin(orig_base) is not base:
+        origin = get_origin(orig_base)
+        if not (isinstance(origin, type) and issubclass(origin, base)):
             continue
-        for (label, shape), declared_shape in zip(shapes.items(), get_args(orig_base)):
+        declared = get_args(orig_base)
+        if origin is not base and len(declared) != 1:
+            # An intermediate generic subclass's arguments are its own; a single one is read as the payload's shape.
+            continue
+        for (label, shape), declared_shape in zip(shapes.items(), declared):
             if isinstance(declared_shape, TypeVar) or (
                 declared_shape is Any if shape is None else _same_shape(declared_shape, shape)
             ):

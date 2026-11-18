@@ -98,6 +98,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _pending_tool_search_call_ids: deque[str] = field(default_factory=deque[str], init=False)
     _function_call_args: dict[str, str] = field(default_factory=dict[str, str], init=False)
     _finalized_function_calls: set[str] = field(default_factory=set[str], init=False)
+    _computer_calls: list[responses.ResponseComputerToolCall] = field(
+        default_factory=list[responses.ResponseComputerToolCall], init=False
+    )
+    """The computer calls mapped so far, mapped again if the response turns out incomplete or failed."""
     _history: Hasher | None = None
     """The history this response was created from, digested with its parts as `ModelResponse.history_digest`."""
     # Custom HTTP clients can return streams outside the SDK's AsyncStream class.
@@ -205,6 +209,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 ),
             ):
                 self._handle_terminal_response(chunk.response)
+                if not isinstance(chunk, responses.ResponseCompletedEvent):
+                    # OpenAI says to stop when a response is incomplete or failed, which is known only after its
+                    # computer calls were mapped, so they're mapped again to run nothing.
+                    for item in self._computer_calls:
+                        yield from self._map_computer_call_done(item, response_completed=False)
         match chunk:
             # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
             case responses.ResponseCompletedEvent():
@@ -563,6 +572,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             case responses.ResponseFunctionToolCall(id=str(item_id)) if item_id:
                 yield from self._map_function_call_done(item, item_id)
             case responses.ResponseComputerToolCall():
+                self._computer_calls.append(item)
                 yield from self._map_computer_call_done(item)
             case responses.ResponseReasoningItem():
                 if signature := item.encrypted_content:  # pragma: no branch
@@ -600,7 +610,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             case _:
                 pass
 
-    def _map_computer_call_done(self, item: responses.ResponseComputerToolCall) -> Iterator[ModelResponseStreamEvent]:
+    def _map_computer_call_done(
+        self, item: responses.ResponseComputerToolCall, *, response_completed: bool = True
+    ) -> Iterator[ModelResponseStreamEvent]:
         # Its actions arrive whole in the done event, and OpenAI finishes each item before adding the next, so the
         # call starts complete here and keeps its place among the other parts.
         # The ID is stored as `_map_function_call_done` stores a function call's.
@@ -610,7 +622,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             provider_response_id=self.provider_response_id,
             timestamp=self.timestamp,
         )
-        if call := map_computer_call(item, self.model_request_parameters, call_id, self.provider_name):
+        if call := map_computer_call(
+            item, self.model_request_parameters, call_id, self.provider_name, response_completed=response_completed
+        ):
             yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
 
     def _map_function_call_done(
