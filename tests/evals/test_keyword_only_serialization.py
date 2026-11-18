@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import ClassVar, Literal
 
 import pytest
 import yaml
@@ -139,6 +139,16 @@ with try_import() as imports_successful:
             return len(ctx.output) >= self.minimum
 
     @dataclass
+    class WithClassVar(Evaluator[str, str, str]):
+        """`unit` is a `ClassVar`, which `__init__` doesn't take."""
+
+        unit: ClassVar[str] = 'characters'
+        minimum: int
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            return len(ctx.output) >= self.minimum
+
+    @dataclass
     class InitFalseTakenByInit(Evaluator[str, str, str]):
         """A hand-written `__init__` takes `label`, so a file keeps it."""
 
@@ -234,6 +244,7 @@ with try_import() as imports_successful:
         ),
         'InitFalseDefault': RoundTripCase(InitFalseDefault(minimum=4), 4, frozenset({'short_spec'})),
         'InitFalseFirst': RoundTripCase(InitFalseFirst(minimum=4), 4, frozenset({'short_spec'})),
+        'WithClassVar': RoundTripCase(WithClassVar(minimum=4), 4, frozenset({'short_spec'})),
         'InitFalseTakenByInit': RoundTripCase(
             InitFalseTakenByInit(4, 'custom'), {'minimum': 4, 'label': 'custom'}, KEYWORD_FORMS
         ),
@@ -288,6 +299,7 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals
         'InitFalseKeywordForm',
         'InitFalseDefault',
         'InitFalseFirst',
+        'WithClassVar',
         'InitFalseTakenByInit',
         'InitFalseTakenByKwargs',
         'InitFalseOnly',

@@ -17,17 +17,6 @@ from pydantic_ai._spec import serializes_as_string_keyed_dict
 from .spec import EvaluatorSpec
 
 
-def init_fields(evaluator: BaseEvaluator) -> list[Field[Any]]:
-    """The dataclass fields of `evaluator` that its `__init__` takes, which are all a spec holds.
-
-    `__post_init__` or the field's default restores an `init=False` field, but a hand-written `__init__` can
-    still take one, by name or through `**kwargs`.
-    """
-    parameters = inspect.signature(type(evaluator)).parameters
-    takes_any_keyword = any(p.kind is p.VAR_KEYWORD for p in parameters.values())
-    return [field for field in fields(evaluator) if field.init or field.name in parameters or takes_any_keyword]
-
-
 class _StrictABCMeta(ABCMeta):
     """An ABC-like metaclass that disallows defining subclasses with unimplemented inherited abstract methods.
 
@@ -84,6 +73,16 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
         # `model_serializer`, so this is where a subclass that can't be serialized raises.
         return self.as_spec()
 
+    def _init_fields(self) -> list[Field[Any]]:
+        """The dataclass fields that `__init__` takes, which are all a spec holds.
+
+        `__post_init__` or the field's default restores an `init=False` field, but a hand-written `__init__` can
+        still take one, by name or through `**kwargs`.
+        """
+        parameters = inspect.signature(type(self)).parameters
+        takes_any_keyword = any(p.kind is p.VAR_KEYWORD for p in parameters.values())
+        return [field for field in fields(self) if field.init or field.name in parameters or takes_any_keyword]
+
     def as_spec(self) -> EvaluatorSpec:
         raw_arguments = self.build_serialization_arguments()
 
@@ -92,7 +91,7 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
             arguments = None
         elif len(raw_arguments) == 1:
             # The compact tuple form passes the value as the first positional argument.
-            first_field = next(iter(init_fields(self)), None)
+            first_field = next(iter(self._init_fields()), None)
             key = next(iter(raw_arguments))
             value = raw_arguments[key]
             if (
@@ -118,7 +117,7 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
             A dictionary of arguments to be used during serialization.
         """
         raw_arguments: dict[str, Any] = {}
-        for field in init_fields(self):
+        for field in self._init_fields():
             value = getattr(self, field.name)
             # always exclude defaults:
             if field.default is not MISSING:
