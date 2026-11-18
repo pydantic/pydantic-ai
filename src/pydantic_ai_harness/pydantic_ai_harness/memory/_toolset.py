@@ -15,7 +15,6 @@ from opentelemetry.trace import Span
 from typing_extensions import TypedDict
 
 from pydantic_ai import ModelRetry
-from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import InstructionChangePolicy, InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
@@ -27,6 +26,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._durable import RetryRequest, raise_retry, retry_as_result
+from pydantic_ai_harness._run_capability import find_run_capability
 from pydantic_ai_harness._workspace import in_working_dir, raise_tool_failure
 from pydantic_ai_harness.artifact_scanning._scanner import ArtifactScanResult, record_flagged
 from pydantic_ai_harness.file_system import READ_FILE_KIND
@@ -43,6 +43,7 @@ from pydantic_ai_harness.memory._store import (
     MetadataMemoryStore,
     SearchableMemoryStore,
     lexical_search,
+    list_scope_paths,
 )
 
 if TYPE_CHECKING:
@@ -54,6 +55,7 @@ MAIN_FILENAME = 'MEMORY.md'
 """The main notebook file injected as bounded user-role context."""
 
 _FILENAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,79}')
+_CRLF_OR_LF_RE = re.compile(r'\r?\n')
 _MAX_CAS_ATTEMPTS = 16
 _MAX_SEARCH_QUERY_CHARS = 1_000
 _MAX_SEARCH_TERMS = 32
@@ -220,6 +222,9 @@ def _apply_write(
         return f'{content.rstrip()}\n', 'created'
     if existing is None:
         raise ModelRetry(f'There is no memory file named {name!r} to edit -- omit `old_text` to create it.')
+    if old_text and old_text not in existing and '\r\n' in existing:
+        # The injected snapshot shows the file's lines joined with `\n`, so match its `\r\n` line endings.
+        old_text, content = (_CRLF_OR_LF_RE.sub('\r\n', text) for text in (old_text, content))
     occurrences = existing.count(old_text) if old_text else 0
     if occurrences == 0:
         raise ModelRetry(f'`old_text` was not found in {name!r} -- call `{read_current}` to see its current content.')
@@ -315,20 +320,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         The copy holds the scope `for_run` resolved once for the run. A durable worker's tree holds
         the construction-time capability instead, which resolves the scope from `ctx`.
         """
-        from pydantic_ai_harness.memory._capability import Memory
-
-        run_capability = self._capability
-
-        def select(capability: AbstractCapability[AgentDepsT]) -> None:
-            nonlocal run_capability
-            # A wrapper such as `prefix_tools()` may be visited in place of the `Memory` it wraps.
-            while isinstance(capability, WrapperCapability):
-                capability = capability.wrapped
-            if isinstance(capability, Memory) and capability.get_toolset() is self:
-                run_capability = capability
-
-        if ctx.root_capability is not None:
-            ctx.root_capability.apply(select)
+        run_capability = find_run_capability(ctx, self._capability, self) or self._capability
         return run_capability.resolve_scope(ctx)
 
     async def _prepare_read_memory(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition:
@@ -750,7 +742,7 @@ async def _fallback_search(
     max_chars: int,
     max_file_chars: int,
 ) -> MemorySearchResult:
-    paths = await store.list_paths(prefix, limit=max_files + 1)
+    paths = await list_scope_paths(store, prefix, limit=max_files + 1)
     files: list[tuple[str, str]] = []
     scanned = 0
     content_truncated = False

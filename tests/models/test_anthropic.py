@@ -4399,12 +4399,7 @@ def test_expired_container_error(status_code: int, error_type: str | None, messa
         if error_type is None
         else {'type': 'error', 'error': {'type': error_type, 'message': message}}
     )
-    error = APIStatusError(
-        'test error',
-        response=httpx2.Response(status_code=status_code, request=httpx2.Request('POST', 'https://example.com/v1')),
-        body=body,
-    )
-    assert is_expired_container_error(error) is expected
+    assert is_expired_container_error(status_code, body) is expected
 
 
 def test_model_connection_error(allow_model_requests: None) -> None:
@@ -6974,6 +6969,39 @@ async def test_anthropic_opus_47_rejects_budget_thinking(allow_model_requests: N
 
     with pytest.raises(UserError, match=f"'{model_name}' does not support"):
         await agent.run('What is 2+2?')
+
+
+async def test_anthropic_extra_body_budget_thinking_reaches_api(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """Budget thinking in `extra_body['thinking']` is sent as is, and the API's 400 comes back as a `ModelHTTPError`.
+
+    Only typed `anthropic_thinking` is checked before sending. `FallbackModel` and `ModelFallback` fall back on the 400,
+    while a check before sending would stop `ModelFallback` with structured output, and fail a whole
+    `model_request_batch` instead of returning the 400 in that request's place.
+    """
+    agent = Agent(
+        anthropic_model('claude-opus-4-7', capture=True),
+        model_settings=AnthropicModelSettings(extra_body={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}),
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('What is 2+2?')
+
+    assert (exc_info.value.status_code, exc_info.value.body) == snapshot(
+        (
+            400,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'message': '"thinking.type.enabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.',
+                },
+                'request_id': 'req_011Ch9EAuo6tvE72oqfMtLyV',
+            },
+        )
+    )
+    assert request_capture.body('/v1/messages')['thinking'] == {'type': 'enabled', 'budget_tokens': 1024}
 
 
 @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
