@@ -337,7 +337,7 @@ def map_computer_call_output(
 
     The API needs a screenshot in every output, so a result without one sends a blank image instead. A `changed` call,
     one a hook renamed or gave other actions after the API stored it, is answered by its ID all the same, with a note
-    saying what ran: the API's item still says what it made.
+    saying what ran when it ran: the API's item still says what it made.
     """
     # A failed or denied call is a base part, without a screenshot.
     computer_return = part if isinstance(part, ComputerReturnPart) else None
@@ -360,7 +360,8 @@ def map_computer_call_output(
     images = [item for item in content if isinstance(item, BinaryImage)]
     extra_images = images[:-1] if image is not None else images
     notes = _scroll_notes(call, computer_return.result) if computer_return else []
-    if changed:
+    # A denied or interrupted call didn't run, so its note would be wrong.
+    if changed and part.outcome in ('success', 'failed'):
         notes.append(f'The call ran as {call.tool_name} with the arguments {call.args_as_json_str()}.')
     if computer_return is None or image is None or _needs_summary(computer_return.result) or extra_images or notes:
         items.append(_summary_message(part, content, extra_images, notes))
