@@ -174,7 +174,9 @@ async def test_a_signed_out_server_is_an_error_and_a_run_never_signs_in(
 ) -> None:
     monkeypatch.setattr(OAuthSignIn, 'sign_in', hang)
     command, store = make(tmp_path)
-    store.put('docs', SSEServer(type='sse', url=HttpUrl(URL), auth='oauth', headers={'X-Team': 'a'}))
+    store.put(
+        'docs', SSEServer(type='sse', url=HttpUrl(URL), auth='oauth', headers={'X-Team': 'a'}, defer_loading=False)
+    )
     servers = command.servers
     with anyio.fail_after(5):
         assert await servers.toolset(RunContext[None](deps=None, model=TestModel(), usage=RunUsage())) is None

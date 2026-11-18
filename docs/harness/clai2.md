@@ -189,6 +189,10 @@ authorization code with PKCE, state validation, and a callback at
 `http://localhost:1455/auth/callback`. It times out after five minutes. The browser
 must be able to reach that callback on the machine running CLAI.
 
+Login adds every model your account's Codex catalog lists to `/model`, skipping
+models the catalog hides. If listing the models fails, the login stays saved, CLAI
+reports why, and it adds the built-in Codex models instead.
+
 Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-clai2/`
 (`credentials-ACCOUNT.enc`), not stored in SQLite or `~/.codex/auth.json`. The key
 that decrypts them is the only entry CLAI keeps in the configured Python `keyring`
