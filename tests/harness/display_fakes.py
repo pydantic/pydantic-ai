@@ -6,12 +6,12 @@ harness display protocols to its backends.
 
 from __future__ import annotations as _annotations
 
-import struct
-import zlib
 from collections.abc import Callable
 from typing import Protocol, Self, runtime_checkable
 
-from pydantic_ai.computer_use import MoveMouse, Point, Region
+from pydantic_ai.computer_use import ComputerReturnPart, MouseMove, Point, Region
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.computer_use import (
     Display,
@@ -22,23 +22,8 @@ from pydantic_ai_harness.computer_use import (
     UnsupportedActionError,
 )
 
+from ..computer_fakes import FAKE_DISPLAY_SIZE, FAKE_SCREENSHOT, png
 from ..workspace_fakes import FilesystemOnlyWorkspaceBackend, InMemoryProvider, ProviderBackend
-
-
-def png(width: int, height: int) -> bytes:
-    """A complete black RGB PNG of the given size."""
-
-    def chunk(tag: bytes, data: bytes) -> bytes:
-        return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
-
-    rows = b''.join(b'\x00' + bytes(width * 3) for _ in range(height))
-    header = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)
-    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', header) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b'')
-
-
-FAKE_DISPLAY_SIZE = (1280, 800)
-FAKE_SCREENSHOT = png(*FAKE_DISPLAY_SIZE)
-"""A screenshot of the fake display."""
 
 
 class ScreenProvider(InMemoryProvider):
@@ -85,8 +70,17 @@ class ScreenBackend(
 
     async def act(self, action: DisplayAction) -> None:
         await self._files()
-        # Everything but `hold_key`, so tests can see an action kind refused.
-        if action.type not in {'click', 'move', 'drag', 'mouse_down', 'mouse_up', 'scroll', 'type', 'keypress'}:
+        # Everything but `hold_keys`, so tests can see an action kind refused.
+        if action.type not in {
+            'click',
+            'mouse_move',
+            'drag',
+            'mouse_down',
+            'mouse_up',
+            'scroll',
+            'type_text',
+            'press_keys',
+        }:
             raise UnsupportedActionError(f'the fake display cannot perform {action.type!r}')
         self.screens.actions.append(action)
         if self.screens.lose_next_action:
@@ -99,7 +93,7 @@ class ScreenBackend(
 
     async def cursor_position(self) -> Point:
         await self._files()
-        moves = [action for action in self.screens.actions if isinstance(action, MoveMouse)]
+        moves = [action for action in self.screens.actions if isinstance(action, MouseMove)]
         return Point(x=moves[-1].x, y=moves[-1].y) if moves else Point(x=640, y=400)
 
 
@@ -135,3 +129,12 @@ def screen(backend: WorkspaceBackend) -> FullDisplay:
     display = backend.display
     assert isinstance(display, FullDisplay)
     return display
+
+
+def look_click_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """A `FunctionModel` function: takes a screenshot, clicks on what it showed, then answers."""
+    steps = [[{'type': 'screenshot'}], [{'type': 'click', 'x': 3, 'y': 4}]]
+    done = sum(isinstance(part, ComputerReturnPart) for message in messages for part in message.parts)
+    if done == len(steps):
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('computer', {'actions': steps[done]})])

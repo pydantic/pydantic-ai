@@ -68,9 +68,11 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessHistory
+from pydantic_ai.computer_use import COMPUTER_KIND, ComputerCallPart
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import (
     ContentFilterError,
+    IncompleteToolCall,
     ModelAPIError,
     ModelContextWindowExceededError,
     ModelHTTPError,
@@ -432,6 +434,34 @@ async def test_openai_responses_model_simple_response(allow_model_requests: None
     agent = Agent(model=model)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_openai_responses_tool_output_cut_off_by_max_tokens(
+    allow_model_requests: None, openai_api_key: str, stream: bool
+):
+    """Output tool arguments the token limit cut off raise right away instead of re-prompting the model with the same limit."""
+    model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    class City(BaseModel):
+        name: str
+        country: str
+
+    class Cities(BaseModel):
+        cities: list[City]
+
+    agent = Agent(model, output_type=ToolOutput(Cities), model_settings=OpenAIResponsesModelSettings(max_tokens=40))
+    prompt = 'List the 20 largest cities in the world.'
+
+    with pytest.raises(
+        IncompleteToolCall,
+        match=r'Model token limit \(40\) exceeded while generating a tool call, resulting in incomplete arguments\.',
+    ):
+        if stream:
+            async with agent.run_stream(prompt) as result:
+                await result.get_output()
+        else:
+            await agent.run(prompt)
 
 
 async def test_tool_availability_delta_uses_additional_tools(allow_model_requests: None):
@@ -5266,7 +5296,7 @@ async def test_response_scoped_tool_call_id_from_other_endpoint(allow_model_requ
     model = OpenAIResponsesModel(
         'gpt-5.6-sol',
         provider=OpenAIProvider(openai_client=mock_client),
-        profile=OpenAIModelProfile(openai_responses_tool_call_ids_are_response_scoped=True),
+        profile=OpenAIModelProfile(tool_call_ids_are_response_scoped=True),
     )
 
     await model.request(history, None, ModelRequestParameters())
@@ -5353,7 +5383,7 @@ async def test_response_scoped_tool_call_id_with_previous_response(allow_model_r
     model = OpenAIResponsesModel(
         'gpt-5.6-sol',
         provider=OpenAIProvider(openai_client=mock_client),
-        profile=OpenAIModelProfile(openai_responses_tool_call_ids_are_response_scoped=True),
+        profile=OpenAIModelProfile(tool_call_ids_are_response_scoped=True),
     )
 
     await model.request(
@@ -5812,6 +5842,45 @@ async def test_openai_previous_response_id_auto_continues_after_a_call_promoted_
     call_part = result.all_messages()[1].parts[0]
     assert isinstance(call_part, ToolCallPart)
     assert call_part.tool_kind == _LOOKUP_KIND.id
+    second_request = get_mock_responses_kwargs(mock_client)[1]
+    assert second_request['previous_response_id'] == 'resp_1'
+
+
+async def test_openai_previous_response_id_auto_continues_after_a_computer_call_is_labelled(
+    allow_model_requests: None,
+):
+    """A `computer` call is labelled with its model's grid and screenshot limits after the response is digested.
+
+    The labels are never sent, so the next request still continues from the response.
+
+    Not a VCR test: this adapter doesn't send `ComputerTool` yet, so no recording can produce a local `computer` call.
+    """
+    call = response_message([_function_call_item('fc_1', '{"actions": []}', name='computer')]).model_copy(
+        update={'id': 'resp_1'}
+    )
+    mock_client = MockOpenAIResponses.create_mock([call, _text_reply('resp_2', 'done')])
+    profile = OpenAIModelProfile(
+        computer_use_coordinate_grid=1000,
+        computer_use_screenshot_max_side=1568,
+        computer_use_screenshot_max_pixels=1_150_000,
+    )
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+    screen = BinaryImage(data=b'png', media_type='image/png')
+    agent = Agent(
+        model,
+        tools=[Tool(lambda actions: ['Done.', screen], name='computer', tool_kind=COMPUTER_KIND)],
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+    )
+
+    result = await agent.run('Click.')
+
+    call_part = result.all_messages()[1].parts[0]
+    assert isinstance(call_part, ComputerCallPart)
+    assert (call_part.coordinate_grid, call_part.screenshot_max_side, call_part.screenshot_max_pixels) == (
+        1000,
+        1568,
+        1_150_000,
+    )
     second_request = get_mock_responses_kwargs(mock_client)[1]
     assert second_request['previous_response_id'] == 'resp_1'
 
@@ -14570,7 +14639,7 @@ async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: 
                     input_tokens=78,
                     output_tokens=37,
                     output_reasoning_tokens=22,
-                    details={'is_byok': 0, 'reasoning_tokens': 22},
+                    details={'reasoning_tokens': 22},
                     cost=IsDecimal(gt=0),
                 ),
                 model_name='openai/gpt-oss-20b',

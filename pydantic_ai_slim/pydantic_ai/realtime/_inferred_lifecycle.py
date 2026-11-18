@@ -457,37 +457,47 @@ class InferredLifecycle:
             self._settle_deferred(event, output, before)
         if output:
             self._output(event, before, after)
-        elif isinstance(event, SessionUsage):
-            # Usage reported between responses doesn't start one: it is the next response's (see `_response_done`).
-            if event.response_scoped and self._calls_awaiting_usage:
-                # A tool-call frame's report: the calls' response is over, and the answer comes once every result
-                # is in.
-                ended = self._open
-                calls = self._open_calls
-                self._end(after, status='completed', finish_reason='tool_call')
-                self._ended_by_usage = ended
-                self._results_owed = set(calls)
-        elif isinstance(event, (InputTranscript, RealtimeInputTranscriptionErrorEvent)):
-            self._input_transcript(event, before)
-        elif isinstance(event, RealtimeResponseInterruptedEvent):
-            # The user (or a tool result) cut in: what was sent meanwhile follows what the model had said, and so
-            # does the speech that cut in, a turn of its own.
-            self._cut_off = self._open is not None
-            self._close_turn(after)
-            self._place_held(after)
-        elif isinstance(event, RealtimeInputSpeechStartEvent):
-            self._speech_started(event, before)
-        elif isinstance(event, RealtimeInputSpeechEndEvent):
-            self._speech_ended(event, after)
-        elif isinstance(event, ResponseDone):
-            self._response_done(event, before, after)
-        elif isinstance(event, InputRejected):
-            self._input_rejected(event, after)
-        elif isinstance(event, ToolCallCancelled):
-            self._calls_cancelled(event, before)
-        # Everything else (the end of a native part, a cancelled call, a typed turn the connection reports lost to a
-        # drop, which `connection_lost` lost already, ...) says nothing about the lifecycle.
+            return before, after
+        match event:
+            case SessionUsage():
+                self._calls_usage(event, after)
+            case InputTranscript() | RealtimeInputTranscriptionErrorEvent():
+                self._input_transcript(event, before)
+            case RealtimeResponseInterruptedEvent():
+                self._cut_in(after)
+            case RealtimeInputSpeechStartEvent():
+                self._speech_started(event, before)
+            case RealtimeInputSpeechEndEvent():
+                self._speech_ended(event, after)
+            case ResponseDone():
+                self._response_done(event, before, after)
+            case InputRejected():
+                self._input_rejected(event, after)
+            case ToolCallCancelled():
+                self._calls_cancelled(event, before)
+            case _:
+                # Everything else (the end of a native part, a cancelled call, a typed turn the connection reports lost
+                # to a drop, which `connection_lost` lost already, ...) says nothing about the lifecycle.
+                pass
         return before, after
+
+    def _calls_usage(self, event: SessionUsage, after: list[LifecycleEvent]) -> None:
+        # Usage reported between responses doesn't start one: it is the next response's (see `_response_done`).
+        if event.response_scoped and self._calls_awaiting_usage:
+            # A tool-call frame's report: the calls' response is over, and the answer comes once every result
+            # is in.
+            ended = self._open
+            calls = self._open_calls
+            self._end(after, status='completed', finish_reason='tool_call')
+            self._ended_by_usage = ended
+            self._results_owed = set(calls)
+
+    def _cut_in(self, after: list[LifecycleEvent]) -> None:
+        # The user (or a tool result) cut in: what was sent meanwhile follows what the model had said, and so
+        # does the speech that cut in, a turn of its own.
+        self._cut_off = self._open is not None
+        self._close_turn(after)
+        self._place_held(after)
 
     def _settle_deferred(self, event: RealtimeCodecEvent, output: bool, before: list[LifecycleEvent]) -> None:
         """Whether the filler the model said while stalling for a tool call is over, with this event."""
@@ -650,25 +660,35 @@ class InferredLifecycle:
         """The provider heard the user stop: the turn joins the conversation, as the provider commits it now."""
         transcribed = self._speaking and self._transcribed_while_speaking
         self._speaking = self._transcribed_while_speaking = False
+        turn = self._turn
         if event.item_id is not None and event.item_id in self._identified:
-            turn = self._turn
             if turn is None or turn.id != event.item_id or turn.joined:
                 return  # (a turn that joined already)
-        else:
-            turn = self._turn
-            if turn is None or turn.joined or (event.item_id is not None and turn.identified):
-                # A turn of its own: the one before it is over.
-                self._audio_since_reply = False
-                if event.item_id is None:
-                    if not transcribed:
-                        self._commit_unnamed(after)
-                    # (Otherwise the speech is the turn its words transcribed, which joined with the last of them.)
-                    return
-                if turn is not None:
-                    self._end_turn(turn, after)
-                turn = self._start_turn(event.item_id, after, transcribed=False)
+        elif turn is None or turn.joined or (event.item_id is not None and turn.identified):
+            # A turn of its own: the one before it is over.
+            turn = self._speech_turn(turn, event.item_id, after, transcribed=transcribed)
+            if turn is None:
+                return
         self._audio_since_reply = False
         self._join(turn, after)
+
+    def _speech_turn(
+        self, turn: _Turn | None, item_id: str | None, after: list[LifecycleEvent], *, transcribed: bool
+    ) -> _Turn | None:
+        """The new turn that speech after `turn` starts, when the speech names an item; `turn` is ended first.
+
+        `None` when the speech names no item: its audio is committed as an unnamed turn, unless its words were already
+        transcribed.
+        """
+        self._audio_since_reply = False
+        if item_id is None:
+            if not transcribed:
+                self._commit_unnamed(after)
+            # (Otherwise the speech is the turn its words transcribed, which joined with the last of them.)
+            return None
+        if turn is not None:
+            self._end_turn(turn, after)
+        return self._start_turn(item_id, after, transcribed=False)
 
     def _input_transcript(
         self, event: InputTranscript | RealtimeInputTranscriptionErrorEvent, before: list[LifecycleEvent]
@@ -685,27 +705,32 @@ class InferredLifecycle:
         if event.item_id is not None and event.item_id in self._identified:
             # More of a turn the provider named, which needn't be the one being said now.
             if turn is not None and turn.id == event.item_id and final:
-                if not turn.joined:
-                    self._join(turn, before)
-                self._turn = None
+                self._turn_transcribed(turn, before)
             return
+        turn = self._transcript_turn(turn, event.item_id, before)
+        if isinstance(event, InputTranscript) and event.text:
+            turn.words = True
+        if final:
+            self._turn_transcribed(turn, before)
+
+    def _transcript_turn(self, turn: _Turn | None, item_id: str | None, before: list[LifecycleEvent]) -> _Turn:
+        """The turn words that name `item_id` (or none) are of: `turn`, or a turn of their own after it."""
         if turn is not None and (
-            (event.item_id is not None and turn.id != event.item_id)
-            or (turn.replied and turn.words and self._audio_since_reply)
+            (item_id is not None and turn.id != item_id) or (turn.replied and turn.words and self._audio_since_reply)
         ):
             # The provider names a turn of its own, or the one before it said all it had: that one is over, and in
             # the conversation.
             self._end_turn(turn, before)
             turn = None
         if turn is None:
-            turn = self._start_turn(event.item_id, before)
-        if isinstance(event, InputTranscript) and event.text:
-            turn.words = True
-        if final:
-            if not turn.joined:
-                # All of it is transcribed: the provider has it.
-                self._join(turn, before)
-            self._turn = None
+            turn = self._start_turn(item_id, before)
+        return turn
+
+    def _turn_transcribed(self, turn: _Turn, before: list[LifecycleEvent]) -> None:
+        """All of `turn` is transcribed: the provider has it, and it is no longer the turn being said."""
+        if not turn.joined:
+            self._join(turn, before)
+        self._turn = None
 
     def _start_turn(self, item_id: str | None, before: list[LifecycleEvent], *, transcribed: bool = True) -> _Turn:
         self._turns += 1

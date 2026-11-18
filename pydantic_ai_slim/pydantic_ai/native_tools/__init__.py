@@ -5,7 +5,8 @@ from abc import ABC
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Any, ClassVar, Literal, Union
+from types import MemberDescriptorType
+from typing import Annotated, Any, Literal, Union
 
 import pydantic
 from pydantic_core import core_schema
@@ -16,9 +17,8 @@ from pydantic_ai._warnings import (
     provider_field_warnings_suppressed,
     suppress_provider_field_warnings,
 )
-from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ToolKind, UploadedFile
+from pydantic_ai.messages import UploadedFile
 
 __all__ = (
     'AbstractNativeTool',
@@ -176,13 +176,6 @@ class AbstractNativeTool(ABC):
     rather than silently substituting different behavior.
     """
 
-    executed_by: ClassVar[frozenset[ToolKind]] = frozenset()
-    """The kinds of the local tools that run this native tool's calls; empty when the provider runs them.
-
-    The native tool is only sent when the request has a non-deferred tool of each kind. Otherwise it is left out when
-    it is [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional], and the request is refused when it isn't.
-    """
-
     @property
     def unique_id(self) -> str:
         """A unique identifier for the native tool.
@@ -216,7 +209,16 @@ class AbstractNativeTool(ABC):
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        NATIVE_TOOL_TYPES[cls.kind] = cls
+        NATIVE_TOOL_TYPES[cls._declared_kind()] = cls
+
+    @classmethod
+    def _declared_kind(cls) -> str:
+        kind = cls.kind
+        if isinstance(kind, MemberDescriptorType):
+            # `@dataclass(slots=True)` recreates the class, re-running `__init_subclass__` with `kind` turned into a
+            # slot, so the kind is the field's default.
+            return cls.__dataclass_fields__['kind'].default
+        return kind
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -225,11 +227,27 @@ class AbstractNativeTool(ABC):
         if cls is not AbstractNativeTool:
             return core_schema.no_info_wrap_validator_function(_validate_without_provider_field_warnings, handler(cls))
 
-        tools = NATIVE_TOOL_TYPES.values()
+        # A snapshot: a type registering on another thread would change the registry mid-iteration.
+        tools = tuple(NATIVE_TOOL_TYPES.values())
         if len(tools) == 1:  # pragma: no cover
             tools_type = next(iter(tools))
         else:
-            tools_annotated = [Annotated[tool, pydantic.Tag(tool.kind)] for tool in tools]
+            # The discriminator is a function, so the union's JSON schema is a `oneOf` with no mapping, and each
+            # tool's `kind` is a plain string with a default. Pinning `kind` keeps `{'kind': 'code_execution'}` from
+            # matching several members; it's required because a document without one loads as no built-in tool.
+            # `kind=tool._declared_kind()` binds each member's own kind: a closure would see only the last one.
+            tools_annotated = [
+                Annotated[
+                    tool,
+                    pydantic.Tag(tool._declared_kind()),
+                    pydantic.GetPydanticSchema(
+                        get_pydantic_json_schema=lambda schema, handler, kind=tool._declared_kind(): {
+                            'allOf': [handler(schema), {'properties': {'kind': {'const': kind}}, 'required': ['kind']}]
+                        }
+                    ),
+                ]
+                for tool in tools
+            ]
             tools_type = Annotated[Union[tuple(tools_annotated)], pydantic.Discriminator(_tool_discriminator)]  # noqa: UP007
 
         return handler(tools_type)
@@ -887,27 +905,23 @@ class ComputerTool(AbstractNativeTool):
     """A provider's native computer use tool, whose calls the request's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool runs.
 
     Pydantic AI Harness's `ComputerUse` adds it with each step's display size. A model adapter sends it in place of
-    that tool, turns the provider's calls into [`ComputerArgs`][pydantic_ai.computer_use.ComputerArgs], and turns the
-    results back into the provider's format. See [Computer Tool](../native-tools.md#computer-tool).
+    that tool, turns the provider's calls into [`ComputerCallPart`][pydantic_ai.computer_use.ComputerCallPart] calls,
+    and turns the results back into the provider's format. It is only sent when the request has exactly one tool of
+    that kind that the model can call: not deferred, or revealed by history. With none, it is left out when it is
+    [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional], and the request is refused when it isn't. With
+    more than one, the request is refused. See [Computer Tool](../native-tools.md#computer-tool).
 
     Supported by:
 
-    * OpenAI Responses, on models whose profile sets `openai_supports_computer_tool`
-    * Anthropic, on models whose profile sets `anthropic_computer_tool_version`
+    * OpenAI Responses, on GPT-5.4 (not nano), GPT-5.5, GPT-5.6 and GPT-6 through OpenAI and Bedrock Mantle
+    * Anthropic, on Claude Haiku 4.5, Sonnet 4.6, Opus 4.5 and later through the Claude API and Amazon Bedrock
     """
 
     display_size: tuple[int, int]
-    """The `(width, height)` of the screenshots the model sees, which may be smaller than the display."""
+    """The `(width, height)` of the screenshots the model sees."""
 
     kind: str = 'computer'
     """The kind of tool."""
-
-    executed_by: ClassVar[frozenset[ToolKind]] = frozenset({COMPUTER_KIND})
-
-    def __post_init__(self) -> None:
-        width, height = self.display_size
-        if width <= 0 or height <= 0:
-            raise ValueError(f'`display_size` must be two positive numbers of pixels, not {self.display_size}')
 
 
 @dataclass(kw_only=True)

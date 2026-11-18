@@ -76,6 +76,7 @@ from pydantic_ai import (
     _utils,
     usage,
 )
+from pydantic_ai._file_input import KNOWN_IMAGE_MEDIA_TYPES, KNOWN_VIDEO_MEDIA_TYPES
 from pydantic_ai._gateway_cost import fill_gateway_header_cost, gateway_reported_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
@@ -533,6 +534,7 @@ LatestBedrockModelNames = Literal[
     'global.anthropic.claude-haiku-4-5-20251001-v1:0',
     # OpenAI
     'global.openai.gpt-6.1-sol',
+    'global.openai.gpt-6.1-terra',
     'global.openai.gpt-6-luna',
     'global.openai.gpt-6-astra',
     'global.openai.gpt-5.6-sol',
@@ -861,8 +863,10 @@ _CACHE_SETTINGS_KEYS = (
 class BedrockConverseModel(Model[BaseClient]):
     """A model that uses the Bedrock Converse API."""
 
-    # The Converse API has no audio content block.
+    # The Converse API has no audio content block, and names each image's and video's format, which only the media
+    # types core knows have.
     _unsupported_file_inputs = frozenset({'audio'})
+    _supported_media_types = {'image': KNOWN_IMAGE_MEDIA_TYPES, 'video': KNOWN_VIDEO_MEDIA_TYPES}
     # A tool's files that a tool result can't carry here go on the user channel, framed.
     _relocates_tool_files = True
 
@@ -973,6 +977,18 @@ class BedrockConverseModel(Model[BaseClient]):
         if self.profile.get('bedrock_thinking_variant') == 'anthropic':
             return 'anthropic'
         return super().canonical_system
+
+    @property
+    def _canonical_system_stamp(self) -> str | None:
+        """Also stamp `'bedrock'` on responses from models with the `openai_responses` thinking variant.
+
+        Their encrypted reasoning would otherwise be accepted by name by a Claude model on Bedrock, which can't
+        verify it. Other responses are stamped only when their canonical system differs from `system`, so one from a
+        model the name doesn't identify, which may be Claude, stays acceptable to Claude models by name.
+        """
+        if self.profile.get('bedrock_thinking_variant') == 'openai_responses':
+            return self.canonical_system
+        return super()._canonical_system_stamp
 
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
@@ -1104,6 +1120,11 @@ class BedrockConverseModel(Model[BaseClient]):
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
             prepared_settings = filtered or None
+        if prepared_settings and 'stop_sequences' in self._unsupported_settings():
+            # `super().prepare_request()` has already warned that it's ignored.
+            without_stop_sequences: ModelSettings = {**prepared_settings}
+            without_stop_sequences.pop('stop_sequences', None)
+            prepared_settings = without_stop_sequences or None
         # Explicit `bedrock_cache_*` settings take precedence over the unified `cache` setting.
         if (cache := model_request_parameters.cache) and not self._has_provider_cache_settings(prepared_settings or {}):
             prepared_settings = self._translate_cache(cast(BedrockModelSettings, prepared_settings or {}), cache)
@@ -1139,6 +1160,11 @@ class BedrockConverseModel(Model[BaseClient]):
                 'Bedrock does not support thinking and output tools at the same time. '
                 f'Use `output_type={suggested_output_type}(...)` instead.'
             )
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        if self.profile.get('bedrock_supports_stop_sequences', True):
+            return self.unsupported_settings
+        return self.unsupported_settings | {'stop_sequences'}
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         """Drop the sampling settings a flagged model rejects, warning like `AnthropicModel` does.
@@ -1973,7 +1999,7 @@ class BedrockConverseModel(Model[BaseClient]):
             content.append({'reasoningContent': reasoning_content})
         else:
             thinking_text, carry_in_user_turn = render_replayed_thinking(part.content, profile)
-            if not carry_in_user_turn:
+            if not carry_in_user_turn and part.content:
                 content.append({'text': thinking_text})
             elif part.content:
                 # A redacted block arrives with its reasoning stripped (`content=''`), and

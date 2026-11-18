@@ -33,17 +33,15 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
-from typing import Any, Literal, cast
+from typing import Literal
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ToolReturn, UserContent
+from pydantic_ai.messages import ToolReturn
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector as TextDetector
 from pydantic_ai_harness.guardrails._tool_guardrail import ToolResultInfo
 from pydantic_ai_harness.guardrails._tool_return_text import (
-    detect_content_list_result as _detect_content_list_result,
-    detect_return_value as _detect_return_value,
     detect_tool_return_content as _detect_tool_return_content,
-    is_checked_tool_return as _is_checked_tool_return,
+    is_text_tool_return as _is_text_tool_return,
 )
 
 _NEWLINE = r'(?:\r?\n|\\+n)'
@@ -76,7 +74,10 @@ DEFAULT_SECRET_PATTERNS: Mapping[str, str] = {
     'stripe_webhook_secret': r'\bwhsec_[A-Za-z0-9]{20,}',
     'google_api_key': r'\bAIza[A-Za-z0-9_-]{35}',
     'google_oauth_secret': r'\bGOCSPX-[A-Za-z0-9_-]{20,}',
-    'jwt': r'\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}',
+    # A `-` directly before `eyJ` ends the header segment, so a failed match does
+    # not rescan the rest of the token from each `eyJ` in it. A header segment
+    # that contains `-eyJ` is not matched.
+    'jwt': r'\beyJ(?:[A-Za-z0-9_]|-(?!eyJ)){10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}',
     # A PEM block, terminated or not. The newline after the BEGIN line is
     # required so prose naming both markers in one sentence is not swallowed as
     # a key.
@@ -429,10 +430,8 @@ def for_tool_result_text(
 ) -> Callable[[ToolResultInfo], GuardrailResult]:
     """Adapt a text detector to the result object `ToolGuardrail` supplies.
 
-    Plain string results are passed to `detector`. A list of content parts, such
-    as text beside an image, has its text checked and its images kept, whether
-    it is the result or a `ToolReturn`'s `return_value`. For a `ToolReturn` with a
-    string or list `return_value`, the detector also checks the text in its
+    Plain string results are passed to `detector`. For a `ToolReturn` with a
+    string `return_value`, the detector also checks the text in its
     model-directed `content`, both part by part and over each stretch of
     adjacent text parts joined, so a secret split across two of them is caught.
     The `ToolReturn` is rebuilt when either channel is redacted, retaining its
@@ -455,9 +454,7 @@ def for_tool_result_text(
                     'A text detector used with for_tool_result_text() must replace a tool result with text.'
                 )
             return verdict
-        if (verdict := _detect_content_list_result(detector, result)) is not None:
-            return verdict
-        if _is_checked_tool_return(result):
+        if _is_text_tool_return(result):
             return _tool_return_verdict(detector, result)
         if on_other == 'allow':
             return GuardrailResult.allow()
@@ -469,27 +466,30 @@ def for_tool_result_text(
     return guard
 
 
-def _tool_return_verdict(detector: TextDetector, result: ToolReturn[Any]) -> GuardrailResult:
-    """Run `detector` over a `ToolReturn`'s string or content-list `return_value` and its `content`.
+def _tool_return_verdict(detector: TextDetector, result: ToolReturn[str]) -> GuardrailResult:
+    """Run `detector` over a `ToolReturn`'s string `return_value` and its `content`.
 
     The `ToolReturn` is rebuilt when either changed.
     """
     # `ToolReturn`'s type parameter does not type `return_value`, so the guard cannot narrow it.
-    value = cast('str | list[UserContent]', result.return_value)
-    value_verdict, return_value = _detect_return_value(detector, value)
-    if value_verdict is not None:
-        return value_verdict
+    assert isinstance(result.return_value, str)
+    verdict = detector(result.return_value)
+    if verdict.action not in ('allow', 'replace'):
+        return verdict
+    return_value = verdict.replacement if verdict.action == 'replace' else result.return_value
+    if not isinstance(return_value, str):
+        raise UserError('A text detector used with for_tool_result_text() must replace a tool result with text.')
 
     content_verdict, content = _detect_tool_return_content(detector, result.content)
     if content_verdict is not None:
         return content_verdict
 
-    if return_value is None and content is None:
-        return GuardrailResult.allow()
-    return GuardrailResult.replace(
-        replace(
-            result,
-            return_value=result.return_value if return_value is None else return_value,
-            content=result.content if content is None else content,
+    if verdict.action == 'replace' or content is not None:
+        return GuardrailResult.replace(
+            replace(
+                result,
+                return_value=return_value,
+                content=result.content if content is None else content,
+            )
         )
-    )
+    return GuardrailResult.allow()

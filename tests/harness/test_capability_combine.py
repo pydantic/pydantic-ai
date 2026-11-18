@@ -58,10 +58,12 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import (
     Advisor,
     BackgroundTools,
+    BenchmarkInstructions,
     Coder,
     CompactOnRequest,
     ComputerUse,
     Planning,
+    PruneToolResults,
     RelevanceCompaction,
     Researcher,
     SlidingWindowCompaction,
@@ -76,9 +78,10 @@ from pydantic_ai_harness import (
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
+from pydantic_ai_harness.peers import InMemoryPeerNetwork
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from pydantic_ai_harness.subagents import AgentOverride
+from pydantic_ai_harness.sub_agents import AgentOverride
 from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
 
@@ -195,6 +198,10 @@ def _check_compact_on_request(merged: Any) -> None:
     assert merged.max_per_run == 2
 
 
+def _check_prune_tool_results(merged: PruneToolResults[None]) -> None:
+    assert merged.placeholder == '[second]'
+
+
 def _check_tool_output_limits(merged: Any) -> None:
     assert merged.strip_ansi is True
 
@@ -207,12 +214,16 @@ def _check_background_tools(merged: Any) -> None:
     assert callable(merged.tools)
 
 
+def _check_benchmark_instructions(merged: BenchmarkInstructions[None]) -> None:
+    assert merged.id == 'benchmark_instructions'
+
+
 def _check_sub_agents(merged: Any) -> None:
     # Rosters union: an agent either side could reach stays reachable through one delegate tool.
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
 
 
-def _check_computer_use(merged: ComputerUse[Any]) -> None:
+def _check_computer_use(merged: ComputerUse[None]) -> None:
     # One display: the later configuration wins, defaults included.
     assert (merged.settle_seconds, merged.native) == (1, True)
 
@@ -266,8 +277,8 @@ COMBINE_POLICY: dict[str, Policy] = {
     'ComputerUse': Combines(
         'an agent has one display: the later configuration wins',
         lambda: (
-            ComputerUse[Any](native=False),
-            ComputerUse[Any](settle_seconds=1),
+            ComputerUse[None](native=False),
+            ComputerUse[None](settle_seconds=1),
         ),
         _check_computer_use,
     ),
@@ -286,6 +297,11 @@ COMBINE_POLICY: dict[str, Policy] = {
             CompactOnRequest[Any](SlidingWindowCompaction[Any](max_messages=1), max_per_run=2),
         ),
         _check_compact_on_request,
+    ),
+    'PruneToolResults': Combines(
+        'one `prune_tool_result` tool per agent',
+        lambda: (PruneToolResults[None](placeholder='[first]'), PruneToolResults[None](placeholder='[second]')),
+        _check_prune_tool_results,
     ),
     'ToolOutputLimits': Combines(
         'one output-limit policy; `tool_filter`/`per_tool` are how one instance varies by tool',
@@ -318,6 +334,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda: (BackgroundTools[Any](tools=['first']), BackgroundTools[Any](tools=['second'])),
         _check_background_tools,
     ),
+    'BenchmarkInstructions': Combines(
+        'one fixed text; two would state it twice',
+        lambda: (BenchmarkInstructions[None](), BenchmarkInstructions[None]()),
+        _check_benchmark_instructions,
+    ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),
     'ServingModelRecorder': Anonymous('one per sub-agent run, added by the delegating toolset'),
@@ -337,6 +358,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     'DockerContainer': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'DockerSandbox': Anonymous('deprecated alias of `DockerContainer`, and combines the same way'),
     'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'KubernetesSandbox': Anonymous(
+        'two coexist; the first supplies the run workspace, as core picks the first supplier'
+    ),
     'RenderSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SpritesSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'DaytonaSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
@@ -361,6 +385,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'InputGuardrail': Anonymous('several guards is the design'),
     'OutputGuardrail': Anonymous('several guards is the design'),
     'PromptInjectionDefender': Anonymous('one per `tool_filter`; several scopes compose'),
+    'StreamGuardrail': Anonymous('several guards is the design'),
     'ToolGuardrail': Anonymous('several guards is the design'),
     'ToolCallJudge': Anonymous('one per risk question; stacked judges must all allow a call'),
     'ApprovalReviewer': Anonymous('one per risk question; each answers the approval requests the ones before it left'),
@@ -382,6 +407,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'WarnOnCacheBusts': Anonymous('a passive observer; several thresholds compose'),
     'TrajectoryJudge': Anonymous('each judge independently evaluates and steers the run'),
     'DetectLoops': Anonymous('only hooks; several detectors with their own thresholds and actions compose'),
+    'ToolBudgets': Anonymous('only a hook; each counts the calls it lets run, so stacked budgets all apply'),
     'RefineOutput': Anonymous('only a hook; each counts its own rounds and adds its instructions to a round'),
     'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
@@ -407,6 +433,13 @@ COMBINE_POLICY: dict[str, Policy] = {
     'AskUser': Narrows(
         'one `ask_user_question` tool per id, and two answerers is a conflict, not one configuration stated twice',
         lambda cls: (cls(answerer=_decline), cls(answerer=None)),
+    ),
+    'Peers': Narrows(
+        'one peer network per id; merging two networks would widen who receives messages',
+        lambda cls: (
+            cls(network=InMemoryPeerNetwork().join(handle='a')),
+            cls(network=InMemoryPeerNetwork().join(handle='b')),
+        ),
     ),
     'Shell': Collides(
         'its toolset registers `run_command` and friends under fixed names',
@@ -593,7 +626,7 @@ def test_the_capability_walk_hides_a_missing_extra_and_nothing_else(monkeypatch:
 
     # Any module the walk visits will do; the class it defines is re-exported elsewhere, so what
     # is under test is that the *import failure* is recorded as skipped rather than propagated.
-    a_capability_module = 'pydantic_ai_harness.subagents._capability'
+    a_capability_module = 'pydantic_ai_harness.sub_agents._capability'
 
     def wrapped_in_user_error() -> Exception:
         """What a capability raises when it builds something needing a missing extra at import.

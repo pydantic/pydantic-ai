@@ -124,5 +124,11 @@ class RecordingDurability(BaseDurabilityCapability[object]):
 
     def get_durable_operation_backend(self) -> _RecordingBackend:
         return _RecordingBackend(
-            self.name, self.calls, self.fail_operations, self.results, self.isolated, self.journal, self.failure
+            self.name,
+            self.calls,
+            self.fail_operations,
+            self.results,
+            self.isolated,
+            self.journal,
+            self.failure,
         )

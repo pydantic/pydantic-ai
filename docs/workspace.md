@@ -67,7 +67,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and run its tests.')
 ```
 
-The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B, Render, Sprites, Daytona and boxd, a local smolvm microVM, and self-hosted OpenSandbox servers. A
+The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B, Render, Sprites, Daytona, boxd and Kubernetes (agent-sandbox), a local smolvm microVM, and self-hosted OpenSandbox servers. A
 sandbox is created the first time the run uses it (a tool call, or `Coder` loading repo
 instructions at run start; durable runs create it when they start), and keeps running after the run until you or its
 provider stop it; see [Cleaning up](#cleaning-up). If the run never used it, calling a method on `result.workspace` after a run with `ref=None` may create a new sandbox that no message records. Check the ref before using the workspace after a run, and arrange to clean up any new sandbox you create.
@@ -233,9 +233,8 @@ working directories.
 
 A bad path raises the usual error, such as `FileNotFoundError` or `IsADirectoryError`. Catch it and
 raise `ModelRetry` so the model can try again; uncaught, it ends the run, except on Temporal, where it
-follows the activity retry policy (see [Durable execution](#durable-execution)). An environment the backend can't
-reach, such as a sandbox deleted or paused during a command, raises `WorkspaceUnavailableError` and ends the run,
-since retrying the call can't succeed.
+follows the activity retry policy (see [Durable execution](#durable-execution)). An environment that is gone,
+such as a sandbox deleted during a command, raises `WorkspaceUnavailableError` and ends the run.
 A command killed by a signal while its environment stays live returns its exit code instead.
 
 ## Read-only access
@@ -298,19 +297,25 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('./checkout
 
 Tools work as before: the agent reads, edits and runs commands in it. The setting is for capabilities
 that pass the workspace's own files to the model. The model treats the agent's instructions as the
-operator speaking, so a capability that would put text read from the workspace there asks
-[`ctx.workspace.authority_of(path)`][pydantic_ai.workspaces.Workspace.authority_of] for each file and sends its
-text with no more [authority][pydantic_ai.messages.Authority] than that: in the user's turn for `'user'`, as
-tool output for `'none'`. Authority doesn't limit what the agent can do; use
+operator speaking, so a capability that would put text read from the workspace there sends it with no more
+[authority][pydantic_ai.messages.Authority] than
+[`ctx.workspace.authority_of(path)`][pydantic_ai.workspaces.Workspace.authority_of] gives the file: in a
+[capability part](capabilities/custom.md#capability-parts) whose source is
+[`await WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace], which
+asks for it and which Pydantic AI renders in the application's voice for `'operator'`, in the user's turn for `'user'`
+and as framed data for `'none'`. Authority doesn't limit what the agent can do; use
 [tool approval](deferred-tools.md#human-in-the-loop-tool-approval) or a sandbox for that.
 
-No built-in capability reads authority yet, so setting it doesn't yet change what reaches the model.
-It's the setting your own capabilities check, and built-in capabilities that load workspace files will
-check it as they adopt it.
+What a tool returns, such as a file `read_file` read, is tool output whatever the workspace's authority.
+Built-in capabilities that load workspace files into instructions check `authority` as they adopt it.
 
 A capability checks authority when it reads a file, so a change applies from the next read. Text it
 already added to a conversation stays in that history, so start a new conversation after lowering a
 workspace's authority.
+
+Pydantic AI Harness's workspace capabilities, such as [`E2BSandbox`](harness/e2b-sandbox.md), [`DockerContainer`](harness/docker-container.md) and [`SSHWorkspace`](harness/ssh-workspace.md), take the
+same `authority` and `path_authority` arguments, for a sandbox, container or host filled with files the operator didn't write.
+Their paths are paths on the sandbox, container or host, so `~` isn't expanded.
 
 For a single run, wrap its workspace in `AuthorityWorkspace(workspace, authority=...)` and pass it as
 `workspace=`, as with `ReadOnlyWorkspace`. A wrapper only lowers the authority: with several, the
@@ -447,10 +452,14 @@ changes. Only where the run starts differs: a Temporal workflow class on a worke
 `PydanticAIPlugin`, a `@DBOS.workflow()` function after `DBOS.launch()`, or a Prefect `@flow`, as each
 [engine guide](durable_execution/overview.md) shows.
 
-Tools use `ctx.workspace` as they would in a plain run. On Temporal, a tool that must run
-its orchestration in the workflow (for example, to approve a file change before writing) can
-set `metadata={'temporal': False}` on its tool definition; workspace calls it makes still run as
-activities.
+Tools use `ctx.workspace` as they would in a plain run. A tool that must run its orchestration in
+the workflow (for example, to approve a file change before writing) can set
+[`durable=False`](durable_execution/overview.md#running-a-tool-outside-the-durable-unit) on its
+tool definition; workspace calls it makes still run as the engine's activities, steps or tasks.
+The engine-specific keys work too: `metadata={'temporal': False}` on Temporal,
+`metadata={'azure_durable_task': False}` on [Azure Durable Task](harness/azure-durable-task.md) and
+`metadata={'render_workflows': False}` on [Render Workflows](harness/render-workflows.md); the harness
+`FileSystem` write tools set all three.
 
 - Inside a workflow or flow, a run creates or attaches its environment when it starts, even if no
   tool uses it; retries, replays and recovery reattach to that same environment. Plain runs stay
@@ -478,7 +487,8 @@ activities.
   such as a sandbox image, do not apply: every unit rebuilds the workspace from the agent's. A previous `result.workspace` without a ref starts a fresh workspace. Put policy on the agent's capability instead, such as
   `LocalWorkspace(..., read_only=True)` or `LocalWorkspace(..., authority='none')`.
 - `workspace.backend` is not available in workflow code, which includes DBOS function tools and
-  Temporal tools with `metadata={'temporal': False}`. Reach the provider's own API from a tool that
+  tools that run outside their durable unit, with `durable=False` or an engine key such as
+  `metadata={'temporal': False}`. Reach the provider's own API from a tool that
   runs as an activity or task.
 - Inside a workflow or flow, the deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` wrappers
   refuse a workspace; use the durability capability instead.
@@ -502,6 +512,12 @@ DBOS and Prefect. Attach them next to the workspace and the durability capabilit
 `capabilities=[LocalWorkspace('.'), Coder(), TemporalDurability()]`. A later run that continues the
 conversation from `message_history`, in a new workflow or flow, works in the
 [same environment](#continuing-in-the-same-workspace).
+
+`FileSystem` and the `Shell` tool named `shell` also work under [Azure Durable Task](harness/azure-durable-task.md)
+and [Render Workflows](harness/render-workflows.md). There, the `FileSystem` write tools run in the
+orchestrator or parent task, so file-change requests reach listeners live. On Azure, events from the
+other tools are dropped, and listeners run in orchestrator code, so they re-run on every replay and
+can't do I/O; on Render, those events are carried back to the run.
 
 | Feature | Temporal | DBOS | Prefect |
 |---|---|---|---|
@@ -800,9 +816,30 @@ Local commands that exceed the 10 MiB combined output limit raise `WorkspaceOutp
 The local backend and command-backed shell fallback require POSIX. A filesystem-only backend
 works without shell support, but cannot run commands.
 
+On Windows, use [`WindowsWorkspace`][pydantic_ai.capabilities.WindowsWorkspace] in place of `LocalWorkspace`.
+It takes the same options and also isolates nothing. Commands run in PowerShell (`pwsh` when it is on `PATH`,
+else Windows PowerShell), and paths are Windows paths (`C:\Users\me\project`). Each command runs in a Windows Job
+Object, so a timeout or cancellation ends the processes it started too; a process it started in the background
+outlives a command that returns. Commands get only the variables Windows tools need to start (`PATH`, `PATHEXT`,
+`SYSTEMROOT`, `TEMP`, `USERPROFILE`, `APPDATA` and the like), plus `env`.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import WindowsWorkspace
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[WindowsWorkspace('.')])
+```
+
+A backend whose shell and paths are not POSIX says so with
+[`SupportsPlatform`][pydantic_ai.workspaces.SupportsPlatform]; tools read it as
+[`Workspace.platform`][pydantic_ai.workspaces.Workspace.platform], and use
+[`Workspace.paths`][pydantic_ai.workspaces.Workspace.paths] (`posixpath` or `ntpath`) for its paths.
+The [conformance suite](#checking-a-backend) checks a `'windows'` backend's commands in PowerShell.
+
 ## Limits
 
-- `LocalWorkspace` runs only on POSIX systems (macOS and Linux) and isolates nothing. Create its root
+- `LocalWorkspace` runs only on POSIX systems (macOS and Linux), and `WindowsWorkspace` only on Windows; neither
+  isolates anything. Create its root
   first: every operation needs it. While it exists, absolute paths outside it are allowed.
   `defer_loading=True` is rejected because the workspace must be selected before deferred
   capabilities load. Its ref normalizes `.` and `..` without resolving symlinks, so differently

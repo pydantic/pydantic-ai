@@ -78,7 +78,7 @@ For a narrower agent, use [`Shell`](https://pydantic.dev/docs/ai/harness/shell/)
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
 from pydantic_ai_harness.docker_container import DockerContainer
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[DockerContainer(image='python:3.13-slim'), Shell(), FileSystem()])
@@ -110,7 +110,7 @@ container = DockerContainer(
 )
 ```
 
-The mount is the only part of your machine's files the commands can change; the network is a separate setting. For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`, since Docker refuses a second `--network` next to `--network none`. `docker_args` can't change the container's name, its `ai.pydantic.workspace=true` label or its entrypoint. Set the directory commands start in with `working_dir`.
+The mount is the only part of your machine's files the commands can change; the network is a separate setting. For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`, since Docker refuses a second `--network` next to `--network none`. A container with `desktop`, created or attached, refuses the host's network (such as `--network host`) before its desktop starts: its X clients could reach an X server on the host and drive its screen. `docker_args` can't change the container's name, its `ai.pydantic.workspace=true` label or its entrypoint. Set the directory commands start in with `working_dir`.
 
 A new container gets `--pids-limit 2048`, so a runaway fork loop can't use up the process table of the machine (or VM) running Docker. A command that hits it fails with `Cannot fork` or `Resource temporarily unavailable`; pass your own `--pids-limit` in `docker_args` to change it, or `-1` to remove it.
 
@@ -201,17 +201,19 @@ async def main():
 
 Without an `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, a window manager, Firefox and a terminal), and later runs reuse it. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. An existing container whose screen is already running keeps its size. The agent also gets the container's shell and files, so `Coder` and `ComputerUse` can share it.
 
-A custom `image` gets [the programs the display needs](../computer_use/#what-the-display-needs) on first use, if it can. The window manager also needs `fluxbox` and `xprop`; start from `DESKTOP_DOCKERFILE`.
+That image is kept and reused, so it doesn't get security updates. For an image you control, build your own from `DESKTOP_DOCKERFILE` under a tag of your choice, and pass it as `image`. Rebuild it the same way to update it; `--no-cache` keeps Docker from reusing its cached layers. Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), build it before the first run, so the build doesn't count against a step's timeout.
+
+```bash
+python -c "from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE; print(DESKTOP_DOCKERFILE)" | docker build --pull --no-cache --tag my-desktop -
+```
+
+Then pass `DockerContainer(image='my-desktop', desktop=True)`.
+
+A custom `image` needs Xvfb, `xdotool`, `xwininfo` (Debian's `x11-utils`), `scrot` and `setsid`, which [the first use installs](https://pydantic.dev/docs/ai/harness/computer-use/#what-the-display-needs) if it can, plus `fluxbox` and `xprop` for a window manager, which it doesn't. Start from `DESKTOP_DOCKERFILE`.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
 There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](../computer_use/#watching-a-run).
-
-Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), build the image before the first run and pass it as `image`, so the build doesn't count against a step's timeout:
-
-```bash
-python -c "from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE; print(DESKTOP_DOCKERFILE)" | docker build --tag my-desktop -
-```
 
 ## Clean up
 
@@ -271,6 +273,8 @@ Specs saved before the rename use the `DockerSandbox` block name. To keep loadin
 | `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |
 | `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`; a `--pids-limit` here replaces the default of 2048. Default: `()`. |
 | `executable` | The container CLI to run, such as `'podman'`, looked up on `PATH` when the capability is created. Default: `'docker'`. |
+| `authority` | The [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority) of the container's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are container paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 | `desktop` | Give the container a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. Without an `image`, builds the desktop image on first use. Default: `False`. |
 
 ## Platforms

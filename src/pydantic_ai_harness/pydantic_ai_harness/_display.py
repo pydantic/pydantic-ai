@@ -10,22 +10,24 @@ from typing import Protocol, TypeVar
 import anyio
 
 from pydantic_ai.computer_use import Point, Region
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError, WorkspaceUnavailableError
 
 from ._png import PNG_SIGNATURE
-from .computer_use import DisplayAction, UnsupportedActionError
-
-__all__ = ('DisplayDriver', 'LazyDisplay')
+from .computer_use import Display, DisplayAction, SupportsCursorPosition, SupportsZoom, UnsupportedActionError
 
 T = TypeVar('T')
-
-DEFAULT_DESKTOP_SIZE = (1280, 800)
-"""The display size `desktop=True` starts."""
 
 
 def desktop_size(desktop: bool | tuple[int, int]) -> tuple[int, int] | None:
     """The display size `desktop=` asks for, or `None` for no display."""
-    return DEFAULT_DESKTOP_SIZE if desktop is True else desktop or None
+    if desktop is True:
+        return (1280, 800)
+    if not desktop:
+        return None
+    if len(desktop) != 2 or min(desktop) < 1:
+        raise UserError(f'`desktop` must be a `(width, height)` of at least 1 pixel each, got {desktop!r}.')
+    return desktop
 
 
 def png_from_base64(encoded: str | None, source: str) -> bytes:
@@ -39,21 +41,16 @@ def png_from_base64(encoded: str | None, source: str) -> bytes:
     return data
 
 
-class DisplayDriver(Protocol):
+class DisplayDriver(Display, SupportsZoom, SupportsCursorPosition, Protocol):
     """Drives one running display, such as an X server through commands or a provider's API."""
-
-    async def display_size(self) -> tuple[int, int]: ...
-    async def screenshot(self) -> bytes: ...
-    async def act(self, action: DisplayAction) -> None: ...
-    async def zoom(self, region: Region) -> bytes: ...
-    async def cursor_position(self) -> Point: ...
 
 
 class LazyDisplay:
     """The display a backend hands out for its lifetime: started on first use, and again after a failure.
 
     Building it does nothing. `start` brings the display up and leaves a running one alone; `driver` then drives it.
-    `scope` wraps every call, start included, such as to map a provider's errors.
+    `scope` wraps every call, start included, such as to map a provider's errors. The backend also starts it before
+    each shell command, so a program the command opens shows on the screen.
 
     A call that only looks, such as a screenshot, is retried once after a failure, which restarts a lost display. An
     action isn't retried, so nothing is done twice.
@@ -80,19 +77,14 @@ class LazyDisplay:
         self._running = False
 
     async def start(self) -> None:
-        """Start the display now unless it runs, such as before handing out a link to watch it.
-
-        It checks even a display known to run, since the environment may have restarted.
-        """
+        """Start the display unless it is known to run."""
         async with self._scope():
-            await self._start_unless_running(even_if_running=True)
+            await self._start_unless_running()
 
-    async def _start_unless_running(self, *, even_if_running: bool = False) -> None:
+    async def _start_unless_running(self) -> None:
         # One start at a time: two would both find no display and start two.
         async with self._lock:
-            if even_if_running or not self._running:
-                # Known to run only once a start succeeds: one that fails leaves the next call to start it.
-                self._running = False
+            if not self._running:
                 await self._start()
                 self._running = True
 

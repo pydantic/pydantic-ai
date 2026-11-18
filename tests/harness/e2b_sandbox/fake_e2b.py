@@ -33,7 +33,7 @@ from typing import IO, TYPE_CHECKING, Any, Literal, Protocol
 import anyio
 import anyio.lowlevel
 import e2b
-from e2b import CommandExitException, CommandResult, FileType, WriteInfo
+from e2b import CommandExitException, CommandResult, FileType, SandboxNetworkOpts, WriteInfo
 from e2b.exceptions import (
     AuthenticationException,
     FileNotFoundException,
@@ -84,6 +84,7 @@ class FakeCreateCall:
     secure: bool
     allow_internet_access: bool
     lifecycle: dict[str, str] | None
+    network: SandboxNetworkOpts | None = None
 
 
 @dataclass(frozen=True)
@@ -640,9 +641,6 @@ class FakeSandbox:
             self.commands = _HostCommands(self, control)
         self.killed = False
 
-    def get_host(self, port: int) -> str:
-        return f'{port}-{self.sandbox_id}.e2b.example'
-
     async def kill(self) -> bool:
         # Real `kill` is a DELETE on the control plane that returns once E2B has removed the
         # sandbox, and `False` when it was already gone (a 404). From then on the SDK's own
@@ -690,10 +688,11 @@ class FakeAsyncSandboxFactory:
         secure: bool = True,
         allow_internet_access: bool = True,
         lifecycle: dict[str, str] | None = None,
+        network: SandboxNetworkOpts | None = None,
     ) -> FakeSandbox:
         self._control.clients.append(self._client)
         self._control.create_calls.append(
-            FakeCreateCall(template, timeout, envs, secure, allow_internet_access, lifecycle)
+            FakeCreateCall(template, timeout, envs, secure, allow_internet_access, lifecycle, network)
         )
         if self._control.create_hangs:
             await anyio.sleep_forever()
@@ -712,14 +711,6 @@ class FakeAsyncSandboxFactory:
             raise self._control.kill_error
         existing = next((sandbox for sandbox in self._control.sandboxes if sandbox.sandbox_id == id), None)
         return await existing.kill() if existing is not None else False
-
-    async def get_info(self, id: str) -> types.SimpleNamespace:
-        if self._control.get_info_error is not None:
-            raise self._control.get_info_error
-        existing = next((sandbox for sandbox in self._control.sandboxes if sandbox.sandbox_id == id), None)
-        if existing is None or existing.killed:
-            raise SandboxNotFoundException(f'Sandbox {id} not found')
-        return types.SimpleNamespace(state='paused' if self._control.sandbox_paused else 'running')
 
     async def connect(self, id: str, timeout: int | None = None) -> FakeSandbox:
         self._control.connect_calls.append((id, timeout))
@@ -761,9 +752,6 @@ class FakeE2B:
     read_error: Exception | None = None
     is_running_error: Exception | None = None
     sandbox_is_running: bool = True
-    # What `AsyncSandbox.get_info` reports for a sandbox that isn't killed, unless it raises `get_info_error`.
-    sandbox_paused: bool = False
-    get_info_error: Exception | None = None
     # When set, sandboxes run commands and file operations on the host under this directory.
     host_root: Path | None = None
 

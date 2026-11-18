@@ -163,13 +163,13 @@ capability to reduce oversized tool returns agent-wide:
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import StackOne, ToolOutputLimits
-from pydantic_ai_harness.tool_output_limits import LocalFileStore
+from pydantic_ai_harness.tool_output_limits import LocalFileOverflowStore
 
 agent = Agent(
     '{{ openai:medium }}',
     capabilities=[
         StackOne(account_id='your-linked-account-id'),
-        ToolOutputLimits(store=LocalFileStore()),
+        ToolOutputLimits(store=LocalFileOverflowStore()),
     ],
 )
 ```
