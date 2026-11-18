@@ -1,6 +1,7 @@
 """`/permissions`: the `run.permissions` mode on every run, its approval question, and the denial of last resort."""
 
 import io
+from collections.abc import Sequence
 from pathlib import Path
 from typing import get_args
 
@@ -8,8 +9,8 @@ import anyio
 import pytest
 from rich.console import Console
 
-from pydantic_ai import Agent, DeferredToolRequests, RunContext, Tool
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai import Agent, DeferredToolRequests, RunContext, Tool, ToolDenied
+from pydantic_ai.capabilities import AgentCapability, LocalWorkspace
 from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo
@@ -17,7 +18,9 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserResponse
+from pydantic_ai_harness.deny_unanswered import DEFAULT_MESSAGE, DenyUnanswered
 from pydantic_ai_harness.permissions import (
+    Approver,
     PermissionDecision,
     PermissionMode as HarnessPermissionMode,
     PermissionRequest,
@@ -32,6 +35,7 @@ from pydantic_clai2.config import PermissionMode, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, bare_screen
+from pydantic_clai2.runtime.capability_guard import PluginGuard
 from pydantic_clai2.runtime.permissions import (
     APPROVE,
     APPROVE_SESSION,
@@ -78,12 +82,24 @@ def removing_agent(folder: Path, ran: list[str]) -> Agent[None, str]:
     return Agent(streamed(respond), deps_type=type(None), tools=[tool])
 
 
-def runtime(tmp_path: Path, agent: Agent[None, str]) -> tuple[SessionRuntime[None, str], io.StringIO]:
+def recording_approver(asked: list[PermissionRequest]) -> Approver:
+    """An approver that approves every call `Permissions` holds, recording each request in `asked`."""
+
+    async def approve(held: PermissionRequest) -> PermissionDecision:
+        asked.append(held)
+        return PermissionDecision(approved=True)
+
+    return approve
+
+
+def runtime(
+    tmp_path: Path, agent: Agent[None, str], plugins: Sequence[AgentCapability[None]] = ()
+) -> tuple[SessionRuntime[None, str], io.StringIO]:
     output = io.StringIO()
     shell = create_shell(
         agent,
         deps=None,
-        plugins=(),
+        plugins=plugins,
         usage_limits=None,
         console=Console(file=output, force_terminal=False, width=200),
         settings=Settings(model=None, code_mode=False),
@@ -109,7 +125,47 @@ async def test_a_session_no_one_can_be_asked_in_denies_held_calls(tmp_path: Path
     assert await shell.run() == 'exit'
     assert ran == ([COMMAND] if runs else [])
     if not runs:
-        assert f'The user denied this command, so it did not run. {UNANSWERED}' in output.getvalue()
+        assert f'Tool said: {UNANSWERED}' in output.getvalue()
+
+
+@pytest.mark.parametrize(
+    ('attended', 'guarded'),
+    [
+        pytest.param(False, False, id='unattended'),
+        pytest.param(True, False, id='attended'),
+        pytest.param(True, True, id='attended-through-plugin-guard'),
+    ],
+)
+async def test_only_a_session_no_one_can_be_asked_in_denies_other_approvals(
+    tmp_path: Path, attended: bool, guarded: bool
+) -> None:
+    """A call needing approval that `Permissions` didn't hold is denied only when nobody can be asked.
+
+    With an approval handler bound, someone is there, so `DenyUnanswered` is not bound and the call isn't denied.
+    That holds for a handler inside the `PluginGuard` a settings-built plugin capability gets too.
+    """
+    ran: list[str] = []
+    asked: list[PermissionRequest] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        returned = [part for part in messages[-1].parts if isinstance(part, ToolReturnPart)]
+        if returned:
+            return ModelResponse(parts=[TextPart(f'Tool said: {returned[0].content}')])
+        return ModelResponse(parts=[ToolCallPart('publish', {})])
+
+    publish = Tool(lambda: ran.append('publish') or 'published', name='publish', requires_approval=True)
+    agent = Agent(streamed(respond), deps_type=type(None), tools=[publish])
+    handler: AgentCapability[None] = approval_handler(recording_approver(asked))
+    if guarded:
+        handler = PluginGuard[None](handler, plugin='approvals')
+    shell, output = runtime(tmp_path, agent, plugins=(handler,) if attended else ())
+    shell.send_input('publish it')
+    shell.send_input('/exit')
+    assert await shell.run() == 'exit'
+    assert ran == [] and asked == []
+    assert (f'Tool said: {DEFAULT_MESSAGE}' in output.getvalue()) is not attended
+    denied = any(isinstance(capability, DenyUnanswered) for capability in shell.run_plugins())
+    assert denied is not attended
 
 
 async def test_permissions_command_shows_and_sets_the_mode(tmp_path: Path) -> None:
@@ -272,13 +328,10 @@ def test_the_status_names_the_mode(saved: dict[str, object], shown: str | None) 
     assert WebPlugin.from_host(host).service.default().status().permissions == shown
 
 
-async def test_approval_handler_answers_held_calls_and_leaves_others(tmp_path: Path) -> None:
+async def test_approval_handler_answers_held_calls_and_backstop_denies_the_rest(tmp_path: Path) -> None:
     ran: list[str] = []
     asked: list[PermissionRequest] = []
-
-    async def approve(held: PermissionRequest) -> PermissionDecision:
-        asked.append(held)
-        return PermissionDecision(approved=True)
+    approve = recording_approver(asked)
 
     agent = removing_agent(tmp_path, ran)
     result = await agent.run('go', capabilities=[*session_permissions(lambda: 'auto'), approval_handler(approve)])
@@ -287,7 +340,11 @@ async def test_approval_handler_answers_held_calls_and_leaves_others(tmp_path: P
 
     other = DeferredToolRequests(approvals=[ToolCallPart('other', {}, tool_call_id='x')])
     [_, unanswered, _] = session_permissions(lambda: 'auto')
-    assert await unanswered.handle_deferred_tool_calls(None, requests=other) is None  # pyright: ignore[reportArgumentType]
+    results = await unanswered.handle_deferred_tool_calls(None, requests=other)  # pyright: ignore[reportArgumentType]
+    assert results is not None and list(results.approvals) == ['x']
+    denial = results.approvals['x']
+    assert isinstance(denial, ToolDenied) and denial.message == DEFAULT_MESSAGE
+    assert await unanswered.handle_deferred_tool_calls(None, requests=DeferredToolRequests()) is None  # pyright: ignore[reportArgumentType]
 
 
 async def test_code_mode_holds_a_shell_call_from_run_code(tmp_path: Path) -> None:

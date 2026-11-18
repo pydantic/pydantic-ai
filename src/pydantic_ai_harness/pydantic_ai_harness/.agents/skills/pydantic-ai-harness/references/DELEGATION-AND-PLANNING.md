@@ -64,8 +64,8 @@ Key parameters:
 - `guidance=None`: `None` = built-in guidance, `''` = none, a string replaces it.
 - `store=None`: `None` = fresh in-memory plan per run. Pass a `PlanStore` to persist.
 - `store_resolver=None`: `Callable[[RunContext], PlanStore]`, wins over `store` (per-tenant stores).
-- `enable_subtasks=False`, `inject=True` (show the model the plan). `cache_ttl` is deprecated and ignored
-  (an explicit `'5m'`/`'1h'` warns); turn on caching on the model (such as `anthropic_cache_messages`).
+- `enable_subtasks=False`, `inject=True` (show the model the plan). Turn on caching on the model (such
+  as `anthropic_cache_messages`).
 - `tools=None`: allowlist, e.g. `tools=['write_plan']`. Naming a tool the mode does not register
   raises `ValueError`; so does an unknown key in `descriptions`.
 
@@ -97,7 +97,7 @@ Gotchas:
 - `parent_id`, `depends_on`, and `blocked` are rejected by `write_plan` unless `enable_subtasks=True`.
 - Events: `PlanCreatedEvent`, `PlanUpdatedEvent`, `PlanStatusChangedEvent`, `PlanCompletedEvent`,
   `PlanDeletedEvent` from `pydantic_ai_harness.planning`, via `@agent.on_event(...)`. Only mutations
-  made through the tools emit them; direct `PlanStore` calls do not. Store `event_emitter=` is deprecated.
+  made through the tools emit them; direct `PlanStore` calls do not.
 - The planner's "do not implement" discipline comes from its instructions and toolsets, not from `Planning`.
 
 ## SubAgents
@@ -140,7 +140,7 @@ max_calls=None, on_failure=None, contain_errors=None, on_model_error=None)` sets
   Pass `workspace=LocalWorkspaceBackend('/app')` to read definitions from elsewhere.
 - `forward_usage=True`: children share the parent's usage, so a parent `usage_limits` bounds the tree.
   A `SubAgent.usage_limits` gives that child isolated accounting (its tokens stop aggregating).
-- `inherit_tools=False`: `True` is deprecated. Bind tools directly to explicit child agents, use
+- The parent's own tools are not passed on. Bind tools directly to explicit child agents, use
   `include_self=True` for a fresh run of the agent with all capabilities and tools bound to it, or
   use `tool_resolver` to give disk agents tools.
 - `shared_capabilities=()`: capabilities applied to every child run.
@@ -234,7 +234,7 @@ orchestrator = Agent(
 - Non-`self` delegations run in an activity on Temporal and inline in the workflow on DBOS. To keep a delegate's
   own durability, add `SetToolMetadata(tools=['delegate_task'], temporal={'child_workflow': {}})` (or `dbos=...`):
   every delegate must be durable on that engine, and on Temporal registered with the worker (`AgentPlugin`).
-  Combined with `include_self`, `inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`,
+  Combined with `include_self`, `models`, `shared_capabilities`, `event_stream_handler`,
   `dynamic_agents`, `task_control`, or `max_calls`, a delegation raises `UserError`.
   The delegate's usage isn't reliably counted in the parent's usage or bounded by its limits.
   Depth isn't carried across, so nested opt-ins reset `max_depth` per child workflow.
@@ -267,22 +267,26 @@ reports = DelegationReports(tasks, conversation_id='conversation-1')
 
 ## Peers
 
-Use `Peers` for independently run sessions, not delegated child runs. The host provides a
-`PeerNetwork` for discovery and delivery, and an optional `PeerInbox` for receiving messages.
-`InMemoryPeerNetwork` and `LocalPeerInbox` connect sessions within one application. Bind the same inbox to
-`network.join(handle=..., inbox=inbox)` and `Peers(network=view, inbox=inbox)` on the recipient.
+Use `Peers` for independently run sessions, not delegated child runs. `InMemoryPeerNetwork` connects
+sessions within one application: `Peers(network)` joins it when the agent is built, under the agent's
+`name` (or `handle=`), receiving in a new `LocalPeerInbox` (or `inbox=`). An agent with no `name` raises
+`UserError`, and handles are unique within a network.
 
 ```python
 from pydantic_ai import Agent
 
 from pydantic_ai_harness import Peers
-from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox
+from pydantic_ai_harness.peers import InMemoryPeerNetwork
 
 network = InMemoryPeerNetwork()
-inbox = LocalPeerInbox()
-view = network.join(handle='reviewer', inbox=inbox)
-agent = Agent('test', capabilities=[Peers(network=view, inbox=inbox)])
+reviewer = Agent('test', name='reviewer', capabilities=[Peers(network)])
+author = Agent('test', name='author', capabilities=[Peers(network)])
 ```
+
+A host network instead gives each peer a `PeerConnection` for discovery and delivery, plus an optional
+`PeerInbox` its transport delivers to: `Peers(connection, inbox=inbox)`. Call
+`InMemoryPeerNetwork.join(handle=..., inbox=..., workspace=..., title=...)` yourself to set the workspace
+or title `list_peers` shows; pass the returned connection and the same inbox to `Peers`.
 
 - Tools: `list_peers(query='')` lists other sessions, filtering handle, title, workspace,
   or branch; `send_message(to, text, reply_to=None)` addresses a listed handle or ID.
@@ -292,13 +296,13 @@ agent = Agent('test', capabilities=[Peers(network=view, inbox=inbox)])
 - A peer with no active run holds the message; `InMemoryPeerNetwork` never starts its run, and a
   host network's own policy decides whether a message wakes it. A running peer reads the message
   at its next model request. Sending never waits for a reply.
-- `PeerNetwork.send` takes a `key` (`Peers` passes `run_id:run_step:tool_call_id`); a retried send
+- `PeerConnection.send` takes a `key` (`Peers` passes `run_id:run_step:tool_call_id`); a retried send
   with the same key must not deliver twice.
 - For host storage, implement `PeerInbox`: `take(run_id)` before and after each model request,
   `acknowledge(message_id)` once in history, `release(run_id)` at run end.
 - Use `LocalPeerInbox(path=...)` for pending messages across restarts. The host owns transport,
   identity, authentication, and any cross-process coordination; the in-memory network
-  does not supply those. A receiver without `Peers(inbox=...)` does not read an inbox.
+  does not supply those. A connection without `Peers(connection, inbox=...)` does not read an inbox.
 - Peer text is untrusted data, not user approval: it arrives as a `PeerMessagePart` with no
   authority. Find it by that type, or use `read_peer_message(part)` to read the typed message,
   not by parsing displayed text. A host delivering peer
@@ -402,9 +406,7 @@ typed = Agent('test', capabilities=[Advisor('openai:gpt-5.6-sol', output_type=De
 caching=None, forward_history=False, id=None, defer_loading=False, description=None)`. By
 default it uses the provider tool where it applies (history gets provider-native parts) and the
 `advisor` function tool otherwise (history gets a `ToolCallPart` and `ToolReturnPart`). `local=False`
-requires the provider tool; `native=False` always uses the function tool. `mode=` is deprecated.
-
-<!-- TODO(harness 1.0, #12997): remove the `mode=` deprecation sentence above. -->
+requires the provider tool; `native=False` always uses the function tool.
 
 The executor decides when to consult. To require a consultation before a verdict, use
 `native=False` and check this run's history in an output validator:

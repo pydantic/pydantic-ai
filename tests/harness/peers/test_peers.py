@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gc
 import re
+import weakref
 from collections.abc import AsyncIterator, Sequence
 from copy import deepcopy
 from dataclasses import replace
@@ -1058,6 +1060,90 @@ class TestPeers:
         inbox.accepting = False
         assert await inbox.pending() == [first]
         assert (await inbox.receive(message(id='another'))).status == 'refused'
+
+    async def test_network_joins_each_agent_under_its_name(self) -> None:
+        network = InMemoryPeerNetwork()
+        peers = Peers(network)
+        alice = Agent(
+            sequence_model([('send_message', {'to': 'bob', 'text': 'migration done'})]),
+            name='alice',
+            capabilities=[peers],
+        )
+        bob = Agent(text_model(), name='bob', capabilities=[peers])
+        sent = await alice.run('tell bob')
+        assert tool_results(sent.all_messages()) == snapshot(
+            ['bob has no active run: message queued (1 pending). It reads it at its next model request. id <id>']
+        )
+        received = await bob.run('read')
+        assert [(part.sender, part.content) for part in peer_parts(received.all_messages())] == [
+            ('alice', 'migration done')
+        ]
+
+    async def test_network_join_takes_a_handle_and_inbox(self) -> None:
+        network = InMemoryPeerNetwork()
+        Agent(text_model(), capabilities=[Peers(network, handle='api', inbox=LocalPeerInbox(accepting=False))])
+        sender = network.join(handle='client')
+        (api,) = await sender.peers()
+        assert (api.handle, api.accepts_messages) == ('api', False)
+
+    async def test_binding_the_same_agent_again_joins_once(self) -> None:
+        network = InMemoryPeerNetwork()
+        peers = Peers(network)
+
+        def per_run(ctx: RunContext[object]) -> Peers[object]:
+            return Peers(network)
+
+        bob = Agent(text_model(), name='bob')
+        carol = Agent(text_model(), name='carol', capabilities=[per_run])
+        for prompt in ('first', 'second'):
+            await bob.run(prompt, capabilities=[peers])
+            await bob.run(prompt, capabilities=[Peers(network)])
+            await carol.run(prompt)
+        probe = network.join(handle='probe')
+        peers_by_handle = {peer.handle: peer for peer in await probe.peers()}
+        assert sorted(peers_by_handle) == ['bob', 'carol']
+        await probe.send(peers_by_handle['carol'].id, 'hello', key='hello')
+        received = await carol.run('read')
+        assert [(part.sender, part.content) for part in peer_parts(received.all_messages())] == [('probe', 'hello')]
+
+    async def test_joining_does_not_keep_the_agent_alive(self) -> None:
+        network = InMemoryPeerNetwork()
+        agent = weakref.ref(Agent(text_model(), name='transient', capabilities=[Peers(network)]))
+        gc.collect()
+        assert agent() is None
+        assert [peer.handle for peer in await network.join(handle='probe').peers()] == ['transient']
+
+    def test_network_join_needs_a_unique_handle(self) -> None:
+        network = InMemoryPeerNetwork()
+        with pytest.raises(UserError, match=re.escape('give the agent a `name`, or pass `Peers(network, handle=...)`')):
+            Agent(text_model(), capabilities=[Peers(network)])
+        Agent(text_model(), name='bob', capabilities=[Peers(network)])
+        with pytest.raises(UserError, match="Peer handle 'bob' is already in use"):
+            Agent(text_model(), name='bob', capabilities=[Peers(network)])
+
+    def test_handle_and_inbox_must_fit_the_network(self) -> None:
+        class ProtocolOnlyInbox:
+            async def take(self, run_id: str) -> Sequence[PeerMessage]:
+                raise NotImplementedError
+
+            async def acknowledge(self, message_id: str) -> None:
+                raise NotImplementedError
+
+            async def release(self, run_id: str) -> None:
+                raise NotImplementedError
+
+        connection = InMemoryPeerNetwork().join(handle='a')
+        with pytest.raises(UserError, match=re.escape('a host connection has its own')):
+            Agent(text_model(), capabilities=[Peers(connection, handle='b')])  # pyright: ignore[reportArgumentType]
+        with pytest.raises(UserError, match=re.escape('delivers to a `LocalPeerInbox`')):
+            Agent(text_model(), name='b', capabilities=[Peers(InMemoryPeerNetwork(), inbox=ProtocolOnlyInbox())])  # pyright: ignore[reportCallIssue,reportArgumentType]
+
+    async def test_rejoining_with_another_inbox_is_rejected(self) -> None:
+        network = InMemoryPeerNetwork()
+        agent = Agent(text_model(), name='bob')
+        await agent.run('first', capabilities=[Peers(network, inbox=LocalPeerInbox())])
+        with pytest.raises(UserError, match="The agent already joined as 'bob' with another inbox"):
+            await agent.run('second', capabilities=[Peers(network, inbox=LocalPeerInbox())])
 
     async def test_join_without_an_inbox_is_send_only(self) -> None:
         network = InMemoryPeerNetwork()

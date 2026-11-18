@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from contextvars import ContextVar
 from typing import Literal, TypeAlias
 
+from .._file_input import KNOWN_IMAGE_MEDIA_TYPES
 from ..native_tools import (
     AdvisorTool,
     CodeExecutionTool,
@@ -307,6 +308,18 @@ class AnthropicModelProfile(ModelProfile, total=False):
     inference region. Set it in the provider's profile or with `profile=` for a client that forwards the parameter to
     the Claude API. It doesn't depend on the model: models that don't support data residency reject the parameter
     with a 400.
+    """
+
+    anthropic_supports_message_threads: bool
+    """Whether the endpoint serves Anthropic
+    [message threads](https://platform.claude.com/docs/en/build-with-claude/message-threads). Default: `False`.
+
+    When False,
+    [`anthropic_previous_message_id`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_previous_message_id]
+    is ignored with a `UserWarning`. When the provider's profile doesn't set it, `AnthropicModel` turns it on for the
+    `AsyncAnthropic` client, which also serves Claude Platform on AWS and Claude on Google Cloud (Anthropic managed),
+    and for the Foundry client, and leaves it off for the Bedrock and Vertex AI clients, where Anthropic doesn't offer
+    threads. Set it in the provider's profile or with `profile=` for a client that forwards threads to the Claude API.
     """
 
 
@@ -640,6 +653,9 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         supported_native_tools = supported_native_tools | {AdvisorTool}
 
     profile = AnthropicModelProfile(
+        # The Anthropic API answers HEIC, AVIF, BMP and TIFF images with a 400, and so does Claude through
+        # OpenRouter (checked live with `claude-haiku-5-5` and `anthropic/claude-haiku-4.5`, 2026-11-04).
+        supported_image_media_types=KNOWN_IMAGE_MEDIA_TYPES,
         # Read by `OpenAIChatModel`, not by `AnthropicModel`: litellm, vercel, heroku, snowflake and
         # openrouter serve Claude through that adapter and map it onto this profile, so these tags are
         # how it splits thinking out of a Claude response. Both adapters only render them for the

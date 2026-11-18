@@ -17,15 +17,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
-import warnings
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 import httpx2
 
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.media._store import (
     _EMPTY_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     KeyStrategy,
@@ -36,9 +33,6 @@ from pydantic_ai_harness.media._store import (
     parse_media_uri,
     resolve_public_url,
 )
-
-if TYPE_CHECKING:
-    import httpx
 
 _ALGORITHM = 'AWS4-HMAC-SHA256'
 _SERVICE = 's3'
@@ -212,16 +206,13 @@ class S3MediaStore:
         access_key_id: str,
         secret_access_key: str,
         key_prefix: str = '',
-        client: httpx2.AsyncClient | httpx.AsyncClient | None = None,
+        client: httpx2.AsyncClient | None = None,
         key_strategy: KeyStrategy = default_key_strategy,
         public_url: PublicUrlResolver | None = None,
     ) -> None:
+        # The parameter's type already excludes it; a legacy `httpx` client would only fail later, at the first request.
         if client is not None and not isinstance(client, httpx2.AsyncClient):
-            warnings.warn(
-                'Passing an `httpx.AsyncClient` to `S3MediaStore` is deprecated; use `httpx2.AsyncClient` instead.',
-                HarnessDeprecationWarning,
-                stacklevel=2,
-            )
+            raise TypeError('`S3MediaStore(client=...)` takes an `httpx2.AsyncClient`; the `httpx` client is removed.')
         self._bucket = bucket
         self._endpoint = endpoint.rstrip('/')
         self._region = region
@@ -248,7 +239,7 @@ class S3MediaStore:
         body: bytes = b'',
         content_type: str | None = None,
         meta_headers: Mapping[str, str] | None = None,
-    ) -> httpx2.Response | httpx.Response:
+    ) -> httpx2.Response:
         headers = sign_request(
             method=method,
             host=self._host(),
@@ -266,11 +257,8 @@ class S3MediaStore:
         # key_strategy emitting reserved chars (`@`, `(`, `=`, ...) would diverge
         # from the signed path -> SignatureDoesNotMatch.
         url = httpx2.URL(self._endpoint).copy_with(raw_path=_canonical_uri(path).encode('ascii'))
-        if isinstance(self._client, httpx2.AsyncClient):
-            return await self._client.request(method, url, content=body, headers=headers)
         if self._client is not None:
-            # A legacy `httpx` client rejects an `httpx2.URL`; its string keeps the signed percent-encoding.
-            return await self._client.request(method, str(url), content=body, headers=headers)
+            return await self._client.request(method, url, content=body, headers=headers)
         async with httpx2.AsyncClient() as client:
             return await client.request(method, url, content=body, headers=headers)
 

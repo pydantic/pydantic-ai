@@ -108,7 +108,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `run.permissions` | `"full"` | What runs without asking: full runs everything; auto asks before commands that delete, push, install, or reach the network; read-only asks before every file write and command. /permissions sets it. |
 | `run.instructions` | `""` | Your own instructions, sent after CLAI's built-in, AGENTS.md, and plugin instructions. /system_prompt edits them. |
 | `accounts.pool` | `true` | A model without @PROFILE runs on every signed-in account of its provider, in /accounts order, as @* does. PROVIDER@default:MODEL runs the default account alone. |
-| `sessions.naming` | `true` | Name saved sessions in the background using a model. |
+| `sessions.naming` | `false` | Name saved sessions in the background using a model, at extra cost. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
 | `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main. |
 | `repo_context.walk_up_roots` | `["~"]` | User-only JSON list of inclusive stops for instruction autoload when the plugin's `walk_up` is on; the nearest one containing the workspace applies, and with none the walk stops at the repository root. |
@@ -648,9 +648,9 @@ without changing anything.
 `/model add` opens a searchable provider list, then a model picker for that provider.
 Esc from the model list returns to providers. Providers are unique prefixes from
 the merged catalog, including `openai-codex`. Its suggestions include
-`gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-luna`,
-`gpt-5.6-terra`, and `gpt-5.6-sol`; availability depends on your account.
-Unknown prices and context limits are not inferred.
+`gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`,
+`gpt-6-luna`, `gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.6-sol`; availability
+depends on your account. Unknown prices and context limits are not inferred.
 
 The model catalog combines genai-prices' catalog
 filtered to providers Pydantic AI can run, plus core's own model list, plus
@@ -788,12 +788,17 @@ For native Anthropic models, **Preserved Thinking** controls
 `thinking.block_binding.prefix_mismatch_behavior`: `error` rejects a mismatched
 prefix; `drop_block` continues without the mismatched reasoning block. It appears
 on adaptive-capable Claude models. Fable 5.1 also exposes **Thinking Display**:
-`updates` or `summarized`. Setting either control without a thinking mode selects
-adaptive thinking; neither can be combined with disabled thinking. Resetting the
-mode clears its budget, display, and binding overrides. **Interleaved Thinking**
-adds the beta header on classic Claude 4 models. CLAI adds the display beta when
-requesting updates; core adds the block-binding beta. These native controls do
-not add Anthropic protocol support to third-party Chat Completions endpoints.
+`updates` or `summarized`. Opus 5.5 and Sonnet 5.5 expose it with `summarized`,
+which shows the notes they write between tool calls. Setting either control
+without a thinking mode selects adaptive thinking; neither can be combined with
+disabled or `between_tools` thinking. **Extended Thinking** offers only the
+modes the model accepts: Fable, Mythos, and Opus 5.5 always think, so they offer
+`adaptive` alone, and Sonnet 5.5 offers `between_tools`, its off switch, in place
+of `disabled`. Resetting the mode clears its budget, display, and binding
+overrides. **Interleaved Thinking** adds the beta header on classic Claude 4
+models. CLAI adds the display beta when requesting updates; core adds the
+block-binding beta. These native controls do not add Anthropic protocol support
+to third-party Chat Completions endpoints.
 
 GLM-4.5 and newer expose **Thinking (GLM)** and **Clear Thinking (GLM)**;
 GLM-5.2 and newer also expose **Reasoning Effort (GLM)**. Clear Thinking set to
@@ -883,7 +888,8 @@ model-request budget.
 ### Codex authentication
 
 The built-in model catalog and `/set model` completions include
-`openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
+`openai-codex:gpt-6.2-sol`, `openai-codex:gpt-6.2-astra`, `openai-codex:gpt-6.1-sol`,
+`openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
 `/login openai-codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
 authorization code with PKCE, state validation, and a callback at
@@ -2018,7 +2024,11 @@ the coding tools' file writes and commands only; other tools, such as MCP server
 only reach files inside the session's folder, so `auto` lets them write. In `full` and `auto`, where code mode's
 sandbox mounts the folder read-write, `pathlib` there can also delete and rename files in it without asking; in
 `read-only`, the sandbox gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
-can be asked in, such as `clai2 -p`, denies held calls. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
+can be asked in, such as `clai2 -p` or a web session with questions turned off, uses harness
+[`DenyUnanswered`](../../../docs/harness/deny-unanswered.md): it denies the calls `Permissions` held, saying
+`/permissions full` lets them run, denies any other call that needs approval (such as an MCP tool's) with the
+harness default text, and answers questions from `AskUser` with "No one is available to answer in this run", so
+the run finishes. A session with the terminal picker or the web UI's approval cards does not deny these. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
 sub-agent, or a delegation to `self` from an agent you supply (`clai2 --agent`), which gets `/permissions`
 per run rather than bound to the agent. The model is told to do the work itself instead.
 
@@ -2483,9 +2493,9 @@ a new session; `--session-id` then names it. `--continue` works with `-p` and
 
 Inside CLAI, `/resume` opens the same browser and `/resume SESSION-ID` restores a
 session directly. Opening or restoring a session does not call the coding model
-or execute pending tools. Background naming may make a separate, tool-free model
-request. Your current model, working directory, credentials, and approved plugins
-remain in effect. The saved model name is shown for reference.
+or execute pending tools. Background naming, when turned on, may make a separate,
+tool-free model request. Your current model, working directory, credentials, and
+approved plugins remain in effect. The saved model name is shown for reference.
 
 Resuming shows the restored conversation in the terminal: the last 10 prompts
 with their answers, reasoning, and tool calls, drawn the way they streamed.
@@ -2610,9 +2620,10 @@ later turns in Claude Code or Codex are not merged into it.
 
 #### Background names
 
-A saved session immediately gets a fallback title from its first prompt. A
-single background worker can replace it with a short title, subtitle, and up to
-four topic tags. The browser refreshes names while idle without moving selection.
+A saved session immediately gets a fallback title from its first prompt. With
+`sessions.naming` on, a single background worker can replace it with a short
+title, subtitle, and up to four topic tags. The browser refreshes names while
+idle without moving selection.
 
 The worker uses up to 2,400 characters of recent user/assistant text, plus the
 previous summary once a model has generated one. Until then, the fallback title
@@ -2629,17 +2640,19 @@ output size, and a 60-second deadline bound the work. Exiting cancels and joins
 the worker.
 
 ```text
-/set sessions.naming false
+/set sessions.naming true
 /set sessions.naming_model openai:gpt-5-mini
 /set sessions.naming_model null
 ```
 
-Naming is enabled by default and uses the current model unless overridden.
-It sends conversation excerpts to that model's provider and incurs additional
-usage. It has no tools and does not inherit coding plugins. Missing credentials,
-timeouts, invalid output, or stale results leave the existing name usable and do
-not interrupt foreground work. `/usage` and the browser preview show persisted
-naming token counts separately; `/cost` remains retained foreground-history cost.
+Naming is off by default, so no model request is made without your opt-in, and
+sessions keep their fallback titles. Once on, it uses the current model unless
+`sessions.naming_model` names a smaller one. It sends conversation excerpts to
+that model's provider and incurs additional usage. It has no tools and does not
+inherit coding plugins. Missing credentials, timeouts, invalid output, or stale
+results leave the existing name usable and do not interrupt foreground work.
+`/usage` and the browser preview show persisted naming token counts separately;
+`/cost` remains retained foreground-history cost.
 
 #### Storage and recovery limits
 
