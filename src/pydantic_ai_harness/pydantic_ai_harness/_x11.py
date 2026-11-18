@@ -4,7 +4,8 @@ from __future__ import annotations as _annotations
 
 import re
 import shlex
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Protocol
 
 import anyio
 
@@ -21,7 +22,7 @@ from pydantic_ai.computer_use import (
     Scroll,
     TypeText,
 )
-from pydantic_ai.workspaces import CommandResult, SupportsCommands, WorkspaceError, WorkspaceUnavailableError
+from pydantic_ai.workspaces import CommandResult, WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness._display import LazyDisplay, png_from_base64
 from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
 from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
@@ -254,8 +255,14 @@ def start_x_server(log: str) -> str:
     )
 
 
+class RunCommand(Protocol):
+    """Runs a command in the environment, without starting its display first, as the display's own commands must."""
+
+    def __call__(self, argv: list[str], /, *, env: Mapping[str, str], timeout: float) -> Awaitable[CommandResult]: ...
+
+
 def x11_display(
-    backend: SupportsCommands,
+    run: RunCommand,
     size: tuple[int, int],
     script: str,
     where: Callable[[], str],
@@ -268,14 +275,14 @@ def x11_display(
     async def start() -> None:
         width, height = size
         # On `DISPLAY` whatever the backend's own env says, so it checks the X server the actions go to.
-        result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], env=_ENV, timeout=_START_TIMEOUT)
+        result = await run(['sh', '-c', script, 'sh', f'{width}x{height}'], env=_ENV, timeout=_START_TIMEOUT)
         if result.exit_code != 0:
             raise WorkspaceUnavailableError(
                 f'Could not start the display in {where()}: it needs Xvfb, xdotool, xwininfo, scrot and setsid '
                 f'({(result.stderr or result.stdout).strip()})'
             )
 
-    return LazyDisplay(X11Computer(backend), start)
+    return LazyDisplay(X11Computer(run), start)
 
 
 class X11Computer:
@@ -285,13 +292,13 @@ class X11Computer:
     and `base64` in the environment.
     """
 
-    def __init__(self, backend: SupportsCommands):
-        self._backend = backend
+    def __init__(self, run: RunCommand):
+        self._run_command = run
 
     async def _run(self, command: list[str], *, pauses: float = 0) -> CommandResult:
         """Run `command`, allowing `pauses`, the seconds it asks to pause for, on top of the usual time limit."""
         timeout = _COMMAND_TIMEOUT + pauses
-        result = await self._backend.run(command, env=_ENV, timeout=timeout)
+        result = await self._run_command(command, env=_ENV, timeout=timeout)
         if result.exit_code == 127:
             raise WorkspaceUnavailableError(
                 f'A display command is missing on display {DISPLAY}: {(result.stderr or result.stdout).strip()}'

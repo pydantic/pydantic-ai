@@ -136,9 +136,15 @@ async def test_screenshots_and_the_pointer_come_from_the_display(docker: FakeDoc
     assert await workspace.cursor_position() == Point(x=640, y=400)
 
 
-async def test_commands_see_the_desktop(docker: FakeDocker, container_dir: Path) -> None:
-    result = await _desktop(container_dir, image='my-desktop').run('echo "$DISPLAY"', shell=True)
-    assert result.stdout == ':1\n'
+async def test_a_shell_command_finds_the_desktop_running(docker: FakeDocker, container_dir: Path) -> None:
+    # The shell is told a program it starts opens on the screen, before anything has looked at the screen.
+    docker.remove_display()
+    result = await _desktop(container_dir, image='my-desktop').run(
+        'echo "$DISPLAY"; xdotool getdisplaygeometry', shell=True
+    )
+
+    assert (result.exit_code, result.stdout) == (0, ':1\n1280 800\n')
+    assert docker.xvfb_starts == 1
 
 
 async def test_a_display_in_env_does_not_move_the_desktop(docker: FakeDocker, container_dir: Path) -> None:

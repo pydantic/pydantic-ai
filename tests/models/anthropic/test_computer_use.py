@@ -26,6 +26,8 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartStartEvent,
     TextPart,
     ToolCallPart,
@@ -34,7 +36,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
-from pydantic_ai.native_tools import ComputerTool
+from pydantic_ai.native_tools import AdvisorTool, ComputerTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
@@ -180,8 +182,9 @@ async def test_a_thread_continue_request_answers_every_member_call(allow_model_r
     ]
 
 
-async def test_a_call_a_hook_changed_goes_back_as_a_plain_call(allow_model_requests: None) -> None:
-    """Sent back as the member calls Claude made, the call would say its click ran, when the screenshot ran instead."""
+@pytest.mark.parametrize('change', ['actions', 'name'])
+async def test_a_call_a_hook_changed_goes_back_as_a_plain_call(allow_model_requests: None, change: str) -> None:
+    """Sent back as the member calls Claude made, the call would say its click ran, when something else ran instead."""
     hooks = Hooks[object]()
 
     @hooks.on.after_model_request
@@ -189,8 +192,10 @@ async def test_a_call_a_hook_changed_goes_back_as_a_plain_call(allow_model_reque
         ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
     ) -> ModelResponse:
         for part in response.parts:
-            if isinstance(part, ComputerCallPart):
+            if isinstance(part, ComputerCallPart) and change == 'actions':
                 part.args = {'actions': [{'type': 'screenshot'}]}
+            elif isinstance(part, ComputerCallPart):
+                part.tool_name = 'look'
         return response
 
     client = MockAnthropic.create_mock(
@@ -200,17 +205,63 @@ async def test_a_call_a_hook_changed_goes_back_as_a_plain_call(allow_model_reque
         ]
     )
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    await Agent(model, capabilities=[FakeComputer(), InMemoryProvider().capability(), hooks]).run('Click.')
+
+    def look(actions: list[dict[str, Any]]) -> str:
+        return 'Looked.'
+
+    agent = Agent(model, tools=[look], capabilities=[FakeComputer(), InMemoryProvider().capability(), hooks])
+    await agent.run('Click.')
 
     _, second = get_mock_chat_completion_kwargs(client)
     (call,) = second['messages'][-2]['content']
-    assert (call['name'], call['input'], 'toolset_name' in call) == (
-        'computer',
-        {'actions': [{'type': 'screenshot'}]},
-        False,
+    expected: tuple[str, dict[str, Any]] = (
+        ('computer', {'actions': [{'type': 'screenshot'}]})
+        if change == 'actions'
+        else ('look', {'actions': [{'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'count': 1, 'modifiers': []}]})
     )
+    assert (call['name'], call['input'], 'toolset_name' in call) == (*expected, False)
     (result,) = second['messages'][-1]['content']
     assert (result['tool_use_id'], 'toolset_name' in result) == ('toolu_1', False)
+
+
+@pytest.mark.parametrize('call', ['request', 'count_tokens'])
+async def test_a_forced_computer_drops_the_advisor_and_its_history(allow_model_requests: None, call: str) -> None:
+    """Requiring the computer leaves out the other native tools, and their history with them, or the API refuses it."""
+    client = MockAnthropic.create_mock(_turn(_tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]})))
+    model = AnthropicModel(
+        'claude-sonnet-4-6',
+        provider=AnthropicProvider(anthropic_client=client),
+        profile=AnthropicModelProfile(anthropic_count_tokens_accepts_server_tools=True),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('What is 2 + 2?'),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(provider_name='anthropic', tool_name=AdvisorTool.kind, tool_call_id='adv_1'),
+                NativeToolReturnPart(
+                    provider_name='anthropic',
+                    tool_name=AdvisorTool.kind,
+                    content={'stop_reason': 'end_turn', 'text': 'It is 4.', 'type': 'advisor_result'},
+                    tool_call_id='adv_1',
+                ),
+                TextPart('4.'),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest.user_text_prompt('Now click.'),
+    ]
+    params = ModelRequestParameters(
+        function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL, AdvisorTool(model='claude-opus-4-8')]
+    )
+    settings: ModelSettings = {'tool_choice': 'required'}
+    if call == 'request':
+        await model.request(history, settings, params)
+    else:
+        await model.count_tokens(history, settings, params)
+
+    (sent,) = get_mock_chat_completion_kwargs(client)
+    assert [tool['name'] for tool in sent['tools']] == ['computer']
+    assert [block['type'] for block in sent['messages'][1]['content']] == ['text']
 
 
 async def test_a_failed_calls_text_goes_back_once_on_the_last_member(allow_model_requests: None) -> None:

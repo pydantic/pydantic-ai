@@ -340,7 +340,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
             None
             if self._desktop_size is None
             else x11_display(
-                self,
+                self._run_argv,
                 self._desktop_size,
                 _START_DESKTOP,
                 lambda: f'E2B sandbox {self.ref.id if self.ref else "(not created)"}',
@@ -660,10 +660,18 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         timeout: float | None = None,
     ) -> CommandResult:
         """Run a command, killing it on timeout, cancellation, or a failed result read."""
+        argv = command_argv(command, shell)
+        check_timeout(timeout)
+        if self._display is not None:
+            # Started first, so a program the command opens shows on the screen.
+            await self._display.start()
+        return await self._run_argv(argv, env=env or {}, timeout=timeout)
+
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        """Run `argv` without starting the display, as the display's own commands do."""
         # `commands.run` takes only a string, which E2B hands to `/bin/bash -l -c`; `shlex.join`
         # keeps each argv element one word, and a `shell=True` string runs under `/bin/sh -c`.
-        line = shlex.join(command_argv(command, shell))
-        check_timeout(timeout)
+        line = shlex.join(argv)
         # Acquiring the sandbox has its own bound; the timeout is the command's alone.
         sandbox = await self._sandbox_for_operation()
         handle: e2b.AsyncCommandHandle | None = None
@@ -700,7 +708,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
                 handle = await sandbox.commands.run(
                     launch,
                     background=True,
-                    envs={**(self._env or {}), **(env or {})},
+                    envs={**(self._env or {}), **env},
                     cwd=self._working_dir,
                     timeout=_SDK_STREAM_UNBOUNDED,
                     user=self._user,

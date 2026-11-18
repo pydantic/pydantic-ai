@@ -56,9 +56,11 @@ async def test_a_desktop_sandbox_runs_the_desktop_template_unless_given_one(
     assert [call.template for call in fake_e2b.create_calls] == [created]
 
 
-async def test_commands_see_the_desktop_and_the_env(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    await E2BSandboxBackend(desktop=True, env={'FOO': 'bar'}).run('true', shell=True)
+async def test_a_shell_command_finds_the_desktop_running(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
+    # The shell is told a program it starts opens on the screen, before anything has looked at the screen.
+    await E2BSandboxBackend(desktop=True, env={'FOO': 'bar'}).run('xterm &', shell=True)
 
+    assert len(display.starts) == 1
     assert fake_e2b.create_calls[0].envs == {'DISPLAY': ':1', 'FOO': 'bar'}
     assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'DISPLAY': ':1', 'FOO': 'bar'}
 

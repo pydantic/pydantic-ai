@@ -48,19 +48,22 @@ class ComputerReplay(TypedDict):
 _REPLAY = TypeAdapter(ComputerReplay)
 
 
-def computer_replay(part: ToolCallPart, provider_name: str) -> ComputerReplay | None:
+def computer_replay(part: ToolCallPart, provider_name: str, sent: NativeComputer) -> ComputerReplay | None:
     """The calls a `computer` call came from, or `None` to send it back as a plain call.
 
     A history may come from storage or a UI, so what it kept is validated: one count per call, each at least 1,
     adding up to the call's actions. The part's class isn't checked: a call whose actions don't validate, such as one
     with an option the `computer` tool lacks, is a plain `ToolCallPart` after JSON, and still goes back as its calls.
-    Calls whose actions aren't the part's, such as after a hook changed them, aren't sent back: they'd say theirs ran.
+    Calls whose actions or tool aren't the part's, such as after a hook changed or renamed them, or of another computer
+    use tool version than the one `sent`, aren't sent back: they'd say theirs ran.
     """
-    if part.provider_name != provider_name:
+    if part.provider_name != provider_name or part.tool_name != sent.name:
         return None
     try:
         replay = _REPLAY.validate_python(part.provider_details)
     except ValidationError:
+        return None
+    if replay['computer_tool'] != sent.version:
         return None
     blocks, counts = replay['computer_blocks'], replay['computer_action_counts']
     match part.args_as_dict():

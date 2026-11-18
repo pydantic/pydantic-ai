@@ -1712,6 +1712,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        model_request_parameters = self._only_the_computer_when_forced(
+            cast(AnthropicModelSettings, prepared_settings or {}), model_request_parameters
+        )
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
         if not extends_max_output(self._request_betas(cast(AnthropicModelSettings, prepared_settings or {}))):
@@ -3087,12 +3090,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         supports_dynamic_filtering = self.profile.get('anthropic_supports_dynamic_filtering', False)
         code_execution_may_call = _code_execution_may_call_web_tools(supports_dynamic_filtering, model_settings)
-        native_tools = model_request_parameters.native_tools
-        if self._forces_the_computer(model_settings, model_request_parameters):
-            # Requiring a tool would let Claude call a native one instead, such as web search, and never the computer.
-            native_tools = []
-
-        for tool in native_tools:
+        for tool in model_request_parameters.native_tools:
             match tool:
                 case WebSearchTool():
                     tools.append(self._map_web_search_tool(tool, supports_dynamic_filtering, code_execution_may_call))
@@ -3769,9 +3767,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         map_context: _MapMessagesContext,
     ) -> None:
         sent_computer = map_context.sent_computer
-        replay = _computer.computer_replay(part, self.system) if sent_computer else None
-        # Calls of another computer use tool version go back as plain calls.
-        if sent_computer and replay is not None and replay['computer_tool'] == sent_computer.version:
+        replay = _computer.computer_replay(part, self.system, sent_computer) if sent_computer else None
+        if sent_computer and replay is not None:
             # Sent back as the calls they came as; toolset member calls each need their own result.
             # The first call goes back under the part's ID as fitted for the request, as its result does.
             part_id = _guard_tool_call_id(t=part)
@@ -4470,15 +4467,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         declared = self._tool_choice_declarations(model_settings, model_request_parameters)[0]
         return native_computer if native_computer.name in declared else None
 
-    def _forces_the_computer(
+    def _only_the_computer_when_forced(
         self, model_settings: AnthropicModelSettings, model_request_parameters: ModelRequestParameters
-    ) -> bool:
-        """Whether the request requires a tool call and offers only the Anthropic computer use tool."""
+    ) -> ModelRequestParameters:
+        """Without the other native tools, when the request requires a tool call and offers only the computer use tool.
+
+        Requiring a tool would let Claude call a native one instead, such as web search, and never the computer. Dropped
+        while preparing the request, every later step (history replay, the token count) sees the tools it sends.
+        """
         native_computer = self._native_computer(model_request_parameters)
         tool_defs, tool_choice = self._tool_choice_declarations(model_settings, model_request_parameters)
-        return (
-            native_computer is not None and tool_choice['type'] == 'any' and tool_defs.keys() == {native_computer.name}
-        )
+        if native_computer is None or tool_choice['type'] != 'any' or tool_defs.keys() != {native_computer.name}:
+            return model_request_parameters
+        native_tools = [tool for tool in model_request_parameters.native_tools if isinstance(tool, ComputerTool)]
+        return replace(model_request_parameters, native_tools=native_tools)
 
     async def _map_computer_results(
         self, part: ToolReturnPart, replay: _computer.ComputerReplay, map_context: _MapMessagesContext
