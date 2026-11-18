@@ -472,7 +472,7 @@ workflow_side_code_mode_agents = {
         toolsets=[FunctionToolset(tools=[add], id='math')],
         capabilities=[
             DynamicCapability(
-                lambda ctx: CodeMode(id='code', monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType,reportUnknownLambdaType]
+                lambda ctx: CodeMode(id='code', monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
                 id='dynamic_code',
             ),
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
