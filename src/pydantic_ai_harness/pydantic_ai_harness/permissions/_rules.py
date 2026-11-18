@@ -165,6 +165,11 @@ def _tokens(command: str) -> list[str] | None:
         return None
 
 
+def _is_word(token: str) -> bool:
+    """Whether a token is a word rather than an operator; an empty quoted argument lexes as an empty word."""
+    return not token or not set(token) <= _OPERATOR_CHARS
+
+
 def _segments(command: str) -> list[_Segment] | None:
     """The simple commands in `command`, or `None` when its syntax is too complex to split safely."""
     tokens = _tokens(command)
@@ -178,7 +183,7 @@ def _segments(command: str) -> list[_Segment] | None:
             target = False
         elif token in _SEPARATORS:
             segments.append(_Segment())
-        elif not set(token) <= _OPERATOR_CHARS:
+        elif _is_word(token):
             segment.words.append(token)
         elif _UNSPLITTABLE_OPERATOR.search(token):
             return None

@@ -590,6 +590,7 @@ class TestPermissionRules:
                 'ask',
             ),
             ('rm -rf / # $(x)', [PermissionRule('deny', command='rm -rf')], 'deny'),
+            ("/bin/rm '' -rf build", [PermissionRule('deny', command='rm -rf')], 'deny'),
             ("'rm' -rf /\ntrue", [PermissionRule('deny', command='rm -rf')], 'deny'),
             ('r\\m -rf /\ntrue', [PermissionRule('deny', command='rm -rf')], 'deny'),
             ('git commit -m "push the fix"', [PermissionRule('ask', command='git push')], 'allow'),
