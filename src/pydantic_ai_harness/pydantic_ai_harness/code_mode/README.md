@@ -770,14 +770,7 @@ connecting to the server.
 Turns run as activities only on a Monty server that stores sessions, as Logfire Agent Sandboxes
 does. On a server that stores none, the first turn finds this before running any code, and the run's
 snippets then run in workflow code as described above. If a storing server cannot store a session's
-state, for example because its snapshot quota is full, the turn raises `UserError` and the workflow
-fails without retrying the turn.
-
-Each turn stores two snapshot records on the server, and Code Mode does not delete them. On Logfire
-Agent Sandboxes they count against the project's snapshot quota, so a run of 10 turns uses 20. When
-the quota is full, every turn that needs to store a session fails, so clear old snapshots in Logfire
-before it runs out. A `CodeMode` given `id=None` stores none, and runs its snippets in workflow
-code, under the 2-second limit.
+state, the turn raises `UserError` and the workflow fails without retrying the turn.
 
 The turn activity is named after the capability's `id`, `'code_mode'` by default. Two `CodeMode` on
 one agent each need their own `id`.

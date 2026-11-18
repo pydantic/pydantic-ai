@@ -241,8 +241,7 @@ host: nested calls, sleeps, deferred calls) runs as its own activity instead, so
 does not count against the 2 seconds and replay reads turn results from history. This needs a server
 that stores sessions (Logfire Agent Sandboxes does); on one that stores none, the run falls back to
 workflow code, and a storing server that cannot store a session's state raises a non-retried
-`UserError`. Each turn stores two snapshot records that Code Mode does not delete, and on Logfire they
-count against the project's quota, so clear old snapshots before it fills. Runs stay workflow-side with `id=None`, under the deprecated
+`UserError`. Runs stay workflow-side with `id=None`, under the deprecated
 `TemporalAgent`, with `os_access` set, with an `'overlay'` mount (the default mode; use `'read-only'`
 or `'read-write'`) or a `write_bytes_limit`, or when the workflow started before this change. Each
 turn takes and returns at most 1 MiB: longer output is cut, and longer tool results fail the snippet
