@@ -569,6 +569,10 @@ DeferredToolRequests(
         ),
     ],
     metadata={},
+    validated_args={
+        'pyd_ai_tool_call_id__temperature_celsius': {'city': 'a'},
+        'pyd_ai_tool_call_id__temperature_fahrenheit': {'city': 'a'},
+    },
 )
 """
 
@@ -726,7 +730,7 @@ _(This example is complete, it can be run "as is")_
 
 If your agent needs to be able to call [external tools](deferred-tools.md#external-tool-execution) that are provided and executed by an upstream service or frontend, you can build an [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset] from a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] containing the tool names, arguments JSON schemas, and descriptions.
 
-When the model calls an external tool, the call is considered to be ["deferred"](deferred-tools.md#deferred-tools), and the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID, which are expected to be passed to the upstream service or frontend that will produce the results.
+When the model calls an external tool, the call is considered to be ["deferred"](deferred-tools.md#deferred-tools), and the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, the arguments as the model sent them, and a unique tool call ID, plus [`validated_args`][pydantic_ai.tools.DeferredToolRequests.validated_args] holding each call's arguments once validated against the tool's schema. These are expected to be passed to the upstream service or frontend that will produce the results.
 
 When the tool call results are received from the upstream service or frontend, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with a `calls` dictionary that maps each tool call ID to an arbitrary value to be returned to the model, a [`ToolReturn`](tools-advanced.md#advanced-tool-returns) object, or an exception in case the tool call failed: a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] if the model should [try again](tools-advanced.md#tool-retries), or a [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] if the failure should be reported to the model as a [failed result](tools-advanced.md#tool-failed) (without consuming the tool's retry budget) so it can decide how to proceed. This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
 

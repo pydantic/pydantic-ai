@@ -21,12 +21,10 @@ from dataclasses import dataclass, field
 from typing import Annotated, ClassVar, Literal, TypeAlias
 
 from pydantic import AliasChoices, Field, model_validator
-from typing_extensions import deprecated
 
 from pydantic_ai import AgentStreamEvent, CapabilityEvent
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 SUB_AGENTS_EVENTS = 'sub_agents'
 
@@ -39,7 +37,8 @@ DelegationOutcome = Literal['ok', 'timeout', 'budget', 'failed', 'contained', 'c
 - `ok`: the child finished and its output went back to the parent.
 - `timeout`: the child exceeded `SubAgent.timeout_seconds`; the parent got a steering message.
 - `budget`: the child reached its own `SubAgent.usage_limits`; the parent got a steering message.
-- `failed`: the child raised a soft model error (the parent got `SubAgent.on_failure` or a `ModelRetry`),
+- `failed`: the child raised a soft model error (the parent got a `ModelRetry` or a tool result, per
+  `SubAgent.on_model_error`),
   or its run ended with `DeferredToolRequests` or `PendingModelResponse` (the parent got a steering message).
 - `contained`: the child crashed with `contain_errors` on; the parent got a `ModelRetry`.
 """
@@ -74,13 +73,6 @@ class DelegationStartedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name=
     task_id: str | None = None
     parent_task_id: _ParentTaskId = None
     """The task whose run started this one, or `None` when the top-level run did."""
-    inherits_tools: bool
-    """Whether the parent's own tools were passed to the child run (`SubAgents.inherit_tools`)."""
-
-    @property
-    @deprecated('`parent_id` is deprecated, use `parent_task_id` instead.', category=HarnessDeprecationWarning)
-    def parent_id(self) -> str | None:
-        return self.parent_task_id
 
 
 @dataclass(kw_only=True)
@@ -119,20 +111,6 @@ class DelegationFinishedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name
         ):
             return {**data, 'duration_ms': seconds * 1000}
         return data
-
-    @property
-    @deprecated(
-        '`duration_seconds` is deprecated, use `duration_ms` instead, which is in milliseconds.',
-        category=HarnessDeprecationWarning,
-    )
-    def duration_seconds(self) -> float:
-        """Deprecated: `duration_ms` in seconds."""
-        return self.duration_ms / 1000
-
-    @property
-    @deprecated('`parent_id` is deprecated, use `parent_task_id` instead.', category=HarnessDeprecationWarning)
-    def parent_id(self) -> str | None:
-        return self.parent_task_id
 
 
 @dataclass(kw_only=True)
@@ -415,8 +393,3 @@ class AgentCreatedEvent(_Vetoable, CapabilityEvent, namespace=SUB_AGENTS_EVENTS,
 
     model: str | None
     """The `SubAgents.models` key the sub-agent runs on, or `None` for the delegating run's model."""
-
-    @property
-    @deprecated('`name` is deprecated, use `agent_name` instead.', category=HarnessDeprecationWarning)
-    def name(self) -> str:
-        return self.agent_name

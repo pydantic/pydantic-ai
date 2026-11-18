@@ -9,9 +9,6 @@ import anyio
 import pytest
 
 from pydantic_ai_harness.planning import (
-    PlanEvent,
-    PlanEventEmitter,
-    PlanEventType,
     PlanItem,
     PostgresConnection,
     PostgresPlanStore,
@@ -19,11 +16,6 @@ from pydantic_ai_harness.planning import (
     TaskStatus,
 )
 from pydantic_ai_harness.planning._postgres import _deleted_count  # pyright: ignore[reportPrivateUsage]
-
-pytestmark = [
-    pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
-]
-
 
 Row = tuple[object, ...]
 
@@ -101,6 +93,8 @@ class FakeConnection:
         if 'pg_advisory_xact_lock' in query:
             self.advisory_locks += 1
             return None
+        if 'to_regclass' in query:
+            return self.create_calls > 0
         if 'MAX(seq)' in query:
             (session,) = args
             seqs = [int(r['seq']) for r in self._rows if r['session'] == session]
@@ -181,8 +175,18 @@ class TestPostgresStore:
                 tg.start_soon(store.get_items)
         assert pool.connection.create_calls == 1
 
-    async def test_remove_creates_the_schema_without_an_emitter(self) -> None:
-        """`remove_item` skips its read when no emitter is attached, so it cannot rely on one."""
+    async def test_a_store_on_an_existing_table_issues_no_ddl(self) -> None:
+        """A role without `CREATE` on the schema can use a table that exists."""
+        pool = FakePool()
+        await PostgresPlanStore(pool).get_items()
+
+        await PostgresPlanStore(pool, session='other').add_item(_item('A'))
+
+        assert pool.connection.create_calls == 1
+        assert pool.connection.advisory_locks == 1
+
+    async def test_remove_creates_the_schema(self) -> None:
+        """`remove_item` deletes without reading first, so it creates the schema itself."""
         pool = FakePool()
         store = PostgresPlanStore(pool)
         assert await store.remove_item('missing') is False
@@ -208,20 +212,6 @@ class TestPostgresStore:
         item = await store.add_item(_item('x'))
         assert await store.remove_item(item.id) is True
         assert await store.remove_item(item.id) is False
-
-    async def test_events(self) -> None:
-        events: list[PlanEvent] = []
-        emitter = PlanEventEmitter()
-        for kind in PlanEventType:
-            emitter.on(kind, events.append)
-        store = PostgresPlanStore(FakePool(), event_emitter=emitter)
-        item = await store.add_item(_item('t'))
-        await store.update_item(item.id, status=TaskStatus.completed)
-        await store.remove_item(item.id)
-        kinds = [e.event_type for e in events]
-        assert PlanEventType.created in kinds
-        assert PlanEventType.completed in kinds
-        assert kinds[-1] is PlanEventType.deleted
 
 
 class TestDeletedCount:
