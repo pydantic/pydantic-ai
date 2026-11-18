@@ -397,11 +397,13 @@ class GoogleInteractionsModel(Model[Client]):
             if caller_user_agents
             else f'{sdk_user_agent} {get_user_agent()}'
         )
-        # The server ends a request at its own deadline unless `X-Server-Timeout` asks for longer, which the
-        # Interactions SDK never sends, so a long decode would be cut off mid-stream. Ask for at least Google's
-        # long-decode figure, as `GoogleModel` does, unless the caller sent their own.
-        if not any(name.lower() == 'x-server-timeout' for name in headers):
-            client_timeout_ms = self.client._api_client._http_options.timeout or 0  # pyright: ignore[reportPrivateUsage]
+        # The server ends a request at its own deadline unless `X-Server-Timeout` asks for longer. The Interactions SDK
+        # never sends it, where the GenerateContent SDK sends the client's timeout, so a long decode would be cut off
+        # mid-stream. Send what `GoogleModel` does: the client's timeout, or Google's long-decode figure if that's
+        # longer, unless the caller sent their own.
+        if not any(name.lower() == 'x-server-timeout' for name in headers) and (
+            client_timeout_ms := self.client._api_client._http_options.timeout  # pyright: ignore[reportPrivateUsage]
+        ):
             headers['X-Server-Timeout'] = str(math.ceil(max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)))
         options: _HttpOptions = {'extra_headers': headers}
         if (timeout := settings.get('timeout')) is not None:

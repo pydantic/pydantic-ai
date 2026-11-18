@@ -275,7 +275,8 @@ this stateless adapter's scope. URI-only output raises an error.
 ### Unsupported Interactions features
 
 Interactions has no token-counting endpoint, batch support, or explicit prompt caching. Implicit
-caching is provider-managed. With `google-genai` earlier than 2.34, which doesn't continue an Interactions
+caching is provider-managed. With `google-genai` earlier than
+[2.34](https://github.com/googleapis/python-genai/releases/tag/v2.34.0), which doesn't continue an Interactions
 [long decode](#long-decode), a request that reaches the model's per-request output cap returns its partial output with
 finish reason `length` and `provider_details['status']` set to `requires_continuation`. Sampling settings absent from this API are ignored; its settings class
 describes them. Finish reasons are derived from interaction status, which has less detail than
@@ -316,8 +317,8 @@ seconds if it has none, to every phase of each request, so give it a read timeou
 models. A client created without a `timeout` has httpx's default of 5 seconds, which is too short for most model
 requests, so the providers warn about it.
 
-`GoogleModel` also tells Google how long each whole request may take, with the `X-Server-Timeout` header: the client's
-read timeout, or 20 minutes if that's longer. A read timeout only bounds the wait between bytes, so a response that
+`GoogleModel` and `GoogleInteractionsModel` also tell Google how long each whole request may take, with the
+`X-Server-Timeout` header: the client's read timeout, or 20 minutes if that's longer. A read timeout only bounds the wait between bytes, so a response that
 streams for longer than it isn't cut off by the server. A per-request [`timeout`][pydantic_ai.settings.ModelSettings.timeout]
 doesn't change the header. To set a different server deadline, send the header yourself in
 [`extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers].

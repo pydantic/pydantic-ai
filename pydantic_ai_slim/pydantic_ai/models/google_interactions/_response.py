@@ -185,7 +185,8 @@ def build_response(
 ) -> ModelResponse:
     usage = usage_from_interaction(response.usage)
     if searches := usage.details.get('google_search_count'):
-        # The count `GoogleModel` bills: one per query on Gemini 3, one per grounded prompt on older models.
+        # Google bills one per query on Gemini 3 and one per grounded prompt on older models. Unlike `GoogleModel`,
+        # this counts a grounded prompt whether or not a web source came back: no result step reports the sources.
         usage.web_searches = 1 if web_search_billed_per_prompt else searches  # pyright: ignore[reportAttributeAccessIssue]
     details: dict[str, JsonValue] = {
         'status': response.status,
@@ -206,7 +207,8 @@ def build_response(
         'completed': 'stop',
         'requires_action': 'tool_call',
         # A long decode stopped at the per-request output cap with a continuation token. google-genai continues it
-        # itself from 2.34.0; an earlier SDK returns the partial output with this status.
+        # itself from 2.34.0 (https://github.com/googleapis/python-genai/releases/tag/v2.34.0); an earlier SDK
+        # returns the partial output with this status.
         'requires_continuation': 'length',
         'incomplete': 'length',
         'budget_exceeded': 'length',
