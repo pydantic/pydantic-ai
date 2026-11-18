@@ -346,15 +346,14 @@ jobs:
           uv lock --script .github/scripts/pydantic-ai-runner --check
           || { echo "::error file=.github/scripts/pydantic-ai-runner.lock::Stale gh-aw runner lock; run: uv lock --script .github/scripts/pydantic-ai-runner"; exit 1; }
 
-      # The tests above import the shim inside this job's workspace venv, which is not
-      # the environment it runs in: gh-aw executes it via `uv run --script` against the
-      # runner's own locked dependency set. Run it there, with no argv, so it reaches
-      # the empty-prompt short-circuit without touching the network. This catches
-      # general shim breakage — a syntax error, a bad import, a module the runner lock
-      # doesn't carry. It is not what guards against importing an unreleased
-      # `pydantic_ai` symbol: the runner's workspace source (#6998) does that, by making
-      # the shim's library the same checkout as its code. The shim exits non-zero on
-      # that path, so the assertion is on its output, never its status: `|| true` holds
+      # Runs the shim through the legacy `uv run --script` runner, which no workflow uses
+      # (#12796), with no argv, so it reaches the empty-prompt short-circuit without touching
+      # the network. This catches general shim breakage — a syntax error, a bad import, a
+      # module the runner lock doesn't carry. The runner installs this checkout's
+      # `pydantic-ai-slim` and harness, so a `pydantic_ai` symbol missing from the pinned
+      # engine runtime still imports here; "Import the gh-aw shim on the pinned engine
+      # runtime" at the end of this job catches that. The shim exits non-zero on an empty
+      # prompt, so the assertion is on its output, never its status: `|| true` holds
       # whether or not the shell has `pipefail` (the default `run` shell here is
       # `bash -e`, but `shell: bash` would add it).
       - name: Smoke-test the gh-aw shim against the runner's own dependencies
@@ -554,6 +553,30 @@ jobs:
       - run: uv run python .github/scripts/check_http_dependencies.py
       - run: ls -lh dist/
       - run: uvx twine check --strict dist/*
+
+      # The gh-aw workflows run the shim on the published engine runtime `shared/engine-zai.md`
+      # pins, not on this checkout's packages. A shim that imports a `pydantic_ai` symbol missing
+      # from that runtime passes every step above and fails every workflow at "Install
+      # repository workflow policy" (#11935, https://github.com/pydantic/pydantic-ai/actions/runs/44225247904).
+      # These steps set up that runtime as the compiled agent job does. They come last because
+      # `setup-python` changes `python3` and its environment for every later step.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Import the gh-aw shim on the pinned engine runtime
+        run: |
+          version=$(yq --front-matter=extract '.engine.version' .github/workflows/shared/engine-zai.md)
+          # The "Preinstall Pydantic AI coder agent" step of the engine definition `shared/engine-zai.md`
+          # imports, with the Logfire install that the workflows' OTLP endpoint turns on.
+          python3 -P -m pip install --quiet --user --disable-pip-version-check \
+            "pydantic-ai-harness[coder]==$version" "pydantic-clai2==$version" \
+            "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0" "cryptography>=48.0.1" "logfire>=4.39.0"
+          bash .github/scripts/stage-gh-aw-agent.sh
+          # The engine then imports the agent module `PAI_AGENT` names, with the environment
+          # `shared/engine-zai.md` gives it: `PAI_OTEL_EXPORT_PATH` makes the import instrument HTTPX and MCP.
+          PYTHONPATH=/tmp/gh-aw/workflow-python PAI_OTEL_EXPORT_PATH=/tmp/gh-aw/pydantic-ai-private-otel.jsonl \
+            python3 -P -c 'import pydantic_ai_gh_aw_shim.agent'
 
   # Fails when a change makes a function's cognitive complexity exceed the limit, or grow while above it.
   complexity:
