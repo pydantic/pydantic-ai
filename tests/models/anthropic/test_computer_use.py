@@ -33,7 +33,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
@@ -178,6 +178,39 @@ async def test_a_thread_continue_request_answers_every_member_call(allow_model_r
         ('toolu_1', 'computer', 'OK'),
         ('toolu_2', 'computer', 'Ran 2 of 2 actions.'),
     ]
+
+
+async def test_a_call_a_hook_changed_goes_back_as_a_plain_call(allow_model_requests: None) -> None:
+    """Sent back as the member calls Claude made, the call would say its click ran, when the screenshot ran instead."""
+    hooks = Hooks[object]()
+
+    @hooks.on.after_model_request
+    async def look_instead(
+        ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        for part in response.parts:
+            if isinstance(part, ComputerCallPart):
+                part.args = {'actions': [{'type': 'screenshot'}]}
+        return response
+
+    client = MockAnthropic.create_mock(
+        [
+            _turn(_tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]})),
+            _turn(BetaTextBlock(text='done', type='text')),
+        ]
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    await Agent(model, capabilities=[FakeComputer(), InMemoryProvider().capability(), hooks]).run('Click.')
+
+    _, second = get_mock_chat_completion_kwargs(client)
+    (call,) = second['messages'][-2]['content']
+    assert (call['name'], call['input'], 'toolset_name' in call) == (
+        'computer',
+        {'actions': [{'type': 'screenshot'}]},
+        False,
+    )
+    (result,) = second['messages'][-1]['content']
+    assert (result['tool_use_id'], 'toolset_name' in result) == ('toolu_1', False)
 
 
 async def test_a_failed_calls_text_goes_back_once_on_the_last_member(allow_model_requests: None) -> None:
@@ -867,8 +900,14 @@ async def _sent_results(
     """The results a request sends for a toolset call whose result is `content`."""
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    # One action per count, as the call was mapped; what they are doesn't matter to how the result is split.
-    actions = [{'type': 'screenshot'}] * sum(counts)
+    # The actions each call maps to. A count the mapping doesn't give is kept as the call's, so its actions are
+    # screenshots: what they are doesn't matter to how the result is split.
+    actions: list[dict[str, Any]] = []
+    for block, count in zip(blocks, counts):
+        mapped = [
+            {k: v for k, v in a.items() if v is not None} for a in map_computer_member(block['name'], block['input'])
+        ]
+        actions += mapped if len(mapped) == count else [{'type': 'screenshot'}] * count
     call = ComputerCallPart(
         'computer',
         {'actions': actions},
@@ -1101,7 +1140,7 @@ async def test_a_stored_call_whose_actions_do_not_validate_still_replays_as_its_
     block = {'id': 'toolu_1', 'name': 'left_click', 'input': {'coordinate': [-1, 6]}}
     call = ToolCallPart(
         'computer',
-        {'actions': [{'type': 'click', 'x': -1, 'y': 6}]},
+        {'actions': [{'type': 'click', 'x': -1, 'y': 6, 'button': 'left', 'count': 1, 'modifiers': []}]},
         tool_call_id='toolu_1',
         tool_kind=COMPUTER_KIND.id,
         provider_name='anthropic',
@@ -1387,7 +1426,12 @@ async def test_a_denied_or_interrupted_toolset_call_is_not_a_tool_error(
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
     call = ComputerCallPart(
         'computer',
-        {'actions': [{'type': 'click', 'x': 1, 'y': 2}, {'type': 'screenshot'}]},
+        {
+            'actions': [
+                {'type': 'click', 'x': 1, 'y': 2, 'button': 'left', 'count': 1, 'modifiers': []},
+                {'type': 'screenshot'},
+            ]
+        },
         tool_call_id='toolu_1',
         provider_name='anthropic',
         provider_details={

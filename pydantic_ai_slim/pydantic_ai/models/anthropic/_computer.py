@@ -54,6 +54,7 @@ def computer_replay(part: ToolCallPart, provider_name: str) -> ComputerReplay | 
     A history may come from storage or a UI, so what it kept is validated: one count per call, each at least 1,
     adding up to the call's actions. The part's class isn't checked: a call whose actions don't validate, such as one
     with an option the `computer` tool lacks, is a plain `ToolCallPart` after JSON, and still goes back as its calls.
+    Calls whose actions aren't the part's, such as after a hook changed them, aren't sent back: they'd say theirs ran.
     """
     if part.provider_name != provider_name:
         return None
@@ -64,9 +65,27 @@ def computer_replay(part: ToolCallPart, provider_name: str) -> ComputerReplay | 
     blocks, counts = replay['computer_blocks'], replay['computer_action_counts']
     match part.args_as_dict():
         case {'actions': [*actions]} if blocks and len(blocks) == len(counts) and sum(counts) == len(actions):
-            return replay
+            starts = [sum(counts[:index]) for index in range(len(counts))]
+            members = [actions[start : start + count] for start, count in zip(starts, counts)]
+            if all(_made(block, member, replay['computer_tool']) for block, member in zip(blocks, members)):
+                return replay
+            return None
         case _:
             return None
+
+
+def _made(block: ComputerBlock, actions: list[Any], version: AnthropicComputerToolVersion) -> bool:
+    """Whether `actions` are what Claude's call `block` became, or its refusal for running after another tool's call.
+
+    A call that maps to another number of actions now, as an earlier release may have mapped it, is left to its count.
+    """
+    if any(isinstance(action, dict) and 'after_tool_calls' in action for action in actions):
+        return True
+    made = [
+        {key: value for key, value in action.items() if value is not None}
+        for action in map_computer_member(*computer_member(block, version))
+    ]
+    return len(made) != len(actions) or actions == made
 
 
 @dataclass(frozen=True)
