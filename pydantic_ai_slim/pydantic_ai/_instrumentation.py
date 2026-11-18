@@ -347,6 +347,8 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
                 'calls': _redact_binary_content(value.calls, active),
                 'approvals': _redact_binary_content(value.approvals, active),
                 'metadata': _redact_binary_content(value.metadata, active),
+                # `validated_args` is left out: it's already dumped to JSON, where a validation hook's
+                # `BinaryContent` or `bytes` is base64 text that can't be told apart from other text.
                 # Kind names, so never binary; serialized only when there are questions, as the type does.
                 **({'_kinds': value._kinds} if value._kinds else {}),  # pyright: ignore[reportPrivateUsage]
             }

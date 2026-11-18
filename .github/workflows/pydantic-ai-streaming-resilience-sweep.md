@@ -37,7 +37,7 @@ safe-outputs:
   create-issue:
     max: 1
     title-prefix: "[streaming-resilience-sweep] "
-    labels: [streaming]
+    labels: [area:streaming]
     close-older-key: "[streaming-resilience-sweep]"
     close-older-issues: false
     expires: 7d

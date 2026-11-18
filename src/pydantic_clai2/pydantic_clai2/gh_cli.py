@@ -77,6 +77,25 @@ def gh_token(hostname: str) -> str | None:
     return token if result.returncode == 0 and token else None
 
 
+def gh_user(hostname: str) -> str | None:
+    """The login of `gh`'s account on `hostname`, asked of GitHub; `None` when `gh` has no working login there."""
+    try:
+        result = subprocess.run(
+            [*_gh(), 'api', '--hostname', hostname, 'user', '--jq', '.login'],
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            env=gh_environment(),
+            stdin=subprocess.DEVNULL,
+            check=False,
+            timeout=TOKEN_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        raise UserError(f'GitHub did not answer gh within {TOKEN_TIMEOUT:g} seconds.') from None
+    login = result.stdout.strip()
+    return login if result.returncode == 0 and login else None
+
+
 @dataclass(frozen=True, kw_only=True)
 class GhToken:
     """A `GitHub` `auth` callable that asks `gh` on every run, so signing in again applies next turn."""
