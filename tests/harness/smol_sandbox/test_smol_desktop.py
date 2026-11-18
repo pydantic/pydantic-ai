@@ -9,8 +9,8 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.computer_use import ComputerReturnPart
 from pydantic_ai.models.function import FunctionModel
-from pydantic_ai_harness.smol_sandbox import SmolSandbox, SmolSandboxBackend
 from pydantic_ai_harness.computer_use import ComputerUse
+from pydantic_ai_harness.smol_sandbox import SmolSandbox, SmolSandboxBackend
 
 from .._fake_x_display import FakeDisplay
 from ..display_fakes import FAKE_SCREENSHOT, look_click_then_finish, screen
