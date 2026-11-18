@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 import httpx2
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import HealthCheck, given, settings, strategies as st
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, AgentStreamEvent, Tool, capture_run_messages
@@ -69,7 +69,6 @@ with try_import() as imports_successful:
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-    from pydantic_ai.models.anthropic._computer import map_computer_member
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = [
@@ -97,6 +96,16 @@ def _tool_use(id: str, name: str, input: dict[str, Any]) -> BetaToolUseBlock:
 
 def _turn(*blocks: BetaContentBlock) -> BetaMessage:
     return completion_message(list(blocks), BetaUsage(input_tokens=1, output_tokens=1))
+
+
+async def _mapped(name: str, input: dict[str, Any]) -> list[dict[str, Any]]:
+    """The actions a response with one toolset member call maps to."""
+    client = MockAnthropic.create_mock(_turn(_tool_use('toolu_1', name, input)))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    params = ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True)
+    response = await model.request([ModelRequest.user_text_prompt('Go.')], None, params)
+    (call,) = [part for part in response.parts if isinstance(part, ComputerCallPart)]
+    return call.args_as_dict()['actions']
 
 
 async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_model_requests: None) -> None:
@@ -633,11 +642,13 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ('type', {'text': 'hi', 'delay': 5}, {'type': 'type_text', 'unsupported_fields': ['delay']}),
     ],
 )
-def test_toolset_members_map_onto_the_computer_tool(
-    name: str, input: dict[str, Any], action: dict[str, Any] | list[dict[str, Any]]
+async def test_toolset_members_map_onto_the_computer_tool(
+    allow_model_requests: None, name: str, input: dict[str, Any], action: dict[str, Any] | list[dict[str, Any]]
 ) -> None:
     """Every member Anthropic documents, including ones no recording has: a VCR test would pin only what Claude sent."""
-    assert map_computer_member(name, input) == (action if isinstance(action, list) else [action])
+    expected = action if isinstance(action, list) else [action]
+    # The call's arguments leave out a field the mapping sets to `None`.
+    assert await _mapped(name, input) == [{k: v for k, v in a.items() if v is not None} for a in expected]
 
 
 @pytest.mark.parametrize('model_name', ['claude-haiku-5-5', 'claude-opus-4-8'])
@@ -976,9 +987,7 @@ async def _sent_results(
     # screenshots: what they are doesn't matter to how the result is split.
     actions: list[dict[str, Any]] = []
     for block, count in zip(blocks, counts):
-        mapped = [
-            {k: v for k, v in a.items() if v is not None} for a in map_computer_member(block['name'], block['input'])
-        ]
+        mapped = await _mapped(block['name'], block['input'])
         actions += mapped if len(mapped) == count else [{'type': 'screenshot'}] * count
     call = ComputerCallPart(
         'computer',
@@ -1421,11 +1430,14 @@ _NEAR_INPUT = st.fixed_dictionaries(
 _TOOL_ACTION: TypeAdapter[ComputerToolAction] = TypeAdapter(ComputerToolAction)
 
 
-@settings(max_examples=50, derandomize=True, deadline=None)
+# The fixture only allows model requests, so sharing it across examples is safe.
+@settings(max_examples=50, derandomize=True, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(st.sampled_from(_MEMBER_NAMES), _NEAR_INPUT | st.dictionaries(st.text(max_size=8), _JSON, max_size=3))
-def test_any_member_input_maps_without_raising_and_a_refusal_is_rejected(name: str, input: dict[str, Any]) -> None:
+async def test_any_member_input_maps_without_raising_and_a_refusal_is_rejected(
+    allow_model_requests: None, name: str, input: dict[str, Any]
+) -> None:
     """The tool checks every action before running any, so one it rejects means none of the call runs."""
-    for action in map_computer_member(name, input):
+    for action in await _mapped(name, input):
         if 'unsupported_fields' in action:
             with pytest.raises(ValidationError):
                 _TOOL_ACTION.validate_python(action)
