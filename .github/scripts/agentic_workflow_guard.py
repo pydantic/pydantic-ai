@@ -570,8 +570,8 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
     missing: list[str] = []
     runtime = str(_as_mapping(agent.get('env')).get('GH_AW_ENGINE_VERSION', ''))
     runtime_match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)', runtime)
-    if runtime_match is None or tuple(map(int, runtime_match.groups())) < (0, 64, 0):
-        missing.append('a published runtime pin of 0.64.0 or newer')
+    if runtime_match is None or tuple(map(int, runtime_match.groups())) < (0, 70, 0):
+        missing.append('a published runtime pin of 0.70.0 or newer')
     if len(executions) != 1:
         missing.append('exactly one public engine execution')
     else:
