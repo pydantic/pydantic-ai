@@ -66,7 +66,7 @@ with try_import() as imports_successful:
     )
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
-    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.models.anthropic._computer import map_computer_member
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -155,6 +155,29 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
         NOT_EXECUTED,
     ]
     assert all(r['toolset_name'] == 'computer' for r in results)
+
+
+async def test_a_thread_continue_request_answers_every_member_call(allow_model_requests: None) -> None:
+    client = MockAnthropic.create_mock(
+        [
+            _turn(
+                _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
+                _tool_use('toolu_2', 'type', {'text': 'hi'}),
+            ),
+            _turn(BetaTextBlock(text='done', type='text')),
+        ]
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    settings: AnthropicModelSettings = {'anthropic_previous_message_id': 'auto'}
+    await _agent(model, FakeComputer()).run('Go.', model_settings=settings)
+
+    _, second = get_mock_chat_completion_kwargs(client)
+    assert second['extra_body']['thread'] == {'type': 'continue', 'previous_message_id': '123'}
+    (results,) = [m['content'] for m in second['messages']]
+    assert [(r['tool_use_id'], r['toolset_name'], r['content'][0]['text']) for r in results] == [
+        ('toolu_1', 'computer', 'OK'),
+        ('toolu_2', 'computer', 'Ran 2 of 2 actions.'),
+    ]
 
 
 async def test_a_failed_calls_text_goes_back_once_on_the_last_member(allow_model_requests: None) -> None:
