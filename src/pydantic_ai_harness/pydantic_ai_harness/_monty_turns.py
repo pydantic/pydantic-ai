@@ -68,16 +68,33 @@ def to_wire(value: object) -> object:
     A value of any other type, such as a `datetime`, crosses as its JSON form and comes back as that
     form, as a tool result does when CodeMode hands it to the sandbox. Raises `TypeError` for a dict
     whose keys would then not come back distinct and hashable, such as a `date` beside its ISO string.
+
+    Also raises `TypeError` once it has written more values than `TURN_PAYLOAD_BYTES`. Each value
+    takes at least one byte of JSON, so the result could not cross anyway, and a list that holds the
+    same list many times stops being expanded here instead of growing exponentially.
     """
-    if _is_list_or_tuple(value):
-        items = [to_wire(item) for item in value]
-        return {'tuple': items} if isinstance(value, tuple) else items
-    if is_mapping(value):
-        pairs = [[to_wire(key), to_wire(item)] for key, item in value.items()]
-        if not _keys_come_back(pairs):
-            raise TypeError('a dict whose keys would not come back distinct and hashable cannot cross as JSON')
-        return {'dict': pairs}
-    return _scalar_to_wire(value)
+    return _Encoder().encode(value)
+
+
+class _Encoder:
+    """`to_wire`'s walk, which counts the values it writes so it can stop as soon as they cannot fit."""
+
+    def __init__(self) -> None:
+        self.values_left = TURN_PAYLOAD_BYTES
+
+    def encode(self, value: object) -> object:
+        self.values_left -= 1
+        if self.values_left < 0:
+            raise TypeError(f'a value with more than {TURN_PAYLOAD_BYTES} parts cannot cross as JSON')
+        if _is_list_or_tuple(value):
+            items = [self.encode(item) for item in value]
+            return {'tuple': items} if isinstance(value, tuple) else items
+        if is_mapping(value):
+            pairs = [[self.encode(key), self.encode(item)] for key, item in value.items()]
+            if not _keys_come_back(pairs):
+                raise TypeError('a dict whose keys would not come back distinct and hashable cannot cross as JSON')
+            return {'dict': pairs}
+        return _scalar_to_wire(value)
 
 
 def _keys_come_back(pairs: list[list[object]]) -> bool:
@@ -436,7 +453,7 @@ async def _run_turn(
     if isinstance(snapshot, MontyComplete):
         try:
             output = to_wire(model_safe_result(snapshot.output))
-        except TypeError:  # keys that would not come back distinct; the `repr` loses nothing
+        except TypeError:  # keys that would not come back distinct, or too many parts; `_fit_turn` cuts the `repr`
             output = repr(snapshot.output)
         return MontyTurn('complete', state=state, suspensions=pauses.count, output=output)
     if isinstance(snapshot, AsyncFunctionSnapshot):

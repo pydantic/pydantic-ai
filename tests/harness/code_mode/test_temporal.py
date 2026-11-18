@@ -28,10 +28,10 @@ import re
 import subprocess
 import sys
 import warnings
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from anyio.from_thread import start_blocking_portal
@@ -1192,7 +1192,11 @@ def _snippet_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo
     return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='snippet')])
 
 
-def _snippet_agent(name: str, monty_sandbox: Any = StoredSessionPool, **code_mode: Any) -> Agent:
+def _snippet_agent(
+    name: str,
+    monty_sandbox: Callable[[], StoredSessionPool] = StoredSessionPool,
+    resource_limits: Literal['unlimited'] | None = None,
+) -> Agent:
     return Agent(
         FunctionModel(_snippet_model),
         name=f'code_mode_temporal_snippet_{name}_agent',
@@ -1200,7 +1204,11 @@ def _snippet_agent(name: str, monty_sandbox: Any = StoredSessionPool, **code_mod
             FunctionToolset(tools=[echo, repeat, give_up, Tool(bad_csv, metadata={'temporal': False})], id='echo')
         ],
         capabilities=[
-            CodeMode(id='code', monty_sandbox=monty_sandbox, **code_mode),
+            CodeMode(
+                id='code',
+                monty_sandbox=monty_sandbox,  # pyright: ignore[reportArgumentType]
+                resource_limits=resource_limits,
+            ),
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
         ],
     )
@@ -1454,3 +1462,17 @@ async def test_remote_turns_keep_module_exception_types(client: Client) -> None:
     )
     output = await _run_snippet(client, 'test_code_mode_temporal_csv_error', code)
     assert output == 'csv.Error'
+
+
+async def test_remote_turns_stop_encoding_a_value_that_cannot_fit(client: Client) -> None:
+    """A list holding the same list many times is refused while it is encoded, not after expanding it.
+
+    Monty keeps the shared references, so the snippet builds this cheaply; fully expanded it would
+    have 2**26 parts.
+    """
+    code = (
+        'x = []\nfor _ in range(25):\n    x = [x, x]\n'
+        'try:\n    await echo(value=x)\n    sent = "sent"\nexcept TypeError as e:\n    sent = str(e)\nsent'
+    )
+    output = await _run_snippet(client, 'test_code_mode_temporal_shared_list', code)
+    assert output.startswith('echo() got arguments that cannot be sent to the tool')
