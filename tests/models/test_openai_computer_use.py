@@ -624,7 +624,7 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(
             {'type': 'drag', 'path': [{'x': 1, 'y': 2}, {'x': 3, 'y': 4}]},
             {'type': 'drag', 'path': [{'x': 1, 'y': 2}, {'x': 3, 'y': 4}], 'modifiers': []},
         ),
-        ({'type': 'move', 'x': 1, 'y': 2}, {'type': 'move', 'x': 1, 'y': 2, 'modifiers': []}),
+        ({'type': 'move', 'x': 1, 'y': 2}, {'type': 'mouse_move', 'x': 1, 'y': 2, 'modifiers': []}),
         (
             {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 340},
             {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 3, 'modifiers': []},
@@ -645,7 +645,7 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(
         # A scroll by nothing only moves the pointer there.
         (
             {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 0},
-            {'type': 'move', 'x': 1, 'y': 2, 'modifiers': []},
+            {'type': 'mouse_move', 'x': 1, 'y': 2, 'modifiers': []},
         ),
         (
             {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 228, 'scroll_y': 0},
@@ -659,8 +659,8 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(
                 {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 1, 'modifiers': list[str]()},
             ],
         ),
-        ({'type': 'keypress', 'keys': ['CTRL', 'S']}, {'type': 'keypress', 'keys': ['CTRL', 'S']}),
-        ({'type': 'type', 'text': 'hi'}, {'type': 'type', 'text': 'hi'}),
+        ({'type': 'keypress', 'keys': ['CTRL', 'S']}, {'type': 'press_keys', 'keys': ['CTRL', 'S']}),
+        ({'type': 'type', 'text': 'hi'}, {'type': 'type_text', 'text': 'hi'}),
         ({'type': 'wait'}, {'type': 'wait'}),
         ({'type': 'teleport', 'x': 1}, {'type': 'teleport', 'unsupported_fields': []}),
         ({'type': ['click'], 'x': 1}, {'type': "['click']", 'unsupported_fields': []}),
@@ -679,9 +679,9 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(
         ({'type': 'click', 'x': 1, 'y': 2}, {'type': 'click', 'unsupported_fields': ['button']}),
         ({'type': 'scroll', 'x': 1, 'y': 2, 'scroll_y': 3}, {'type': 'scroll', 'unsupported_fields': ['scroll_x']}),
         # So is a field of the wrong type, as the SDK builds its items without checking them.
-        ({'type': 'type', 'text': 5}, {'type': 'type', 'unsupported_fields': ['text']}),
-        ({'type': 'keypress', 'keys': 'CTRL'}, {'type': 'keypress', 'unsupported_fields': ['keys']}),
-        ({'type': 'move', 'x': True, 'y': 2}, {'type': 'move', 'unsupported_fields': ['x']}),
+        ({'type': 'type', 'text': 5}, {'type': 'type_text', 'unsupported_fields': ['text']}),
+        ({'type': 'keypress', 'keys': 'CTRL'}, {'type': 'press_keys', 'unsupported_fields': ['keys']}),
+        ({'type': 'move', 'x': True, 'y': 2}, {'type': 'mouse_move', 'unsupported_fields': ['x']}),
         ({'type': 'drag', 'path': 42}, {'type': 'drag', 'unsupported_fields': ['path']}),
     ],
 )

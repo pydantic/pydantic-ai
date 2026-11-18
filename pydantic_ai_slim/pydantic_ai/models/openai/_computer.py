@@ -117,22 +117,31 @@ def _map_computer_action(raw: Any) -> list[tuple[dict[str, Any], str | None]]:
         case _OpenAIDoubleClick():
             return [({'type': 'click', 'x': action.x, 'y': action.y, 'count': 2, 'modifiers': action.keys}, None)]
         case _OpenAIMove():
-            return [({'type': 'move', 'x': action.x, 'y': action.y, 'modifiers': action.keys}, None)]
+            return [({'type': 'mouse_move', 'x': action.x, 'y': action.y, 'modifiers': action.keys}, None)]
         case _OpenAIDrag():
             path = [{'x': point.x, 'y': point.y} for point in action.path]
             return [({'type': 'drag', 'path': path, 'modifiers': action.keys}, None)]
         case _OpenAIScroll():
             return _map_scroll(action)
         case _OpenAIKeypress():
-            return [({'type': 'keypress', 'keys': action.keys}, None)]
+            return [({'type': 'press_keys', 'keys': action.keys}, None)]
         case _OpenAIType():
-            return [({'type': 'type', 'text': action.text}, None)]
+            return [({'type': 'type_text', 'text': action.text}, None)]
         case _OpenAIWait():
             return [({'type': 'wait'}, None)]
         case _OpenAIScreenshot():
             return [({'type': 'screenshot'}, None)]
         case _:
             assert_never(action)
+
+
+_TOOL_TYPES: dict[object, str] = {
+    'double_click': 'click',
+    'move': 'mouse_move',
+    'keypress': 'press_keys',
+    'type': 'type_text',
+}
+"""The `computer` tool's action type for each OpenAI action type spelled differently."""
 
 
 def _refused_action(error: ValidationError) -> dict[str, Any]:
@@ -143,7 +152,7 @@ def _refused_action(error: ValidationError) -> dict[str, Any]:
     fields = sorted({str(detail['loc'][1]) for detail in details if len(detail['loc']) > 1})
     kind = details[0]['loc'][0] if details[0]['loc'] else (details[0].get('ctx') or {}).get('tag')
     # Under the tool's own type, so the retry names the fields rather than refusing the type.
-    return {'type': 'click' if kind == 'double_click' else kind, 'unsupported_fields': fields}
+    return {'type': _TOOL_TYPES.get(kind, kind), 'unsupported_fields': fields}
 
 
 def _map_scroll(action: _OpenAIScroll) -> list[tuple[dict[str, Any], str | None]]:
@@ -157,7 +166,7 @@ def _map_scroll(action: _OpenAIScroll) -> list[tuple[dict[str, Any], str | None]
         if pixels
     ]
     # A scroll by nothing only moves the pointer there.
-    return scrolls or [({'type': 'move', 'x': action.x, 'y': action.y, 'modifiers': action.keys}, None)]
+    return scrolls or [({'type': 'mouse_move', 'x': action.x, 'y': action.y, 'modifiers': action.keys}, None)]
 
 
 def _scroll(action: _OpenAIScroll, axis: str, pixels: int, direction: str) -> tuple[dict[str, Any], str | None]:

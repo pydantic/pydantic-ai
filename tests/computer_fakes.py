@@ -52,7 +52,7 @@ _LOOKING = (Wait, Screenshot)
 class FakeComputer(AbstractCapability[Any]):
     """A `computer` tool that records the actions it runs, refusing to act on a read-only workspace.
 
-    It refuses `hold_key`, so tests can see an action refused, and returns what zoom and screenshot
+    It refuses `hold_keys`, so tests can see an action refused, and returns what zoom and screenshot
     actions before the last one read, before its screenshot. With `native`, it also adds a `ComputerTool` declaring `display_size`, as
     `ComputerUse` does.
     """
@@ -81,7 +81,7 @@ class FakeComputer(AbstractCapability[Any]):
                     result['error'] = 'This workspace is read-only.'
                     break
                 if isinstance(action, HoldKeys):
-                    result['error'] = "the fake display cannot perform 'hold_key'"
+                    result['error'] = "the fake display cannot perform 'hold_keys'"
                     break
                 self.actions.append(action)
             result['performed'] += 1
