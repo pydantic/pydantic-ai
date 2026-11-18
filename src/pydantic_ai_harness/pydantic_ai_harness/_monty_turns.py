@@ -162,14 +162,11 @@ def _named_tuple_parts(obj: object) -> tuple[str, tuple[str, ...], tuple[Any, ..
     return cls.__name__, tuple(fields), tuple(cast(tuple[Any, ...], obj))
 
 
-@cache
-def _named_tuple_class(name: str, fields: tuple[str, ...]) -> type[tuple[Any, ...]]:
-    return namedtuple(name, fields)  # pyright: ignore[reportUntypedNamedTuple] -- fields known only at run time
-
-
 def _named_tuple(name: str, fields: tuple[str, ...], values: tuple[Any, ...]) -> tuple[Any, ...]:
     """A named tuple with `name`, `fields` and `values`, as Monty makes one on the host."""
-    return _named_tuple_class(name, fields)(*values)
+    # A new class each time, as Monty makes one each time it hands a named tuple over.
+    cls: type[tuple[Any, ...]] = namedtuple(name, fields)  # pyright: ignore[reportUntypedNamedTuple]
+    return cls(*values)
 
 
 class _WireUnpickler(pickle.Unpickler):
