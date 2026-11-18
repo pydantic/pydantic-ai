@@ -124,5 +124,5 @@ def test_the_sweep_runs_default_branch_code_one_at_a_time() -> None:
         'pull-requests': 'write',
     }
     checkout = guard['steps'][0]['with']
-    assert 'ref' not in checkout
+    assert checkout['ref'] == '${{ github.event.repository.default_branch }}'
     assert checkout['sparse-checkout'].split() == ['.github/scripts/pr_guard.sh', '.github/scripts/pr_guard_sweep.py']
