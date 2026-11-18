@@ -432,7 +432,7 @@ it can't tell a moved prefix from an expired cache.
 ## ToolBridge
 
 Replaces the agent's tools with three fixed tools, so the tool definitions stay cached however many
-tools sit behind them and however they change mid-run: `tool_search(query)` returns matching names
+tools sit behind them and however they change mid-run: `tool_search(queries)` returns matching names
 and descriptions, `tool_describe(name)` returns the description and `parameters_json_schema`, and
 `tool_call(name, args_json)` runs the tool with its arguments as a JSON object string. Bridged calls
 go through the normal tool path (validation, hooks, usage; approval only through a

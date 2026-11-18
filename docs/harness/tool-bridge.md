@@ -22,7 +22,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[ToolBridge()])
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `tool_search` | `query` | The name and description of each matching tool, at most `max_results` |
+| `tool_search` | `queries` (a list of strings) | The name and description of each matching tool, at most `max_results` |
 | `tool_describe` | `name` | The tool's name, description and `parameters_json_schema` |
 | `tool_call` | `name`, `args_json` | The tool's result |
 
@@ -33,7 +33,7 @@ A tool added, removed or changed mid-run changes what `tool_search` finds, not t
 ## Options
 
 - `tools` (default `'all'`): which tools to bridge, as a list of names or a `(ctx, tool_def) -> bool` callable, sync or async. The rest stay visible to the model as normal tools.
-- `search`: ranks the bridged tools for a query, with the signature of a [`ToolSearchFunc`][pydantic_ai.capabilities.ToolSearchFunc]. `None` (default) ranks tools by how many of the query's words appear in their name or description.
+- `search`: ranks the bridged tools for `tool_search`'s queries, with the signature of a [`ToolSearchFunc`][pydantic_ai.capabilities.ToolSearchFunc]. `None` (default) ranks tools by how many of the queries' words appear in their name or description.
 - `max_results` (default `10`): the most tools one `tool_search` returns.
 - `max_retries` (default `None`, the agent's tool retry budget, as `Agent(retries={'tools': N})` sets it): retries for each dispatcher tool, spent on unknown tool names, invalid arguments and retries the bridged tools ask for.
 

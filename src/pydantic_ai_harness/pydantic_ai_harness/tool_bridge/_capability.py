@@ -38,9 +38,9 @@ class ToolBridge(AbstractCapability[AgentDepsT]):
     _: KW_ONLY
 
     search: ToolSearchFunc[AgentDepsT] | None = None
-    """Ranks the bridged tools for a `tool_search` query: `(ctx, queries, tools) -> names`, sync or async.
+    """Ranks the bridged tools for `tool_search`'s queries: `(ctx, queries, tools) -> names`, sync or async.
 
-    `None` (default) ranks tools by how many of the query's words appear in their name or description.
+    `None` (default) ranks tools by how many of the queries' words appear in their name or description.
     """
 
     max_results: int = 10

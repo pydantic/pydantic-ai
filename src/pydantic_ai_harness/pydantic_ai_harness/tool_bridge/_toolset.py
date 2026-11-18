@@ -33,7 +33,7 @@ CALL_TOOL_NAME = 'tool_call'
 
 
 class _SearchArgs(TypedDict):
-    query: str
+    queries: list[str]
 
 
 class _DescribeArgs(TypedDict):
@@ -72,7 +72,8 @@ def _dispatcher(description: str, args: type[object]) -> tuple[str, dict[str, An
 
 _DISPATCHERS = {
     SEARCH_TOOL_NAME: _dispatcher(
-        'Search the tools available through `tool_call`. Returns the names and descriptions of the matching tools.',
+        'Search the tools available through `tool_call` with one or more queries. '
+        'Returns the names and descriptions of the matching tools.',
         _SearchArgs,
     ),
     DESCRIBE_TOOL_NAME: _dispatcher(
@@ -105,7 +106,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
     """Which wrapped tools to bridge; the rest stay native."""
 
     search: ToolSearchFunc[AgentDepsT] | None = None
-    """Ranks the bridged tools for a `tool_search` query; `None` matches the query's words."""
+    """Ranks the bridged tools for `tool_search`'s queries; `None` matches the queries' words."""
 
     max_results: int = 10
     """Maximum number of `tool_search` results."""
@@ -175,7 +176,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         if not isinstance(tool, _DispatcherTool):
             return await self.wrapped.call_tool(name, tool_args, ctx, tool)
         if name == SEARCH_TOOL_NAME:
-            return await self._search(ctx, tool_args['query'], tool.bridged)
+            return await self._search(ctx, tool_args['queries'], tool.bridged)
         target = tool.bridged.get(tool_args['name'])
         if target is None:
             raise ModelRetry(
@@ -191,10 +192,10 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         return await self._call(ctx, target, tool_args['args_json'], tool.bridged)
 
     async def _search(
-        self, ctx: RunContext[AgentDepsT], query: str, bridged: dict[str, ToolsetTool[AgentDepsT]]
+        self, ctx: RunContext[AgentDepsT], queries: list[str], bridged: dict[str, ToolsetTool[AgentDepsT]]
     ) -> list[_Match]:
         search = self.search or keywords_search
-        names = search(ctx, [query], [tool.tool_def for tool in bridged.values()])
+        names = search(ctx, queries, [tool.tool_def for tool in bridged.values()])
         if inspect.isawaitable(names):
             names = await names
         matches = [

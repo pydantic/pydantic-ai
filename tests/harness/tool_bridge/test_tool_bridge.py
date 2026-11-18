@@ -91,7 +91,7 @@ class TestToolBridge:
         seen: list[list[str]] = []
         model = _scripted(
             [
-                _call('tool_search', query='weather'),
+                _call('tool_search', queries=['weather']),
                 _call('tool_describe', name='_get_weather'),
                 _call('tool_call', name='_get_weather', args_json='{"city": "Paris"}'),
             ],
@@ -122,7 +122,10 @@ class TestToolBridge:
     async def test_tool_list_is_fixed_while_tools_change(self):
         seen: list[list[str]] = []
         model = _scripted(
-            [_call('tool_search', query='time'), _call('tool_call', name='_get_time', args_json='{"timezone": "UTC"}')],
+            [
+                _call('tool_search', queries=['time']),
+                _call('tool_call', name='_get_time', args_json='{"timezone": "UTC"}'),
+            ],
             seen,
         )
         agent = Agent(model, capabilities=[ToolBridge()])
@@ -191,7 +194,7 @@ class TestToolBridge:
         ) -> list[str]:
             return ['missing', *(tool.name for tool in tools)]
 
-        model = _scripted([_call('tool_search', query='anything')])
+        model = _scripted([_call('tool_search', queries=['anything'])])
         agent = Agent(
             model, tools=[_get_weather, _get_time], capabilities=[ToolBridge(search=everything, max_results=1)]
         )
@@ -316,7 +319,7 @@ class TestToolBridge:
         seen: list[list[str]] = []
         model = _scripted(
             [
-                _call('tool_search', query='weather'),
+                _call('tool_search', queries=['weather']),
                 _call('tool_call', name='_get_weather', args_json='{"city": "Oslo"}'),
             ],
             seen,
