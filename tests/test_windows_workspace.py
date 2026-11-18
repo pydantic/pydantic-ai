@@ -26,7 +26,10 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
 )
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
-from pydantic_ai.workspaces.windows import powershell_script
+from pydantic_ai.workspaces.windows import (
+    _decode_clixml,  # pyright: ignore[reportPrivateUsage]
+    powershell_script,
+)
 
 windows_only = pytest.mark.skipif(sys.platform != 'win32', reason='`WindowsWorkspaceBackend` runs only on Windows')
 
@@ -165,22 +168,18 @@ class TestWindowsCommands:
         assert result.workspace.platform == 'windows'
 
 
-def test_clixml_stderr_is_decoded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_clixml_stderr_is_decoded() -> None:
     """Real Windows PowerShell 5.1 `Get-Item` output, pinned whole and on every runner, Linux included.
 
     On the Windows job its line wrapping follows the temporary path. Also markup that isn't a CLIXML record,
     and an unclosed record.
     """
-    monkeypatch.setattr('pydantic_ai.workspaces.windows._on_windows', lambda: True)
-    backend = WindowsWorkspaceBackend(tmp_path, powershell='powershell.exe')
-
-    def decode(stderr: str) -> str:
-        return backend._decode_stderr(stderr.encode(), shell=True)  # pyright: ignore[reportPrivateUsage]
-
     clixml = (
         '<Objs a><S S="x">y</S></Objs>\r\n'
         '#< CLIXML\r\n'
         '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">'
+        '<Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T></TN>'
+        '<MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV></PR></MS></Obj>'
         '<S S="Error">Get-Item : Cannot find path \'C:\\work\\missing.txt\' because it does not exist._x000D__x000A_</S>'
         '<S S="Error">At line:4 char:1_x000D__x000A_</S>'
         '<S S="Error">+ Get-Item missing.txt_x000D__x000A_</S>'
@@ -193,7 +192,7 @@ def test_clixml_stderr_is_decoded(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         '</Objs>'
         '<Objs a><S S="x">z</S></Objs>\r\n'
     )
-    assert decode(clixml) == snapshot(
+    assert _decode_clixml(clixml) == snapshot(
         """\
 <Objs a><S S="x">y</S></Objs>\r
 Get-Item : Cannot find path 'C:\\work\\missing.txt' because it does not exist.\r
@@ -208,7 +207,7 @@ a <b> & _x000A_ \U0001f600\r
 <Objs a><S S="x">z</S></Objs>\r
 """
     )
-    assert decode('<Objs a><S S="x">y</S></Objs>\n') == '<Objs a><S S="x">y</S></Objs>\n'
+    assert _decode_clixml('<Objs a><S S="x">y</S></Objs>\n') == '<Objs a><S S="x">y</S></Objs>\n'
     opening = '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">'
     unclosed = f'{opening}<S S="Error">cut</S>'
-    assert decode(f'#< CLIXML\n{opening}<S S="Error">boom</S></Objs>{unclosed}') == f'boom{unclosed}'
+    assert _decode_clixml(f'#< CLIXML\n{opening}<S S="Error">boom</S></Objs>{unclosed}') == f'boom{unclosed}'

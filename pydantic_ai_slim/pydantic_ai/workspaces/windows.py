@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from subprocess import DEVNULL, PIPE
 
@@ -300,12 +301,20 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
             self._jobs[process.pid] = job
         return process
 
-    def _decode_stderr(self, data: bytes | bytearray, *, shell: bool) -> str:
-        stderr = super()._decode_stderr(data, shell=shell)
+    async def _run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool,
+        env: Mapping[str, str] | None,
+        timeout: float | None,
+        cwd: str | None,
+    ) -> CommandResult:
+        result = await super()._run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
         # Windows PowerShell, unlike `pwsh`, writes its error stream as CLIXML for an `-EncodedCommand` script.
         if shell and ntpath.basename(self._executable()).lower() in ('powershell', 'powershell.exe'):
-            return _decode_clixml(stderr)
-        return stderr
+            return replace(result, stderr=_decode_clixml(result.stderr))
+        return result
 
     def _kill_tree(self, process: anyio.abc.Process) -> tuple[PermissionError | None, PermissionError | None]:
         job = self._jobs.get(process.pid)
