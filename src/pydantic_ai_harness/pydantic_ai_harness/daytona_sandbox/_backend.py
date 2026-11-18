@@ -6,6 +6,7 @@ both streams to files that are downloaded once it exits.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import errno
 import logging
@@ -19,6 +20,7 @@ from typing import TYPE_CHECKING, Literal
 import anyio
 import anyio.lowlevel
 import anyio.to_thread
+from typing_extensions import TypeIs
 
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -250,11 +252,31 @@ async def _close_quietly(client: AsyncDaytona) -> None:
     """Close an API client, bounded and shielded; a failure is logged, not raised."""
     with anyio.move_on_after(_TEARDOWN_TIMEOUT, shield=True) as deadline:
         try:
+            await _settle_event_socket(client)
             await client.close()
         except Exception as error:
             logger.warning('Could not close the Daytona API client: %r', error)
     if deadline.cancelled_caught:
         logger.warning('Closing the Daytona API client did not complete within %ss.', _TEARDOWN_TIMEOUT)
+
+
+async def _settle_event_socket(client: AsyncDaytona) -> None:
+    """Wait for the SDK's event-socket connect in flight, so closing the client does not leak it.
+
+    Every `client.get()` starts that connect in the background, and `close()` landing between the
+    websocket upgrade and engine.io's OPEN packet leaks the websocket's connection. Destroying a sandbox
+    through a client of its own closes it within that window. The SDK bounds the connect at 5 seconds.
+
+    TODO: Drop once the SDK closes the websocket itself: https://github.com/daytonaio/clients/issues/676
+    """
+    dispatcher: object = getattr(client, '_event_dispatcher', None)
+    connecting: object = getattr(dispatcher, '_connect_task', None)
+    if _is_task(connecting) and not connecting.done():
+        await asyncio.wait([connecting])
+
+
+def _is_task(value: object) -> TypeIs[asyncio.Task[object]]:
+    return isinstance(value, asyncio.Task)
 
 
 async def _delete_session(sandbox: AsyncSandbox, session_id: str) -> None:

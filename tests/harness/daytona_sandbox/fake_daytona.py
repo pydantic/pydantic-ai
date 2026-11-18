@@ -455,10 +455,25 @@ class FakeSandbox:
             )
 
 
+class FakeEventDispatcher:
+    """The SDK's event socket: `get()` starts a connect in the background, as `AsyncSandbox` does."""
+
+    def __init__(self) -> None:
+        self._connect_task: asyncio.Task[object] | None = None
+
+    def start_connect(self, gate: asyncio.Event) -> None:
+        self._connect_task = asyncio.create_task(gate.wait())
+
+    @property
+    def connecting(self) -> bool:
+        return self._connect_task is not None and not self._connect_task.done()
+
+
 class FakeClient:
     def __init__(self, owner: FakeDaytona) -> None:
         self.owner = owner
         self.closed = False
+        self._event_dispatcher = FakeEventDispatcher()
 
     async def create(self, params: CreateParams, *, timeout: float = 60) -> FakeSandbox:
         if self.owner.create_error is not None:
@@ -486,6 +501,8 @@ class FakeClient:
             raise self.owner.get_error
         if self.owner.get_gate is not None:
             await self.owner.get_gate.wait()
+        if self.owner.event_socket_gate is not None:
+            self._event_dispatcher.start_connect(self.owner.event_socket_gate)
         for sandbox in self.owner.sandboxes:
             if sandbox.id == sandbox_id or sandbox.name == sandbox_id:
                 sandbox.client = self
@@ -497,6 +514,9 @@ class FakeClient:
             await self.owner.close_gate.wait()
         if (error := next(self.owner.close_errors, None)) is not None:
             raise error
+        if self._event_dispatcher.connecting:
+            # The real SDK leaks the websocket here: https://github.com/daytonaio/clients/issues/676
+            self.owner.closed_while_connecting += 1
         self.closed = True
         self.owner.closed_clients += 1
 
@@ -517,6 +537,9 @@ class FakeDaytona:
         self.close_gate: asyncio.Event | None = None
         self.get_gate: asyncio.Event | None = None
         self.get_error: Exception | None = None
+        # When set, `get()` starts an event-socket connect that finishes once it is set.
+        self.event_socket_gate: asyncio.Event | None = None
+        self.closed_while_connecting = 0
         # What constructing `AsyncDaytona()` raises, e.g. for a missing API key.
         self.client_error: Exception | None = None
         # When set, new sandboxes run commands and file operations on the host under this directory.

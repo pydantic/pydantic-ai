@@ -119,6 +119,17 @@ async def test_destroy_with_a_supplied_client_leaves_it_open(fake_daytona: FakeD
     assert (fake_daytona.opened_clients, fake_daytona.closed_clients) == (1, 0)
 
 
+async def test_destroy_closes_its_own_client_only_after_the_event_socket_connects(fake_daytona: FakeDaytona) -> None:
+    sandbox = fake_daytona.sandbox()
+    fake_daytona.event_socket_gate = gate = asyncio.Event()
+    destroying = asyncio.create_task(DaytonaSandbox().destroy(WorkspaceRef(provider='daytona', id=sandbox.id)))
+    await anyio.wait_all_tasks_blocked()
+    assert (sandbox.state, fake_daytona.closed_clients) == (daytona.SandboxState.DESTROYING, 0)
+    gate.set()
+    await destroying
+    assert (fake_daytona.closed_clients, fake_daytona.closed_while_connecting) == (1, 0)
+
+
 async def test_backend_for_a_ref_attaches_with_the_capability_settings(fake_daytona: FakeDaytona) -> None:
     existing = fake_daytona.sandbox('existing')
     capability = DaytonaSandbox[None](working_dir='/work', env={'A': 'b'})
