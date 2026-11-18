@@ -264,6 +264,7 @@ def resolve_settings(overrides: dict[str, JsonValue]) -> Settings:
 
 
 _CODER_FACTORY = 'pydantic_ai_harness.coder:Coder'
+_FORMER_PACKAGE = re.compile(r'^pydantic_clai2(?=[.:]|$)')
 
 
 class PluginSettings(BaseModel):
@@ -275,6 +276,15 @@ class PluginSettings(BaseModel):
     path: str | None = None
     enabled: bool = True
     settings: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @field_validator('factory')
+    @classmethod
+    def _renamed_package(cls, factory: str) -> str:
+        """Name a module of `pydantic_clai2`, this package's name before `pydantic_ai_pax`, by its current path.
+
+        `pydantic_clai2` still imports, so without this one module would pass checks that compare factories.
+        """
+        return _FORMER_PACKAGE.sub('pydantic_ai_pax', factory)
 
     @model_validator(mode='after')
     def _coder_without_delegation(self) -> 'PluginSettings':

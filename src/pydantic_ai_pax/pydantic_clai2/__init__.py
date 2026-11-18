@@ -13,6 +13,16 @@ _ALIAS = f'{__name__}.'
 _ENTRY_POINT = f'{__name__}.__main__'
 
 
+def _deprecated(old: str, new: str) -> None:
+    warnings.warn(f'`{old}` is deprecated, import `{new}` instead.', DeprecationWarning, stacklevel=3)
+
+
+def __getattr__(name: str) -> object:
+    value = getattr(importlib.import_module('pydantic_ai_pax'), name)
+    _deprecated(f'{__name__}.{name}', f'pydantic_ai_pax.{name}')
+    return value
+
+
 class _Alias(MetaPathFinder, Loader):
     def find_spec(
         self, fullname: str, path: Sequence[str] | None, target: ModuleType | None = None
@@ -23,9 +33,7 @@ class _Alias(MetaPathFinder, Loader):
 
     def exec_module(self, module: ModuleType) -> None:
         target = f'pydantic_ai_pax.{module.__name__.removeprefix(_ALIAS)}'
-        warnings.warn(
-            f'`{module.__name__}` is deprecated, import `{target}` instead.', DeprecationWarning, stacklevel=2
-        )
+        _deprecated(module.__name__, target)
         # The import system returns whatever `sys.modules` holds once this returns, so both names share one module.
         sys.modules[module.__name__] = importlib.import_module(target)
 

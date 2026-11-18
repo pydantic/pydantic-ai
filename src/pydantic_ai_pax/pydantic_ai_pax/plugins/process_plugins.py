@@ -12,7 +12,6 @@ import hashlib
 import importlib
 import logging
 import os
-import re
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -61,8 +60,7 @@ T = TypeVar('T')
 _LOGGER = logging.getLogger(__name__)
 
 # Local settings databases from before the package move, or from before plugins were declared as
-# `Plugin` classes, can still name the old factories. `upgrade` first renames `pydantic_clai2` paths.
-_OLD_PACKAGE = re.compile(r'^pydantic_clai2(?=[.:]|$)')
+# `Plugin` classes, can still name the old factories; `PluginSettings` already renamed `pydantic_clai2` paths.
 MOVED_FACTORIES = {
     'pydantic_ai_harness.coder:Coder': 'pydantic_ai_pax.builtin_plugins.coder',
     'pydantic_ai_harness:Coder': 'pydantic_ai_pax.builtin_plugins.coder',
@@ -426,9 +424,8 @@ class ProcessPlugins(Generic[DepsT]):
         Preserve custom settings when a local database uses an old CLAI module path.
         """
         old = saved
-        renamed = _OLD_PACKAGE.sub('pydantic_ai_pax', saved.factory)
-        factory = MOVED_FACTORIES.get(renamed, renamed)
-        if factory != saved.factory:
+        factory = MOVED_FACTORIES.get(saved.factory)
+        if factory is not None:
             saved = saved.model_copy(update={'factory': factory})
         current = self.builtin.get(saved.id)
         if current is not None and same_plugin(old, RETIRED_BUILTINS.get(saved.id)):

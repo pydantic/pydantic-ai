@@ -8,8 +8,10 @@ from types import ModuleType
 
 import pytest
 
+import pydantic_ai_pax
 import pydantic_ai_pax.commands
 import pydantic_ai_pax.plugins
+import pydantic_clai2
 from pydantic_clai2 import __main__ as clai2_main
 
 SOURCES = Path(__file__).parents[2] / 'src'
@@ -56,3 +58,13 @@ def test_old_import_paths_are_the_new_modules(monkeypatch: pytest.MonkeyPatch, o
     monkeypatch.delitem(sys.modules, old, raising=False)
     with pytest.warns(DeprecationWarning, match=rf'^`{old}` is deprecated, import `{new.__name__}` instead\.$'):
         assert importlib.import_module(old) is new
+
+
+def test_old_top_level_names_are_the_new_ones() -> None:
+    with pytest.warns(
+        DeprecationWarning, match=r'^`pydantic_clai2.create_agent` is deprecated, import `pydantic_ai_pax.create_agent`'
+    ):
+        from pydantic_clai2 import create_agent
+    assert create_agent is pydantic_ai_pax.create_agent
+    with pytest.raises(AttributeError):
+        pydantic_clai2.missing
