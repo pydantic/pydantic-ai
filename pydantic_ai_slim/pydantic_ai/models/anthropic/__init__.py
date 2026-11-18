@@ -1271,7 +1271,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             supported_native_tools = supported_native_tools - {AdvisorTool}
         if isinstance(client, _CODE_EXECUTION_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {CodeExecutionTool}
-        if _profile.get('anthropic_computer_tool_version') is None or isinstance(client, _COMPUTER_UNSUPPORTED_CLIENTS):
+        if isinstance(client, _COMPUTER_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {ComputerTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
@@ -1352,9 +1352,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         `rejects_unpaired_tool_calls` is on for `AsyncAnthropic` clients and off for the Bedrock, Bedrock Mantle,
         Vertex AI and Foundry clients, which aren't verified to reject an unpaired tool call, unless the provider's
         profile already sets it.
-
-        `ComputerTool` joins `supported_native_tools` when `anthropic_computer_tool_version` is set, so a
-        `supported_native_tools` the user sets without it wins.
         """
         client = self._provider.client
         profile = merge_profile(
@@ -1409,9 +1406,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     rejects_unpaired_tool_calls=not isinstance(client, _UNPAIRED_TOOL_CALLS_UNVERIFIED_CLIENTS)
                 ),
             )
-        if profile.get('anthropic_computer_tool_version') is not None:
-            listed = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-            profile = merge_profile(profile, ModelProfile(supported_native_tools=listed | {ComputerTool}))
         return profile
 
     @property
@@ -4438,10 +4432,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     def _native_computer(self, model_request_parameters: ModelRequestParameters) -> _computer.NativeComputer | None:
         """The `computer` tool's name and the Anthropic computer use tool sent in its place, for a `ComputerTool`."""
-        version = self.profile.get('anthropic_computer_tool_version')
         computer = next((t for t in model_request_parameters.native_tools if isinstance(t, ComputerTool)), None)
-        if version is None or computer is None:
+        if computer is None:
             return None
+        version = self.profile.get('anthropic_default_computer_tool_version', 'computer_20250124')
         names = _computer_tool_names(model_request_parameters)
         return _computer.NativeComputer(names[0], version, computer.display_size) if names else None
 
