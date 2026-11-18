@@ -247,7 +247,7 @@ async def main():
     print(result.output)
 ```
 
-The screen needs Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid` in the sandbox image. Pods run as a non-root user, so nothing is installed for you: without them, the first use of the screen raises `WorkspaceUnavailableError` naming what is missing. Build them into an image along with the programs the agent should use, and give the pool's template that image in place of `python:3.12`:
+The screen needs [Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid`](computer-use.md#what-the-display-needs) in the sandbox image. Pods run as a non-root user, so nothing is installed for you: without them, the first use of the screen raises `WorkspaceUnavailableError` naming what is missing. Build them into an image along with the programs the agent should use, and give the pool's template that image in place of `python:3.12`:
 
 ```dockerfile
 FROM python:3.12
