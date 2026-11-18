@@ -106,9 +106,16 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
 )
 
 
-def _workflow_runner() -> SandboxedWorkflowRunner:
+def _workflow_runner(*, reimport_this_module: bool = False) -> SandboxedWorkflowRunner:
+    """A sandbox that imports this module once, since building its agents again for every run and replay is slow.
+
+    `reimport_this_module` makes the sandbox import it for each run, as it would a user's workflow module, so
+    the `subprocess` this module imported is the sandbox's restricted one.
+    """
+    this_module = () if reimport_this_module else (__name__,)
     return SandboxedWorkflowRunner(
         restrictions=SandboxRestrictions.default.with_passthrough_modules(
+            *this_module,
             # Coverage imports parser modules lazily while tracing workflow code.
             'coverage',
             # `PydanticAIPlugin` registers `pydantic_graph`'s `UnsupportedEventLoopError` as a
@@ -725,7 +732,7 @@ async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
         task_queue=TASK_QUEUE,
         workflows=[CodeModeWorkflow, SandboxRestrictionWorkflow],
         plugins=[AgentPlugin(code_mode_agent)],
-        workflow_runner=_workflow_runner(),
+        workflow_runner=_workflow_runner(reimport_this_module=True),
     ):
         result = await client.execute_workflow(
             CodeModeWorkflow.run,
