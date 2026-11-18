@@ -1069,6 +1069,20 @@ async def test_lowest_authority_under_counts_where_an_entry_leads(authority_root
     assert await lowest_authority_under(ws, 'vendor') == 'operator'
 
 
+@posix_only
+@pytest.mark.parametrize('path_authority', [{}, {'trusted': 'operator'}])
+async def test_lowest_authority_under_a_directory_that_links_out(
+    tmp_path: Path, authority_root: Path, path_authority: dict[str, Authority]
+) -> None:
+    # The directory itself leads outside the working directory, so it's outside the workspace, as `authority_of` says.
+    (tmp_path / 'elsewhere').mkdir()
+    (authority_root / 'linked').symlink_to(tmp_path / 'elsewhere')
+    ws = _authority_workspace(authority_root, path_authority=path_authority)
+
+    assert await ws.authority_of('linked/AGENTS.md') == 'none'
+    assert await lowest_authority_under(ws, 'linked') == 'none'
+
+
 async def test_lowest_authority_under_a_plain_workspace(authority_root: Path) -> None:
     assert await lowest_authority_under(Workspace(LocalWorkspaceBackend(authority_root)), 'vendor') == 'operator'
 
