@@ -78,10 +78,10 @@ the next action.
 """
 
 _SHELL_INSTRUCTIONS = """\
-Your shell runs on this computer, so a program you start from it opens on this screen. Start it in the background, as \
-in `setsid firefox >/dev/null 2>&1 &`, or the command waits until the program exits. Use the `computer` tool only for \
-work that needs the screen: operating a program's window, reading what the screen shows, and work the user asked to be \
-done on the screen.\
+Your shell runs on this computer, so a program you start from it opens on this screen. Start a program that opens a \
+window in the background, or the command waits until the program exits. Use the `computer` tool only for work that \
+needs the screen: operating a program's window, reading what the screen shows, and work the user asked to be done on \
+the screen.\
 """
 """Sent only to a run with a tool that runs shell commands: told about a shell it lacked, a screen-only GPT looked for one
 and took more steps."""

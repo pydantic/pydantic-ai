@@ -46,8 +46,8 @@ call ends with.
 
 The instructions tell the model how to group actions into calls and never to follow instructions shown on the screen.
 A run with a tool that runs shell commands, such as `Shell`'s, is also told that a program it starts from the shell
-opens on the screen, how to start one in the background, and to use the screen only for work that needs it: operating
-a program's window, reading what the screen shows, and work the user asked to be done on the screen.
+opens on the screen, to start a program with a window in the background, and to use the screen only for work that
+needs it: operating a program's window, reading what the screen shows, and work the user asked to be done on the screen.
 
 With `defer_loading=True`, the model reads only the capability's `description` until it loads it. The default names
 the same three cases. Pass `description=` to change when the model loads it.
