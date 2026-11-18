@@ -3653,25 +3653,8 @@ have layout keys. A fragment is dropped when its plugin unloads. The built-in
 row accents output-token counts and tool names using the selected theme;
 reordering preserves those styles, and plugin fragments stay muted.
 
-Open `/set`, then select `display.footer_fields` for the shared **Main footer
-layout** submenu in the terminal and web settings. Each field offers **Show** or
-**Hide**, **Move earlier**, and **Move later**. Changes persist immediately; the
-visible **Reset layout** row restores only the footer layout. Moving a shown field
-skips hidden neighbours. Show hidden fields before moving them; moving does not
-change visibility. The setting is an
-ordered JSON list of visible names; omitted names are hidden and `[]` hides all
-footer figures. The default includes every built-in except `assistant_age`,
-which is opt-in. `model` includes the focused subagent label; `updates`, `live`,
-and `queued` are independent fields, not plugin fragments. Their conditional
-visibility still applies when selected.
-
-New writes reject unknown names, duplicates, non-string entries, and non-list
-values. Saved and project layouts skip unsupported names without rewriting raw
-values on reads or unrelated edits. A future-only list shows no figures.
-Explicit layout replacement or reset replaces the whole saved value; other invalid
-values remain errors. See the
-[status-line reference](docs/reference.md#status-line) for the default order,
-valid field names, and direct JSON examples.
+See the [status-line reference](docs/reference.md#status-line) for layout controls,
+defaults, validation, cross-build compatibility, and direct JSON examples.
 
 ```python
 from collections.abc import Sequence

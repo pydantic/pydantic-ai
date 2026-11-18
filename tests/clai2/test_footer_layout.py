@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
+from inspect import signature
 from pathlib import Path
 
 import anyio
@@ -66,6 +67,9 @@ def test_default_footer_order_and_field_styles_survive_reordering() -> None:
         live=lambda: '2 live',
         queued=lambda: 3,
     )
+    for name in ('_text_response', '_streamed_text'):
+        assert name not in signature(Status).parameters
+        assert name not in repr(status)
     assert status.text() == (
         'main | /work | context: 100/1k tokens | 42 output tokens | $0.0100 | running: shell'
         ' | plugin | update | 2 live | queued: 3'

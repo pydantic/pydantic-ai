@@ -18,6 +18,7 @@ from pydantic import (
 from pydantic_clai2.config.theme_names import names
 
 _WORKTREE_COMMAND_PLACEHOLDER = re.compile(r'{[A-Za-z_]\w*}')
+_STORED_FOOTER_FIELDS: TypeAdapter[list[str]] = TypeAdapter(list[str])
 
 UpdateChannel = Literal['stable', 'main']
 UPDATE_CHANNELS: tuple[UpdateChannel, ...] = get_args(UpdateChannel)
@@ -300,10 +301,10 @@ def resolve_settings(overrides: dict[str, JsonValue], *, stored: bool = False) -
     unknown = overrides.keys() - SETTING_FIELDS.keys()
     if unknown:
         raise ValueError(f'Unknown settings: {", ".join(sorted(unknown))}')
-    values = {SETTING_FIELDS[key]: value for key, value in overrides.items()}
+    values: dict[str, JsonValue] = {SETTING_FIELDS[key]: value for key, value in overrides.items()}
     if stored and 'footer_fields' in values:
         # Project and store overrides remain raw; only the effective snapshot skips future names.
-        fields = TypeAdapter(list[str]).validate_python(values['footer_fields'], strict=True)
+        fields = _STORED_FOOTER_FIELDS.validate_python(values['footer_fields'], strict=True)
         values['footer_fields'] = [field for name in fields for field in FOOTER_FIELDS if field == name]
     return Settings.model_validate(values)
 

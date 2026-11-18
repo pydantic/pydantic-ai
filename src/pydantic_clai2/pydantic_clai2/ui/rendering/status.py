@@ -5,7 +5,7 @@ import contextlib
 import math
 import time
 from collections.abc import AsyncGenerator, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Self, cast
@@ -51,8 +51,8 @@ class Status:
     updates: StatusSegment = lambda: ''
     live: StatusSegment = lambda: ''
     queued: Callable[[], int] = lambda: 0
-    _text_response: ModelResponse | None = None
-    _streamed_text: bool = False
+    _text_response: ModelResponse | None = field(default=None, init=False, repr=False)
+    _streamed_text: bool = field(default=False, init=False, repr=False)
     model: str = 'agent default'
     workspace: str = ''
     """The session's working directory; hidden while empty."""
