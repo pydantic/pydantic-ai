@@ -344,7 +344,8 @@ FIXTURES: dict[str, Fixture] = {
     'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
     'Coder': _workspace(Coder),
     'CompactOnRequest': lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
-    'ComputerUse': lambda _: [ScreenProvider().capability(), ComputerUse()],
+    # The fake screen never changes, so settling after an action would only wait out its interval.
+    'ComputerUse': lambda _: [ScreenProvider().capability(), ComputerUse(settle_seconds=0)],
     'ConversationSearch': lambda _: ConversationSearch(
         SnapshotHistorySource(InMemoryStepStore()), scope='conversation'
     ),

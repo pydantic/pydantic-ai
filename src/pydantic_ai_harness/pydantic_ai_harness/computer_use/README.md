@@ -37,7 +37,7 @@ async def main():
     print(result.output)
 ```
 
-1. Any capability whose workspace has a display, such as `DockerSandbox(desktop=True)`. See
+1. Any capability whose workspace has a display, such as `DockerContainer(desktop=True)`. See
    [Giving a workspace a screen](#giving-a-workspace-a-screen) to write your own.
 
 On a [read-only](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only-access) workspace the `computer` tool offers only the actions that look,

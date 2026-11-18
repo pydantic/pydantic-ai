@@ -423,7 +423,7 @@ from pydantic_ai_harness import ComputerUse
 agent = Agent('test', capabilities=[my_desktop_sandbox, ComputerUse()])
 ```
 
-Fields: `settle_seconds=2` (pause after acting before a zoom or a screenshot; set it if screenshots catch pages mid-load), `native=True` (adds a `ComputerTool`
+Fields: `settle_seconds=2` (longest wait after acting for the screen to stop changing, with screenshots taken until two in a row match; `0` takes the screenshot at once), `native=True` (adds a `ComputerTool`
 so Claude and GPT get their own computer tool, run by this one; `False` sends this tool to every model, for example so
 GPT can zoom). Every request carries every earlier screenshot; nothing drops them, so long runs reach provider image
 limits (100 images on 200k-context Claude).

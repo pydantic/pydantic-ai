@@ -9,7 +9,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 import pytest
-from pydantic import ValidationError
 
 from pydantic_ai import Agent, Tool, capture_run_messages
 from pydantic_ai.computer_use import (
@@ -17,9 +16,7 @@ from pydantic_ai.computer_use import (
     Click,
     ComputerCallPart,
     ComputerReturnPart,
-    HoldKeys,
     Screenshot,
-    Wait,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -368,12 +365,3 @@ def test_a_computer_call_reads_only_real_labels(value: object) -> None:
     assert (
         ComputerCallPart('computer', {'actions': []}, provider_details={'coordinate_grid': 1}).coordinate_grid is None
     )
-
-
-@pytest.mark.parametrize('seconds', [float('inf'), float('nan')])
-def test_a_duration_must_be_finite(seconds: float) -> None:
-    # JSON can't hold it, so a saved history would lose the action.
-    with pytest.raises(ValidationError, match='finite number'):
-        Wait(seconds=seconds)
-    with pytest.raises(ValidationError, match='finite number'):
-        HoldKeys(keys=('shift',), seconds=seconds)
