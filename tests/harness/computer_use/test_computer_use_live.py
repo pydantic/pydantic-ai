@@ -1007,9 +1007,15 @@ async def test_gpt_sees_an_image_a_result_holds_beside_its_screenshot(
     assert 'red' in result.output.lower()
     last = request_capture.bodies('/responses')[-1]
     message = json_objects(last['input'])[-1]
-    # The output can carry only the screenshot, so the image goes in a message after it.
+    # The output can carry only the screenshot, so the image goes in a message after it: a note naming the file,
+    # then the image between the provenance tags core puts around a tool's files.
     assert isinstance(content := message['content'], list)
-    assert [part['type'] for part in content if isinstance(part, dict)] == ['input_text', 'input_image']
+    assert [part['type'] for part in content if isinstance(part, dict)] == [
+        'input_text',
+        'input_text',
+        'input_image',
+        'input_text',
+    ]
 
 
 @needs_openai
