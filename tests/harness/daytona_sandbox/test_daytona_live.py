@@ -23,7 +23,6 @@ Run locally:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
@@ -107,11 +106,11 @@ async def test_destroy_by_ref_does_not_start_sandbox(
         await (await client.get(backend.ref.id)).stop()
         monkeypatch.setattr(daytona.AsyncSandbox, 'start', refuse)
         await DaytonaSandbox(client=client).destroy(backend.ref)
-        with contextlib.suppress(daytona.DaytonaNotFoundError):
-            assert (await client.get(backend.ref.id)).state in (
-                daytona.SandboxState.DESTROYING,
-                daytona.SandboxState.DESTROYED,
-            )
+        try:
+            state = (await client.get(backend.ref.id)).state
+        except daytona.DaytonaNotFoundError:
+            state = None
+        assert state in (None, daytona.SandboxState.DESTROYING, daytona.SandboxState.DESTROYED)
         await DaytonaSandbox(client=client).destroy(backend.ref)
 
 
