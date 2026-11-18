@@ -9577,7 +9577,9 @@ async def test_agent_realtime_session_denied_tool_returns_denial_message() -> No
     lifecycle = [event for event in events if isinstance(event, (DeferredToolRequestsEvent, DeferredToolResultsEvent))]
     assert lifecycle == [
         DeferredToolRequestsEvent(
-            DeferredToolRequests(approvals=[ToolCallPart(tool_name='danger', args='{}', tool_call_id='tc')])
+            DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='danger', args='{}', tool_call_id='tc')], validated_args={'tc': {}}
+            )
         ),
         DeferredToolResultsEvent(DeferredToolResults(approvals={'tc': False})),
     ]
@@ -9674,7 +9676,10 @@ async def test_realtime_session_does_not_execute_an_approval_gated_tool_without_
     lifecycle = [event for event in events if isinstance(event, (DeferredToolRequestsEvent, DeferredToolResultsEvent))]
     assert lifecycle == [
         DeferredToolRequestsEvent(
-            DeferredToolRequests(approvals=[ToolCallPart(tool_name='transfer_funds', args='{}', tool_call_id='tc')])
+            DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='transfer_funds', args='{}', tool_call_id='tc')],
+                validated_args={'tc': {}},
+            )
         )
     ]
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
@@ -9703,7 +9708,10 @@ async def test_realtime_session_denies_an_approval_gated_tool_through_a_handler(
     lifecycle = [event for event in events if isinstance(event, DeferredToolRequestsEvent)]
     assert lifecycle == [
         DeferredToolRequestsEvent(
-            DeferredToolRequests(approvals=[ToolCallPart(tool_name='transfer_funds', args='{}', tool_call_id='tc')])
+            DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='transfer_funds', args='{}', tool_call_id='tc')],
+                validated_args={'tc': {}},
+            )
         )
     ]
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))

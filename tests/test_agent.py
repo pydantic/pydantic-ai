@@ -6315,7 +6315,7 @@ class TestMultipleToolCalls:
             assert info.output_tools is not None
             return ModelResponse(
                 parts=[
-                    ToolCallPart('deferred_tool'),
+                    ToolCallPart('deferred_tool', tool_call_id='deferred_tool'),
                     ToolCallPart('regular_tool', {'x': 1}),
                 ],
             )
@@ -6337,7 +6337,10 @@ class TestMultipleToolCalls:
 
         result = agent.run_sync('test early strategy with deferred tool call')
         assert result.output == snapshot(
-            DeferredToolRequests(calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())])
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())],
+                validated_args={'deferred_tool': {}},
+            )
         )
         messages = result.all_messages()
 
@@ -11353,7 +11356,7 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
                 ToolCallPart(tool_name='call_first'),
                 ToolCallPart(tool_name='call_first'),
                 ToolCallPart(tool_name='increment_integer_holder'),
-                ToolCallPart(tool_name='requires_approval'),
+                ToolCallPart(tool_name='requires_approval', tool_call_id='requires_approval'),
                 ToolCallPart(tool_name='call_second'),
                 ToolCallPart(tool_name='call_second'),
                 ToolCallPart(tool_name='call_second'),
@@ -11402,7 +11405,10 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
         result = agent.run_sync(user_prompt)
 
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())],
+            validated_args={'requires_approval': {}},
+        )
     )
     assert integer_holder == 2
 
@@ -11926,7 +11932,8 @@ async def test_hitl_tool_approval(serialize_history: bool):
             approvals=[
                 ToolCallPart(tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'),
                 ToolCallPart(tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'),
-            ]
+            ],
+            validated_args={'ok_to_delete': {'path': 'ok_to_delete.py'}, 'never_delete': {'path': 'never_delete.py'}},
         )
     )
 
@@ -13334,14 +13341,17 @@ async def test_run_with_unapproved_tool_call_in_history():
 
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='delete_file')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='delete_file', tool_call_id='delete_file')]),
     ]
 
     result = await agent.run(message_history=messages)
 
     assert result.all_messages() == messages
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='delete_file', tool_call_id=IsStr())])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='delete_file', tool_call_id=IsStr())],
+            validated_args={'delete_file': {}},
+        )
     )
 
 

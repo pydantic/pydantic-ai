@@ -3289,7 +3289,7 @@ class TestMultipleToolCalls:
 
         async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
             assert info.output_tools is not None
-            yield {1: DeltaToolCall('deferred_tool')}
+            yield {1: DeltaToolCall('deferred_tool', tool_call_id='deferred_tool')}
             yield {2: DeltaToolCall('regular_tool', '{"x": 1}')}
 
         agent = Agent(
@@ -3310,7 +3310,10 @@ class TestMultipleToolCalls:
         async with agent.run_stream('test early strategy with external tool call') as result:
             response = await result.get_output()
             assert response == snapshot(
-                DeferredToolRequests(calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())])
+                DeferredToolRequests(
+                    calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())],
+                    validated_args={'deferred_tool': {}},
+                )
             )
             messages = result.all_messages()
 
@@ -5297,10 +5300,18 @@ async def test_tool_raises_call_deferred():
         assert isinstance(result.run_id, str)
         assert isinstance(result.conversation_id, str)
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])]
+            [
+                DeferredToolRequests(
+                    calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                    validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
+                )
+            ]
         )
         assert await result.get_output() == snapshot(
-            DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
+            )
         )
         responses = [c async for c in result.stream_response(debounce_by=None)]
         assert responses == snapshot(
@@ -5318,7 +5329,10 @@ async def test_tool_raises_call_deferred():
             ]
         )
         assert await result.validate_response_output(responses[0]) == snapshot(
-            DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
+            )
         )
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=4))
         assert result.timestamp == IsNow(tz=datetime.UTC)
@@ -5345,7 +5359,10 @@ async def test_tool_raises_approval_required():
         messages = result.all_messages()
         output = await result.get_output()
         assert output == snapshot(
-            DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id=IsStr())])
+            DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id=IsStr())],
+                validated_args={'my_tool': {'x': 1}},
+            )
         )
         assert result.is_complete
 
@@ -5492,6 +5509,10 @@ async def test_deferred_tool_iter():
                             tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
                         )
                     ],
+                    validated_args={
+                        'pyd_ai_tool_call_id__my_tool': {'x': 0},
+                        'pyd_ai_tool_call_id__my_other_tool': {'x': 0},
+                    },
                 ),
             ),
         ]
@@ -5609,6 +5630,10 @@ async def test_tool_raises_call_deferred_approval_required_iter():
                             tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
                         )
                     ],
+                    validated_args={
+                        'pyd_ai_tool_call_id__my_tool': {'x': 0},
+                        'pyd_ai_tool_call_id__my_other_tool': {'x': 0},
+                    },
                 ),
             ),
         ]
@@ -5619,6 +5644,7 @@ async def test_tool_raises_call_deferred_approval_required_iter():
         DeferredToolRequests(
             calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
             approvals=[ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())],
+            validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}, 'pyd_ai_tool_call_id__my_other_tool': {'x': 0}},
         )
     )
 
@@ -6507,7 +6533,7 @@ async def test_args_validator_deferral_not_triggered_by_partial_args():
     validator_calls: list[tuple[int, int, bool]] = []
 
     async def stream_args(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
-        yield {0: DeltaToolCall(name='add_numbers')}
+        yield {0: DeltaToolCall(name='add_numbers', tool_call_id='add_numbers')}
         yield {0: DeltaToolCall(json_args='{"x": 1,')}
         yield {0: DeltaToolCall(json_args=' "y": 2}')}
 
@@ -6568,7 +6594,8 @@ async def test_args_validator_deferral_not_triggered_by_partial_args():
                             args='{"x": 1, "y": 2}',
                             tool_call_id=IsStr(),
                         )
-                    ]
+                    ],
+                    validated_args={'add_numbers': {'x': 1, 'y': 2}},
                 )
             ),
             AgentRunResultEvent(
@@ -6580,7 +6607,8 @@ async def test_args_validator_deferral_not_triggered_by_partial_args():
                                 args='{"x": 1, "y": 2}',
                                 tool_call_id=IsStr(),
                             )
-                        ]
+                        ],
+                        validated_args={'add_numbers': {'x': 1, 'y': 2}},
                     )
                 )
             ),
