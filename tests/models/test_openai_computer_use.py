@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     PartStartEvent,
+    RetryInfo,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -336,7 +337,7 @@ _SCREEN_JSON = {
             ['Ran 1 action.', _ZOOM, _SCREEN],
             {'performed': 1},
             _SCREEN.data_uri,
-            'Ran 1 action.',
+            f'Ran 1 action. See file {_ZOOM.identifier}.',
             id='last-image-is-the-screen',
         ),
         # Text from the screen goes as written, as in any tool result; a lookalike frame gets core's note instead.
@@ -437,11 +438,73 @@ async def test_a_result_goes_out_as_a_computer_call_output_and_a_note_when_the_s
     others = [item for item in content[:-1] if isinstance(item, BinaryImage)] if isinstance(content, list) else []
     expected: str | list[dict[str, Any]] = framed
     if others:
-        expected = [
-            {'type': 'input_text', 'text': framed},
-            *({'type': 'input_image', 'image_url': other.data_uri, 'detail': 'original'} for other in others),
-        ]
+        # Each one is framed on its own, as core frames a tool's files on the user channel.
+        expected = [{'type': 'input_text', 'text': framed}]
+        for other in others:
+            expected += [
+                {
+                    'type': 'input_text',
+                    'text': f'<pyai:tool_result tool_name="computer" tool_call_id="call_1" file_id="{other.identifier}">',
+                },
+                {'type': 'input_image', 'image_url': other.data_uri, 'detail': 'original'},
+                {'type': 'input_text', 'text': '</pyai:tool_result>'},
+            ]
     assert after == ([{'role': 'user', 'content': expected}] if note else [])
+
+
+async def test_a_call_the_model_is_asked_to_fix_goes_out_with_a_blank_screen_and_the_reason(
+    allow_model_requests: None,
+) -> None:
+    client = MockOpenAIResponses.create_mock(_done())
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    computer_call: dict[str, Any] = {
+        'type': 'computer_call',
+        'id': 'cu_1',
+        'call_id': 'call_1',
+        'status': 'completed',
+        'actions': [],
+    }
+    call = ToolCallPart(
+        'computer',
+        {'actions': [{'type': 'click', 'x': 5000, 'y': 1}]},
+        tool_call_id='call_1',
+        tool_kind=COMPUTER_KIND.id,
+        provider_name='openai',
+        provider_details={'computer_call': computer_call},
+    )
+    refused = 'Action 1 (click) at (5000, 1) is outside the 1280x800 screen, so no action ran.'
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Look.'),
+        ModelResponse(parts=[call], provider_name='openai'),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'computer',
+                    refused,
+                    tool_call_id='call_1',
+                    tool_kind=COMPUTER_KIND.id,
+                    outcome='retried',
+                    retry=RetryInfo('model_retry'),
+                )
+            ]
+        ),
+    ]
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    await model.request(
+        history,
+        None,
+        ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True),
+    )
+
+    (request,) = get_mock_responses_kwargs(client)
+    output = next(item for item in request['input'] if item.get('type') == 'computer_call_output')
+    assert _is_a_valid_png(output['output']['image_url'])
+    assert request['input'][request['input'].index(output) + 1 :] == [
+        {
+            'role': 'user',
+            'content': f'<pyai:tool_result tool_name="computer" tool_call_id="call_1">{refused}</pyai:tool_result>',
+        }
+    ]
 
 
 async def test_an_unfinished_call_runs_nothing(allow_model_requests: None) -> None:
