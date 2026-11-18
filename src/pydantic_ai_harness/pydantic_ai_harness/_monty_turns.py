@@ -15,17 +15,15 @@ therefore plain data: the types below are what crosses the activity boundary.
 from __future__ import annotations
 
 import base64
-import hashlib
 import io
 import math
 import pickle
-from collections import namedtuple
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from functools import cache
-from typing import Any, Literal, TypeGuard, TypeVar, cast, get_args
+from typing import Any, Literal, TypeGuard, cast, get_args
 
 from pydantic_core import PydanticSerializationError, to_json
 from pydantic_monty import (
@@ -80,7 +78,7 @@ def to_wire(value: object) -> str:
 
     Only the types in `_WIRE_CLASSES` are written, and `from_wire` loads only those, so loading a
     recorded turn never imports or calls anything else. A subclass of a container crosses as the
-    container, as Monty itself hands it to the host. Raises `TypeError` for any other type, with the
+    container, as Monty itself hands it to the host, and a named tuple as a plain tuple. Raises `TypeError` for any other type, with the
     message a live session gives for a host value it cannot convert, and for a value nested too
     deeply to write.
     """
@@ -130,11 +128,6 @@ class _WirePickler(pickle.Pickler):
         # containers, and for each class the pickle names.
         if obj is ... or type(obj) in _WIRE_CLASSES.values() or obj in _WIRE_CLASSES.values():
             return NotImplemented
-        if obj is _named_tuple:
-            return NotImplemented
-        if (named := _named_tuple_parts(obj)) is not None:
-            # Monty makes a named tuple's class on the host as it hands one over, so no module holds it.
-            return _named_tuple, named
         for container in _CONTAINERS:
             if isinstance(obj, container):
                 return container, (container(cast(Any, obj)),)
@@ -153,28 +146,10 @@ class _WirePickler(pickle.Pickler):
         raise TypeError(f'Cannot convert {cls.__module__}.{cls.__qualname__} to Monty value')
 
 
-def _named_tuple_parts(obj: object) -> tuple[str, tuple[str, ...], tuple[Any, ...]] | None:
-    """The name, fields and values of a named tuple, or `None` for any other value."""
-    cls = type(obj)
-    fields: tuple[str, ...] | None = getattr(cls, '_fields', None)
-    if fields is None or not issubclass(cls, tuple):
-        return None
-    return cls.__name__, tuple(fields), tuple(cast(tuple[Any, ...], obj))
-
-
-def _named_tuple(name: str, fields: tuple[str, ...], values: tuple[Any, ...]) -> tuple[Any, ...]:
-    """A named tuple with `name`, `fields` and `values`, as Monty makes one on the host."""
-    # A new class each time, as Monty makes one each time it hands a named tuple over.
-    cls: type[tuple[Any, ...]] = namedtuple(name, fields)  # pyright: ignore[reportUntypedNamedTuple]
-    return cls(*values)
-
-
 class _WireUnpickler(pickle.Unpickler):
     def find_class(self, module: str, name: str) -> Any:
         if module == 'builtins' and name == 'Ellipsis':
             return ...
-        if module == __name__ and name == _named_tuple.__name__:
-            return _named_tuple
         if (cls := _WIRE_CLASSES.get((module, name))) is None:
             raise pickle.UnpicklingError(f'{module}.{name} is not a wire type')
         return cls
@@ -319,11 +294,8 @@ class MontyFailure:
     and the code that turns a failure into a retry reads only this.
     """
 
-    kind: Literal[
-        'syntax', 'typing', 'runtime', 'crashed', 'disconnected', 'other', 'panic', 'not_stored', 'no_storage'
-    ]
-    """`not_stored`: the server refused to store the session; `display` says why. `no_storage`: the server
-    stores no sessions at all, found before the turn ran any code."""
+    kind: Literal['syntax', 'typing', 'runtime', 'crashed', 'disconnected', 'other', 'panic', 'not_stored']
+    """`not_stored`: the server refused to store the session; `display` says why."""
     display: str = ''
     """The full report: `display()` for a sandbox error, `str()` for any other."""
     message: str = ''
@@ -338,15 +310,7 @@ class MontyFailure:
     cause: str | None = None
     """Why the server dropped the connection, for a disconnect."""
     session_lost: bool = False
-    message_sha256: str | None = None
-    """The SHA-256 of `message` before `_fit_turn` cut it, so it still matches the error it came from."""
     """Whether the server could not keep the session a runtime error left, so the next turn starts fresh."""
-
-    def carries(self, text: str) -> bool:
-        """Whether `message` is `text`, or was before `_fit_turn` cut it."""
-        if self.message_sha256 is None:
-            return self.message == text
-        return self.message_sha256 == _sha256(text)
 
     @classmethod
     def from_error(cls, error: BaseException) -> MontyFailure | None:
@@ -373,15 +337,26 @@ class MontyFailure:
             case Exception():
                 return cls('other', display=str(error), type_name=type(error).__name__)
             case _:
-                # pyo3 raises a sandbox panic as a `BaseException` from a module that cannot be imported.
-                return cls('panic') if type(error).__name__ == 'PanicException' else None
+                return cls('panic') if is_sandbox_panic(error) else None
+
+
+def is_sandbox_panic(exc: BaseException) -> bool:
+    """Whether `exc` is a Rust-side sandbox panic surfacing through pyo3.
+
+    pyo3 raises `pyo3_runtime.PanicException`, a `BaseException` (not `Exception`) subclass
+    from a module that cannot be imported, so it is matched by name. A panic can surface from
+    monty's host-side bindings, so callers should convert it to a retry rather than let it
+    tear down the whole agent run.
+    """
+    return type(exc).__name__ == 'PanicException'
 
 
 @dataclass
 class MontyTurn:
     """How a turn ended, and the stored record to start the next turn from."""
 
-    kind: Literal['call', 'waiting', 'complete', 'failed']
+    kind: Literal['call', 'waiting', 'complete', 'failed', 'no_storage']
+    """`no_storage`: the server stores no sessions at all, found before the turn ran any code."""
     state: str | None = None
     """The record of the session after this turn, base64-encoded; `None` when it could not be saved.
 
@@ -399,16 +374,13 @@ class MontyTurn:
     failure: MontyFailure | None = None
 
 
-_Snapshot = TypeVar('_Snapshot', bound=AsyncSnapshot | MontyComplete)
-
-
 @dataclass
 class _Pauses:
     """Counts the snapshots a turn pauses at: every pause, answered in the turn or not, is a suspension."""
 
     count: int = 0
 
-    def seen(self, snapshot: _Snapshot) -> _Snapshot:
+    def seen(self, snapshot: AsyncSnapshot | MontyComplete) -> AsyncSnapshot | MontyComplete:
         if not isinstance(snapshot, MontyComplete):
             self.count += 1
         return snapshot
@@ -437,9 +409,6 @@ TURN_PAYLOAD_BYTES = 1024 * 1024
 The other half leaves room for the converter's envelope. Past the limit the activity result fails
 to upload, while workflow code would hand the same text on for the model's tool output limits to cut.
 """
-
-_NOTE_BYTES = 100
-"""Room kept for the note that says how much of a text `_fit_turn` cut."""
 
 _DUMP_REFUSED = "The Monty server could not store the session's state, for example because its snapshot quota is full."
 
@@ -482,7 +451,9 @@ async def _run_turn(
     if await _session_id(session) is None:
         # Before anything ran, CodeMode falls back to workflow code. Later, this checkout reached a
         # server that cannot have the run's record, so CodeMode reports it as a dropped session.
-        return MontyTurn('failed', failure=MontyFailure('no_storage' if request.state is None else 'disconnected'))
+        if request.state is None:
+            return MontyTurn('no_storage')
+        return MontyTurn('failed', failure=MontyFailure('disconnected'))
     pauses = _Pauses()
     try:
         paused = await _load(session, request, mount=mount, capture=capture)
@@ -565,48 +536,40 @@ def oversized(request: TurnRequest) -> str | None:
 
 
 def _fit_turn(turn: MontyTurn) -> MontyTurn:
-    """`turn`, its longest text cut, pass after pass, until the encoded turn fits `TURN_PAYLOAD_BYTES`.
+    """`turn`, its longest text halved, pass after pass, until the encoded turn fits `TURN_PAYLOAD_BYTES`.
 
-    Measured on the encoded turn, so JSON escaping and error text count. A nested call's arguments
-    are never cut: `_answer_in_turn` keeps them to half the budget, so the texts always hold the excess.
+    Measured on the encoded turn, so JSON escaping and error text count. A result picked to cut first
+    becomes the text the model would read; a result that fits keeps its types. A nested call's arguments are never cut:
+    `_answer_in_turn` keeps them to half the budget, so the texts always hold the excess.
     """
-    shown: str | None = None  # the result as text, rendered once so cutting it always shrinks it
-    while (excess := len(to_json(turn)) - TURN_PAYLOAD_BYTES) > 0:
-        if shown is None:
-            shown = '' if turn.output is None else _shown(from_wire(turn.output))
+    shown: str | None = None
+    while len(to_json(turn)) > TURN_PAYLOAD_BYTES:
         failure = turn.failure or MontyFailure('other')
+        output = shown if shown is not None else turn.output or ''  # an unrendered result counts at its wire size
         texts: dict[str, str] = {
             'prints': turn.prints,
-            'output': shown,
+            'output': output,
             'display': failure.display,
             'message': failure.message,
         }
         name = _longest(texts)
-        data = texts[name].encode()
-        if name == 'output' and len(data) <= _NOTE_BYTES:
-            # A short text standing for a large value, such as a huge integer: it replaces the value.
+        if name == 'output' and shown is None:
+            assert turn.output is not None
+            shown = _shown(from_wire(turn.output))
             turn = replace(turn, output=to_wire(shown))
             continue
-        assert len(data) > _NOTE_BYTES, 'the excess is always in a text longer than the note'
-        # At most half per pass, so a cut spreads over the texts rather than emptying the first.
-        kept = max(len(data) - excess, len(data) // 2) - _NOTE_BYTES
-        note = f'\n[{len(data) - kept} more bytes not shown: a turn returns at most {TURN_PAYLOAD_BYTES} bytes]'
-        cut = data[:kept].decode(errors='ignore') + note
+        text = texts[name]
+        kept = len(text) // 2
+        assert kept > 100, 'the excess is always in a text longer than the note'
+        cut = f'{text[:kept]}\n[the rest is not shown: a turn returns at most {TURN_PAYLOAD_BYTES} bytes]'
         if name == 'output':
             shown = cut
-        turn = _with_cut(turn, failure, name, cut)
+            turn = replace(turn, output=to_wire(cut))
+        elif name == 'prints':
+            turn = replace(turn, prints=cut)
+        else:
+            turn = replace(turn, failure=replace(failure, **{name: cut}))
     return turn
-
-
-def _with_cut(turn: MontyTurn, failure: MontyFailure, name: str, cut: str) -> MontyTurn:
-    """`turn` with its text `name` replaced by `cut`."""
-    if name == 'message' and failure.message_sha256 is None:
-        return replace(turn, failure=replace(failure, message=cut, message_sha256=_sha256(failure.message)))
-    if name in ('display', 'message'):
-        return replace(turn, failure=replace(failure, **{name: cut}))
-    if name == 'output':
-        return replace(turn, output=to_wire(cut))
-    return replace(turn, prints=cut)
 
 
 def _longest(texts: dict[str, str]) -> str:
@@ -621,10 +584,6 @@ def _shown(value: object) -> str:
         return repr(value)
     except (ValueError, RecursionError):  # too many digits to convert to text, or nested too deeply
         return f'[a {type(value).__name__} too large to show]'
-
-
-def _sha256(text: str) -> str:
-    return hashlib.sha256(text.encode(errors='surrogatepass')).hexdigest()
 
 
 async def _answer_in_turn(

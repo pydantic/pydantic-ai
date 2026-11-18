@@ -266,17 +266,6 @@ class PendingCall:
     context: otel_context.Context
 
 
-def is_sandbox_panic(exc: BaseException) -> bool:
-    """Whether `exc` is a Rust-side sandbox panic surfacing through pyo3.
-
-    pyo3 raises `pyo3_runtime.PanicException`, a `BaseException` (not `Exception`) subclass
-    from a module that cannot be imported, so it is matched by name. A panic can surface from
-    monty's host-side bindings, so callers should convert it to a retry rather than let it
-    tear down the whole agent run.
-    """
-    return type(exc).__name__ == 'PanicException'
-
-
 _PRINT_LIMIT_BYTES = 10 * 1024 * 1024
 """The most a feed may print, `CollectString`'s default cap; Monty raises `MemoryError` past it."""
 
@@ -319,6 +308,13 @@ class MontyTurnFailed(Exception):
         self.failure = failure
 
 
+class MontyStoresNoSessions(Exception):
+    """The first turn of a run found that the server stores no sessions, before it ran any code.
+
+    The snippet then runs on a live session in the workflow, as it did before turns ran elsewhere.
+    """
+
+
 class MontyTurnUnavailable(Exception):
     """The durable operation that runs a turn failed, so the turn's outcome is unknown.
 
@@ -338,8 +334,7 @@ _MONTY_DEFAULT_MAX_SUSPENSIONS = 1000
 def _host_error(type_name: str, message: str) -> MontyTurnFailed:
     """Results the turn cannot carry, failing the snippet as a live session fails it, and resetting it.
 
-    The stored record is the paused snippet, which cannot continue, so the session is reset: a
-    `MemoryError` also tells the model to work in smaller batches.
+    The stored record is the paused snippet, which cannot continue, so the session is reset.
     """
     failure = MontyFailure(
         'runtime',
@@ -396,7 +391,7 @@ class TurnFeed:
 
     async def _turn(self, request: TurnRequest) -> TurnSnapshot:
         if (message := oversized(request)) is not None:
-            raise _host_error('MemoryError', message)
+            raise _host_error('ValueError', message)
         try:
             turn = await self.run_turn(request)
         except Exception as error:
@@ -408,12 +403,14 @@ class TurnFeed:
         match turn.kind:
             case 'call':
                 assert turn.call is not None
-                return TurnFunctionSnapshot(self, turn.call)
+                return TurnFunctionSnapshot.from_call(self, turn.call)
             case 'waiting':
                 return TurnFutureSnapshot(self, turn.pending_call_ids)
             case 'complete':
                 assert turn.output is not None
                 return TurnComplete(from_wire(turn.output))
+            case 'no_storage':
+                raise MontyStoresNoSessions
             case _:  # 'failed'
                 assert turn.failure is not None
                 raise MontyTurnFailed(turn.failure)
@@ -424,27 +421,16 @@ class TurnFunctionSnapshot:
     """An `AsyncFunctionSnapshot` stand-in for a turn that paused at an external call."""
 
     feed: TurnFeed
-    call: TurnCall
+    function_name: str
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+    call_id: int
+    is_os_function: bool
 
-    @property
-    def function_name(self) -> str:
-        return self.call.function_name
-
-    @property
-    def args(self) -> tuple[Any, ...]:
-        return from_wire(self.call.args)
-
-    @property
-    def kwargs(self) -> dict[str, Any]:
-        return from_wire(self.call.kwargs)
-
-    @property
-    def call_id(self) -> int:
-        return self.call.call_id
-
-    @property
-    def is_os_function(self) -> bool:
-        return self.call.is_os_function
+    @classmethod
+    def from_call(cls, feed: TurnFeed, call: TurnCall) -> TurnFunctionSnapshot:
+        args, kwargs = from_wire(call.args), from_wire(call.kwargs)
+        return cls(feed, call.function_name, args, kwargs, call.call_id, call.is_os_function)
 
     def trace_context(self) -> otel_context.Context:
         return otel_context.get_current()

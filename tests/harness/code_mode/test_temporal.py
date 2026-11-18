@@ -32,7 +32,6 @@ import re
 import subprocess
 import sys
 import warnings
-from collections import namedtuple
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
 from pathlib import Path
@@ -86,7 +85,13 @@ from tests.harness.code_mode.grpc_relay import serve_monty_relay
 from tests.harness.code_mode.stored_sessions import SERVER, StoredSessionPool
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
-pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
+# Its own group, on its own port: it is the largest harness Temporal module, and in the shared group it
+# would run after all the others, past the durable-exec job's timeout on the slower Python versions.
+pytestmark = [
+    pytest.mark.temporal,
+    pytest.mark.xdist_group(name='harness-temporal-code-mode'),
+    ignore_source_reads_left_open,
+]
 
 TEMPORAL_PORT = 7244  # avoid conflict with other test suites
 # Fixed because the agent below is built at import time, before any fixture runs.
@@ -1237,11 +1242,6 @@ def give_up() -> str:
     raise ToolFailed('the tool gave up')
 
 
-async def give_up_at_length(length: int) -> str:
-    """Fail without asking the model to retry, with a message `length` characters long."""
-    raise ToolFailed('x' * length)
-
-
 async def type_names(values: list[object]) -> list[str]:
     """Name each value's type. It runs in the workflow, so values reach it as the turn delivers them."""
     return [type(value).__name__ for value in values]
@@ -1304,7 +1304,6 @@ def _snippet_agent(
                     echo,
                     repeat,
                     give_up,
-                    give_up_at_length,
                     *in_workflow,
                 ],
                 id='echo',
@@ -1383,7 +1382,7 @@ async def test_remote_turns_cut_output_to_fit_a_payload(client: Client, monkeypa
     """
     monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 1000)
     output = await _run_snippet(client, 'test_code_mode_temporal_cut_output', 'print("p" * 3000)\n"r" * 3000')
-    assert output.count('more bytes not shown: a turn returns at most 1000 bytes]') == 2
+    assert output.count('[the rest is not shown: a turn returns at most 1000 bytes]') == 2
     assert len(output) < 3000
 
 
@@ -1392,13 +1391,13 @@ async def test_remote_turns_cut_an_error_to_fit_a_payload(client: Client, monkey
     monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 1000)
     output = await _run_snippet(client, 'test_code_mode_temporal_cut_error', 'raise ValueError("e" * 3000)')
     assert 'ValueError' in output
-    assert 'more bytes not shown: a turn returns at most 1000 bytes]' in output
+    assert '[the rest is not shown: a turn returns at most 1000 bytes]' in output
     assert 'e' * 1000 not in output
 
 
 async def test_remote_turns_charge_cut_prints_to_the_print_cap(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
     """Prints a turn cut to fit its payload still count toward the feed's print cap, as in workflow code."""
-    monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 1000)
+    monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 1200)
     monkeypatch.setattr('pydantic_ai_harness._monty_exec._PRINT_LIMIT_BYTES', 2500)
     code = 'import time\nprint("a" * 1500)\ntime.sleep(0)\nprint("b" * 1500)'
     output = await _run_snippet(client, 'test_code_mode_temporal_print_cap', code)
@@ -1540,11 +1539,8 @@ class DynamicWorkflow:
         return result.output
 
 
-async def test_remote_turns_refuse_a_dynamic_code_mode(client: Client) -> None:
-    """A `CodeMode` a `DynamicCapability` returns has no turn activity, so the run fails saying why.
-
-    Its turn would otherwise run inline, waiting on the network inside the workflow task.
-    """
+async def test_remote_turns_leave_a_dynamic_code_mode_in_the_workflow(client: Client) -> None:
+    """A `CodeMode` a `DynamicCapability` returns has no turn activity bound, so it runs as it did before turns."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -1552,28 +1548,26 @@ async def test_remote_turns_refuse_a_dynamic_code_mode(client: Client) -> None:
         plugins=[AgentPlugin(dynamic_code_mode_agent)],
         workflow_runner=_workflow_runner(),
     ):
-        with pytest.raises(WorkflowFailureError) as exc_info:
-            await client.execute_workflow(
-                DynamicWorkflow.run,
-                id='test_code_mode_temporal_dynamic',
-                task_queue=TASK_QUEUE,
-                execution_timeout=timedelta(seconds=30),
-            )
-    cause = exc_info.value.cause
-    assert isinstance(cause, ApplicationError)
-    assert cause.type == 'UserError'
-    assert 'not returned by a `DynamicCapability`' in cause.message
+        output = await client.execute_workflow(
+            DynamicWorkflow.run,
+            id='test_code_mode_temporal_dynamic',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert output == 'done: 70'
+    history = await client.get_workflow_handle('test_code_mode_temporal_dynamic').fetch_history()
+    assert 'monty_turn' not in _activity_types(history)
 
 
 async def test_remote_turns_refuse_results_too_large_for_one_turn(
     client: Client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Results the sandbox awaits together that exceed a turn reset the session and tell the model to batch."""
+    """Results the sandbox awaits together that exceed a turn reset the session and say how large they were."""
     monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 1000)
     code = 'import asyncio\nawait asyncio.gather(repeat(text="x", times=600), repeat(text="y", times=600))'
     output = await _run_snippet(client, 'test_code_mode_temporal_large_results', code)
     assert 'more than the 1000 it can take' in output
-    assert 'the session was reset' in output
+    assert 'so it was reset' in output
 
 
 async def test_remote_turns_reset_before_a_tool_failure(client: Client) -> None:
@@ -1594,15 +1588,6 @@ async def test_remote_turns_keep_module_exception_types(client: Client) -> None:
     )
     output = await _run_snippet(client, 'test_code_mode_temporal_csv_error', code)
     assert output == 'csv.Error'
-
-
-async def test_remote_turns_keep_a_cut_tool_failure(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A nested `ToolFailed` whose message the turn has to cut still fails `run_code` without a retry."""
-    monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 2500)
-    output = await _run_snippet(
-        client, 'test_code_mode_temporal_cut_tool_failed', 'await give_up_at_length(length=1800)'
-    )
-    assert output == 'x' * 1800
 
 
 async def test_remote_turns_do_not_rerun_a_snippet_whose_save_dropped(client: Client) -> None:
@@ -1666,17 +1651,16 @@ async def test_remote_turns_keep_every_value_monty_holds(client: Client) -> None
 def test_turn_values_keep_what_temporal_json_cannot() -> None:
     """Deep nesting, huge integers and shared values come back as they went in, as one short string."""
     deep: object = 0
-    for _ in range(500):
+    # Past the 200 levels Temporal's Pydantic JSON decoder takes, within what Python 3.11's pickler can write.
+    for _ in range(250):
         deep = [deep]
     shared = [[1, 2]] * 2
-    pair = namedtuple('Pair', ['a', 'b'])(1, 2)  # pyright: ignore[reportUntypedNamedTuple]
-    values = (deep, 10**5000, shared, (1j, ..., {1}, frozenset({2}), b'\xff', bytearray(b'x')), pair)
+    values = (deep, 10**5000, shared, (1j, ..., {1}, frozenset({2}), b'\xff', bytearray(b'x')))
     data = to_wire(values)
     assert isinstance(data, str)
     back = from_wire(data)
     assert back == values
     assert back[2][0] is back[2][1]
-    assert (type(back[4]).__name__, back[4].a) == ('Pair', 1)
 
 
 def test_turn_values_load_only_wire_types() -> None:
@@ -1704,7 +1688,7 @@ def test_turn_values_send_enum_members_as_their_values() -> None:
 @pytest.mark.parametrize(
     ('code', 'expected'),
     [
-        ('"\\\\\\n" * 3000', 'more bytes not shown: a turn returns at most 2000 bytes]'),
+        ('"\\\\\\n" * 3000', '[the rest is not shown: a turn returns at most 2000 bytes]'),
         ('10**5000', '[a int too large to show]'),
     ],
     ids=['escaped_text', 'huge_int'],

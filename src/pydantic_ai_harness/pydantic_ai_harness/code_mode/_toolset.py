@@ -64,6 +64,7 @@ from pydantic_ai_harness._code_tools import (
 from pydantic_ai_harness._monty_exec import (
     MontyExecutor,
     MontyRunState,
+    MontyStoresNoSessions,
     MontyTurnFailed,
     MontyTurnUnavailable,
     PrintCapture,
@@ -831,7 +832,7 @@ def _raise_escaped_tool_failed(error: MontyFailure, execution: RunCodeExecution,
     if error.type_name != 'Exception':
         return
     escaped = next(
-        (nested for nested in reversed(execution.nested_errors.values()) if error.carries(str(nested))), None
+        (nested for nested in reversed(execution.nested_errors.values()) if error.message == str(nested)), None
     )
     if not isinstance(escaped, ToolFailed):
         return
@@ -1305,22 +1306,23 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         computes, and Temporal fails a workflow task that does not yield within 2 seconds. Turns move
         out only where they behave as they do here: an `os_access` handler may use workflow APIs, and
         Monty restarts a mount's `write_bytes_limit` count and drops its `'overlay'` writes when a
-        stored session loads. The answer is fixed for the run, so every `run_code` call takes the same
-        path, and `workflow.patched` keeps runs that started before this existed on the path they
-        started on.
+        stored session loads. The operation is bound only for a `CodeMode` with an `id` that was on the
+        agent when it was built, so one a `DynamicCapability` returns keeps its turns here. The answer
+        is fixed for the run, so every `run_code` call takes the same path, and `workflow.patched`
+        keeps runs that started before this existed on the path they started on.
         """
         from pydantic_ai_harness.code_mode._capability import CodeMode  # imports this module
 
-        # The turn operation is bound only for a `CodeMode` with an `id`.
         capability = self.capability
-        if not isinstance(capability, CodeMode) or capability.id is None:
+        operations = ctx._durable_operations or {}  # pyright: ignore[reportPrivateUsage]
+        if not isinstance(capability, CodeMode) or (capability.id, 'monty_turn') not in operations:
             return None
         if self.monty_sandbox is None or self.os_access is not None:
             return None
         mounts = self.mount if isinstance(self.mount, list) else [self.mount] if self.mount is not None else []
         if any(mount.mode == 'overlay' or mount.write_bytes_limit is not None for mount in mounts):
             return None
-        if not in_durable_execution(ctx) or not _workflow_patched(_DURABLE_TURNS_PATCH):
+        if not _workflow_patched(_DURABLE_TURNS_PATCH):
             return None
         return partial(capability._monty_turn, ctx)  # pyright: ignore[reportPrivateUsage]
 
@@ -1363,16 +1365,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         execution: RunCodeExecution,
         *,
         fresh_repl: bool,
-    ) -> MontyComplete | TurnComplete | None:
-        """Run the snippet from `start`, or return `None` when the first turn found the server stores no sessions.
-
-        That turn checks before it runs any code, so the snippet can run again on the live session.
-        """
+    ) -> MontyComplete | TurnComplete:
+        """Run the snippet from `start`, turning a failure into the retry the model sees."""
         try:
             completed = await executor.run(start)
+        except MontyStoresNoSessions:
+            raise
         except BaseException as exc:
-            if isinstance(exc, MontyTurnFailed) and exc.failure.kind == 'no_storage':
-                return None
             retry = await self._feed_failure_retry(exc, run_state, execution, fresh_repl=fresh_repl)
             if retry is None:
                 raise
@@ -1452,25 +1451,25 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # Already converted in `__post_init__`; this narrows the field's type.
             os_handler=as_os_handler(self.os_access),
         )
-        feed_start = partial(
-            self._feed_start,
-            ctx,
-            run_state,
-            code,
-            capture,
-            type_check_stubs=type_check_stubs if type_check else None,
-            limits=limits,
-            in_workflow=in_workflow,
-        )
-        start, portal = await feed_start()
-        feed = partial(self._feed, run_state=run_state, execution=execution, fresh_repl=fresh_repl)
-        completed = await feed(executor(portal=portal), start)
-        if completed is None:
-            # The server stores no sessions, so the snippet runs in the workflow, as before turns were activities.
+
+        async def run_feed() -> MontyComplete | TurnComplete:
+            start, portal = await self._feed_start(
+                ctx,
+                run_state,
+                code,
+                capture,
+                type_check_stubs=type_check_stubs if type_check else None,
+                limits=limits,
+                in_workflow=in_workflow,
+            )
+            return await self._feed(executor(portal=portal), start, run_state, execution, fresh_repl=fresh_repl)
+
+        try:
+            completed = await run_feed()
+        except MontyStoresNoSessions:
+            # The first turn ran no code, so the snippet runs in the workflow, as before turns were activities.
             run_state.stores_sessions = False
-            start, portal = await feed_start()
-            completed = await feed(executor(portal=portal), start)
-            assert completed is not None, 'only a turn activity finds that the server stores no sessions'
+            completed = await run_feed()
 
         _raise_usage_limit_exceeded(execution)
         result = completed.output
@@ -1564,7 +1563,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 await run_state.reset()
                 _raise_usage_limit_exceeded(execution)
                 return ModelRetry(f'{self._worker_failure_message(failure)}{_started_calls_note(execution)}')
-            case 'not_stored' | 'no_storage':  # `no_storage` falls back in `_feed` and never gets here
+            case 'not_stored':
                 # Retrying soon would meet the same refusal, so the run fails with the reason.
                 await run_state.reset()
                 raise UserError(failure.display)

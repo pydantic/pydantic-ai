@@ -790,9 +790,9 @@ Code Mode keeps running `run_code` in workflow code, as described above, when an
   them, so their directories must exist wherever turn activities run.
 - The workflow started before this version of Code Mode, so its history replays as it was recorded.
 
-A `CodeMode` with a remote `monty_sandbox` that a `DynamicCapability` returns fails the run with a
-`UserError`, because Temporal binds activities only for capabilities on the agent when it is built.
-Put it on the agent instead.
+A `CodeMode` that a `DynamicCapability` returns keeps its turns in workflow code, because Temporal
+binds activities only for capabilities on the agent when it is built. Put it on the agent to run its
+turns as activities.
 
 Each turn uses the `activity_config` you pass to `TemporalDurability`. Its `start_to_close_timeout`
 bounds one turn, and its retry policy retries a turn that failed to reach the server. A retry starts
@@ -814,9 +814,8 @@ Tool results and nested call arguments keep their types and shared values, since
 string, and the model sees the same snippet result as in workflow code. Each
 turn takes and returns at most 1 MiB, half Temporal's default payload limit. Longer prints, results and
 error text are cut with a note saying how much was left out, and tool results that would make a turn's
-input longer fail the snippet with a `MemoryError` that resets the session and tells the model to work
-in smaller batches. If the server will not store the session a snippet error left, Code Mode resets the
-session, as it does after a memory error. A nested call whose arguments are of a type Monty does not
+input longer fail the snippet with a `ValueError` that gives the size and resets the session. If the
+server will not store the session a snippet error left, Code Mode also resets the session. A nested call whose arguments are of a type Monty does not
 hand the host, such as an instance of a class the snippet defined, raises `TypeError` in the snippet:
 its arguments cannot reach the tool. If the server no longer has a run's stored state, for example
 because it expired, Code Mode resets the session and tells the model the connection was lost, as for

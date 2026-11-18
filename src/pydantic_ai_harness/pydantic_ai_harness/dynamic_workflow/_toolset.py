@@ -62,8 +62,8 @@ from pydantic_ai_harness._monty_exec import (
     MontyRunState,
     PrintCapture,
     in_temporal_workflow,
-    is_sandbox_panic,
 )
+from pydantic_ai_harness._monty_turns import is_sandbox_panic
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
     cancel_pending_output,
