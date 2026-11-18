@@ -41,6 +41,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import PartDeltaEvent, PartStartEvent, ThinkingPartDelta
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -60,6 +61,7 @@ with try_import() as imports_successful:
         ChatCompletionOutput,
         ChatCompletionOutputComplete,
         ChatCompletionOutputFunctionDefinition,
+        ChatCompletionOutputLogprobs,
         ChatCompletionOutputMessage,
         ChatCompletionOutputToolCall,
         ChatCompletionOutputUsage,
@@ -160,9 +162,12 @@ def get_mock_chat_completion_kwargs(hf_client: AsyncInferenceClient) -> list[dic
 
 
 def completion_message(
-    message: ChatCompletionInputMessage | ChatCompletionOutputMessage, *, usage: ChatCompletionOutputUsage | None = None
+    message: ChatCompletionInputMessage | ChatCompletionOutputMessage,
+    *,
+    usage: ChatCompletionOutputUsage | None = None,
+    logprobs: ChatCompletionOutputLogprobs | None = None,
 ) -> ChatCompletionOutput:
-    choices = [ChatCompletionOutputComplete(finish_reason='stop', index=0, message=message)]  # pyright: ignore[reportArgumentType]
+    choices = [ChatCompletionOutputComplete(finish_reason='stop', index=0, message=message, logprobs=logprobs)]  # pyright: ignore[reportArgumentType]
     return ChatCompletionOutput.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
         {
             'id': '123',
@@ -1322,6 +1327,161 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
             ),
         ]
     )
+
+
+@pytest.mark.vcr()
+async def test_hf_model_reasoning_field_thinking_part(allow_model_requests: None, huggingface_api_key: str):
+    """Groq returns `openai/gpt-oss-120b` reasoning in `message.reasoning`, which becomes a `ThinkingPart`."""
+    m = HuggingFaceModel(
+        'openai/gpt-oss-120b',
+        provider=HuggingFaceProvider(provider_name='groq', api_key=huggingface_api_key),
+    )
+    agent = Agent(m)
+
+    result = await agent.run('What is 6 times 7? Reply with just the number.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='What is 6 times 7? Reply with just the number.', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user asks: "What is 6 times 7? Reply with just the number."
+
+We should comply: 42. Provide just the number.\
+"""
+                    ),
+                    TextPart(content='42'),
+                ],
+                usage=RequestUsage(input_tokens=85, output_tokens=42, cost=Decimal('0.00004425')),
+                model_name='openai/gpt-oss-120b',
+                model_id='huggingface:openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='huggingface',
+                provider_url='https://router.huggingface.co/groq',
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-e8703237-1cff-4156-a873-2d1437e7a79b',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_hf_model_reasoning_field_thinking_part_iter(allow_model_requests: None, huggingface_api_key: str):
+    """Groq streams `openai/gpt-oss-120b` reasoning in `delta.reasoning`, which becomes thinking part deltas."""
+    m = HuggingFaceModel(
+        'openai/gpt-oss-120b',
+        provider=HuggingFaceProvider(provider_name='groq', api_key=huggingface_api_key),
+    )
+    agent = Agent(m)
+
+    part_events: list[PartStartEvent | PartDeltaEvent] = []
+    result: AgentRunResult[str] | None = None
+    async with agent.run_stream_events(user_prompt='What is 6 times 7? Reply with just the number.') as event_stream:
+        async for event in event_stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
+            elif isinstance(event, PartStartEvent | PartDeltaEvent):
+                part_events.append(event)
+
+    assert result is not None
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='What is 6 times 7? Reply with just the number.', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user asks: "What is 6 times 7? Reply with just the number." So answer should be "42". Must be just the number.'
+                    ),
+                    TextPart(content='42'),
+                ],
+                usage=RequestUsage(input_tokens=85, output_tokens=43, cost=Decimal('0.00004500')),
+                model_name='openai/gpt-oss-120b',
+                model_id='huggingface:openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='huggingface',
+                provider_url='https://router.huggingface.co/groq',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'stop'},
+                provider_response_id='chatcmpl-048ba2b0-af70-4072-bea0-e1161fd1deec',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    first_event = part_events[0]
+    assert isinstance(first_event, PartStartEvent)
+    assert isinstance(first_event.part, ThinkingPart)
+    assert any(
+        isinstance(event, PartDeltaEvent) and isinstance(event.delta, ThinkingPartDelta) for event in part_events
+    )
+
+
+async def test_hf_model_reasoning_field_and_think_tags_both_surfaces(allow_model_requests: None):
+    """No recorded Hugging Face response carries both `reasoning` and `<think>` tags in `content`, so a mock client returns them together."""
+    mock_client = MockHuggingFace.create_mock(
+        completion_message(
+            ChatCompletionOutputMessage(content='<think>hmm</think>42', reasoning='I computed it', role='assistant'),
+            usage=ChatCompletionOutputUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+        )
+    )
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == '42'
+    assert result.all_messages()[-1].parts == [
+        ThinkingPart(content='I computed it'),
+        ThinkingPart(content='hmm'),
+        TextPart(content='42'),
+    ]
+
+
+async def test_hf_model_reasoning_field_thinking_part_round_trip(allow_model_requests: None):
+    """No live round trip is recorded, so a mock client returns `reasoning` and captures the `<think>` text the follow-up request sends back."""
+    mock_client = MockHuggingFace.create_mock(
+        [
+            completion_message(
+                ChatCompletionOutputMessage(content='42', reasoning='I computed it', role='assistant'),
+                usage=ChatCompletionOutputUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            ),
+            completion_message(
+                ChatCompletionOutputMessage(content='43', role='assistant'),
+                usage=ChatCompletionOutputUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            ),
+        ]
+    )
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == '42'
+
+    second_result = await agent.run('And again?', message_history=result.all_messages())
+    assert second_result.output == '43'
+
+    assistant_messages = [
+        sent for sent in get_mock_chat_completion_kwargs(mock_client)[1]['messages'] if sent['role'] == 'assistant'
+    ]
+    assert len(assistant_messages) == 1
+    assert assistant_messages[0]['content'] == '<think>\nI computed it\n</think>\n\n42'
 
 
 async def test_cache_point_filtering():

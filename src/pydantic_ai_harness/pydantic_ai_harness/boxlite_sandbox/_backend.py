@@ -327,7 +327,7 @@ async def _remove(boxes: _Runtime, name: str) -> None:
         await _finish(boxes.remove(name, force=True), f'deleting box {name!r}')
 
 
-class _StaleHandle(Exception):
+class _StaleHandleError(Exception):
     """The box's handle was stopped before a command started on it."""
 
 
@@ -463,7 +463,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
             # Commands see the desktop too, so a program the agent starts from the shell opens on it.
             self._env = {'DISPLAY': DISPLAY, **self._env}
         self._display = desktop_display(
-            self,
+            self._run_argv,
             self._desktop_size,
             lambda: f'BoxLite box {self._ref.id if self._ref else "(not created)"}',
         )
@@ -546,7 +546,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
                     result = await self._exec(
                         box, ['mkdir', '-p', self._working_dir], env={}, working_dir=None, timeout=_SETUP_TIMEOUT
                     )
-                except _StaleHandle as error:
+                except _StaleHandleError as error:
                     raise WorkspaceUnavailableError(f'The BoxLite box {name!r} was stopped while starting.') from error
                 _check_working_dir_created(result, self._working_dir, name)
             self._box = box
@@ -577,20 +577,27 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
         argv = command_argv(command, shell)
         check_timeout(timeout)
         check_env(env)
-        env = {**self._env, **(env or {})}
+        if self._display is not None:
+            # Started first, so a program the command opens shows on the screen.
+            await self._display.start()
+        return await self._run_argv(argv, env=env or {}, timeout=timeout)
+
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        """Run `argv` without starting the display, as the display's own commands do."""
+        env = {**self._env, **env}
         # Creating or attaching is bounded by the SDK; the timeout is the command's alone.
         try:
             return await self._exec(
                 await self.get_sandbox(), argv, env=env, working_dir=self._working_dir, timeout=timeout
             )
-        except _StaleHandle:
+        except _StaleHandleError:
             # `stop()` invalidates every handle to a box for good, but a new one boots it again. The
             # command never started, so it starts on the new handle.
             self._box = None
             box = await self.get_sandbox()
             try:
                 return await self._exec(box, argv, env=env, working_dir=self._working_dir, timeout=timeout)
-            except _StaleHandle as error:
+            except _StaleHandleError as error:
                 raise WorkspaceUnavailableError(f'The BoxLite box {_key(box)!r} was stopped while starting.') from error
 
     async def _exec(
@@ -646,7 +653,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
             )
         except boxlite.BoxliteError as error:
             if isinstance(error, boxlite.StoppedError):
-                raise _StaleHandle from error
+                raise _StaleHandleError from error
             if 'spawn_failed' in str(error):
                 raise WorkspaceError(
                     f'Could not start the command in BoxLite box {_key(box)}: {error}. '

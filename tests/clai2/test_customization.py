@@ -9,7 +9,7 @@ import pytest
 from rich.console import Console
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.capabilities import LocalWorkspace, WindowsWorkspace
 from pydantic_ai.messages import (
     InstructionDeltaPart,
     ModelMessage,
@@ -46,13 +46,14 @@ async def test_workspace_defaults_follow_platform_support(supported: bool, monke
     assert call is not None
     capabilities = call.kwargs['capabilities']
     # Last, so a sandbox plugin listed earlier supplies the workspace instead.
-    workspace = capabilities[-1] if capabilities else None
-    assert isinstance(workspace, LocalWorkspace) is supported
-    if isinstance(workspace, LocalWorkspace):
-        assert workspace.working_dir == session.workspace
-        assert workspace.env is not None
-        assert workspace.env['CLAI_USER_VARIABLE'] == 'forwarded'
-        assert 'OPENAI_API_KEY' not in workspace.env
+    workspace = capabilities[-1]
+    # On Windows, a `WindowsWorkspace`: the `LocalWorkspace` for Windows.
+    assert isinstance(workspace, LocalWorkspace)
+    assert isinstance(workspace, WindowsWorkspace) is not supported
+    assert workspace.working_dir == session.workspace
+    assert workspace.env is not None
+    assert workspace.env['CLAI_USER_VARIABLE'] == 'forwarded'
+    assert 'OPENAI_API_KEY' not in workspace.env
 
     loaded = load_plugin(RepoContextPlugin, PluginHost[None](name='repo_context', console=Console(), settings={}))
     assert any(isinstance(capability, WorkspacelessCapability) for capability in loaded.capabilities) is supported

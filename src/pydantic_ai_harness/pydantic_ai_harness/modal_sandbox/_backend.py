@@ -301,7 +301,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             # Commands see the desktop too, so a program the agent starts from the shell opens on it.
             self._env = {'DISPLAY': DISPLAY, **self._env}
         self._display = desktop_display(
-            self,
+            self._run_argv,
             self._desktop_size,
             lambda: f'Modal sandbox {self._ref.id if self._ref else "(not created)"}',
         )
@@ -654,16 +654,24 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         A shell command runs as `/bin/sh -c <command>`. Cancellation and command deadlines
         stop its foreground process group, without terminating the shared sandbox.
         """
+        check_timeout(timeout)
+        if self._display is not None:
+            # Started first, so a program the command opens shows on the screen.
+            await self._display.start()
         # Modal executes argv and never a shell string, so shell interpretation is requested
         # explicitly through `/bin/sh -c`, the one shell every sandbox image carries.
-        argv = command_argv(command, shell)
+        return await self._run_argv(command_argv(command, shell), env=env or {}, timeout=timeout, shell=shell)
+
+    async def _run_argv(
+        self, argv: list[str], *, env: Mapping[str, str], timeout: float | None, shell: bool = False
+    ) -> CommandResult:
+        """Run `argv` without starting the display, as the display's own commands do."""
         if not shell:
             # Through `sh`, so a program that can't start exits 127 or 126 as it does in `sh`.
             argv = ['/bin/sh', '-c', 'exec "$@"', 'sh', *argv]
         # Given per command, not only at creation, so an attached sandbox honors it too.
         workdir = self._working_dir
-        check_timeout(timeout)
-        variables: dict[str, str | None] | None = {**self._env, **(env or {})} or None
+        variables: dict[str, str | None] | None = {**self._env, **env} or None
         # Acquiring the sandbox and probing for setsid have their own bounds; the timeout is the command's alone.
         sandbox = await self.get_sandbox()
         # Without setsid, only the wrapper leader can be signalled, not its descendants.

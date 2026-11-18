@@ -13,7 +13,7 @@ import pydantic_core
 from pydantic import ValidationError
 
 from . import _usage_attribution, messages as _messages
-from ._deferred import filter_deferred_results
+from ._deferred import filter_deferred_results, jsonable_validated_args
 from ._output import (
     OutputSchema,
     OutputToolset,
@@ -332,34 +332,6 @@ class _ValidationDeferral(Exception):
         self.deferral = deferral
         self.validated_args = validated_args
         super().__init__()
-
-
-def _has_safety_checks(call: ToolCallPart) -> bool:
-    """Whether `call` is a `computer` call carrying a provider's safety checks."""
-    from .computer_use import COMPUTER_KIND, _safety_checks  # pyright: ignore[reportPrivateUsage]
-
-    return call.tool_kind == COMPUTER_KIND.id and bool(_safety_checks(call.provider_details))
-
-
-def _require_safety_approval(validated: ValidatedToolCall[AgentDepsT]) -> ValidatedToolCall[AgentDepsT]:
-    """Make a `computer` call carrying a provider's safety checks wait for a person's approval.
-
-    Runs however the arguments were accepted (the schema, a hook's corrected arguments, or `SkipToolValidation`), so
-    no route runs the call unseen. The model adapter acknowledges the checks once the call has a result.
-    """
-    if validated.ctx.tool_call_approved or not _has_safety_checks(validated.call):
-        return validated
-    tool = validated.tool
-    if isinstance(validated.deferral, CallDeferred) or (tool is not None and tool.tool_def.kind == 'external'):
-        # An approved call runs here, which an external or deferred call can't.
-        raise UserError(
-            f'The {validated.call.tool_name!r} call carries safety checks from the provider, which need a person'
-            ' to approve it before it runs, but it is handed to an external or deferred executor that approval'
-            ' cannot reach. Run the computer tool in this process so approval can gate it.'
-        )
-    if isinstance(validated.deferral, ApprovalRequired):
-        return validated  # a hook already asked for approval
-    return replace(validated, deferral=ApprovalRequired())
 
 
 def _validate_hook_deferral_error(hook_name: str, error: CallDeferred | ApprovalRequired) -> UserError:
@@ -1005,11 +977,11 @@ class ToolManager(Generic[AgentDepsT]):
             _name, tool = self._resolve_tool(call)
             ctx = self._build_tool_context(call, tool, allow_partial=False, approved=approved, metadata=metadata)
             validated_args = await self._run_validate_hooks(call, tool, ctx, allow_partial=False)
-            validated = self._make_validation_success(call, tool, ctx, validated_args)
+            return self._make_validation_success(call, tool, ctx, validated_args)
         except SkipToolValidation as e:
             assert tool is not None
             # Hook asked us to skip validation entirely; accept the args it provided.
-            validated = self._make_validation_success(call, tool, ctx, e.validated_args)
+            return self._make_validation_success(call, tool, ctx, e.validated_args)
         except _ValidationDeferral as e:
             assert tool is not None
             if isinstance(e.deferral, ApprovalRequired) and tool.tool_def.kind == 'external':
@@ -1026,7 +998,7 @@ class ToolManager(Generic[AgentDepsT]):
             # consumed, no `on_tool_validate_error`) and the deferral is carried on the result for
             # `execute_tool_call` to raise, which routes it into the same deferred-call handling as
             # a deferral raised by the tool function.
-            validated = replace(self._make_validation_success(call, tool, ctx, e.validated_args), deferral=e.deferral)
+            return replace(self._make_validation_success(call, tool, ctx, e.validated_args), deferral=e.deferral)
         except (ValidationError, ModelRetry) as e:
             if not wrap_validation_errors:
                 raise
@@ -1047,7 +1019,6 @@ class ToolManager(Generic[AgentDepsT]):
                 validated_args=None,
                 validation_error=self._wrap_error_as_failed(call.tool_name, call, e),
             )
-        return _require_safety_approval(validated)
 
     async def execute_tool_call(
         self,
@@ -1553,15 +1524,16 @@ class ToolManager(Generic[AgentDepsT]):
         call: ToolCallPart,
         exc: CallDeferred | ApprovalRequired,
         *,
-        executed: ValidatedToolCall[AgentDepsT] | None = None,
+        executed: ValidatedToolCall[AgentDepsT],
         wrap_validation_errors: bool = True,
         on_deferred_requests: InlineDeferredRequestsHandler | None = None,
         on_inline_deferred: InlineDeferredResultHandler | None = None,
     ) -> ToolDenied | ToolReturn[Any] | Any:
         """Resolve a single deferred tool call inline using the capability handler.
 
-        `executed` is the validated call whose execution raised `exc`, if any: the answer to a question
-        the tool raised itself passes the tool's `after_tool_execute` hooks, as the graph path's does.
+        `executed` is the validated call whose execution raised `exc`: the request carries its validated
+        arguments, and the answer to a question the tool raised itself passes the tool's `after_tool_execute`
+        hooks, as the graph path's does.
 
         Dispatches the handler's result for `call` on the same set of
         [`DeferredToolResult`][pydantic_ai.tools.DeferredToolResult] variants as the
@@ -1602,6 +1574,7 @@ class ToolManager(Generic[AgentDepsT]):
             approvals=[call] if isinstance(exc, ApprovalRequired) else [],
             calls=[call] if isinstance(exc, CallDeferred) else [],
             metadata={call.tool_call_id: exc.metadata} if exc.metadata else {},
+            validated_args={call.tool_call_id: jsonable_validated_args(executed.validated_args)},
             _kinds={call.tool_call_id: 'question'} if isinstance(exc, CallDeferred) and exc.kind == 'question' else {},
         )
         if on_deferred_requests is not None:
@@ -1664,7 +1637,7 @@ class ToolManager(Generic[AgentDepsT]):
 
     async def _answer_question(
         self,
-        executed: ValidatedToolCall[AgentDepsT] | None,
+        executed: ValidatedToolCall[AgentDepsT],
         exc: CallDeferred | ApprovalRequired,
         answer: Any,
         *,
@@ -1674,11 +1647,6 @@ class ToolManager(Generic[AgentDepsT]):
 
         Other results, and a question an `args_validator` raised before the tool ran, are returned as given.
         """
-        if (
-            executed is None
-            or executed.deferral is not None
-            or not isinstance(exc, CallDeferred)
-            or exc.kind != 'question'
-        ):
+        if executed.deferral is not None or not isinstance(exc, CallDeferred) or exc.kind != 'question':
             return answer
         return await self.after_tool_execute(executed, answer, wrap_validation_errors=wrap_validation_errors)

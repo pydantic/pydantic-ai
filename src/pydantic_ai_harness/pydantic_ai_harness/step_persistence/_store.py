@@ -22,7 +22,7 @@ from typing_extensions import TypedDict
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai_harness._history import STORED_HISTORY_CONTEXT
 from pydantic_ai_harness.media import (
-    DiskMediaStore,
+    FileMediaStore,
     MediaStore,
     SqliteMediaStore,
     externalize_media,
@@ -578,10 +578,10 @@ class FileStepStore:
     to prevent path traversal. Blocking I/O is dispatched to a worker thread
     via `anyio.to_thread`, so capability hooks do not stall the event loop.
 
-    `BinaryContent` payloads of any size and text parts at or above
+    `BinaryContent` payloads and text parts at or above
     `media_threshold_bytes` (default 64 KiB) are externalized through the
-    configured `MediaStore` to keep snapshot JSON small, since each snapshot
-    repeats the history. The default backs onto `<root>/media/<sha256>.bin`. Pass `media_store=None` to keep
+    configured `MediaStore` to keep snapshot JSON small. The default backs
+    onto `<root>/media/<sha256>.bin`. Pass `media_store=None` to keep
     payloads inline, or pass a custom `MediaStore` to redirect (e.g.
     `S3MediaStore(...)`). Snapshots written before text externalization
     existed still restore: `restore_media` recognizes the older marker shape.
@@ -604,7 +604,7 @@ class FileStepStore:
         self._root = Path(directory)
         resolved: MediaStore | None
         if media_store == 'auto':
-            resolved = DiskMediaStore(self._root / 'media')
+            resolved = FileMediaStore(self._root / 'media')
         else:
             resolved = media_store
         self._media_store: MediaStore | None = resolved
@@ -694,8 +694,6 @@ class FileStepStore:
                 messages_json,
                 media_store=self._media_store,
                 threshold_bytes=self._media_threshold_bytes,
-                # Binary of any size: see the class docstring.
-                binary_threshold_bytes=0,
             )
         await anyio.to_thread.run_sync(self._sync_save_snapshot, snapshot, messages_json)
 

@@ -38,6 +38,23 @@ def _no_endpoint(name: str) -> UserError:
     return no_endpoint(name)
 
 
+def _no_api_key(name: str) -> UserError:
+    from pydantic_clai2.models.key_profiles import no_api_key
+
+    return no_api_key(name)
+
+
+def _check_built(provider: str, built: Mapping[str, str], *, plugin: bool) -> None:
+    """Fail when `/model settings` saved a `base_url` or `api_key` that `provider`'s models are not built with."""
+    if plugin and 'base_url' in built:
+        raise _no_endpoint(provider)
+    if 'api_key' in built:
+        from pydantic_clai2.models.key_profiles import takes_key
+
+        if plugin or not takes_key(provider):
+            raise _no_api_key(provider)
+
+
 @dataclass(kw_only=True)
 class ModelResolver:
     """Load provider integrations on demand, retaining Codex authentication per conversation."""
@@ -112,10 +129,14 @@ class ModelResolver:
         from pydantic_clai2.models.chains import chain_name
 
         if (chain := chain_name(name)) is not None:
-            if await self._saved_base_url(name) is not None:
+            if await self._saved(name, 'base_url') is not None:
                 raise _no_endpoint(name)
+            if await self._saved(name, 'api_key') is not None:
+                raise _no_api_key(name)
             return [member for model in self._chain(chain) for member in await self.expand(model)]
         ref = _parse(name)
+        if ref.profile == ALL and await self._saved(name, 'api_key') is not None:
+            raise _no_api_key(name)  # Each pooled account keeps its own key.
         members = await self._accounts(ref)
         return [member.pinned(ref.name) for member in members] if members else [name]
 
@@ -140,11 +161,13 @@ class ModelResolver:
     async def _one_account(self, name: str) -> Model | str:
         """Build a model on the one account it names, the default one when it names none or `@default`."""
         ref = _parse(name)
-        base_url = await self._base_url(name)
-        endpoint = {} if base_url is None else {'base_url': base_url}
+        built = await self._built(name)
+        endpoint = {'base_url': built['base_url']} if 'base_url' in built else {}
         if ref.profile == DEFAULT:
             name = base_model(name)
             ref = _parse(name)
+        provider = self.plugins().get(ref.provider)
+        _check_built(ref.provider, built, plugin=provider is not None)
         if ref.provider in ('openrouter', 'vllm', 'github-copilot'):
             from pydantic_clai2.models import github_copilot, openrouter, vllm
 
@@ -152,9 +175,7 @@ class ModelResolver:
             return await to_thread.run_sync(partial(build[ref.provider], name, **endpoint), abandon_on_cancel=True)
         if ref.provider == 'openai-codex':
             return self.codex_auth().model(name, **endpoint)
-        if (provider := self.plugins().get(ref.provider)) is not None:
-            if endpoint:
-                raise _no_endpoint(ref.provider)
+        if provider is not None:
             if ref.profile is None:
                 resolve = partial(provider.resolve, ref.name)
             elif provider.resolve_profile is not None:
@@ -167,26 +188,37 @@ class ModelResolver:
 
                 limit_retry_after(model=model)
             return model
-        if ref.profile is not None or endpoint:
+        if ref.profile is not None or built:
             from pydantic_clai2.models import key_profiles
 
-            return await to_thread.run_sync(partial(key_profiles.model, name, **endpoint), abandon_on_cancel=True)
+            return await to_thread.run_sync(partial(key_profiles.model, name, **built), abandon_on_cancel=True)
         return name
+
+    async def _built(self, name: str) -> dict[str, str]:
+        """The `base_url` and `api_key` saved for building `name`, when set."""
+        built = {'base_url': await self._base_url(name), 'api_key': await self._api_key(name)}
+        return {setting: value for setting, value in built.items() if value is not None}
 
     async def _base_url(self, name: str) -> str | None:
         """The endpoint saved for `name`, or else for its pooled `PROVIDER@*:NAME` or plain `PROVIDER:NAME`."""
         plain = base_model(name)
         for candidate in dict.fromkeys((name, with_profile(plain, ALL), plain)):
-            if (base_url := await self._saved_base_url(candidate)) is not None:
+            if (base_url := await self._saved(candidate, 'base_url')) is not None:
                 return base_url
         return None
 
-    async def _saved_base_url(self, name: str) -> str | None:
-        """The endpoint `/model settings` saved for `name` itself."""
+    async def _api_key(self, name: str) -> str | None:
+        """The `/keys` entry saved for `name`, or for its plain `PROVIDER:NAME` on the default account it replaces."""
+        if (api_key := await self._saved(name, 'api_key')) is not None or _parse(name).profile != DEFAULT:
+            return api_key
+        return await self._saved(base_model(name), 'api_key')
+
+    async def _saved(self, name: str, setting: str) -> str | None:
+        """A setting `/model settings` saved for `name` itself."""
         if (store := self.store) is None:
             return None
-        base_url = await to_thread.run_sync(lambda: store.model_settings(name).get('base_url'), abandon_on_cancel=True)
-        return base_url if isinstance(base_url, str) else None
+        value = await to_thread.run_sync(lambda: store.model_settings(name).get(setting), abandon_on_cancel=True)
+        return value if isinstance(value, str) else None
 
     async def _pool(self, provider: str) -> 'list[Account]':
         """The provider's signed-in accounts, in `/accounts` order; none without a settings store."""

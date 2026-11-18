@@ -208,6 +208,9 @@ def test_a_kind_can_declare_the_shape_of_its_metadata() -> None:
     # Without a declared shape, the metadata is read as it is.
     assert LookupReturnPart('lookup', {'in_stock': True}, metadata=[1]).typed_metadata == [1]
     assert ToolReturnPart('t', 'plain', metadata={'any': 1}).typed_metadata == {'any': 1}
+    # The metadata shape is part of the kind, like its argument and content shapes.
+    with pytest.raises(UserError, match=r"Tool kind 'test\.with-metadata' is already defined as "):
+        ToolKind('test', 'with-metadata', content=LookupResult, metadata=LookupResult)
 
 
 def test_metadata_that_does_not_fit_does_not_stop_promotion() -> None:
@@ -448,6 +451,7 @@ def test_a_kind_registered_twice_is_an_error() -> None:
 
 
 _T = TypeVar('_T')
+_U = TypeVar('_U')
 
 
 def test_the_parameterized_base_must_match_the_kind() -> None:
@@ -487,9 +491,31 @@ def test_the_parameterized_base_must_match_the_kind() -> None:
     class OpenCallPart(ToolCallPart[_T], Generic[_T], kind=ToolKind('test', 'open', args=LookupArgs)):
         pass
 
+    # An intermediate generic subclass's arguments are its own, not the base's content and metadata.
+    class PairReturnPart(ToolReturnPart[tuple[_T, _U]], Generic[_T, _U]):
+        pass
+
+    class IntStrReturnPart(PairReturnPart[int, str], kind=ToolKind('test', 'pair', content=tuple[int, str])):
+        pass
+
+    assert IntStrReturnPart('t', (1, 'one')).typed_content == (1, 'one')
     assert AnyCallPart('t').tool_kind == 'test.any-shape'
     assert ViaGenericCallPart('t', {'sku': 'A-1'}).typed_args == {'sku': 'A-1'}
     assert OpenCallPart('t').tool_kind == 'test.open'
+
+
+def test_a_shape_set_through_a_generic_subclass_must_match_the_kind() -> None:
+    class GenericCallPart(ToolCallPart[_T], Generic[_T]):
+        pass
+
+    mismatched = ToolKind('test', 'via-generic-mismatch', args=LookupArgs)
+    with pytest.raises(
+        UserError,
+        match=r"ViaGenericMismatch parameterizes ToolCallPart with ImageResult, but its kind 'test\.via-generic-mismatch' declares `args=LookupArgs`",
+    ):
+
+        class ViaGenericMismatch(GenericCallPart[ImageResult], kind=mismatched):  # pyright: ignore[reportUnusedClass,reportGeneralTypeIssues,reportArgumentType]
+            pass
 
 
 def test_redefining_the_same_class_replaces_its_registration() -> None:

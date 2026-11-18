@@ -34,6 +34,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._typeguards import is_mapping
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -47,7 +48,7 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
-from pydantic_ai_harness.computer_use import Display, SupportsDisplay
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay, UnsupportedActionError
 
 if TYPE_CHECKING:
     from daytona import AsyncComputerUse, AsyncDaytona, AsyncSandbox
@@ -63,7 +64,7 @@ except ImportError as error:
     raise ImportError('Install `pydantic-ai-harness[daytona]` to use DaytonaSandbox.') from error
 
 from pydantic_ai_harness._display import LazyDisplay, desktop_size
-from pydantic_ai_harness.daytona_sandbox._desktop import DaytonaDesktop
+from pydantic_ai_harness.daytona_sandbox._desktop import DISPLAY, REQUEST_TIMEOUT as _REQUEST_TIMEOUT, DaytonaDesktop
 
 _AUTH_MESSAGE = (
     'Daytona rejected the credentials. Set DAYTONA_API_KEY, or pass a configured `AsyncDaytona` as `client=`.'
@@ -74,10 +75,6 @@ _MISSING_CREDENTIALS_MESSAGE = (
 _OUTPUT_LIMIT_MESSAGE = (
     'Daytona command output exceeded the 10 MiB limit; redirect it to a file and read part of it instead'
 )
-_REQUEST_TIMEOUT = 30
-
-_VNC_PORT = 6080
-"""Where the desktop's noVNC viewer listens, once `computer_use.start()` has started it."""
 # Bound sandbox creation and attachment so a wedged control plane cannot hang acquisition.
 _CREATE_TIMEOUT = 120
 # For create, start, and delete.
@@ -136,6 +133,20 @@ async def destroy_sandbox(client: AsyncDaytona | None, sandbox_id: str) -> None:
     finally:
         if owned is not None:
             await _close_quietly(owned)
+
+
+def secrets_error(secrets: Mapping[str, str] | None, env: Mapping[str, str] | None) -> TypeError | ValueError | None:
+    """What is wrong with `secrets` on its own (`TypeError`, as for `env`) or beside `env` (`ValueError`), if anything."""
+    if secrets is None:
+        return None
+    if not is_mapping(secrets) or any(type(key) is not str or type(value) is not str for key, value in secrets.items()):
+        return TypeError(
+            "`secrets` maps environment variable names to Secret names, such as {'GH_TOKEN': 'github-token'}"
+        )
+    if shadowed := sorted(name for name in env or {} if name in secrets):
+        # `env` is set on every command, so it would hide the placeholder the proxy replaces.
+        return ValueError(f'{", ".join(shadowed)} cannot be in both `env` and `secrets`')
+    return None
 
 
 def _in_deleted_state(sandbox: AsyncSandbox) -> bool:
@@ -210,15 +221,9 @@ async def _probe(sandbox: AsyncSandbox) -> WorkspaceUnavailableError | None:
         return None
     if _in_deleted_state(sandbox):
         return WorkspaceUnavailableError(_unavailable_message(sandbox.id))
-    state = sandbox.state
-    if state is not None and state in (
-        daytona.SandboxState.STOPPED,
-        daytona.SandboxState.ARCHIVED,
-        daytona.SandboxState.PAUSED,
-    ):
-        # Stopped by a call or by Daytona's auto-stop when idle: Daytona doesn't say which.
+    if sandbox.state in (daytona.SandboxState.STOPPED, daytona.SandboxState.ARCHIVED, daytona.SandboxState.PAUSED):
         return WorkspaceUnavailableError(
-            f'The Daytona sandbox {sandbox.id!r} is {state.value}; a later run that attaches to it '
+            f'The Daytona sandbox {sandbox.id!r} was stopped while idle; a later run that attaches to it '
             "starts it again. Pass `workspace='new'` to start a fresh sandbox."
         )
     return None
@@ -430,7 +435,7 @@ class DaytonaSandboxBackend(
     A command's complete output is returned once it exits. A shell string runs under `/bin/sh -c`;
     a timeout or cancellation stops the command.
 
-    A deleted sandbox, a stopped one (attaching again starts it), rejected
+    A deleted sandbox, one Daytona stopped while idle (attaching again starts it), rejected
     credentials, and an unknown snapshot raise `WorkspaceUnavailableError`. Path failures raise the
     built-in errors, such as `FileNotFoundError`.
 
@@ -449,10 +454,14 @@ class DaytonaSandboxBackend(
             sandbox's own default when `None`, discovered with `pwd -P` on first use.
         env: Environment variables every command gets; a command's own `env` is layered on top.
             They are also set on a newly created sandbox.
+        secrets: Daytona's `secrets` for a newly created sandbox, passed to `AsyncDaytona.create`
+            unchanged: environment variable name to Secret name. The variable holds a placeholder, and
+            Daytona swaps in the real value in HTTPS request headers as requests leave for the Secret's
+            `hosts` (any host if it has none). An attached sandbox keeps the ones it was created with.
         desktop: Whether the sandbox has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse],
-            started on first use: `True` for 1280x800, or its `(width, height)`, at least 1024x768. The size applies
-            to a new sandbox, since Daytona can't resize a running one. The snapshot needs Daytona's desktop
-            packages, which the default snapshot has.
+            started on first use: `True` for 1280x800, or its `(width, height)`. The size applies to a new sandbox,
+            since Daytona can't resize a running one. The snapshot needs Daytona's desktop packages, which the default
+            snapshot has.
     """
 
     def __init__(
@@ -466,6 +475,7 @@ class DaytonaSandboxBackend(
         allow_internet_access: bool = True,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        secrets: Mapping[str, str] | None = None,
         desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
@@ -475,6 +485,8 @@ class DaytonaSandboxBackend(
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
         check_env_types(env)
+        if (error := secrets_error(secrets, env)) is not None:
+            raise error
         self._ref = ref if sandbox is None else WorkspaceRef(provider='daytona', id=sandbox.id)
         self._sandbox = sandbox
         self._client = client
@@ -484,15 +496,8 @@ class DaytonaSandboxBackend(
         self._auto_stop_interval = auto_stop_interval
         self._allow_internet_access = allow_internet_access
         self._desktop_size = desktop_size(desktop)
-        creates = sandbox is None and ref is None
-        if creates and self._desktop_size is not None and (self._desktop_size[0] < 1024 or self._desktop_size[1] < 768):
-            # Daytona's desktop starts at 1024x768 when asked for less.
-            raise UserError(
-                f"Daytona's desktop is at least 1024x768, not {self._desktop_size[0]}x{self._desktop_size[1]}."
-            )
-        # Commands see the desktop too, so a program the agent starts from the shell opens on it. Daytona's desktop
-        # runs on display `:0`.
-        self._env = {**({'DISPLAY': ':0'} if self._desktop_size else {}), **(env or {})}
+        # Commands see the desktop too, so a program the agent starts from the shell opens on it.
+        self._env = {**({'DISPLAY': DISPLAY} if self._desktop_size else {}), **(env or {})}
         self._display = (
             None
             if self._desktop_size is None
@@ -500,6 +505,7 @@ class DaytonaSandboxBackend(
                 DaytonaDesktop(self._attached_computer_use), self._start_display, scope=self._display_scope
             )
         )
+        self._secrets = dict(secrets) if secrets is not None else None
         self._working_dir = absolute_path('working_dir', working_dir)
         # `working_dir()` must return a canonical absolute path, resolved once with `pwd -P`.
         self._resolved_working_dir: str | None = None
@@ -576,6 +582,7 @@ class DaytonaSandboxBackend(
             name=name,
             snapshot=self._snapshot,
             env_vars=env_vars or None,
+            secrets=self._secrets,
             auto_stop_interval=self._auto_stop_interval,
             network_block_all=not self._allow_internet_access,
             labels={'created-by': 'pydantic-ai'},
@@ -718,6 +725,9 @@ class DaytonaSandboxBackend(
             argv = command_argv(command, shell)
             # Acquiring the sandbox has its own bound; the timeout is the command's alone.
             sandbox = await self.get_sandbox()
+            if self._display is not None:
+                # Started first, so a program the command opens shows on the screen.
+                await self._display.start()
             process = _DaytonaProcess(sandbox)
             line = process.command_line(argv, cwd=self._working_dir, env={**self._env, **(env or {})})
             async with command_deadline(timeout, stop=process.kill, output=lambda: (process.stdout, process.stderr)):
@@ -871,9 +881,23 @@ class DaytonaSandboxBackend(
     async def _display_scope(self) -> AsyncGenerator[None]:
         async with self._operation():
             sandbox = await self.get_sandbox()
+            if sandbox.public:
+                # Daytona's VNC preview of the desktop has no password, and a public sandbox's previews need no token.
+                raise UserError(
+                    f'The Daytona sandbox {sandbox.id!r} is public, so anyone with its preview URL could control its '
+                    'desktop. Make it private with `sandbox.set_public(False)` to use the desktop.'
+                )
             try:
                 async with _mapped_errors('The Daytona desktop failed', sandbox=sandbox):
-                    yield
+                    try:
+                        yield
+                    except (WorkspaceUnavailableError, UnsupportedActionError):
+                        raise
+                    except WorkspaceError as error:
+                        # The desktop's own failure, such as keys it couldn't let go of, may come from a lost sandbox.
+                        if (gone := await _probe(sandbox)) is not None:
+                            raise gone from error
+                        raise
             except daytona.DaytonaTimeoutError as error:
                 raise WorkspaceTimeoutError(f'The Daytona desktop did not answer in time: {error}') from error
             except daytona.DaytonaRateLimitError:
@@ -903,23 +927,6 @@ class DaytonaSandboxBackend(
                 f"The Daytona sandbox {sandbox.id!r}'s desktop stopped answering; stopping and starting the "
                 f'sandbox brings it back. ({error})'
             ) from error
-
-    async def live_view_url(self, *, expires_in: int = 3600) -> str:
-        """A link to watch the desktop, and use it, in a browser, valid for `expires_in` seconds.
-
-        Anyone with the link can see and use the desktop until it expires.
-        """
-        if self._display is None:
-            raise UserError('This Daytona workspace has no display: create it with `desktop=True`.')
-        # The sandbox may have stopped and started since the desktop last started, which leaves the viewer down.
-        await self._display.start()
-        async with self._operation():
-            sandbox = await self.get_sandbox()
-            async with _mapped_errors('Could not create a live view link', sandbox=sandbox):
-                signed = await sandbox.create_signed_preview_url(
-                    _VNC_PORT, expires_in_seconds=expires_in, request_timeout=_REQUEST_TIMEOUT
-                )
-        return f'{signed.url.rstrip("/")}/vnc.html?autoconnect=true&resize=scale'
 
 
 def _desktop_broken(error: daytona.DaytonaServiceUnavailableError) -> bool:

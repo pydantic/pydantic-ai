@@ -82,7 +82,7 @@ For a narrower agent, use [`Shell`](https://pydantic.dev/docs/ai/harness/shell/)
 
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.smol_sandbox import SmolSandbox
 
@@ -260,6 +260,8 @@ Whoever passes a ref runs commands in the VM it names. smolmachines can open any
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created if missing. Default: `/workspace`; `None` uses the VM's own (`/` without an image). |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the VM, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
 | `desktop` | Give the VM a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The size applies when the display first starts. Default: `False`. |
+| `authority` | The [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
 ## Platforms
 
