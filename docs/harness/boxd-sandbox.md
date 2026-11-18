@@ -38,7 +38,7 @@ flowchart TB
 pip/uv-add "pydantic-ai-harness[coder,boxd,anthropic]"
 ```
 
-Set `BOXD_API_KEY` to an API key from `boxd auth keys create`; each key belongs to one boxd organization. The examples also use `Coder` and an Anthropic model, hence the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`; swap them for your own tools and model provider.
+Set `BOXD_API_KEY` to an API key from `boxd auth keys create`. Each key belongs to one boxd organization. The examples also use `Coder` and an Anthropic model, so they need the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`. Swap them for your own tools and model provider.
 
 ## Quick start
 
@@ -57,9 +57,9 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 - **`Coder` creates it when the run starts**, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
 - **It keeps its disk until you delete it.** boxd suspends it when idle, but never deletes it unless your organization's defaults say so. See [Clean up](#clean-up).
-- **Commands run as the non-root `boxd` user in `/home/boxd`**, with passwordless `sudo`. Pass `working_dir='/home/boxd/project'` to give the agent a project directory; it is created on a new machine.
-- **The default image is Ubuntu 24.04 with git, Python 3, uv, Node.js and `rg`**, but not your project's dependencies. Install them in a machine, save it with `boxd snapshots save`, and pass `snapshot='my-snapshot'`. An unknown snapshot, or one still saving, fails on first use with `WorkspaceUnavailableError`.
-- **It has a public HTTPS address** that serves the port its code listens on, and can reach the internet. See [Security model](#security-model).
+- **Commands run as the non-root `boxd` user in `/home/boxd`**, with passwordless `sudo`. Pass `working_dir='/home/boxd/project'` to give the agent a project directory. It is created on a new machine.
+- **The default image is Ubuntu 24.04 with git, Python 3, uv, Node.js and `rg`**, but not your project's dependencies. Install them in a machine and save it as a snapshot, a copy new machines can start from, with `boxd snapshots save`. Then pass `snapshot='my-snapshot'`. An unknown snapshot, or one still saving, fails on first use with `WorkspaceUnavailableError`.
+- **It can reach the internet, and has a public HTTPS address** that serves the port its code listens on. See [Security model](#security-model).
 
 ## Continue in the same machine
 
@@ -82,9 +82,11 @@ followup = agent.run_sync(
 ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later run
 ```
 
-If the machine has been deleted, the run raises `WorkspaceUnavailableError`; pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace.
+The history records the machine as a `WorkspaceRef`, or "ref": the provider's name and the machine's ID. `result.workspace.ref` is the same ref, for continuing without the history.
 
-The ref holds no credentials: the process that reattaches needs `BOXD_API_KEY` or a `client=` too.
+If the machine has been deleted, the run raises `WorkspaceUnavailableError`. Pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace.
+
+The ref holds no credentials, so the process that reattaches needs `BOXD_API_KEY` or a `client=` too.
 
 ## Prepare a machine before the run
 
@@ -112,9 +114,9 @@ async def run_in_prepared_machine() -> str:
             await BoxdSandbox().destroy(ref)
 ```
 
-The run leaves a backend you built open, so close it with `aclose()`; that closes the client it opened from the environment, not the machine. A `client=` you passed is never closed. To keep the machine, store `backend.ref` instead of destroying it.
+The run leaves a backend you built open, so close it with `aclose()`. That closes the client it opened from the environment, not the machine. A `client=` you passed is never closed. To keep the machine, store `backend.ref` instead of destroying it.
 
-For boxd features the workspace API doesn't cover, such as snapshots and public URLs, `await backend.get_sandbox()` returns the machine's `boxd.Machine` record; use its `id` with your own `boxd.AsyncBoxd`.
+For boxd features the workspace API doesn't cover, such as snapshots and public URLs, `await backend.get_sandbox()` returns the machine's `boxd.Machine` record. Use its `id` with your own `boxd.AsyncBoxd`.
 
 ## Clean up
 
@@ -157,9 +159,10 @@ async def delete_failed_run_machine(ctx: RunContext[None], *, error: BaseExcepti
 agent = Agent('{{ anthropic:large }}', capabilities=[BoxdSandbox(), Coder(), hooks])
 ```
 
-A machine you don't delete is suspended when it sits idle, then hibernated. boxd uses your organization's idle time; set `auto_suspend_timeout=` in seconds to change it, or `0` to never suspend.
+A machine you don't delete is suspended when it sits idle, then hibernated:
 
-boxd deletes a machine only if your organization gives new machines a delete timer. `boxd machine get` shows a machine's timers.
+- boxd uses your organization's idle time. Set `auto_suspend_timeout=` in seconds to change it, or `0` to never suspend.
+- boxd deletes a machine only if your organization gives new machines a delete timer. `boxd machine get` shows a machine's timers.
 
 ### Find a lost machine
 
@@ -169,6 +172,7 @@ If your program stops before it stores the ref, for example after a crash or Ctr
 - Or search your logs for `Created boxd machine <id>`, or `Forked boxd machine` for a copy, logged at INFO by the `pydantic_ai_harness` logger.
 
 Then delete it: `await BoxdSandbox().destroy(WorkspaceRef(provider='boxd', id='<id>'))`.
+
 ## Keep a token out of the machine
 
 Pass `secrets` to give a new machine boxd secrets by name. If a secret is tied to domains, the machine gets only a placeholder starting with `bxds_`, and boxd swaps in the real value as requests leave for those domains. Create the secret first, since boxd won't create a machine that names a missing one:
@@ -234,7 +238,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Destroy each machine when you are done; the copy isn't tied to the original.
+Destroy each machine when you are done. The copy isn't tied to the original, so destroying one leaves the other.
 
 ## Security model
 
@@ -248,18 +252,18 @@ Destroy each machine when you are done; the copy isn't tied to the original.
 
 | Option | What it does |
 | --- | --- |
-| `client` | A `boxd.AsyncBoxd` to share across runs on one event loop, or to point at another boxd cluster. Default: `None`, a client each run opens and closes when it ends, from `BOXD_TOKEN`, else `BOXD_API_KEY`, else the boxd machine it runs in. You close a client you pass. |
+| `client` | A `boxd.AsyncBoxd` to share across runs on one event loop, or to point at another boxd cluster. You close a client you pass. Default: `None`, a client each run opens and closes. It logs in with `BOXD_TOKEN`, else `BOXD_API_KEY`, else as the boxd machine it runs in. |
 | `org` | boxd organization a new machine belongs to. Default: `None`, the API key's organization, or your default one for other credentials. |
 | `snapshot` | boxd snapshot a new machine starts from, by name or id. Default: `None`, boxd's default image. An unknown snapshot fails on first use. |
-| `vcpu` | Size of a new machine: `1`, `2`, `4` or `8` vCPUs, with 4 GiB of memory each. Default: `None`, the organization's default size. Can't be combined with `snapshot`: a machine from a snapshot keeps the size it was saved at. |
-| `auto_suspend_timeout` | Seconds without network activity before boxd suspends a new machine; `0` disables it. Default: `None`, the organization's default. A command wakes a suspended machine. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/boxd`. Created on a new machine; on an attached one it must exist. |
-| `env` | Environment variables every command gets. Default: `None`; nothing from your machine reaches the boxd machine. The agent's commands can read these, so leave out secrets it shouldn't see. |
-| `secrets` | Names of existing boxd secrets a new machine gets, applied as `boxd.spec.secrets(*secrets)` in its spec. Default: `None`. An attached machine keeps the ones it was created with. See [Keep a token out of the machine](#keep-a-token-out-of-the-machine). |
-| `authority` | Who wrote the sandbox's files, for capabilities that check [authority](../workspace-custom.md#workspace-authority): `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. Default: `'operator'`. |
-| `path_authority` | Levels for some directories and files, overriding `authority` under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
+| `vcpu` | Size of a new machine: `1`, `2`, `4` or `8` vCPUs, with 4 GiB of memory each. Default: `None`, the organization's default size. Can't be combined with `snapshot`, since a machine from a snapshot keeps the size it was saved at. |
+| `auto_suspend_timeout` | Seconds without network activity before boxd suspends a new machine. `0` disables it. Default: `None`, the organization's default. A command wakes a suspended machine. |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/boxd`. Created on a new machine. On an attached one, it must already exist. |
+| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine reaches the boxd machine. The agent's commands can read these, so leave out secrets it shouldn't see. |
+| `secrets` | Names of existing boxd secrets a new machine gets. Default: `None`. An attached machine keeps the ones it was created with. See [Keep a token out of the machine](#keep-a-token-out-of-the-machine). |
+| `authority` | Who wrote the machine's files. A capability that puts a file's text in the prompt gives it no more [authority](../workspace-custom.md#workspace-authority) than this. Default: `'operator'`, your own files. Use `'user'` for the user's files, and `'none'` for files nobody on your side wrote, such as a cloned third-party repository. |
+| `path_authority` | Levels for some directories and files, overriding `authority` under them. The longest matching path wins. Paths are in the machine, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 
-`client`, `working_dir`, `env`, `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`; the other options only shape a new machine, and an attached machine keeps the `secrets` it was created with.
+`client`, `working_dir`, `env`, `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`. The other options only shape a new machine. An attached machine keeps the `secrets` it was created with.
 
 ## Limits
 
@@ -267,13 +271,15 @@ Destroy each machine when you are done; the copy isn't tied to the original.
 
 - boxd ends a command that prints nothing for 30 minutes, even with `timeout=None`, raising `WorkspaceTimeoutError`. Have long builds print progress.
 - A timeout or cancellation stops the command's process group, not the machine.
-- `run()` returns when the command exits, so output a background child writes afterwards is lost. Redirect it to a file; `Shell.start_command` does this for you.
+- `run()` returns when the command exits, so output a background child writes afterwards is lost. Redirect it to a file. `Shell.start_command` does this for you.
 - A command whose output passes 10 MiB is stopped with `WorkspaceOutputLimitError`. Redirect large output to a file.
-- The boxd SDK needs asyncio; under Trio, every operation raises `UserError`.
+- The boxd SDK needs asyncio. Under Trio, every operation raises `UserError`.
 
 ## Durable execution
 
-Add a durability capability, such as `TemporalDurability()` from the `temporal` extra, next to `BoxdSandbox()`; [Workspaces](../workspace.md#durable-execution) covers what changes. Pass one client, as in `BoxdSandbox(client=boxd.AsyncBoxd())`: without it, every workspace operation logs in to boxd again, and boxd allows 30 logins a minute from one IP address, so a busy worker fails with `RateLimitError`.
+Add a durability capability, such as `TemporalDurability()` from the `temporal` extra, next to `BoxdSandbox()`. [Workspaces](../workspace.md#durable-execution) covers what changes.
+
+Pass one client, as in `BoxdSandbox(client=boxd.AsyncBoxd())`. Without it, every workspace operation logs in to boxd again. boxd allows 30 logins a minute from one IP address, so a busy worker fails with `RateLimitError`.
 
 ## Telemetry
 

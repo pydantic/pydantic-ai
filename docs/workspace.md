@@ -47,9 +47,9 @@ if __name__ == '__main__':
   is a normal result, so the model sees what went wrong.
 - `timeout=60` stops a stuck command with a
   [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError], which carries the output so
-  far. The clock starts once the sandbox is ready, so creating it doesn't count. Turning any
-  [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] into `ModelRetry` lets the model try
-  something else instead of ending the run.
+  far. The clock starts once the sandbox is ready, so creating it doesn't count.
+- Turning any [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] into `ModelRetry` lets the model
+  try something else. Without it, the error ends the run.
 
 You rarely write these tools yourself: [`Coder`](harness/coder.md), [`Shell`](harness/shell.md) and
 [`FileSystem`](harness/filesystem.md) from the Pydantic AI Harness give the model file, search and shell
@@ -71,14 +71,18 @@ agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and run its tests.')
 ```
 
-The sandbox is created the first time the run uses it. With `Coder`, that's when the run starts, since it
-loads the repository's instructions; pass `Coder(repo_context=False)` to wait for the first tool call. A
-durable run also creates it when it starts. It keeps running after the run until you delete it or its
-provider stops it; see [Cleaning up](#cleaning-up).
+The sandbox is created the first time the run uses it:
+
+- With `Coder`, that's when the run starts, because `Coder` loads the repository's instructions. Pass
+  `Coder(repo_context=False)` to wait for the first tool call instead.
+- A [durable run](#durable-execution) also creates it when the run starts.
+
+The sandbox keeps running after the run until you delete it or its provider stops it. [Cleaning
+up](#cleaning-up) shows how to handle that.
 
 ## Supported workspaces {#supported-workspaces}
 
-`LocalWorkspace` and `WindowsWorkspace` come with `pydantic-ai`; the rest come with
+`LocalWorkspace` and `WindowsWorkspace` come with `pydantic-ai`. The rest come with
 [Pydantic AI Harness](harness/index.md), each behind its own install extra.
 
 | Workspace | Where commands run | Isolated from your machine | You need |
@@ -108,11 +112,15 @@ open a pull request.
 <span id="writing-a-backend"></span><span id="resolving-symlinks"></span><span id="checking-a-backend"></span>For anything else, [write a backend](workspace-custom.md#writing-a-backend): one class that runs a
 command, plus a test suite that checks it behaves like the others.
 
-<span id="supplying-a-workspace-from-a-capability"></span><span id="workspace-authority"></span><span id="files-you-didnt-write"></span><span id="authority-by-path"></span><span id="path-authority"></span>To
-choose a workspace per user, [supply one from a capability](workspace-custom.md#supplying-a-workspace-from-a-capability).
-To [mark who wrote its files](workspace-custom.md#workspace-authority), including
-[by path](workspace-custom.md#path-authority), or to [wrap one](workspace-custom.md#wrapping-a-workspace), see
-Custom Workspaces.
+<span id="supplying-a-workspace-from-a-capability"></span><span id="workspace-authority"></span><span id="files-you-didnt-write"></span><span id="authority-by-path"></span><span id="path-authority"></span>[Custom
+Workspaces](workspace-custom.md) also shows how to:
+
+- [Supply a workspace from a capability](workspace-custom.md#supplying-a-workspace-from-a-capability) to
+  give each user their own.
+- [Mark who wrote its files](workspace-custom.md#workspace-authority), for the whole workspace or
+  [by path](workspace-custom.md#path-authority), so the model doesn't take a third-party file's text as
+  your instructions.
+- [Wrap a workspace](workspace-custom.md#wrapping-a-workspace) to add a policy of your own.
 
 ## Your machine or a sandbox
 
@@ -143,10 +151,10 @@ agent = Agent(
 
 - [`run`][pydantic_ai.workspaces.Workspace.run] runs a command.
 - [`read_text`][pydantic_ai.workspaces.Workspace.read_text] and
-  [`write_text`][pydantic_ai.workspaces.Workspace.write_text] read and write text;
-  [`read_bytes`][pydantic_ai.workspaces.Workspace.read_bytes] and
-  [`write_bytes`][pydantic_ai.workspaces.Workspace.write_bytes] read and write exact bytes. Writing creates
-  missing parent directories.
+  [`write_text`][pydantic_ai.workspaces.Workspace.write_text] read and write text.
+- [`read_bytes`][pydantic_ai.workspaces.Workspace.read_bytes] and
+  [`write_bytes`][pydantic_ai.workspaces.Workspace.write_bytes] read and write exact bytes.
+- Writing creates missing parent directories.
 - [`list_dir`][pydantic_ai.workspaces.Workspace.list_dir], [`stat`][pydantic_ai.workspaces.Workspace.stat],
   [`exists`][pydantic_ai.workspaces.Workspace.exists], [`make_dir`][pydantic_ai.workspaces.Workspace.make_dir]
   and [`remove`][pydantic_ai.workspaces.Workspace.remove] work with directories and entries.
@@ -175,13 +183,13 @@ async def save_notes(ctx: RunContext, notes: str) -> str:
 
 - Relative paths resolve against the working directory. It is a starting point, not a boundary: `..` and
   absolute paths reach the rest of the environment.
-- `run(..., cwd='subdir')` starts one command in another directory, relative to the working directory; it
-  must already exist.
+- `run(..., cwd='subdir')` starts one command in another directory, relative to the working directory. The
+  directory must already exist.
 - Sandbox providers use different default users and directories, so prefer relative paths, or set
   `working_dir=` on the sandbox.
 - A bad path raises the usual error, such as `FileNotFoundError` or `IsADirectoryError`. Raise `ModelRetry`
-  from it so the model can try again; uncaught, it ends the run (on Temporal, it follows the
-  [retry policy](#durable-execution)).
+  from it so the model can try again. Uncaught, it ends the run. On Temporal, it follows the
+  [retry policy](#durable-execution) instead.
 - An environment that is gone, such as a sandbox deleted during a command, raises
   `WorkspaceUnavailableError` and ends the run. A command killed by a signal while its environment stays
   live returns its exit code instead.
@@ -200,9 +208,10 @@ async def main() -> None:
     await agent.run('Now add a test for it.', message_history=first.all_messages())
 ```
 
-Each model response records its workspace as a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] on
-[`workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref], so this works however you store the
-messages:
+This works because each model response records which workspace it ran in. The record is a
+[`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], a reference (or "ref") holding the provider's name and
+the environment's ID, stored on [`workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref]. It is
+saved with the messages, so this works however you store them:
 
 ```python {requires="workspace_agent.py"}
 from pydantic_ai import ModelMessagesTypeAdapter
@@ -249,9 +258,10 @@ Pydantic AI never deletes an environment. A sandbox keeps running, and billing, 
 delete it or its provider's lifetime settings stop it. Each sandbox page shows how to delete one.
 
 - After a successful run that used the sandbox, `result.workspace.ref` names it, so you can continue in it or
-  delete it. If the ref is `None`, calling `result.workspace` methods creates a new sandbox that no message records.
+  delete it. If the ref is `None`, the run never created a sandbox, and calling `result.workspace` methods
+  creates a new one that no message records.
 - A failed run returns no result. Delete its sandbox in an `on_run_error` [hook](hooks.md), where
-  `ctx.workspace.ref` names it; `after_run` doesn't run when a run fails.
+  `ctx.workspace.ref` names it. `after_run` doesn't run when a run fails.
 - If you delete the sandbox after each run, pass `workspace='new'` when you continue its history, or the
   next run raises `WorkspaceUnavailableError`.
 
@@ -319,13 +329,16 @@ A run uses the first of these that applies:
 2. The reference on the latest response in `message_history`.
 3. The agent's workspace capability: its directory for `LocalWorkspace`, a new sandbox for a sandbox.
 
-`workspace=` takes `'new'` to start fresh and ignore the history, a
-[`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for the agent's capability to attach to, or a live
-workspace or backend, such as `result.workspace` or `ctx.workspace`, used as is.
+`workspace=` takes one of:
 
-To move to a new directory or provider without breaking old conversations, list both: capabilities are asked in order,
-and only the one that recognizes a reference attaches to it. New conversations use the first; conversations
-that started in the second continue there.
+- `'new'`, to start fresh and ignore the history.
+- A [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], for the agent's capability to attach to.
+- A live workspace, such as `result.workspace` or `ctx.workspace`, or a
+  [backend](workspace-custom.md#writing-a-backend), used as is.
+
+To move to a new directory or provider without breaking old conversations, list both capabilities. They are
+asked in order, and only the one that recognizes a reference attaches to it. New conversations use the
+first. Conversations that started in the second continue there.
 
 ```python {title="two_workspaces.py"}
 from pydantic_ai import Agent
@@ -353,7 +366,8 @@ When no capability supplies the workspace:
 - Without a reference, the run has no workspace, and tools that use it raise `WorkspaceUnavailableError`.
 
 In tests, `with agent.override(workspace=LocalWorkspaceBackend(tmp_path)):` puts every run in that directory,
-whatever the agent's capability, the history or `workspace=` say.
+whatever the agent's capability, the history or `workspace=` say. `LocalWorkspaceBackend` is the class that
+does `LocalWorkspace`'s work, without the capability around it.
 
 ## Durable execution
 
@@ -374,53 +388,72 @@ agent = Agent(
 )
 ```
 
-Swap `TemporalDurability` for `DBOSDurability` or `PrefectDurability` and nothing else in the agent changes;
-the [engine guides](durable_execution/overview.md) show where each run starts. Tools use `ctx.workspace` as
-in a plain run, and harness tools such as `Coder`, `Shell` and `FileSystem` work on all three engines,
-background jobs, sticky `cd` and [`FileChangeRequestedEvent`](harness/filesystem.md#events) approval
-included, with the [Temporal limits](durable_execution/temporal.md#harness-workspace-capabilities) on live
-events and delegation. `FileSystem` and the `shell` tool also work under
-[Azure Durable Task](harness/azure-durable-task.md) and [Render Workflows](harness/render-workflows.md).
+Swap `TemporalDurability` for `DBOSDurability` or `PrefectDurability` and nothing else in the agent changes.
+The [engine guides](durable_execution/overview.md) show where each run starts.
 
-A tool that must run its orchestration in the workflow, for example to approve a file change before
-writing, can set [`durable=False`](durable_execution/overview.md#running-a-tool-outside-the-durable-unit);
-the workspace calls it makes still run as the engine's activities, steps or tasks.
+Tools use `ctx.workspace` as in a plain run:
 
-- A durable run creates or attaches its environment when it starts, even if no tool uses it, and retries,
-  replays and recovery reattach to it. If a worker dies after creating a sandbox but before that is
-  recorded, the retry can create a second one; delete the first with the provider's tools.
-- A workspace call can run again if a worker dies during it. Timeouts, output-limit failures, read-only
-  refusals and a lost environment are not retried. Other errors, such as `FileNotFoundError`, follow the
-  engine's retry policy, which on Temporal retries without limit by default: raise `ModelRetry` from them,
-  or set `maximum_attempts` on the
-  [retry policy](durable_execution/temporal.md#activity-configuration).
-- On Temporal, a command must finish within its activity's `start_to_close_timeout`, 60 seconds by
-  default, whatever its own `timeout`. Raise it for a tool with
-  `metadata={'temporal': ActivityConfig(start_to_close_timeout=...)}`. Workspace calls from workflow code use
-  `activity_config`; if you set it, keep a `start_to_close_timeout` in it.
-- A sticky `cd` is kept in the workspace under `.pydantic-ai-harness/shell/run-state/`, keyed by the run,
-  so a new worker continues in the same directory, and removed when the run ends. Commands in one run that
-  change directory at the same time can overwrite each other's state.
-- A retried `start_command` reattaches to its job instead of starting a second process. If a launch failed
-  partway, the retry reports a pending launch; once the process has stopped, remove its files under
-  `.pydantic-ai-harness/shell/`.
+- Harness tools such as `Coder`, `Shell` and `FileSystem` work on all three engines, including background
+  jobs, sticky `cd` and [`FileChangeRequestedEvent`](harness/filesystem.md#events) approval.
+- On Temporal, live events and delegation have [limits](durable_execution/temporal.md#harness-workspace-capabilities).
+- `FileSystem` and the `shell` tool also work under [Azure Durable Task](harness/azure-durable-task.md) and
+  [Render Workflows](harness/render-workflows.md).
+
+An engine normally runs each tool call as one recorded unit: a Temporal activity, a DBOS step or a Prefect
+task. A tool that must run in the workflow code itself, for example to approve a file change before writing
+it, can set [`durable=False`](durable_execution/overview.md#running-a-tool-outside-the-durable-unit). The
+workspace calls it makes are still recorded as activities, steps or tasks.
+
+### Creating and reattaching
+
+- A durable run creates or attaches its environment when it starts, even if no tool uses it. Retries,
+  replays and recovery reattach to it.
+- If a worker dies after creating a sandbox but before that is recorded, the retry can create a second one.
+  Delete the first with the provider's tools.
 - Without an explicit `run_id`, a durable run takes its ID from the Temporal run ID, DBOS workflow ID or
   Prefect flow run ID, so workspace state such as a sticky `cd` or a background job survives a worker
   restart.
+- On Temporal, `LocalWorkspace` calls run on whichever worker picks them up, so every worker needs the
+  directory at the same absolute path, on shared storage.
+
+### Retries and timeouts
+
+- A workspace call can run again if a worker dies during it.
+- Timeouts, output-limit failures, read-only refusals and a lost environment are not retried.
+- Other errors, such as `FileNotFoundError`, follow the engine's retry policy. On Temporal that retries
+  without limit by default. Raise `ModelRetry` from them, or set `maximum_attempts` on the
+  [retry policy](durable_execution/temporal.md#activity-configuration).
+- On Temporal, a command must finish within its activity's `start_to_close_timeout`, 60 seconds by
+  default, whatever its own `timeout`. Raise it for a tool with
+  `metadata={'temporal': ActivityConfig(start_to_close_timeout=...)}`.
+- Workspace calls from workflow code use `activity_config`. If you set it, keep a `start_to_close_timeout`
+  in it.
 - On DBOS, tool calls in a run with a workspace run one at a time, so their steps replay in order.
-- `workspace=` passes only the reference; each step rebuilds the workspace from the agent's capability.
-  Put policy on that capability, such as `LocalWorkspace(..., read_only=True)` or
-  `LocalWorkspace(..., authority='none')`: a `ReadOnlyWorkspace(...)` or `AuthorityWorkspace(...)` passed to
-  the run raises `UserError`, because rebuilding would drop it. A workspace capability passed to
-  the run doesn't apply its own settings, such as a sandbox image, for the same reason.
+
+### Harness shell state
+
+- A sticky `cd` is kept in the workspace under `.pydantic-ai-harness/shell/run-state/`, keyed by the run,
+  so a new worker continues in the same directory. It is removed when the run ends.
+- Commands in one run that change directory at the same time can overwrite each other's state.
+- A retried `start_command` reattaches to its job instead of starting a second process.
+- If a launch failed partway, the retry reports a pending launch. Once the process has stopped, remove its
+  files under `.pydantic-ai-harness/shell/`.
+
+### Settings belong on the capability
+
+Each step rebuilds the workspace from the agent's capability, and `workspace=` passes only the reference.
+Anything you wrap around a workspace for one run would be dropped, so:
+
+- Put policy on the capability, such as `LocalWorkspace(..., read_only=True)` or
+  `LocalWorkspace(..., authority='none')`.
+- A `ReadOnlyWorkspace(...)` or `AuthorityWorkspace(...)` passed to the run raises `UserError`.
+- A workspace capability passed to the run doesn't apply its own settings, such as a sandbox image.
 - Workspace calls made from workflow code store their arguments, `env=` and file contents included, in
   durable history. Keep secrets in the capability's `env=` or use them inside a tool.
 - `workspace.backend` is not available in workflow code, which includes DBOS function tools and tools with
   `durable=False`. Reach the provider's own API from a tool that runs as an activity or step.
-- The deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` refuse a workspace; use the durability
-  capability.
-- On Temporal, `LocalWorkspace` calls run on whichever worker picks them up, so every worker needs the
-  directory at the same absolute path, on shared storage.
+- The deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` refuse a workspace. Use the durability
+  capability instead.
 
 !!! warning "Adding a workspace with runs in flight"
     Adding or removing a workspace capability changes what runs record, so runs started before the change
@@ -432,10 +465,12 @@ the workspace calls it makes still run as the engine's activities, steps or task
 ## Platforms
 
 `LocalWorkspace` needs macOS or Linux. On Windows, use
-[`WindowsWorkspace`][pydantic_ai.capabilities.WindowsWorkspace]: it takes the same options and isolates
-nothing either. Commands run in PowerShell (`pwsh` when it is on `PATH`, else Windows PowerShell) and get
-only the variables Windows tools need to start, plus `env`. A timeout or cancellation ends the processes a
-command started.
+[`WindowsWorkspace`][pydantic_ai.capabilities.WindowsWorkspace]. It takes the same options and isolates
+nothing either.
+
+- Commands run in `pwsh` when it is on `PATH`, and in Windows PowerShell otherwise.
+- Commands get only the variables Windows tools need to start, plus `env`.
+- A timeout or cancellation ends the processes a command started.
 
 ```python {test="skip"}
 from pydantic_ai import Agent

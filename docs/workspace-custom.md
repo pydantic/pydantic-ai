@@ -31,16 +31,21 @@ class UserDirectory(AbstractCapability[str]):
         return backend
 ```
 
-`LocalWorkspaceBackend` never creates its directory, and raises `WorkspaceUnavailableError` until it
-exists, so create each user's directory when you create the user. Like `LocalWorkspace`, it separates where
-users start, not what they can reach.
+A backend is the object that talks to one environment, here a directory. `LocalWorkspaceBackend` never
+creates its directory, and raises `WorkspaceUnavailableError` until it exists, so create each user's
+directory when you create the user. Like `LocalWorkspace`, it separates where users start, not what they can
+reach.
+
+`get_workspace` receives the run's `ref`, the [reference to an earlier
+environment](workspace.md#continuing-in-the-same-workspace) taken from `workspace=` or the message history:
 
 - With `ref=None`, return the backend for a new environment.
-- With a `ref` you recognize, return a backend that attaches to it; return `None` for any other. Refs can
-  come from stored or untrusted history, so validate the id before using it as a path or identifier.
+- With a `ref` you recognize, return a backend that attaches to it. Return `None` for any other.
+- Refs can come from stored or untrusted history, so validate the id before using it as a path or
+  identifier.
 - To apply a policy, return a `Workspace` around the backend, such as `ReadOnlyWorkspace(Workspace(backend))`.
-- `get_workspace` can be called more than once per run, so do no I/O there: connect on the backend's first
-  operation.
+- `get_workspace` can be called more than once per run, so do no I/O there. Connect on the backend's first
+  operation instead.
 - A capability that supplies a workspace can't use `defer_loading=True`, because the workspace is chosen
   when the run starts.
 
@@ -92,8 +97,15 @@ class RootedWrites(WrapperWorkspace):
 
 ## Marking who wrote the files {#workspace-authority}
 
-Set `authority` when the agent works on files the operator didn't write: `'user'` for the user's own files,
-such as uploads, and `'none'` for files nobody on your side wrote, such as a cloned third-party repository:
+The model treats your instructions, as the operator of the application, differently from what a user types
+or from data it reads. Some capabilities put workspace files into the prompt, so a file written by someone
+else could speak to the model as you. A workspace's `authority` says who wrote its files:
+
+- `'operator'`, the default, for files you control.
+- `'user'` for the user's own files, such as uploads.
+- `'none'` for files nobody on your side wrote, such as a cloned third-party repository.
+
+This agent works on a cloned repository:
 
 ```python
 from pydantic_ai import Agent
@@ -102,28 +114,32 @@ from pydantic_ai.capabilities import LocalWorkspace
 agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('./checkout', authority='none')])
 ```
 
-Tools work as before. The setting is for capabilities that put the workspace's files into the prompt: the
-model treats instructions as the operator speaking, so such a capability sends a file's text with no more
-[authority][pydantic_ai.messages.Authority] than
-[`ctx.workspace.authority_of(path)`][pydantic_ai.workspaces.Workspace.authority_of] gives it. It does that
-in a [capability part](capabilities/custom.md#capability-parts) whose source is
-[`await WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace],
-which Pydantic AI renders in the application's voice for `'operator'`, in the user's turn for `'user'` and as
-framed data for `'none'`.
+Tools work as before. The setting only changes how capabilities put a file's text into the prompt. Such a
+capability sends the text with no more [authority][pydantic_ai.messages.Authority] than
+[`ctx.workspace.authority_of(path)`][pydantic_ai.workspaces.Workspace.authority_of] gives that file, and
+Pydantic AI shows it to the model by level:
 
-- What a tool returns, such as a file `read_file` read, is tool output whatever the authority. Built-in
-  capabilities that load workspace files into instructions check `authority` as they adopt it.
+- `'operator'`: in the application's voice.
+- `'user'`: in the user's turn.
+- `'none'`: as framed data.
+
+To do the same in your own capability, send the text in a
+[capability part](capabilities/custom.md#capability-parts) whose source is
+[`await WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace].
+
+- What a tool returns, such as a file `read_file` read, is tool output whatever the authority.
+- Built-in capabilities that load workspace files into instructions check `authority` as they adopt it.
 - Harness workspaces such as [`E2BSandbox`](harness/e2b-sandbox.md),
   [`DockerContainer`](harness/docker-container.md) and [`SSHWorkspace`](harness/ssh-workspace.md) take the
   same `authority` and `path_authority`. Their paths are on the sandbox, container or host, so `~` isn't
   expanded.
-- Authority doesn't limit what the agent can do; use
+- Authority doesn't limit what the agent can do. Use
   [tool approval](deferred-tools.md#human-in-the-loop-tool-approval) or a sandbox for that.
 - It's checked when a file is read. Text already in a conversation keeps its level, so start a new
   conversation after lowering it.
-- For one run, pass `workspace=AuthorityWorkspace(workspace, authority=...)`; under
-  [durable execution](workspace.md#durable-execution), set it on the capability instead. Wrappers only lower
-  authority: with several, the lowest wins.
+- For one run, pass `workspace=AuthorityWorkspace(workspace, authority=...)`. Under
+  [durable execution](workspace.md#durable-execution), set it on the capability instead.
+- Wrappers only lower authority. With several, the lowest wins.
 
 ### Authority by path {#path-authority}
 
@@ -147,15 +163,15 @@ agent = Agent(
 ```
 
 - The longest matching path wins.
-- Relative paths resolve against the working directory. `LocalWorkspace` expands `~`; `AuthorityWorkspace`
-  refuses paths starting with `~`.
+- Relative paths resolve against the working directory.
+- `LocalWorkspace` expands `~`. `AuthorityWorkspace` refuses paths starting with `~`.
 - A file outside the working directory is at `'none'`, unless a `path_authority` entry contains it.
 - A symlinked file gets the lower of the levels where its path is written and where it leads.
 - Paths also match ignoring case, keeping the lower level, so `Vendor/` can't escape a lower `vendor/`.
 
 ## Writing a backend
 
-A backend talks to one environment; [`Workspace`][pydantic_ai.workspaces.Workspace] wraps it to give tools the
+A backend talks to one environment. [`Workspace`][pydantic_ai.workspaces.Workspace] wraps it to give tools the
 `ctx.workspace` methods. A [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] implements `ref`
 and `working_dir`, plus [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
 [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both:
@@ -163,7 +179,7 @@ and `working_dir`, plus [`SupportsCommands`][pydantic_ai.workspaces.SupportsComm
 - **Commands only:** file operations run as shell commands. They work everywhere a POSIX shell does, and are
   slower than a provider's file API.
 - **Filesystem only:** file tools work and `ctx.workspace.run` raises `UserError`. If the storage can hold
-  symlinks, also implement `SupportsRealpath`; see [Resolving symlinks](#resolving-symlinks).
+  symlinks, also implement `SupportsRealpath`, as [Resolving symlinks](#resolving-symlinks) explains.
 - **Both:** they must reach the same environment.
 
 A backend for a cloud sandbox has this shape (`sandbox_sdk` stands in for the provider's SDK):
@@ -230,7 +246,7 @@ Supply it from a capability's [`get_workspace`](#supplying-a-workspace-from-a-ca
   create call returns, before setup that can fail, so a failed setup still leaves a ref to clean up.
 - Create one environment when first operations run concurrently. `Workspace` holds no lock, so the backend
   owns its get-or-create lock.
-- Keep the ref when the caller is cancelled during creation. The example above skips this; the harness
+- Keep the ref when the caller is cancelled during creation. The example above skips this. The harness
   sandboxes show one way.
 - Raise `WorkspaceUnavailableError` for a `ref` whose environment is gone, and never create a replacement.
 - Never destroy the environment when a run ends, and never stop a process a command detached into its own
@@ -254,7 +270,7 @@ A path check, such as "only under `/app`", needs to know where a path really lea
 - A backend with commands but no [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] follows links
   with `readlink`. If the image has no `readlink`, it raises `WorkspaceError`.
 - A backend with neither only normalizes the text. That is exact for storage without symlinks, such as an
-  object store; where symlinks exist, path checks such as `FileSystem`'s `root_dir` can be led outside.
+  object store. Where symlinks exist, path checks such as `FileSystem`'s `root_dir` can be led outside.
 
 ### Checking a backend
 
@@ -277,10 +293,12 @@ class TestMyBackend(WorkspaceBackendSuite):
 - The suite needs the anyio pytest plugin, which runs each rule on asyncio and, when installed, Trio. For an
   asyncio-only SDK, override `anyio_backend` to return `'asyncio'`, class-scoped when `backend` is.
 - A class-scoped `backend` starts one environment for the whole suite instead of one per rule.
-- Optional fixtures turn on more rules: `fresh_backend` for concurrent first use; `attach_backend`, a
-  factory that builds a backend for a ref as your `get_workspace` does, for reattaching and durable
-  execution; `destroy_environment` and `destructive_backend` for a destroyed environment. Rules whose
-  fixtures are missing are skipped, so run pytest with `-rs` to see what went unchecked.
+- Optional fixtures turn on more rules:
+    - `fresh_backend`: concurrent first use.
+    - `attach_backend`, a factory that builds a backend for a ref as your `get_workspace` does: reattaching
+      and durable execution.
+    - `destroy_environment` and `destructive_backend`: a destroyed environment.
+- Rules whose fixtures are missing are skipped, so run pytest with `-rs` to see what went unchecked.
 - Four boolean fixtures, `True` by default, declare a known limit. Return `False` only for a limit you also
   document for users:
     - `can_detect_exit_with_inherited_output_pipes`: the provider reports a command's exit only after every

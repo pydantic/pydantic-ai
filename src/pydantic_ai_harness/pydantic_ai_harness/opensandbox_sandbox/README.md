@@ -31,9 +31,14 @@ uvx opensandbox-server init-config ~/.sandbox.toml --example docker
 uvx opensandbox-server
 ```
 
-Set `execd_image = "opensandbox/execd:release-1.2.0"` under `[runtime]` in `~/.sandbox.toml`: the capability needs execd 1.1.1 or later, and with an older one the first operation raises `WorkspaceUnavailableError`.
+Then set `execd_image = "opensandbox/execd:release-1.2.0"` under `[runtime]` in `~/.sandbox.toml`. execd runs the commands inside each sandbox, and the capability needs version 1.1.1 or later. With an older one, the first operation raises `WorkspaceUnavailableError`.
 
-The capability finds the server through `OPEN_SANDBOX_DOMAIN` (default `localhost:8080`), and sends `OPEN_SANDBOX_API_KEY` if your server requires a key. Requests use plain HTTP unless the domain starts with `https://`, such as `OPEN_SANDBOX_DOMAIN=https://sandbox.example.com`. For Kubernetes, see [Run on Kubernetes](#run-on-kubernetes).
+The capability reads two environment variables:
+
+- `OPEN_SANDBOX_DOMAIN`, the server's address. Default: `localhost:8080`. Requests use plain HTTP unless it starts with `https://`, such as `https://sandbox.example.com`.
+- `OPEN_SANDBOX_API_KEY`, sent if your server requires a key.
+
+For Kubernetes, see [Run on Kubernetes](#run-on-kubernetes).
 
 ## Quick start
 
@@ -49,9 +54,9 @@ result = agent.run_sync('Write a script that prints the first 10 primes, and run
 `Coder`'s shell and file tools now run in the sandbox. For a narrower agent, use [`Shell`](https://pydantic.dev/docs/ai/harness/shell/), [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) or your own tools on [`ctx.workspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#using-the-workspace-in-tools).
 
 - **`Coder` creates it when the run starts**, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
-- **It keeps running after the run** until you destroy it, or until `sandbox_timeout` passes with no use. See [Clean up](#clean-up).
+- **It keeps running after the run** until you destroy it. If you set `sandbox_timeout`, the server also deletes it after that many seconds unused. See [Clean up](#clean-up).
 - **Commands run as the image's user, usually `root`, in `/workspace`**, which is created if missing. The image needs a POSIX `sh` and the usual file utilities.
-- **Its network access is whatever the server configures.** Pass `allow_internet_access=False` for deny-all egress; see [Network access](#network-access).
+- **Its network access is whatever the server configures.** Pass `allow_internet_access=False` to block all outbound connections. See [Network access](#network-access).
 
 ## Continue in the same sandbox
 
@@ -71,7 +76,9 @@ followup = agent.run_sync('Now make it print the first 100.', message_history=re
 ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later run
 ```
 
-If the sandbox has been destroyed, the run raises `WorkspaceUnavailableError`; pass `workspace='new'` to start over. [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#continuing-in-the-same-workspace) covers how runs find their workspace. `image`, `resource`, `allow_internet_access`, `network_policy` and `secure_access` only shape a new sandbox; `working_dir`, `env`, `sandbox_timeout`, `authority` and `path_authority` also apply when you reattach.
+`result.workspace.ref` is a `WorkspaceRef` holding the sandbox's id. Store it to continue later or to destroy the sandbox.
+
+If the sandbox has been destroyed, the run raises `WorkspaceUnavailableError`. Pass `workspace='new'` to start over. [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#continuing-in-the-same-workspace) covers how runs find their workspace.
 
 Whoever passes a ref runs commands in that sandbox, and the server serves every sandbox to every holder of its API key. Only pass refs your application stored itself.
 
@@ -110,7 +117,9 @@ if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-The `finally` destroys the sandbox even when setup or the run fails, and `aclose()` closes the backend's connection to the server. To keep the sandbox, store `backend.ref` instead. `OpenSandbox`'s settings don't apply to a backend you pass as `workspace=`; give the backend its own.
+The `finally` destroys the sandbox even when setup or the run fails. `aclose()` closes the backend's connection to the server. To keep the sandbox, store `backend.ref` instead.
+
+`OpenSandbox`'s settings don't apply to a backend you pass as `workspace=`. Give the backend its own.
 
 ## Clean up
 
@@ -125,9 +134,37 @@ async def remove_sandbox(ref: WorkspaceRef) -> None:
     await OpenSandbox().destroy(ref)
 ```
 
-`OpenSandbox()` without an `image` only attaches to and destroys sandboxes by ref. A failed run returns no result, so destroy its sandbox in an `on_run_error` hook, as shown for [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/#clean-up).
+`OpenSandbox()` without an `image` only attaches to and destroys sandboxes by ref.
 
-To have the server clean up for you, set `sandbox_timeout`: a sandbox unused for that many seconds is deleted, files included. Every operation renews it, but a single command must finish within it, so set it above your longest command.
+A failed run returns no result, so destroy its sandbox in an `on_run_error` hook:
+
+```python
+from typing import Any
+
+import anyio
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox
+
+hooks = Hooks()
+
+
+@hooks.on.run_error
+async def destroy_failed_run_sandbox(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
+    if ctx.workspace.ref is not None:
+        # Shielded so a deadline around the run can't cut the destroy short, bounded so a hung call can't hang it.
+        with anyio.move_on_after(30, shield=True):
+            await OpenSandbox().destroy(ctx.workspace.ref)
+    raise error
+
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[OpenSandbox(image='python:3.13-slim'), Coder(), hooks])
+```
+
+To have the server clean up for you, set `sandbox_timeout`. The server deletes a sandbox unused for that many seconds, files included. Every operation restarts the countdown, but a single command must finish within it, so set it above your longest command.
 
 ### Find a lost sandbox
 
@@ -140,7 +177,9 @@ Then destroy it: `await OpenSandbox().destroy(WorkspaceRef(provider='opensandbox
 
 ## Run on Kubernetes
 
-On a server deployed with OpenSandbox's [Helm charts](https://github.com/opensandbox-group/OpenSandbox/blob/main/docs/deployment/index.md), sandboxes are pods, created through OpenSandbox's own `BatchSandbox` resources or through [agent-sandbox](https://agent-sandbox.sigs.k8s.io); both work the same here. Pods are reachable only inside the cluster, so either deploy the server's ingress gateway, or let the server proxy commands:
+On a server deployed with OpenSandbox's [Helm charts](https://github.com/opensandbox-group/OpenSandbox/blob/main/docs/deployment/index.md), sandboxes are pods. The server creates them through OpenSandbox's own `BatchSandbox` resources or through [agent-sandbox](https://agent-sandbox.sigs.k8s.io), and both work the same here.
+
+Pods are reachable only inside the cluster. Either deploy the server's ingress gateway, or let the server proxy commands with `use_server_proxy=True`:
 
 ```python {names="defined"}
 from opensandbox.config import ConnectionConfig
@@ -154,15 +193,15 @@ sandbox = OpenSandbox(
 )
 ```
 
-This connects over plain HTTP inside the cluster. For HTTPS, put the server behind TLS and pass `ConnectionConfig(domain='https://opensandbox.example.com', protocol='https', use_server_proxy=True)`: the SDK uses the domain's scheme for the server's API and `protocol` for command and file requests, so a config needs both.
+This connects over plain HTTP inside the cluster. For HTTPS, put the server behind TLS and pass `ConnectionConfig(domain='https://opensandbox.example.com', protocol='https', use_server_proxy=True)`. The SDK uses the domain's scheme for the server's API and `protocol` for command and file requests, so a config needs both.
 
-Each sandbox asks for one CPU and 2 GiB unless you pass `resource`. A pod that can't be scheduled makes the create time out after 30 seconds while the server may still finish it; the backend finds that sandbox by a tag and attaches to it on the next operation.
+Each sandbox asks for one CPU and 2 GiB unless you pass `resource`. If its pod can't be scheduled within 30 seconds, the create times out, but the server may still finish it. The next operation then attaches to that sandbox instead of creating another.
 
 ## Network access
 
-`allow_internet_access=False` asks the server to create the sandbox with a deny-all egress policy. The default, `True`, sends no policy, so the server's own configuration applies. Attaching never changes a sandbox's policy.
+`allow_internet_access=False` asks the server to create the sandbox with a policy that blocks all outbound connections. The default, `True`, sends no policy, so the server's own configuration applies. Attaching never changes a sandbox's policy.
 
-The server enforces the policy with its egress sidecar. In the default `dns` mode it filters DNS lookups only, so a command can still connect to an IP address directly. To block both, configure the server with:
+The server enforces the policy with its egress sidecar, a container next to the sandbox. In the default `dns` mode it filters DNS lookups only, so a command can still connect to an IP address directly. To block both, configure the server with:
 
 ```toml
 [egress]
@@ -170,10 +209,13 @@ image = "opensandbox/egress:v1.1.7"
 mode = "dns+nft"
 ```
 
-See [OpenSandbox egress configuration](https://github.com/opensandbox-group/OpenSandbox/blob/main/server/configuration.md#egress) for runtime requirements and server-level allow and deny rules.
+[OpenSandbox egress configuration](https://github.com/opensandbox-group/OpenSandbox/blob/main/server/configuration.md#egress) covers runtime requirements and server-level allow and deny rules.
+
 ## Keep a token out of the sandbox
 
-Pass `credential_proxy` and `network_policy` to `OpenSandboxBackend` to have OpenSandbox's [Credential Vault](https://github.com/opensandbox-group/OpenSandbox/blob/main/docs/guides/credential-vault.md) add a token to the sandbox's requests itself, so the token is never inside the sandbox. Both take the SDK's own objects and pass them on unchanged. In an image with `git` and `gh`, these work as the token's owner, while `echo $GH_TOKEN` in the sandbox prints `placeholder`:
+OpenSandbox's [Credential Vault](https://github.com/opensandbox-group/OpenSandbox/blob/main/docs/guides/credential-vault.md) holds a token outside the sandbox and adds it to the sandbox's outgoing requests to the hosts you name, so the token is never inside the sandbox.
+
+Turn it on by passing `credential_proxy` and `network_policy` to `OpenSandboxBackend`. Both take the SDK's own objects and pass them on unchanged. In an image with `git` and `gh`, both then work as the token's owner, while `echo $GH_TOKEN` in the sandbox prints `placeholder`:
 
 ```python {test="skip"}
 import base64
@@ -229,60 +271,70 @@ async def github_sandbox() -> OpenSandboxBackend:
 
 Pass the backend as `workspace=`, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run). `credential_proxy` is on `OpenSandboxBackend` only, because the vault has to be filled after the sandbox exists and before the agent's first command.
 
+Before you rely on it:
+
 - The server must filter traffic in `dns+nft` mode (see [Network access](#network-access)), or creating the sandbox fails.
 - The policy must allow every host in the vault, and any other host the agent needs, such as a package index.
 - Only HTTPS requests get the token, replacing any `Authorization` header they carried. Use `https://` remotes, not `git@github.com:owner/repo.git`.
 - The agent can't see the token, but it can use it for anything the token allows.
 - The vault doesn't hide the token in responses. List only hosts that never send request headers back, or a command could read the token there.
-- The vault is kept in memory next to the sandbox. Pausing and resuming a Kubernetes sandbox, or restarting the server's network proxy, empties it, so fill it again after you reattach. To swap the token, call `credential_vault.patch(credentials={'replace': [...]})` on `await backend.get_sandbox()`.
-- `allow_internet_access=False` already means a deny-all policy, so pass one or the other: `OpenSandbox` raises `UserError` and `OpenSandboxBackend` raises `ValueError` for both.
+- The vault is kept in memory next to the sandbox. Pausing and resuming a Kubernetes sandbox, or restarting the server's network proxy, empties it, so fill it again after you reattach.
+- To swap the token, call `credential_vault.patch(credentials={'replace': [...]})` on `await backend.get_sandbox()`.
+- `allow_internet_access=False` already sets a policy that blocks everything, so pass it or `network_policy`, not both. For both, `OpenSandbox` raises `UserError` and `OpenSandboxBackend` raises `ValueError`.
 
 ## Endpoint authentication
 
-`secure_access=True` asks the server to turn on [Secure Access](https://github.com/opensandbox-group/OpenSandbox/blob/main/docs/guides/secure-access.md) for a new sandbox. It needs Kubernetes with the server's ingress gateway (`[ingress]` with `mode = "gateway"`); Docker rejects it.
+`secure_access=True` asks the server to turn on [Secure Access](https://github.com/opensandbox-group/OpenSandbox/blob/main/docs/guides/secure-access.md) for a new sandbox. The gateway and the server proxy then reject requests to the sandbox's endpoints that lack its token. The SDK fetches the token with the server API key and sends it with every command and file request.
 
-With it on, the gateway and the server proxy reject requests to the sandbox's endpoints that lack its token. The SDK fetches the token with the server API key and sends it with every command and file request. Requests that reach the pod without passing through the gateway or proxy, such as from elsewhere in the cluster, are not checked.
+- It needs Kubernetes with the server's ingress gateway: `[ingress]` with `mode = "gateway"`. Docker rejects it.
+- Requests that reach the pod without passing through the gateway or proxy, such as from elsewhere in the cluster, are not checked.
 
 ## Security model
 
-The sandbox's isolation is the server's runtime: a Docker container shares the host's kernel, and a Kubernetes pod shares its node's, unless the server is configured with a secure runtime such as gVisor or Kata Containers. Commands run as the image's user, usually `root`.
+The sandbox is as isolated as the server's runtime makes it. A Docker container shares the host's kernel, and a Kubernetes pod shares its node's, unless the server is configured with a secure runtime such as gVisor or Kata Containers. Commands run as the image's user, usually `root`.
 
 - With the default `allow_internet_access=True`, a Docker-backed sandbox can reach its host and LAN, including the OpenSandbox server if it listens there. `False` on a server in `dns+nft` mode blocks that.
-- Requests to the server's API carry the server API key; command and file requests carry commands, file contents and `env` values. Over plain `http` all of them are unencrypted. A `ConnectionConfig` you pass is used as given, so set both an `https://` domain and `protocol='https'` on it.
+- Requests to the server's API carry the server API key. Command and file requests carry commands, file contents and `env` values. Over plain `http`, all of them are unencrypted. A `ConnectionConfig` you pass is used as given, so set both an `https://` domain and `protocol='https'` on it.
 - The server API key, set as `api_key` under `[server]`, controls every sandbox on that server and can fetch their Secure Access tokens. Keep it out of the sandbox's `env`.
-- Without the server proxy, command and file requests go straight to the sandbox's endpoint, without the server API key, and the endpoint checks only what the server configures for it, such as Secure Access. With `use_server_proxy=True`, they go through the server, which checks the API key.
+- Without the server proxy, command and file requests go straight to the sandbox's endpoint, without the server API key. The endpoint checks only what the server configures for it, such as Secure Access. With `use_server_proxy=True`, they go through the server, which checks the API key.
 - `image` is pulled by tag; pin a digest, such as `python:3.13-slim@sha256:...`, to get the same image every time.
 
 ## Configuration
 
-[Agent specs](https://pydantic.dev/docs/ai/core-concepts/agent/#agent-specs) can set every option except `connection` and `network_policy`; a spec reaches the server through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`.
+[Agent specs](https://pydantic.dev/docs/ai/core-concepts/agent/#agent-specs) can set every option except `connection` and `network_policy`. A spec reaches the server through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`.
 
 | Option | What it does |
 | --- | --- |
 | `image` | Image for a new sandbox, such as `'python:3.13-slim'`. Default: `None`, which only attaches to and destroys sandboxes by ref. |
 | `connection` | The SDK's `ConnectionConfig` for your server. Default: `None`, which reads `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`. A config you pass is used as given. |
 | `resource` | Resource limits for a new sandbox, such as `{'cpu': '500m', 'memory': '1Gi'}`. Default: `None`, one CPU and 2 GiB. |
-| `allow_internet_access` | Default: `True`, which sends no policy, so the server's configuration applies. `False` asks the server for deny-all egress on a new sandbox. |
+| `allow_internet_access` | Whether a new sandbox may connect out. Default: `True`, which sends no policy, so the server's configuration applies. `False` asks the server to block all outbound connections. |
 | `network_policy` | The SDK's `NetworkPolicy` for a new sandbox, passed to `Sandbox.create` unchanged. Default: `None`. Cannot be combined with `allow_internet_access=False`. A spec cannot set it. |
-| `secure_access` | Default: `False`. `True` asks the server to require a token for a new sandbox's endpoints at its Kubernetes ingress gateway and proxy. Docker rejects `True`. |
-| `sandbox_timeout` | Seconds a sandbox may go unused before the server deletes it, files included; every operation renews it, and a single command must finish within it. Default: `None`, kept until destroyed. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`; `None` uses the image's own. |
+| `secure_access` | Whether a new sandbox's endpoints require a token at the server's Kubernetes ingress gateway and proxy. Default: `False`. Docker rejects `True`. |
+| `sandbox_timeout` | Seconds a sandbox may go unused before the server deletes it, files included. Every operation restarts the countdown, and a single command must finish within it. Default: `None`, kept until destroyed. |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`. `None` uses the image's own. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. |
-| `authority` | Who wrote the sandbox's files, for capabilities that check [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority): `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. Default: `'operator'`. |
-| `path_authority` | Levels for some directories and files, overriding `authority` under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
+| `authority` | Who wrote the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, or `'user'` for the user's own. Capabilities that put a file into the prompt give it no more [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) than this. Default: `'operator'`, files you wrote. |
+| `path_authority` | An `authority` level for specific directories and files, overriding `authority` under them. The longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
+
+`image`, `resource`, `allow_internet_access`, `network_policy` and `secure_access` only shape a new sandbox. `working_dir`, `env`, `sandbox_timeout`, `authority` and `path_authority` also apply when you reattach.
 
 ## Limits
 
 <span id="how-commands-run"></span>
 
-- Each command takes about a fifth of a second, and file operations run as commands, so a large file takes several seconds per MiB. Keep large data out of the workspace or fetch it from inside the sandbox.
+- Each command takes about a fifth of a second. File operations run as commands, so a large file takes several seconds per MiB. Keep large data out of the workspace, or fetch it from inside the sandbox.
 - Creating the sandbox, including pulling the image, isn't bounded by a command's `timeout`.
 - On a timeout or cancellation, the command and the processes it started are stopped.
-- The OpenSandbox SDK needs asyncio; under Trio, the capability raises `UserError`.
+- The OpenSandbox SDK needs asyncio. Under Trio, the capability raises `UserError`.
 
 ## Durable execution
 
-Add a durability capability next to `OpenSandbox(image=...)`; [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) covers what changes. Configure the same capability and server connection on every worker. Set `sandbox_timeout` above the longest gap between workspace operations, including workflow waits and retries, since nothing renews it while the workflow is idle. To avoid a second sandbox when an attempt is retried before its ref is recorded, create the sandbox and store its ref before starting the workflow, then pass that ref as `workspace=`.
+Add a durability capability next to `OpenSandbox(image=...)`. [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) covers what changes. Then:
+
+- Configure the same capability and server connection on every worker.
+- Set `sandbox_timeout` above the longest gap between workspace operations, including workflow waits and retries. Nothing restarts the countdown while the workflow is idle.
+- A retried attempt can create a second sandbox if the first attempt's ref wasn't recorded yet. To avoid that, create the sandbox and store its ref before starting the workflow, then pass that ref as `workspace=`.
 
 ## Telemetry
 

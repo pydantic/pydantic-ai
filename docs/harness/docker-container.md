@@ -78,9 +78,11 @@ followup = agent.run_sync('Now make it print the first 100.', message_history=re
 ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later run
 ```
 
-If the container has been removed, the run raises `WorkspaceUnavailableError`; pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace. `image`, `allow_internet_access` and `docker_args` only shape a new container; `working_dir` and `env` apply to every command.
+`result.workspace.ref` is a `WorkspaceRef` holding the container's name. Store it to continue later or to remove the container.
 
-A ref is the container's name, and whoever passes one runs commands in that container. `DockerContainer` refuses a container without its `ai.pydantic.workspace=true` label, so a ref can't reach other containers on the daemon. Anyone who can run `docker` can add that label, though, so only pass refs your application stored itself.
+If the container has been removed, the run raises `WorkspaceUnavailableError`. Pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace.
+
+Whoever passes a ref runs commands in that container, so only pass refs your application stored itself. `DockerContainer` refuses a container without its `ai.pydantic.workspace=true` label, so a ref can't reach other containers on the daemon. Anyone who can run `docker` can add that label, though.
 
 ## Prepare a container before the run
 
@@ -117,7 +119,9 @@ if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-The `finally` removes the container even when setup or the run fails. To keep it, store `backend.ref` instead. `DockerContainer`'s settings don't apply to a backend you pass as `workspace=`; give the backend its own.
+The `finally` removes the container even when setup or the run fails. To keep it, store `backend.ref` instead.
+
+`DockerContainer`'s settings don't apply to a backend you pass as `workspace=`. Give the backend its own.
 
 ## Clean up
 
@@ -132,9 +136,41 @@ async def remove_container(ref: WorkspaceRef) -> None:
     await DockerContainer().destroy(ref)
 ```
 
-`DockerContainer()` without an `image` only attaches to and removes containers by ref. A failed run returns no result, so remove its container in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up).
+`DockerContainer()` without an `image` only attaches to and removes containers by ref.
 
-`docker ps --all --filter label=ai.pydantic.workspace=true` lists the containers `DockerContainer` created, including any left without a stored ref, such as one a cancelled run was still creating.
+A failed run returns no result, so remove its container in an `on_run_error` hook:
+
+```python
+from typing import Any
+
+import anyio
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.docker_container import DockerContainer
+
+hooks = Hooks()
+
+
+@hooks.on.run_error
+async def remove_failed_run_container(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
+    if ctx.workspace.ref is not None:
+        # Shielded so a deadline around the run can't cut the remove short, bounded so a hung call can't hang it.
+        with anyio.move_on_after(30, shield=True):
+            await DockerContainer().destroy(ctx.workspace.ref)
+    raise error
+
+
+agent = Agent('{{ anthropic:large }}', capabilities=[DockerContainer(image='python:3.13-slim'), Coder(), hooks])
+```
+
+### Find a lost container
+
+If your program stops before it stores the ref, for example after a crash, Ctrl-C or a cancelled run, the container is left behind. To find it, run `docker ps --all --filter label=ai.pydantic.workspace=true`. It lists every container `DockerContainer` created.
+
+Then remove it: `await DockerContainer().destroy(WorkspaceRef(provider='docker', id='<name>'))`.
 
 ## Work on a project directory
 
@@ -153,9 +189,10 @@ container = DockerContainer(
 )
 ```
 
-The mount is the only part of your machine's files the commands can change. For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`; Docker refuses a second `--network` next to `--network none`. `docker_args` can't change the container's name, label or entrypoint.
-
-A new container gets `--pids-limit 2048`, so a runaway fork loop can't exhaust the process table of the machine running Docker. A command that hits it fails with `Cannot fork` or `Resource temporarily unavailable`; pass your own `--pids-limit` in `docker_args`, or `-1` to remove it.
+- The mount is the only part of your machine's files the commands can change.
+- For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`. Docker refuses a second `--network` next to `--network none`.
+- `docker_args` can't change the container's name, label or entrypoint.
+- A new container gets `--pids-limit 2048`, so a runaway fork loop can't exhaust the process table of the machine running Docker. A command that hits the limit fails with `Cannot fork` or `Resource temporarily unavailable`. Pass your own `--pids-limit` in `docker_args`, or `-1` to remove it.
 
 ## Use Podman or a remote Docker host
 
@@ -170,7 +207,7 @@ export DOCKER_HOST=ssh://dev@build-box  # or: docker context use build-box
 ```
 
 - The host needs Docker, and `ssh` must log in without a prompt, through a key or your SSH agent.
-- `DOCKER_HOST` overrides `DOCKER_CONTEXT`, which overrides `docker context use`, so unset the ones you don't use, and keep them the same while a container is in use.
+- `DOCKER_HOST` overrides `DOCKER_CONTEXT`, which overrides `docker context use`. Unset the ones you don't use, and don't change them while a container is in use.
 - Paths in `docker_args`, such as a `--volume` source, are paths on that host, and the container reaches that host's network.
 - The `docker` CLI gets the variables that select and reach a daemon (`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `SSH_AUTH_SOCK` and the like) from your environment, plus `PATH`, `HOME` and the locale, and nothing else.
 
@@ -179,8 +216,10 @@ export DOCKER_HOST=ssh://dev@build-box  # or: docker context use build-box
 A container shares your machine's kernel, so it is a weaker boundary than a VM, which runs its own ([Containers are not VMs](https://www.docker.com/blog/containers-are-not-vms/)). Commands run as the image's user, usually `root`, so anything the agent runs can change anything in the container.
 
 - Don't mount the Docker socket or directories holding secrets. A writable mount also lets commands change files your machine runs later, such as a virtualenv, the `docker` CLI inside one, or git hooks.
-- Add hardening such as `--cap-drop ALL`, `--user` or `--read-only` through `docker_args` when the image allows it. With `--user`, point `working_dir` at a directory that user can write, such as a mount, or pass `working_dir=None` to use the image's own. With `--read-only`, mount a writable working directory.
-- On Linux, files written to a mounted directory belong to the container's user on your machine too, `root` unless you pass `--user` with your own IDs, such as `--user 1000:1000` from `id -u` and `id -g`.
+- Add hardening such as `--cap-drop ALL`, `--user` or `--read-only` through `docker_args` when the image allows it.
+    - With `--user`, point `working_dir` at a directory that user can write, such as a mount, or pass `working_dir=None` to use the image's own.
+    - With `--read-only`, mount a writable working directory.
+- On Linux, files written to a mounted directory belong to the container's user on your machine too, which is `root` by default. Pass `--user` with your own IDs to avoid that, such as `--user 1000:1000` from `id -u` and `id -g`.
 - While a command runs, its `env` values are visible in process listings (`ps`) on your machine.
 - Docker adds the proxy settings in your `~/.docker/config.json` to every new container as environment variables.
 - `image` is pulled by tag; pin a digest, such as `python:3.13-slim@sha256:...`, to get the same image every time.
@@ -190,13 +229,15 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM, 
 | Option | What it does |
 | --- | --- |
 | `image` | Image for a new container, such as `'python:3.13-slim'`. Default: `None`, which only attaches to and removes containers by ref. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`; `None` uses the image's own (`WORKDIR`, or `/`). |
-| `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the container except Docker's proxy settings. The agent's commands can read these, so leave out secrets it shouldn't see. |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`. `None` uses the image's own: its `WORKDIR`, or `/`. |
+| `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing else from your machine's environment reaches the container, except Docker's proxy settings. The agent's commands can read these, so leave out secrets it shouldn't see. |
 | `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |
-| `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`; a `--pids-limit` here replaces the default of 2048. Default: `()`. |
+| `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`. A `--pids-limit` here replaces the default of 2048. Default: `()`. |
 | `executable` | The container CLI to run, such as `'podman'`, looked up on `PATH` when the capability is created. Default: `'docker'`. |
-| `authority` | The [authority](../workspace-custom.md#workspace-authority) of the container's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
-| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are container paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
+| `authority` | Who wrote the container's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, or `'user'` for the user's own. Capabilities that put a file into the prompt give it no more [authority](../workspace-custom.md#workspace-authority) than this. Default: `'operator'`, files you wrote. |
+| `path_authority` | An `authority` level for specific directories and files, overriding `authority` under them. The longest matching path wins. Paths are container paths, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
+
+`image`, `allow_internet_access` and `docker_args` only shape a new container. `working_dir` and `env` apply to every command, including after you reattach.
 
 ## Limits
 
@@ -211,9 +252,11 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM, 
 
 ## Renamed from `DockerSandbox`
 
-This capability was `DockerSandbox`, with `DockerSandboxBackend`, in `pydantic_ai_harness.docker_sandbox`. The old names still import from there, with a `HarnessDeprecationWarning`, until a future release removes them; the `DockerSandbox` name is then kept for a possible capability built on [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/), Docker's microVM product. Migrate to `DockerContainer` now, so your agent keeps running in a plain container.
+This capability was `DockerSandbox`, with `DockerSandboxBackend`, in `pydantic_ai_harness.docker_sandbox`. The old names still import from there, with a `HarnessDeprecationWarning`, until a future release removes them.
 
-To load specs saved before the rename, pass the deprecated `DockerSandbox` class in `custom_capability_types`. To migrate a spec, rename its `DockerSandbox` block to `DockerContainer`; the options are unchanged.
+Migrate to `DockerContainer` now, so your agent keeps running in a plain container. After the removal, the `DockerSandbox` name is kept for a possible capability built on [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/), Docker's microVM product.
+
+To load specs saved before the rename, pass the deprecated `DockerSandbox` class in `custom_capability_types`. To migrate a spec, rename its `DockerSandbox` block to `DockerContainer`. The options are unchanged.
 
 ## Telemetry
 

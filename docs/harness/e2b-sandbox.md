@@ -36,7 +36,7 @@ flowchart TB
 pip/uv-add "pydantic-ai-harness[coder,e2b,anthropic]"
 ```
 
-Set `E2B_API_KEY` to your E2B API key. The examples also use `Coder` and an Anthropic model, hence the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`; swap them for your own tools and model provider.
+Set `E2B_API_KEY` to your E2B API key. The examples also use `Coder` and an Anthropic model, so they need the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`. Swap them for your own tools and model provider.
 
 ## Quick start
 
@@ -55,9 +55,9 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 - **`Coder` creates it when the run starts**, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
 - **It keeps running, and billing, after the run.** See [Clean up](#clean-up).
-- **It pauses after 1 hour** (`sandbox_timeout=3600`, the most E2B's Hobby plan allows), and the next run resumes it. Pro plans allow up to `sandbox_timeout=86400`.
-- **Commands start in `/home/user`.** Pass `working_dir='/home/user/project'` to keep the project out of the home directory; it is created on a new sandbox.
-- **The default template has Python and git**, but not your project's dependencies or ripgrep. Bake them into an E2B [template](https://e2b.dev/docs/template/quickstart) and pass `template='my-template'`, or install them [before the run](#prepare-a-sandbox-before-the-run).
+- **It pauses after 1 hour**, and the next run resumes it. That is `sandbox_timeout=3600`, the most E2B's Hobby plan allows. On a Pro plan, pass up to `sandbox_timeout=86400`.
+- **Commands start in `/home/user`.** Pass `working_dir='/home/user/project'` to keep the project out of the home directory. It is created on a new sandbox.
+- **The default template has Python and git**, but not your project's dependencies or ripgrep. A template is the image a new sandbox starts from. Bake them into your own E2B [template](https://e2b.dev/docs/template/quickstart) and pass `template='my-template'`, or install them [before the run](#prepare-a-sandbox-before-the-run).
 
 ## Continue in the same sandbox
 
@@ -80,11 +80,13 @@ followup = agent.run_sync(
 ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later run
 ```
 
-If the sandbox has been killed, the run raises `WorkspaceUnavailableError`; pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace.
+The history records the sandbox as a `WorkspaceRef`, or "ref": the provider's name and the sandbox's ID. `result.workspace.ref` is the same ref, for continuing without the history.
 
-The ref holds no credentials: the process that reattaches needs `E2B_API_KEY` or a `client=` too.
+If the sandbox has been killed, the run raises `WorkspaceUnavailableError`. Pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace.
 
-Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sandbox, working_dir=..., env=...)` to a run; `E2BSandbox`'s settings don't apply to it.
+The ref holds no credentials, so the process that reattaches needs `E2B_API_KEY` or a `client=` too.
+
+Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sandbox, working_dir=..., env=...)` to a run. `E2BSandbox`'s settings don't apply to it.
 
 ## Prepare a sandbox before the run
 
@@ -164,14 +166,14 @@ async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -
 agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder(), hooks])
 ```
 
-A sandbox you don't kill pauses when its `sandbox_timeout` runs out; see [E2B's sandbox lifecycle](https://docs.e2b.dev/sandbox).
+A sandbox you don't kill pauses when its `sandbox_timeout` runs out. See [E2B's sandbox lifecycle](https://docs.e2b.dev/sandbox).
 
 ### Find a lost sandbox
 
 If your program stops before it stores the ref, for example after a crash or Ctrl-C, the sandbox is left behind. To find it:
 
 - Search your logs for `Created E2B sandbox <id>`, logged at INFO by the `pydantic_ai_harness` logger.
-- If the run stopped before E2B replied, there's no log line; look in the E2B dashboard.
+- If the run stopped before E2B replied, there's no log line. Look in the E2B dashboard.
 
 Then kill it: `await E2BSandbox().destroy(WorkspaceRef(provider='e2b', id='<id>'))`.
 
@@ -209,7 +211,7 @@ agent = Agent('{{ anthropic:large }}', deps_type=User, capabilities=[UsersE2B(),
 ```
 
 - E2B's client falls back to `E2B_API_KEY` when its key is empty, so check for a key first, as above, or a user without one runs on that account.
-- Destroy a user's sandbox with that user's key: `await E2BSandbox(client=E2B(api_key=user.e2b_api_key)).destroy(ref)`. With another account's client the sandbox isn't found, `destroy` returns without an error, and the sandbox keeps billing.
+- Destroy a user's sandbox with that user's key: `await E2BSandbox(client=E2B(api_key=user.e2b_api_key)).destroy(ref)`. With another account's client, the sandbox isn't found and `destroy` returns without an error, so the sandbox keeps billing.
 - Under [Temporal](../durable_execution/temporal.md), `deps` are stored in the workflow's history. Put a user ID there, and look the key up in `get_workspace` on the worker.
 
 ## Keep a token out of the sandbox
@@ -235,7 +237,7 @@ sandbox = E2BSandbox(
 )
 ```
 
-E2B adds the header as each request leaves the sandbox, replacing any header with the same name. E2B calls this [public beta](https://docs.e2b.dev/sandbox/internet-access), so it may change.
+E2B adds the header as each request leaves the sandbox, replacing any header with the same name. This E2B feature is in [public beta](https://docs.e2b.dev/sandbox/internet-access), so it may change.
 
 - Only HTTPS requests get the header. Use `https://` remotes, not `git@github.com:owner/repo.git`.
 - If you also set `allow_out` or `allow_internet_access=False`, add each host in `rules` to `allow_out`, or its requests are blocked.
@@ -246,7 +248,7 @@ E2B adds the header as each request leaves the sandbox, replacing any header wit
 
 ## Preview a dev server
 
-With `Shell`, have the agent start the server with `start_command`, such as `npm run dev -- --host 0.0.0.0 --port 3000`. Then get its public hostname from the sandbox, with `capability` being the agent's `E2BSandbox`:
+With `Shell`, have the agent start the server with `start_command`, such as `npm run dev -- --host 0.0.0.0 --port 3000`. Then get its public hostname from the sandbox. Here `capability` is the agent's `E2BSandbox`:
 
 ```text
 sandbox = await capability.backend(ref).get_sandbox()
@@ -262,14 +264,14 @@ The preview is public. Stop it with `stop_command` while the workspace is attach
 | `client` | An `e2b.E2B` for the API key and connection settings. Default: `None`, which reads `E2B_API_KEY` and the rest of the environment. |
 | `template` | E2B template name or ID for a new sandbox. Default: `None`, E2B's `base`. An unknown template fails on first use. |
 | `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. |
-| `sandbox_timeout` | Seconds until E2B pauses the sandbox, set on create and on reattach. Default: `3_600`. Over your plan's limit raises `WorkspaceUnavailableError`. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/user` on the default template. Created on a new sandbox; on an attached one it must exist. |
-| `env` | Environment variables every command gets. Default: `None`; nothing from your machine reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. The default locale is POSIX; pass `{'LC_ALL': 'C.UTF-8'}` for tools that should count characters rather than bytes. |
-| `network` | E2B's network options for a new sandbox, passed to `Sandbox.create` unchanged. Default: `None`. See [Keep a token out of the sandbox](#keep-a-token-out-of-the-sandbox). A spec cannot set it. |
-| `authority` | Who wrote the sandbox's files, for capabilities that check [authority](../workspace-custom.md#workspace-authority): `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. Default: `'operator'`. |
-| `path_authority` | Levels for some directories and files, overriding `authority` under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
+| `sandbox_timeout` | Seconds until E2B pauses the sandbox, set on create and on reattach. Default: `3_600`. A value over your plan's limit raises `WorkspaceUnavailableError`. |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/user` on the default template. Created on a new sandbox. On an attached one, it must already exist. |
+| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. The default locale is POSIX. Pass `{'LC_ALL': 'C.UTF-8'}` for tools that should count characters rather than bytes. |
+| `network` | E2B's network options for a new sandbox, passed to `Sandbox.create` unchanged. Default: `None`. See [Keep a token out of the sandbox](#keep-a-token-out-of-the-sandbox). It can't be set from an [agent spec](../agent-spec.md). |
+| `authority` | Who wrote the sandbox's files. A capability that puts a file's text in the prompt gives it no more [authority](../workspace-custom.md#workspace-authority) than this. Default: `'operator'`, your own files. Use `'user'` for the user's files, and `'none'` for files nobody on your side wrote, such as a cloned third-party repository. |
+| `path_authority` | Levels for some directories and files, overriding `authority` under them. The longest matching path wins. Paths are in the sandbox, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 
-`template`, `allow_internet_access` and `network` only shape a new sandbox; the other options also apply when you reattach, and `destroy` uses `client`.
+`template`, `allow_internet_access` and `network` only shape a new sandbox. The other options also apply when you reattach, and `destroy` uses `client`.
 
 ## Limits
 
@@ -277,15 +279,15 @@ The preview is public. Stop it with `stop_command` while the workspace is attach
 
 - E2B's file service runs as root, so Unix permissions don't restrict file tools. Commands run as `user`.
 - Concurrent writes to one path can interleave, and a reader can see a partial file. Write to separate paths.
-- A background process that keeps the command's stdout or stderr open keeps `run()` waiting. Redirect its output to a file; `Shell.start_command` does this for you.
+- A background process that keeps the command's stdout or stderr open keeps `run()` waiting. Redirect its output to a file. `Shell.start_command` does this for you.
 - A command whose output passes 10 MiB is stopped with `WorkspaceOutputLimitError`. Redirect large output to a file.
-- On a timeout, the command's process group is stopped. Custom templates need `/bin/bash`, `/bin/sh` and `setsid` for that; without `setsid`, only the command itself is stopped.
-- Stopping is best effort: if E2B can't be reached, the command may keep running, so keep the ref to inspect or kill the sandbox.
-- The E2B SDK needs asyncio; under Trio, every operation raises `UserError`.
+- On a timeout, the command's process group is stopped. Custom templates need `/bin/bash`, `/bin/sh` and `setsid` for that. Without `setsid`, only the command itself is stopped.
+- Stopping is best effort. If E2B can't be reached, the command may keep running, so keep the ref to inspect or kill the sandbox.
+- The E2B SDK needs asyncio. Under Trio, every operation raises `UserError`.
 
 ## Durable execution
 
-Add `TemporalDurability()` next to `E2BSandbox()` and install the `temporal` extra; [Workspaces](../workspace.md#durable-execution) covers what changes. A durable run creates its sandbox when it starts.
+Add `TemporalDurability()` next to `E2BSandbox()` and install the `temporal` extra. [Workspaces](../workspace.md#durable-execution) covers what changes. A durable run creates its sandbox when it starts.
 
 ## Telemetry
 

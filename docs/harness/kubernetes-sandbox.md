@@ -5,7 +5,7 @@ description: "Run a Pydantic AI agent's commands and file edits in a Kubernetes 
 
 # Kubernetes Sandbox
 
-Run your agent's commands and file edits in a sandbox pod on your own Kubernetes cluster, claimed from a [kubernetes-sigs/agent-sandbox](https://agent-sandbox.sigs.k8s.io) warm pool.
+Run your agent's commands and file edits in a sandbox pod on your own Kubernetes cluster, taken from a [kubernetes-sigs/agent-sandbox](https://agent-sandbox.sigs.k8s.io) warm pool of ready pods.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/kubernetes_sandbox/)
 
@@ -41,7 +41,7 @@ flowchart TB
 pip/uv-add "pydantic-ai-harness[coder,kubernetes,anthropic]"
 ```
 
-The client uses your kubeconfig, or the pod's service account inside the cluster, and the default port-forward connection needs `kubectl` on your `PATH`. The examples also use `Coder` and an Anthropic model, hence the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`; swap them for your own tools and model provider.
+The capability reaches the cluster with your kubeconfig, or with the pod's service account when it runs inside the cluster. The default connection to each sandbox is a `kubectl port-forward`, so it needs `kubectl` on your `PATH`. The examples also use `Coder` and an Anthropic model, hence the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`; swap them for your own tools and model provider.
 
 ## Set up the cluster
 
@@ -51,7 +51,13 @@ Install agent-sandbox (v1.0.7 or later) with its extensions:
 kubectl apply --server-side -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.11/sandbox-with-extensions.yaml
 ```
 
-Each sandbox pod must run [sandboxd](https://github.com/kubernetes-sigs/agent-sandbox/tree/main/packages/sandboxd), agent-sandbox's in-pod server. Commands run in the container that runs sandboxd, so that container's image decides which tools the agent has. This template copies sandboxd into `python:3.12` and keeps three sandboxes warm:
+Then define the pods your agent gets:
+
+- A `SandboxTemplate` describes one sandbox pod.
+- A `SandboxWarmPool` keeps a number of pods from that template started and ready, so a run doesn't wait for a pod to start.
+- Each run claims one ready pod from the pool. Deleting the claim deletes the pod.
+
+Each sandbox pod must run [sandboxd](https://github.com/kubernetes-sigs/agent-sandbox/tree/main/packages/sandboxd), agent-sandbox's in-pod server. Commands run in the container that runs sandboxd, so that container's image decides which tools the agent has. This template copies sandboxd into `python:3.12`, and the pool keeps three sandboxes ready:
 
 ```yaml
 apiVersion: extensions.agents.x-k8s.io/v1beta1
@@ -110,8 +116,7 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 `Coder`'s shell and file tools now run in a sandbox pod claimed from the warm pool. For a narrower agent, use [`Shell`](shell.md), [`FileSystem`](filesystem.md) or your own tools on [`ctx.workspace`](../workspace.md#using-the-workspace-in-tools).
 
 - **`Coder` creates it when the run starts**, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
-- **It keeps running after the run.** See [Clean up](#clean-up).
-- **It is deleted after 24 hours** (`sandbox_timeout=86_400`), whether or not anyone still uses it. `sandbox_timeout=None` keeps it until you delete it.
+- **It keeps running after the run, and is deleted 24 hours after it was claimed**, whether or not anyone still uses it. Change that with `sandbox_timeout`, in seconds, or pass `None` to keep it until you delete it. See [Clean up](#clean-up).
 - **Commands start in sandboxd's root directory**, `/workspace` in the template above, and run as the container's user.
 - **The image needs a POSIX shell with coreutils and `find`**, since file operations run as shell commands.
 - **Files are lost if the pod is lost.** When a node fails, agent-sandbox starts a new pod that keeps only what the template puts on a persistent volume; the template above uses `emptyDir`.
@@ -137,9 +142,11 @@ followup = agent.run_sync(
 ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later run
 ```
 
-If the claim has been deleted, the run raises `WorkspaceUnavailableError`; pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace.
+`result.workspace.ref` is a `WorkspaceRef` holding `<namespace>/<claim name>`. Store it to continue later or to delete the sandbox.
 
-The ref is `<namespace>/<claim name>`, and the process that reattaches needs its own access to the cluster. `KubernetesSandbox` reattaches only to claims it made; see [Security model](#security-model).
+If the claim has been deleted, the run raises `WorkspaceUnavailableError`. Pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace.
+
+The process that reattaches needs its own access to the cluster. `KubernetesSandbox` reattaches only to claims it made, as [Security model](#security-model) explains.
 
 ## Prepare a sandbox before the run
 
@@ -167,7 +174,7 @@ async def run_in_prepared_sandbox() -> str:
             await KubernetesSandbox(warm_pool='python-pool').destroy(ref)
 ```
 
-The run leaves a backend you built open, so close it with `aclose()`; that closes the connection (and any `kubectl port-forward`), not the sandbox. To keep the sandbox, store `backend.ref` instead of destroying it.
+The run leaves a backend you built open, so close it with `aclose()`. That closes the connection, including any `kubectl port-forward`, not the sandbox. To keep the sandbox, store `backend.ref` instead of destroying it.
 
 ## Clean up
 
@@ -249,8 +256,12 @@ sandbox = KubernetesSandbox(
 
 - `KubernetesSandbox` reattaches to and deletes only claims in its `namespace` named `pydantic-ai-` and 32 hex digits, the names it gives its claims. A ref naming any other claim raises `ValueError` before anything reaches the cluster.
 - The name is not proof of origin, and a `KubernetesSandboxBackend(ref=...)` you build yourself attaches to any claim it names, so keep refs server-side.
-- Your cluster sets everything else: the pod's isolation (it shares its node's kernel unless `runtimeClassName` selects gVisor or Kata), which claims the agent's kubeconfig or service account can reach, which pods can reach sandboxd's ports, and whether sandboxd requires an auth token.
-- The SDK talks to sandboxd over plaintext gRPC: `connection='port-forward'` tunnels it through the API server, an in-cluster connection does not.
+- Your cluster sets everything else:
+    - The pod's isolation. It shares its node's kernel unless `runtimeClassName` selects gVisor or Kata.
+    - Which claims the agent's kubeconfig or service account can reach.
+    - Which pods can reach sandboxd's ports.
+    - Whether sandboxd requires an auth token.
+- The SDK talks to sandboxd over unencrypted gRPC. `connection='port-forward'` tunnels it through the API server. An in-cluster connection sends it over the cluster network as is.
 
 ## Configuration
 
@@ -258,12 +269,12 @@ sandbox = KubernetesSandbox(
 | --- | --- |
 | `warm_pool` | Name of the `SandboxWarmPool` to claim new sandboxes from. Required. |
 | `namespace` | Namespace of the warm pool and the claims. Default: `'default'`. |
-| `connection` | `'port-forward'` (default), `'in-cluster-pod-ip'` or `'in-cluster-service'`; or the SDK's `SandboxdPodTunnelConnectionConfig` or `SandboxdInClusterConnectionConfig`, for other ports, timeouts and auth tokens. |
-| `sandbox_timeout` | Seconds after which a newly claimed sandbox is deleted. Default: `86_400` (24 hours); `None` keeps it until `destroy(ref)`. |
+| `connection` | How the client reaches each sandbox: `'port-forward'`, `'in-cluster-pod-ip'` or `'in-cluster-service'`. For other ports, timeouts and auth tokens, pass the SDK's `SandboxdPodTunnelConnectionConfig` or `SandboxdInClusterConnectionConfig`. Default: `'port-forward'`. |
+| `sandbox_timeout` | Seconds after which a newly claimed sandbox is deleted. Default: `86_400`, 24 hours. `None` keeps it until `destroy(ref)`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, sandboxd's root directory. Created on a new claim; on an attached one it must exist. |
 | `env` | Environment variables every command gets, on top of the container's own. Default: `None`. The agent's commands can read these, so leave out secrets it shouldn't see. |
-| `authority` | Who wrote the sandbox's files, for capabilities that check [authority](../workspace-custom.md#workspace-authority): `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. Default: `'operator'`. |
-| `path_authority` | Levels for some directories and files, overriding `authority` under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
+| `authority` | Who wrote the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, or `'user'` for the user's own. Capabilities that put a file into the prompt give it no more [authority](../workspace-custom.md#workspace-authority) than this. Default: `'operator'`, files you wrote. |
+| `path_authority` | An `authority` level for specific directories and files, overriding `authority` under them. The longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 
 `connection`, `working_dir`, `env`, `authority` and `path_authority` also apply when you reattach; the other options only shape a new claim.
 
@@ -271,16 +282,18 @@ sandbox = KubernetesSandbox(
 
 <span id="how-commands-run"></span><span id="what-a-timeout-stops"></span>
 
-- Claiming or reattaching gives up with `TimeoutError` after 190 seconds; a claim that times out is deleted.
+- Claiming or reattaching gives up with `TimeoutError` after 190 seconds. A claim that times out is deleted.
 - A timeout or cancellation kills the command's process group, not the sandbox. A job that detaches with `setsid` may keep running.
 - A background job that keeps the command's output open delays the result by about 5 seconds. Redirect its output to a file; `Shell.start_command` does this for you.
 - A command whose output passes 10 MiB is stopped with `WorkspaceOutputLimitError`. Redirect large output to a file.
 - While a lost pod is replaced, commands fail with an error durable execution retries.
-- The agent-sandbox SDK needs asyncio; under Trio, every operation raises `UserError`.
+- The agent-sandbox SDK needs asyncio. Under Trio, every operation raises `UserError`.
 
 ## Durable execution
 
-Add a durability capability, such as `TemporalDurability()` from the `temporal` extra, next to `KubernetesSandbox()`; [Workspaces](../workspace.md#durable-execution) covers what changes. Outside a run, each command opens and closes its own connection (with the default, a `kubectl port-forward`), so each activity takes a little longer than a call inside a plain run.
+Add a durability capability, such as `TemporalDurability()` from the `temporal` extra, next to `KubernetesSandbox()`. [Workspaces](../workspace.md#durable-execution) covers what changes.
+
+Outside a run, each command opens and closes its own connection, a new `kubectl port-forward` by default. So each activity takes a little longer than the same call inside a plain run.
 
 ## Telemetry
 

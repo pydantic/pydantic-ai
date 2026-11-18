@@ -39,7 +39,12 @@ flowchart TB
 pip/uv-add "pydantic-ai-harness[coder,smol,anthropic]"
 ```
 
-The `smol` extra installs [smolmachines](https://github.com/smol-machines/smol), which runs VMs on this machine: macOS on Apple silicon, or Linux on x86_64 or aarch64 with glibc 2.34 or newer, where the user running the agent needs read and write access to `/dev/kvm`. The examples also use `Coder` and an Anthropic model, hence the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`; swap them for your own tools and model provider.
+The `smol` extra installs [smolmachines](https://github.com/smol-machines/smol), which runs VMs on this machine. It needs one of:
+
+- macOS on Apple silicon.
+- Linux on x86_64 or aarch64 with glibc 2.34 or newer. The user running the agent needs read and write access to `/dev/kvm`.
+
+The examples also use `Coder` and an Anthropic model, hence the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`; swap them for your own tools and model provider.
 
 ## Quick start
 
@@ -57,8 +62,8 @@ result = agent.run_sync('Write a script that prints the first 10 primes, and run
 `Coder`'s shell and file tools now run in a VM with its own kernel and filesystem. For a narrower agent, use [`Shell`](shell.md), [`FileSystem`](filesystem.md) or your own tools on [`ctx.workspace`](../workspace.md#using-the-workspace-in-tools).
 
 - **`Coder` creates it when the run starts**, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
-- **Its disk stays on this machine after the run.** The VM shuts down when your process exits; nothing deletes it. See [Clean up](#clean-up).
-- **It has no network access.** Pass `allow_internet_access=True` to install packages or clone repositories. That access is unrestricted and comes from this machine, so treat it as access to anything this machine can reach, such as your local network or a cloud metadata endpoint.
+- **Its disk stays on this machine after the run.** The VM shuts down when your process exits, but nothing deletes it. See [Clean up](#clean-up).
+- **It has no network access.** Pass `allow_internet_access=True` to install packages or clone repositories. That access is unrestricted and comes from this machine, so the VM can reach anything this machine can, such as your local network or a cloud metadata endpoint.
 - **Commands run as the image's user, usually `root`, in `/workspace`**, which is created if missing.
 - **Without an `image`, the VM runs smolvm's own Alpine Linux**, which has BusyBox but no Python, git or ripgrep. An `image` is any OCI image with a POSIX `/bin/sh`; smolvm pulls it the first time.
 
@@ -80,9 +85,11 @@ followup = agent.run_sync('Now make it print the first 100.', message_history=re
 ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later run
 ```
 
-If the VM has been deleted, the run raises `WorkspaceUnavailableError`; pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace. `image`, `cpus`, `memory_mb` and `allow_internet_access` only shape a new VM; `working_dir` and `env` apply to every command.
+`result.workspace.ref` is a `WorkspaceRef` holding the VM's name. Store it to continue later or to delete the VM.
 
-A ref also works from another process, which boots the VM again. smolmachines doesn't flush a VM's disk when the process using it exits, so stop the VM first to keep its file changes:
+If the VM has been deleted, the run raises `WorkspaceUnavailableError`. Pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace.
+
+Another process can continue in the VM with the ref, and boots it again. smolmachines saves a VM's disk when the VM stops or when `sync` runs inside it, so stop the VM before your process exits, or its recent file changes can be lost:
 
 ```python {names="defined"}
 from pydantic_ai.workspaces import WorkspaceRef
@@ -129,11 +136,15 @@ if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-The `finally` deletes the VM even when setup or the run fails, or is cancelled mid-boot. To keep it, store `backend.ref` instead. `SmolSandbox`'s settings don't apply to a backend you pass as `workspace=`; give the backend its own. `backend.get_sandbox()` returns the SDK's `smol.AsyncMachine`, for features the workspace API doesn't cover.
+The `finally` deletes the VM even when setup or the run fails, or is cancelled mid-boot. To keep it, store `backend.ref` instead.
+
+`SmolSandbox`'s settings don't apply to a backend you pass as `workspace=`. Give the backend its own.
+
+For features the workspace API doesn't cover, `backend.get_sandbox()` returns the SDK's `smol.AsyncMachine`.
 
 ## Clean up
 
-Delete a VM and its disk with the ref you stored. A VM that is already gone returns quietly; a stopped one is booted first, since smolmachines deletes through an attached handle:
+Delete a VM and its disk with the ref you stored. A VM that is already gone returns quietly. A stopped VM is booted briefly first, because smolmachines can't delete a local VM without attaching to it:
 
 ```python {names="defined"}
 from pydantic_ai.workspaces import WorkspaceRef
@@ -144,7 +155,33 @@ async def delete_vm(ref: WorkspaceRef) -> None:
     await SmolSandbox().destroy(ref)
 ```
 
-A failed run returns no result, so delete its VM in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up).
+A failed run returns no result, so delete its VM in an `on_run_error` hook:
+
+```python
+from typing import Any
+
+import anyio
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.smol_sandbox import SmolSandbox
+
+hooks = Hooks()
+
+
+@hooks.on.run_error
+async def delete_failed_run_vm(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
+    if ctx.workspace.ref is not None:
+        # Shielded so a deadline around the run can't cut the delete short, bounded so a hung call can't hang it.
+        with anyio.move_on_after(30, shield=True):
+            await SmolSandbox().destroy(ctx.workspace.ref)
+    raise error
+
+
+agent = Agent('{{ anthropic:large }}', capabilities=[SmolSandbox(image='python:3.12-alpine'), Coder(), hooks])
+```
 
 ### Find a lost VM
 
@@ -154,19 +191,24 @@ Then delete it: `await SmolSandbox().destroy(WorkspaceRef(provider='smol', id='<
 
 ## Use a VM you already have
 
-Pass `workspace=SmolSandboxBackend(sandbox=machine)` with a `smol.Machine` or `smol.AsyncMachine`, or `SmolSandboxBackend(ref=WorkspaceRef(provider='smol', id=...))` with a VM's name. Give the backend its own `working_dir=` and `env=`. The backend never deletes the VM.
+Pass one of these as `workspace=`:
+
+- `SmolSandboxBackend(sandbox=machine)`, with a `smol.Machine` or `smol.AsyncMachine`.
+- `SmolSandboxBackend(ref=WorkspaceRef(provider='smol', id=...))`, with a VM's name.
+
+Give the backend its own `working_dir=` and `env=`. The backend never deletes the VM.
 
 ## Security model
 
-The VM is the boundary: it has its own kernel and filesystem, nothing from this machine is mounted into it, no ports are published, and none of your environment variables reach it. Commands run as the image's user, `root` on smolvm's Alpine and most images, so anything the agent runs can change anything in the VM.
+The VM is the boundary. It has its own kernel and filesystem. Nothing from this machine is mounted into it, no ports are published, and none of your environment variables reach it. Commands run as the image's user, `root` on smolvm's Alpine and most images, so anything the agent runs can change anything in the VM.
 
-- smolvm runs in your process with your OS user's permissions. `SMOLVM_*` environment variables configure it, and some, like `SMOLVM_SECCOMP=off`, turn off its own confinement on Linux, so don't let untrusted input set them.
+- smolvm runs in your process with your OS user's permissions. `SMOLVM_*` environment variables configure it, and some, like `SMOLVM_SECCOMP=off`, turn off its own confinement on Linux. Don't let untrusted input set them.
 - `image` is pulled by tag; pin a digest, such as `python:3.12-alpine@sha256:...`, to get the same image every time.
-- `cpus` and `memory_mb` cap a VM; nothing limits how many VMs a process boots.
+- `cpus` and `memory_mb` cap one VM. Nothing limits how many VMs a process boots.
 
 ### Which VMs a run can use
 
-Whoever passes a ref runs commands in the VM it names, and smolmachines can open any VM of your OS user by name, including ones other tools made with your folders mounted. So:
+Whoever passes a ref runs commands in the VM it names. smolmachines can open any VM of your OS user by name, including ones other tools made with your folders mounted. So:
 
 - **Refs reaching `SmolSandbox`** (message history, `workspace=ref`, `backend(ref)`, `destroy(ref)`) only open VMs `SmolSandbox` booted, named `pydantic-ai-` and 32 hex digits. Any other name raises `ValueError`. Durable execution rebuilds the workspace from its ref, so it only works with VMs `SmolSandbox` booted.
 - **`SmolSandboxBackend(...)` built by your code** opens any VM on this machine, because your code chose it. A later run given only its message history raises `ValueError`; pass the backend again, or `workspace='new'`.
@@ -180,24 +222,30 @@ Whoever passes a ref runs commands in the VM it names, and smolmachines can open
 | `cpus` | vCPUs for a new VM. Default: `None`, smolvm's default. |
 | `memory_mb` | Memory for a new VM in MiB. Default: `None`, smolvm's default. |
 | `allow_internet_access` | Whether a new VM has unrestricted outbound network access, from this machine's network. Default: `False`. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve against, created if missing. Default: `/workspace`; `None` uses the VM's own (`/` without an image). |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against, created if missing. Default: `/workspace`. `None` uses the VM's own, `/` without an image. |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the VM. The agent's commands can read these, so leave out secrets it shouldn't see. |
-| `authority` | Who wrote the sandbox's files, for capabilities that check [authority](../workspace-custom.md#workspace-authority): `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. Default: `'operator'`. |
-| `path_authority` | Levels for some directories and files, overriding `authority` under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
+| `authority` | Who wrote the VM's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, or `'user'` for the user's own. Capabilities that put a file into the prompt give it no more [authority](../workspace-custom.md#workspace-authority) than this. Default: `'operator'`, files you wrote. |
+| `path_authority` | An `authority` level for specific directories and files, overriding `authority` under them. The longest matching path wins. Paths are VM paths, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
+
+`image`, `cpus`, `memory_mb` and `allow_internet_access` only shape a new VM. `working_dir` and `env` apply to every command, including after you reattach.
 
 ## Limits
 
 <span id="how-commands-run"></span>
 
-- On an unsupported platform, importing `pydantic_ai_harness.smol_sandbox` raises `ImportError`. A host that can't run VMs, such as Linux without `/dev/kvm` access, raises `WorkspaceUnavailableError` on first use; check with `smol.local_availability()`.
-- Files move 64 KiB per command, so a file of several MiB takes seconds to read or write. Images need the usual file utilities, which BusyBox has.
+- On an unsupported platform, importing `pydantic_ai_harness.smol_sandbox` raises `ImportError`.
+- A host that can't run VMs, such as Linux without `/dev/kvm` access, raises `WorkspaceUnavailableError` on first use. Check with `smol.local_availability()`.
+- Files move 64 KiB per command, so a file of several MiB takes seconds to read or write.
+- Images need the usual file utilities, which BusyBox has.
 - A command whose output passes 10 MiB is stopped with `WorkspaceOutputLimitError`. Redirect large output to a file.
-- On a timeout, the command and the processes it started are killed; jobs that outlive their command, like a [Shell](shell.md) background job, keep running.
-- The smol SDK needs asyncio; under Trio, operations raise `UserError`.
+- On a timeout, the command and the processes it started are killed. Jobs that outlive their command, like a [Shell](shell.md) background job, keep running.
+- The smol SDK needs asyncio. Under Trio, operations raise `UserError`.
 
 ## Telemetry
 
-`SmolSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records `pydantic_ai.workspace.provider` (`smol`) and `pydantic_ai.workspace.id` on the agent run span, and each command or file operation runs inside its tool call's span. On this machine, a VM's id is all your OS user's processes need to attach to it.
+`SmolSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records `pydantic_ai.workspace.provider` (`smol`) and `pydantic_ai.workspace.id` on the agent run span, and each command or file operation runs inside its tool call's span.
+
+Treat the recorded id like a ref: any process of your OS user on this machine can attach to the VM with it.
 
 ## API reference
 
