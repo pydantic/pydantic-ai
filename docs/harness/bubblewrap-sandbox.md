@@ -73,10 +73,10 @@ result = agent.run_sync('Run the test suite and fix the first failure.')
 
 `bwrap` gives the wrapper its own user namespace and no Linux capabilities, the kernel's per-process privileges. `/run` is empty because host daemons such as Docker listen on sockets there, and a read-only mount doesn't stop a connection.
 
-When the working directory contains the host account's home directory, as an `SSHWorkspace` without a `working_dir` does, the files the host reads when the next SSH connection logs in are mounted read-only:
+When the working directory contains the host account's home directory, as an `SSHWorkspace` without a `working_dir` does, the files the host runs or reads when the next SSH connection logs in are mounted read-only:
 
 - `~/.ssh` and `~/.pam_environment`.
-- The startup files a login shell runs or commonly sources for a command: `~/.bashrc`, `~/.bashrc.d`, `~/.cargo/env`, `~/.local/bin/env`, `~/.zshenv`, `~/.cshrc`, `~/.tcshrc` and `~/.config/fish`.
+- The startup files a login shell runs or commonly sources for a command: `~/.bashrc`, `~/.bashrc.d`, `~/.cargo/env`, `~/.local/bin/env`, `~/.zshenv` (and `$ZDOTDIR/.zshenv` when `ZDOTDIR` points elsewhere), `~/.cshrc`, `~/.tcshrc` and `~/.config/fish`.
 
 Missing ones are created empty. If one of them is a symlink, or the home directory isn't absolute, the wrapper doesn't start.
 
@@ -105,10 +105,15 @@ The wrapper keeps an agent from accidentally changing the host outside its worki
 - Commands can read every file the host user can, such as SSH keys and cloud credentials, and show them to the model. Hide those directories with `bwrap_args=['--tmpfs', path]`.
 - Commands can see the host's processes and their command lines, including a call's `env` values. They can also signal, and so stop, the host user's other processes.
 - Anything a command writes in the working directory, such as Git hooks, a `Makefile` or an `.envrc`, runs outside the wrapper if you later run it there.
-- With the home directory writable, so are the files only an interactive login runs, such as `~/.profile` and `~/.bash_profile`, and other per-user configuration. That includes fish configuration when `$XDG_CONFIG_HOME` is set to a non-default location. Give the wrapper a project directory as its `working_dir` instead.
+- When the working directory contains the home directory, everything in it except the paths listed above stays writable. That includes:
+  - files only an interactive login runs, such as `~/.profile` and `~/.bash_profile`;
+  - other per-user configuration, including fish configuration when `$XDG_CONFIG_HOME` is set to a non-default location;
+  - files the read-only startup files source, such as a `~/.bashrc.local`. Which ones depends on each host, so the wrapper can't know them all.
+
+  This isn't specific to SSH: with a `LocalWorkspace`, the same files run the next time you open a shell. Give the wrapper a project directory as its `working_dir` instead.
 - The wrapper trusts the wrapped workspace's own settings, `bwrap_args`, and the host's `bwrap` and `base64`, taken from a `PATH` directory outside the working directory.
 
-For an agent you don't trust, give it its own user on the host, or use a VM or microVM-backed sandbox such as [E2B](e2b-sandbox.md), [Modal](modal-sandbox.md), [Daytona](daytona-sandbox.md), [BoxLite](boxlite-sandbox.md), or [Smol](smol-sandbox.md).
+For an agent you don't trust, give it its own user on the host, or use a VM-backed sandbox such as [Smol](smol-sandbox.md) or [BoxLite](boxlite-sandbox.md).
 
 ## Use the workspace directly
 

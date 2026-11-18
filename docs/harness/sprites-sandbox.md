@@ -131,7 +131,7 @@ async def delete_sprite(ref: WorkspaceRef) -> None:
 
 A ref can name any Sprite your `SPRITE_TOKEN` reaches, and `destroy` deletes whatever it names, so keep refs on your server and only destroy Sprites you created.
 
-A failed run returns no result, so delete its Sprite in an `on_run_error` hook:
+A failed run returns no result, so delete its Sprite in an `on_run_error` hook. If Sprites' reply to the create was lost, the ref still names the Sprite the backend tried to create, which may or may not exist. Delete it by that name anyway; deleting a Sprite that doesn't exist returns quietly:
 
 ```python
 from typing import Any
@@ -167,7 +167,7 @@ If your program stops before it stores the ref, for example after a crash or Ctr
 
 - List your Sprites. Sprites Pydantic AI creates are named `pydantic-ai-<hex>`, and the name is the ref's id.
 - Or search your logs for `Created Sprite <id>`, logged at INFO by the `pydantic_ai_harness` logger.
-- If the run stopped before Sprites replied, the new Sprite may not show up in the API straight away. Check again before you decide it was never created.
+- If the run stopped before Sprites replied, there is no log line, but the Sprite may still exist. Look for it in the list.
 
 Then delete it: `await SpritesSandbox().destroy(WorkspaceRef(provider='sprites', id='<id>'))`.
 
