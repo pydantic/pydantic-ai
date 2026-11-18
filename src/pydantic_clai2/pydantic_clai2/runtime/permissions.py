@@ -3,9 +3,9 @@
 A held call is put to the user as an `ask_user` question with three choices, so the terminal picker and
 the browser's question card both answer it; a typed answer denies the call with that reason. Whichever
 plugin answers questions binds `approval_handler` with its answerer, an `ApprovalHandler` whose handler is
-harness `approval_ask`. A call no handler answered, as in a session no one can be asked in, is
-denied by `DenyUnanswered`. A `SubAgents` delegation that the session's `Permissions` would not reach is refused
-outside `full` by `KeepDelegatesChecked`.
+harness `approval_ask`. A call no handler answered, as in a session no one can be asked in, is denied by
+`DenyUnanswered`. A `SubAgents` delegation that the session's `Permissions` would not reach is refused outside
+`full` by `KeepDelegatesChecked`.
 """
 
 import difflib
