@@ -331,11 +331,13 @@ def _needs_summary(result: ComputerResult | None) -> bool:
 
 
 def map_computer_call_output(
-    part: ToolReturnPart, call_id: str, call: ToolCallPart
+    part: ToolReturnPart, call_id: str, call: ToolCallPart, *, changed: bool
 ) -> list[responses.ResponseInputItemParam]:
     """A `computer` result as a `computer_call_output`, followed by a message when it needs more than an image.
 
-    The API needs a screenshot in every output, so a result without one sends a blank image instead.
+    The API needs a screenshot in every output, so a result without one sends a blank image instead. A `changed` call,
+    one a hook renamed or gave other actions after the API stored it, is answered by its ID all the same, with a note
+    saying what ran: the API's item still says what it made.
     """
     # A failed or denied call is a base part, without a screenshot.
     computer_return = part if isinstance(part, ComputerReturnPart) else None
@@ -357,20 +359,16 @@ def map_computer_call_output(
     # Images before the closing screenshot, such as a zoom, can't go in the output.
     images = [item for item in content if isinstance(item, BinaryImage)]
     extra_images = images[:-1] if image is not None else images
-    scroll_notes = _scroll_notes(call, computer_return.result) if computer_return else []
-    if (
-        computer_return is None
-        or image is None
-        or _needs_summary(computer_return.result)
-        or extra_images
-        or scroll_notes
-    ):
-        items.append(_summary_message(part, content, extra_images, scroll_notes))
+    notes = _scroll_notes(call, computer_return.result) if computer_return else []
+    if changed:
+        notes.append(f'The call ran as {call.tool_name} with the arguments {call.args_as_json_str()}.')
+    if computer_return is None or image is None or _needs_summary(computer_return.result) or extra_images or notes:
+        items.append(_summary_message(part, content, extra_images, notes))
     return items
 
 
 def _summary_message(
-    part: ToolReturnPart, content: Sequence[object], extra_images: list[BinaryImage], scroll_notes: list[str]
+    part: ToolReturnPart, content: Sequence[object], extra_images: list[BinaryImage], notes: list[str]
 ) -> responses.EasyInputMessageParam:
     """The output can only carry an image: say what didn't run, or why the image is blank.
 
@@ -380,8 +378,8 @@ def _summary_message(
     texts = [item for item in content if isinstance(item, str)]
     references = [f'See file {image.identifier}.' for image in extra_images]
     note = (
-        ' '.join([*texts, *scroll_notes, *references])
-        if texts or scroll_notes or references
+        ' '.join([*texts, *notes, *references])
+        if texts or notes or references
         else part.model_response_str(wrap_if_error=False)
     )
     framed = frame(TOOL_RESULT_TAG, note, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
