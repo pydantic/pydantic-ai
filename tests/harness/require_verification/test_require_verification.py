@@ -288,6 +288,7 @@ class TestRequireVerification:
             'FAILED test_app.py\n[exited with code 1]',
             'partial\n[output truncated]\n[terminated by signal SIGKILL]',
             'PID: 7 (supervisor)\nOutput: /tmp/o\nStatus: /tmp/s\n{"pid": 7, "exit_code": 1}',
+            'FAILED x\n1 failed\nPID: 7 (supervisor)\nOutput: /tmp/o\nStatus: /tmp/s\n{"pid": 7, "exit_code": 1}',
         ],
     )
     async def test_a_failed_check_is_not_evidence(self, tmp_path: Path, output: str) -> None:
@@ -301,6 +302,7 @@ class TestRequireVerification:
         'output',
         [
             'PID: 7 (supervisor)\nOutput: /tmp/o\nStatus: /tmp/s',
+            'collecting\nPID: 7 (supervisor)\nOutput: /tmp/o\nStatus: /tmp/s',
             'PID: 7 (supervisor)\nOutput: /tmp/o\nStatus: /tmp/s\n{"pid": 7, "exit_code": null}',
             'PID: 7 (supervisor)\nOutput: /tmp/o\nStatus: /tmp/s\n{not json',
             'PID: 7 (supervisor)\nOutput: /tmp/o\nStatus: /tmp/s\n[1, 2]',
@@ -690,17 +692,21 @@ class TestRequireVerification:
 
         assert _attempts(result.new_messages()) == [1]
 
-    async def test_reads_the_results_of_the_shell_tools(self, tmp_path: Path) -> None:
-        capability = RequireVerification[None](verification_commands=[r'true\b', r'false\b'])
+    @pytest.mark.parametrize(
+        ('call', 'verified'),
+        [
+            pytest.param(_run('echo FAILED; false'), False, id='run_command-fails'),
+            pytest.param(_run('echo ok; true'), True, id='run_command-passes'),
+            pytest.param(ToolCallPart('shell', {'command': 'echo FAILED; false'}), False, id='shell-fails'),
+            pytest.param(ToolCallPart('shell', {'command': 'echo ok; true'}), True, id='shell-passes'),
+        ],
+    )
+    async def test_reads_the_results_of_the_shell_tools(
+        self, tmp_path: Path, call: ToolCallPart, verified: bool
+    ) -> None:
+        capability = RequireVerification[None](max_attempts=1, verification_commands=[r'true\b', r'false\b'])
         agent = Agent[None, str](
-            _scripted(
-                _write(),
-                _run('false'),
-                'Done.',
-                _write(),
-                ToolCallPart('shell', {'command': 'true'}),
-                'Verified.',
-            ),
+            _scripted(_write(), call, 'Done.'),
             deps_type=type(None),
             capabilities=[
                 LocalWorkspace(tmp_path),
@@ -712,9 +718,7 @@ class TestRequireVerification:
 
         result = await agent.run('Fix the bug')
 
-        # `run_command`'s `false` failed; after the next edit, the `shell` tool's `true` passed.
-        assert result.output == 'Verified.'
-        assert _attempts(result.new_messages()) == [1]
+        assert _attempts(result.new_messages()) == ([] if verified else [1])
 
     async def test_records_spans(self, tmp_path: Path) -> None:
         exporter = InMemorySpanExporter()

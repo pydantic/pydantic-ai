@@ -27,7 +27,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[FileSystem(), Shell(), Requ
 - An **edit** is a successful [`FileSystem`](filesystem.md) `write_file` or `edit_file` call, recognized by its tool kind whatever it is named, or a shell command matching `edit_commands`, such as `ruff format .` (but not `ruff format --check .`), `sed -i`, `git checkout`, `mv`, `rm`, an `sh -c`, `python -c`, or `node -e` script, or a `>` redirect. Edits that `write_file` or `edit_file` make to files matching `exempt_paths` don't count. Shell edit commands always count, since the file they touch isn't known.
 - A **check** is a shell command matching `verification_commands`, such as `pytest`, `uv run --no-sync pyright`, `.venv/bin/pytest`, `ruff format --check .`, `pnpm -r test`, or `cargo build`. The [`Shell`](shell.md) tool's result tells whether it passed.
 
-Each edit makes every earlier check result stale. When the run would end after an edit, and checks have run since then, the latest run of each must have passed. Otherwise an instruction carrying `instructions` is added to the conversation and the model answers again, with its tools available. After `max_attempts` of these redirects in one run, the run ends anyway and reports it with a `CompletionUnverifiedEvent`.
+Each edit makes every earlier check result stale. When the run would end after an edit, it is sent back unless at least one check has run since then and the latest run of each passed: an instruction carrying `instructions` is added to the conversation and the model answers again, with its tools available. After `max_attempts` of these redirects in one run, the run ends anyway and reports it with a `CompletionUnverifiedEvent`.
 
 | Field | Default | Meaning |
 |---|---|---|

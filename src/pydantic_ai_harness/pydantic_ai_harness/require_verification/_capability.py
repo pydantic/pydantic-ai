@@ -319,7 +319,8 @@ def _passed(result: object) -> bool | None:
     """
     if not isinstance(result, str):
         return None
-    lines = result.rstrip().rsplit('\n', 3)
+    # The last four lines, each one whole: the command's own output comes before the `shell` tool's handles.
+    lines = result.rstrip().rsplit('\n', 4)[-4:]
     if len(lines) == 4 and _SUPERVISOR.match(lines[0]):
         try:
             status = json.loads(lines[3])
