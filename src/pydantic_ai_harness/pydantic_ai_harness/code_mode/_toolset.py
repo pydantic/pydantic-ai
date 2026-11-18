@@ -1304,7 +1304,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         return next((run_id for run_id, cap in ctx.capabilities.items() if cap is self.capability), None)
 
     def _durable_turn(self, ctx: RunContext[AgentDepsT]) -> Callable[[TurnRequest], Awaitable[MontyTurn]] | None:
-        """Inside a Temporal workflow, the operation that runs each Monty turn in an activity, or `None` to run turns here.
+        """The operation that runs each Monty turn in a Temporal activity, or `None` to run turns here.
 
         A remote sandbox otherwise keeps the workflow task waiting on the network while a snippet
         computes, and Temporal fails a workflow task that does not yield within 2 seconds. Turns move
