@@ -865,7 +865,7 @@ class TestReadFile:
 
     async def test_window_deep_into_a_file(self, tmp_path: Path) -> None:
         # About 30 KB of short lines, so the offset lies several 4 KiB blocks into the file.
-        (tmp_path / 'long.txt').write_text(''.join(f'line {i}\n' for i in range(3000)))
+        (tmp_path / 'long.txt').write_bytes(''.join(f'line {i}\n' for i in range(3000)).encode())
         result = await _unhashed_toolset().read_file(
             'long.txt', offset=2500, limit=2, workspace=LocalWorkspaceBackend(tmp_path)
         )
