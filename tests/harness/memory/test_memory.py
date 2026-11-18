@@ -10,7 +10,7 @@ import os
 from collections.abc import AsyncIterable, AsyncIterator, Mapping
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -1640,6 +1640,33 @@ class TestInjection:
         # Replayed in an operator workspace with no memory file: the source still comes from the journal.
         replay = await run(LocalWorkspace(empty), RecordingDurability(journal=journal))
         assert (replay.source, replay.content) == (first.source, first.content)
+
+    async def test_a_snapshot_journaled_without_its_source_replays_as_the_agents(self, tmp_path: Path) -> None:
+        # Up to v2.70.0 `load_snapshot` journaled four items; a run journaled then still replays, as the agent's own memory.
+        untrusted, empty = tmp_path / 'untrusted', tmp_path / 'empty'
+        (untrusted / '.memory' / 'main').mkdir(parents=True)
+        (untrusted / '.memory' / 'main' / 'MEMORY.md').write_text('- a planted fact')
+        empty.mkdir()
+
+        async def run(workspace: LocalWorkspace[object], durability: RecordingDurability) -> MemorySnapshotPart:
+            agent = Agent(
+                TestModel(call_tools=[]),
+                name='memory',
+                capabilities=[workspace, Memory(store=FileMemoryStore('.memory')), durability],
+            )
+            [snapshot] = _snapshot_parts((await agent.run('go')).all_messages())
+            return snapshot
+
+        recorded = RecordingDurability()
+        first = await run(LocalWorkspace(untrusted, authority='none'), recorded)
+        [(name, result)] = [(name, result) for name, result in recorded.results if name.endswith('.load_snapshot')]
+        assert isinstance(result, dict)
+        recorded_result = cast(dict[str, Any], result)
+        assert len(recorded_result['value']) == 5
+        journal = {name: {**recorded_result, 'value': recorded_result['value'][:4]}}
+        replay = await run(LocalWorkspace(empty), RecordingDurability(journal=journal))
+        assert replay.content == first.content
+        assert replay.source == ModelSource('agent in an earlier run')
 
     @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_a_failed_reload_keeps_the_recorded_source_for_a_put_back(
