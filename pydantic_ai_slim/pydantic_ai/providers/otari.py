@@ -49,6 +49,27 @@ _OTARI_VENDOR_PROFILES: dict[str, ModelProfileFunc] = {
 """Otari's own provider ids that the shared vendor map doesn't spell the same way."""
 
 
+_OPEN_WEIGHT_BACKENDS: frozenset[str] = frozenset(
+    {
+        # Self-hosted servers render the model's own chat template.
+        'huggingface',
+        'llamacpp',
+        'llamafile',
+        'lmstudio',
+        'ollama',
+        'vllm',
+        # Hosts of open-weight models, as `_special_tokens._EVERY_MODEL` classifies them.
+        'cerebras',
+        'groq',
+        'nebius',
+        'sambanova',
+        'together',
+        'zai',
+    }
+)
+"""Otari provider ids that only serve open-weight models, so special tokens are escaped whatever the model's name."""
+
+
 def _vendor_model_name(model_name: str) -> str:
     """Otari names a model `provider:model` or `provider/model`; return it as `provider/model`."""
     vendor, separator, rest = model_name.partition(':')
@@ -81,12 +102,19 @@ class OtariProvider(_OpenAISDKProvider):
         vendor_model_name = _vendor_model_name(model_name)
         profile = vendor_family_model_profile(vendor_model_name, overrides=_OTARI_VENDOR_PROFILES)
 
+        # The backend in the name decides first: `ollama:command-r` is open weights, though `command` names Cohere's API.
+        vendor = vendor_model_name.partition('/')[0].lower() if '/' in vendor_model_name else ''
+        if vendor in _OPEN_WEIGHT_BACKENDS:
+            special_tokens = ModelProfile(may_tokenize_special_tokens_in_content=True)
+        else:
+            special_tokens = special_token_route_profile('otari', vendor_model_name)
+
         # As OtariProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
-            special_token_route_profile('otari', vendor_model_name),
+            special_tokens,
         )
 
     @overload
@@ -115,8 +143,8 @@ class OtariProvider(_OpenAISDKProvider):
 
         Args:
             api_key: An Otari API key. Defaults to the `OTARI_API_KEY` environment variable.
-            base_url: The API root of a self-hosted gateway, its URL plus `/api/v1`. Defaults to the
-                `OTARI_BASE_URL` environment variable, then to otari.ai in `region`.
+            base_url: The API root of a self-hosted gateway, its URL plus `/api/v1`. Defaults to otari.ai in
+                `region` when that is set, else to the `OTARI_BASE_URL` environment variable, else to otari.ai's US region.
             region: The otari.ai region to send requests to, `'us'` (the default) or `'eu'`.
                 Cannot be combined with `base_url`.
             openai_client: An existing `AsyncOpenAI` client to use. Cannot be combined with `base_url` or `region`.
