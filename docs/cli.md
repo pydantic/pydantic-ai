@@ -5,9 +5,26 @@ description: "Chat with LLMs from your terminal using clai, the Pydantic AI comm
 # Command Line Interface (CLI)
 
 !!! warning "`clai` is deprecated"
-    `clai` is deprecated in favour of [pax](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax) (`pydantic-ai-pax`), a coding agent for your terminal built on [Pydantic AI Harness](harness/index.md), and will be removed in Pydantic AI v3. Running `clai` emits a [`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning]. Try pax with `uvx pydantic-ai-pax`. `clai` now only receives fixes.
+    `clai` is deprecated in favour of [pax](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax) (`pydantic-ai-pax`) and will be removed in Pydantic AI v3. It now only receives fixes, and prints a deprecation note to stderr when it starts. See [Migrating to pax](#migrating-to-pax).
 
 **Pydantic AI** comes with a CLI, `clai` (pronounced "clay"). You can use it to chat with various LLMs and quickly get answers, right from the command line, or spin up a uvicorn server to chat with your Pydantic AI agents from your browser.
+
+## Migrating to pax {#migrating-to-pax}
+
+pax is a terminal client built on [Pydantic AI Harness](harness/index.md). Install it with `uv tool install pydantic-ai-pax`, or try it with `uvx pydantic-ai-pax`.
+
+Unlike `clai`, pax is a coding agent by default: without `-a`, it loads the Harness's `coder`, which reads and edits files and runs shell commands in the current directory. To chat with your own agent, pass it with `-a`; pax then loads no plugins for that session.
+
+| `clai` | `pax` |
+|--------|-------|
+| `clai` | `pax` |
+| `clai "prompt"` | `pax -p "prompt"` |
+| `clai -m <model>` | `pax -m <model>` |
+| `clai -a module:agent` | `pax -a module:agent` |
+| `clai web -a module:agent` | `pax --web -a module:agent` |
+| `clai --mcp-config <file>` | `/mcp` without `-a`, or [MCP toolsets](mcp/client.md) on your own agent with `-a` |
+
+[`Agent.to_cli()`][pydantic_ai.agent.AbstractAgent.to_cli], [`Agent.to_cli_sync()`][pydantic_ai.agent.AbstractAgent.to_cli_sync] and [`Agent.to_web()`][pydantic_ai.agent.Agent.to_web] are not deprecated.
 
 ## Installation
 

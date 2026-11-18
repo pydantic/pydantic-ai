@@ -5,7 +5,6 @@ import functools
 import json
 import shutil
 import sys
-import warnings
 from collections.abc import Generator, Sequence
 from contextlib import AsyncExitStack, ExitStack, contextmanager, suppress
 from dataclasses import dataclass, field
@@ -18,7 +17,6 @@ from pydantic import ImportString, TypeAdapter, ValidationError
 
 from .. import __version__, _display, models, usage as _usage
 from .._run_context import AgentDepsT
-from .._warnings import PydanticAIDeprecationWarning
 from ..agent import AbstractAgent, Agent
 from ..exceptions import UserError
 from ..messages import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse
@@ -138,14 +136,16 @@ The current date and time is {datetime.now()} {tzname}.
 The user is running {sys.platform}."""
 
 
+_DEPRECATION = (
+    '`clai` is deprecated in favour of `pax` and will be removed in Pydantic AI v3. '
+    'Install it with `uv tool install pydantic-ai-pax`; '
+    'https://pydantic.dev/docs/ai/integrations/cli/#migrating-to-pax shows how `clai` commands map to `pax`.'
+)
+
+
 def cli_exit(prog_name: str = 'clai'):
-    """Run the CLI and exit."""
-    warnings.warn(
-        f'`{prog_name}` is deprecated and will be removed in Pydantic AI v3. Use pax instead: `uvx pydantic-ai-pax`. '
-        'See https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax',
-        PydanticAIDeprecationWarning,
-        stacklevel=2,
-    )
+    """Run the CLI and exit, after pointing at `pax` on stderr."""
+    print(_DEPRECATION, file=sys.stderr)
     sys.exit(cli(prog_name=prog_name))
 
 

@@ -19,17 +19,7 @@ from rich.live import Live
 from rich.markdown import Markdown
 from rich.text import Text
 
-from pydantic_ai import (
-    Agent,
-    ModelMessage,
-    ModelResponse,
-    ModelRetry,
-    PydanticAIDeprecationWarning,
-    TextPart,
-    ToolCallPart,
-    __version__,
-    _display,
-)
+from pydantic_ai import Agent, ModelMessage, ModelResponse, ModelRetry, TextPart, ToolCallPart, __version__, _display
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import ToolReturnPart
@@ -87,15 +77,16 @@ def test_cli_version(capfd: CaptureFixture[str]):
     assert capfd.readouterr().out.startswith('clai - Pydantic AI CLI')
 
 
-def test_cli_exit_warns_deprecated(capfd: CaptureFixture[str], monkeypatch: pytest.MonkeyPatch):
+def test_cli_exit_points_at_pax(capfd: CaptureFixture[str], monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sys, 'argv', ['clai', '--version'])
-    with (
-        pytest.warns(PydanticAIDeprecationWarning, match=r'`clai` is deprecated .* `uvx pydantic-ai-pax`'),
-        pytest.raises(SystemExit) as exc_info,
-    ):
+    with pytest.raises(SystemExit) as exc_info:
         cli_exit()
     assert exc_info.value.code == 0
-    assert capfd.readouterr().out.startswith('clai - Pydantic AI CLI')
+    out, err = capfd.readouterr()
+    assert out.startswith('clai - Pydantic AI CLI')
+    assert err == snapshot(
+        '`clai` is deprecated in favour of `pax` and will be removed in Pydantic AI v3. Install it with `uv tool install pydantic-ai-pax`; https://pydantic.dev/docs/ai/integrations/cli/#migrating-to-pax shows how `clai` commands map to `pax`.\n'
+    )
 
 
 def test_invalid_model(capfd: CaptureFixture[str]):
