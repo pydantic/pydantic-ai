@@ -531,9 +531,9 @@ class ComputerCallPart(ToolCallPart[_ComputerArgs], kind=COMPUTER_KIND):
 
         This is the answering model's profile value, `computer_use_screenshot_max_side`: a limit set by the model's
         maker. The agent records it on the call, because under `ModelFallback` the tool can't otherwise tell which
-        model made the call. A `FallbackModel` doesn't say which of its models answered, so its calls get the smallest
-        limit across them. A computer use capability can then refuse a screen the model can't see before the call
-        acts. A history a UI rebuilt reads `None`.
+        model made the call. A `FallbackModel`'s calls get the smallest limit across its models: its response is matched
+        to one of them only by provider, which doesn't tell two models on one provider apart. A computer use capability
+        can then refuse a screen the model can't see before the call acts. A history a UI rebuilt reads `None`.
         """
         return _label(self, _SCREENSHOT_MAX_SIDE)
 

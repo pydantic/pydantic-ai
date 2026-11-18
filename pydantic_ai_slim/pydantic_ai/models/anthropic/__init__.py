@@ -2014,6 +2014,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 model_settings,
                 model_request_parameters,
                 continues_thread=True,
+                thread_history=messages[: len(messages) - len(new_messages)],
                 record_cache_breakpoints_on_send=True,
             )
         except UserError:
@@ -2138,6 +2139,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         *,
         compaction: BetaCompactionConfigParam | None = None,
         continues_thread: bool = False,
+        thread_history: Sequence[ModelMessage] = (),
         record_cache_breakpoints_on_send: bool = False,
     ) -> _PreparedMessagesCreate:
         """The `messages.create` parameters of a request.
@@ -2164,7 +2166,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(
-            messages, model_request_parameters, model_settings, continues_thread=continues_thread
+            messages,
+            model_request_parameters,
+            model_settings,
+            continues_thread=continues_thread,
+            thread_history=thread_history,
         )
         request_scoped_texts = _request_scoped_tail_texts(messages)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages, request_scoped_texts)
@@ -3293,12 +3299,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
         *,
         continues_thread: bool = False,
+        thread_history: Sequence[ModelMessage] = (),
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`.
 
         With `continues_thread`, `messages` are the new messages of a thread continue request, which follow the
         thread's history, so their first request doesn't open the conversation and its system prompts aren't
-        hoisted into the top-level `system`.
+        hoisted into the top-level `system`. The computer calls in `thread_history`, the messages the thread holds,
+        are read so a result in `messages` answers each member call its call was sent back as.
         """
         messages = self._trim_before_compaction(messages)
         declared_tools = self._tool_choice_declarations(model_settings, model_request_parameters)[0]
@@ -3352,6 +3360,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_defs_by_name={tool.name: tool for tool in model_request_parameters.function_tools},
             sent_computer=sent_computer,
         )
+        for part in (p for m in thread_history if isinstance(m, ModelResponse) for p in m.parts):
+            if isinstance(part, ToolCallPart):
+                self._map_tool_call_part(part, [], map_context)
         leading_request = None if continues_thread else next((m for m in messages if isinstance(m, ModelRequest)), None)
         for m in messages:
             if isinstance(m, ModelRequest):

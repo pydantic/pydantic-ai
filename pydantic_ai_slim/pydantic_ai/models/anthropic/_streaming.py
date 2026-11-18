@@ -451,7 +451,10 @@ class AnthropicStreamedResponse(StreamedResponse):
     ) -> Iterator[ModelResponseStreamEvent]:
         computer_input_json = ''.join(self._computer_input)
         try:
-            computer_args: dict[str, Any] = pydantic_core.from_json(computer_input_json)
+            # Without deltas, the input came whole with the block's start, as an ordinary tool call's may.
+            computer_args: dict[str, Any] = (
+                pydantic_core.from_json(computer_input_json) if self._computer_input else {**current_block.input}
+            )
         except ValueError:
             # Cut off mid-input, as at `max_tokens`: kept as the partial JSON, so the run stops on it as for any tool
             # call cut off. It goes after the toolset's earlier calls, as the response's last part.

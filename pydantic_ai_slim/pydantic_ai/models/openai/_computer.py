@@ -204,10 +204,13 @@ def stored_computer_call(part: ToolCallPart) -> dict[str, Any] | None:
     """The `computer_call` item a call came as, to send back, or `None` to send the call back plain.
 
     A history may come from storage or a UI, so an item of another type is not sent, nor is any key a `computer_call`
-    doesn't have: otherwise a forged item could be a message from the developer. The API judges the values.
+    doesn't have: otherwise a forged item could be a message from the developer. The API judges the values. Nor is an
+    item whose actions aren't the call's, such as after a hook changed them: sent back, it would say they ran.
     """
     stored = (part.provider_details or {}).get('computer_call')
     if not is_str_dict(stored) or stored.get('type') != 'computer_call':
+        return None
+    if _call_args(stored) not in (part.args, part.args_as_dict()):
         return None
     return {key: value for key, value in stored.items() if key in _COMPUTER_CALL_KEYS}
 
@@ -228,21 +231,23 @@ def map_computer_call(
     tool_name = tool_names[0]
     # The SDK doesn't validate a response, so the item can hold anything; it is kept as sent, without a warning.
     dumped = item.model_dump(mode='json', exclude_none=True, warnings=False)
-    args: dict[str, Any] | str
-    if item.status != 'completed':
-        # Cut off or still being generated: like a truncated function call, its arguments don't parse, so none of it
-        # runs. OpenAI says not to run a partially generated action.
-        args = '{"actions": ['
-    else:
-        args = {'actions': [action for action, _ in _map_actions(dumped)]}
     return ComputerCallPart(
         tool_name,
-        args,
+        _call_args(dumped),
         tool_call_id=tool_call_id,
         id=item.id,
         provider_name=provider_name,
         provider_details={'computer_call': dumped},
     )
+
+
+def _call_args(dumped: dict[str, Any]) -> dict[str, Any] | str:
+    """The `computer` call's arguments for a `computer_call` item."""
+    if dumped.get('status') != 'completed':
+        # Cut off or still being generated: like a truncated function call, its arguments don't parse, so none of it
+        # runs. OpenAI says not to run a partially generated action.
+        return '{"actions": ['
+    return {'actions': [action for action, _ in _map_actions(dumped)]}
 
 
 def _map_actions(dumped: dict[str, Any]) -> list[tuple[dict[str, Any], str | None]]:
