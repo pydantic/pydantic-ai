@@ -163,8 +163,10 @@ class FakeSandboxd:
         if any(len(string.encode()) >= _MAX_ARG_STRLEN for string in strings):
             # As on Linux, whatever the host: `execve` fails with E2BIG, which sandboxd reports as INTERNAL.
             await context.abort(grpc.StatusCode.INTERNAL, 'start process: fork/exec /bin/sh: argument list too long')
-        line = ' '.join(command)
-        if self.display is not None and any(program in line for program in _DISPLAY_PROGRAMS):
+        if self.display is not None and any(program in command[-1] for program in _DISPLAY_PROGRAMS):
+            # The backend sends `/bin/sh -c 'set -- <argv>\n<exec script>'`; the display sees the argv it quoted,
+            # which for the display's own commands holds no newline.
+            line = shlex.join(shlex.split(command[-1].partition('\n')[0].removeprefix('set -- ')))
             assert call_env.get('DISPLAY') == ':1'
             stdout, stderr, exit_code = self.display(line, None)
             command = [
