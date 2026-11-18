@@ -855,6 +855,22 @@ CASES = [
         attrs={'phase': 'read'},
     ),
     Case(
+        # Groq's flex service tier is out of capacity.
+        id='groq-flex-capacity',
+        model=_groq,
+        handler=_json(498, {'error': {'message': 'Flex tier capacity exceeded.', 'type': 'invalid_request_error'}}),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 498},
+    ),
+    Case(
+        # Groq's remote MCP dependency failure is not a model failure.
+        id='groq-mcp-dependency',
+        model=_groq,
+        handler=_json(424, {'error': {'message': 'Remote MCP server failed.', 'type': 'invalid_request_error'}}),
+        categories={ModelHTTPError},
+        attrs={'status_code': 424},
+    ),
+    Case(
         id='google-rate-limit',
         model=_google,
         handler=_json(
@@ -2564,8 +2580,13 @@ async def test_retrying_transport_gave_up_keeps_streamed_error_body(
     assert exc.retry_after == retry_after
 
 
-def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientError:
+def _bedrock_error(
+    code: str, message: str, status_code: int | None, original_status_code: int | None = None
+) -> ClientError:
     response: dict[str, Any] = {'Error': {'Code': code, 'Message': message}}
+    if original_status_code is not None:
+        # botocore puts a `ModelErrorException`'s modeled fields at the top level of the error response.
+        response['originalStatusCode'] = original_status_code
     if status_code is None:
         # An exception event inside a `ConverseStream` response: botocore gives it no response metadata.
         return EventStreamError(cast(Any, response), 'ConverseStream')
@@ -2613,6 +2634,18 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
             {ModelHTTPError, ModelServerError},
             {'status_code': 500, 'provider_error_code': 'InternalServerException'},
             id='server-error',
+        ),
+        pytest.param(
+            lambda: _bedrock_error('ModelErrorException', 'The model returned an error.', 424),
+            {ModelHTTPError, ModelServerError},
+            {'status_code': 424, 'provider_error_code': 'ModelErrorException'},
+            id='model-error',
+        ),
+        pytest.param(
+            lambda: _bedrock_error('ModelErrorException', 'The model returned an error.', 424, original_status_code=429),
+            {ModelHTTPError, ModelRateLimitError},
+            {'status_code': 424, 'provider_error_code': 'ModelErrorException'},
+            id='model-error-original-status',
         ),
         pytest.param(
             lambda: _bedrock_error('serviceUnavailableException', 'Service unavailable.', None),

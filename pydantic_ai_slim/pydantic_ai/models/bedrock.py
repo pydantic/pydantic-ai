@@ -85,6 +85,7 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
     ModelNotFoundError,
+    ModelServerError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -246,6 +247,13 @@ def _map_client_error(
     code, message = error.get('Code'), error.get('Message')
     provider_error_code = code if isinstance(code, str) else None
     category = _model_errors.bedrock_code_category(provider_error_code, message)
+    if provider_error_code == 'ModelErrorException':
+        # A 424 `ModelErrorException` is the model failing; it carries the model's own status, when present, which
+        # says more than the 424.
+        original_status_code = e.response.get('originalStatusCode')
+        if isinstance(original_status_code, int):
+            category = _model_errors.http_status_category(original_status_code, message)
+        category = category or ModelServerError
     # An exception event inside a `ConverseStream` response carries no status code; it gets the status the same
     # exception has before the stream opens.
     in_stream = not isinstance(status_code, int)
