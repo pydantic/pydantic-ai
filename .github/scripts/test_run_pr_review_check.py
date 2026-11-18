@@ -547,6 +547,7 @@ def test_review_span_reports_every_outcome_and_the_plan_of_its_last_run(
         **outcome,
         **{f'pr_review_checks.{key}': value for key, value in failure.items()},
         'pr_review_checks.provider': 'zai-coding-plan',
+        'pr_review_checks.model': 'zai-coding-plan/glm-5.3-flash',
         'pr_review_checks.plan': 'the primary Coding Plan',
         'pr_review_checks.attempts': '2',
     }
@@ -597,6 +598,7 @@ def test_review_span_marks_a_review_the_chain_restarted(
         'pr_review_checks.output_tokens': '0',
         'pr_review_checks.cache_read_tokens': '0',
         'pr_review_checks.provider': 'zai-coding-plan',
+        'pr_review_checks.model': 'zai-coding-plan/glm-5.3-flash',
         'pr_review_checks.plan': 'the backup Coding Plan',
         'pr_review_checks.attempts': '3',
         **restart,
@@ -649,6 +651,7 @@ def test_cancelled_review_exports_its_span(
         'pr_review_checks.outcome': 'FAILED',
         'pr_review_checks.exception': 'KeyboardInterrupt',
         'pr_review_checks.provider': 'opencode-go',
+        'pr_review_checks.model': 'opencode-go/deepseek-v4.1-flash',
         'pr_review_checks.plan': 'OpenCode Go',
         'pr_review_checks.attempts': '1',
     }
@@ -730,6 +733,9 @@ def test_review_runs_on_the_chain_its_repository_variable_names(
     monkeypatch.setenv('PR_REVIEW_MODEL_CHAIN', json.dumps(chain))
     run_pr_review_check.main()
     assert launches.read_text().splitlines() == ['opencode-go/hy4-flash-free go-key ', 'opencode/hy4-flash-free  ']
+    # The review span names the model that served it, so reviews compare by model without a join to their runs.
+    *_, span = exported
+    assert _span_attributes(span)['pr_review_checks.model'] == 'opencode/hy4-flash-free'
 
 
 def test_only_a_repository_variable_picks_the_reviews_secrets() -> None:

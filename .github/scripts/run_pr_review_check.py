@@ -344,11 +344,12 @@ def main() -> None:
         raise
     finally:
         if attempts:
-            # The plan of the last OpenCode run, which served the review or failed it.
+            # The provider, model and plan of the last OpenCode run, which served the review or failed it.
             last = attempts[-1]
             failure = {'error_type': last.error_type, 'error_status': last.status, 'error_code': last.code}
             values |= {
                 'pr_review_checks.provider': last.provider.name,
+                'pr_review_checks.model': last.provider.model,
                 'pr_review_checks.plan': last.provider.plan,
                 'pr_review_checks.attempts': len(attempts),
                 **{f'pr_review_checks.{key}': value for key, value in failure.items() if value is not None},
