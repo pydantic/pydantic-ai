@@ -300,6 +300,14 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     operations, so the class must reject its own id-less runs inside a durable workflow or flow.
     """
 
+    _telemetry_internal: ClassVar[bool] = False
+    """Whether this is framework plumbing that the agent run span's `pydantic_ai.capabilities` leaves out.
+
+    Internal, in-tree only. A private class that doesn't set it is recorded under the public class it
+    extends, so only set it on a capability the run adds for its own bookkeeping, which the user
+    never configured and would only mistake for one of their own.
+    """
+
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
 

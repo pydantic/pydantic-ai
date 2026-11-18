@@ -759,6 +759,8 @@ class _TerminalEventPublisher(AbstractCapability[AgentDepsT]):
     that for consumers.
     """
 
+    _telemetry_internal = True
+
     def __init__(self, durability: TemporalDurability[AgentDepsT]) -> None:
         self._durability = durability
 

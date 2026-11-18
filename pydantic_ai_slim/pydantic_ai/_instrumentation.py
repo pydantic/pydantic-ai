@@ -566,11 +566,10 @@ def _is_framework_internal(cls: type[AbstractCapability[Any]] | type[AbstractToo
     """Whether `cls` is Pydantic AI or Harness plumbing, like the agent's own function and output toolsets, so isn't worth recording.
 
     Recording it under the public class it extends would put it alongside the user's own instances of that class.
+    A private class without the marker, like the one Harness `Skills` registers per skill, is recorded under the
+    public class it extends instead.
     """
-    return (
-        cls.__module__.partition('.')[0] in _PUBLIC_PACKAGES
-        and public_class_path(cls).rpartition('.')[2] != cls.__name__
-    )
+    return cls._telemetry_internal  # pyright: ignore[reportPrivateUsage]
 
 
 def recorded_capability_ids(
