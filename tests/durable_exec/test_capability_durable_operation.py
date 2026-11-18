@@ -2256,8 +2256,18 @@ class _DocumentedNote:
     """What the note says."""
 
 
+class _NoteOperation(AbstractCapability[Any]):
+    id = 'note_operation'
+
+    @durable_operation('read_note')
+    async def read_note(self, note: _DocumentedNote) -> str:
+        raise NotImplementedError
+
+
 def test_operation_schema_reads_no_attribute_docstrings(monkeypatch: pytest.MonkeyPatch) -> None:
     """Building an operation's schema reads no class source for attribute docstrings, unlike a tool's.
+
+    Not a VCR test: it builds schemas offline and asserts which class sources Pydantic reads, which no request shows.
 
     Only an operation schema's validator is used. On Python < 3.13, Pydantic re-parses a dataclass's whole module to
     read its attribute docstrings (https://github.com/pydantic/pydantic/issues/14309), which takes seconds over every
@@ -2274,6 +2284,8 @@ def test_operation_schema_reads_no_attribute_docstrings(monkeypatch: pytest.Monk
     # An operation that also takes a user-typed argument rebuilds its schema every time, so an earlier test's cached
     # schema can't hide a read.
     collect_capability_operations(_define_prepare_capabilities()[1]())
+    # An operation without a run context or a model request context builds its schema on a separate path.
+    collect_capability_operations(_NoteOperation())
     assert read_classes == []
 
     def take_note(note: _DocumentedNote) -> str:
