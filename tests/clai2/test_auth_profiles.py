@@ -502,7 +502,7 @@ def test_chains_and_profiles_take_their_model_settings(tmp_path: Path) -> None:
     assert (context.model_settings('chain:pool') or {}).get('openai_reasoning_effort') == 'medium'
     source = ModelSettingsSource(store, 'chain:pool', settings_as=context.settings_model('chain:pool'))
     rows = {row.key: row for row in source.rows()}
-    assert rows['service_tier'].label == 'Service Tier / Fast Mode'
+    assert source.current(rows['openai_codex_speed']) == 'ultrafast'
     assert source.current(rows['openai_reasoning_effort']) == 'medium'
     summary = model_settings_summary(store=store, model='chain:pool', settings_as=context.settings_model('chain:pool'))
     assert 'Reasoning' in summary
@@ -516,7 +516,7 @@ async def test_shell_runs_a_chain_of_codex_accounts(tmp_path: Path, monkeypatch:
         [
             '/chain pool openai-codex:test',  # chains are made in the /model picker now
             '/model chain:pool',
-            '/fast',
+            '/fast on',
             'hello',
             '/exit',
         ],
@@ -538,11 +538,11 @@ async def test_shell_runs_a_chain_of_codex_accounts(tmp_path: Path, monkeypatch:
     )
     text = output.getvalue()
     assert 'Usage: /model chains. Create, edit, rename, and delete fallback chains in its picker.' in text
-    assert 'Fast mode on for chain:pool' in text
+    assert 'Codex speed fast for chain:pool' in text
     assert 'openai-codex:test answered' in text
     # `ModelFallback` resolves a later model only once the run falls back to it.
     assert resolved == ['openai-codex:test']
-    assert store.model_settings('chain:pool') == {'service_tier': 'priority'}
+    assert store.model_settings('chain:pool') == {'openai_codex_speed': 'fast'}
 
 
 @pytest.mark.parametrize('stock', [False, True])
@@ -552,12 +552,12 @@ async def test_shell_chain_falls_back_with_its_settings(
     """A stock agent binds `ModelFallback` itself, so its delegated tasks fall back too; another agent gets it per run."""
     store = SettingsStore(tmp_path / 'config.db')
     store.save_chain(name='pool', models=['openai-codex:test', 'openai-codex@work:test'])
-    inputs(monkeypatch, ['/model chain:pool', '/fast', 'hello', '/exit'])
+    inputs(monkeypatch, ['/model chain:pool', '/fast on', 'hello', '/exit'])
     tiers: list[tuple[str, object]] = []
 
     def model(self: CodexAuth, name: str) -> FunctionModel:
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-            tiers.append((name, (info.model_settings or {}).get('service_tier')))
+            tiers.append((name, (info.model_settings or {}).get('openai_codex_speed')))
             if name == 'openai-codex:test':
                 raise ModelHTTPError(status_code=429, model_name=name, body='usage limit reached')
             yield f'{name} answered'
@@ -574,7 +574,7 @@ async def test_shell_chain_falls_back_with_its_settings(
         console=Console(file=output, width=200),
     )
     assert 'openai-codex@work:test answered' in output.getvalue()
-    assert tiers == [('openai-codex:test', 'priority'), ('openai-codex@work:test', 'priority')]
+    assert tiers == [('openai-codex:test', 'fast'), ('openai-codex@work:test', 'fast')]
 
 
 def test_key_users_cover_profile_connections() -> None:

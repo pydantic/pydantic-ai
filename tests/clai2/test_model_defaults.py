@@ -36,6 +36,7 @@ def test_defaults_apply_without_saved_preferences(tmp_path: Path, provider: str,
         'openai_reasoning_mode': 'standard',
         'openai_reasoning_summary': 'detailed',
         'openai_text_verbosity': 'low',
+        **({'openai_codex_speed': 'ultrafast'} if provider == 'openai-codex' else {}),
     }
     assert context.store.model_settings(model) == {}
 

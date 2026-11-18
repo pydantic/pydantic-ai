@@ -136,6 +136,22 @@ To mirror the official Codex client's prompt-cache affinity, [`OpenAICodexModel`
 
 The Codex backend caches prompts implicitly and rejects the explicit prompt caching fields of the OpenAI API, so the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting, [`CachePoint`][pydantic_ai.messages.CachePoint]s, and `openai_cache_instructions` have no effect.
 
+## Speed
+
+Like the Codex CLI's `/fast` and `/ultrafast` commands, the [`openai_codex_speed`][pydantic_ai.models.openai_codex.OpenAICodexModelSettings.openai_codex_speed] setting picks how fast the model runs, by sending the `service_tier` the Codex CLI sends for it: `'fast'` sends `priority`, `'ultrafast'` sends `ultrafast`, and `'standard'` sends `default`. Faster speeds use more of your plan's usage, and their availability depends on the model and your account.
+
+```python {title="codex_speed.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai_codex import OpenAICodexModelSettings
+
+agent = Agent(
+    'openai-codex:gpt-5.6-luna',
+    model_settings=OpenAICodexModelSettings(openai_codex_speed='ultrafast'),
+)
+```
+
+The speed takes precedence over the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] setting, and an explicit [`openai_service_tier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_service_tier] wins over it.
+
 ## Continuing on the OpenAI API
 
 The Codex backend and the OpenAI API accept each other's encrypted reasoning and compaction items, so a conversation can move between [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel] and an [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] on the OpenAI API, in either direction, without losing them: both have the `openai` [canonical system](../message-history.md#sending-history-to-another-provider). After a compaction, the other model continues from the compaction item rather than from the full earlier history. Response and item IDs stay with the provider that issued them. The OpenAI API ignores reasoning encrypted for another organization, which a ChatGPT plan's usually is, without failing the request.

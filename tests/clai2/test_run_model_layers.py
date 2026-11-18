@@ -193,6 +193,7 @@ CASES = [
                 'openai_reasoning_mode': 'standard',
                 'openai_reasoning_summary': 'detailed',
                 'openai_text_verbosity': 'low',
+                'openai_codex_speed': 'ultrafast',
                 'thinking': True,
             }
         ),
@@ -229,6 +230,7 @@ CASES = [
                 'openai_reasoning_mode': 'standard',
                 'openai_reasoning_summary': 'detailed',
                 'openai_text_verbosity': 'medium',
+                'openai_codex_speed': 'ultrafast',
                 'thinking': True,
             }
         ),
@@ -309,6 +311,7 @@ async def test_capability_settings_beat_defaults_not_overrides(tmp_path: Path) -
                     'openai_reasoning_context': 'all_turns',
                     'openai_reasoning_mode': 'standard',
                     'openai_reasoning_summary': 'detailed',
+                    'openai_codex_speed': 'ultrafast',
                     'openai_text_verbosity': 'medium',
                     'thinking': True,
                 },

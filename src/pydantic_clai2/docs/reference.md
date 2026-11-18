@@ -27,7 +27,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/model settings [NAME]` | Edit a saved model's request and thinking settings |
 | `/model chains` | Open the `/model` picker on its fallback chains (alias `/chain`) |
 | `/effort [VALUE\|reset]` | View or set the active model's reasoning effort |
-| `/fast [on\|off]` | Codex priority processing, shown only for `openai-codex:` models |
+| `/fast [on\|off\|ultrafast]` | Codex speed (ultrafast by default), shown only for `openai-codex:` models |
 | `/login [NAME[@PROFILE]]` | Sign in: `openai-codex`, `github-copilot`, or one a plugin adds; `@PROFILE` adds another account |
 | `/accounts` | Add, rename, reorder, and sign out of accounts |
 | `/keys` | Manage saved API keys |
@@ -719,22 +719,23 @@ does the same, with a file list and the drafts to edit first. A plugin's own
 by them, and CLAI says so.
 
 First select `openai-codex:gpt-6-astra` with `/model`, then open `/model settings openai-codex:gpt-6-astra`
-(or your saved Codex model), then **Service Tier / Fast Mode**. Choose
-**Fast (priority)** to request fast processing, or **Standard (default)** to
-turn it off. [Codex fast mode](https://developers.openai.com/codex/speed)
-uses more ChatGPT credits and depends on model and account availability. It does
-not lower reasoning effort. Reset restores the existing model default; it does
-not enable fast mode. The stored values remain `service_tier=priority` and
-`service_tier=default`, so older CLAI versions can read them. A custom
-`service_tier` body parameter still takes precedence.
+(or your saved Codex model), then **Speed**. CLAI defaults Codex models to
+**ultrafast**; choose **fast** for priority processing, or **standard** to turn
+both off. [Codex speeds](https://developers.openai.com/codex/speed) use more
+ChatGPT credits and depend on model and account availability. They do not lower
+reasoning effort. Reset restores the ultrafast default. A `service_tier` saved by
+an older CLAI's `/fast` keeps applying instead of that default until you choose a
+speed. The speed overrides the **Service Tier** row, and a custom `service_tier`
+body parameter still takes precedence over both.
 
 While the active model starts with `openai-codex:`, `/fast` toggles between
-priority and standard processing. `/fast on` and `/fast off` select explicitly.
-It saves the active model's service tier for subsequent prompts and sessions,
-without changing reasoning effort or other preferences. It is absent from help
-and Tab completion on other models, and typing it there reports an unknown command.
-If a custom `service_tier` parameter is set, `/fast` asks you to remove it first
-with `/model settings` rather than saving an ineffective change.
+ultrafast and standard. `/fast on` selects fast, `/fast off` standard, and
+`/fast ultrafast` ultrafast. It saves the active model's speed for subsequent
+prompts and sessions, without changing reasoning effort or other preferences. It
+is absent from help and Tab completion on other models, and typing it there
+reports an unknown command. If a custom `service_tier` parameter is set, `/fast`
+asks you to remove it first with `/model settings` rather than saving an
+ineffective change.
 
 Model preferences are shared across checkouts. Reading saved preferences ignores
 unknown fields, so newer settings do not break an older reader with this

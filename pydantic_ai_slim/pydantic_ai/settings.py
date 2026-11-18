@@ -126,7 +126,8 @@ with `'flex_only'` or `'priority_only'`. Likewise, provider-specific values not 
 routing tiers, and Groq's `'performance'`) are reachable only through the per-provider field.
 
 Per-provider settings (`openai_service_tier`, `anthropic_service_tier`, `bedrock_service_tier`,
-`google_cloud_service_tier`, `groq_service_tier`) always take precedence over this unified field when set.
+`google_cloud_service_tier`, `groq_service_tier`, and the OpenAI Codex `openai_codex_speed`) always take precedence over
+this unified field when set.
 """
 
 
@@ -723,7 +724,7 @@ class ModelSettings(TypedDict, total=False):
     See [`ServiceTier`][pydantic_ai.settings.ServiceTier] for the value semantics and
     the per-provider mapping table. Provider-specific settings (`openai_service_tier`,
     `anthropic_service_tier`, `bedrock_service_tier`, `google_cloud_service_tier`,
-    `groq_service_tier`) take precedence over this unified field when set.
+    `groq_service_tier`, `openai_codex_speed`) take precedence over this unified field when set.
 
     Supported by:
 
