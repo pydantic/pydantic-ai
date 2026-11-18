@@ -197,3 +197,12 @@ def test_the_computer_tool_schema_requires_type_first_and_only_names_it_declares
     )
     # Every required name must exist: Gemini rejects a schema that requires an undeclared property.
     assert all(set(definition['required']) <= set(definition['properties']) for definition in schema.values())
+
+
+@pytest.mark.parametrize('seconds', [float('inf'), float('nan')])
+def test_a_duration_must_be_finite(seconds: float) -> None:
+    # JSON can't hold it, so a saved history would lose the action.
+    with pytest.raises(ValidationError, match='finite number'):
+        Wait(seconds=seconds)
+    with pytest.raises(ValidationError, match='finite number'):
+        HoldKeys(keys=('shift',), seconds=seconds)

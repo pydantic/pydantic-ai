@@ -47,7 +47,7 @@ class DockerContainer(AbstractCapability[AgentDepsT]):
     """The image for a new container, such as `'python:3.13-slim'`; it needs a POSIX `sh` and the usual file utilities.
 
     Without one, the capability only attaches to and removes containers by ref, and leaves a run without a ref
-    to the agent's other workspace capabilities.
+    to the agent's other workspace capabilities, unless `desktop` is set: then it builds the desktop image.
     """
 
     working_dir: str | None = '/workspace'
