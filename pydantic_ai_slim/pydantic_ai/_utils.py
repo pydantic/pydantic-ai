@@ -25,7 +25,7 @@ from collections.abc import (
     Mapping,
 )
 from concurrent.futures import Executor
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import aclosing, asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
@@ -596,12 +596,12 @@ class _TemporalGroupsContext(Generic[T]):
     task: asyncio.Task[T] | None = None
 
 
-async def _ungrouped_items(context: _TemporalGroupsContext[T]) -> AsyncIterator[list[T]]:
+async def _ungrouped_items(context: _TemporalGroupsContext[T]) -> AsyncGenerator[list[T]]:
     async for item in context.aiterator:
         yield [item]
 
 
-async def _debounced_groups(context: _TemporalGroupsContext[T], soft_max_interval: float) -> AsyncIterator[list[T]]:
+async def _debounced_groups(context: _TemporalGroupsContext[T], soft_max_interval: float) -> AsyncGenerator[list[T]]:
     assert soft_max_interval >= 0, 'soft_max_interval must be a positive number'
     buffer: list[T] = []
     group_start_time: float | None = None
@@ -686,7 +686,12 @@ async def group_by_temporal(
     """
     context = _TemporalGroupsContext(aiter(aiterable))
     try:
-        yield _ungrouped_items(context) if soft_max_interval is None else _debounced_groups(context, soft_max_interval)
+        # A consumer that leaves early drops the groups generator still suspended, and a reference cycle can keep it
+        # alive until the garbage collector finalizes it in a detached `aclose()` task, at an arbitrary later point.
+        async with aclosing(
+            _ungrouped_items(context) if soft_max_interval is None else _debounced_groups(context, soft_max_interval)
+        ) as groups:
+            yield groups
     finally:
         await _cleanup_temporal_group(context.task, context.aiterator)
 
