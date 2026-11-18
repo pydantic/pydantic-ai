@@ -45,6 +45,7 @@ from pydantic_clai2.runtime.imported_history import (
     framed,
     imported_context,
     imported_kind,
+    imported_summary,
     is_typed_prompt,
     number,
     obj,
@@ -113,8 +114,8 @@ _COMPACTED = (
     'follows, which only OpenAI can read, and the messages after it.'
 )
 _COMPACTED_LOCALLY = (
-    'Codex compacted the conversation above at this point: from here on, its model saw only the messages that '
-    'follow, its summary among them.'
+    'Codex compacted the conversation above at this point: from here on, its model saw only the summary that '
+    'follows, and the messages after it.'
 )
 _STOPPED = 'Stopped in Codex before it answered. Its history is saved: resume it to continue.'
 """The output of a sub-agent that never finished in Codex."""
@@ -184,8 +185,9 @@ def _first_typed(item: JsonObject) -> str:
 def messages(path: Path) -> list[ModelMessage]:
     """The history the session's model saw, as Pydantic AI messages, framed by notes on the change of harness.
 
-    History compacted away is kept ahead of the compaction, which a model of the `openai-codex` provider
-    continues from, as Codex's did, and other models read past, as the summary is not readable to them.
+    History compacted away is kept ahead of the compaction. A summary Codex wrote itself is an
+    `imported_summary`, which CLAI's compaction builds on. An encrypted one is for a model of the
+    `openai-codex` provider to continue from, as Codex's did, and for other models to read past.
     """
     # Task IDs derive from the session alone, and a report names no conversation, so none is needed here.
     session_id, agents = _agents(path, conversation_id='')
@@ -412,7 +414,7 @@ def _turn_start(part: ModelRequestPart) -> bool:
     """Whether `part` starts a turn Codex can roll back: a prompt or a message between agents, compaction-kept too.
 
     A rollback right after a compaction drops the prompts it kept, rather than reaching back past it, as
-    Codex's does; an encrypted summary stays, where Codex drops it with the last prompt it followed.
+    Codex's does; the summary stays, where Codex drops it with the last prompt it followed.
     """
     kind = imported_kind(part) or ''
     return (
@@ -434,7 +436,7 @@ def _compacted(history: HistoryBuilder, payload: JsonObject, *, at: datetime, mo
     if not replacement:
         # Older versions kept the readable summary alone.
         if summary := text(payload.get('message')):
-            history.request(imported_context(summary, source=SOURCE, kind='compaction_summary', at=at), at=at)
+            history.request(imported_summary(summary, source=SOURCE, at=at), at=at)
         return
     sealed = [
         item
@@ -449,35 +451,42 @@ def _compacted(history: HistoryBuilder, payload: JsonObject, *, at: datetime, mo
         details = {'type': 'compaction', 'encrypted_content': text(item.get('encrypted_content'))}
         part = CompactionPart(None, id=text(item.get('id')) or None, provider_name=PROVIDER, provider_details=details)
         history.respond(part, at=at, model_name=model, provider_name=PROVIDER)
-    _retained_context(history, replacement, sealed, at=at)
-
-
-def _retained_context(
-    history: HistoryBuilder, replacement: list[JsonObject], sealed: list[JsonObject], *, at: datetime
-) -> None:
-    """The items of a compaction's `replacement` other than its `sealed` summaries."""
+    retained: list[JsonObject] = []
     for item in replacement:
+        if summary := _local_summary(item):
+            # Ahead of the messages it kept, where CLAI's compaction puts its own summary.
+            history.request(imported_summary(summary, source=SOURCE, at=at), at=at)
+        elif item not in sealed:
+            retained.append(item)
+    _retained_context(history, retained, at=at)
+
+
+def _local_summary(item: JsonObject) -> str:
+    """The text of the summary Codex wrote when it compacted the history itself, or empty for any other item."""
+    if item.get('type') != 'message' or item.get('role') != 'user' or _first_typed(item):
+        return ''
+    summary = '\n\n'.join(body for block in objects(item.get('content')) if (body := text(block.get('text'))))
+    return summary if summary.lstrip().startswith(_SUMMARY_PREFIX) else ''
+
+
+def _retained_context(history: HistoryBuilder, retained: list[JsonObject], *, at: datetime) -> None:
+    """The items of a compaction's replacement other than its summaries."""
+    for item in retained:
         # Kept from before the summary, as the history above holds them too: as context on the user's channel.
-        content = _retained(item) if item not in sealed else []
+        content = _retained(item)
         body = '\n\n'.join(entry for entry in content if isinstance(entry, str))
         files = [entry for entry in content if not isinstance(entry, str)]
         if body or files:
-            kind = _retained_kind(item, body)
+            kind = _retained_kind(item)
             history.request(imported_context(body, source=SOURCE, kind=kind, files=files, at=at), at=at)
 
 
-def _retained_kind(item: JsonObject, body: str) -> str:
+def _retained_kind(item: JsonObject) -> str:
     """The `imported_context` kind of an item compaction kept, from its role or type, and whether it was typed."""
     kind = f'compaction_retained:{text(item.get("role")) or text(item.get("type"))}'
-    kinds = _kinds(item)
-    blocks = objects(item.get('content'))
-    if kind == _RETAINED_USER and not any(
-        _typed(t, kinds[index] if index < len(kinds) else '')
-        for index, block in enumerate(blocks)
-        if (t := text(block.get('text')))
-    ):
-        # A local compaction's summary, or Codex's own context, rather than a prompt it kept.
-        return 'compaction_summary' if body.lstrip().startswith(_SUMMARY_PREFIX) else _RETAINED_CONTEXT
+    if kind == _RETAINED_USER and not _first_typed(item):
+        # Codex's own context, rather than a prompt it kept.
+        return _RETAINED_CONTEXT
     return kind
 
 

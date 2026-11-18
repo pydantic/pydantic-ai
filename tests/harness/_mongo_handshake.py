@@ -20,11 +20,9 @@ from tests.harness.conftest import IsStr
 
 _OP_MSG = 2013
 
-# PyMongo joins its own entries and the harness's with `|`. From 4.19.0 it also gives every name
-# entry (`c`, `async`) a version slot, empty for those, so the separators between its version and
-# the harness's vary.
 HARNESS_DRIVER: dict[str, object] = {
     'name': IsStr(regex=r'PyMongo\|.*\|pydantic-ai-harness'),
+    # pymongo >= 4.19 adds an empty version segment for each built-in `|c` / `|async` name segment.
     'version': IsStr(regex=rf'{re.escape(pymongo.version)}\|+{re.escape(version("pydantic-ai-harness"))}'),
 }
 
