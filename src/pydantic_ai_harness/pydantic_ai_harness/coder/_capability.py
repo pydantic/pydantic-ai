@@ -26,7 +26,7 @@ from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT, Shell
 from pydantic_ai_harness.sub_agents import SubAgents, TaskControl
-from pydantic_ai_harness.sub_agents._control import ASK_PARENT_TOOL_NAME
+from pydantic_ai_harness.sub_agents._tasks import ASK_PARENT_TOOL_NAME
 from pydantic_ai_harness.sub_agents._toolset import CONTROL_TOOL_NAMES, delegation_depth
 from pydantic_ai_harness.tool_output_limits import Band, ToolOutputLimits, Truncate
 

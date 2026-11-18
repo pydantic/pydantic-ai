@@ -72,19 +72,19 @@ def _accumulated() -> chat_types.Response:
 
 
 def _tool_turns(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The sent messages that carry a server-side call or its result, with each id replaced by whether it pairs."""
+    """The sent messages that carry a server-side call or its result, with each call reduced to its function name and each id to whether it pairs."""
     turns: list[dict[str, Any]] = []
     for message in messages:
-        call_ids = [call['id'] for call in message.get('tool_calls', [])]
-        if not call_ids:
+        calls = message.get('tool_calls', [])
+        if not calls:
             continue
         turn: dict[str, Any] = {
             'role': message['role'],
-            'calls': len(call_ids),
+            'calls': [call['function']['name'] for call in calls],
             'encrypted_content': 'encrypted_content' in message,
         }
         if 'tool_call_id' in message:
-            turn['paired'] = message['tool_call_id'] == call_ids[0]
+            turn['paired'] = message['tool_call_id'] == calls[0]['id']
         turns.append(turn)
     return turns
 
@@ -92,14 +92,14 @@ def _tool_turns(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # The recorded follow-up answers, which quote rows only the search result held.
 FOLLOW_UP_OUTPUTS: dict[bool, str] = {
     False: """\
-1. [Python 3.15.0](/downloads/release/python-3150/) Oct. 9, 2026
-2. [Python 3.14.8](/downloads/release/python-3148/) Sept. 30, 2026
-3. [Python 3.14.7](/downloads/release/python-3147/) Aug. 5, 2026\
+Python 3.15.2 Oct. 25, 2026
+Python 3.15.1 Oct. 21, 2026
+Python 3.15.0 Oct. 9, 2026\
 """,
     True: """\
-1. [Python 3.15.0](/downloads/release/python-3150/) Oct. 9, 2026 [Download](/downloads/release/python-3150/) [Release notes](https://docs.python.org/release/3.15.0/whatsnew/changelog.html)
-2. [Python 3.14.8](/downloads/release/python-3148/) Sept. 30, 2026 [Download](/downloads/release/python-3148/) [Release notes](https://docs.python.org/release/3.14.8/whatsnew/changelog.html)
-3. [Python 3.14.7](/downloads/release/python-3147/) Aug. 5, 2026 [Download](/downloads/release/python-3147/) [Release notes](https://docs.python.org/release/3.14.7/whatsnew/changelog.html)\
+1. [Python 3.15.2](/downloads/release/python-3152/) Oct. 25, 2026 [Download](/downloads/release/python-3152/) [Release notes](https://docs.python.org/release/3.15.2/whatsnew/changelog.html)
+2. [Python 3.15.1](/downloads/release/python-3151/) Oct. 21, 2026 [Download](/downloads/release/python-3151/) [Release notes](https://docs.python.org/release/3.15.1/whatsnew/changelog.html)
+3. [Python 3.15.0](/downloads/release/python-3150/) Oct. 9, 2026 [Download](/downloads/release/python-3150/) [Release notes](https://docs.python.org/release/3.15.0/whatsnew/changelog.html)\
 """,
 }
 
@@ -129,6 +129,9 @@ async def test_xai_native_tool_result_replayed_paired(
 
     response = history[-1]
     assert isinstance(response, ModelResponse)
+    # xAI ran `open_page`, one of its web search functions, which the follow-up must send back by that name.
+    call_parts = [part for part in response.parts if isinstance(part, NativeToolCallPart)]
+    assert [part.provider_details for part in call_parts] == [{'function_name': 'open_page'}]
     return_parts = [part for part in response.parts if isinstance(part, NativeToolReturnPart)]
     assert return_parts
     assert all((part.provider_details or {}).get('encrypted_content') for part in return_parts)
@@ -148,8 +151,8 @@ async def test_xai_native_tool_result_replayed_paired(
     assert follow_up.output == FOLLOW_UP_OUTPUTS[stream]
     assert _tool_turns(get_sent_request_messages(xai_provider.client)[-1]) == snapshot(
         [
-            {'role': 'ROLE_ASSISTANT', 'calls': 1, 'encrypted_content': True},
-            {'role': 'ROLE_TOOL', 'calls': 1, 'paired': True, 'encrypted_content': True},
+            {'role': 'ROLE_ASSISTANT', 'calls': ['open_page'], 'encrypted_content': True},
+            {'role': 'ROLE_TOOL', 'calls': ['open_page'], 'paired': True, 'encrypted_content': True},
         ]
     )
 
@@ -509,4 +512,29 @@ async def test_xai_other_provider_tool_results_are_not_replayed(allow_model_requ
             {'content': [{'text': 'First answer.'}], 'role': 'ROLE_ASSISTANT'},
             {'content': [{'text': 'And now?'}], 'role': 'ROLE_USER'},
         ]
+    )
+
+
+async def test_xai_web_search_function_name_fallback(allow_model_requests: None):
+    """A web search call stored without `provider_details` is replayed as `web_search`.
+
+    Not a recorded test: calls stored before `XaiModel` kept the function name xAI ran in
+    `provider_details['function_name']` have no `provider_details`, which no current response produces.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='First question')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='web_search', args={'query': 'pydantic'}, tool_call_id='call_1', provider_name='xai'
+                ),
+                TextPart(content='First answer.'),
+            ],
+            model_name=XAI_REASONING_MODEL,
+            provider_name='xai',
+        ),
+    ]
+
+    assert _tool_turns(await _sent_messages(history)) == snapshot(
+        [{'role': 'ROLE_ASSISTANT', 'calls': ['web_search'], 'encrypted_content': False}]
     )
