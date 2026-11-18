@@ -10,11 +10,17 @@ mkdir -p /tmp/gh-aw/workflow-python
 cp -R .github/scripts/pydantic_ai_gh_aw_shim /tmp/gh-aw/workflow-python/
 # Keep workflow preferences separate from runner and repository preferences.
 export XDG_CONFIG_HOME=/tmp/gh-aw/clai2-config
-request_limit=$(PYTHONPATH=/tmp/gh-aw/workflow-python python3 -P -c \
-  'from pydantic_ai_gh_aw_shim.cli import run_request_limit; print(run_request_limit())')
-"$HOME/.local/bin/clai2" config set run.request_limit "$request_limit"
+# `clai2 config set` refuses run settings, since the agent can run clai2 from its shell (#13039).
+# This host step runs before the agent starts, so it writes the settings store directly.
+PYTHONPATH=/tmp/gh-aw/workflow-python python3 -P -c '
+from pydantic_ai_gh_aw_shim.cli import run_request_limit
+from pydantic_clai2.config.settings_store import SettingsStore
+
+store = SettingsStore()
+store.set("run.request_limit", run_request_limit())
+store.set("run.code_mode", False)
+'
 # The engine's `service.version`: the staged copy, which a later checkout of the workspace does not change.
 service_version=$(PYTHONPATH=/tmp/gh-aw/workflow-python python3 -P -c \
   'from pydantic_ai_gh_aw_shim.cli import source_digest; print(source_digest())')
 echo "service-version=${service_version}" >> "${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
-"$HOME/.local/bin/clai2" config set run.code_mode false

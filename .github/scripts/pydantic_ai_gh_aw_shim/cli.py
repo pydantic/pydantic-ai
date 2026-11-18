@@ -52,7 +52,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, 
 from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, TypeAlias, cast
+from typing import Annotated, Any, ClassVar, TypeAlias, cast
 from urllib.parse import urlparse
 
 import httpx2
@@ -89,6 +89,7 @@ from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     InstructionBaselinePart,
     ModelMessage,
     ModelRequest,
@@ -126,17 +127,6 @@ from . import (
 )
 from ._backends import local_workspace
 from .shared import logger, reset_context_state
-
-if TYPE_CHECKING:
-    from pydantic_ai.messages import CapabilityPart
-else:
-    try:
-        from pydantic_ai.messages import CapabilityPart
-    except ImportError:  # pragma: no cover
-
-        class CapabilityPart:
-            """Stands in when the released `pydantic-ai-slim` the workflow installs predates `CapabilityPart`."""
-
 
 # Type aliases for the public surface — the shim runs `None`-deps agents
 # throughout, so every `RunContext` is concretely `RunContext[object]`.
