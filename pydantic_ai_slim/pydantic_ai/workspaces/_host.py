@@ -412,8 +412,12 @@ class HostWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         return CommandResult(
             exit_code=exit_code,
             stdout=stdout_buffer.decode('utf-8', errors='replace'),
-            stderr=stderr_buffer.decode('utf-8', errors='replace'),
+            stderr=self._decode_stderr(stderr_buffer),
         )
+
+    @staticmethod
+    def _decode_stderr(data: bytes | bytearray) -> str:
+        return data.decode('utf-8', errors='replace')
 
     async def _start_dir(self, cwd: str | None) -> Path:
         """Where a command starts: `cwd`, else the working directory, which is checked to still exist either way."""

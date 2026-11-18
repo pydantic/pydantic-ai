@@ -13,6 +13,7 @@ from pathlib import Path
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import WindowsWorkspace
@@ -51,6 +52,13 @@ class TestWindowsCommands:
         result = await WindowsWorkspaceBackend(tmp_path).run('Get-Item missing.txt', shell=True)
         assert result.exit_code == 1
         assert 'missing.txt' in result.stderr
+
+    async def test_windows_powershell_errors_are_text(self, tmp_path: Path) -> None:
+        backend = WindowsWorkspaceBackend(tmp_path, powershell='powershell.exe')
+        result = await backend.run('Get-Item missing.txt', shell=True)
+        assert result.exit_code == 1
+        assert 'missing.txt' in result.stderr
+        assert 'CLIXML' not in result.stderr
 
     async def test_timeout_ends_the_whole_process_tree(self, tmp_path: Path) -> None:
         backend = WindowsWorkspaceBackend(tmp_path)
@@ -127,3 +135,37 @@ class TestWindowsCommands:
         assert result.workspace is not None
         assert result.workspace.ref == WorkspaceRef(provider='windows', id=str(tmp_path))
         assert result.workspace.platform == 'windows'
+
+
+def test_clixml_stderr_is_decoded() -> None:
+    """Windows PowerShell 5.1 writes its error stream as CLIXML when the script comes from `-EncodedCommand`."""
+    clixml = (
+        '[Console]::Error output\r\n'
+        '#< CLIXML\r\n'
+        '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">'
+        '<S S="Error">Get-Item : Cannot find path \'C:\\work\\missing.txt\' because it does not exist._x000D__x000A_</S>'
+        '<S S="Error">At line:4 char:1_x000D__x000A_</S>'
+        '<S S="Error">+ Get-Item missing.txt_x000D__x000A_</S>'
+        '<S S="Error">+ ~~~~~~~~~~~~~~~~~~~~_x000D__x000A_</S>'
+        '<S S="Error">    + CategoryInfo          : ObjectNotFound: (C:\\work\\missing.txt:String) [Get-Item], ItemNotFoundExcep _x000D__x000A_</S>'
+        '<S S="Error">   tion_x000D__x000A_</S>'
+        '<S S="Error">    + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetItemCommand_x000D__x000A_</S>'
+        '<S S="Error"> _x000D__x000A_</S>'
+        '<S S="Error">a &lt;b&gt; &amp; _x005F_x000A__x000D__x000A_</S>'
+        '</Objs>'
+    )
+    assert WindowsWorkspaceBackend._decode_stderr(clixml.encode()) == snapshot(  # pyright: ignore[reportPrivateUsage]
+        """\
+[Console]::Error output\r
+Get-Item : Cannot find path 'C:\\work\\missing.txt' because it does not exist.\r
+At line:4 char:1\r
++ Get-Item missing.txt\r
++ ~~~~~~~~~~~~~~~~~~~~\r
+    + CategoryInfo          : ObjectNotFound: (C:\\work\\missing.txt:String) [Get-Item], ItemNotFoundExcep \r
+   tion\r
+    + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetItemCommand\r
+ \r
+a <b> & _x000A_\r
+"""
+    )
+    assert WindowsWorkspaceBackend._decode_stderr(b'plain <S S="Error">text</S>\n') == 'plain <S S="Error">text</S>\n'  # pyright: ignore[reportPrivateUsage]

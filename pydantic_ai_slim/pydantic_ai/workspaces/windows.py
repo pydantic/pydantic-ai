@@ -9,6 +9,7 @@ from __future__ import annotations as _annotations
 import base64
 import errno
 import functools
+import html
 import ntpath
 import os
 import re
@@ -68,6 +69,11 @@ _EPILOGUE = '\nif ($?) { exit 0 } elseif ($LASTEXITCODE) { exit $LASTEXITCODE } 
 
 _POWERSHELL_FLAGS = ('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-OutputFormat', 'Text')
 
+_CLIXML_HEADER = re.compile(r'^#< CLIXML\r?\n', re.MULTILINE)
+_CLIXML_OBJECTS = re.compile(r'<Objs [^>]*>(.*?)</Objs>', re.DOTALL)
+_CLIXML_STRING = re.compile(r'<S S="[^"]*">([^<]*)</S>')
+_CLIXML_ESCAPE = re.compile(r'_x([0-9A-Fa-f]{4})_')
+
 _PROCESS_SET_QUOTA = 0x0100
 _PROCESS_TERMINATE = 0x0001
 
@@ -88,6 +94,20 @@ def powershell_script(script: str) -> str:
     detached job, so that it behaves like a command run directly.
     """
     return f'{_PREAMBLE}{script}{_EPILOGUE}'
+
+
+def _clixml_text(objects: re.Match[str]) -> str:
+    return ''.join(
+        _CLIXML_ESCAPE.sub(lambda escape: chr(int(escape[1], 16)), html.unescape(string))
+        for string in _CLIXML_STRING.findall(objects[1])
+    )
+
+
+def _decode_clixml(stderr: str) -> str:
+    """`stderr` with the CLIXML records Windows PowerShell writes for its error stream replaced by their text."""
+    if not _CLIXML_HEADER.search(stderr):
+        return stderr
+    return _CLIXML_OBJECTS.sub(_clixml_text, _CLIXML_HEADER.sub('', stderr))
 
 
 def _powershell_command(executable: str, script: str) -> list[str]:
@@ -268,6 +288,11 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
         if (job := _job_objects().assign(process.pid)) is not None:  # pragma: no branch
             self._jobs[process.pid] = job
         return process
+
+    @staticmethod
+    def _decode_stderr(data: bytes | bytearray) -> str:
+        # Windows PowerShell writes its error stream as CLIXML for an `-EncodedCommand` script.
+        return _decode_clixml(HostWorkspaceBackend._decode_stderr(data))
 
     def _kill_tree(self, process: anyio.abc.Process) -> tuple[PermissionError | None, PermissionError | None]:
         job = self._jobs.get(process.pid)
