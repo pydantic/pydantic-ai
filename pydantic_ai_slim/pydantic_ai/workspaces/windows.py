@@ -70,6 +70,7 @@ _EPILOGUE = '\nif ($?) { exit 0 } elseif ($LASTEXITCODE) { exit $LASTEXITCODE } 
 _POWERSHELL_FLAGS = ('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-OutputFormat', 'Text')
 
 _CLIXML_HEADER = re.compile(r'^#< CLIXML\r?\n', re.MULTILINE)
+_CLIXML_OPEN = '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">'
 _CLIXML_STRING = re.compile(r'<S S="[^"<>]*">([^<]*)</S>')
 _CLIXML_ESCAPE = re.compile(r'_x([0-9A-Fa-f]{4})_')
 
@@ -111,7 +112,7 @@ def _decode_clixml(stderr: str) -> str:
     pieces = [stderr[: header.start()]]
     position = header.end()
     # `str.find`, not a regex, so unclosed records can't make this quadratic.
-    while (start := stderr.find('<Objs ', position)) != -1 and (end := stderr.find('</Objs>', start)) != -1:
+    while (start := stderr.find(_CLIXML_OPEN, position)) != -1 and (end := stderr.find('</Objs>', start)) != -1:
         pieces += (stderr[position:start], _clixml_text(stderr[start:end]))
         position = end + len('</Objs>')
     pieces.append(stderr[position:])
@@ -229,7 +230,9 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
     The Windows counterpart of [`LocalWorkspaceBackend`][pydantic_ai.workspaces.LocalWorkspaceBackend], and
     like it, this isolates nothing: commands and absolute paths reach anywhere this process can. Paths are
     Windows paths (`C:\Users\me\project`), and a `shell=True` command runs in PowerShell: `pwsh` when it
-    is on `PATH`, else Windows PowerShell. Its exit code is the last native command's, as in `sh`.
+    is on `PATH`, else Windows PowerShell. Its exit code is the last native command's, as in `sh`, and the
+    CLIXML Windows PowerShell writes its errors as is decoded to text in its result's `stderr`; a timeout
+    or output-limit error's `stderr` is left as captured.
 
     Each command runs in a Windows Job Object, so a timeout or cancellation ends the processes it started
     along with it. A background job started with `Start-Process` stays in that Job Object: it outlives a

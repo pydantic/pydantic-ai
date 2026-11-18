@@ -102,13 +102,14 @@ def _startup_timed_out(error: BaseException, absolute_deadline: float | None) ->
 def _raise_command_timeout(
     timeout: float,
     stdout_buffer: bytearray,
-    stderr: str,
+    stderr_buffer: bytearray,
     *,
     error: TimeoutError,
     denial: PermissionError | None,
     child_denial: PermissionError | None,
 ) -> NoReturn:
     stdout = stdout_buffer.decode('utf-8', errors='replace')
+    stderr = stderr_buffer.decode('utf-8', errors='replace')
     if child_denial is not None:
         raise WorkspaceTimeoutError(
             f'command timed out after {timeout:g}s; killing its process group and the direct child '
@@ -402,12 +403,7 @@ class HostWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             # Without a command timeout, a `TimeoutError` is only a stalled reap's grace period.
             if isinstance(error, TimeoutError) and timeout is not None:
                 _raise_command_timeout(
-                    timeout,
-                    stdout_buffer,
-                    self._decode_stderr(stderr_buffer, shell=shell),
-                    error=error,
-                    denial=denial,
-                    child_denial=child_denial,
+                    timeout, stdout_buffer, stderr_buffer, error=error, denial=denial, child_denial=child_denial
                 )
             raise
         # A process can still finish after its working directory is deleted; don't report
@@ -420,7 +416,7 @@ class HostWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         )
 
     def _decode_stderr(self, data: bytes | bytearray, *, shell: bool) -> str:
-        """The text of a command's stderr, for its result and its timeout error."""
+        """The text of a finished command's stderr."""
         return data.decode('utf-8', errors='replace')
 
     async def _start_dir(self, cwd: str | None) -> Path:

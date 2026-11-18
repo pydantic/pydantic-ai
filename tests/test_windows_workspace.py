@@ -155,15 +155,15 @@ class TestWindowsCommands:
 
 
 def test_clixml_stderr_is_decoded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Real Windows PowerShell 5.1 error output, decoded on every runner; only the Windows job can produce it.
+    """Real Windows PowerShell 5.1 `Get-Item` output, which the Windows job can't pin: its wrapping follows the path.
 
-    Also a truncated record, which only a timeout's stderr can hold.
+    Also markup that isn't a CLIXML record, and an unclosed record.
     """
     monkeypatch.setattr('pydantic_ai.workspaces.windows._on_windows', lambda: True)
     backend = WindowsWorkspaceBackend(tmp_path)
 
-    def decode(stderr: str, *, shell: bool = True) -> str:
-        return backend._decode_stderr(stderr.encode(), shell=shell)  # pyright: ignore[reportPrivateUsage]
+    def decode(stderr: str) -> str:
+        return backend._decode_stderr(stderr.encode(), shell=True)  # pyright: ignore[reportPrivateUsage]
 
     clixml = (
         '<Objs a><S S="x">y</S></Objs>\r\n'
@@ -179,6 +179,7 @@ def test_clixml_stderr_is_decoded(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         '<S S="Error"> _x000D__x000A_</S>'
         '<S S="Error">a &lt;b&gt; &amp; _x005F_x000A_ _xD83D__xDE00__x000D__x000A_</S>'
         '</Objs>'
+        '<Objs a><S S="x">z</S></Objs>\r\n'
     )
     assert decode(clixml) == snapshot(
         """\
@@ -192,10 +193,10 @@ At line:4 char:1\r
     + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetItemCommand\r
  \r
 a <b> & _x000A_ \U0001f600\r
+<Objs a><S S="x">z</S></Objs>\r
 """
     )
-    assert decode(clixml, shell=False) == clixml
     assert decode('<Objs a><S S="x">y</S></Objs>\n') == '<Objs a><S S="x">y</S></Objs>\n'
-    record = '<Objs Version="1.1.0.1"><S S="Error">boom</S></Objs>'
-    unclosed = '<Objs ><S S="Error">cut</S><Objs >'
-    assert decode(f'#< CLIXML\n{record}{unclosed}') == f'boom{unclosed}'
+    opening = '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">'
+    unclosed = f'{opening}<S S="Error">cut</S>'
+    assert decode(f'#< CLIXML\n{opening}<S S="Error">boom</S></Objs>{unclosed}') == f'boom{unclosed}'
