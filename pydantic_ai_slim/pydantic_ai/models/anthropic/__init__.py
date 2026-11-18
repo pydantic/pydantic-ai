@@ -3360,9 +3360,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_defs_by_name={tool.name: tool for tool in model_request_parameters.function_tools},
             sent_computer=sent_computer,
         )
-        for part in (p for m in thread_history if isinstance(m, ModelResponse) for p in m.parts):
-            if isinstance(part, ToolCallPart):
-                self._map_tool_call_part(part, [], map_context)
+        self._map_held_tool_calls(thread_history, map_context)
         leading_request = None if continues_thread else next((m for m in messages if isinstance(m, ModelRequest)), None)
         for m in messages:
             if isinstance(m, ModelRequest):
@@ -3755,6 +3753,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             anthropic_messages.insert(insert_at, {'role': 'user', 'content': carried_thinking_params})
         if len(assistant_content_params) > 0:
             anthropic_messages.append({'role': 'assistant', 'content': assistant_content_params})
+
+    def _map_held_tool_calls(self, thread_history: Sequence[ModelMessage], map_context: _MapMessagesContext) -> None:
+        """Map the tool calls a thread holds, so a result in its new messages answers each member call its call was."""
+        for message in thread_history:
+            if isinstance(message, ModelResponse):
+                for part in message.parts:
+                    if isinstance(part, ToolCallPart):
+                        self._map_tool_call_part(part, [], map_context)
 
     def _map_tool_call_part(
         self,
