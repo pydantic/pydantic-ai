@@ -8,6 +8,13 @@ from importlib.abc import Loader, MetaPathFinder
 from importlib.machinery import ModuleSpec
 from importlib.util import spec_from_loader
 from types import ModuleType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pydantic_ai_pax import DEFAULT_PLUGINS, Session, StreamRenderer, chat, create_agent, open_stock_agent
+
+__all__ = ['DEFAULT_PLUGINS', 'Session', 'StreamRenderer', 'chat', 'create_agent', 'open_stock_agent']
+"""`pydantic_ai_pax.__all__`, copied so that importing this package stays light."""
 
 _ALIAS = f'{__name__}.'
 _ENTRY_POINT = f'{__name__}.__main__'
@@ -18,12 +25,11 @@ def _deprecated(old: str, new: str) -> None:
 
 
 def __getattr__(name: str) -> object:
-    package = importlib.import_module('pydantic_ai_pax')
-    # Only its exports: a submodule it happens to hold, such as `__main__`, is not this package's.
-    if name not in package.__all__:
+    # Only its exports: a submodule `pydantic_ai_pax` happens to hold, such as `__main__`, is not this package's.
+    if name not in __all__:
         raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
     _deprecated(f'{__name__}.{name}', f'pydantic_ai_pax.{name}')
-    return getattr(package, name)
+    return getattr(importlib.import_module('pydantic_ai_pax'), name)
 
 
 class _Alias(MetaPathFinder, Loader):
