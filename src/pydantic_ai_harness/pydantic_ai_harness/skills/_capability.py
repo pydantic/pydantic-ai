@@ -35,6 +35,7 @@ from pydantic_ai_harness.skills._loader import (
     SkillDefinition,
     SkippedSkill,
     UnknownNames,
+    catalog_description,
     load_skill_libraries,
     same_skill,
     skip_duplicate_name,
@@ -88,7 +89,7 @@ class _Skill(AbstractCapability[AgentDepsT]):
     def __init__(self, skill: SkillDefinition) -> None:
         self.id = skill.name
         # Continuation lines are indented so a multiline description doesn't read as separate catalog entries.
-        self.description = _catalog_description(skill).replace('\n', '\n  ')
+        self.description = catalog_description(skill).replace('\n', '\n  ')
         self.defer_loading = True
         self.instructions = skill.render()
 
@@ -560,7 +561,7 @@ class Skills(AbstractCapability[AgentDepsT]):
             skills, skipped = await load_skill_libraries(
                 workspace,
                 source.directories,
-                include=_selection(source.include, only),
+                include=_selection(source.include, source.exclude, only),
                 exclude=source.exclude,
                 missing_directories=source.missing_directories,
                 duplicate_names=source.duplicate_names,
@@ -610,14 +611,6 @@ class Skills(AbstractCapability[AgentDepsT]):
         return advice
 
 
-def _catalog_description(skill: SkillDefinition) -> str:
-    """The text the model's catalog lists for `skill`: its description, then its `when_to_use`."""
-    if skill.when_to_use is None:
-        return skill.description
-    # Appended verbatim, Claude Code style: the author writes the trigger clause, e.g. 'Use when ...'.
-    return f'{skill.description} {skill.when_to_use}'
-
-
 async def _read_text(entry: _Entry, path: str) -> str:
     """The text of `path` in `entry`'s skill directory, refusing a path that leads outside it."""
     skill, workspace, directory = entry.skill.name, entry.workspace, entry.skill.directory
@@ -660,7 +653,7 @@ def _flagged(scanner: ArtifactScanner | None, skill: SkillDefinition) -> Skipped
     if scanner is None:
         return None
     # Scan exactly what reaches the model: the catalog entry, including `when_to_use`, and the body.
-    scan = scanner.scan(f'{_catalog_description(skill)}\n\n{skill.body}', source=f'skill:{skill.name}')
+    scan = scanner.scan(f'{catalog_description(skill)}\n\n{skill.body}', source=f'skill:{skill.name}')
     if not scan.flagged:
         return None
     return SkippedSkill(
@@ -671,11 +664,17 @@ def _flagged(scanner: ArtifactScanner | None, skill: SkillDefinition) -> Skipped
     )
 
 
-def _selection(include: frozenset[str] | None, only: frozenset[str] | None) -> frozenset[str] | None:
-    """The names a configuration selects, narrowed to `only` when that's given."""
+def _selection(
+    include: frozenset[str] | None, exclude: frozenset[str], only: frozenset[str] | None
+) -> frozenset[str] | None:
+    """The names a configuration includes, narrowed to `only` when that's given.
+
+    The loader ignores `exclude` once there's an `include` set, so narrowing to `only` takes the exclusions out here:
+    a name read again in one library mustn't bring back a skill that library excluded.
+    """
     if only is None:
         return include
-    return only if include is None else include & only
+    return only - exclude if include is None else include & only
 
 
 async def _lowered(entries: dict[str, _Entry]) -> frozenset[str]:

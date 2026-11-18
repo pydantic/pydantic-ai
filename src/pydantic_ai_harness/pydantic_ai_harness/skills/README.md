@@ -168,8 +168,8 @@ below `'operator'`
 [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority),
 such as one in a repository the operator doesn't control, stays out of it. The
 instructions point the model at two tools instead: it calls
-`list_skills` for their names and descriptions and `load_skill` for one's
-instructions. Both reach it as tool output rather than as your instructions.
+`list_skills` for their names and descriptions, with any `when_to_use` as the
+catalog shows it, and `load_skill` for one's instructions. Both reach it as tool output rather than as your instructions.
 This costs a tool call when a task may need a skill. The tools offer the skills
 the run started with, read again on each call, and a skill skipped on that read,
 such as one an artifact scan now flags, is reported to the model in the tool's

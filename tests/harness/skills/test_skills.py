@@ -531,6 +531,33 @@ class TestUntrustedWorkspaces:
             f"No skill is named 'alpha'. Call `list_skills` to see the skills.\nSkipped:\n- {skipped}",
         ]
 
+    async def test_a_skill_read_again_keeps_its_librarys_exclusions(self, tmp_path: Path) -> None:
+        # `first` excludes its `review`, so the run starts with `second`'s; reading `review` again mustn't bring back
+        # the one `first` excluded.
+        _write_skill(tmp_path / 'first', 'review', description='First review.', body='First directions.')
+        _write_skill(tmp_path / 'second', 'review', description='Second review.', body='Second directions.')
+        skills = _combined(Skills('first', exclude=['review']), Skills('second', duplicate_names='keep_first'))
+        model, requests, _ = _calling(ToolCallPart('list_skills', {}), ToolCallPart('load_skill', {'name': 'review'}))
+
+        await Agent(model, capabilities=[skills]).run('go', workspace=_untrusted(tmp_path))
+
+        assert _tool_results(requests) == [
+            {'skills': {'review': 'Second review.'}},
+            _loaded(tmp_path.resolve() / 'second', 'review', 'Second directions.'),
+        ]
+
+    async def test_list_skills_shows_when_to_use_as_the_catalog_does(self, tmp_path: Path) -> None:
+        _write_skill(
+            tmp_path / 'skills',
+            'review',
+            frontmatter='description: Review code.\nwhen_to_use: Use when asked to review.',
+        )
+        model, requests, _ = _calling(ToolCallPart('list_skills', {}))
+
+        await Agent(model, capabilities=[Skills('skills')]).run('go', workspace=_untrusted(tmp_path))
+
+        assert _tool_results(requests) == [{'skills': {'review': 'Review code. Use when asked to review.'}}]
+
     async def test_a_tool_call_without_the_runs_copy_reads_every_library(self, tmp_path: Path) -> None:
         # As in a durable engine's activity in another process, which doesn't hold the run's copy.
         _write_skill(tmp_path / 'skills', 'alpha', description='Alpha help.')
