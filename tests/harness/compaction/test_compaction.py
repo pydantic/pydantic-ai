@@ -778,7 +778,7 @@ class TestSlidingWindowCompaction:
 
         def tokenizer(text: str) -> int:
             if 'REJECTED' in text:
-                raise ValueError('disallowed text')  # pragma: no cover - the point is it never runs
+                raise ValueError('disallowed text')  # pragma: no cover
             counted.append(text)
             return len(text)
 
