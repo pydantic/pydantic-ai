@@ -864,7 +864,7 @@ The local tool is found by its kind, not its name. The native tool is sent when 
 
 Here the desktop comes from a Docker container, and `ComputerUse` adds the `computer` tool and its native tool:
 
-```py {title="computer_tool.py" test="skip" typecheck="skip - `ComputerUse` and a desktop `DockerContainer` come with later PRs"}
+```py {title="computer_tool.py" test="skip" typecheck="skip - ComputerUse and a desktop DockerContainer come with later PRs"}
 from pydantic_ai_harness import ComputerUse, DockerContainer
 
 from pydantic_ai import Agent
