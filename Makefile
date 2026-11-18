@@ -8,7 +8,7 @@
 # files, so syncing `griffe` 1.x away deletes them, and uv does not notice they are missing.
 .PHONY: install
 install: .uv ## Install the package, dependencies, and pre-commit for local development
-	uv sync --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --reinstall-package griffelib
+	uv sync --frozen --all-extras --all-packages --group lint --reinstall-package griffelib
 	@if command -v pre-commit >/dev/null 2>&1; then \
 		pre-commit install --install-hooks; \
 	else \
@@ -17,15 +17,15 @@ install: .uv ## Install the package, dependencies, and pre-commit for local deve
 
 .PHONY: install-all-python
 install-all-python: ## Install and synchronize an interpreter for every python version
-	UV_PROJECT_ENVIRONMENT=.venv311 uv sync --python 3.11 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --reinstall-package griffelib
-	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --reinstall-package griffelib
-	UV_PROJECT_ENVIRONMENT=.venv313 uv sync --python 3.13 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --reinstall-package griffelib
-	UV_PROJECT_ENVIRONMENT=.venv314 uv sync --python 3.14 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --reinstall-package griffelib
-	UV_PROJECT_ENVIRONMENT=.venv315 uv sync --python 3.15 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --reinstall-package griffelib
+	UV_PROJECT_ENVIRONMENT=.venv311 uv sync --python 3.11 --frozen --all-extras --all-packages --group lint --reinstall-package griffelib
+	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --all-packages --group lint --reinstall-package griffelib
+	UV_PROJECT_ENVIRONMENT=.venv313 uv sync --python 3.13 --frozen --all-extras --all-packages --group lint --reinstall-package griffelib
+	UV_PROJECT_ENVIRONMENT=.venv314 uv sync --python 3.14 --frozen --all-extras --all-packages --group lint --reinstall-package griffelib
+	UV_PROJECT_ENVIRONMENT=.venv315 uv sync --python 3.15 --frozen --all-extras --all-packages --group lint --reinstall-package griffelib
 
 .PHONY: sync
 sync: .uv ## Update local packages and uv.lock
-	uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint --reinstall-package griffelib
+	uv sync --all-extras --all-packages --group lint --reinstall-package griffelib
 
 .PHONY: format
 format: ## Format the code
@@ -81,11 +81,11 @@ test: ## Run tests without coverage (fast, for local dev)
 
 .PHONY: test-all-python
 test-all-python: ## Run tests on Python 3.11 to 3.15
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv314 uv run --python 3.14 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv315 uv run --python 3.15 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv314 uv run --python 3.14 --all-extras --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv315 uv run --python 3.15 --all-extras --all-packages coverage run -p -m pytest
 	@uv run coverage combine
 	@uv run coverage report
 
@@ -100,30 +100,30 @@ testcov: ## Run tests with coverage and generate an HTML report
 
 .PHONY: integration-localstack
 integration-localstack: ## Run the harness LocalStack tests (needs Docker and LOCALSTACK_AUTH_TOKEN)
-	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/localstack
+	uv run --all-packages --all-extras pytest src/pydantic_ai_harness/integration_tests/localstack
 
 .PHONY: integration-mongodb
 integration-mongodb: ## Run the harness MongoDB tests (`docker run -d -p 27017:27017 mongo:8`, or set MONGODB_TEST_URL)
-	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/mongodb
+	uv run --all-packages --all-extras pytest src/pydantic_ai_harness/integration_tests/mongodb
 
 .PHONY: integration-postgres
 integration-postgres: ## Run the harness Postgres tests (`docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:17`, or set POSTGRES_TEST_URL)
-	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/postgres
+	uv run --all-packages --all-extras pytest src/pydantic_ai_harness/integration_tests/postgres
 
 .PHONY: integration-redis
 integration-redis: ## Run the harness Redis tests (`docker run -d -p 6379:6379 redis:8`, or set REDIS_TEST_URL)
-	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/redis
+	uv run --all-packages --all-extras pytest src/pydantic_ai_harness/integration_tests/redis
 
 .PHONY: integration-azure-durable-task
 integration-azure-durable-task: ## Run the harness Azure Durable Task tests (`docker run -d -p 8080:8080 -p 8082:8082 mcr.microsoft.com/dts/dts-emulator:v0.0.9`, or set AZURE_DURABLE_TASK_TEST_ENDPOINT)
-	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/azure_durable_task
+	uv run --all-packages --all-extras pytest src/pydantic_ai_harness/integration_tests/azure_durable_task
 
 .PHONY: integration-bubblewrap
 integration-bubblewrap: ## Run the harness BubblewrapWorkspace tests, those that need a working `bwrap` included (set BWRAP_REQUIRE_LIVE=1 to fail rather than skip them without one)
-	uv run --all-packages --all-extras --no-extra mcp-tasks pytest tests/harness/bubblewrap_sandbox
+	uv run --all-packages --all-extras pytest tests/harness/bubblewrap_sandbox
 .PHONY: integration-kubernetes
 integration-kubernetes: ## Run the harness Kubernetes sandbox tests against real sandboxd (`GOBIN=$$PWD/.bin go install sigs.k8s.io/agent-sandbox/packages/sandboxd/cmd/sandboxd@v1.0.7`, then set SANDBOXD_BIN)
-	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/kubernetes/test_live_sandboxd.py
+	uv run --all-packages --all-extras pytest src/pydantic_ai_harness/integration_tests/kubernetes/test_live_sandboxd.py
 
 # The cluster's credentials go to their own file, even when KUBECONFIG is set, so the current kubectl context is never touched.
 KUBERNETES_LIVE_KUBECONFIG ?= $(HOME)/.kube/pydantic-ai-live
@@ -131,7 +131,7 @@ KUBERNETES_LIVE_KUBECONFIG ?= $(HOME)/.kube/pydantic-ai-live
 .PHONY: integration-kubernetes-cluster
 integration-kubernetes-cluster: ## Run the harness Kubernetes sandbox live tier on a kind cluster it creates or reuses, with agent-sandbox's newest release and staging sandboxd (needs Docker, kind and kubectl; delete it with `kind delete cluster --name pydantic-ai-live`)
 	KUBECONFIG="$(KUBERNETES_LIVE_KUBECONFIG)" tests/harness/kubernetes_sandbox/cluster/up.sh
-	KUBECONFIG="$(KUBERNETES_LIVE_KUBECONFIG)" PYDANTIC_AI_HARNESS_KUBERNETES_LIVE=1 uv run --all-packages --all-extras --no-extra mcp-tasks pytest -m kubernetes_live tests/harness/kubernetes_sandbox
+	KUBECONFIG="$(KUBERNETES_LIVE_KUBECONFIG)" PYDANTIC_AI_HARNESS_KUBERNETES_LIVE=1 uv run --all-packages --all-extras pytest -m kubernetes_live tests/harness/kubernetes_sandbox
 
 .PHONY: update-examples
 update-examples: ## Update documentation examples
