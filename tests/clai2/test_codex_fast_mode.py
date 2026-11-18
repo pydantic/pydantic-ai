@@ -152,6 +152,7 @@ async def test_speed_reaches_codex_request(
     assert result.output == 'done'
     assert len(bodies) == 1
     assert bodies[0]['service_tier'] == tier
+    assert bodies[0]['stream'] is True and bodies[0]['store'] is False
     reasoning = bodies[0]['reasoning']
     assert isinstance(reasoning, dict) and reasoning['effort'] == 'medium'
 

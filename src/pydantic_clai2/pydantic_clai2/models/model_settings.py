@@ -28,7 +28,10 @@ ULTRAFAST_CODEX_MODELS = frozenset(
 )
 """Codex models that offer the Ultrafast speed, per https://developers.openai.com/codex/speed."""
 
-_CODEX_SERVICE_TIERS: dict[str, Literal['default', 'priority', 'ultrafast']] = {
+CodexSpeed = Literal['standard', 'fast', 'ultrafast']
+"""A Codex speed, as the Codex CLI's `/fast` and `/ultrafast` select it."""
+
+_CODEX_SERVICE_TIERS: dict[CodexSpeed, Literal['default', 'priority', 'ultrafast']] = {
     'standard': 'default',
     'fast': 'priority',
     'ultrafast': 'ultrafast',
@@ -83,7 +86,7 @@ class ModelSettingsForm(BaseModel):
     openai_text_verbosity: Literal['low', 'medium', 'high'] | None = Field(
         default=None, description='OpenAI answer verbosity.'
     )
-    codex_speed: Literal['standard', 'fast', 'ultrafast'] | None = Field(
+    codex_speed: CodexSpeed | None = Field(
         default=None,
         description=(
             'Codex speed. Fast and ultrafast use more ChatGPT credits; availability depends on your model and '

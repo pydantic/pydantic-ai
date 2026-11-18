@@ -172,7 +172,7 @@ def _fast_command(
 
     No argument toggles standard and the model's default speed, ultrafast where it is offered, else fast.
     """
-    from pydantic_clai2.models.model_settings import model_defaults, model_settings_from_json
+    from pydantic_clai2.models.model_settings import CodexSpeed, model_defaults, model_settings_from_json
 
     if args not in ([], ['on'], ['off'], ['ultrafast']):
         raise ValueError('Usage: /fast [on|off|ultrafast]')
@@ -181,13 +181,14 @@ def _fast_command(
     custom = saved.get('custom_params')
     if isinstance(custom, dict) and any(key.partition('.')[0] == 'service_tier' for key in custom):
         raise ValueError('Custom service_tier overrides the Codex speed. Remove it with /model settings first.')
+    speeds: dict[str, CodexSpeed] = {'on': 'fast', 'off': 'standard', 'ultrafast': 'ultrafast'}
     if args:
-        speed = {'on': 'fast', 'off': 'standard'}.get(args[0], args[0])
+        speed = speeds[args[0]]
     else:
         settings_as = context.settings_model(model)
         form = model_settings_from_json(saved, model=settings_as)
         active = form.codex_speed or ('fast' if form.service_tier == 'priority' else 'standard')
-        on = model_defaults(model=settings_as).get('codex_speed', 'fast')
+        on = 'ultrafast' if model_defaults(model=settings_as).get('codex_speed') == 'ultrafast' else 'fast'
         speed = on if active == 'standard' else 'standard'
     store.save_model_settings(model, {**saved, 'codex_speed': speed})
     return f'Codex speed {speed} for {model}. Applies on the next prompt.' + (

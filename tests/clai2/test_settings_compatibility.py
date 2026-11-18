@@ -582,6 +582,40 @@ def test_codex_speed_labels_preserve_existing_preferences(tmp_path: Path, tier: 
     assert source.current(row) == 'default'
 
 
+@pytest.mark.parametrize(
+    ('stored', 'tier'),
+    [
+        pytest.param('{"service_tier":"default"}', 'default', id='fast-off'),
+        pytest.param('{"service_tier":"priority"}', 'priority', id='fast-on'),
+        pytest.param('{"max_tokens":64}', 'ultrafast', id='unrelated'),
+    ],
+)
+def test_codex_speed_default_keeps_saved_tiers(tmp_path: Path, stored: str, tier: str) -> None:
+    """A tier an older CLAI's `/fast` saved outranks the ultrafast default; other rows gain it."""
+    path = tmp_path / 'config.db'
+    SettingsStore(path)
+    name = 'openai-codex:gpt-6-astra'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('INSERT INTO model_settings VALUES (?, ?)', (name, stored))
+    settings = model_settings_from_json(SettingsStore(path).model_settings(name), model=name).to_model_settings() or {}
+    assert (settings.get('openai_service_tier') or settings.get('service_tier')) == tier
+    assert SettingsStore(path).model_settings(name) == json.loads(stored)
+
+
+def test_codex_speed_survives_edits_to_other_settings(tmp_path: Path) -> None:
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    name = 'openai-codex:gpt-6-astra'
+    original: dict[str, JsonValue] = {'codex_speed': 'fast', 'future_option': 42}
+    store.save_model_settings(name, original)
+    source = ModelSettingsSource(SettingsStore(path), name)
+    row = FieldMenu(source).row_for('openai_reasoning_effort')
+    assert row is not None and source.apply(row, 'high').startswith('Saved')
+    assert SettingsStore(path).model_settings(name) == {**original, 'openai_reasoning_effort': 'high'}
+    settings = model_settings_from_json(SettingsStore(path).model_settings(name), model=name).to_model_settings()
+    assert settings is not None and settings.get('openai_service_tier') == 'priority'
+
+
 def test_saved_coder_declarations_keep_delegation_off(tmp_path: Path) -> None:
     """A `coder` saved before `sub_agents` existed keeps its previous delegation opt-out."""
     store = SettingsStore(tmp_path / 'settings.db')
