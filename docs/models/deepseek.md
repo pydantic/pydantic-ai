@@ -66,6 +66,8 @@ agent = Agent(model)
 
 OpenAI-compatible providers also accept a legacy `httpx.AsyncClient` during Pydantic AI v2, but emit a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.
 
+DeepSeek only enforces [strict tool definitions](../tools-advanced.md#strict-mode) on its beta base URL, and accepts but ignores `strict` on the default one. To use strict mode, pass a client for that URL: `DeepSeekProvider(openai_client=AsyncOpenAI(base_url='https://api.deepseek.com/beta', api_key=...))`.
+
 ## Structured output and thinking
 
 `deepseek-flash` and DeepSeek's V4 models think by default, and DeepSeek rejects a forced tool choice while thinking is on, answering `Thinking mode does not support this tool_choice`. Pydantic AI therefore sends `tool_choice='auto'` on those requests, which leaves the model free to answer in prose instead of calling the output tool — on `deepseek-v4-pro` that costs a retry often enough to exhaust the retry budget. Turn thinking off when you need [structured output](../output.md) to be reliable, and forcing is used again:

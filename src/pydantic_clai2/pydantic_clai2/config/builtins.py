@@ -16,6 +16,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu'),
     PluginSettings(id='repo_context', factory='pydantic_clai2.builtin_plugins.repo_context'),
     PluginSettings(id='compaction', factory='pydantic_clai2.builtin_plugins.compaction', settings={}),
+    PluginSettings(id='refinement', factory='pydantic_clai2.builtin_plugins.refinement'),
     PluginSettings(id='persistence', factory='pydantic_clai2.runtime.sessions'),
     PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire'),
     PluginSettings(id='notifications', factory='pydantic_clai2.builtin_plugins.notifications'),
@@ -36,6 +37,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='aoe', factory='pydantic_clai2.builtin_plugins.aoe', enabled=False),
     PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', enabled=False),
     PluginSettings(id='workspaces', factory='pydantic_clai2.builtin_plugins.workspaces', enabled=False),
+    PluginSettings(id='sandbox', factory='pydantic_clai2.builtin_plugins.sandbox'),
 )
 """Built-in declarations, each integrated with the shell. `remove` restores their defaults.
 

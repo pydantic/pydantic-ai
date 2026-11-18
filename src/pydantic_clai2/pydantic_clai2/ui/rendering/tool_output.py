@@ -14,7 +14,7 @@ from rich.console import Console, Group
 from rich.text import Text
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2.config import ToolCallDisplay
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
@@ -191,7 +191,7 @@ class ToolOutput:
         self.tool_calls = tool_calls
         self._shells: dict[str | None, ShellPreview] = {}
         self._headers: set[tuple[str | None, str]] = set()
-        self._writes: dict[tuple[str | None, str, str], FileChangeRequestEvent] = {}
+        self._writes: dict[tuple[str | None, str, str], FileChangeRequestedEvent] = {}
 
     def _header(self, name: str, argument: str) -> None:
         if name == 'shell':
@@ -278,7 +278,7 @@ class ToolOutput:
         preview = self._shells.pop(event.tool_call_id, ShellPreview())
         if preview.pending and preview.completed_lines < self.shell_lines:
             self._shell_line(preview)
-        omitted = max(0, event.total_lines - preview.shown) if event.total_lines is not None else 0
+        omitted = max(0, event.line_count - preview.shown) if event.line_count is not None else 0
         if omitted:
             self.console.print(f'Truncated {omitted} lines', style=theme.color(theme.MUTED))
         state = f'exit {event.exit_code}' if event.exit_code is not None else 'running in background'
@@ -330,7 +330,7 @@ class ToolOutput:
                     self._shells.pop(event.tool_call_id, None)
                     return True
                 self._shell_finished(event)
-            case FileChangeRequestEvent():
+            case FileChangeRequestedEvent():
                 if event.operation == 'write':
                     self._writes[event.tool_call_id, event.root_dir, event.path] = event
             case FileEditedEvent():

@@ -17,6 +17,7 @@ from typing import IO, Any
 import anyio
 import anyio.lowlevel
 import pytest
+from e2b import SandboxNetworkOpts
 from e2b.exceptions import (
     AuthenticationException,
     InvalidArgumentException,
@@ -40,6 +41,8 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
 from .fake_e2b import FakeCommandHandle, FakeE2B, _HostCommandHandle  # pyright: ignore[reportPrivateUsage]
+
+posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 def _user_line(launch: str) -> str:
@@ -134,6 +137,16 @@ class TestCreate:
         # The most E2B's Hobby plan allows, pausing rather than killing at the end of it.
         assert (call.template, call.timeout, call.envs, call.lifecycle) == (None, 3_600, None, {'on_timeout': 'pause'})
         assert call.allow_internet_access is True
+        assert call.network is None
+
+    async def test_network_options_pass_through(self, fake_e2b: FakeE2B) -> None:
+        network: SandboxNetworkOpts = {
+            'rules': {'api.github.com': [{'transform': {'headers': {'Authorization': 'token secret'}}}]}
+        }
+        await started(network=network)
+        assert fake_e2b.create_calls[-1].network == network
+        # The value never reaches the sandbox's environment.
+        assert fake_e2b.create_calls[-1].envs is None
 
     @pytest.mark.parametrize(
         ('error', 'message'),
@@ -300,6 +313,7 @@ class TestRun:
         assert 'kill -KILL -' in commands.group_stops[0]
         assert 'pydantic-e2b-pgid-' in launch
 
+    @posix_only
     async def test_host_fake_reaps_unfinished_commands_and_closes_output(
         self, fake_e2b: FakeE2B, tmp_path: Path
     ) -> None:
@@ -313,6 +327,7 @@ class TestRun:
         assert process.poll() is not None
         assert handle._out.closed and handle._err.closed  # pyright: ignore[reportPrivateUsage]
 
+    @posix_only
     async def test_host_fake_close_ends_background_children_of_a_finished_launcher(
         self, fake_e2b: FakeE2B, tmp_path: Path
     ) -> None:
@@ -350,6 +365,7 @@ class TestRun:
         assert all(stream.closed for stream in opened)
 
     @pytest.mark.parametrize('delay_ack', [False, True])
+    @posix_only
     async def test_group_stop_ends_a_real_child(
         self, fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delay_ack: bool
     ) -> None:
@@ -386,6 +402,7 @@ class TestRun:
             for handle in fake_e2b.sandboxes[0].commands.handles:
                 handle.close()
 
+    @posix_only
     async def test_timed_out_command_leaves_no_registration_files(self, fake_e2b: FakeE2B, tmp_path: Path) -> None:
         fake_e2b.host_root = tmp_path
         backend = await started()
@@ -396,6 +413,7 @@ class TestRun:
         assert match is not None
         assert not Path(match.group()).exists()
 
+    @posix_only
     async def test_cancel_before_remote_start_fences_late_start_and_retry(
         self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -729,6 +747,7 @@ class TestWorkingDir:
 
 
 class TestFilesystem:
+    @posix_only
     async def test_files_and_commands_share_user(self, fake_e2b: FakeE2B, tmp_path: Path) -> None:
         fake_e2b.host_root = tmp_path
         backend = await started()
@@ -793,6 +812,7 @@ class TestFilesystem:
             ('pkg', '/srv/pkg', True, None),
         ]
 
+    @posix_only
     async def test_symlinks_report_their_target(self, fake_e2b: FakeE2B, tmp_path: Path) -> None:
         fake_e2b.host_root = tmp_path
         (tmp_path / 'data.txt').write_bytes(b'12345')
@@ -809,6 +829,7 @@ class TestFilesystem:
             'to-file': (False, 5),
         }
 
+    @posix_only
     async def test_list_dir_resolves_symlinks_concurrently_in_order(
         self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -877,6 +898,7 @@ class TestFilesystem:
         entry = await backend.stat('/srv/link')
         assert (entry.is_dir, entry.size) == (False, None)
 
+    @posix_only
     async def test_remove_refuses_the_working_dir_and_its_ancestors(self, fake_e2b: FakeE2B, tmp_path: Path) -> None:
         # envd's remove is recursive, so `.` would take the whole working directory.
         root = tmp_path.resolve() / 'work'
@@ -891,6 +913,7 @@ class TestFilesystem:
         await workspace.remove('child')
         assert sorted(root.iterdir()) == []
 
+    @posix_only
     async def test_remove_deletes_a_dangling_symlink(self, fake_e2b: FakeE2B, tmp_path: Path) -> None:
         # envd's stat follows the link and reports it missing; the link itself must still go.
         fake_e2b.host_root = tmp_path.resolve()
@@ -909,6 +932,7 @@ class TestFilesystem:
             with pytest.raises(WorkspaceTimeoutError, match="Could not remove '/tmp/missing': the E2B sandbox"):
                 await backend.remove('/tmp/missing')
 
+    @posix_only
     async def test_a_failed_remove_names_the_path(
         self, fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1112,6 +1136,7 @@ async def test_filesystem_first_use_preserves_auth_error(fake_e2b: FakeE2B) -> N
 
 
 @pytest.mark.skipif(os.path.exists('/proc/self/stat'), reason='the `ps` fallback runs only without Linux `/proc`')
+@posix_only
 async def test_timeout_stops_a_command_run_with_a_different_locale(
     fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1215,6 +1240,7 @@ def _path_without_ps(tmp_path: Path) -> str:
     return str(bin_dir)
 
 
+@posix_only
 async def test_a_template_without_ps_keeps_stderr_clean(fake_e2b: FakeE2B, tmp_path: Path) -> None:
     fake_e2b.host_root = tmp_path
     backend = await started(env={'PATH': _path_without_ps(tmp_path)})
@@ -1257,6 +1283,7 @@ async def test_timeout_stops_a_command_on_a_template_without_ps(fake_e2b: FakeE2
 
 
 @pytest.mark.skipif(shutil.which('perl') is None, reason="leaves its process group with Perl's `setpgrp`")
+@posix_only
 async def test_a_leader_stop_reaches_a_command_that_left_its_group(fake_e2b: FakeE2B, tmp_path: Path) -> None:
     # Without `setsid` only the leader is stopped; one that later moves to its own group is still that leader.
     fake_e2b.host_root = tmp_path

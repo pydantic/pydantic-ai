@@ -114,7 +114,10 @@ def inject_clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
     still pass: route new time reads through `pydantic_ai._utils.now_utc`.
     """
     CLOCK.now = START
-    # Build the history schema first: built after the swap, it would see the clock's `datetime` subclass.
+    # Build the history schema first: built after the swap, it would see the clock's `datetime` subclass. Rebuilt, so
+    # it knows every capability part kind defined since it was first built, which would otherwise get an adapter of
+    # their own built after the swap.
+    ModelMessagesTypeAdapter.rebuild(force=True)
     ModelMessagesTypeAdapter.validate_json(b'[]')
     for name, module in list(sys.modules.items()):
         if name.startswith('pydantic_ai') and getattr(module, 'datetime', None) is _real_datetime:
@@ -676,6 +679,8 @@ async def run_conversation(
         replays: list[bytes] = []
         for _ in range(2):
             clock.now = replay_at
+            # Response IDs count `sent`, and a replay that sends two requests echoes its first ID in the second.
+            del transport.sent[len(conversation) :]
             transport.script = [Turn(text=scenario.replay_text)]
             await run('Anything more?', message_history=history, **scenario.run_kwargs)
             replays.append(transport.sent[-1])

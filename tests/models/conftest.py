@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Coroutine, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+import httpx2
 import pytest
-from pydantic import JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue
 from pytest_mock import MockerFixture
 
 from ..conftest import RequestCapture, try_import
@@ -145,6 +146,42 @@ def cache_breakpoints(body: dict[str, JsonValue]) -> tuple[dict[str, JsonValue] 
             if block.get('cache_control') or block.get('prompt_cache_breakpoint'):
                 blocks.append(f'messages[{message_index}].content[{block_index}]')
     return cache_control, blocks
+
+
+def mock_downloads(
+    monkeypatch: pytest.MonkeyPatch,
+    handle_request: Callable[[httpx2.Request], httpx2.Response]
+    | Callable[[httpx2.Request], Coroutine[None, None, httpx2.Response]],
+) -> None:
+    """Route file URL downloads through an `httpx2.MockTransport`, so the real download path runs.
+
+    A test in a module that records cassettes also needs `@pytest.mark.vcr(ignore_hosts=[...])` for the mocked
+    host, so the request reaches the mock transport instead of a recording. Use a public IP literal as the host:
+    SSRF validation accepts it without a DNS lookup, which would need the network and is a blocking call.
+    """
+
+    def create_http_client(*, timeout: float | httpx2.Timeout) -> httpx2.AsyncClient:
+        # A fresh client per download: each download closes the client it was given.
+        return httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
+
+    monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', create_http_client)
+
+
+class InfAsString(BaseModel):
+    model_config = ConfigDict(ser_json_inf_nan='strings')
+    value: float
+
+
+def items_serialized_differently_inside_a_list() -> list[object]:
+    """Tool return items whose JSON inside a list differs from their JSON alone unless each is dumped by itself.
+
+    A model whose own config writes `inf` as a string, keys that collide once dumped, and a 254-level item one
+    level short of the serializer's depth limit.
+    """
+    deep: object = {'leaf': 1}
+    for _ in range(253):
+        deep = {'child': deep}
+    return [InfAsString(value=float('inf')), {1: 'a', '1': 'b'}, deep]
 
 
 def stream_bedrock_converse_mock(mocker: MockerFixture, client: Any) -> None:

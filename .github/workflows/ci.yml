@@ -62,7 +62,7 @@ jobs:
 
   classify:
     name: classify changes
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: read
       pull-requests: read
@@ -259,7 +259,7 @@ jobs:
     name: quality checks
     needs: classify
     if: needs.classify.outputs.content_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     # `pull-requests: read` is for the lock-regeneration guard's PR file listing. Reading
     # it works today on `contents: read` alone only because this repo is public; declaring
     # it keeps the step working on a private fork or mirror.
@@ -271,18 +271,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.13"
           enable-cache: true
           cache-suffix: lint
 
-      # `--no-extra mcp-tasks` everywhere `--all-extras` appears: the extra lives in the
-      # FastMCP 4 / MCP SDK v2 lock fork, which `tool.uv.conflicts` bars from co-installing
-      # with the FastMCP 3 dev environment (the `test-fastmcp-4` job covers that universe).
       - name: Install dependencies
         id: install
-        run: uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
+        run: uv sync --all-extras --all-packages --group lint
 
       - name: Test GitHub agentic workflow policy
         env:
@@ -290,6 +287,7 @@ jobs:
         run: >-
           uv run pytest
           .github/scripts/test_pydantic_ai_runner.py
+          .github/scripts/test_workflow_agent.py
           .github/scripts/test_review_lifecycle.py
           .github/scripts/test_pre_agent_steps_tag_fetch.py
           .github/scripts/test_agent_provider_health.py
@@ -304,19 +302,26 @@ jobs:
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
+          .github/scripts/test_pr_guard.py
           .github/scripts/test_pr_gates.py
           .github/scripts/test_douwebot_config_approval.py
           .github/scripts/test_douwebot_usage_limit.py
           .github/scripts/test_douwebot_opencode_run.py
           .github/scripts/test_douwebot_opencode_result.py
+          .github/scripts/test_pr_review_checks.py
+          .github/scripts/test_run_pr_review_check.py
+          .github/scripts/test_publish_pr_review_checks.py
+          .github/scripts/test_gh_aw_opencode_detect.py
           .github/scripts/test_size_label.py
           .github/scripts/test_ci_content_classifier.py
-          .github/scripts/test_ui_security_detection.py
           .github/scripts/test_gh_aw_engine_pin_bump.py
           .github/scripts/test_clai2_web_bundle.py
           .github/scripts/test_shard_durations.py
           .github/scripts/test_ci_matrix.py
           scripts/test_gather_pydantic_ai_review_context.py
+
+      - name: Test threat detector telemetry
+        run: node --test .github/scripts/test_detector_telemetry.cjs .github/scripts/test_workflow_telemetry.cjs
 
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
       # answer here silently stops type errors reaching a developer's terminal.
@@ -418,10 +423,61 @@ jobs:
 
       # The full Pyright check runs here, not in pre-commit. With `CI` set, `make typecheck-changed`
       # hands the whole project to `make typecheck-pyright`, under the `PYRIGHT_TIME_BUDGET` that only
-      # that script enforces. It runs whenever the install succeeded, so a failing pre-commit hook or
-      # policy check does not hide type errors.
+      # that script enforces. The check runs whenever the install succeeded, so a failing pre-commit
+      # hook or policy check does not hide type errors.
+      #
+      # A pull request checks with pyright-rs first: a Rust port of pyright's command-line check
+      # that prints pyright's output and exit code for the same command line and configuration, in
+      # about a fifth of the time (https://github.com/dsfaccini/pyright-rs). The release is pinned
+      # by tag and checksum, and used only when it ports the pyright version `uv.lock` installs, so a
+      # pyright bump is never checked by an older port. When the install or the pyright-rs check
+      # fails, pyright checks, and its result counts, so a pull request never fails on a pyright-rs
+      # mistake. A merge group checks with pyright alone, so a wrong pyright-rs pass never reaches
+      # `main`; a push to `main` checks with pyright too.
+      - name: Install pyright-rs
+        id: pyright-rs
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' }}
+        continue-on-error: true
+        env:
+          PYRIGHT_RS_RELEASE: v1.1.414-1
+          PYRIGHT_RS_SHA256: 8eacc246abfabff2bfc1d2735b756050047471b1468cb29a7ddcf42c56ae3cdc
+          PYRIGHT_PYTHON_IGNORE_WARNINGS: "1"
+          UV_NO_SYNC: "1"
+        run: |
+          trap 'echo "::warning title=pyright-rs::Installing pyright-rs failed, so pyright checks this run."' ERR
+          name="pyright-rs-$PYRIGHT_RS_RELEASE-x86_64-unknown-linux-gnu"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/$name.tar.gz" \
+            "https://github.com/dsfaccini/pyright-rs/releases/download/$PYRIGHT_RS_RELEASE/$name.tar.gz"
+          echo "$PYRIGHT_RS_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          ported=$("$RUNNER_TEMP/$name/pyright-rs" --version)
+          locked=$(uv run pyright --version)
+          if [ "$ported" != "$locked" ]; then
+            echo "::notice title=pyright-rs::pyright-rs ports $ported but uv.lock installs $locked, so pyright checks this run."
+            exit 0
+          fi
+          echo "path=$RUNNER_TEMP/$name/pyright-rs" >> "$GITHUB_OUTPUT"
+
+      - name: Type-check with pyright-rs
+        id: pyright-rs-check
+        if: ${{ !cancelled() && steps.pyright-rs.outputs.path != '' }}
+        continue-on-error: true
+        env:
+          PYRIGHT: ${{ steps.pyright-rs.outputs.path }}
+          # A failure here only hands the check to pyright and its own budget below, so a slowdown
+          # fails the pull request only when pyright shows it too. On 2026-11-12 eight runners each
+          # checked one pull request with both (https://github.com/pydantic/pydantic-ai/actions/runs/43321752660):
+          # pyright-rs took 35.3 to 47.6 s (median 40.0 s), and pyright 6.0 to 6.6 times as long. 55
+          # is pyright's 370 s budget divided by the highest of those ratios, so a pyright-rs run that
+          # points to a pyright run over that budget hands the check to pyright. It is about 1.15x the
+          # slowest of those pyright-rs runs, and a run 1.5x their median exceeds it.
+          PYRIGHT_TIME_BUDGET: "55"
+          UV_NO_SYNC: "1"
+        run: make typecheck-changed
+
       - name: Type-check with Pyright
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' && steps.pyright-rs-check.outcome != 'success' }}
         env:
           # The `Makefile` leaves pyright single-process by default, for laptops where a worker
           # per core swaps. A runner has the memory, and this step is the longest in the job, so
@@ -456,7 +512,15 @@ jobs:
           # (146 pull request, 20 merge queue, 15 `main`) ran 145 to 288 s (median 231 s, p95 254 s,
           # p99 274 s); 280 keeps about 10% above that p95, and 1 of the 146 pull request runs
           # exceeded it.
-          PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '280' || '' }}
+          # From 2026-11-09 to 12 the step ran 169 to 335 s over 100 `main` push runs (median 249 s,
+          # p95 300 s), and three pull request runs failed on the 280 s budget at 291 to 307 s with
+          # zero type errors. No change is known to explain the rise from the 2026-10-29 to 30 median
+          # of 231 s. 370 is about 1.1x the `main` maximum. Passing `main` runs now reach the 328 s of
+          # #8077's fastest regressed run, so the budget no longer fails that absolute range; #8077 took
+          # the median from 88.5 s to at least 3.7x that, and a run 1.5x today's median fails 370.
+          # A pull request reaches this step only when pyright-rs did not run or did not pass. The
+          # budget times this step alone, so a pyright-rs run before it never counts against it.
+          PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '370' || '' }}
           UV_NO_SYNC: "1"
         run: make typecheck-changed
 
@@ -496,16 +560,16 @@ jobs:
     name: cognitive complexity
     needs: classify
     if: needs.classify.outputs.content_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           # The base is `HEAD^1`: on a pull request, the base branch tip its merge commit was made on;
           # on a push or a merge group, the commit before it on the branch.
           fetch-depth: 2
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-suffix: complexity
@@ -520,13 +584,13 @@ jobs:
       needs.classify.outputs.content_only != 'true'
       && needs.classify.outputs.clai2_only != 'true'
       && needs.classify.outputs.harness_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-suffix: mypy
@@ -541,13 +605,13 @@ jobs:
   docs-assets:
     needs: classify
     if: needs.classify.outputs.content_only != 'true' || needs.classify.outputs.docs_changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-suffix: docs-assets
@@ -588,7 +652,7 @@ jobs:
     if: >-
       (needs.classify.outputs.content_only == 'true' || needs.classify.outputs.harness_only == 'true')
       && needs.classify.outputs.docs_changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     env:
       CI: true
@@ -600,14 +664,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.13"
           enable-cache: true
           cache-suffix: docs-only
 
       - name: Install documentation test dependencies
-        run: uv sync --all-extras --no-extra mcp-tasks --all-packages
+        run: uv sync --all-extras --all-packages
 
       - name: Check Markdown files
         uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
@@ -633,7 +697,7 @@ jobs:
     name: content checks
     needs: classify
     if: needs.classify.outputs.content_only == 'true' && needs.classify.outputs.docs_changed != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -650,7 +714,7 @@ jobs:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     needs: classify
     if: needs.classify.outputs.content_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -747,7 +811,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
@@ -768,7 +832,7 @@ jobs:
           assert importlib.util.find_spec('pymongo') is None, 'the base install must not include pymongo'
           assert importlib.util.find_spec('json_repair') is None, 'json-repair belongs to the coder and repair-tool-arguments extras'
           import pydantic_ai_harness, pydantic_ai_harness.media, pydantic_ai_harness.step_persistence
-          import pydantic_ai_harness.filesystem, pydantic_ai_harness.shell
+          import pydantic_ai_harness.file_system, pydantic_ai_harness.shell
           try:
               import pydantic_ai_harness.coder
           except ImportError as error:
@@ -779,9 +843,12 @@ jobs:
 
       - run: uv sync --only-dev
 
+      # A sync that selects two packages ignores root dependency groups, so `gh-aw-tracing` gets its own.
       - name: install harness and CLAI 2 test dependencies
         if: matrix.install.name == 'pydantic-ai-harness'
-        run: uv sync ${{ matrix.install.sync_command }}
+        run: |
+          uv sync ${{ matrix.install.sync_command }}
+          uv sync --inexact --only-group gh-aw-tracing
 
       # `-n logical`, not `-n auto`: when `psutil` is importable, xdist's `auto` counts
       # *physical* cores while `logical` counts every vCPU, which is what hyperthreaded
@@ -848,7 +915,7 @@ jobs:
   # few API calls; don't add `needs: classify` to save them.
   test-durations-baseline:
     name: fetch test durations baseline
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -939,7 +1006,7 @@ jobs:
       }})
     needs: [classify, test-durations-baseline]
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -976,10 +1043,10 @@ jobs:
       # jitter; the per-test report on the same cells surfaces anything new over 1s. List the tests over a budget from a
       # run's `--durations` with `scripts/list_over_budget_tests.py`.
       PYTEST_TEST_BUDGET_SECONDS: ${{ matrix.python-version == '3.13' && '8' || '' }}
-      # Per-module collection budget, also enforced by `tests/cost_guards.py`. The first module in a shard to import a
-      # dependency many modules share (`anthropic`, `openai`, `hypothesis`) is charged for it, up to 5s on these cells;
-      # 8s sits above that with headroom for runner jitter, and well below the 11-16s a module paid for importing
-      # `torch` at collection.
+      # Per-module collection budget, also enforced by `tests/cost_guards.py`. With it set, the guard imports the
+      # dependencies in its `SHARED_DEPENDENCIES` before collection, so each module is charged only for its own
+      # imports, not for being the first in its shard to import a shared one. 8s leaves headroom for runner jitter,
+      # and sits well below the 11-16s a module paid for importing `torch` at collection.
       PYTEST_COLLECT_BUDGET_SECONDS: ${{ matrix.python-version == '3.13' && '8' || '' }}
       # `tests/harness/absurd` runs on Absurd's schema; an unreachable server fails rather than skips.
       ABSURD_REQUIRE_LIVE: "1"
@@ -1029,7 +1096,7 @@ jobs:
             exit 1
           fi
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
@@ -1071,7 +1138,7 @@ jobs:
         continue-on-error: true
         run: |
           for i in 1 2 3; do
-            if uv run --all-extras --no-extra mcp-tasks python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
+            if uv run --all-extras python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
               exit 0
             fi
             echo "HF model download attempt $i failed; retrying in 15s..."
@@ -1122,7 +1189,7 @@ jobs:
           mapfile -t shard_args < "$RUNNER_TEMP/shard-args.txt"
           read -ra test_paths <<< "$TEST_PATHS"
           # `--store-durations` (from `pytest-split`) records this shard's durations for the next run.
-          uv run --all-packages --all-extras --no-extra mcp-tasks "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+          uv run --all-packages --all-extras "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec -m "not temporal" "${shard_args[@]}" "${test_paths[@]}" \
             --store-durations --clean-durations --durations-path "$RUNNER_TEMP/test-durations.json"
         env:
@@ -1160,7 +1227,7 @@ jobs:
         if: matrix.python-version == '3.14' && matrix.shard == 1
         run: >-
           env -u ABSURD_TEST_DATABASE_URL -u PGTASK_TEST_DATABASE_URL
-          uv run --all-packages --all-extras --no-extra mcp-tasks
+          uv run --all-packages --all-extras
           coverage run -m pytest
           tests/harness/absurd/test_absurd.py::TestDurability::test_replay_serves_cached_model_response
           tests/harness/pgtask/test_pgtask.py::TestReplay::test_model_response_served_from_checkpoint
@@ -1170,7 +1237,7 @@ jobs:
       # See the matching step in the `test` job.
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
-        run: uv run --all-packages --all-extras --no-extra mcp-tasks coverage combine
+        run: uv run --all-packages --all-extras coverage combine
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
 
@@ -1198,7 +1265,7 @@ jobs:
     name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
     needs: classify
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -1257,7 +1324,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
@@ -1281,7 +1348,7 @@ jobs:
 
       - name: install lowest resolution
         if: matrix.resolution == 'lowest'
-        run: uv sync --all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers --resolution lowest-direct
+        run: uv sync --all-packages --all-extras --no-extra sentence-transformers --resolution lowest-direct
         env:
           UV_FROZEN: "0"
 
@@ -1308,14 +1375,18 @@ jobs:
           # `DURABLE_EXEC_MANIFEST_FRESHNESS`: the manifest also walks the Harness engines, so a
           # harness change can leave it stale.
           if [[ "$HARNESS_ONLY" != "true" ]]; then
-            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }} \
               "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
           elif [[ "$DURABLE_EXEC_MANIFEST_FRESHNESS" == "true" ]]; then
-            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }} \
               "${runner[@]}" tests/durable_exec/test_durable_exec_contract_manifest.py
           fi
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
-            "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
+          # Only modules that mention Temporal can hold `temporal` tests (`tests/harness/conftest.py` enforces it), so the
+          # workers don't spend over a minute collecting the rest of `tests/harness` just to deselect it.
+          mapfile -t temporal_modules < <(git grep -liE 'temporal' -- 'tests/harness/**/test_*.py' 'tests/harness/test_*.py')
+          (( ${#temporal_modules[@]} )) || { echo '::error::No harness module mentions Temporal.'; exit 1; }
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }} \
+            "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal "${temporal_modules[@]}"
         env:
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
@@ -1334,7 +1405,7 @@ jobs:
           mv "$RUNNER_TEMP/render-cli/cli_v${RENDER_CLI_VERSION}" "$RUNNER_TEMP/render-cli/render"
           chmod +x "$RUNNER_TEMP/render-cli/render"
           export PATH="$RUNNER_TEMP/render-cli:$PATH"
-          uv run --all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers \
+          uv run --all-packages --all-extras --no-extra sentence-transformers \
             pytest --durations=5 tests/harness/render/test_local_runtime_live.py
         env:
           RENDER_CLI_VERSION: 2.28.0
@@ -1345,7 +1416,7 @@ jobs:
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
         run: >-
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }}
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }}
           coverage combine
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
@@ -1367,7 +1438,7 @@ jobs:
       }})
     needs: [classify, test-durations-baseline]
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -1405,7 +1476,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
@@ -1421,7 +1492,7 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: hf-${{ runner.os }}-stsb-bert-tiny-safetensors-f3cb857cba53019a20df283396bcca179cf051a4
 
-      - run: uv sync --all-packages --all-extras --no-extra mcp-tasks --resolution lowest-direct
+      - run: uv sync --all-packages --all-extras --resolution lowest-direct
         env:
           UV_FROZEN: "0"
 
@@ -1516,14 +1587,14 @@ jobs:
       needs.classify.outputs.content_only != 'true'
       && needs.classify.outputs.clai2_only != 'true'
       && needs.classify.outputs.harness_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.11"
           enable-cache: true
@@ -1545,7 +1616,7 @@ jobs:
       needs.classify.outputs.content_only != 'true'
       && needs.classify.outputs.clai2_only != 'true'
       && needs.classify.outputs.harness_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -1567,13 +1638,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-suffix: examples
 
-      - run: uv run --all-extras --no-extra mcp-tasks python tests/import_examples.py
+      - run: uv run --all-extras python tests/import_examples.py
 
   # `browser-use` pins every one of its dependencies exactly, so the workspace lock excludes it
   # (`exclude-dependencies` in pyproject.toml) and no other job installs it. This one installs it on
@@ -1583,7 +1654,7 @@ jobs:
     name: test harness browser-use
     needs: classify
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     env:
       CI: true
@@ -1595,7 +1666,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.13"
           enable-cache: true
@@ -1603,7 +1674,7 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: uv sync --all-packages --all-extras --no-extra mcp-tasks --group lint
+      - run: uv sync --all-packages --all-extras --group lint
       # `--no-config`: the project's `exclude-dependencies` would otherwise drop the package too.
       - run: uv pip install --no-config "browser-use>=0.13.6,<0.14"
       - run: uv run --no-sync coverage run -m pytest tests/harness/browser_use
@@ -1633,7 +1704,7 @@ jobs:
       github.ref_type != 'tag'
       && needs.classify.outputs.content_only != 'true'
       && needs.classify.outputs.clai2_changed == 'true'
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && vars.CI_LINUX_RUNNER || matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -1653,7 +1724,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.13"
           enable-cache: true
@@ -1674,6 +1745,62 @@ jobs:
             uv run --package pydantic-clai2 pytest "${tests[@]}"
           fi
 
+  # `WindowsWorkspaceBackend` and the PowerShell side of the harness's file and shell tools run only on
+  # Windows, and every other test job runs on Linux. Their coverage joins the rest in the `coverage` job.
+  test-windows-workspace:
+    name: test Windows workspace
+    needs: classify
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CI: true
+      COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.windows-workspace
+      # See `test-clai2-clipboard`: no Git-sourced dependency is installed here.
+      GIT_CONFIG_COUNT: "0"
+      GIT_CONFIG_KEY_0: ""
+      GIT_CONFIG_VALUE_0: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: windows-workspace
+
+      - run: mkdir .coverage
+
+      # `grep` and `list_files` run `rg`; the tests cover both its presence and its absence.
+      - run: choco install ripgrep --no-progress -y
+
+      - run: uv sync --only-dev
+
+      - name: run tests
+        run: uv run --package pydantic-clai2 coverage run -m pytest tests/test_windows_workspace.py tests/harness/coder/test_windows.py
+
+      # The remote-sandbox fakes run commands as POSIX processes on the host, so their suites must skip here.
+      - name: run sandbox backend tests
+        run: >-
+          uv run --package pydantic-ai-harness --group dev
+          --extra coder --extra render --extra modal --extra e2b --extra sprites --extra boxd --extra opensandbox --extra daytona
+          coverage run -m pytest
+          tests/harness/boxd_sandbox tests/harness/daytona_sandbox tests/harness/e2b_sandbox tests/harness/modal_sandbox
+          tests/harness/opensandbox_sandbox tests/harness/render_sandbox tests/harness/sprites_sandbox
+
+      # See the matching step in the `test` job.
+      - name: combine coverage files
+        run: uv run --package pydantic-clai2 coverage combine
+
+      - name: store coverage files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-windows-workspace
+          path: .coverage
+          include-hidden-files: true
+
   test-clai2-web:
     name: test clai2 web UI
     needs: classify
@@ -1685,69 +1812,106 @@ jobs:
       # `release-build` ships the bundle this builds on a tag.
       npm-cache: ${{ github.ref_type == 'tag' && 'false' || 'true' }}
 
-  test-fastmcp-4:
-    name: test FastMCP 4 compatibility
+  # The workspace locks FastMCP 4 / MCP SDK v2; `[mcp]` still allows FastMCP 3 (MCP SDK v1), so the
+  # tests whose behavior depends on the generation run here on its floor and on its newest release.
+  test-fastmcp-3:
+    name: test FastMCP 3 compatibility (${{ matrix.fastmcp.name }})
     needs: classify
-    if: >-
-      needs.classify.outputs.content_only != 'true'
-      && needs.classify.outputs.clai2_only != 'true'
-      && needs.classify.outputs.harness_only != 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        fastmcp:
+          # The `[mcp]` extra's floor. `pydantic-clai2` requires FastMCP 3.4.0 or later.
+          - name: "3.3.0"
+            spec: "==3.3.0"
+            skip: tests/clai2/
+          - name: latest
+            spec: ">=3,<4"
+            skip: ""
     env:
       CI: true
       COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
+      # See `test-durable-exec`: the Temporal workflow deadlock detector flakes under `-n logical`.
+      TEMPORAL_DEBUG: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.13"
           enable-cache: true
-          cache-suffix: fastmcp-4
+          cache-suffix: fastmcp-3
+
+      # The same cache `test-durable-exec`'s locked legs use; see that step.
+      - name: cache Temporal dev-server binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/temporal-dev-server
+          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-locked-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            temporal-cli-${{ runner.os }}-${{ runner.arch }}-locked-
 
       - run: mkdir .coverage
 
-      # Keep the normal matrix locked to FastMCP 3 while `--with` gives these tests an isolated
-      # FastMCP 4 environment without mutating the project environment.
-      # TODO: Drop these package-specific cutoffs after 2026-08-14, when the pinned artifacts clear
-      # the workspace's seven-day cooldown. Unrelated dependencies remain subject to the cooldown.
-      # uv only opts direct requirements into prereleases, so the two beta distributions that
-      # FastMCP pins transitively must also be named as direct requirements.
-      - run: >-
-          uv run
-          --all-extras
-          --no-extra mcp-tasks
-          --all-packages
-          --with "fastmcp[tasks]==4.0.0b2"
-          --with "fastmcp-slim==4.0.0b2"
-          --with "fastmcp-tasks==4.0.0b2"
-          --exclude-newer-package "fastmcp=2026-08-08T00:00:00Z"
-          --exclude-newer-package "fastmcp-slim=2026-08-08T00:00:00Z"
-          --exclude-newer-package "fastmcp-tasks=2026-08-08T00:00:00Z"
-          --exclude-newer-package "mcp=2026-08-08T00:00:00Z"
-          --exclude-newer-package "mcp-types=2026-08-08T00:00:00Z"
-          coverage run -m pytest
-          tests/test_mcp.py
-          tests/test_mcp_apps.py
-          tests/models/test_mcp_sampling.py
-          tests/test_conftest.py
+      # `--with` layers FastMCP 3 and the MCP SDK v1 it pins over the locked environment without
+      # mutating it. `--no-extra mcp-tasks`: that extra is FastMCP 4's tasks extension, which FastMCP 3
+      # doesn't use (it serves task-augmented tools itself).
+      # The modules are every test module that imports FastMCP or the MCP SDK, or a test server or
+      # helper whose behavior depends on the generation, so a new MCP test runs here without editing
+      # this job. A `conftest.py` match stands for its directory. A `pydantic-ai-harness`-only change
+      # runs only the harness modules. `tests/harness/test_history_append_only.py` is left out: it
+      # builds every harness capability, and under the overlay the non-MCP ones can't find their
+      # binaries and data files; each hosted MCP capability's own module runs here. `tests/durable_exec` runs with `BLOCKBUSTER_ENABLED=false`, as in
+      # `test-durable-exec`: Prefect writes its result cache from inside the event loop.
+      # `tests/test_conftest.py` tests BlockBuster itself, which skips in lanes that turn it off; this
+      # is the only BlockBuster-on lane that uploads coverage.
+      - name: run tests
+        shell: bash
+        run: |
+          run=(
+            uv run --all-extras --no-extra mcp-tasks --all-packages
+            --with "fastmcp${{ matrix.fastmcp.spec }}"
+            --with "fastmcp-slim${{ matrix.fastmcp.spec }}"
+            coverage run -m pytest -n logical --dist=loadgroup
+          )
+          pattern='^[[:space:]]*(from|import) (fastmcp|mcp)([.[:space:]]|$)|MCP_SDK_V2|_mcp_server import|mcp_task_server|counting_mcp|drop_fastmcp_client_spans|tests\.mcp_server|mcp\.server\.(mcpserver|fastmcp)'
+          mapfile -t modules < <({
+            git grep -lE "$pattern" -- 'tests/**/test_*.py' 'tests/test_*.py'
+            git grep -lE "$pattern" -- 'tests/**/conftest.py' | sed 's|/conftest\.py$||'
+            echo tests/test_conftest.py
+          } | sort -u)
+          durable=() other=()
+          for module in "${modules[@]}"; do
+            if [[ "$HARNESS_ONLY" == true && "$module" != tests/harness/* ]]; then continue; fi
+            if [[ -n "$SKIP" && "$module" == "$SKIP"* ]]; then continue; fi
+            if [[ "$module" == tests/harness/test_history_append_only.py ]]; then continue; fi
+            if [[ "$module" == tests/durable_exec/* ]]; then durable+=("$module"); else other+=("$module"); fi
+          done
+          (( ${#other[@]} )) || { echo '::error::No MCP test module matched.'; exit 1; }
+          printf '%s\n' "${other[@]}" "${durable[@]}"
+          "${run[@]}" "${other[@]}"
+          if (( ${#durable[@]} )); then BLOCKBUSTER_ENABLED=false "${run[@]}" "${durable[@]}"; fi
         env:
-          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-4
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-3-${{ matrix.fastmcp.name }}
+          HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
+          SKIP: ${{ matrix.fastmcp.skip }}
 
       # See the matching step in the `test` job. Plain `uv run`: combining is
-      # environment-independent, so the FastMCP 4 `--with` overlay isn't needed.
+      # environment-independent, so the FastMCP 3 `--with` overlay isn't needed.
       - name: combine coverage files
-        run: uv run --all-extras --no-extra mcp-tasks --all-packages coverage combine
+        run: uv run --all-extras --all-packages coverage combine
         env:
-          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-4
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-3-${{ matrix.fastmcp.name }}
 
       - name: store coverage files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage-fastmcp-4
+          name: coverage-fastmcp-3-${{ matrix.fastmcp.name }}
           path: .coverage
           include-hidden-files: true
 
@@ -1757,13 +1921,15 @@ jobs:
   harness-integration-changes:
     name: classify harness integration changes
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.ref_type == 'branch'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     outputs:
       localstack: ${{ steps.detect.outputs.localstack }}
       mongodb: ${{ steps.detect.outputs.mongodb }}
       postgres: ${{ steps.detect.outputs.postgres }}
       redis: ${{ steps.detect.outputs.redis }}
       azure_durable_task: ${{ steps.detect.outputs.azure_durable_task }}
+      kubernetes: ${{ steps.detect.outputs.kubernetes }}
+      bubblewrap: ${{ steps.detect.outputs.bubblewrap }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1796,11 +1962,16 @@ jobs:
           detect mongodb "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
             tests/harness/step_persistence tests/harness/media "$H/integration_tests/mongodb"
           detect postgres "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
-            "$H/pydantic_ai_harness/spend" tests/harness/step_persistence tests/harness/media tests/harness/spend \
+            "$H/pydantic_ai_harness/spend_limits" tests/harness/step_persistence tests/harness/media tests/harness/spend_limits \
             tests/harness/_postgres_sqlite.py "$H/integration_tests/postgres"
-          detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
+          detect redis "$H/pydantic_ai_harness/spend_limits" tests/harness/spend_limits "$H/integration_tests/redis"
           detect azure_durable_task "$H/pydantic_ai_harness/azure_durable_task" tests/harness/azure_durable_task \
             "$H/integration_tests/azure_durable_task"
+          detect kubernetes "$H/pydantic_ai_harness/kubernetes_sandbox" tests/harness/kubernetes_sandbox \
+            "$H/pydantic_ai_harness/_workspace_provider.py" "$H/pydantic_ai_harness/_workspace.py" \
+            "$H/integration_tests/kubernetes" pydantic_ai_slim/pydantic_ai/workspaces
+          detect bubblewrap "$H/pydantic_ai_harness/bubblewrap_sandbox" tests/harness/bubblewrap_sandbox \
+            tests/harness/_fake_remote_tools.py .github/actions/install-subprocess-isolation-deps
 
   harness-localstack-integration:
     name: harness LocalStack integration tests
@@ -1815,7 +1986,7 @@ jobs:
           && (github.event_name != 'pull_request'
               || (github.event.pull_request.head.repo.full_name == github.repository
                   && github.actor != 'dependabot[bot]')) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     env:
       LOCALSTACK_REQUIRE_AUTH_TOKEN: "1"
@@ -1826,7 +1997,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.14"
           enable-cache: true
@@ -1849,7 +2020,7 @@ jobs:
     if: >-
       ${{ always()
           && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.mongodb == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     services:
       mongodb:
@@ -1873,7 +2044,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.14"
           enable-cache: true
@@ -1888,7 +2059,7 @@ jobs:
     if: >-
       ${{ always()
           && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.postgres == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     services:
       postgres:
@@ -1912,7 +2083,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.14"
           enable-cache: true
@@ -1926,7 +2097,7 @@ jobs:
     if: >-
       ${{ always()
           && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.redis == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     services:
       redis:
@@ -1948,7 +2119,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.14"
           enable-cache: true
@@ -1975,7 +2146,7 @@ jobs:
     if: >-
       ${{ always()
           && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.azure_durable_task == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     services:
       dts-emulator:
@@ -1992,13 +2163,87 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.14"
           enable-cache: true
           cache-suffix: harness-azure-durable-task
 
       - run: make integration-azure-durable-task
+
+  # The unit suite runs the backend against a Python stand-in for sandboxd; this runs the same
+  # conformance rules against the real daemon, built from an agent-sandbox release tag. No cluster.
+  harness-kubernetes-integration:
+    name: harness Kubernetes sandbox integration tests
+    needs: [harness-integration-changes]
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.kubernetes == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SANDBOXD_REQUIRE_LIVE: "1"
+      SANDBOXD_BIN: ${{ github.workspace }}/.bin/sandboxd
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+
+      # The oldest release the docs support; the nightly live job runs the newest. `GOTOOLCHAIN=auto`
+      # fetches the Go version its module requires.
+      - run: go install sigs.k8s.io/agent-sandbox/packages/sandboxd/cmd/sandboxd@v1.0.7
+        env:
+          GOBIN: ${{ github.workspace }}/.bin
+          GOTOOLCHAIN: auto
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-kubernetes
+
+      - run: make integration-kubernetes
+
+  # The `BubblewrapWorkspace` sandbox tests with a real `bwrap`: the `test` job has none, so it skips
+  # the tests that need one. Reproduce a failure with `BWRAP_REQUIRE_LIVE=1 make integration-bubblewrap`.
+  harness-bubblewrap-integration:
+    name: harness Bubblewrap integration tests
+    needs: [harness-integration-changes]
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.bubblewrap == 'true') }}
+    # The pinned bubblewrap package is a noble build.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # A `bwrap` that does not work is a skip locally and must be a failure here.
+      BWRAP_REQUIRE_LIVE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install bubblewrap and socat
+        uses: ./.github/actions/install-subprocess-isolation-deps
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-bubblewrap
+
+      # The runner image restricts unprivileged user namespaces through AppArmor, and `bwrap` needs one.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # Shows `bwrap`'s own error, which the tests only report as a failed requirement.
+      - run: bwrap --ro-bind / / --unshare-all true
+
+      - run: make integration-bubblewrap
 
   # Advisory release check: resolve the workspace at the top of the ranges this tag declares and
   # run the suite there, so a release shows whether its own dependency ranges already admit an
@@ -2012,11 +2257,27 @@ jobs:
     uses: ./.github/workflows/latest-versions-canary.yml
 
   coverage:
-    runs-on: ubuntu-latest
-    needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4, test-harness-browser-use]
-    # A `pydantic-clai2`-only change skips every test job but `test`, a `pydantic-ai-harness`-only
-    # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too.
-    if: ${{ !failure() && !cancelled() && needs.classify.outputs.content_only != 'true' }}
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    needs:
+      [
+        classify,
+        test,
+        test-all-extras,
+        test-durable-exec,
+        test-lowest-versions,
+        test-fastmcp-3,
+        test-harness-browser-use,
+        test-windows-workspace,
+      ]
+    # A `pydantic-clai2`-only change skips every test job but `test`, and a skipped need would
+    # otherwise skip this job too. A test job
+    # cancelled by its own `timeout-minutes` uploads no coverage, and neither `failure()` nor `cancelled()`
+    # sees it, so without the `needs` check this job would report that job's lines as missing.
+    if: >-
+      ${{
+        !failure() && !cancelled() && !contains(needs.*.result, 'cancelled')
+        && needs.classify.outputs.content_only != 'true'
+      }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2029,7 +2290,7 @@ jobs:
           merge-multiple: true
           path: .coverage
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-suffix: dev
@@ -2074,9 +2335,10 @@ jobs:
       - test-lowest-versions
       - test-temporal-latest
       - test-examples
-      - test-fastmcp-4
+      - test-fastmcp-3
       - test-harness-browser-use
       - test-clai2-clipboard
+      - test-windows-workspace
       - test-clai2-web
       - harness-integration-changes
       - harness-localstack-integration
@@ -2084,9 +2346,11 @@ jobs:
       - harness-postgres-integration
       - harness-redis-integration
       - harness-azure-durable-task-integration
+      - harness-kubernetes-integration
+      - harness-bubblewrap-integration
       - latest-versions-canary
       - coverage
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
 
     steps:
       - name: Decide whether the needed jobs succeeded or failed
@@ -2107,29 +2371,31 @@ jobs:
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-windows-workspace,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
+              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 
   # `check` may succeed with intentionally skipped ancestors, so downstream jobs must override
   # GitHub's default success check and inspect the result of their direct dependency.
+  # Only pydantic/pydantic-ai deploys docs and publishes releases; a copy of the repository skips
+  # these jobs and the post-release jobs that need them.
   # Note: this should match the `deploy-docs-manual` job in manually-deploy-docs.yml
   deploy-docs:
     needs: [check]
-    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.check.result == 'success' }}
+    if: ${{ !cancelled() && github.repository == 'pydantic/pydantic-ai' && github.ref_type == 'tag' && needs.check.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Generate app token
@@ -2157,7 +2423,7 @@ jobs:
   release-build:
     name: build release artifacts
     needs: [check]
-    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.check.result == 'success' }}
+    if: ${{ !cancelled() && github.repository == 'pydantic/pydantic-ai' && github.ref_type == 'tag' && needs.check.result == 'success' }}
     runs-on: ubuntu-latest
 
     outputs:
@@ -2169,7 +2435,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: false
 
@@ -2215,7 +2481,7 @@ jobs:
   release:
     name: publish to PyPI
     needs: [release-build]
-    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.release-build.result == 'success' }}
+    if: ${{ !cancelled() && github.repository == 'pydantic/pydantic-ai' && github.ref_type == 'tag' && needs.release-build.result == 'success' }}
     runs-on: ubuntu-latest
 
     environment:
@@ -2264,7 +2530,7 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: false
 
@@ -2276,7 +2542,8 @@ jobs:
   # gh-aw workflow installs, and consumers compile the definition straight from the default branch.
   # Shipping a bump is therefore an ordinary pull request against that file, and this job publishes
   # nothing: when the harness release just cut is not the release the definition names, it opens
-  # that pull request for a maintainer to merge when the released version is newer than the pin.
+  # that pull request for a maintainer to merge when the released version is newer than the pin,
+  # and closes the pin bumps it opened for earlier releases.
   #
   # The writes use a `pydantic-docs` App installation token, not GITHUB_TOKEN: GitHub starts no
   # workflow runs for a pull request opened with GITHUB_TOKEN, so the pull request would arrive
@@ -2425,3 +2692,41 @@ jobs:
 
           gh pr create --head "${branch}" --base "${DEFAULT_BRANCH}" --title "${title}" \
             --label chore --label pkg:harness --body-file "${RUNNER_TEMP}/pin-bump.md"
+
+      # A step of its own so that a rerun still reaches it: the step above stops once the pull
+      # request it would open exists.
+      - name: Close the superseded pin bump pull requests
+        if: steps.guard.outputs.bump == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # The author and the branch name together pick out the pull requests this job opened:
+          # the App opens other pull requests too, and people can name a branch anything.
+          # `--head` reads the pull request list, while `--app` goes through search, whose index
+          # can lag behind the pull request the step above opened seconds ago.
+          current=$(gh pr list --state open --head "gh-aw-engine-pin-${RELEASED}" --json number,author \
+            --jq '.[] | select(.author.login == "app/pydantic-docs") | .number')
+          if [[ -z "$current" ]]; then
+            echo "No open pull request bumps the gh-aw engine pin to ${RELEASED}."
+            exit 0
+          fi
+          # Earlier release runs opened the pull requests this closes, so search has indexed them.
+          pin_prs=$(gh pr list --state open --app pydantic-docs --limit 100 \
+            --json number,headRefName --jq '.[] | [.number, .headRefName] | @tsv')
+          # Only lower versions: a patch release for an older minor can follow a newer release.
+          superseded=$(awk -F '\t' -v released="$RELEASED" '
+            BEGIN { split(released, r, "[.]") }
+            $2 ~ /^gh-aw-engine-pin-[0-9]+\.[0-9]+\.[0-9]+$/ {
+              version = $2
+              sub(/^gh-aw-engine-pin-/, "", version)
+              split(version, p, "[.]")
+              for (i = 1; i <= 3; i++) {
+                if (r[i] + 0 > p[i] + 0) { print $1; next }
+                if (r[i] + 0 < p[i] + 0) next
+              }
+            }
+          ' <<< "$pin_prs")
+          for number in $superseded; do
+            gh pr close "$number" --comment "Superseded by #${current}, which bumps the pin to \`${RELEASED}\`."
+          done

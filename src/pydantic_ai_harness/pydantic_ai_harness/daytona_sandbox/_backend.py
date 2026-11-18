@@ -32,6 +32,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._typeguards import is_mapping
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -126,6 +127,20 @@ async def destroy_sandbox(client: AsyncDaytona | None, sandbox_id: str) -> None:
     finally:
         if owned is not None:
             await _close_quietly(owned)
+
+
+def secrets_error(secrets: Mapping[str, str] | None, env: Mapping[str, str] | None) -> TypeError | ValueError | None:
+    """What is wrong with `secrets` on its own (`TypeError`, as for `env`) or beside `env` (`ValueError`), if anything."""
+    if secrets is None:
+        return None
+    if not is_mapping(secrets) or any(type(key) is not str or type(value) is not str for key, value in secrets.items()):
+        return TypeError(
+            "`secrets` maps environment variable names to Secret names, such as {'GH_TOKEN': 'github-token'}"
+        )
+    if shadowed := sorted(name for name in env or {} if name in secrets):
+        # `env` is set on every command, so it would hide the placeholder the proxy replaces.
+        return ValueError(f'{", ".join(shadowed)} cannot be in both `env` and `secrets`')
+    return None
 
 
 def _in_deleted_state(sandbox: AsyncSandbox) -> bool:
@@ -272,7 +287,7 @@ class _DaytonaProcess:
         self._process = sandbox.process
         self._session_id = f'pydantic-ai-{uuid.uuid4().hex}'
         self._marker = f'pydantic-ai-end-{uuid.uuid4().hex}'
-        self._out, self._err = f'/tmp/{self._marker}.out', f'/tmp/{self._marker}.err'
+        self._out, self._error = f'/tmp/{self._marker}.out', f'/tmp/{self._marker}.err'
         self._command_id: str | None = None
         self._finished = False
         self.missing_cwd = False
@@ -291,7 +306,7 @@ class _DaytonaProcess:
             argv = ['env', '--', *(f'{name}={value}' for name, value in env.items()), *argv]
         missing_cwd = f'{{ printf %s {self._marker}-cwd >{self._out}; exit 125; }}'
         prefix = f'cd -- {shlex.quote(cwd)} || {missing_cwd}; ' if cwd is not None else ''
-        script = f'{prefix}"$@" </dev/null >{self._out} 2>{self._err}'
+        script = f'{prefix}"$@" </dev/null >{self._out} 2>{self._error}'
         return shlex.join(['sh', '-c', script, 'sh', *argv])
 
     async def start(self, line: str) -> None:
@@ -334,27 +349,27 @@ class _DaytonaProcess:
                 with anyio.fail_after(_REQUEST_TIMEOUT):
                     # Sizes first: a command can grow a file without writing it (`truncate`).
                     sizes = await self._process.exec(
-                        f'for f in {self._out} {self._err}; do if [ -e "$f" ]; then wc -c < "$f"; else echo 0; fi; done',
+                        f'for f in {self._out} {self._error}; do if [ -e "$f" ]; then wc -c < "$f"; else echo 0; fi; done',
                         timeout=_REQUEST_TIMEOUT,
                     )
                     try:
-                        out_size, err_size = (int(size) for size in sizes.result.split())
+                        out_size, error_size = (int(size) for size in sizes.result.split())
                     except ValueError:
                         raise WorkspaceError(f'Could not read the command output sizes: {sizes.result!r}') from None
-                    if out_size + err_size > _MAX_OUTPUT_BYTES:
+                    if out_size + error_size > _MAX_OUTPUT_BYTES:
                         stdout, stderr = await self._excerpts('head', _OUTPUT_PREVIEW_BYTES)
                         raise WorkspaceOutputLimitError(
                             _OUTPUT_LIMIT_MESSAGE, limit=_MAX_OUTPUT_BYTES, stdout=stdout, stderr=stderr
                         )
                     out = await self._sandbox.fs.download_file(self._out, _REQUEST_TIMEOUT) if out_size else b''
-                    err = await self._sandbox.fs.download_file(self._err, _REQUEST_TIMEOUT) if err_size else b''
+                    error = await self._sandbox.fs.download_file(self._error, _REQUEST_TIMEOUT) if error_size else b''
                     # A background child can keep writing after the sizes were read.
-                    if len(out) + len(err) > _MAX_OUTPUT_BYTES:
+                    if len(out) + len(error) > _MAX_OUTPUT_BYTES:
                         raise WorkspaceOutputLimitError(
                             _OUTPUT_LIMIT_MESSAGE,
                             limit=_MAX_OUTPUT_BYTES,
                             stdout=out[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
-                            stderr=err[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
+                            stderr=error[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
                         )
         finally:
             await self._remove_output_files()
@@ -362,19 +377,19 @@ class _DaytonaProcess:
         if f'{self._marker}-cwd' in stdout:
             self.missing_cwd = True
             return CommandResult(exit_code=exit_code, stdout='', stderr='')
-        return CommandResult(exit_code=exit_code, stdout=stdout, stderr=err.decode(errors='replace'))
+        return CommandResult(exit_code=exit_code, stdout=stdout, stderr=error.decode(errors='replace'))
 
     async def _excerpts(self, end: Literal['head', 'tail'], limit: int) -> tuple[str, str]:
         """At most `limit` bytes from one end of each output file, cut in the sandbox before transfer."""
-        paths = (self._out, self._err)
+        paths = (self._out, self._error)
         cuts = '; '.join(f'{end} -c {limit} -- {path} > {path}.part 2>/dev/null || : > {path}.part' for path in paths)
         await self._process.exec(cuts, timeout=_REQUEST_TIMEOUT)
-        out, err = [await self._sandbox.fs.download_file(f'{path}.part', _REQUEST_TIMEOUT) for path in paths]
-        return out.decode(errors='replace'), err.decode(errors='replace')
+        out, error = [await self._sandbox.fs.download_file(f'{path}.part', _REQUEST_TIMEOUT) for path in paths]
+        return out.decode(errors='replace'), error.decode(errors='replace')
 
     async def _remove_output_files(self) -> None:
         """Best effort: a file left behind only takes space in the sandbox's `/tmp`."""
-        paths = f'{self._out} {self._err} {self._out}.part {self._err}.part'
+        paths = f'{self._out} {self._error} {self._out}.part {self._error}.part'
         with anyio.move_on_after(_REQUEST_TIMEOUT, shield=True):
             try:
                 await self._process.exec(f'rm -f -- {paths}', timeout=_REQUEST_TIMEOUT)
@@ -427,6 +442,10 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             sandbox's own default when `None`, discovered with `pwd -P` on first use.
         env: Environment variables every command gets; a command's own `env` is layered on top.
             They are also set on a newly created sandbox.
+        secrets: Daytona's `secrets` for a newly created sandbox, passed to `AsyncDaytona.create`
+            unchanged: environment variable name to Secret name. The variable holds a placeholder, and
+            Daytona swaps in the real value in HTTPS request headers as requests leave for the Secret's
+            `hosts` (any host if it has none). An attached sandbox keeps the ones it was created with.
     """
 
     def __init__(
@@ -440,6 +459,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         allow_internet_access: bool = True,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        secrets: Mapping[str, str] | None = None,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'daytona')
@@ -448,6 +468,8 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
         check_env_types(env)
+        if (error := secrets_error(secrets, env)) is not None:
+            raise error
         self._ref = ref if sandbox is None else WorkspaceRef(provider='daytona', id=sandbox.id)
         self._sandbox = sandbox
         self._client = client
@@ -457,6 +479,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._auto_stop_interval = auto_stop_interval
         self._allow_internet_access = allow_internet_access
         self._env = dict(env or {})
+        self._secrets = dict(secrets) if secrets is not None else None
         self._working_dir = absolute_path('working_dir', working_dir)
         # `working_dir()` must return a canonical absolute path, resolved once with `pwd -P`.
         self._resolved_working_dir: str | None = None
@@ -529,6 +552,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             name=name,
             snapshot=self._snapshot,
             env_vars=self._env or None,
+            secrets=self._secrets,
             auto_stop_interval=self._auto_stop_interval,
             network_block_all=not self._allow_internet_access,
             labels={'created-by': 'pydantic-ai'},

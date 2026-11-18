@@ -22,6 +22,7 @@ Run locally:
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
@@ -313,6 +314,45 @@ async def test_commands_get_a_usable_environment(client: boxd.AsyncBoxd) -> None
 
         result = await backend.run('echo "$FOO"; echo "$PATH"', shell=True, env={'FOO': '1'}, timeout=60)
         assert result.stdout.splitlines() == ['1', path]
+
+
+async def test_secrets_reach_the_machine_as_stand_ins(client: boxd.AsyncBoxd) -> None:
+    """Validates the fake-encoded assumptions behind `secrets`: boxd refuses `isolated` and `vcpu` beside a
+    spec, so the spec carries them; its `'{n}x{4n}'` size gives the machine `n` vCPUs; a spec combines with
+    `from_snapshot`; and the secret's variable holds a `bxds_` stand-in, not the value. The value is a dummy."""
+    secret = _unique('PYDANTIC_AI_E2E').replace('-', '_').upper()
+    snapshot = _unique('pydantic-ai-e2e-secrets')[:40]
+    probe = f'nproc; v=$(printenv {secret}); echo "${{v%%_*}}_"; [ "$v" = dummy-value ] && echo value || echo no-value'
+    await client.secrets.set(secret, 'dummy-value', scope='private-unattached', domains=['example.com'])
+    machines: list[WorkspaceRef] = []
+    try:
+        backend = BoxdSandboxBackend(
+            client=client, secrets=[secret], vcpu=2, auto_suspend_timeout=LIVE_AUTO_SUSPEND_TIMEOUT
+        )
+        machine = await backend.get_sandbox()
+        assert backend.ref is not None
+        machines.append(backend.ref)
+        assert machine.networking.isolated
+        assert (await backend.run(['sh', '-c', probe], timeout=60)).stdout.split() == ['2', 'bxds_', 'no-value']
+
+        await client.snapshots.create(backend.ref.id, snapshot)
+        with anyio.fail_after(120):
+            while (await client.snapshots.get(snapshot)).status != 'ready':
+                await anyio.sleep(0.5)
+        restored = BoxdSandboxBackend(
+            client=client, snapshot=snapshot, secrets=[secret], auto_suspend_timeout=LIVE_AUTO_SUSPEND_TIMEOUT
+        )
+        machine = await restored.get_sandbox()
+        assert restored.ref is not None
+        machines.append(restored.ref)
+        assert machine.networking.isolated
+        assert (await restored.run(['sh', '-c', probe], timeout=60)).stdout.split()[1:] == ['bxds_', 'no-value']
+    finally:
+        for ref in machines:
+            await BoxdSandbox(client=client).destroy(ref)
+        with contextlib.suppress(boxd.NotFoundError):
+            await client.snapshots.delete(snapshot)
+        await client.secrets.delete(secret, scope='private-unattached')
 
 
 # The README's Python blocks are the same as this page's.

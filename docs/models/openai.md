@@ -40,7 +40,7 @@ agent = Agent('{{ openai:medium }}')
     For voice agents, use a GPT-Live or `gpt-realtime` model with a [realtime session](../realtime/openai.md) instead.
 
 To pin to the legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead, use the `'openai-chat:'` prefix, which resolves to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
-For `gpt-6-sol` and `gpt-6-luna`, Chat Completions supports function calling only when `openai_reasoning_effort='none'`. [OpenAI documents tool calling for `gpt-6.1-terra` through Responses only](https://developers.openai.com/api/docs/models/gpt-6.1-terra), so use Responses for its tool calls. Use Responses whenever you need reasoning and tools together. `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for function calling with them.
+GPT-6 models reject tools, output tools included, on Chat Completions while reasoning is on, so `OpenAIChatModel` raises a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] before it sends such a request, which [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on as it would on the API's 400. Use Responses whenever you need reasoning and tools together. `gpt-6-sol`, `gpt-6-luna` and `gpt-6.1-terra` also take tools on Chat Completions with reasoning off: `thinking=False` sends `reasoning_effort='none'`, although [OpenAI documents tool calling for `gpt-6.1-terra` through Responses only](https://developers.openai.com/api/docs/models/gpt-6.1-terra). `gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for tool calling with them. [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] sets [`openai_chat_function_tools_require_reasoning_off`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_function_tools_require_reasoning_off] for these models, including through a custom `base_url`, as a proxy to OpenAI needs. Another server that serves these model names and accepts tools with reasoning turns it off with `openai_chat_function_tools_require_reasoning_off=False` in the model's [profile](overview.md#models-and-providers).
 
 Or initialise the model directly with just the model name:
 
@@ -69,6 +69,8 @@ model = OpenAIResponsesModel('{{ openai:medium.name }}', provider=OpenAIProvider
 agent = Agent(model)
 ...
 ```
+
+For short-lived or rotating credentials, `api_key` also accepts an async callable that returns the key, which the OpenAI SDK calls before each request. [Batch processing](../batch.md#which-requests-share-a-batch) refuses such a client, and [Responses WebSockets](#responses-websockets) send its requests over HTTP.
 
 ## Custom OpenAI Client
 
@@ -143,6 +145,10 @@ editing, geometry, and normalized settings.
 
 GPT Image models require a verified organization on a paid usage tier: on an unverified organization every request fails
 with a rate-limit error before anything generates. Complex prompts can take up to two minutes to process.
+
+## Image input {#image-input}
+
+`OpenAIProvider` lists JPEG, PNG, GIF and WebP as the images OpenAI models read. OpenAI's API rejects others, such as HEIC, AVIF, BMP and TIFF. An image of another type that a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance). The list applies to `OpenAIProvider` only. If you point `OpenAIProvider(base_url=...)` at another server that reads more formats, use [`OpenAICompatibleProvider`](compatible-apis.md#other-endpoints) for it, or pass `profile=OpenAIModelProfile(supported_image_media_types=frozenset({...}))` to the model.
 
 ## Structured output schemas
 
@@ -299,6 +305,12 @@ When the response includes moderation results, they are stored under the `'moder
 
 With [`OpenAIChatModel`](#chat-completions-api), use [`OpenAIChatModelSettings`][pydantic_ai.models.openai.OpenAIChatModelSettings] instead. The results are surfaced the same way on both the non-streaming and streaming paths, except that the Chat Completions API nests each entry one level deeper, under a `results` list.
 
+### Safety identifier
+
+OpenAI uses a [safety identifier](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers) to detect end users who may be violating its usage policies. Set it with [`openai_safety_identifier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_safety_identifier] on both the Responses and Chat Completions APIs; nothing is sent when it is unset. Pass a hash of the end user's ID, such as their username or email address, so that no identifying information reaches OpenAI.
+
+OpenAI is replacing the `user` field, which [`openai_user`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_user] sends, with `safety_identifier` and `prompt_cache_key`.
+
 ## Responses API features
 
 The features below are specific to the Responses API and only available on [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] (the default). For background on how the Responses API differs from Chat Completions, see the [OpenAI API docs](https://platform.openai.com/docs/guides/migrate-to-responses).
@@ -409,12 +421,14 @@ print(result1.output)
 
 result2 = agent.run_sync(
     'Explain?',
-    message_history=result1.new_messages(),
+    message_history=result1.all_messages(),
     model_settings=model_settings
 )
 print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
+
+Pass the whole conversation, as [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] does, even though only the messages after the latest response are sent. A history missing its earlier messages, such as [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] from a later turn, looks the same as one that compaction or a history processor trimmed. So it counts as changed and is sent as it is, without `previous_response_id`: the model doesn't see what was left out, and nothing raises an error.
 
 As an alternative to passing `message_history`, you can pass a concrete `provider_response_id` from an earlier run as the seed. Pydantic AI uses the seed for the first request in the new run, then automatically chains to the response returned for that request on any subsequent in-run calls — so the chain still extends correctly if the run includes tool-call continuations or retries.
 
@@ -514,7 +528,7 @@ agent = Agent(
 )
 ```
 
-As an alternative, `OpenAICompaction` supports a **stateless mode** (`stateless=True`) that calls the stateless `/responses/compact` endpoint via a `before_model_request` hook. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI must not retain conversation data, when using [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], or when you need explicit out-of-band control over when compaction runs. Stateless mode requires you to specify either a [`message_count_threshold`][pydantic_ai.models.openai.OpenAICompaction] or a custom `trigger` callable:
+As an alternative, `OpenAICompaction` supports a **stateless mode** (`stateless=True`) that calls the stateless `/responses/compact` endpoint via a `before_model_request` hook. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI must not retain conversation data, when using [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], when you need explicit out-of-band control over when compaction runs, or when the per-request cost of stateful mode matters. Stateful mode sends `context_management` on every `/responses` request, not only once the conversation nears the threshold; in our measurements, that added roughly 50 ms of server processing time per request, and setting `token_threshold` didn't reduce it. Stateless mode sends no `context_management`, and instead makes a separate `/responses/compact` request before the model request whenever its trigger fires. Stateless mode requires you to specify either a [`message_count_threshold`][pydantic_ai.models.openai.OpenAICompaction] or a custom `trigger` callable:
 
 ```python {title="openai_compaction_stateless.py" test="skip"}
 from pydantic_ai import Agent
@@ -588,7 +602,7 @@ Because the request is queued server-side, the time to the first token is higher
 To end the run instead of waiting, add [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] to the agent's `output_type`: the run then ends with a `PendingModelResponse` as soon as the background response is queued (when streaming, the response streams until it's finished, unless the stream drops before then), and running the agent again with the run's message history checks on the same background response. See [Ending a run while it waits](../batch.md#ending-a-run-while-it-waits).
 
 !!! note
-    A message history that ends in a pending response (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired]. Abandoning or cancelling a run that's waiting cancels the server-side background job.
+    A message history that ends in a pending response (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired], or, with a [retrying transport](../retries.md#a-retrying-client) whose `validate_response` rejects the 404, a [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError], so that a [fallback model](../retries.md#model-fallback-is-not-a-retry) moves on. Abandoning or cancelling a run that's waiting cancels the server-side background job.
 
 ## Batch API
 
@@ -729,6 +743,8 @@ Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI o
 
 On Chat Completions, only OpenAI's audio models take audio input, such as `gpt-audio` and `gpt-4o-audio-preview`: the OpenAI models with `audio` in their name. With another OpenAI model, audio in the prompt raises an error, and audio a tool returns is replaced by a note saying the model can't read it. The Responses API takes no audio input. The rule applies to `OpenAIProvider`. OpenAI-compatible providers, including Azure, report audio input for every model, since their model names don't say which models take it. If you point `OpenAIProvider(base_url=...)` at another server that serves an audio model, such as vLLM with Voxtral, use [`OpenAICompatibleProvider`](compatible-apis.md#other-endpoints) for it, or pass `profile=OpenAIModelProfile(supports_audio_file_input=True)` to the model.
 
+Chat Completions takes WAV and MP3 audio only (`audio/wav`, `audio/mpeg`, and the `audio/x-wav` and `audio/mp3` spellings). Audio of another format in the prompt raises a `UserError` naming its media type, before an `AudioUrl` is downloaded, and audio of another format that a tool returns is replaced by a note.
+
 ## Decisions API {#decisions-api}
 
 OpenAI's [Decisions API](https://developers.openai.com/api/docs/guides/decisions) runs a GPT model as a [decision model](decision.md): it answers typed questions about text or images, each with a probability or a distribution over the options, rather than writing text. [`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] is the Pydantic AI model class for it, so an agent's output type and tools become the questions as described on the [Decision models](decision.md) page.
@@ -758,7 +774,7 @@ agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
 
 All the questions of a request go to the API in one call, and its usage is reported in tokens, as for the Responses API. OpenAI bills only input tokens on this API, with no cache-read or cache-write charges. The `cost` Pydantic AI reports comes from [genai-prices](https://github.com/pydantic/genai-prices)' prices for `gpt-6-luna`, which price cached input apart, so it can differ from the bill when the API reports cached tokens.
 
-The conversation goes to the API as Responses input items, rather than as the [state](decision.md#where-the-wording-comes-from) other decision models are sent: system prompts, user prompts, answers and tool calls with their results keep their roles, so a question names what to judge, such as "the user's latest request", where it would otherwise point at the state's `text`. Item types the API doesn't take are sent as text: thinking as the assistant's, wrapped in thinking tags, and a tool result whose call is no longer in the history as a framed `<tool_result>` on the user channel. An image from an assistant response goes in a user message too, right after the assistant's `<image N>` reference to it, since an assistant message can only hold text. Retry feedback goes as a `developer` message, so it isn't read as a newer request. A lone prompt with no history goes as plain text.
+The conversation goes to the API as Responses input items, rather than as the [state](decision.md#where-the-wording-comes-from) other decision models are sent: system prompts, user prompts, answers and tool calls with their results keep their roles, so a question names what to judge, such as "the user's latest request", where it would otherwise point at the state's `text`. Item types the API doesn't take are sent as text: thinking as the assistant's, wrapped in thinking tags, and a tool result whose call is no longer in the history as a framed `<pyai:tool_result>` on the user channel. An image from an assistant response goes in a user message too, right after the assistant's `<image N>` reference to it, since an assistant message can only hold text. Retry feedback goes as a `developer` message, so it isn't read as a newer request. A summary in a request-side [`CompactionPart`][pydantic_ai.messages.CompactionPart] goes as framed user text, [as on every model](../capabilities/compaction.md#model-agnostic-compaction). A lone prompt with no history goes as plain text.
 
 OpenAI Decisions supports image input through [`BinaryContent`][pydantic_ai.BinaryContent], [`BinaryImage`][pydantic_ai.messages.BinaryImage] or [`ImageUrl`][pydantic_ai.messages.ImageUrl]; `ImageUrl` images are downloaded and sent inline as data URLs. Images in user input and message history, including assistant file parts and tool or native-tool images, are sent where they appear in the conversation, while instructions remain separate questions. See [image input](../input.md#image-input). Set `vendor_metadata={'detail': 'high'}` on an image to control its detail level; Decisions accepts `'low'`, `'high'`, `'auto'` and `'original'`. The metadata is preserved when image URLs are downloaded.
 

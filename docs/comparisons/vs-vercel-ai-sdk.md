@@ -13,7 +13,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Language | TypeScript | Python |
 | License | Apache-2.0 | MIT |
 | Model providers | Many | [Many](../models/overview.md) |
-| Extensibility | Middleware, tools | [Capabilities and toolsets](../extensibility.md); [80+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Middleware, tools | [Capabilities and toolsets](../extensibility.md); [90+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | [Eve](https://eve.dev), a separate package; adapters drive external harnesses | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | None documented for the AI SDK; [Vercel Enterprise](https://vercel.com/enterprise) for the platform | [For the framework itself](../enterprise-support.md), no platform required |
