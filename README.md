@@ -65,7 +65,7 @@ agent.to_cli_sync()
 
 ```python
 capabilities = [
-    FileSystem('.'), Shell(cwd='.'), RepoContext(), SubAgents(...),
+    FileSystem(), Shell(), RepoContext(), SubAgents(...),
     ClearToolResults(), ToolOutputLimits(), RepairToolArguments(),
 ]
 ```

@@ -80,14 +80,15 @@ agent = Agent(
 ```
 
 Non-matching tools remain regular tool calls. Some tools always stay native even with `tools='all'`:
-framework control tools, undiscovered deferred (`defer_loading=True`) tools, native fallbacks, and other
+framework control tools, undiscovered deferred (`defer_loading=True`) tools, `requires_approval=True` and external tools, native fallbacks, and other
 code-execution tools (any tool with `code_arg_name` metadata) -- including `Shell`'s `run_command`, `start_command`, and `shell`, and `CapabilityCreation`'s
 `author_capability`. `Shell`'s `check_command`/`stop_command` and all `FileSystem` tools are folded in.
 Provider-native tools (`native=True`) execute server-side and never reach `run_code`.
 
-With the default `tools='all'`, approval-gated tools and every tool from MCP or hosted-integration
-capabilities (for example `GitHub` or `Linear` write tools) move behind `run_code` too, where an
-approval-gated call fails as a retry unless a `HandleDeferredToolCalls` capability resolves it inline. When only some tools should be batched, tag those tools'
+With the default `tools='all'`, every tool from MCP or hosted-integration capabilities (for example
+`GitHub` or `Linear` write tools) moves behind `run_code` too. Only tools registered with `requires_approval=True` and external tools stay
+native: tools gated with `.approval_required()` are still sandboxed, where a gated call fails as a retry
+unless a `HandleDeferredToolCalls` capability resolves it inline. When only some tools should be batched, tag those tools'
 toolset with `.with_metadata(code_mode=True)` and use `CodeMode(tools={'code_mode': True})`, so
 approval-gated and integration tools stay regular tool calls.
 
@@ -169,7 +170,7 @@ Key restrictions:
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` require an `os_access` handler (or, for the clock, `os_policy`); `time.sleep` and `asyncio.sleep` really wait, within the sleep allowance
 - Filesystem I/O requires an `os_access` handler or a `mount`; `os.getenv` and `os.environ` require an `os_access` handler
 - A sandboxed tool named after a Python builtin (`list`, `open`, `print`, ...) raises `UserError`; rename it or use `toolset.prefixed(...)`
-- Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
+- Approval-required (`requires_approval=True`) and external (`kind='external'`) tools stay native under `tools='all'`, so their deferred calls pause the run as usual. An explicit selector can still sandbox them. A sandboxed call that needs approval or is deferred, including one from a toolset wrapped with `.approval_required()` or a tool that raises `ApprovalRequired` or `CallDeferred` from its body (both keep `kind='function'`), needs a `HandleDeferredToolCalls` (or equivalent) capability to resolve it inline; without one, it raises an error that surfaces to the model as a retry
 
 The sandbox constrains the model-generated Python, not the implementation of the tools it calls.
 Wrapped tools retain their normal host and network access, so expose only tools with the authority and
@@ -196,7 +197,7 @@ CodeMode(os_access=OSAccess(environ={'API_BASE': 'https://api.example.com'}))
 ```
 
 - `mount` takes a `MountDir` or a list of them; `host_path` must already exist (`MountDir` raises `TypeError` otherwise). The default `mode='overlay'` is copy-on-write: writes are visible only within the current `run_code` call and never reach the host. Use `mode='read-write'` when writes must persist (including across `run_code` calls), `mode='read-only'` to forbid them.
-- `os_access` takes an `AbstractOS` (e.g. `OSAccess`, isolated in-memory filesystem and env, host clock) or a keyword-argument callback `def handler(*, name, args, kwargs, **_)` (may be `async`). Return any value (including `None`) to answer the call; return `pydantic_monty.NOT_HANDLED` to refuse it (raises in the sandbox and burns a retry). The positional `(name, args, kwargs)` form is deprecated.
+- `os_access` takes an `AbstractOS` (e.g. `OSAccess`, isolated in-memory filesystem and env, host clock) or a keyword-argument callback `def handler(*, name, args, kwargs, **_)` (may be `async`). Return any value (including `None`) to answer the call; return `pydantic_monty.NOT_HANDLED` to refuse it (raises in the sandbox and burns a retry).
 - Mounts are directories on the machine running the agent, not the run's workspace. With a remote sandbox such as `ModalSandbox`, `FileSystem` and `Shell` act in the sandbox while mounted `pathlib` code still touches the host -- for files the model shares with its commands, sandbox the workspace tools (`FileSystem`) instead of mounting.
 
 ## Other Options
@@ -219,13 +220,13 @@ CodeMode(
 )
 ```
 
-- `dynamic_catalog=True` (default): moves sandboxed-tool signatures out of `run_code`'s description into an instruction block (`toolset:code_mode:catalog`, `on_change='append'`), keeps deferred tools that `run_code` will take over off the wire until they're found, and appends the updated catalog when one is found (plus a short announcement when Tool Search found it), so discoveries don't rewrite the cached prompt. Discovery then goes through the local `search_tools` or `load_capability`, which also searches deferred tools a selector keeps native (the native tool search isn't sent then); with the `'bm25'`/`'regex'` strategies, such tools are still declared for the native search. The catalog takes the toolset id `code_mode`, so another instruction-contributing toolset with that id raises a duplicate-id `UserError`; rename it. A callable selector must give the same answer for a tool before and after it's revealed, or the cache moves. `dynamic_catalog=False` keeps the catalog in `run_code`'s description instead (the default in earlier releases), so a reveal rewrites the description and the cached prompt.
+- `dynamic_catalog=True` (default): moves sandboxed-tool signatures out of `run_code`'s description into an instruction block (`toolset:code_mode:catalog`, `on_change='append'`), keeps deferred tools that `run_code` will take over off the wire until they're found, and appends the updated catalog when one is found (plus a short `DiscoveryAnnouncementPart`, an `InstructionCapabilityPart` whose `tools` field lists what it announces, when Tool Search found it), so discoveries don't rewrite the cached prompt. Discovery then goes through the local `search_tools` or `load_capability`, which also searches deferred tools a selector keeps native (the native tool search isn't sent then); with the `'bm25'`/`'regex'` strategies, such tools are still declared for the native search. The catalog takes the toolset id `code_mode`, so another instruction-contributing toolset with that id raises a duplicate-id `UserError`; rename it. A callable selector must give the same answer for a tool before and after it's revealed, or the cache moves. `dynamic_catalog=False` keeps the catalog in `run_code`'s description instead (the default in earlier releases), so a reveal rewrites the description and the cached prompt.
 - `eager=True`: side effects from early statements cannot be rolled back, and hooks/approval on `run_code` run only after the call finishes streaming. Only applies when `run_code` is the first tool call in the response.
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - `os_policy`: Monty's `OSPolicy`, merged key by key over the defaults (clock, sleeps, and random seeding routed to `os_access`). `{'datetime': 'system', 'timezone': 'Europe/Paris'}` gives the sandbox the worker's clock in that zone with no handler; `{'timezone': ...}` alone keeps the clock on `os_access` but makes `astimezone()` and `%Z` report the zone. Keep the defaults under Temporal: a `'system'` clock or `random_start` is re-read on replay. Fixed values stay fixed.
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
-- `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_seconds` also applies, except inside Temporal. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.5.0`. `monty_sandbox_url` is the deprecated form.
+- `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_seconds` also applies, except inside Temporal. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.5.0`.
 - Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's instructions or tool arguments.
 
 ## Durable Execution

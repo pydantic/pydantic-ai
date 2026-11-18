@@ -1173,6 +1173,7 @@ settings using the former import paths are redirected to the new modules.
 | `compaction` | `pydantic_clai2.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `refinement` | `pydantic_clai2.builtin_plugins.refinement` | `{}` | `/refine`: the model reviews and revises its last answer |
 | `hooks` | `pydantic_clai2.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
+| `sandbox` | `pydantic_clai2.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a cloud sandbox whose provider's proxy holds your GitHub token; see [Cloud sandboxes](docs/reference.md#cloud-sandboxes-sandbox) |
 | `slack` (off until enabled) | `pydantic_clai2.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
@@ -1255,8 +1256,8 @@ are still run-level capabilities, so self-delegation requires binding `Coder` an
 the capabilities it should carry when constructing that agent.
 
 `task_control` gives delegation task control: `delegate_task` gains `background`
-and `resume`, the model gets `list_tasks`, `message_task`, `answer_task`, and
-`cancel_task`, and a delegated task gets `ask_parent`. It has no effect unless
+and `resume`, the model gets `list_tasks`, `check_task`, `message_task`, `answer_task`,
+and `cancel_task`, and a delegated task gets `ask_parent`. It has no effect unless
 `sub_agents` is on. It defaults to `true`, also for saved `coder` declarations
 that omit it, so an upgrade gives a saved `coder` with `sub_agents: true` the
 task tools. Unlike `sub_agents` and `agent_folders`, it turns on no new
@@ -3025,8 +3026,9 @@ prompt the keyboard does:
   recently created instead of the most recently active, as the web sidebar does. As in `/resume`,
   a fork gets its own copy of the session's Monty state, and a deleted session's state is deleted
   with it. Like opening `/resume`, `listing` queues the newest untitled sessions for background
-  naming, which calls the naming model. Renaming the current conversation fires
-  `on_conversation_changed` at once, even while a turn runs, unlike background naming.
+  naming, which calls the naming model when `sessions.naming` is on. Renaming the current
+  conversation fires `on_conversation_changed` at once, even while a turn runs, unlike background
+  naming.
   `follows_workspace` says whether `/resume ID` moves the session into the directory it was saved
   in (its `host.workspace`; the process's working directory never changes), as under
   `clai2 --web`, rather than refusing a session saved elsewhere.
@@ -4311,7 +4313,8 @@ searchable. Esc, Ctrl-C, or **Save & close** goes back. Enter opens a picker for
 fixed choices; numeric fields accept typed values, and empty input resets.
 
 The built-in model catalog and `/set model` completions include
-`openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
+`openai-codex:gpt-6.2-sol`, `openai-codex:gpt-6.2-astra`, `openai-codex:gpt-6.1-sol`,
+`openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
 For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
@@ -4383,12 +4386,17 @@ For native Anthropic models, **Preserved Thinking** controls
 `thinking.block_binding.prefix_mismatch_behavior`: `error` rejects a mismatched
 prefix; `drop_block` continues without the mismatched reasoning block. It appears
 on adaptive-capable Claude models. Fable 5.1 also exposes **Thinking Display**:
-`updates` or `summarized`. Setting either control without a thinking mode selects
-adaptive thinking; neither can be combined with disabled thinking. Resetting the
-mode clears its budget, display, and binding overrides. **Interleaved Thinking**
-adds the beta header on classic Claude 4 models. CLAI adds the display beta when
-requesting updates; core adds the block-binding beta. These native controls do
-not add Anthropic protocol support to third-party Chat Completions endpoints.
+`updates` or `summarized`. Opus 5.5 and Sonnet 5.5 expose it with `summarized`,
+which shows the notes they write between tool calls. Setting either control
+without a thinking mode selects adaptive thinking; neither can be combined with
+disabled or `between_tools` thinking. **Extended Thinking** offers only the
+modes the model accepts: Fable, Mythos, and Opus 5.5 always think, so they offer
+`adaptive` alone, and Sonnet 5.5 offers `between_tools`, its off switch, in place
+of `disabled`. Resetting the mode clears its budget, display, and binding
+overrides. **Interleaved Thinking** adds the beta header on classic Claude 4
+models. CLAI adds the display beta when requesting updates; core adds the
+block-binding beta. These native controls do not add Anthropic protocol support
+to third-party Chat Completions endpoints.
 
 GLM-4.5 and newer expose **Thinking (GLM)** and **Clear Thinking (GLM)**;
 GLM-5.2 and newer also expose **Reasoning Effort (GLM)**. Clear Thinking set to

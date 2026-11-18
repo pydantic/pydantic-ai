@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
@@ -341,6 +342,11 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
 ToolAgentDepsT = TypeVar('ToolAgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies for a tool."""
 
+_without_toolset_sequential_defer_loading: ContextVar[bool] = ContextVar(
+    '_without_toolset_sequential_defer_loading', default=False
+)
+"""Set while Temporal and DBOS list tools for a workflow started before `FunctionToolset` applied its `sequential` and `defer_loading` to `Tool` instances."""
+
 
 def _validate_max_retries(max_retries: int | None) -> None:
     if max_retries is not None and max_retries < 0:
@@ -371,6 +377,7 @@ class Tool(Generic[ToolAgentDepsT]):
     metadata: dict[str, Any] | None
     tool_kind: ToolPartKind | None
     timeout: float | None
+    durable: bool | None
     defer_loading: bool
     include_return_schema: bool | None
     function_schema: _function_schema.FunctionSchema
@@ -379,6 +386,11 @@ class Tool(Generic[ToolAgentDepsT]):
 
     This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
     """
+    # Set when a `FunctionToolset` turned on `sequential` or `defer_loading` from its own value. Temporal and
+    # DBOS list the tool without them, wherever it is held, for workflows started before `FunctionToolset` did so.
+    # Unannotated, so they aren't dataclass fields: a dataclass subclass adding a required field stays valid.
+    _sequential_from_toolset = False
+    _defer_loading_from_toolset = False
 
     def __init__(
         self,
@@ -399,6 +411,7 @@ class Tool(Generic[ToolAgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
@@ -470,6 +483,9 @@ class Tool(Generic[ToolAgentDepsT]):
                 See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
+                outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
+                Defaults to `None`, the engine's default placement.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -502,6 +518,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.metadata = metadata
         self.tool_kind = _tool_kind_id(tool_kind)
         self.timeout = timeout
+        self.durable = durable
         self.defer_loading = defer_loading
         self.include_return_schema = include_return_schema
 
@@ -565,16 +582,20 @@ class Tool(Generic[ToolAgentDepsT]):
 
     @property
     def tool_def(self) -> ToolDefinition:
+        # Set while Temporal and DBOS list tools for a workflow started before `FunctionToolset` applied its
+        # `sequential` and `defer_loading` to `Tool` instances: drop those, so `prepare` sees what it saw then.
+        without_toolset = _without_toolset_sequential_defer_loading.get()
         return ToolDefinition(
             name=self.name,
             description=self.description,
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
-            sequential=self.sequential,
+            sequential=self.sequential and not (without_toolset and self._sequential_from_toolset),
             metadata=self.metadata,
             tool_kind=self.tool_kind,
             timeout=self.timeout,
-            defer_loading=self.defer_loading,
+            durable=self.durable,
+            defer_loading=self.defer_loading and not (without_toolset and self._defer_loading_from_toolset),
             kind='unapproved' if self.requires_approval else 'function',
             return_schema=self.function_schema.return_schema,
             include_return_schema=self.include_return_schema,
@@ -769,6 +790,20 @@ class ToolDefinition:
 
     If the tool takes longer than this, a retry prompt is returned to the model.
     Defaults to None (no timeout).
+    """
+
+    durable: bool | None = None
+    """Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool.
+
+    `False` runs it outside its durable unit (activity, step or task), in workflow code, on every engine built on
+    the durable execution backend. Only async function tools can do that; an engine raises a
+    [`UserError`][pydantic_ai.exceptions.UserError] for any other tool it wraps.
+    `None` (the default) and `True` keep the engine's default placement; `True` lets a `prepare` function undo an
+    earlier `durable=False`, but not an opt-out in the engine's own per-tool config, such as Temporal's
+    `tool_activity_config`. An engine's own metadata key, such as `metadata={'temporal': ...}`, wins when it's set
+    on the tool.
+
+    Not sent to the model.
     """
 
     defer_loading: bool = False

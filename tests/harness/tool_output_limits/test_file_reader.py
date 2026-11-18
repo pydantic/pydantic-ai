@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import posixpath
 from pathlib import Path
 
 import pytest
@@ -11,8 +12,9 @@ from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, PrefixT
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness.file_system import READ_FILE_KIND, FileSystem
+from pydantic_ai_harness.file_system import DEFAULT_TOOL_NAMES, READ_FILE_KIND, FileSystem
 from pydantic_ai_harness.tool_output_limits import (
+    GREP_TOOL_NAME,
     READ_TOOL_NAME,
     READ_TOOL_RESULT_KIND,
     Band,
@@ -75,13 +77,39 @@ def _limits(store: OverflowStore | WorkspaceOverflowStore | None = None) -> Tool
 class TestReaderStepsAside:
     async def test_read_file_replaces_read_tool_result(self, tmp_path: Path) -> None:
         recorder, output = await _run(tmp_path, _limits(), FileSystem())
-        assert all(READ_TOOL_NAME not in tools for tools in recorder.offered)
+        assert all(READ_TOOL_NAME not in tools and GREP_TOOL_NAME not in tools for tools in recorder.offered)
         assert recorder.marker is not None
         assert 'Read it with read_file(path=' in recorder.marker
         assert READ_TOOL_NAME not in recorder.marker
         # The read of the spill is not itself spilled, though it is over the band's threshold.
         assert 'line 100' in output
         assert 'Tool output too large' not in output
+
+    @pytest.mark.parametrize('tool', ['search_files', 'grep'])
+    async def test_searching_a_spill_is_reduced_as_usual(self, tmp_path: Path, tool: str) -> None:
+        """A search bounds how many lines match, not how long a line is, so a one-line spill comes back reduced."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            returns = _returns(messages)
+            if searched := [part for part in returns if part.tool_name == tool]:
+                return ModelResponse(parts=[TextPart(str(searched[0].content))])
+            if returns:
+                assert returns[0].metadata is not None
+                spill_dir = posixpath.dirname(returns[0].metadata['overflow_handle'])
+                return ModelResponse(parts=[ToolCallPart(tool, {'pattern': 'id', 'path': spill_dir})])
+            return ModelResponse(parts=[ToolCallPart('big_tool', {})])
+
+        agent = Agent(
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[LocalWorkspace(tmp_path), _limits(), FileSystem(tools=[*DEFAULT_TOOL_NAMES, 'grep'])],
+        )
+
+        @agent.tool_plain
+        def big_tool() -> str:
+            return '[' + ','.join(f'{{"id":{i}}}' for i in range(2_000)) + ']'
+
+        assert (await agent.run('go')).output.startswith('[Tool output too large')
 
     async def test_prefixed_read_file_is_named(self, tmp_path: Path) -> None:
         recorder, output = await _run(tmp_path, _limits(), PrefixTools(FileSystem(), prefix='repo'))

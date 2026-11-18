@@ -23,6 +23,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness.docker_container import DockerContainer, DockerContainerBackend
 from pydantic_ai_harness.docker_container._backend import _WRAPPER  # pyright: ignore[reportPrivateUsage]
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._fake_docker import FakeDocker, install_fake_docker
 
@@ -190,8 +191,11 @@ async def test_a_stop_that_comes_before_the_command_starts_prevents_it(docker: F
 
 
 async def test_a_timeout_is_stopped_even_when_the_configured_working_dir_is_gone(
-    docker: FakeDocker, tmp_path: Path
+    docker: FakeDocker, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The stop runs in a shielded scope bounded by this grace; a stalled runner must not cut it short before it
+    # removes the PID file.
+    monkeypatch.setattr('pydantic_ai_harness.docker_container._backend._STOP_TIMEOUT', READINESS_WAIT_TIMEOUT)
     target, link = tmp_path / 'target', tmp_path / 'link'
     target.mkdir()
     link.symlink_to(target)
@@ -324,6 +328,20 @@ async def test_capability_supplies_the_run_workspace(docker: FakeDocker, contain
     result = await agent.run('go')
 
     assert result.output == '{"probe":"contained"}'
+    assert result.workspace.ref is not None and docker.containers() == [result.workspace.ref.id]
+
+
+async def test_authority_reaches_the_runs_workspace(docker: FakeDocker, container_dir: Path) -> None:
+    container = DockerContainer(image='image', working_dir=str(container_dir), authority='none')
+    agent = Agent(TestModel(call_tools=['probe']), capabilities=[container])
+
+    @agent.tool
+    async def probe(ctx: RunContext[object]) -> str:
+        return await ctx.workspace.authority_of('AGENTS.md')
+
+    result = await agent.run('go')
+
+    assert result.output == '{"probe":"none"}'
     assert result.workspace.ref is not None and docker.containers() == [result.workspace.ref.id]
 
 

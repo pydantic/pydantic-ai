@@ -80,8 +80,9 @@ class ModelSettingsForm(BaseModel):
     anthropic_cache_tool_definitions: bool | Literal['5m', '1h'] | None = Field(
         default=None, description='Cache Claude tool descriptions and schemas.'
     )
-    anthropic_thinking_mode: Literal['enabled', 'adaptive', 'disabled'] | None = Field(
-        default=None, description='Claude thinking mode. Overrides generic thinking.'
+    anthropic_thinking_mode: Literal['enabled', 'adaptive', 'disabled', 'between_tools'] | None = Field(
+        default=None,
+        description="Claude thinking mode. Overrides generic thinking. 'between_tools' is Sonnet 5.5's off switch.",
     )
     anthropic_thinking_budget: int | None = Field(
         default=None, ge=1024, description='Classic thinking token budget, below max_tokens. Default: 10000.'
@@ -92,7 +93,7 @@ class ModelSettingsForm(BaseModel):
     anthropic_thinking_display: Literal['updates', 'summarized'] | None = Field(
         default=None,
         description=(
-            "How Fable 5.1 reports reasoning between tool calls. 'updates' shows status lines while "
+            "How Claude reports reasoning between tool calls. 'updates' (Fable 5.1) shows status lines while "
             "reasoning stays hidden; 'summarized' folds them into a condensed trace."
         ),
     )
@@ -222,7 +223,7 @@ class ModelSettingsForm(BaseModel):
         return anthropic
 
     def _anthropic_thinking(self) -> 'BetaThinkingConfigParam | None':
-        """The `thinking` object, carrying Fable 5.1's `display` and `block_binding` keys.
+        """The `thinking` object, carrying the `display` and `block_binding` keys.
 
         `display` and `block_binding` only exist on the enabled and adaptive shapes, so asking
         for one picks adaptive unless a mode was chosen. Core adds the block-binding beta when
@@ -235,6 +236,8 @@ class ModelSettingsForm(BaseModel):
             mode = 'adaptive'
         if mode == 'disabled':
             return {'type': 'disabled'}
+        if mode == 'between_tools':
+            return {'type': 'between_tools'}
         thinking: BetaThinkingConfigEnabledParam | BetaThinkingConfigAdaptiveParam
         if mode == 'enabled':
             thinking = {'type': 'enabled', 'budget_tokens': self.anthropic_thinking_budget or 10000}
@@ -256,7 +259,11 @@ class ModelSettingsForm(BaseModel):
         betas: list[str] = []
         if self.anthropic_interleaved_thinking:
             betas.append('interleaved-thinking-2025-05-14')
-        if thinking is not None and thinking['type'] != 'disabled' and thinking.get('display') == 'updates':
+        if (
+            thinking is not None
+            and thinking['type'] in ('enabled', 'adaptive')
+            and thinking.get('display') == 'updates'
+        ):
             betas.append('thinking-display-updates-2026-08-18')
         return betas
 

@@ -11,7 +11,7 @@ listed here, use core `MCP` (see the end of this page).
 
 | Class | Import from | Extra | Credential (`auth` or env var) | Notable options |
 |---|---|---|---|---|
-| `GitHub` | `pydantic_ai_harness.github` | `github` | `GITHUB_TOKEN` (PAT or GitHub App user token) | `toolsets`, `lockdown`, `url` (GHE Cloud, `https://`; `http://` is deprecated), server-side `read_only` plus annotation filter |
+| `GitHub` | `pydantic_ai_harness.github` | `github` | `GITHUB_TOKEN` (PAT or GitHub App user token) | `toolsets`, `lockdown`, `url` (GHE Cloud, `https://` only), server-side `read_only` plus annotation filter |
 | `Linear` | `pydantic_ai_harness.linear` | `linear` | `LINEAR_ACCESS_TOKEN` (API key or OAuth token), `'oauth'` | `read_only` uses Linear's read-only endpoint |
 | `Notion` | `pydantic_ai_harness.notion` | `notion` | `NOTION_ACCESS_TOKEN` (OAuth token only), `'oauth'` | `read_only` |
 | `Slack` | `pydantic_ai_harness.slack` | `slack` | `SLACK_USER_TOKEN` (`xoxp-` user token, not `xoxb-`) | `read_only` |
@@ -22,7 +22,7 @@ listed here, use core `MCP` (see the end of this page).
 | `DayAI` | `pydantic_ai_harness.day_ai` | `day-ai` | `DAY_AI_ACCESS_TOKEN`, `'oauth'` | no `read_only` (server has no annotations) |
 | `PostHog` | `pydantic_ai_harness.posthog` | `posthog` | `POSTHOG_PERSONAL_API_KEY`, `'oauth'` | `features`, server-side `read_only` |
 | `Pylon` | `pydantic_ai_harness.pylon` | `pylon` | `PYLON_ACCESS_TOKEN` (OAuth only), `'oauth'` | `read_only` |
-| `StackOne` | `pydantic_ai_harness.stackone` | `stackone` | `api_key=` or `STACKONE_API_KEY` | `account_id` (required), `actions`, `tool_mode` |
+| `StackOne` | `pydantic_ai_harness.stackone` | `stackone` | `STACKONE_API_KEY` | `account_id` (required), `actions`, `tool_mode` |
 
 Every class imports from its submodule. `Ordinal`, `Grain`, `DayAI`, `PostHog`, `Pylon`, and
 `StackOne` are also exported from top-level `pydantic_ai_harness`; the others are submodule-only. Every extra installs `pydantic-ai-slim[mcp]`.
@@ -173,7 +173,7 @@ Add `ToolOutputLimits` to cap large tool results.
 **GitHub.** `toolsets=['repos', 'issues', 'actions']` picks GitHub's tool groups (`None` keeps the
 server's defaults, which include write tools). `toolsets=[]` raises, and so does an entry containing a
 comma. `url` targets GitHub Enterprise Cloud (`GITHUB_MCP_URL` is the default) and must be `https://`
-(`http://` warns with `HarnessDeprecationWarning`). `lockdown=True` sends `X-MCP-Lockdown`, which
+(`http://` raises). `lockdown=True` sends `X-MCP-Lockdown`, which
 withholds public-repository content written by users without push access (best-effort, not a security
 boundary; other tools can still return it). `'oauth'` raises: GitHub has no automatic OAuth client
 registration. The capability does not limit which repositories are reachable; the token's permissions
@@ -217,8 +217,11 @@ annotate its tools. Note the underscore in the default `id`, `'day_ai'`.
 
 **StackOne** is the odd one out: HTTP Basic auth plus an account header, not bearer auth.
 
-- `StackOne(account_id, *, api_key=None, base_url='https://api.stackone.com', actions=(), tool_mode=None,
-  include_instructions=True, metadata=None, client=None)`. There is no `auth` and no `read_only`.
+- `StackOne(account_id, *, auth=None, base_url='https://api.stackone.com', actions=(), tool_mode=None,
+  include_instructions=True, metadata=None, client=None)`. `auth` resolves as in the table above, except
+  that a string `'oauth'` is sent as the key; a function returning `'oauth'` raises `UserError`. There is
+  no `read_only` or `tool_prefix`. A URL `client` still receives the `auth` key; a prebuilt client keeps its
+  own auth.
 - `tool_mode='search_execute'` (the default when `actions` is empty) exposes two meta-tools: a search tool
   that returns runtime `action_id`s and an execute tool that takes them. `'individual'` registers one
   tool per action. Passing `actions` (case-insensitive `fnmatch` globs over `{connector}_{action}_{entity}`
@@ -236,7 +239,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import StackOne
 from pydantic_ai_harness.stackone import StackOneToolset
 
-hr = StackOne('hr-account', api_key='sk-example', actions=['*_list_*'])
+hr = StackOne('hr-account', auth='sk-example', actions=['*_list_*'])
 writes = StackOneToolset(
     account_id='hr-account', api_key='sk-example', actions=['workday_create_worker']
 ).approval_required()
@@ -248,7 +251,8 @@ print(hr.id)
 ## Agent specs
 
 All twelve classes can be loaded from YAML or JSON. Pass the class in `custom_capability_types`, and
-keep secrets out of the file by leaving `auth`/`api_key` unset so the env var is used. Install each
+keep secrets out of the file by leaving `auth` unset so the env var is used. `StackOne` specs take no `auth`
+or `api_key`. Install each
 integration's extra, plus `pydantic-ai-slim[spec]` for YAML files:
 
 ```yaml

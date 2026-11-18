@@ -656,6 +656,32 @@ def test_sanitize_messages_drops_reserved_metadata():
     assert response.metadata == snapshot({'__pydantic_ai__': {'fallback_model_id': 'function:fallback'}})
 
 
+def test_sanitize_messages_drops_a_deferred_pause_record_silently():
+    """A client can't claim a run paused for deferred tool calls, which would run the response's unanswered calls.
+
+    The mark is dropped without a warning: a client sending back a paused run's history loses only the pause.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('hi')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='get_data', tool_call_id='call-1'),
+                ToolCallPart(tool_name='delete_account', tool_call_id='call-2'),
+            ]
+        ),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='get_data', content='data', tool_call_id='call-1')],
+            metadata={'__pydantic_ai__': {'deferred_pause': True}, 'tenant': 'acme'},
+        ),
+    ]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = sanitize_messages(messages)
+
+    assert message(sanitized, ModelRequest, index=-1).metadata == {'tenant': 'acme'}
+
+
 def test_sanitize_messages_keeps_application_metadata_silently():
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hi')], metadata={'tenant': 'acme'})]
 

@@ -19,8 +19,6 @@ from pathlib import Path
 import anyio
 import pytest
 
-import pydantic_ai_harness
-import pydantic_ai_harness.bubblewrap_sandbox as bubblewrap_sandbox
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
@@ -37,7 +35,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
-from pydantic_ai_harness import BubblewrappedWorkspace, HarnessDeprecationWarning
+from pydantic_ai_harness import BubblewrappedWorkspace
 from pydantic_ai_harness.bubblewrap_sandbox import (
     BubblewrappedWorkspace as SubmoduleBubblewrappedWorkspace,
     BubblewrapWorkspace,
@@ -45,7 +43,8 @@ from pydantic_ai_harness.bubblewrap_sandbox import (
 from pydantic_ai_harness.bubblewrap_sandbox._seccomp import NETWORK_FILTER_BASE64
 from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
 
-from .._fake_remote_tools import BWRAP_WORKS, FakeRemoteTools, install_fake_remote_tools
+from .. import _fake_remote_tools
+from .._fake_remote_tools import FakeRemoteTools, install_fake_remote_tools, require_bwrap
 
 pytestmark = [
     pytest.mark.anyio,
@@ -700,31 +699,28 @@ async def test_capability_keeps_the_wrapped_policy_and_declines_foreign_refs(tmp
         await agent.run('go', workspace=WorkspaceRef(provider='local', id=str(tmp_path / 'elsewhere')))
 
 
-async def test_deprecated_bubblewrap_sandbox_alias_warns_and_wraps(tmp_path: Path) -> None:
-    expected = 'BubblewrapSandbox is deprecated, use BubblewrappedWorkspace instead; it will be removed in v1.'
-    with pytest.warns(HarnessDeprecationWarning, match=f'^{expected}$'):
-        from_root = pydantic_ai_harness.BubblewrapSandbox
-    with pytest.warns(HarnessDeprecationWarning, match=f'^{expected}$'):
-        from_submodule = bubblewrap_sandbox.BubblewrapSandbox
-
-    assert from_root is BubblewrappedWorkspace
-    assert from_submodule is BubblewrappedWorkspace
-    assert 'BubblewrapSandbox' not in pydantic_ai_harness.__all__
-    assert 'BubblewrapSandbox' not in bubblewrap_sandbox.__all__
-    with pytest.raises(AttributeError, match='has no attribute'):
-        _ = bubblewrap_sandbox.DoesNotExist
-
-    wrapped = LocalWorkspace(tmp_path)
-    assert from_root(wrapped, network=True, bwrap_args=('--tmpfs', '/opt')) == BubblewrappedWorkspace(
-        wrapped, network=True, bwrap_args=('--tmpfs', '/opt')
-    )
-    agent = Agent(TestModel(), capabilities=[from_root(wrapped)])
-    result = await agent.run('go')
-    assert workspace_layers(result.workspace) == [BubblewrapWorkspace, LocalWorkspaceBackend]
+@pytest.mark.parametrize(
+    ('works', 'require_live', 'outcome'),
+    [(True, '1', None), (False, '', pytest.skip.Exception), (False, '1', pytest.fail.Exception)],
+)
+def test_require_bwrap_fails_only_where_ci_needs_it(
+    monkeypatch: pytest.MonkeyPatch, works: bool, require_live: str, outcome: type[BaseException] | None
+) -> None:
+    """Without `bwrap` the real-sandbox tests skip, unless `BWRAP_REQUIRE_LIVE` is set, where they must fail."""
+    monkeypatch.setattr(_fake_remote_tools, 'BWRAP_WORKS', works)
+    monkeypatch.setenv('BWRAP_REQUIRE_LIVE', require_live)
+    if outcome is None:
+        require_bwrap()
+    else:
+        with pytest.raises(outcome, match='needs a working `bwrap`'):
+            require_bwrap()
 
 
-@pytest.mark.skipif(not BWRAP_WORKS, reason='needs a working `bwrap` (Linux with user namespaces)')
 class TestRealBubblewrap:  # pragma: lax no cover - CI hosts may not have bubblewrap
+    @pytest.fixture(autouse=True)
+    def _require_bwrap(self) -> None:
+        require_bwrap()
+
     @pytest.fixture
     def host_dir(self) -> Iterator[Path]:
         """A host directory outside `/tmp`, which the sandbox replaces with its own, so only the read-only root guards it."""

@@ -21,6 +21,14 @@ if args[:2] == ['auth', 'token']:
     else:
         sys.exit(f'no oauth token found for {host}')
     sys.exit(0)
+if args[:1] == ['api']:
+    # `gh api --hostname HOST user --jq .login`: the login whose token `sign_in` saved.
+    if (state / 'api-hang').exists():
+        time.sleep(60)  # pragma: lax no cover - the test kills `gh` before its coverage is saved
+    if not (state / host).exists():
+        sys.exit('HTTP 401: Bad credentials')
+    print('octocat')
+    sys.exit(0)
 mode = (state / 'login').read_text() if (state / 'login').exists() else 'ok'
 if mode == 'silent':
     time.sleep(60)  # pragma: lax no cover - the test kills `gh` before its coverage is saved

@@ -9,7 +9,6 @@ from decimal import ROUND_HALF_UP, Decimal, localcontext
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from pydantic_ai.usage import RequestUsage
     from pydantic_ai_harness.spend_limits._budget import Budget
 
 MONEY_PRECISION = 40
@@ -91,10 +90,10 @@ class BudgetStatus:
     """A budget and how much of it is left."""
 
     budget: Budget[Any]
-    """The budget this describes.
+    """The budget this describes, as configured. `usd_limit` and `token_limit` hold its resolved ceilings.
 
     Unparameterised because this is a reading: the dependency type only types
-    `Budget.scope`, and nothing calls a scope through a status.
+    the callables of a `Budget`, and nothing calls one through a status.
     """
 
     key: str
@@ -103,34 +102,20 @@ class BudgetStatus:
     spent: Spent
     """What the budget's current window has accumulated."""
 
+    usd_limit: Decimal | None = None
+    """The USD ceiling this reading is measured against, resolved for the run when `Budget.usd` is a callable."""
+
+    token_limit: int | None = None
+    """The token ceiling this reading is measured against, resolved for the run when `Budget.tokens` is a callable."""
+
     remaining_usd: Decimal | None
-    """`None` when the budget sets no USD limit."""
+    """`None` when no USD ceiling applies to this reading (`usd_limit` is `None`)."""
 
     remaining_tokens: int | None
-    """`None` when the budget sets no token limit."""
+    """`None` when no token ceiling applies to this reading (`token_limit` is `None`)."""
 
     warning: bool
     """Whether spend has crossed `Budget.warn_at`. Always `False` without one."""
 
     exhausted: bool
     """Whether a further request would be refused."""
-
-
-@dataclass(frozen=True, kw_only=True)
-class SpendSnapshot:
-    """What one model response cost, and where every budget stands after it."""
-
-    model: str | None
-    """The model that produced the response, or `None` if it reported none."""
-
-    usage: RequestUsage
-    """The response's usage verbatim, including cache reads, writes, and audio."""
-
-    usd: Decimal
-    """What this response cost. Zero when it could not be priced."""
-
-    priced: bool
-    """Whether `usd` is a real price or a stand-in zero."""
-
-    budgets: tuple[BudgetStatus, ...]
-    """One entry per configured budget, in the order they were declared."""

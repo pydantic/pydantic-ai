@@ -232,31 +232,37 @@ def _embedded_ipv4s(ip: ipaddress.IPv6Address, *, exhaustive: bool) -> set[ipadd
     set is small enough that a coincidental match is effectively impossible, and it
     additionally covers operator-chosen NAT64 prefixes that we cannot enumerate.
     """
-    packed = ip.packed
-
-    def at(offsets: tuple[int, int, int, int]) -> ipaddress.IPv4Address:
-        return ipaddress.IPv4Address(bytes(packed[i] for i in offsets))
-
-    candidates: set[ipaddress.IPv4Address] = set()
-
     if exhaustive:
-        candidates.update(at(offsets) for offsets in _ALL_EMBEDDED_OFFSETS)
-        if ip in _TEREDO_PREFIX:  # client IPv4 = low 32 bits XOR all-ones (RFC 4380)
-            candidates.add(ipaddress.IPv4Address(int.from_bytes(packed[12:16], 'big') ^ 0xFFFFFFFF))
-        return candidates
+        return _exhaustive_embedded_ipv4s(ip)
 
+    packed = ip.packed
+    candidates: set[ipaddress.IPv4Address] = set()
     if ip.ipv4_mapped is not None:  # ::ffff:a.b.c.d (RFC 4291 §2.5.5.2)
         candidates.add(ip.ipv4_mapped)
     if ip.sixtofour is not None:  # 2002::/16 (RFC 3056)
         candidates.add(ip.sixtofour)
     for prefix, offsets_list in _NAT64_PREFIXES:  # 64:ff9b::/96 (RFC 6052), 64:ff9b:1::/48 (RFC 8215)
         if ip in prefix:
-            candidates.update(at(offsets) for offsets in offsets_list)
+            candidates.update(_ipv4_at(packed, offsets) for offsets in offsets_list)
     if int(ip) >> 32 == 0 and not ip.is_loopback and not ip.is_unspecified:  # ::a.b.c.d (deprecated)
-        candidates.add(at(_LOW32_OFFSETS))
+        candidates.add(_ipv4_at(packed, _LOW32_OFFSETS))
     if packed[8:12] in _ISATAP_INTERFACE_IDS:  # ...:[0|200]:5efe:a.b.c.d (RFC 5214)
-        candidates.add(at(_LOW32_OFFSETS))
+        candidates.add(_ipv4_at(packed, _LOW32_OFFSETS))
     return candidates
+
+
+def _exhaustive_embedded_ipv4s(ip: ipaddress.IPv6Address) -> set[ipaddress.IPv4Address]:
+    """Return the IPv4 at every standardized embedding position of `ip`, for `_embedded_ipv4s(exhaustive=True)`."""
+    packed = ip.packed
+    candidates = {_ipv4_at(packed, offsets) for offsets in _ALL_EMBEDDED_OFFSETS}
+    if ip in _TEREDO_PREFIX:  # client IPv4 = low 32 bits XOR all-ones (RFC 4380)
+        candidates.add(ipaddress.IPv4Address(int.from_bytes(packed[12:16], 'big') ^ 0xFFFFFFFF))
+    return candidates
+
+
+def _ipv4_at(packed: bytes, offsets: tuple[int, int, int, int]) -> ipaddress.IPv4Address:
+    """Return the IPv4 address made of the bytes of `packed` at `offsets`."""
+    return ipaddress.IPv4Address(bytes(packed[i] for i in offsets))
 
 
 def _parse_ip(ip_str: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
@@ -728,22 +734,7 @@ async def safe_download(
             if resolved.is_https:
                 extensions['sni_hostname'] = resolved.hostname
 
-            request_headers: dict[str, str] = {k: v for k, v in effective_headers.items() if k.lower() != 'host'}
-            default_port = 443 if resolved.is_https else 80
-            if resolved.port == default_port:
-                request_headers['Host'] = resolved.hostname
-            else:
-                host = resolved.hostname
-                # Bracket an IPv6 literal before appending the port so the `:port` stays
-                # unambiguous (RFC 3986 §3.2.2), matching the connect URL from build_url_with_ip.
-                try:
-                    if isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address):
-                        host = f'[{host}]'
-                except ValueError:
-                    pass
-                request_headers['Host'] = f'{host}:{resolved.port}'
-            if max_bytes is not None and not any(k.lower() == 'accept-encoding' for k in request_headers):
-                request_headers['Accept-Encoding'] = _BOUNDED_ACCEPT_ENCODING
+            request_headers = _hop_request_headers(effective_headers, resolved, max_bytes)
 
             # Stream the raw response so gzip members can be decoded and validated before
             # httpx2's automatic content decoder discards member boundaries.
@@ -765,42 +756,85 @@ async def safe_download(
             if response.is_redirect:
                 await response.aclose()
                 redirects_followed += 1
-                if redirects_followed > max_redirects:
-                    raise ValueError(f'Too many redirects ({redirects_followed}). Maximum allowed: {max_redirects}')
-
-                # Get redirect location
-                location = response.headers.get('location')
-                if not location:
-                    raise ValueError('Redirect response missing Location header')
-
                 previous_url = current_url
-                current_url = resolve_redirect_url(current_url, location)
+                current_url = _redirect_target(response, current_url, redirects_followed, max_redirects)
 
                 # Drop caller-supplied credentials when the redirect crosses origins, as
                 # RFC 9110 section 15.4 advises for headers added by the calling context.
                 if not _keeps_credentials(previous_url, current_url):
-                    effective_headers = {
-                        k: v for k, v in effective_headers.items() if k.lower() not in _SENSITIVE_HEADERS
-                    }
+                    effective_headers = _without_sensitive_headers(effective_headers)
 
                 continue
 
             # Not a redirect, we're done
             try:
-                try:
-                    response.raise_for_status()
-                except httpx2.HTTPStatusError as e:
-                    raise _CompatibleHTTPStatusError(str(e), request=e.request, response=e.response) from e
-                if max_bytes is not None:
-                    content = await _read_capped_body(response, max_bytes)
-                    return _response_with_decoded_content(response, content)
-                if _content_encodings(response) in (['gzip'], ['x-gzip']):
-                    content = await _read_gzip_body(response)
-                    return _response_with_decoded_content(response, content)
-                await _read_body(response)
-                return response
+                return await _read_final_response(response, max_bytes)
             finally:
                 await response.aclose()
+
+
+def _hop_request_headers(
+    effective_headers: dict[str, str], resolved: ResolvedUrl, max_bytes: int | None
+) -> dict[str, str]:
+    """Return one hop's request headers: the caller's headers with `Host` set to the original host.
+
+    `Accept-Encoding` is set to the encodings a bounded download can size-limit when
+    `max_bytes` is set and the caller did not send one.
+    """
+    request_headers: dict[str, str] = {k: v for k, v in effective_headers.items() if k.lower() != 'host'}
+    default_port = 443 if resolved.is_https else 80
+    if resolved.port == default_port:
+        request_headers['Host'] = resolved.hostname
+    else:
+        host = resolved.hostname
+        # Bracket an IPv6 literal before appending the port so the `:port` stays
+        # unambiguous (RFC 3986 §3.2.2), matching the connect URL from build_url_with_ip.
+        try:
+            if isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address):
+                host = f'[{host}]'
+        except ValueError:
+            pass
+        request_headers['Host'] = f'{host}:{resolved.port}'
+    if max_bytes is not None and not any(k.lower() == 'accept-encoding' for k in request_headers):
+        request_headers['Accept-Encoding'] = _BOUNDED_ACCEPT_ENCODING
+    return request_headers
+
+
+def _redirect_target(response: httpx2.Response, current_url: str, redirects_followed: int, max_redirects: int) -> str:
+    """Return the URL a redirect response points to, after checking the redirect budget.
+
+    Raises:
+        ValueError: If `redirects_followed` exceeds `max_redirects`, or the response has no `Location`.
+    """
+    if redirects_followed > max_redirects:
+        raise ValueError(f'Too many redirects ({redirects_followed}). Maximum allowed: {max_redirects}')
+
+    location = response.headers.get('location')
+    if not location:
+        raise ValueError('Redirect response missing Location header')
+
+    return resolve_redirect_url(current_url, location)
+
+
+def _without_sensitive_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Return `headers` without the ones in `_SENSITIVE_HEADERS`, matching names case-insensitively."""
+    return {k: v for k, v in headers.items() if k.lower() not in _SENSITIVE_HEADERS}
+
+
+async def _read_final_response(response: httpx2.Response, max_bytes: int | None) -> httpx2.Response:
+    """Raise for an error status, then read the body of the last hop's response, decoding gzip."""
+    try:
+        response.raise_for_status()
+    except httpx2.HTTPStatusError as e:
+        raise _CompatibleHTTPStatusError(str(e), request=e.request, response=e.response) from e
+    if max_bytes is not None:
+        content = await _read_capped_body(response, max_bytes)
+        return _response_with_decoded_content(response, content)
+    if _content_encodings(response) in (['gzip'], ['x-gzip']):
+        content = await _read_gzip_body(response)
+        return _response_with_decoded_content(response, content)
+    await _read_body(response)
+    return response
 
 
 class DownloadTooLargeError(ValueError):
@@ -895,47 +929,65 @@ async def _read_capped_identity(response: httpx2.Response, max_bytes: int) -> by
     return bytes(content)
 
 
-async def _read_gzip_body(response: httpx2.Response, max_bytes: int | None = None) -> bytes:
-    content = bytearray()
-    encoded_total = 0
-    decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)
-    member_started = False
-    async for raw in _aiter_raw(response):
-        encoded_total += len(raw)
-        if max_bytes is not None and encoded_total > max_bytes:
-            raise _download_exceeds(max_bytes)
+class _GzipBodyDecoder:
+    """Decodes a gzip body one raw chunk at a time, member after member, within an optional size cap."""
+
+    def __init__(self, response: httpx2.Response, max_bytes: int | None) -> None:
+        self._response = response
+        self._max_bytes = max_bytes
+        self._content = bytearray()
+        self._decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)
+        self._member_started = False
+
+    def feed(self, raw: bytes) -> None:
         while raw:
-            if not member_started:
-                member_started = True
-            elif decompressor.eof:
+            if not self._member_started:
+                self._member_started = True
+            elif self._decompressor.eof:
                 # CPython's gzip reader accepts zero padding between/after members. Preserve
                 # that compatibility while treating any other remaining bytes as a new member.
                 raw = raw.lstrip(b'\x00')
                 if not raw:
                     break
-                decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)
+                self._decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)
 
             # Decompressing one byte past the cap distinguishes an oversized body from one that
             # exactly fills it, so a gzip CRC/ISIZE trailer arriving in a later chunk is still
             # consumed (it produces no output) instead of being rejected.
-            max_length = max_bytes + 1 - len(content) if max_bytes is not None else 0
+            max_length = self._max_bytes + 1 - len(self._content) if self._max_bytes is not None else 0
             try:
-                content.extend(decompressor.decompress(raw, max_length=max_length))
+                self._content.extend(self._decompressor.decompress(raw, max_length=max_length))
             except zlib.error as e:
-                raise _CompatibleDecodingError(f'Invalid gzip response body: {e}', request=response.request) from e
-            if max_bytes is not None and len(content) > max_bytes:
-                raise _download_exceeds(max_bytes)
+                raise _CompatibleDecodingError(
+                    f'Invalid gzip response body: {e}', request=self._response.request
+                ) from e
+            self._check_size()
 
-            raw = decompressor.unconsumed_tail or decompressor.unused_data
+            raw = self._decompressor.unconsumed_tail or self._decompressor.unused_data
 
-    if not member_started:
-        return b''
-    try:
-        content.extend(decompressor.flush())
-    except zlib.error as e:
-        raise _CompatibleDecodingError(f'Invalid gzip response body: {e}', request=response.request) from e
-    if max_bytes is not None and len(content) > max_bytes:
-        raise _download_exceeds(max_bytes)
-    if not decompressor.eof:
-        raise _CompatibleDecodingError('Received an incomplete gzip response body', request=response.request)
-    return bytes(content)
+    def finish(self) -> bytes:
+        if not self._member_started:
+            return b''
+        try:
+            self._content.extend(self._decompressor.flush())
+        except zlib.error as e:
+            raise _CompatibleDecodingError(f'Invalid gzip response body: {e}', request=self._response.request) from e
+        self._check_size()
+        if not self._decompressor.eof:
+            raise _CompatibleDecodingError('Received an incomplete gzip response body', request=self._response.request)
+        return bytes(self._content)
+
+    def _check_size(self) -> None:
+        if self._max_bytes is not None and len(self._content) > self._max_bytes:
+            raise _download_exceeds(self._max_bytes)
+
+
+async def _read_gzip_body(response: httpx2.Response, max_bytes: int | None = None) -> bytes:
+    decoder = _GzipBodyDecoder(response, max_bytes)
+    encoded_total = 0
+    async for raw in _aiter_raw(response):
+        encoded_total += len(raw)
+        if max_bytes is not None and encoded_total > max_bytes:
+            raise _download_exceeds(max_bytes)
+        decoder.feed(raw)
+    return decoder.finish()

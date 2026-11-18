@@ -19,7 +19,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import ToolOperation, raise_retry
 from pydantic_ai_harness._output import truncate_head
-from pydantic_ai_harness._warn import warn_argument_renamed
+from pydantic_ai_harness._version import HARNESS_DISTRIBUTION, harness_version
 from pydantic_ai_harness._web_search import defer_to_native_web_search
 
 try:
@@ -172,16 +172,6 @@ class YouClient(Protocol):
         ...  # pragma: no cover
 
 
-def _harness_version() -> str:
-    """Resolve the installed `pydantic-ai-harness` version for the attribution header."""
-    from importlib.metadata import version as _pkg_version
-
-    try:
-        return _pkg_version('pydantic-ai-harness')
-    except Exception:  # pragma: no cover
-        return 'unknown'
-
-
 def default_client(timeout_ms: int) -> YouClient:
     """Build a `youdotcom.You` client from the `YDC_API_KEY` environment variable.
 
@@ -196,8 +186,8 @@ def default_client(timeout_ms: int) -> YouClient:
     return You(
         api_key_auth=None,
         timeout_ms=timeout_ms,
-        app_name='pydantic-ai-harness',
-        app_version=_harness_version(),
+        app_name=HARNESS_DISTRIBUTION,
+        app_version=harness_version(),
         app_title='Pydantic AI Harness',
         app_url='https://github.com/pydantic/pydantic-ai',
     )
@@ -316,16 +306,10 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
         defer_to_native: bool = False,
         id: str | None = None,
         operations: YouSearchOperations | None = None,
-        num_results: int | None = None,
     ) -> None:
         super().__init__(id=id)
         self._client = client if client is not None else default_client(timeout_ms)
         self._operations = operations
-        if num_results is not None:
-            if max_results != YOU_DEFAULT_MAX_RESULTS:
-                raise TypeError('Pass `max_results` only: `num_results` is its deprecated name.')
-            warn_argument_renamed('YouSearchToolset', 'num_results', 'max_results')
-            max_results = num_results
         self._max_results = max_results
         self._extraction_mode: ExtractionModeName = extraction_mode
         self._max_text_chars = max_text_chars
