@@ -13,6 +13,7 @@ import pytest
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import KnownModelName, infer_model_profile, known_model_names
 from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
 
@@ -27,7 +28,8 @@ with try_import() as imports_successful:
     from pydantic_ai.embeddings.openai import LatestOpenAIEmbeddingModelNames
     from pydantic_ai.images.openai import LatestOpenAIImageModelNames
     from pydantic_ai.images.xai import LatestXaiImageGenerationModelNames
-    from pydantic_ai.models.anthropic import DEPRECATED_ANTHROPIC_MODELS, AnthropicModelName
+    from pydantic_ai.models import anthropic as anthropic_module
+    from pydantic_ai.models.anthropic import AnthropicModelName
     from pydantic_ai.models.bedrock import BedrockModelName
     from pydantic_ai.models.bedrock_mantle import BedrockMantleModelName
     from pydantic_ai.models.cerebras import CerebrasModelName
@@ -55,7 +57,6 @@ if not imports_successful():  # pragma: lax no cover
     AnthropicModelName = BedrockModelName = BedrockMantleModelName = CerebrasModelName = CohereModelName = None
     GoogleModelName = GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
     OpenAIDecisionsModelName = GoogleDecisionsModelName = None
-    DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     CrusoeModelName = None
     DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = SnowflakeModelName = None
@@ -175,7 +176,24 @@ def test_unsupported_gateway_model_names_are_curated():
 
 def test_curated_model_names_exclude_retired_sdk_ids():
     assert set(get_model_names(OpenAIModelName)) & DEPRECATED_OPENAI_MODELS == set()
-    assert set(get_model_names(AnthropicModelName)) & DEPRECATED_ANTHROPIC_MODELS == set()
+
+
+def test_deprecated_anthropic_models_warns_and_keeps_its_value():
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`DEPRECATED_ANTHROPIC_MODELS` is deprecated and will be removed in v3, as Pydantic AI no longer uses it\. '
+        r'Keep your own list of retired model ids',
+    ):
+        retired_model_names = anthropic_module.DEPRECATED_ANTHROPIC_MODELS
+    assert retired_model_names == {
+        'claude-3-haiku-20240307',
+        'claude-opus-4-0',
+        'claude-opus-4-20250514',
+        'claude-sonnet-4-0',
+        'claude-sonnet-4-20250514',
+    }
+    with pytest.raises(AttributeError, match="has no attribute 'Missing'"):
+        anthropic_module.Missing
 
 
 @pytest.mark.parametrize(
