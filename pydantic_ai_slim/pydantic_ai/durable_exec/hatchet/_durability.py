@@ -92,9 +92,9 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
 
 
         @hatchet.durable_task(name='answer', input_validator=dict[str, str])
-        async def answer(input: dict[str, str], ctx: DurableContext) -> str:
+        async def answer(input: dict[str, str], ctx: DurableContext) -> dict[str, str]:
             result = await agent.run(input['question'])
-            return result.output
+            return {'answer': result.output}
 
 
         worker = hatchet.worker('agent-worker', workflows=[answer, *durability.workflows])
