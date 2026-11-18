@@ -396,10 +396,10 @@ track CLAI2 like its built-in agents. Register CLAI2 as an AoE custom agent:
 ```toml
 # ~/.config/agent-of-empires/config.toml
 [session.custom_agents]
-pax = "clai2"
+pax = "pax"
 ```
 
-and start sessions with `aoe add --tool clai2 -l`, or pick `pax` in AoE's new-session
+and start sessions with `aoe add --tool pax -l`, or pick `pax` in AoE's new-session
 dialog. If AoE alerts you on status changes (its sounds, or `[status_hooks]` such as
 `on_waiting = "notify-send ..."`), `/plugins disable notifications` avoids a second
 desktop alert from CLAI2 for the same turn.

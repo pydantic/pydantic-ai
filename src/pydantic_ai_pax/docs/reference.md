@@ -3232,10 +3232,10 @@ Register CLAI2 with AoE as a custom agent:
 ```toml
 # ~/.config/agent-of-empires/config.toml
 [session.custom_agents]
-pax = "clai2"
+pax = "pax"
 ```
 
-Then `aoe add --tool clai2 -l`. The plugin does nothing outside an AoE session.
+Then `aoe add --tool pax -l`. The plugin does nothing outside an AoE session.
 See [the plugin guide](../PLUGINS.md#agent-of-empires-integration) for details and limitations.
 
 ### Telemetry and references

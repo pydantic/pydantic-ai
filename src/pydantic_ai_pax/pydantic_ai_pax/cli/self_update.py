@@ -33,6 +33,7 @@ from anyio import CancelScope, open_process, run_process, to_thread
 from pydantic import StringConstraints, TypeAdapter
 from typing_extensions import TypedDict
 
+from pydantic_ai_pax.cli.install import DISTRIBUTION, command_name, tool_distribution
 from pydantic_ai_pax.config import UpdateChannel
 from pydantic_ai_pax.plugins import InstallProgress, UpdateStage
 from pydantic_ai_pax.ui.stderr_relay import terminal_stderr
@@ -40,14 +41,6 @@ from pydantic_ai_pax.ui.stderr_relay import terminal_stderr
 if TYPE_CHECKING:
     import httpx
 
-DISTRIBUTION = 'pydantic-ai-pax'
-LEGACY_DISTRIBUTION = 'pydantic-clai2'
-"""CLAI's former name: a `uv tool` environment installed under it keeps updating under it, keeping `clai2`.
-
-That needs a `pydantic-clai2` release for every version, so the shim cannot stop being released until `/update`
-moves these environments to `pydantic-ai-pax`.
-"""
-_COMMANDS = {DISTRIBUTION: 'pax', LEGACY_DISTRIBUTION: 'clai2'}
 PACKAGES = (
     'pydantic-ai-pax',
     'pydantic-clai2',
@@ -93,16 +86,6 @@ class _Manifest(TypedDict):
 _DIRECT_URL = TypeAdapter(_DirectURL)
 _PYPI_PROJECT = TypeAdapter(_PyPIProject)
 _MANIFEST = TypeAdapter(_Manifest)
-
-
-def tool_distribution() -> str:
-    """The package this `uv tool` environment was installed from, which uv names the environment after."""
-    return LEGACY_DISTRIBUTION if Path(sys.prefix).name == LEGACY_DISTRIBUTION else DISTRIBUTION
-
-
-def command_name() -> str:
-    """The command this install provides: `clai2` from a `pydantic-clai2` environment, otherwise `pax`."""
-    return _COMMANDS[tool_distribution()]
 
 
 def bleeding_url(*, environ: Mapping[str, str] = os.environ) -> str:
