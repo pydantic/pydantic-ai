@@ -38,7 +38,11 @@ def candidate_models(model: AbstractModel) -> list[Model]:
     try:
         model.profile
     except NotImplementedError:
-        return candidate_models(model.wrapped) if isinstance(model, WrapperModel) else []
+        # Only `WrapperModel`'s own `profile` forwards to `wrapped`. An override may pick another model for the run,
+        # as `TemporalModel.using_model()` does, so its `wrapped` would give the wrong limits.
+        if isinstance(model, WrapperModel) and type(model).profile is WrapperModel.profile:
+            return candidate_models(model.wrapped)
+        return []
     return [model]
 
 
