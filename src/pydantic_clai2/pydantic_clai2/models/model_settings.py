@@ -374,10 +374,13 @@ def default_model_settings(
 
     Every default fills exactly one `ModelSettings` key, so merging the saved settings over these
     gives the same settings as `model_settings_from_json(saved, model=model)`. `selected` is the saved
-    row of the selection `model` runs under, such as its chain, whose tier picks a Codex speed; by default `saved`.
+    row of the CLI selection `model` runs under, such as its chain, whose tier picks a Codex speed.
+    Without it, as for `open_stock_agent`, Codex gets no default speed, so a tier set above these applies.
     """
-    tiers = saved if selected is None else selected
-    defaults = {key: value for key, value in model_defaults(model=model, saved=tiers).items() if key not in saved}
+    defaults = model_defaults(model=model, saved=selected)
+    if selected is None:
+        defaults.pop('codex_speed', None)
+    defaults = {key: value for key, value in defaults.items() if key not in saved}
     return ModelSettingsForm.model_validate(defaults).to_model_settings()
 
 

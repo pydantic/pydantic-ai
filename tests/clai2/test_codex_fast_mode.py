@@ -1,6 +1,7 @@
 """Codex speeds: CLAI defaults `openai-codex` models to ultrafast, and `/fast` and the settings menu pick another."""
 
 import json
+from collections.abc import Sequence
 from io import StringIO
 from pathlib import Path
 
@@ -12,13 +13,17 @@ from termflow.tui.completion import CompleteEvent, Document
 from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import override_allow_model_requests
 from pydantic_ai.models.openai_codex import OpenAICodexModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
+from pydantic_ai.settings import ModelSettings
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.models.model_settings import default_model_settings
+from pydantic_clai2.runtime.session import ModelDefaults
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, shown
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command
@@ -94,26 +99,10 @@ async def test_model_settings_flow_saves_speed_without_selecting_model(tmp_path:
     assert context.settings.model == original and not applied
 
 
-@pytest.mark.parametrize(
-    ('model', 'saved', 'command', 'tier'),
-    [
-        pytest.param('gpt-6-astra', {}, None, 'ultrafast', id='default'),
-        pytest.param('gpt-5.6-luna', {}, None, 'default', id='default-without-ultrafast'),
-        pytest.param('gpt-5.6-luna', {}, '/fast', 'priority', id='toggle-without-ultrafast'),
-        pytest.param('gpt-6-astra', {}, '/fast off', 'default', id='off'),
-        pytest.param('gpt-6-astra', {}, '/fast on', 'priority', id='on'),
-        pytest.param('gpt-6-astra', {'codex_speed': 'standard'}, '/fast ultrafast', 'ultrafast', id='ultrafast'),
-        pytest.param('gpt-6-astra', {'service_tier': 'priority'}, None, 'priority', id='saved-tier'),
-    ],
-)
-async def test_speed_reaches_codex_request(
-    tmp_path: Path, model: str, saved: dict[str, JsonValue], command: str | None, tier: str
-) -> None:
-    context, _ = make_context(tmp_path)
-    name = f'openai-codex:{model}'
-    context.store.save_model_settings(name, saved)
-    if command is not None:
-        await _shell(context.store, name).commands.execute_async(command)
+async def _codex_request(
+    model: str, *, model_settings: ModelSettings | None, capabilities: Sequence[AbstractCapability[None]] = ()
+) -> dict[str, JsonValue]:
+    """The body of the one Responses request a run on the Codex `model` sends."""
     bodies: list[dict[str, JsonValue]] = []
     adapter = TypeAdapter(dict[str, JsonValue])
 
@@ -157,14 +146,55 @@ async def test_speed_reaches_codex_request(
             http_client=client,
         )
         with override_allow_model_requests(True):
-            result = await Agent(OpenAICodexModel(model, provider=provider)).run(
-                'hello', model_settings=context.model_settings(name)
-            )
+            agent = Agent(OpenAICodexModel(model, provider=provider), deps_type=type(None), capabilities=capabilities)
+            result = await agent.run('hello', model_settings=model_settings)
     assert result.output == 'done'
     assert len(bodies) == 1
-    assert bodies[0]['service_tier'] == tier
     assert bodies[0]['stream'] is True and bodies[0]['store'] is False
-    reasoning = bodies[0]['reasoning']
+    return bodies[0]
+
+
+@pytest.mark.parametrize(
+    ('selected', 'run_settings', 'tier'),
+    [
+        pytest.param({}, None, 'ultrafast', id='cli'),
+        pytest.param(None, {'service_tier': 'flex'}, 'flex', id='stock-agent'),
+    ],
+)
+async def test_only_the_cli_defaults_codex_to_ultrafast(
+    selected: dict[str, JsonValue] | None, run_settings: ModelSettings | None, tier: str
+) -> None:
+    """`open_stock_agent`'s defaults set no Codex speed, so a tier its caller sets reaches the request."""
+    defaults = ModelDefaults[None](
+        lambda _: default_model_settings(model='openai-codex:gpt-6-astra', saved={}, selected=selected)
+    )
+    body = await _codex_request('gpt-6-astra', model_settings=run_settings, capabilities=[defaults])
+    assert body['service_tier'] == tier
+
+
+@pytest.mark.parametrize(
+    ('model', 'saved', 'command', 'tier'),
+    [
+        pytest.param('gpt-6-astra', {}, None, 'ultrafast', id='default'),
+        pytest.param('gpt-5.6-luna', {}, None, 'default', id='default-without-ultrafast'),
+        pytest.param('gpt-5.6-luna', {}, '/fast', 'priority', id='toggle-without-ultrafast'),
+        pytest.param('gpt-6-astra', {}, '/fast off', 'default', id='off'),
+        pytest.param('gpt-6-astra', {}, '/fast on', 'priority', id='on'),
+        pytest.param('gpt-6-astra', {'codex_speed': 'standard'}, '/fast ultrafast', 'ultrafast', id='ultrafast'),
+        pytest.param('gpt-6-astra', {'service_tier': 'priority'}, None, 'priority', id='saved-tier'),
+    ],
+)
+async def test_speed_reaches_codex_request(
+    tmp_path: Path, model: str, saved: dict[str, JsonValue], command: str | None, tier: str
+) -> None:
+    context, _ = make_context(tmp_path)
+    name = f'openai-codex:{model}'
+    context.store.save_model_settings(name, saved)
+    if command is not None:
+        await _shell(context.store, name).commands.execute_async(command)
+    body = await _codex_request(model, model_settings=context.model_settings(name))
+    assert body['service_tier'] == tier
+    reasoning = body['reasoning']
     assert isinstance(reasoning, dict) and reasoning['effort'] == 'medium'
 
 
