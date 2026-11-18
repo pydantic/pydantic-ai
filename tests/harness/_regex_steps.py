@@ -92,10 +92,13 @@ def _repeat(argument: object) -> tuple[int, int, list[Node]]:
 
 
 def _group(argument: object, flags: int) -> tuple[list[Node], int]:
-    """The body of a `(...)` group, and the flags inside it after its `(?i:...)`-style flag changes."""
+    """The body of a `(...)` group, and the flags inside it after its `(?i:...)`-style flag changes.
+
+    `re` combines them, so a scoped `(?a:...)` replaces the pattern's Unicode matching rather than adding to it.
+    """
     assert _is_object_tuple(argument)
     _, add_flags, remove_flags, body = argument
-    return _nodes(body), (flags | _int(add_flags)) & ~_int(remove_flags)
+    return _nodes(body), _int(_compiler._combine_flags(flags, add_flags, remove_flags))
 
 
 def parse(pattern: str, flags: int) -> tuple[list[Node], int]:

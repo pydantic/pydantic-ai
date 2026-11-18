@@ -480,6 +480,7 @@ def test_a_super_linear_pattern_fails(pattern: str, failure: str):
         pytest.param(r'ab|a[^b]', 0, 'abacad', id='branch-and-negated-literal'),
         pytest.param(r'a+', 0, 'aAa', id='case-sensitive'),
         pytest.param(r'[a-c]x|(?-i:[a-c])y|(?i:K)k', re.IGNORECASE, 'BXcx Ay ay kKKk', id='scoped-flags'),
+        pytest.param(r'(?a:\w+)', 0, 'aé b', id='scoped-ascii'),
         pytest.param(r'.+', 0, 'a\nbc', id='any'),
         pytest.param(r'.+', re.DOTALL, 'a\nbc', id='dotall'),
         pytest.param(r'^a|a$|\Ab|b\Z', 0, 'ab\nab\n', id='anchors'),
