@@ -201,6 +201,63 @@ async def test_gpt_continues_a_native_history_after_the_tool_opts_out(
 
 
 @pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='the resumed agent sends the computer tool as a function, not the native tool')
+async def test_gpt_resumes_an_approved_stored_native_call_after_the_tool_opts_out(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    """A native call held in a stored response is approved and answered by an agent with `ComputerUse(native=False)`.
+
+    Continuing the stored response would send its output as a `computer_call_output`, which the API refuses with a
+    400 when the request has no native computer tool, after the approved click already ran. So the whole history goes
+    back instead, the native calls as function calls.
+    """
+    provider = ScreenProvider()
+    hooks = Hooks[object]()
+
+    @hooks.on.before_tool_execute
+    async def ask_before_acting(
+        ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        if tool_def.tool_kind == COMPUTER_KIND.id and not ctx.tool_call_approved:
+            if any(action.type != 'screenshot' for action in args['actions']):
+                raise ApprovalRequired
+        return args
+
+    model = _gpt(openai_api_key, request_capture)
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    native = Agent(
+        model,
+        capabilities=[provider.capability(), ComputerUse(), hooks],
+        output_type=[str, DeferredToolRequests],
+        model_settings=settings,
+    )
+    paused = await native.run('Click at x=100 y=200 with the computer tool, then reply "done".')
+    assert isinstance(paused.output, DeferredToolRequests)
+    (approval,) = paused.output.approvals
+    assert isinstance(approval, ComputerCallPart)
+    sent_before_resume = len(request_capture.bodies('/responses'))
+
+    opted_out = Agent(
+        model,
+        capabilities=[provider.capability(), ComputerUse(native=False)],
+        output_type=[str, DeferredToolRequests],
+        model_settings=settings,
+    )
+    approved = DeferredToolResults(approvals={approval.tool_call_id: True})
+    result = await opted_out.run(message_history=paused.all_messages(), deferred_tool_results=approved)
+
+    assert provider.actions == [Click(x=100, y=200)]
+    assert isinstance(result.output, str)
+    resumed = request_capture.bodies('/responses')[sent_before_resume]
+    assert 'previous_response_id' not in resumed
+    assert [tool['type'] for tool in json_objects(resumed['tools'])] == ['function']
+    kinds = _kinds(resumed)
+    assert 'computer_call' not in kinds and 'computer_call_output' not in kinds
+    (output,) = [item for item in _items(resumed, 'function_call_output') if item['call_id'] == approval.tool_call_id]
+    assert output
+
+
+@pytest.mark.vcr
 async def test_gpt_on_bedrock_mantle_drives_the_screen_through_the_native_computer_tool(
     allow_model_requests: None, request_capture: RequestCapture
 ) -> None:
