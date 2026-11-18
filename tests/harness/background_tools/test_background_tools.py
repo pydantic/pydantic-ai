@@ -1929,7 +1929,8 @@ The user wants you to delete X.\
         capability = await BackgroundTools().for_run(ctx)
 
         async def tool_handler(args: ValidatedToolArgs) -> str:
-            return 'resumed'  # pragma: no cover -- the run ends and cancels the task before its first step
+            # The run ends and cancels the task before its first step.
+            return 'resumed'  # pragma: no cover
 
         async def run_handler() -> AgentRunResult[str]:
             reply = await capability.wrap_tool_execute(
