@@ -821,25 +821,11 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
             if max_retries is None:
                 max_retries = ctx.max_retries
-            # `retries` is keyed by the name the model calls the tool by, computed here by applying
-            # the layers `PrefixedToolset` and `RenamedToolset` pushed, innermost first, the way they
-            # name the tools they list. That name is wrong when the tool's own `prepare` renames it,
-            # or when a wrapper other than `PrefixedToolset` and `RenamedToolset` renames tools,
-            # nested inside or around them, whether or not it calls `super().get_tools()`. If it
-            # then names an unrelated tool, `prepare` reads that tool's count.
-            exposed = original_name
-            for layer in reversed(ctx._tool_name_path):  # pyright: ignore[reportPrivateUsage]
-                exposed = f'{layer}_{exposed}' if isinstance(layer, str) else layer.get(exposed) or exposed
-            run_context = replace(
-                ctx,
-                tool_name=original_name,
-                retry=ctx.retries.get(exposed, 0),
-                max_retries=max_retries,
-                _tool_name_path=(),
-                # A listing nested in a tool call must not inherit that call's tool manager name.
-                _dispatched_tool_name=None,
-            )
-            tool_def = await tool.prepare_tool_def(run_context)
+            # Without `prepare` or an override, `prepare_tool_def` ignores the context, so skip building one.
+            if tool.prepare is None and type(tool).prepare_tool_def is Tool.prepare_tool_def:
+                tool_def = tool.tool_def
+            else:
+                tool_def = await tool.prepare_tool_def(self._prepare_context(ctx, original_name, max_retries))
             if not tool_def:
                 continue
 
@@ -852,6 +838,29 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
             tools[new_name] = self._tool_for(tool, tool_def, max_retries, original_name)
         return tools
+
+    def _prepare_context(
+        self, ctx: RunContext[AgentDepsT], original_name: str, max_retries: int
+    ) -> RunContext[AgentDepsT]:
+        """Build the run context a tool's `prepare` function sees."""
+        # `retries` is keyed by the name the model calls the tool by, computed here by applying
+        # the layers `PrefixedToolset` and `RenamedToolset` pushed, innermost first, the way they
+        # name the tools they list. That name is wrong when the tool's own `prepare` renames it,
+        # or when a wrapper other than `PrefixedToolset` and `RenamedToolset` renames tools,
+        # nested inside or around them, whether or not it calls `super().get_tools()`. If it
+        # then names an unrelated tool, `prepare` reads that tool's count.
+        exposed = original_name
+        for layer in reversed(ctx._tool_name_path):  # pyright: ignore[reportPrivateUsage]
+            exposed = f'{layer}_{exposed}' if isinstance(layer, str) else layer.get(exposed) or exposed
+        return replace(
+            ctx,
+            tool_name=original_name,
+            retry=ctx.retries.get(exposed, 0),
+            max_retries=max_retries,
+            _tool_name_path=(),
+            # A listing nested in a tool call must not inherit that call's tool manager name.
+            _dispatched_tool_name=None,
+        )
 
     def tool_for_tool_def(
         self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT], original_name: str | None = None
