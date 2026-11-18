@@ -298,6 +298,27 @@ async def _with_event_stream_buffer(
         await aclose_if_supported(stream)
 
 
+async def buffered_events(
+    event_stream_buffer: list[_messages.AgentStreamEvent],
+) -> AsyncIterator[_messages.AgentStreamEvent]:
+    """Stream the events in `event_stream_buffer`, removing each as it's yielded."""
+    while event_stream_buffer:
+        yield event_stream_buffer.pop(0)
+
+
+def leftover_event_stream(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+) -> AsyncIterator[_messages.AgentStreamEvent]:
+    """The events buffered after the run's last node stream closed, wrapped in the capability chain as a node's are.
+
+    Hooks that run once a node has finished, and the pending-message drain at the end of a run, can emit events no
+    node stream remains to deliver.
+    """
+    run_context = build_run_context(ctx)
+    inner = dispatch_event_stream(run_context, buffered_events(ctx.state.event_stream_buffer))
+    return aiter(ctx.deps.root_capability.wrap_run_event_stream(run_context, stream=inner))
+
+
 def _context_changes(before: Context, after: Context) -> list[tuple[ContextVar[Any], Any]]:
     """Return values newly set or replaced between two task-context snapshots."""
     return [(var, after[var]) for var in after if var not in before or before[var] is not after[var]]
@@ -1342,12 +1363,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     )
                 elif last_message.tool_calls:
                     # An interrupted response's calls were already closed out by `_repair_interrupted_tail`.
-                    raise exceptions.UserError(
-                        'Cannot provide a new user prompt when the message history contains unprocessed tool calls. '
-                        'Run the agent with this message history and no new prompt to execute the calls, pass '
-                        '`deferred_tool_results` if they were deferred, or call '
-                        '`pydantic_ai.messages.repair_messages()` on the history first to close them out.'
-                    )
+                    raise _new_prompt_on_unprocessed_calls_error()
 
         if not run_context:
             run_context = build_run_context(ctx)
@@ -1378,14 +1394,19 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     def _history_to_run(
         self, stored: list[_messages.ModelMessage]
     ) -> tuple[list[_messages.ModelMessage], tuple[_ToolCallKey, ...] | None]:
-        """The cleaned history to run on, and the calls answered at the deferred pause it resumes, if it resumes one.
+        """The cleaned history to run on, and the calls answered at the deferred pause it ends on, if it ends on one.
 
-        Only a run given neither a new prompt nor results resumes a pause its history ends on.
+        A run given `deferred_tool_results` answers the pause instead, so it gets `None`. A new prompt raises:
+        answering it would record a response after the paused calls, so their results could never be given. It
+        raises before anything is recorded, as for a history that ends on the paused response.
         """
         messages = _clean_message_history(stored)
-        if self.user_prompt is None and self.deferred_tool_results is None:
-            return messages, _answered_at_pause(messages)
-        return messages, None
+        if self.deferred_tool_results is not None:
+            return messages, None
+        answered = _answered_at_pause(messages)
+        if answered is not None and self.user_prompt is not None:
+            raise _new_prompt_on_unprocessed_calls_error()
+        return messages, answered
 
     async def _adopt_resumed_response(
         self,
@@ -1537,6 +1558,15 @@ def _repair_interrupted_tail(
 
 _ToolCallKey: TypeAlias = tuple[str, str]
 """A tool call's tool name and ID, which together tell apart calls a model gave the same ID."""
+
+
+def _new_prompt_on_unprocessed_calls_error() -> exceptions.UserError:
+    return exceptions.UserError(
+        'Cannot provide a new user prompt when the message history contains unprocessed tool calls. '
+        'Run the agent with this message history and no new prompt to execute the calls, pass '
+        '`deferred_tool_results` if they were deferred, or call '
+        '`pydantic_ai.messages.repair_messages()` on the history first to close them out.'
+    )
 
 
 def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_ToolCallKey, ...] | None:
@@ -3466,9 +3496,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             mirrored_messages.detach()
         # The drain capability ran ahead of the other hooks, so `'asap'` content a `before_model_request` hook
         # enqueued would wait for the next request. Delivering it now puts it in this request and in history with
-        # one call, which is what a request-scoped reminder needs. Not when resuming a suspended response: that
-        # request re-sends the history ending in it, so there's nowhere to put new content, and it waits.
-        if self._resume_suspended is None:
+        # one call, which is what a request-scoped reminder needs.
+        if not _enqueue.resumes_suspended_response(processed_context):
             processed_context = _enqueue.deliver_asap_messages(run_context, processed_context)
         # Content enqueued during a tool call replaces the request it went into with a copy. Keep this node on the
         # copy, so what's recorded on its request below, like the instructions sent, lands in history.
