@@ -39,6 +39,7 @@ The notice is an instruction block named `notice` with `on_change='append'`, ret
 ## Options
 
 - `notice` (default `DEFAULT_CROSS_MODEL_NOTICE`): the text stated while the history has a turn from another model.
+- `id` (default `'label_cross_model_history'`): the capability's id, which makes the `notice` block addressable as `capability:label_cross_model_history:notice`. Without an id, core can't append changes to the block and rewrites the instructions instead.
 
 ## Composition
 

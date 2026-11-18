@@ -39,6 +39,10 @@ class LabelCrossModelHistory(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
     id: str | None = 'label_cross_model_history'
+    """Stable capability ID, so the `notice` block is addressable as `capability:label_cross_model_history:notice`.
+
+    Without one, core can't append changes to the block and rewrites the instructions instead.
+    """
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], InstructionPart]:
         """State `notice` while the history has a response from another model, and nothing otherwise."""
