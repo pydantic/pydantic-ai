@@ -36,7 +36,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal, TypeGuard
+from types import MappingProxyType
+from typing import Any, Literal, NamedTuple, TypeGuard
 from uuid import uuid4
 
 import pytest
@@ -522,6 +523,66 @@ def test_turn_values_keep_what_temporal_json_cannot() -> None:
     assert back_shared[0] is back_shared[1]
 
 
+class _Pair(NamedTuple):
+    first: int
+    second: int
+
+
+class _Items(list[int]):
+    pass
+
+
+class _Fields(dict[str, int]):
+    pass
+
+
+class _Members(set[int]):
+    pass
+
+
+class _FrozenMembers(frozenset[int]):
+    pass
+
+
+class _Ratio(float):
+    pass
+
+
+class _Blob(bytes):
+    pass
+
+
+def test_turn_values_send_subclasses_as_their_base_types() -> None:
+    """A subclass of a type a live session takes reaches the sandbox as that base type, as from a live session.
+
+    Called directly: the tools that return these run in workflow code, whose lines coverage does not record.
+    """
+    values = (
+        _Pair(1, 2),
+        _Items([3]),
+        _Fields(a=4),
+        _Members({5}),
+        _FrozenMembers({6}),
+        _Ratio(7.5),
+        _Blob(b'8'),
+        MappingProxyType({'b': 9}),
+    )
+    back = from_wire(to_wire(values))
+    assert back == ((1, 2), [3], {'a': 4}, {5}, frozenset({6}), 7.5, b'8', {'b': 9})
+    assert _is_object_tuple(back)
+    assert [type(value) for value in back] == [tuple, list, dict, set, frozenset, float, bytes, dict]
+
+
+def test_turn_values_refuse_a_value_nested_too_deeply_to_send() -> None:
+    """A value nested past what the pickler can write fails as a `TypeError`, as other unsendable values do."""
+    deep: object = 0
+    # Deep enough for each supported Python's pickler, some of which write tens of thousands of levels.
+    for _ in range(100_000):
+        deep = [deep]
+    with pytest.raises(TypeError, match='the value is nested too deeply to send'):
+        to_wire(deep)
+
+
 def test_turn_values_load_only_wire_types() -> None:
     """A recorded turn value that names any other class is refused instead of loaded.
 
@@ -566,12 +627,14 @@ def give_up() -> str:
 
 async def type_names(values: list[object]) -> list[str]:
     """Name each value's type. It runs in the workflow, so values reach it as the turn delivers them."""
-    return [type(value).__name__ for value in values]
+    # Coverage does not record this line, which runs in workflow code; the `host_types` case runs it.
+    return [type(value).__name__ for value in values]  # pragma: lax no cover
 
 
 async def same(first: object, second: object) -> bool:
     """Whether `first` equals `second`."""
-    return first == second
+    # The test refuses the call's arguments before the tool runs.
+    return first == second  # pragma: lax no cover
 
 
 async def echo_here(value: object) -> object:
@@ -1255,6 +1318,17 @@ async def test_remote_turns_reset_a_session_the_server_will_not_store(
     assert _NOT_KEPT in output
     history = await _history(client, workflow_id)
     assert _activity_types(history) == expected_activities
+
+
+async def test_remote_turns_keep_the_session_after_a_syntax_error_the_server_will_not_store(
+    client: Client, workflow_id: str
+) -> None:
+    """A syntax error ran nothing, so the session keeps its stored state even when storing it again fails."""
+    SERVER.dumps_left = 1
+    # Only a run's first snippet is type-checked, so the second reaches the sandbox's parser.
+    output = await _run(client, workflow_id, snippet_agents['default'], f'x = 1{NEXT_SNIPPET}1 +')
+    assert output.startswith('Syntax error in code:')
+    assert _NOT_KEPT not in output
 
 
 _CUT = '[the rest is not shown: a turn returns at most {} bytes]'

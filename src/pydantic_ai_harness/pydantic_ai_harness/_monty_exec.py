@@ -374,7 +374,9 @@ class TurnFeed:
         """Resume with what `encode` returns: the results, as data a turn can carry."""
         try:
             resume = encode()
-        except TypeError as error:  # a value the wire cannot carry, such as a class instance
+        # A value the wire cannot carry, such as a `bytearray`. This runs in workflow code, whose lines coverage
+        # does not record; `test_remote_turns_carry_values_as_a_live_session_does[bytearray_tool_result]` runs it.
+        except TypeError as error:  # pragma: lax no cover
             raise _unsendable_turn('TypeError', str(error), resuming=True) from None
         limits = self._limits(restored_pauses=1)
         request = TurnRequest(self.run_state.stored_state, limits, self.capture.unused_bytes, resume=resume)

@@ -175,7 +175,9 @@ def _output_to_wire(output: object) -> str:
         safe = model_safe_result(output)
         try:
             return to_wire(safe)
-        except TypeError:
+        # No value Monty returns has a JSON form but no wire form; this keeps a new one from failing the turn
+        # after the snippet ran.
+        except TypeError:  # pragma: no cover
             return to_wire(repr(safe))
     except RecursionError:
         # The snippet already ran, so failing here would let the activity retry run it again.
