@@ -63,11 +63,11 @@ agent = Agent(
 result = agent.run_sync('Run the test suite and fix the first failure.')
 ```
 
-- **Commands can write only to the working directory.** They see the host's other files read-only, a private `/tmp` and an empty `/run`.
-- **The file tools of [`FileSystem`](filesystem.md) and [`Coder`](coder.md) run in the wrapper too**, so they can't write outside the working directory either, even through a swapped-in symlink.
-- **There is no network**, not even loopback or Unix sockets. A test suite that starts a local server needs `network=True`. See [Network](#network).
-- **Background jobs keep running** after the call and the run that started them, until something stops them. Commands share the host's process list.
-- **The run's ref and `backend` are the wrapped workspace's**, so continuing a run works as it does for that workspace.
+- Commands can write only to the working directory. They see the host's other files read-only, a private `/tmp` and an empty `/run`.
+- The file tools of [`FileSystem`](filesystem.md) and [`Coder`](coder.md) run in the wrapper too, so they can't write outside the working directory either, even through a swapped-in symlink.
+- There is no network, not even loopback or Unix sockets. A test suite that starts a local server needs `network=True`. See [Network](#network).
+- Background jobs keep running after the call and the run that started them, until something stops them. Commands share the host's process list.
+- The run's ref and `backend` are the wrapped workspace's, so continuing a run works as it does for that workspace.
 
 ## What the wrapper allows
 

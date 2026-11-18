@@ -100,7 +100,7 @@ up](#cleaning-up) shows how to handle that.
 | [Render Sandbox](harness/render-sandbox.md) | A Render sandbox | Yes | A Render workspace with Sandboxes access |
 | [Sprites Sandbox](harness/sprites-sandbox.md) | A persistent Fly.io Sprite | Yes | A Sprites API token |
 | [boxd Sandbox](harness/boxd-sandbox.md) | A boxd cloud machine | Yes | A boxd account |
-| [SSH Workspace](harness/ssh-workspace.md) | Another machine, over your `ssh` client | No, commands run as your SSH user there | SSH access |
+| [SSH Workspace](harness/ssh-workspace.md) | Another machine, over your `ssh` client | Yes, on another host, but not sandboxed there: commands run as your SSH user | SSH access |
 | [Bubblewrapped Workspace](harness/bubblewrap-sandbox.md) | Wraps another workspace and runs its commands in Linux `bwrap` | Best effort, not a security boundary | Linux with `bwrap` on that host |
 
 <span id="third-party-workspaces"></span>Other packages implement the same interface:
@@ -446,8 +446,12 @@ Anything you wrap around a workspace for one run would be dropped, so:
 
 - Put policy on the capability, such as `LocalWorkspace(..., read_only=True)` or
   `LocalWorkspace(..., authority='none')`.
-- A `ReadOnlyWorkspace(...)` or `AuthorityWorkspace(...)` passed to the run raises `UserError`.
-- A workspace capability passed to the run doesn't apply its own settings, such as a sandbox image.
+- A `ReadOnlyWorkspace(...)` or `AuthorityWorkspace(...)` passed to the run raises `UserError`, unless the
+  capability already applies the same policy.
+- A live workspace passed to the run that has no ref yet raises `UserError`. A previous `result.workspace`
+  without a ref is the exception: it starts a fresh workspace.
+- A workspace capability passed to the run raises `UserError` if it selects a different kind of workspace
+  or policy. Its other settings, such as a sandbox image, are ignored.
 - Workspace calls made from workflow code store their arguments, `env=` and file contents included, in
   durable history. Keep secrets in the capability's `env=` or use them inside a tool.
 - `workspace.backend` is not available in workflow code, which includes DBOS function tools and tools with
