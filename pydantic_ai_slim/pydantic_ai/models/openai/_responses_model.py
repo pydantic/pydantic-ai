@@ -850,6 +850,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         # The `computer_call`s the server holds before `new_messages`, whose outputs go as `computer_call_output`s.
         calls = computer_calls_by_id(restored[: len(restored) - len(new_messages)])
+        if (
+            previous_response_id
+            and calls
+            and ComputerTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+        ):
+            # The endpoint refuses the computer tool for this model, which the calls' outputs need, so the whole
+            # history goes instead, its `computer_call`s as function calls, as for a request.
+            previous_response_id, new_messages, calls = None, messages, {}
         messages = new_messages
         # The endpoint doesn't take `configuration_update` items: the compacted window carries no effort change.
         # Removed after resolving the response to continue, which matches the history as stored.
