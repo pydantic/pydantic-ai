@@ -7,7 +7,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 
 from pydantic_ai_pax.cli.command_context import CommandContext
-from pydantic_ai_pax.cli.self_update import Updates, command_name
+from pydantic_ai_pax.cli.install import command_name
+from pydantic_ai_pax.cli.self_update import Updates
 from pydantic_ai_pax.plugins.menus import CloseMenu, Dialogs, FieldRow, SettingsMenu
 from pydantic_ai_pax.ui.menus.set_menu import SettingsSource
 

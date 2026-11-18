@@ -125,11 +125,11 @@ values. Keep `.env` files containing credentials out of version control.
 ## Git worktrees
 
 ```bash
-py-cli clai2 --worktree my-task
+py-cli pax --worktree my-task
 ```
 
 ```bash
-py-cli clai2 -w
+py-cli pax -w
 ```
 
 A Git worktree is another checkout of the same repository with its own branch

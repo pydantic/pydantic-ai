@@ -11,7 +11,7 @@ npm ci --ignore-scripts --no-audit --no-fund
 npm run build
 ```
 
-`build` typechecks before bundling and writes the bundle there, so `clai2 --web`
+`build` typechecks before bundling and writes the bundle there, so `pax --web`
 from the checkout serves your changes.
 
 Do not commit the rebuilt bundle: a pull request changes only the sources and

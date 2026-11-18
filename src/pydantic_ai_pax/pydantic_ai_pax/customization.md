@@ -172,7 +172,7 @@ or to a program inside the project that a list command runs, such as
 needs approval again (a string command is approved as written), and so does
 any change to a project plugin's file. The user's own table is the settings of
 the built-in hooks plugin (pydantic_ai_pax.builtin_plugins.hooks). Outside a session,
-pax plugins only lists declarations, since the agent can run clai2 too.
+pax plugins only lists declarations, since the agent can run pax too.
 /plugins opens the management menu. Removing a drop-in disables it persistently;
 delete its source file yourself to remove it from disk.
 
