@@ -66,8 +66,7 @@ class StavProvider(_OpenAISDKProvider):
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = vendor_family_model_profile(model_name, overrides=_STAV_VENDOR_PROFILES)
 
-        # As StavProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly.
+        # `OpenAIJsonSchemaTransformer` is the fallback for the OpenAI-compatible API; a family's own transformer wins.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
