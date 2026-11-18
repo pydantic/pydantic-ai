@@ -53,6 +53,7 @@ from ..workspace_fakes import InMemoryProvider
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message, with_history_digests
 
 with try_import() as imports_successful:
+    from openai import omit as OMIT
     from openai.types import responses as resp
 
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -172,6 +173,65 @@ async def test_compacting_response_scoped_computer_call_ids_enables_the_computer
     assert output['call_id'] == 'call_1'
     # The endpoint refuses a `computer_call_output` unless the computer tool is enabled.
     assert sent['extra_body'] == {'tools': [{'type': 'computer'}]}
+
+
+async def test_compacting_a_held_computer_call_with_a_model_without_the_tool_sends_the_whole_history(
+    allow_model_requests: None,
+) -> None:
+    """GPT-5.2 refuses the computer tool on the compaction endpoint (live: "Tool 'computer' is not supported with
+    gpt-5.2."), so the call goes as a function call in the whole history, as for a request."""
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    call = ToolCallPart(
+        'computer',
+        {'actions': [{'type': 'click', 'x': 5, 'y': 6}]},
+        tool_call_id='call_1',
+        tool_kind=COMPUTER_KIND.id,
+        provider_name='openai',
+        provider_details={
+            'computer_call': {'type': 'computer_call', 'id': 'cu_1', 'call_id': 'call_1', 'status': 'completed'},
+        },
+    )
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Go.'),
+        ModelResponse(parts=[call], provider_name='openai', provider_response_id='resp_1', model_name='gpt-5.4-mini'),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'computer',
+                    ['Ran 1 action.', _SCREEN],
+                    tool_call_id='call_1',
+                    metadata={'performed': 1},
+                    tool_kind=COMPUTER_KIND.id,
+                )
+            ]
+        ),
+    ]
+    sent: dict[str, Any] = {}
+
+    async def compact(**kwargs: Any) -> Any:
+        sent.update(kwargs)
+        return resp.CompactedResponse(
+            id='resp_compact',
+            created_at=0,
+            object='response.compaction',
+            output=[resp.ResponseCompactionItem(id='comp_1', encrypted_content='summary', type='compaction')],
+            usage=resp.ResponseUsage.model_construct(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+    model.client.responses.compact = compact
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    await model.compact_messages(
+        ModelRequestContext(
+            model=model,
+            messages=with_history_digests(history),
+            model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+            model_request_parameters=ModelRequestParameters(function_tools=[computer], allow_text_output=True),
+        )
+    )
+
+    assert [item.get('type') for item in sent['input']] == snapshot([None, 'function_call', 'function_call_output'])
+    assert sent['previous_response_id'] is OMIT
+    assert sent['extra_body'] is None
 
 
 async def test_a_held_result_with_a_response_scoped_call_id_is_a_computer_call_output(
