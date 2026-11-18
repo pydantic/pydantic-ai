@@ -178,6 +178,7 @@ with try_import() as imports_successful:
         BetaDirectCaller,
         BetaDocumentBlock,
         BetaInputJSONDelta,
+        BetaMCPToolUseBlock,
         BetaMemoryTool20250818CreateCommand,
         BetaMemoryTool20250818DeleteCommand,
         BetaMemoryTool20250818InsertCommand,
@@ -10023,6 +10024,58 @@ async def test_anthropic_mcp_call_replays_empty_tool_args(allow_model_requests: 
     assert completion_kwargs['messages'][1]['content'][0] == snapshot(
         {'id': 'mcptoolu_123', 'type': 'mcp_tool_use', 'server_name': 'clock', 'name': 'current_time', 'input': {}}
     )
+
+
+@pytest.mark.parametrize('empty_delta', [False, True], ids=['no-delta', 'empty-delta'])
+async def test_anthropic_mcp_call_streams_empty_tool_args(allow_model_requests: None, empty_delta: bool):
+    """Mocked, not recorded: no MCP server in the cassettes exposes a zero-argument tool."""
+    input_deltas: list[BetaRawMessageStreamEvent] = []
+    if empty_delta:
+        input_deltas.append(
+            BetaRawContentBlockDeltaEvent(
+                type='content_block_delta', index=0, delta=BetaInputJSONDelta(type='input_json_delta', partial_json='')
+            )
+        )
+    stream: list[BetaRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_1',
+                model='claude-sonnet-4-5',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=1, output_tokens=1),
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start',
+            index=0,
+            content_block=BetaMCPToolUseBlock(
+                type='mcp_tool_use', id='mcptoolu_01', name='who_am_i', server_name='srv', input={}
+            ),
+        ),
+        *input_deltas,
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start', index=1, content_block=BetaTextBlock(type='text', text='ok')
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=1),
+        BetaRawMessageDeltaEvent(
+            type='message_delta', delta=Delta(stop_reason='end_turn'), usage=BetaMessageDeltaUsage(output_tokens=1)
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    model = AnthropicModel(
+        'claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(stream))
+    )
+    agent = Agent(model, capabilities=[NativeTool(MCPServerTool(id='srv', url='https://mcp.example/mcp'))])
+
+    async with agent.run_stream('Who am I?') as result:
+        await result.get_output()
+    call = next(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
+    assert call.args == '{"action":"call_tool","tool_name":"who_am_i","tool_args":{}}'
 
 
 @pytest.mark.vcr()
