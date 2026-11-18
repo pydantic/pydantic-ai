@@ -89,7 +89,7 @@ class _Encoder:
     def encode(self, value: object) -> object:
         self.values_left -= 1
         if self.values_left < 0:
-            raise TypeError(f'a value with more than {TURN_PAYLOAD_BYTES} parts cannot cross as JSON')
+            raise TurnTooLarge(f'a value with more than {TURN_PAYLOAD_BYTES} parts cannot cross as JSON')
         if _is_list_or_tuple(value):
             items = [self.encode(item) for item in value]
             return {'tuple': items} if isinstance(value, tuple) else items
@@ -441,7 +441,9 @@ async def _run_turn(
     capture: CollectString,
 ) -> MontyTurn:
     if await _session_id(session) is None:
-        return MontyTurn('failed', failure=MontyFailure('no_storage'))
+        # Before anything ran, CodeMode falls back to workflow code. Later, this checkout reached a
+        # server that cannot have the run's record, so CodeMode reports it as a dropped session.
+        return MontyTurn('failed', failure=MontyFailure('no_storage' if request.state is None else 'disconnected'))
     pauses = _Pauses()
     try:
         paused = await _load(session, request, mount=mount, capture=capture)
@@ -480,6 +482,10 @@ async def _run_turn(
         state = await _dump(session)
     except MontyRuntimeError:
         return MontyTurn('failed', failure=MontyFailure('not_stored', display=_DUMP_REFUSED))
+    except Exception:
+        # The snippet already ran, so retrying the activity would run it again, mount writes included.
+        # CodeMode reports this as a dropped session instead.
+        return MontyTurn('failed', failure=MontyFailure('disconnected'))
     if isinstance(snapshot, MontyComplete):
         try:
             output = to_wire(model_safe_result(snapshot.output))
@@ -515,6 +521,10 @@ async def _state_after(session: AsyncMontySession, request: TurnRequest, failure
             return request.state
         failure.session_lost = True
         return None
+
+
+class TurnTooLarge(TypeError):
+    """A value has more parts than a turn can carry."""
 
 
 def oversized(request: TurnRequest) -> str | None:

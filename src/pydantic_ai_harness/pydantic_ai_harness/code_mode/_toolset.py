@@ -1339,8 +1339,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     ) -> tuple[Callable[[], Awaitable[Snapshot]], BlockingPortal | None]:
         """How to start feeding `code`, and the portal to call Monty through: in turns, or on the live session."""
         if in_workflow and run_state.stores_sessions and (run_turn := self._durable_turn(ctx)) is not None:
-            # The workflow's limits, so a snippet runs under the same limits on either path.
-            feed = TurnFeed(run_turn, run_state, capture, limits)
+            # The configured limits: Monty's elapsed-time check is replay-safe in an activity, and it is
+            # what stops a turn, since Temporal's timeout does not stop a running activity.
+            feed = TurnFeed(run_turn, run_state, capture, _resolve_resource_limits(self.resource_limits))
             return partial(feed.start, code, type_check_stubs), None
         type_check = type_check_stubs is not None
         session = await run_state.get_session(
@@ -1565,7 +1566,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 await run_state.reset()
                 _raise_usage_limit_exceeded(execution)
                 return ModelRetry(f'{self._worker_failure_message(failure)}{_started_calls_note(execution)}')
-            case 'not_stored' | 'no_storage':  # `no_storage` falls back in `_run_feed` and never gets here
+            case 'not_stored' | 'no_storage':  # `no_storage` falls back in `_feed` and never gets here
                 # Retrying soon would meet the same refusal, so the run fails with the reason.
                 await run_state.reset()
                 raise UserError(failure.display)

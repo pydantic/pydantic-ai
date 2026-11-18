@@ -61,6 +61,7 @@ try:
         TurnCall,
         TurnRequest,
         TurnResume,
+        TurnTooLarge,
         from_wire,
         oversized,
         settled_data,
@@ -335,6 +336,22 @@ _MONTY_DEFAULT_MAX_SUSPENSIONS = 1000
 """The `max_suspensions` Monty applies when none is set; it cannot be turned off (see `ResourceLimits`)."""
 
 
+def _too_large(message: str) -> MontyTurnFailed:
+    """Tool results too large for one turn, reported as running out of memory.
+
+    That resets the session and tells the model to work in smaller batches.
+    """
+    return MontyTurnFailed(
+        MontyFailure(
+            'runtime',
+            display=f'MemoryError: {message}',
+            message=message,
+            type_name='MemoryError',
+            exception_types=('MemoryError', 'Exception', 'BaseException'),
+        )
+    )
+
+
 @dataclass
 class TurnFeed:
     """One feed of a remote session, run one turn at a time through `run_turn`, a durable operation.
@@ -355,7 +372,12 @@ class TurnFeed:
         request = TurnRequest(state, limits, self.capture.unused_bytes, code=code, type_check_stubs=type_check_stubs)
         return await self._turn(request)
 
-    async def resume(self, resume: TurnResume) -> TurnSnapshot:
+    async def resume(self, encode: Callable[[], TurnResume]) -> TurnSnapshot:
+        """Resume with what `encode` returns: the results, as data a turn can carry."""
+        try:
+            resume = encode()
+        except TurnTooLarge as error:
+            raise _too_large(str(error)) from None
         limits = self._limits(restored_pauses=1)
         request = TurnRequest(self.run_state.stored_state, limits, self.capture.unused_bytes, resume=resume)
         return await self._turn(request)
@@ -374,17 +396,7 @@ class TurnFeed:
 
     async def _turn(self, request: TurnRequest) -> TurnSnapshot:
         if (message := oversized(request)) is not None:
-            # Tool results the sandbox awaits, all sent in one turn. Reported as running out of memory,
-            # which resets the session and tells the model to work in smaller batches.
-            raise MontyTurnFailed(
-                MontyFailure(
-                    'runtime',
-                    display=f'MemoryError: {message}',
-                    message=message,
-                    type_name='MemoryError',
-                    exception_types=('MemoryError', 'Exception', 'BaseException'),
-                )
-            )
+            raise _too_large(message)
         try:
             turn = await self.run_turn(request)
         except Exception as error:
@@ -437,7 +449,7 @@ class TurnFunctionSnapshot:
         return otel_context.get_current()
 
     async def resume(self, result: ExternalResult) -> TurnSnapshot:
-        return await self.feed.resume(TurnResume.from_result(result))
+        return await self.feed.resume(partial(TurnResume.from_result, result))
 
 
 @dataclass
@@ -448,8 +460,11 @@ class TurnFutureSnapshot:
     pending_call_ids: list[int]
 
     async def resume(self, results: dict[int, ExternalSettledResult]) -> TurnSnapshot:
-        settled = {call_id: settled_data(result) for call_id, result in results.items()}
-        return await self.feed.resume(TurnResume('settled', settled=settled))
+        return await self.feed.resume(
+            lambda: TurnResume(
+                'settled', settled={call_id: settled_data(result) for call_id, result in results.items()}
+            )
+        )
 
 
 @dataclass

@@ -1202,6 +1202,20 @@ async def test_remote_turns_report_a_lost_session(client: Client, prompt: str, r
     assert not [result for result in activity_results if b'secret-token' in result]
 
 
+async def numbers(count: int) -> list[int]:
+    """Return `count` zeros."""
+    return [0] * count
+
+
+forgetful_pool_calls: list[None] = []
+
+
+def _forgetful_pool() -> StoredSessionPool:
+    """A pool whose server stores the first turn's session, and whose later checkouts land on one that stores none."""
+    forgetful_pool_calls.append(None)
+    return StoredSessionPool(stores=len(forgetful_pool_calls) == 1)
+
+
 def repeat(text: str, times: int) -> str:
     """Return `text` repeated `times` times."""
     return text * times
@@ -1290,6 +1304,8 @@ snippet_agents = {
     'unlimited': _snippet_agent('unlimited', resource_limits='unlimited'),
     'factory_error': _snippet_agent('factory_error', monty_sandbox=_refusing_factory),
     'types': _snippet_agent('types', workflow_tools=(type_names, echo_here)),
+    'forgetful': _snippet_agent('forgetful', monty_sandbox=_forgetful_pool),
+    'numbers': _snippet_agent('numbers', workflow_tools=(numbers,)),
 }
 
 
@@ -1553,3 +1569,34 @@ async def test_remote_turns_keep_a_cut_tool_failure(client: Client, monkeypatch:
         client, 'test_code_mode_temporal_cut_tool_failed', 'await give_up_at_length(length=1800)'
     )
     assert output == 'x' * 1800
+
+
+async def test_remote_turns_refuse_tool_results_with_too_many_parts(
+    client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tool result with more parts than a turn carries resets the session and tells the model to batch."""
+    monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 2500)
+    output = await _run_snippet(
+        client, 'test_code_mode_temporal_many_parts', 'await numbers(count=3000)', agent='numbers'
+    )
+    assert 'MemoryError: a value with more than 2500 parts cannot cross as JSON' in output
+    assert 'the session was reset' in output
+
+
+async def test_remote_turns_do_not_rerun_a_snippet_whose_save_dropped(client: Client) -> None:
+    """A connection lost while saving a finished turn is a dropped session, not a retry that runs it again."""
+    SERVER.drops_next_dump = ConnectionResetError('the connection dropped')
+    output = await _run_snippet(client, 'test_code_mode_temporal_dump_dropped', '1')
+    # A retried activity would find the connection back and return `1`.
+    assert output.startswith('The sandbox connection was lost and the session was reset.')
+
+
+async def test_remote_turns_report_storage_lost_after_the_first_turn(client: Client) -> None:
+    """A later turn on a server without storage reports a dropped session instead of rerunning in the workflow."""
+    forgetful_pool_calls.clear()
+    output = await _run_snippet(
+        client, 'test_code_mode_temporal_storage_lost', 'await echo(value=1)', agent='forgetful'
+    )
+    # Falling back would run the snippet again in workflow code and return its result.
+    assert output.startswith('The sandbox connection was lost and the session was reset.')
+    assert len(forgetful_pool_calls) == 2

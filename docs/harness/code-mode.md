@@ -764,10 +764,12 @@ the original error's type name but not its text, which can carry the pool's URL 
 the workflow fails with Temporal's `ActivityError`. Errors in the snippet itself, such as syntax errors,
 exceptions, and time limits, are returned to the model as model retries, as they are outside Temporal.
 
-Turns use the same limits as workflow code: `max_memory` applies to each turn, `max_duration_seconds`
-is off, and `max_suspensions` and the 10 MiB print cap count across a session's turns. Sleeps are
-still charged against `max_duration_seconds`. `start_to_close_timeout` bounds how long one turn
-computes.
+`max_memory` and `max_duration_seconds` apply to each turn; workflow code turns `max_duration_seconds`
+off. `max_suspensions` and the 10 MiB print cap count across a session's turns, as in workflow code.
+Keep `start_to_close_timeout` above `max_duration_seconds`: Temporal's timeout does not stop a running
+turn, it retries the turn while the first attempt keeps running, whereas `max_duration_seconds` stops
+the turn and Code Mode reports the time limit to the model. With `'unlimited'`, nothing stops a long
+turn.
 
 Tool results and nested call arguments keep their types, including `bytes`, tuples, dates, times,
 `timedelta`, `Decimal` and sets, and the model sees the same snippet result as in workflow code. Each

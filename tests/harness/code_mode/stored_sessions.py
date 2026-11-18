@@ -32,6 +32,8 @@ class Server:
     records: dict[bytes, bytes] = field(default_factory=dict[bytes, bytes])
     drops_next_feed: Exception | None = None
     """An error the next `feed_start` raises, as a connection that drops mid-feed does."""
+    drops_next_dump: Exception | None = None
+    """An error the next `dump()` raises, as a connection that drops while the state is saved does."""
     dumps_left: int | None = None
     """How many more `dump()` calls succeed before the rest raise `MontyRuntimeError`, as on a server
     whose snapshot quota fills, or that refuses to store a session a snippet error left; `None` is no limit."""
@@ -58,6 +60,9 @@ class StoredSession:
         return b'session' if self.stores else None
 
     async def dump(self) -> bytes:
+        if (error := SERVER.drops_next_dump) is not None:
+            SERVER.drops_next_dump = None
+            raise error
         if SERVER.dumps_left is not None:
             if SERVER.dumps_left == 0:
                 # `MontyRuntimeError` cannot be built directly; Monty raises it for bytes that are not a dump.

@@ -238,16 +238,21 @@ workflow task that does not yield within 2 seconds fails, so move heavy computat
 
 With a remote `monty_sandbox` and `CodeMode(id=...)`, each turn (the code between two waits on the
 host: nested calls, sleeps, deferred calls) runs as its own activity instead, so sandbox computation
-does not count against the 2 seconds and replay reads turn results from history. The server must store
-sessions (Logfire Agent Sandboxes does); one that stores none or cannot store a session's state raises
-a non-retried `UserError`. Runs stay workflow-side without an `id`, under the deprecated
+does not count against the 2 seconds and replay reads turn results from history. This needs a server
+that stores sessions (Logfire Agent Sandboxes does); on one that stores none, the run falls back to
+workflow code, and a storing server that cannot store a session's state raises a non-retried
+`UserError`. Runs stay workflow-side without an `id`, under the deprecated
 `TemporalAgent`, with `os_access` set, with an `'overlay'` mount (the default mode; use `'read-only'`
 or `'read-write'`) or a `write_bytes_limit`, or when the workflow started before this change. Each
-turn returns at most 1 MiB of prints and result and cuts the rest.
+turn takes and returns at most 1 MiB: longer output is cut, and longer tool results fail the snippet
+with a `MemoryError` that tells the model to batch.
 Turns use `TemporalDurability`'s `activity_config`; a turn that still fails after its retries fails
 the workflow with `ActivityError`. In a turn activity `max_duration_seconds` applies again, so keep
-`start_to_close_timeout` above it. A retried turn repeats its `'read-write'` mount writes. Tool results
-and call arguments keep their types across turns, and the model sees the same result; nested-call
+`start_to_close_timeout` above it: Temporal's timeout does not stop a running turn. A retried turn
+repeats its `'read-write'` mount writes. Recorded pool errors keep their type name, so
+`non_retryable_error_types` still match. A `DynamicCapability` that returns such a `CodeMode` raises
+`UserError`. Tool results and call arguments keep their types across turns (dates, `Decimal` and sets
+included), and the model sees the same result; nested-call
 arguments with no JSON form raise `TypeError`.
 
 Setup errors reach workflow code with their original types. `PydanticAIPlugin` treats `UserError`
