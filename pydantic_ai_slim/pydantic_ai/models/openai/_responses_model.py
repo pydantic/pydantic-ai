@@ -718,14 +718,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # Chat Completions endpoint rejects it, so the generic flag can only be raised per model class.
         if profile.get('openai_responses_supports_json_schema_output', False):
             profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
-        # The flag, after every layer including the user's `profile=`, decides whether the native computer tool is sent.
         listed = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-        if profile.get('openai_supports_computer_tool', False):
-            supported = listed | {ComputerTool}
-        else:
-            supported = listed - {ComputerTool}
-        if supported != listed:
-            profile = merge_profile(profile, ModelProfile(supported_native_tools=supported))
+        if ComputerTool in listed and not profile.get('openai_responses_supports_computer_tool', False):
+            profile = merge_profile(profile, ModelProfile(supported_native_tools=listed - {ComputerTool}))
         if isinstance(self._provider, OAuthCredentialsProvider):
             # These providers authenticate HTTP requests without configuring the SDK socket client.
             profile = merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
@@ -733,6 +728,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Turn off Batch API, Responses WebSocket and native computer tool defaults for Azure clients and the gateway.
+
+        Where `openai_responses_supports_computer_tool` is still on, `ComputerTool` joins `supported_native_tools`.
 
         Every model resolves this, so it reads only the client's type and the provider's identity, never client state
         such as URLs, which a mocked or partly built client may not have yet.
@@ -745,10 +742,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # Responses WebSockets aren't verified on the Azure client, and the gateway's handshake fails with a 503
             # while HTTP succeeds (live, 2026-10-22). Nor is the native computer tool verified on either, so
             # `ComputerUse` keeps its function tool.
-            return merge_profile(
+            profile = merge_profile(
                 profile,
-                OpenAIModelProfile(openai_responses_supports_websocket=False, openai_supports_computer_tool=False),
+                OpenAIModelProfile(
+                    openai_responses_supports_websocket=False, openai_responses_supports_computer_tool=False
+                ),
             )
+        if profile.get('openai_responses_supports_computer_tool', False):
+            # Added before the user's `profile=`, so `supported_native_tools` set there without it wins.
+            listed = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+            profile = merge_profile(profile, ModelProfile(supported_native_tools=listed | {ComputerTool}))
         return profile
 
     @classmethod
@@ -3427,7 +3430,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 output.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'tool returns'))  # pyright: ignore[reportArgumentType]
             elif isinstance(item, str):  # pragma: no branch
                 output.append(ResponseInputTextContentParam(type='input_text', text=item))
-        if isinstance(part, ComputerReturnPart) and self.profile.get('openai_supports_computer_tool'):
+        if isinstance(part, ComputerReturnPart) and self.profile.get('openai_responses_supports_computer_tool'):
             # As in a `computer_call_output`: `auto` may downscale the screenshot the model's positions are on.
             for content in output:
                 if content['type'] == 'input_image':

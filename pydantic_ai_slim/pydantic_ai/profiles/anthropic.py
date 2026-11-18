@@ -19,7 +19,7 @@ from . import ModelProfile
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 """Native tool types Anthropic generally supports across the model line. Mirrors
 `AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated per-model in the profile
-below, and `ComputerTool`, which `AnthropicModel.profile` adds by `anthropic_computer_tool_version`."""
+below, and `ComputerTool`, which `AnthropicModel` adds by `anthropic_computer_tool_version`."""
 
 _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-fable-5',
@@ -191,7 +191,9 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_computer_tool_version: AnthropicComputerToolVersion | None
     """The computer use tool a tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind is sent as.
 
-    Default: `None`, meaning a function tool.
+    Default: `None`, meaning a function tool. When set, `AnthropicModel` adds
+    [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] to `supported_native_tools`. A `supported_native_tools`
+    set in the model's `profile=` without `ComputerTool` also keeps the function tool.
     """
 
     anthropic_supports_on_demand_compaction: bool
