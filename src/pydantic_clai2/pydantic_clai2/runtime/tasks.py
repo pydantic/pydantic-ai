@@ -2,10 +2,12 @@
 
 import asyncio
 import copy
+import ctypes
 import logging
+import sys
 import time
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Coroutine, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -37,9 +39,9 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.step_persistence import StepStore
-from pydantic_ai_harness.subagents import (
+from pydantic_ai_harness.sub_agents import (
     DelegationFinishedEvent,
     DelegationStartedEvent,
     DelegationTask,
@@ -216,6 +218,12 @@ class TaskRouter:
         async with self._lock:
             if not self._users:
                 await self._stack.enter_async_context(self.owner.opened())
+                # Loading the saved tasks parsed each one's full history and then dropped it, and glibc keeps
+                # that freed memory for reuse instead of returning it: hundreds of megabytes for a large task
+                # directory. Other C libraries either return it themselves or have no `malloc_trim`.
+                if sys.platform == 'linux':
+                    with suppress(AttributeError):
+                        ctypes.CDLL(None).malloc_trim(0)
             self._users += 1
         try:
             yield self.owner
@@ -226,7 +234,11 @@ class TaskRouter:
                     self._users -= 1
                     last = not self._users
                     if last:
-                        await self._stack.aclose()
+                        try:
+                            await self._stack.aclose()
+                        except RuntimeError:
+                            # The owner's drain timeout: a task that ignores cancellation must not crash CLAI.
+                            logging.getLogger(__name__).exception('Delegated tasks did not close cleanly')
                 if not last:
                     for record in [record for record in self.owner.records.values() if view.runs(record)]:
                         await self.owner.cancel(record.id, user=False)

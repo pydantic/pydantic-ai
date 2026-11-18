@@ -50,6 +50,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/forks` | Show this session's background forks |
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
+| `/sandbox [e2b\|boxd\|daytona\|opensandbox\|modal\|render\|sprites\|kubernetes\|delete]` | Start a new conversation in a cloud sandbox; no argument says where this one runs. See [Cloud sandboxes](#cloud-sandboxes-sandbox) |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
 | `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer CLAI is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
@@ -267,9 +268,15 @@ conversation. Bytecode compiles during installation, so the restart skips it. Sw
 back to `stable` offers the latest release. Run from a source checkout, it installs
 CLAI as a `uv tool` the same way and restarts into that.
 
+Installing replaces the files of the `uv tool` environment, which would break any other
+`clai2` process running from it. So on Linux and macOS, while another `clai2` runs from that
+install, `/update now` and `clai2 update` install nothing and name the processes' IDs: quit
+them, then update again. A `clai2` started while uv installs is not covered, so start none then.
+
 `clai2 update` (or `clai2 --update`) installs the same way without starting a session: it prints uv's output
 and a last line saying what it did, then exits instead of restarting, so the next `clai2`
-is the new build. It exits with status 1 when the check, uv, or finding uv failed. On
+is the new build. It exits with status 1 when the check, uv, or finding uv failed, or
+when other `clai2` processes run from the install. On
 Windows, `clai2 --update` exits with status 1 without installing: use `/update now` in
 an interactive session, which installs after CLAI exits. The flag cannot be combined with
 `config`, `plugins`, `--prompt`, `--web`, `--resume`, `--continue`,
@@ -579,11 +586,12 @@ then move through the suggestions. Editing the recalled text ends the walk, so
 suggestions for a prefix you type take Up/down as before. Esc closes the
 suggestions, and Tab brings them back.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
-To steer the active run instead, press Alt+Enter (Option+Enter). With a typed
+To steer the active run instead, press Alt+Enter (Option+Enter; Ctrl+Enter on
+Windows, see [Windows Terminal](#windows-terminal)). With a typed
 draft, this immediately shows the message in the transcript and enqueues it for
 the run's next model request. It does not interrupt the current response or
 cancel in-flight tools. Messages already queued stay queued. With an empty
-draft, it sends the oldest queued follow-up instead. Each Alt+Enter sends one
+draft, it sends the oldest queued follow-up instead. Each press sends one
 message. Slash commands, `!` shell commands, and exit signals are never steered.
 A draft that cannot steer, including any draft while idle, is taken as if you
 pressed Enter. A queued message that cannot steer stays queued and is not
@@ -640,9 +648,9 @@ without changing anything.
 `/model add` opens a searchable provider list, then a model picker for that provider.
 Esc from the model list returns to providers. Providers are unique prefixes from
 the merged catalog, including `openai-codex`. Its suggestions include
-`gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-luna`,
-`gpt-5.6-terra`, and `gpt-5.6-sol`; availability depends on your account.
-Unknown prices and context limits are not inferred.
+`gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`,
+`gpt-6-luna`, `gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.6-sol`; availability
+depends on your account. Unknown prices and context limits are not inferred.
 
 The model catalog combines genai-prices' catalog
 filtered to providers Pydantic AI can run, plus core's own model list, plus
@@ -831,6 +839,20 @@ versions before this setting ignore it and send to the provider's default endpoi
 if you depend on a gateway, also set the provider's environment variable or don't
 downgrade.
 
+Set `api_key` to the name of a `/keys` entry for a model to use that key instead of
+the provider's environment variable. Only the name is saved; the key stays in `/keys`
+and is read each time the model is built, so deleting or renaming the key in `/keys`
+fails the turn until you pick another. The row
+shows when the environment variable, such as `OPENAI_API_KEY`, already supplies a key.
+The plain model's `api_key` also applies to its `@default` account, which uses the
+environment's key; a profile such as `openai@work` keeps its own sign-in unless its
+own model sets `api_key`. While `accounts.pool` runs a plain model on every signed-in
+account, each keeps its own key, so its `api_key` reaches only the `@default` account,
+if that is one of them. OpenRouter, vLLM, GitHub Copilot, Codex, chains, `@*` pools,
+and plugin models take their keys elsewhere and have no API Key row. CLAI versions
+before this setting ignore it and use the environment's key, sending it to any saved
+`base_url`, so don't downgrade while a model relies on both.
+
 For `/set` and `/model add`, Tab completes setting names, boolean values, and model names from Pydantic AI's
 built-in catalog without network access. Provider prefixes include `openai-codex:`,
 which core supports but does not currently include in that model catalog. Complete
@@ -861,7 +883,8 @@ model-request budget.
 ### Codex authentication
 
 The built-in model catalog and `/set model` completions include
-`openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
+`openai-codex:gpt-6.2-sol`, `openai-codex:gpt-6.2-astra`, `openai-codex:gpt-6.1-sol`,
+`openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
 `/login openai-codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
 authorization code with PKCE, state validation, and a callback at
@@ -891,14 +914,17 @@ in an interactive session, then retry your message. This replaces the generic
 connection error that can hide an expired login. Headless runs show the same
 advice on stderr and exit with code 1. CLAI does not retry the turn automatically.
 
-When no keyring backend exists at all (keyring raises `NoKeyringError` or
-`InitError`, typical on a headless Linux box or over SSH), credentials go to a
+When no usable keyring backend exists (keyring raises `NoKeyringError`,
+`InitError`, `RuntimeError`, or `PasswordSetError`, `kwallet.DBusKeyring`
+cannot open a wallet, or the backend does not retain the key, typical on a headless
+Linux box, over SSH, or on KDE / Steam Deck with KWallet disabled or unconfigured), credentials go to a
 `0600` file in `$XDG_CONFIG_HOME/pydantic-clai2/` (`~/.config/pydantic-clai2/` by
 default) instead, named for the account: Codex uses `credentials-openai-codex.json`,
 and the GitHub Copilot, vllm and openrouter connections use their own files. Like keyring entries,
-these files are per user, so `--database PATH` does not move them. `/login` says so in its confirmation. A locked keyring is not treated as
-missing; unlock it instead. Once a keyring becomes available, the next login or
-token refresh encrypts the credentials and deletes the plaintext file.
+these files are per user, so `--database PATH` does not move them; `/login` says so in its
+confirmation. Reading or writing one logs a single warning per process. A locked keyring is not
+treated as missing; unlock it instead. Once a keyring becomes available, the next login or token
+refresh encrypts the credentials and deletes the plaintext file.
 
 The default Coder shell runs under your OS identity, without a sandbox. Commands
 can read files and access credential backends available to that identity, including
@@ -1334,6 +1360,20 @@ still queues the message like Enter, the terminal is sending a plain Enter:
   Settings > Profiles > Keys > Left Option key: Esc+. Herdr needs no setup.
 - For Shift-Enter (newline) inside tmux, add `set -g extended-keys on` to
   `~/.tmux.conf`. Without it, tmux sends Shift-Enter as Enter.
+
+### Windows Terminal
+
+Windows Terminal and the Windows console take Alt+Enter to toggle full screen,
+so on Windows Ctrl+Enter steers instead, and the input box shows Ctrl+Enter.
+CLAI treats a session as Windows when it runs on Windows or when `WT_SESSION`
+is set, which Windows Terminal also passes into WSL. Alt+Enter still steers
+wherever it reaches CLAI, and elsewhere Ctrl+Enter works like Enter.
+Ctrl+Enter needs a terminal that reports modified keys, such as Windows
+Terminal 1.25 or later. Older versions send Ctrl+Enter as Ctrl-J, which inserts
+a newline.
+SSH does not forward `WT_SESSION`, so a remote session started from Windows
+Terminal has no working steer chord. Set `WT_SESSION` on the remote host, for
+example with `export WT_SESSION=1` in the shell you start CLAI from.
 
 ### Interrupting a turn
 
@@ -1865,14 +1905,19 @@ not the filesystem the file tools act on there.
   delete and rename files there, which `write_file` cannot do but could already
   replace the content of.
 - **Read-only:** `read_file` registered but `write_file` missing, `read_only`,
-  `read_only_patterns` set, or a `ToolGuardrail` (a plugin's or the agent's own)
-  that checks or hides `write_file`, `edit_file`, `shell`, or `run_code`.
+  `read_only_patterns` set, or a `ToolGuardrail` or `ToolCallJudge` (a plugin's
+  or the agent's own) that checks or hides `write_file`, `edit_file`, `shell`,
+  or `run_code`. Any bound `Permissions` in `read-only` mode (the session's,
+  the agent's own, or a plugin's) mounts it read-only for that run.
 - **Not mounted:** no `read_file`, `allowed_patterns` or `denied_patterns`, a
-  `ToolGuardrail` that checks or hides `read_file`, no `FileSystem`, more than
-  one, a supplied agent that does not expose its capabilities, or a plugin that
-  adds a capability function or
-  `DynamicCapability` (which could supply one at run time). File access then
-  goes through the file tools only.
+  `ToolGuardrail` or `ToolCallJudge` that may check or hide `read_file`, no
+  `FileSystem`, more than one, a supplied agent that does not expose its
+  capabilities, or a plugin that adds a capability function or
+  `DynamicCapability` (which could supply one at run time). So does any
+  `Hooks`, such as a `before_tool` hooks table, and a `ToolCallJudge` over
+  every tool or chosen by metadata or a function: which tools they check can't
+  be read before the run. An `after_tool` table only reports, so it keeps the
+  mount. File access then goes through the file tools only.
 
 While the model writes:
 
@@ -1971,8 +2016,9 @@ that code mode's sandbox keeps the folder as the turn mounted it until the next 
 The mode is the `run.permissions` setting: `/permissions MODE` saves it as the default for new sessions too,
 and Settings, General edits it. It is harness [`Permissions`](../../../docs/harness/permissions.md), which checks
 the coding tools' file writes and commands only; other tools, such as MCP servers', run as before. File tools
-only reach files inside the session's folder, so `auto` lets them write. In `read-only`, code mode's sandbox
-gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
+only reach files inside the session's folder, so `auto` lets them write. In `full` and `auto`, where code mode's
+sandbox mounts the folder read-write, `pathlib` there can also delete and rename files in it without asking; in
+`read-only`, the sandbox gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
 can be asked in, such as `clai2 -p`, denies held calls. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
 sub-agent, or a delegation to `self` from an agent you supply (`clai2 --agent`), which gets `/permissions`
 per run rather than bound to the agent. The model is told to do the work itself instead.
@@ -2099,11 +2145,12 @@ is needed, and your unfinished draft and queued input are preserved. Reports
 arriving during a turn use that run's queue; completed reports are not replayed.
 Nested children join their descendants and receive their reports before settling.
 
-The model also manages its tasks: `list_tasks` lists them, `message_task` steers a
-running one, and `cancel_task` stops one. A child that needs a decision calls
-`ask_parent` and waits; the question shows as a `?` task row, and the parent
-answers it with `answer_task`. Like a report, a question continues an idle parent
-without a user prompt, and one queued on a turn you cancel waits for your next prompt.
+The model also manages its tasks: `list_tasks` lists them, `check_task` shows what a
+running one is doing, `message_task` steers a running one or resumes a finished one, and `cancel_task` stops
+one. A child that needs a decision calls `ask_parent` and waits; the question shows
+as a `?` task row, and the parent answers it with `answer_task`. Like a report, a
+question continues an idle parent without a user prompt, and one queued on a turn
+you cancel waits for your next prompt.
 
 - **Ctrl+B** moves foreground children of the main run to the background without
   restarting them. The hint appears only while a foreground child can be
@@ -2526,14 +2573,21 @@ CLAI's own tools handle what comes next.
 
 CLAI also keeps what the other agent's harness added to the conversation. From
 Claude Code: messages you typed while the model worked, attached files,
-reminders, skill bodies, task notifications, and its compaction summary. From
-Codex: its developer instructions, environment, `AGENTS.md` and other context,
-and messages between its agents. They are marked as the harness's, so the
-transcript doesn't show them as your prompts and compaction doesn't treat them
-as your requests. A note opens the history saying it ran in the other agent, and
-another closes it saying it continues in CLAI, whose tools and instructions now
-apply. A Claude Code session keeps the name you or Claude Code gave it, and a
-Codex session the name in Codex's index.
+reminders, skill bodies, and task notifications. From Codex: its developer
+instructions, environment, `AGENTS.md` and other context, and messages between
+its agents. They are marked as the harness's, so the transcript doesn't show
+them as your prompts and compaction doesn't treat them as your requests. A note
+opens the history saying it ran in the other agent, and another closes it saying
+it continues in CLAI, whose tools and instructions now apply. A Claude Code
+session keeps the name you or Claude Code gave it, and a Codex session the name
+in Codex's index.
+
+A compaction summary Claude Code or Codex wrote is imported as a summary like
+the ones CLAI's own compaction writes, so CLAI's compaction later builds on it
+rather than summarizing it again. A Claude Code session starts at its latest
+compaction: the summary, then the messages Claude Code kept from before it, as
+Claude Code sent them. A Codex session keeps the history the summary replaced
+ahead of it.
 
 Codex encrypts some of what its models see so that only OpenAI's models can
 read it: reasoning, its compaction summaries, and messages between its agents.
@@ -2795,6 +2849,95 @@ A worktree separates working files, not permissions. CLAI's default tools can
 still access files outside it. Creation runs before the agent starts and emits
 no agent telemetry spans.
 
+### Cloud sandboxes: `/sandbox`
+
+Run `/sandbox PROVIDER` (`e2b`, `boxd`, `daytona`, `opensandbox`, `modal`, `render`, `sprites`, or `kubernetes`) in a new
+conversation, before its first prompt. CLAI copies this checkout (the branch, its unpushed commits, and
+uncommitted files) into a new cloud sandbox, and every command and file edit of the conversation runs
+there. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
+the conversation runs. To work on this machine again, run `/new`.
+
+A sandbox stays until you run `/sandbox delete`, even when you leave its conversation. If CLAI stops
+while copying the checkout in, the conversation keeps its half-copied sandbox; `/sandbox delete` deletes
+it. A fork or copy of the conversation uses the same sandbox, and stops working once it is deleted.
+
+`git` and `gh` in the sandbox act as your `gh` login, so the agent can push and open pull requests.
+Each sandbox gets the token `gh` has when you run `/sandbox`, and loses it when the sandbox is deleted.
+Without a `gh` login, the sandbox has no GitHub access, and its copy has no `origin` remote.
+
+| Provider | Install extra | Keys | Where your GitHub token is | Who can read it |
+|---|---|---|---|---|
+| `e2b` | `pydantic-clai2[e2b]` | `E2B_API_KEY` | E2B's proxy, in the sandbox's network rules | anyone with an API key for your E2B team; use a team of your own |
+| `boxd` | `pydantic-clai2[boxd]` | `BOXD_API_KEY` | boxd's proxy, in a private secret made for the machine | a command in the sandbox, as below |
+| `daytona` | `pydantic-clai2[daytona]` | `DAYTONA_API_KEY` | Daytona's proxy, in a secret of your Daytona organization made for the sandbox | anyone in your Daytona organization who can create sandboxes can name the secret and have the proxy send the token |
+| `opensandbox` | `pydantic-clai2[opensandbox]` | `OPEN_SANDBOX_DOMAIN`, and `OPEN_SANDBOX_API_KEY` if your server needs one | your OpenSandbox server's credential proxy, in the memory of the sandbox's egress sidecar | anyone with your server's API key can use it; anyone who can read the sidecar's memory on the server's machine |
+| `modal` | `pydantic-clai2[modal]` | Modal's own login: `modal token new` | in the sandbox | anything run in the sandbox |
+| `render` | `pydantic-clai2[render]` | `RENDER_API_KEY` and `RENDER_WORKSPACE_ID` | in the sandbox | anything run in the sandbox |
+| `sprites` | `pydantic-clai2[sprites]` | `SPRITE_TOKEN` | in the Sprite | anything run in the Sprite |
+| `kubernetes` | `pydantic-clai2[kubernetes]` | `CLAI_KUBERNETES_WARM_POOL`, and `CLAI_KUBERNETES_NAMESPACE` if it is not `default`; `kubectl`'s current context | in the sandbox pod | anything run in the pod, and anyone who can exec into it |
+
+A key the agent asks for with `request_env` reaches every command it starts in the sandbox afterwards,
+on every provider, for as long as this conversation stays open in CLAI. After a restart, a `/reload`, or a
+conversation reopened in another session, it asks again and you pick the same saved `/keys` entry.
+It goes to the provider with each command: inside the command for `boxd`, `daytona` and `render`, in its URL for `sprites`.
+
+Install a provider with `uv tool install 'pydantic-clai2[PROVIDER]'`, and add its keys in `/keys`.
+`/sandbox PROVIDER` says what is missing.
+
+**Through the provider's proxy** (`e2b`, `boxd`, `daytona`, `opensandbox`): the token never enters the
+sandbox. The provider's network proxy, outside it, adds the token to requests for `github.com`,
+`api.github.com`, and `uploads.github.com`, and the sandbox holds only a stand-in. Use one of these if the
+agent must not have your token.
+
+`opensandbox` runs on your own [OpenSandbox](https://open-sandbox.ai) server, whose egress must be in
+`dns+nft` mode. A server address without a scheme uses HTTPS unless it is this machine (`localhost`,
+`127.0.0.1`, or `[::1]`). Its credential proxy keeps the token in the memory of the sandbox's egress
+sidecar until the sandbox is deleted; if the sidecar restarts, the token is gone and `git` and `gh` there are signed
+out. OpenSandbox's proxy is meant for sandboxes that reach only the hosts it allows, so a sandbox made with
+a `gh` login reaches only `github.com`, `api.github.com`, and `uploads.github.com`: it can't install
+packages or download release assets, archives, or Git LFS files. One made without a `gh` login keeps
+your server's network policy.
+Whether a server started in the sandbox can be reached from outside is also up to your server:
+`/sandbox` does not turn on OpenSandbox's Secure Access, which needs a Kubernetes ingress gateway and
+which Docker deployments reject, so on a server whose ingress is reachable, anything listening in the
+sandbox answers without a token.
+
+`daytona` keeps the token in a `CLAI_GITHUB_...` secret of your Daytona organization, which
+`/sandbox delete` deletes with the sandbox. A sandbox deleted outside CLAI, in Daytona's dashboard or CLI
+or by Daytona's auto-delete, leaves its secret behind: delete it on Daytona's Secrets page.
+
+**In the sandbox** (`modal`, `render`, `sprites`, `kubernetes`): these have no proxy that can add it, so
+CLAI saves the token in the sandbox's home folder for `git` and `gh`. Anything run there, the agent
+included, can read it, and it goes when the sandbox does. A `kubernetes` sandbox is a pod CLAI claims from
+your [agent-sandbox](https://agent-sandbox.sigs.k8s.io) warm pool, on the cluster `kubectl`'s current
+context names, and reaches through `kubectl port-forward`. Its pod runs commands but takes no file
+uploads, so the token travels base64-encoded inside a command to the pod.
+
+How long a sandbox lasts differs. An `e2b` sandbox that times out is paused, and Daytona stops an idle
+one; both keep their files, so delete them when you are done. A `modal` or `render` sandbox ends after
+24 hours, with its files and any unpushed work, and a Modal sandbox cannot be paused. A Sprite has no
+time limit and sleeps while idle. An `opensandbox` sandbox or a `kubernetes` claim has no time limit.
+
+With `boxd`, a command in the sandbox can still learn the token. boxd puts the real token
+anywhere in a request to GitHub, the body included, so a command can save it in a GitHub file or
+issue and read it back ([boxd's docs](https://docs.boxd.sh/guides/env-secrets.md)). `e2b` only
+adds the token as a request header, so this can't happen there.
+
+A server started in a `boxd` machine is also public: boxd gives every machine an HTTPS address
+that forwards to ports such as 8000 and 3000, and has no setting to turn it off or require a
+login ([boxd's docs](https://docs.boxd.sh/guides/https)). The address holds the machine's random
+name, so it can't be guessed, but anyone who learns it can reach the server. `e2b` sandboxes
+answer only requests that carry the sandbox's access token.
+
+When a command needs another key, such as `ANTHROPIC_API_KEY` for a script, the agent asks
+for it by name, and CLAI shows the `/keys` picker: pick a saved key or type a new one, which
+is saved in `/keys`. CLAI sets it as an environment variable in the sandbox, so the agent
+carries on in the same turn without seeing the value. This key is in the sandbox, and anything
+run there can read it. It reaches every command started afterwards; a server started before it
+needs a restart. The table says how long it lasts: one kept for this CLAI session is gone once the session
+closes the sandbox, as an idle session does, or in a `/fork`, so the agent asks again. The agent asks only in the terminal,
+not in the web UI.
+
 ### Several sessions in the web UI
 
 ```bash
@@ -2807,9 +2950,11 @@ others run turns. Each live session has its own conversation, folder, plugins,
 queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
 `.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
-asks which folder, offering every worktree of the repositories it has sessions in,
-and completing a typed path to any directory, with every worktree of each repository it finds.
-**New worktree…**, on a folder's row or below the list for the row the arrow keys
+asks which folder. It lists one row per project it has sessions in, which starts
+in the checkout you are in, else the main one; the row's chevron, or → and ←, shows
+and hides every worktree of its repository, to start in one of those instead. It also
+completes a typed path to any directory, listing each repository it finds with its
+worktrees shown. **New worktree…**, on a row or below the list for the row the arrow keys
 select, checks out a new branch of that folder's repository
 first, from the base you name (by default its `HEAD`), in `.worktrees/` as
 [`--worktree`](#git-worktrees) does, and starts the session there; without a branch
@@ -2981,7 +3126,8 @@ see [Questions from the model](#questions-from-the-model). The built-in
 of the launch directory and its ancestors into the agent's
 instructions, and a subdirectory's as the agent works there; `/plugins disable
 repo_context` turns that off.
-On Windows, CLAI does not provide an agent workspace or repository context yet.
+On Windows, the agent's workspace is a `WindowsWorkspace` on the launch directory, so commands run
+in PowerShell; CLAI does not provide repository context or skills there yet.
 `coder` clears old tool results as the context fills.
 CLAI sends every tool, MCP tool, and output tool with strict mode off, whatever the
 provider, and relies on argument repair and retries instead. A `NativeOutput` schema keeps

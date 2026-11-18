@@ -11,8 +11,9 @@ StackOne. Use it when tools return untrusted text such as emails, tickets,
 documents, or web content.
 
 Results pass through unchanged by default. Set `block_high_risk=True` to replace a
-result that the built-in defense rejects with a short notice. Use `on_detection`
-to observe flagged verdicts.
+result that the built-in defense rejects with a short notice. Each flagged verdict
+is recorded as an OpenTelemetry span, and `on_detection` gives your code the full
+verdict.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/prompt_injection_defender/)
 
@@ -125,6 +126,22 @@ When a result is rejected, the replacement `ToolReturn` also carries a diagnosti
 summary in metadata under `prompt_injection`. Metadata is available to the
 application and is not sent to the model.
 
+### Telemetry
+
+With [instrumentation](../logfire.md) enabled, each flagged verdict emits a
+zero-duration `prompt_injection flagged` span, with or without `on_detection` and
+`block_high_risk`. It carries:
+
+- `gen_ai.tool.name` and `gen_ai.tool.call.id`
+- `prompt_injection.action`: `blocked` or `reported`
+- `prompt_injection.risk_level`
+- `prompt_injection.detections`: the matched pattern names
+- `prompt_injection.tier2_score`, when semantic detection scored the result
+- `prompt_injection.fields_sanitized`: the result fields that matched, only when
+  the instrumentation includes content
+
+The tool result text is not recorded. Clean results emit no span.
+
 ## Scope and limitations
 
 - The capability classifies results from normally completed client-executed tools.
@@ -146,8 +163,8 @@ application and is not sent to the model.
 Inside a durable workflow or flow (Temporal, DBOS, Prefect), classification with
 `semantic_detection=True` or a supplied `defense` runs as a durable operation, as
 does the semantic warmup, because the ML classifier can't load in workflow code.
-A replay reuses the recorded verdict. `on_detection` runs from the hook, so a
-replay calls it again.
+A replay reuses the recorded verdict. `on_detection` and the span run from the
+hook, so a replay repeats them.
 With distributed workers, as on Temporal, the `warmup` activity may load the
 model on a different worker from the one that later runs `classify`, which then
 loads it on first use. To guarantee a warm classifier, supply a `defense` and

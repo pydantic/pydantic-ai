@@ -50,7 +50,6 @@ def test_codex_profile_extends_the_standard_openai_profile():
         'openai_responses_requires_streaming',
         'openai_responses_requires_store_false',
         'openai_supports_input_token_counting',
-        'openai_supports_computer_tool',
         'openai_supports_batch_api',
         'openai_supports_prompt_cache_breakpoints',
         'supports_cache',
@@ -73,13 +72,13 @@ def test_codex_provider_layers_wire_dialect_over_first_party_profile():
         'openai_responses_requires_streaming',
         'openai_responses_requires_store_false',
         'openai_supports_input_token_counting',
-        'openai_supports_computer_tool',
         'openai_supports_batch_api',
         'openai_supports_prompt_cache_breakpoints',
         'supports_cache',
         'supported_cache_retentions',
         'openai_responses_supports_prompt_cache_diagnostics',
         'openai_responses_supports_max_reasoning_effort',
+        'supported_native_tools',
     }
 
     assert {key: value for key, value in codex.items() if key not in dialect} == {

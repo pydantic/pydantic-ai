@@ -3,26 +3,27 @@ from __future__ import annotations as _annotations
 import base64
 import itertools
 import warnings
-from collections.abc import AsyncGenerator, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from functools import cached_property, partial
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, assert_never, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, assert_never, cast, overload
 
-from opentelemetry.trace import Span
 from typing_extensions import TypedDict
 
 from ... import UnexpectedModelBehavior, _utils, usage
 from ..._context_size import mark_context_input_tokens
+from ..._file_input import registered_media_type
 from ..._http import to_httpx2_timeout
 from ..._instrumentation import current_model_request_span
 from ..._run_context import RunContext
 from ..._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinking
 from ..._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
-from ..._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
+from ..._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict, is_str_mapping
+from ..._warnings import PydanticAIDeprecationWarning
 from ...capabilities.abstract import AbstractCapability
-from ...computer_use import COMPUTER_KIND, ComputerResult, ComputerReturnPart
+from ...computer_use import ComputerResult, ComputerReturnPart
 from ...exceptions import UserError
 from ...messages import (
     ERROR_OUTCOMES,
@@ -77,7 +78,6 @@ from ...profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
     AnthropicCodeExecutionToolVersion,
-    AnthropicComputerToolVersion,
     AnthropicEffort,
     AnthropicModelProfile,
     resolve_anthropic_effort,
@@ -100,6 +100,7 @@ from .. import (
     ModelRequestParameters,
     StreamedResponse,
     ToolVisibility,
+    _computer_tool_names,  # pyright: ignore[reportPrivateUsage]
     _declare_lone_newcomers,  # pyright: ignore[reportPrivateUsage]
     _effort_window_baseline,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
@@ -117,6 +118,7 @@ from .. import (
 from .._anthropic_max_tokens import cap_max_tokens
 from .._anthropic_schema_limits import default_output_mode_within_limits, limit_exceeded_error, model_exceeded_limit
 from .._decode_errors import check_json_response, map_decode_errors
+from .._history_digest import history_hasher
 from .._prompt_cache import (
     excess_cache_points,
     instruction_cache_boundaries,
@@ -132,9 +134,10 @@ def _native_tool_is_a_tools_entry(tool: AbstractNativeTool) -> bool:
     """Whether `_add_native_tools` sends this native tool as an entry in the request's `tools`.
 
     An MCP server goes in `mcp_servers` instead, and a custom tool search strategy is served by the
-    `search_tools` function tool, which `function_tools` already carries.
+    `search_tools` function tool, which `function_tools` already carries. A `ComputerTool` replaces the
+    `computer` function tool, so it is a tools entry only when that function tool is declared.
     """
-    if isinstance(tool, MCPServerTool):
+    if isinstance(tool, MCPServerTool | ComputerTool):
         return False
     return not (isinstance(tool, ToolSearchTool) and tool.strategy == 'custom')
 
@@ -189,6 +192,7 @@ try:
     from anthropic import (
         DEFAULT_TIMEOUT,
         NOT_GIVEN,
+        APIConnectionError,
         APIStatusError,
         AsyncAnthropicAWS,
         AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
@@ -276,17 +280,18 @@ try:
         Content as WebFetchToolResultBlockParamContent,
     )
 
-    from . import _batch
+    from . import _batch, _computer
     from ._bedrock_count_tokens import BEDROCK_ANTHROPIC_VERSION, count_tokens_via_bedrock
     from ._betas import extends_max_output
     from ._cache_control import (
         ANTHROPIC_CACHEABLE_PARAM_TYPES,
         add_cache_control_param,
-        blocks_before_request_scoped_text,
         last_cacheable_block_has_cache_control,
         last_message_content,
+        lasting_blocks_at_end,
         lasting_messages,
         raise_earlier_breakpoint_ttls,
+        record_cache_breakpoints,
     )
     from ._citations import (
         check_citations_tool_choice,
@@ -308,18 +313,15 @@ try:
         settle_tool_choice,
         without_unanswered_tool_calls,
     )
-    from ._computer import (
-        COMPUTER_NOT_EXECUTED,
-        COMPUTER_TOOL_BETAS,
-        RETURNS_OUTPUT,
-        ComputerBatch,
-        ComputerBlock,
-        ComputerReplay,
-        NativeComputer,
-        computer_replay,
-    )
     from ._containers import is_tool_result_only
-    from ._errors import is_expired_container_error, map_api_errors
+    from ._errors import (
+        is_expired_container_error,
+        is_thread_replay_error,
+        is_thread_unsupported_error,
+        map_api_errors,
+        status_and_body,
+        thread_error_code,
+    )
     from ._message_passes import (
         anchor_system_messages,
         drop_unpaired_native_tool_calls,
@@ -360,6 +362,7 @@ try:
         last_pass_input_tokens,
         map_usage,
         mark_continuation_context_input_tokens,
+        report_inference_geo,
         response_provider_details,
     )
     from ._streaming import AnthropicEventStream, AnthropicStreamedResponse
@@ -371,6 +374,17 @@ try:
         mark_history_to_drop_stale_thinking_blocks_for_count_tokens,
         thinking_with_stale_block_history,
         warn_stale_thinking_block_recovery,
+    )
+    from ._threads import (
+        MESSAGE_THREADS_BETA,
+        Thread,
+        ThreadRecord,
+        may_use_thread,
+        served_by_fallback_model,
+        thread_continuation,
+        thread_fingerprint,
+        thread_unsupported,
+        with_thread,
     )
 except ImportError as _import_error:
     raise ImportError(
@@ -390,14 +404,12 @@ __all__ = (
     'AnthropicStreamedResponse',
     'AnthropicTaskBudget',
     'AnthropicWebToolCaller',
-    'DEPRECATED_ANTHROPIC_MODELS',
     'LatestAnthropicModelNames',
     'advisor_tool_result_content_ta',
     'bash_code_execution_tool_result_content_ta',
     'code_execution_tool_result_content_ta',
     'text_editor_code_execution_tool_result_content_ta',
     'web_search_tool_result_content_ta',
-    'ComputerResult',
 )
 
 # Fast mode is not available on any Bedrock transport, so it goes in `_FAST_MODE_UNSUPPORTED_CLIENTS`.
@@ -421,17 +433,6 @@ _BATCH_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
-# These platforms serve computer use only through the earlier beta tool versions; Claude Models on Google Cloud serves
-# the toolset like the Claude API. https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool
-_COMPUTER_BETA_TOOLS_ONLY_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicFoundry)
-_CLAUDE_5_5_MODELS = (
-    'claude-fable-5-5',
-    'claude-mythos-5-5',
-    'claude-opus-5-5',
-    'claude-sonnet-5-5',
-    'claude-haiku-5-5',
-)
-"""The Claude 5.5 models, which Foundry doesn't serve with a computer use tool."""
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
 # `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
 # the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
@@ -488,6 +489,10 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (
 # is not supported for this model"). Claude Platform on AWS (`AsyncAnthropicAWS`, an `AsyncAnthropic` subclass) is a
 # separate transport and keeps the tool. https://github.com/pydantic/pydantic-ai/issues/11513
 _CODE_EXECUTION_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
+# The computer use tool is recorded driving a screen on the Claude API and both Bedrock APIs
+# (`tests/harness/computer_use/test_computer_use_live.py`). Vertex AI, Foundry and Claude Platform on AWS
+# (`AsyncAnthropicAWS`, an `AsyncAnthropic` subclass) aren't, so they get the function tool.
+_COMPUTER_UNSUPPORTED_CLIENTS = (AsyncAnthropicVertex, AsyncAnthropicFoundry, AsyncAnthropicAWS)
 # Mid-conversation `{'role': 'system'}` messages are published as available on the Anthropic API,
 # Amazon Bedrock and Google Cloud, which leaves Microsoft Foundry as the only transport that has to
 # fall back to the `<system>`-tagged user rendering. Verified on Bedrock rather than assumed: with
@@ -537,6 +542,27 @@ _CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
+# The Claude API rejects a `tool_use` with no `tool_result`, and a `tool_result` whose `tool_use_id` names no
+# `tool_use` (https://github.com/pydantic/pydantic-ai/issues/13404). The platform clients aren't verified to, so
+# `rejects_unpaired_tool_calls` stays off for them and their requests keep the history as translated.
+_UNPAIRED_TOOL_CALLS_UNVERIFIED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
+# Anthropic documents `inference_geo` as not applicable on Bedrock, Vertex AI (Google managed) and Foundry, where the
+# endpoint or deployment decides the inference region. Claude Platform on AWS and Claude on Google Cloud (Anthropic
+# managed) take it, and their clients are `AsyncAnthropic` subclasses.
+_INFERENCE_GEO_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
+# Anthropic offers message threads on the Claude API, Claude Platform on AWS, Claude on Google Cloud (Anthropic
+# managed) and Microsoft Foundry, not on Bedrock or Vertex AI (Google managed).
+_MESSAGE_THREADS_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
 
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
@@ -575,19 +601,10 @@ The `Literal` lists the models to pick from, for autocomplete. Any other model i
 See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
 
-DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset(
-    {
-        # https://platform.claude.com/docs/en/about-claude/model-deprecations
-        # Retired 2026-04-20
-        'claude-3-haiku-20240307',
-        # Retired 2026-06-15
-        'claude-opus-4-0',
-        'claude-opus-4-20250514',
-        'claude-sonnet-4-0',
-        'claude-sonnet-4-20250514',
-    }
-)
-"""Models that have been retired by Anthropic but are still present in the SDK's type definitions."""
+if TYPE_CHECKING:
+    # TODO(v3): remove this deprecated constant and the `__getattr__` at the bottom of this module.
+    DEPRECATED_ANTHROPIC_MODELS: frozenset[str]
+    """Deprecated, to be removed in v3: a partial list of Claude API model ids that Anthropic has retired."""
 
 _AssistantContentBlockParam: TypeAlias = (
     BetaTextBlockParam
@@ -707,6 +724,42 @@ class AnthropicModelSettings(ModelSettings, total=False):
     with history from a client; see [Loading untrusted history](../../message-history.md#loading-untrusted-history).
     """
 
+    anthropic_previous_message_id: Literal['auto']
+    """Continue the conversation in an Anthropic [message thread](https://platform.claude.com/docs/en/build-with-claude/message-threads), omitting the messages the thread holds.
+
+    - `'auto'`: continue the thread of the most recent usable `provider_response_id` in the message history, as
+      the thread's `previous_message_id`. If the history contains no such response, the request creates a thread
+      with the full history.
+
+    Only `'auto'` is supported for now. A concrete message ID to continue from, like the response ID
+    [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]
+    takes, may come later.
+
+    A continue request leaves out the messages before the chosen response, and `system` and `tools`, which the
+    thread keeps. A response records the thread's fixed fields under `'thread_fingerprint'` in
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], and its
+    [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest] covers it and the history before it. A
+    response is only chosen while both still match, so changed instructions, tools, betas or other fixed fields, an
+    edited history, a refusal, or a response from another model start a new thread with the full history. So does a
+    thread Anthropic can no longer continue, and the response to that replay records `'thread_replayed': True`. A
+    request using something threads don't support is sent without one, with a warning, and its response records
+    `'thread_unsupported': True`. So is a continue from a replayed response that fails because the thread can't be
+    found either, as Anthropic may be unable to store that conversation. See
+    [Message threads](../../models/anthropic.md#message-threads-beta) for every case.
+
+    The response ID comes from the message history, which
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent. With history from a client, pass
+    a `history_digest_key` to [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], so the client can't
+    swap in another conversation's response ID, or another configuration's fingerprint, to continue a thread, or
+    leave this off; see
+    [Loading untrusted history](../../message-history.md#loading-untrusted-history).
+
+    Threads are available on the Claude API, Claude Platform on AWS, Claude on Google Cloud (Anthropic managed) and
+    Microsoft Foundry. On Bedrock and Vertex AI, the setting is ignored with a `UserWarning`; see
+    [`anthropic_supports_message_threads`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_message_threads].
+    Threads aren't eligible for Zero Data Retention. By default, no thread is used.
+    """
+
     anthropic_effort: AnthropicEffort | None
     """The effort level for the model to use when generating a response.
 
@@ -819,6 +872,22 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Note: switching between `'fast'` and `'standard'` invalidates the prompt cache.
     """
 
+    anthropic_inference_geo: Literal['us', 'global'] | str
+    """Where model inference runs for this request, sent as Anthropic's `inference_geo` parameter.
+
+    `'us'` keeps inference on US-based infrastructure, at 1.1x the standard price, which Pydantic AI's computed cost
+    ([`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost]) doesn't include yet; `'global'` lets it run in
+    any available geography. Other values are sent as given, for the API to accept or reject. When unset, the
+    workspace's default inference geo applies. Where the request ran is reported
+    in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `'inference_geo'`.
+
+    It's sent on the Claude API, Claude Platform on AWS, Claude on Google Cloud (Anthropic managed), and in
+    Message Batches. Models that don't support data residency (Claude Opus 4.5, Sonnet 4.5, Haiku 4.5 and older)
+    reject it with a 400. On the Bedrock, Vertex AI and Foundry clients, where the endpoint or deployment decides the
+    inference region, it's ignored with a `UserWarning`. See
+    [the Anthropic docs](https://platform.claude.com/docs/en/manage-claude/data-residency) for details.
+    """
+
     anthropic_context_management: BetaContextManagementConfigParam
     """Context management configuration for automatic compaction.
 
@@ -862,7 +931,7 @@ def _build_extra_body(
     extra_body = model_settings.get('extra_body')
     if not fields:
         return extra_body
-    if not _is_str_mapping(extra_body):
+    if not is_str_mapping(extra_body):
         return fields
     merged = {**fields, **extra_body}
     if thinking_override is not None:
@@ -880,19 +949,12 @@ def _extra_body_thinking(model_settings: AnthropicModelSettings) -> dict[str, ob
     retried over.
     """
     extra_body = model_settings.get('extra_body')
-    if not _is_str_mapping(extra_body):
+    if not is_str_mapping(extra_body):
         return None
     thinking = extra_body.get('thinking')
-    if not _is_str_mapping(thinking):
+    if not is_str_mapping(thinking):
         return None
     return dict(thinking)
-
-
-def _is_str_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
-    """Whether a value is a mapping whose keys are all strings."""
-    if not isinstance(value, Mapping):
-        return False
-    return all(isinstance(key, str) for key in value)  # pyright: ignore[reportUnknownVariableType]
 
 
 def _effective_thinking(
@@ -940,6 +1002,7 @@ class _MessageCreateParams(TypedDict):
     compaction: BetaCompactionConfigParam | Omit
     container: BetaContainerParams | str | Omit
     service_tier: Literal['auto', 'standard_only'] | Omit
+    inference_geo: str | Omit
     diagnostics: BetaDiagnosticsParam | Omit
     extra_body: object | None
 
@@ -959,6 +1022,11 @@ class _PreparedMessagesCreate:
     mcp_servers: list[BetaRequestMCPServerURLDefinitionParam]
     output_config: BetaOutputConfigParam | None
     auto_cache_control: BetaCacheControlEphemeralParam | None
+    cache_breakpoints: tuple[list[str], list[str]] | None
+    """The cache breakpoints the request asks for and the ones it keeps, for each attempt to record as it's sent.
+
+    `None` when there are none, or when `_prepare_messages_create` recorded them already.
+    """
     max_tokens: int
     stop_sequences: list[str] | Omit
     effective_thinking: dict[str, object] | Omit
@@ -972,6 +1040,7 @@ class _PreparedMessagesCreate:
     initial_betas: set[str]
     initial_thinking_override: dict[str, object] | None
     initial_effective_thinking: dict[str, object] | Omit
+    inference_geo: str | Omit
 
 
 def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
@@ -1052,10 +1121,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     _honors_compaction_boundaries = True
     # The Messages API has no audio or video block, and its document block takes a PDF or plain text.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
-    _supported_document_media_types = frozenset({'application/pdf', 'text/plain'})
+    _supported_media_types = {'document': frozenset({'application/pdf', 'text/plain'})}
 
     _model_name: AnthropicModelName = field(repr=False)
     _provider: Provider[AsyncAnthropicClient] = field(repr=False)
+    _history_digest_key: bytes | None = field(default=None, repr=False)
 
     def __init__(
         self,
@@ -1064,6 +1134,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         provider: Literal['anthropic', 'gateway'] | Provider[AsyncAnthropicClient] = 'anthropic',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
+        history_digest_key: bytes | None = None,
     ):
         """Initialize an Anthropic model.
 
@@ -1075,8 +1146,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
                 The default 'anthropic' provider will use the default `..profiles.anthropic.anthropic_model_profile`.
             settings: Default model settings for this model instance.
+            history_digest_key: A secret to key each thread response's
+                [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest] and `'thread_fingerprint'`
+                with (an HMAC-SHA256), so stored history can't be used to test guesses at content redacted from
+                it later, and a client sending the history can't swap in another conversation's response ID, or
+                another configuration's fingerprint, to continue a thread. Every model continuing the same
+                conversations needs the same key; a response recorded with another key, or none, starts a new
+                thread rather than being continued.
         """
         self._model_name = model_name
+        self._history_digest_key = history_digest_key
 
         if isinstance(provider, str):
             provider = infer_provider('gateway/anthropic' if provider == 'gateway' else provider)
@@ -1192,13 +1271,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             supported_native_tools = supported_native_tools - {AdvisorTool}
         if isinstance(client, _CODE_EXECUTION_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {CodeExecutionTool}
-        computer_tool_version = _computer_tool_version_for_client(
-            _profile.get('anthropic_computer_tool_version'), client, self.model_name
-        )
-        # A profile without its own native tools lists every type, so the version also takes it away.
-        if computer_tool_version is not None:
-            supported_native_tools = supported_native_tools | {ComputerTool}
-        else:
+        if isinstance(client, _COMPUTER_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {ComputerTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
@@ -1230,7 +1303,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS),
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
-                anthropic_computer_tool_version=computer_tool_version,
                 anthropic_accepts_file_and_container_ids=_profile.get('anthropic_accepts_file_and_container_ids', True)
                 and not isinstance(client, _FILE_AND_CONTAINER_IDS_UNSUPPORTED_CLIENTS),
             ),
@@ -1258,6 +1330,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         clients whose count endpoints aren't verified to accept server tools, unless the provider's profile already
         sets it.
 
+        `anthropic_supports_inference_geo` is on for `AsyncAnthropic` clients and off for the Bedrock, Vertex AI and
+        Foundry clients, where the endpoint decides the inference region, unless the provider's profile already sets it.
+
+        `anthropic_supports_message_threads` is on for the `AsyncAnthropic` and Foundry clients and off for the Bedrock
+        and Vertex AI clients, where Anthropic doesn't offer threads, unless the provider's profile already sets it.
+
         The legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't serve
         from the Messages API infrastructure, so `supports_auto_cache` is narrowed by model on the legacy Bedrock
         client, and `anthropic_cache` and the unified `cache` setting place a breakpoint on the last block there
@@ -1270,6 +1348,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         `anthropic_calls_cited_web_tools_directly` is on for `AsyncAnthropic` clients and off for every client in
         `_CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS`, Claude Platform on AWS included, unless the provider's profile
         already sets it.
+
+        `rejects_unpaired_tool_calls` is on for `AsyncAnthropic` clients and off for the Bedrock, Bedrock Mantle,
+        Vertex AI and Foundry clients, which aren't verified to reject an unpaired tool call, unless the provider's
+        profile already sets it.
         """
         client = self._provider.client
         profile = merge_profile(
@@ -1292,6 +1374,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             self._model_name
         ):
             profile = merge_profile(profile, AnthropicModelProfile(supports_auto_cache=False))
+        if 'anthropic_supports_inference_geo' not in profile:
+            profile = merge_profile(
+                profile,
+                AnthropicModelProfile(
+                    anthropic_supports_inference_geo=not isinstance(client, _INFERENCE_GEO_UNSUPPORTED_CLIENTS)
+                ),
+            )
+        if 'anthropic_supports_message_threads' not in profile:
+            profile = merge_profile(
+                profile,
+                AnthropicModelProfile(
+                    anthropic_supports_message_threads=not isinstance(client, _MESSAGE_THREADS_UNSUPPORTED_CLIENTS)
+                ),
+            )
         if isinstance(client, _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS):
             profile = merge_profile(profile, AnthropicModelProfile(anthropic_enforces_strict_schema_limits=False))
         if 'anthropic_calls_cited_web_tools_directly' not in profile:
@@ -1301,6 +1397,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     anthropic_calls_cited_web_tools_directly=not isinstance(
                         client, _CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS
                     )
+                ),
+            )
+        if 'rejects_unpaired_tool_calls' not in profile:
+            profile = merge_profile(
+                profile,
+                AnthropicModelProfile(
+                    rejects_unpaired_tool_calls=not isinstance(client, _UNPAIRED_TOOL_CALLS_UNVERIFIED_CLIENTS)
                 ),
             )
         return profile
@@ -1348,8 +1451,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
-        response = await self._messages_create(messages, False, model_settings, model_request_parameters)
-        model_response = await self._finish_response(response, messages, model_settings, model_request_parameters)
+        thread_record = ThreadRecord()
+        response = await self._messages_create(
+            messages, False, model_settings, model_request_parameters, thread_record=thread_record
+        )
+        model_response = await self._finish_response(
+            response, messages, model_settings, model_request_parameters, thread_record=thread_record
+        )
         mark_continuation_context_input_tokens(messages, model_response)
         return model_response
 
@@ -1359,18 +1467,26 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         messages: list[ModelMessage],
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        thread_record: ThreadRecord | None = None,
     ) -> ModelResponse:
-        """Turn the response to a non-streaming `_messages_create` call into a `ModelResponse`."""
+        """Turn the response to a non-streaming `_messages_create` call into a `ModelResponse`.
+
+        With `thread_record`, the response records the message thread its request was sent in, if any.
+        """
         response = check_json_response(self.model_name, response)
         code_execution_in_open_turn = open_turn_has_code_execution(messages, self.system)
         if isinstance(response, BetaMessage):
-            return self._process_response(
+            model_response = self._process_response(
                 response,
                 model_request_parameters,
                 model_settings,
                 fetched_pages_from_history(messages),
                 code_execution_in_open_turn=code_execution_in_open_turn,
             )
+            if thread_record is None:
+                return model_response
+            return thread_record.stamp(model_response, from_fallback_model=served_by_fallback_model(response.usage))
         # The request was streamed behind the scenes, see `_messages_create`. `map_api_errors` maps a transport
         # error that breaks the stream off, both while it opens and while it's read.
         async with response.source:
@@ -1380,6 +1496,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 model_settings,
                 fetched_pages_from_history(messages),
                 code_execution_in_open_turn=code_execution_in_open_turn,
+                thread_record=thread_record,
             )
             async for _ in streamed_response:
                 pass
@@ -1487,7 +1604,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
-        response = await self._messages_create(messages, True, model_settings, model_request_parameters)
+        thread_record = ThreadRecord()
+        response = await self._messages_create(
+            messages, True, model_settings, model_request_parameters, thread_record=thread_record
+        )
         async with response.source:
             streamed_response = await self._process_streamed_response(
                 response,
@@ -1495,6 +1615,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 model_settings,
                 fetched_pages_from_history(messages),
                 code_execution_in_open_turn=open_turn_has_code_execution(messages, self.system),
+                thread_record=thread_record,
             )
             yield streamed_response
             mark_continuation_context_input_tokens(messages, streamed_response)
@@ -1558,6 +1679,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         profile = self.profile
         merged = merge_model_settings(self.settings, model_settings) or {}
 
+        # Typed budget thinking fails here with a `UserError`, kept for backward compatibility. Budget thinking in
+        # `extra_body['thinking']` is sent as is: the API rejects it with a 400, which `FallbackModel`, `ModelFallback`
+        # and `model_request_batch` handle as a failure of that one request, and a check before sending would turn it
+        # into a hard failure for them.
         if (
             profile.get('anthropic_disallows_budget_thinking', False)
             and (anthropic_thinking := merged.get('anthropic_thinking'))
@@ -1587,6 +1712,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        model_request_parameters = self._only_the_computer_when_forced(
+            AnthropicModelSettings(**(prepared_settings or {})), model_request_parameters
+        )
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
         if not extends_max_output(self._request_betas(cast(AnthropicModelSettings, prepared_settings or {}))):
@@ -1659,6 +1787,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         *,
         compaction: BetaCompactionConfigParam | None = None,
+        thread_record: ThreadRecord | None = None,
     ) -> AnthropicEventStream:
         pass
 
@@ -1671,6 +1800,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         *,
         compaction: BetaCompactionConfigParam | None = None,
+        thread_record: ThreadRecord | None = None,
     ) -> BetaMessage | AnthropicEventStream:
         pass
 
@@ -1682,6 +1812,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         *,
         compaction: BetaCompactionConfigParam | None = None,
+        thread_record: ThreadRecord | None = None,
     ) -> BetaMessage | AnthropicEventStream:
         """Calls the Anthropic API to create a message.
 
@@ -1694,9 +1825,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         With `compaction`, this is a compaction request, which samples no reply: the parameters Anthropic rejects
         on one are settled here, on the request as it would otherwise be sent, so the rest of the request (and the
         prompt cache it reads) stays the same.
+
+        With `thread_record`, the request uses a message thread when `anthropic_previous_message_id` applies (see
+        `may_use_thread` and `_first_attempt`), and the record gets the fingerprint to stamp on the response when it
+        did, or when threads don't support the request.
         """
+        if thread_record is not None and not may_use_thread(self, model_settings, compaction):
+            thread_record = None
         prepared = await self._prepare_messages_create(
-            messages, model_settings, model_request_parameters, compaction=compaction
+            messages,
+            model_settings,
+            model_request_parameters,
+            compaction=compaction,
+            record_cache_breakpoints_on_send=thread_record is not None,
         )
         anthropic_profile = self.profile
         client = _with_max_retries(self.client, model_settings)
@@ -1708,10 +1849,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         retry_container = prepared.container
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
-                return await create(prepared.container, initial_thinking, initial_betas, initial_thinking_override)
-            except APIStatusError as error:
+                return await self._first_attempt(
+                    messages,
+                    model_settings,
+                    model_request_parameters,
+                    prepared,
+                    lambda thread: create(
+                        prepared.container, initial_thinking, initial_betas, initial_thinking_override, thread
+                    ),
+                    thread_record,
+                )
+            except (APIStatusError, APIConnectionError) as error:
+                # `status_and_body` also reads a status a retrying transport gave up on, which `anthropic` wraps in
+                # `APIConnectionError`, so the recoveries below run for it as for the SDK's own error.
+                response = status_and_body(error)
                 if (
-                    is_expired_container_error(error)
+                    response is not None
+                    and is_expired_container_error(*response)
                     and prepared.container_from_history
                     and any(
                         is_str_dict(block) and block['type'] == 'container_upload'
@@ -1721,13 +1875,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 ):
                     try:
                         return await create(None, initial_thinking, initial_betas, initial_thinking_override)
-                    except APIStatusError as fallback_error:
+                    except (APIStatusError, APIConnectionError) as fallback_error:
                         # Classify what the fallback hit, not the 500 that caused it, so a stale
                         # thinking block rejected only on this attempt still reaches the retry
                         # below. The history-resolved container is gone, so it stays dropped there.
-                        error = fallback_error
+                        error, response = fallback_error, status_and_body(fallback_error)
                         retry_container = None
-                if not is_stale_thinking_block_error(anthropic_profile, prepared.initial_effective_thinking, error):
+                if response is None or not is_stale_thinking_block_error(
+                    anthropic_profile, prepared.initial_effective_thinking, *response
+                ):
                     raise error
 
             result = await create(
@@ -1738,6 +1894,147 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
             warn_stale_thinking_block_recovery(self.model_name)
             return result
+
+    async def _first_attempt(
+        self,
+        messages: list[ModelMessage],
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        prepared: _PreparedMessagesCreate,
+        send: Callable[[Thread | None], Awaitable[BetaMessage | AnthropicEventStream]],
+        thread_record: ThreadRecord | None,
+    ) -> BetaMessage | AnthropicEventStream:
+        """Send the first attempt of a request, in a message thread when it has a `thread_record`.
+
+        In a thread it's a continue request when possible, else a create. A continue request needs the most recent
+        response in the history to have been stored in a thread whose fixed fields match this request's. A continue
+        request that the API can't serve is replayed as a create request with the full conversation. If the API
+        can't find the thread of a replayed response either, it may be unable to store the conversation, so the
+        request is sent without a thread. So is a create request that threads don't support, sent again without one.
+        Either way the response records it, so the next request with the same fingerprint is sent without a thread
+        straight away. The recovery retries in `_messages_create` send no thread, as they change fixed fields, so a
+        response is only stamped with the fingerprint of a thread request that succeeded, or of a request sent
+        without a thread as above (see `ThreadRecord`).
+        """
+        if thread_record is None:
+            return await send(None)
+        params = self._messages_create_params(
+            messages,
+            model_settings,
+            prepared,
+            prepared.container,
+            prepared.initial_thinking,
+            prepared.initial_thinking_override,
+        )
+        fingerprint = thread_fingerprint(
+            params, prepared.initial_betas | {MESSAGE_THREADS_BETA}, self._history_digest_key
+        )
+        if thread_unsupported(messages, fingerprint):
+            thread_record.fingerprint = fingerprint
+            return await send(None)
+        thread = await self._continue_thread(messages, model_settings, model_request_parameters, fingerprint)
+        if (
+            thread is not None
+            and (response := await self._send_continue(messages, send, thread, thread_record, fingerprint)) is not None
+        ):
+            return response
+        try:
+            response = await send(Thread(cache_breakpoints=prepared.cache_breakpoints))
+        except (APIStatusError, APIConnectionError) as error:
+            failure = status_and_body(error)
+            if failure is None or not is_thread_unsupported_error(failure[1]):
+                raise
+            # The request uses something threads don't support, like context management: send it without one.
+            warnings.warn(
+                f"Threads don't support this request to {self.model_name!r}, so it's sent without a thread, "
+                'and so are later requests in this conversation with the same instructions, tools and other fixed '
+                f'fields: {error.message}',
+                UserWarning,
+                stacklevel=2,
+            )
+            thread_record.fingerprint = fingerprint
+            return await send(None)
+        thread_record.fingerprint = fingerprint
+        thread_record.history = history_hasher(messages, self._history_digest_key)
+        thread_record.replayed = thread is not None
+        return response
+
+    async def _send_continue(
+        self,
+        messages: list[ModelMessage],
+        send: Callable[[Thread | None], Awaitable[BetaMessage | AnthropicEventStream]],
+        thread: Thread,
+        thread_record: ThreadRecord,
+        fingerprint: str,
+    ) -> BetaMessage | AnthropicEventStream | None:
+        """Send the continue request `thread`, or return `None` when the API can't serve it, so the caller replays.
+
+        If the API can't find the thread of a replayed response either, it may be unable to store the conversation,
+        so the request is sent without a thread instead, and the response records that (see `_first_attempt`).
+        """
+        try:
+            response = await send(thread)
+        except (APIStatusError, APIConnectionError) as error:
+            # Like the recoveries in `_messages_create`, this reads a status a retrying transport gave up on too.
+            failure = status_and_body(error)
+            if failure is None or not is_thread_replay_error(failure[1]):
+                raise
+            if not thread.continues_replay or thread_error_code(failure[1]) != 'thread_not_found':
+                return None
+            warnings.warn(
+                f"The thread of this conversation with {self.model_name!r} can't be continued right after it was "
+                "replayed, so Anthropic may be unable to store it. It's sent without a thread, and so are later "
+                'requests in this conversation with the same instructions, tools and other fixed fields.',
+                UserWarning,
+                stacklevel=3,
+            )
+            thread_record.fingerprint = fingerprint
+            return await send(None)
+        thread_record.fingerprint = fingerprint
+        thread_record.history = history_hasher(messages, self._history_digest_key)
+        return response
+
+    async def _continue_thread(
+        self,
+        messages: list[ModelMessage],
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        fingerprint: str,
+    ) -> Thread | None:
+        """The continue request of a thread, if the history allows one and its new messages can be sent on their own."""
+        continuation = thread_continuation(self, messages, fingerprint, self._history_digest_key)
+        if continuation is None:
+            return None
+        previous_message_id, new_messages, continues_replay = continuation
+        # This maps the new messages a second time, so a file URL that mapping downloads (a text `DocumentUrl`, or
+        # one with `force_download`) is downloaded twice. A slice of `prepared.anthropic_messages` would avoid that
+        # once the mapping can say where each history message starts (#13804). `continues_thread` keeps their
+        # `SystemPromptPart`s where the full mapping puts them: none of them opens the conversation, so none is
+        # hoisted into `system`, which a continue request doesn't send.
+        try:
+            new_prepared = await self._prepare_messages_create(
+                new_messages,
+                model_settings,
+                model_request_parameters,
+                continues_thread=True,
+                thread_history=messages[: len(messages) - len(new_messages)],
+                record_cache_breakpoints_on_send=True,
+            )
+        except UserError:
+            # The full history mapped, so the new messages need what came before them: a `CachePoint` with nothing
+            # before it in them marks the end of the previous response, which a continue request can't send again.
+            # A create request with the full history keeps the boundary where it was put.
+            return None
+        # A continue request leaves out `system` and `tools`, so their breakpoints aren't in it.
+        requested, applied = (
+            [path for path in paths if not path.startswith(('system[', 'tools['))]
+            for paths in new_prepared.cache_breakpoints or ([], [])
+        )
+        return Thread(
+            continuation=(previous_message_id, new_prepared.anthropic_messages),
+            cache_breakpoints=(requested, applied) if requested else None,
+            continues_replay=continues_replay,
+        )
 
     async def _create_message(
         self,
@@ -1750,16 +2047,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         thinking: BetaThinkingConfigParam | Omit,
         betas: set[str],
         thinking_override: dict[str, object] | None,
+        thread: Thread | None = None,
     ) -> BetaMessage | AnthropicEventStream:
-        """Send one attempt of `_messages_create`, with the container and thinking object this attempt uses."""
+        """Send one attempt of `_messages_create`, with the container, thinking object and thread this attempt uses."""
         max_tokens = prepared.max_tokens
         anthropic_profile = self.profile
+        record_cache_breakpoints(prepared.cache_breakpoints if thread is None else thread.cache_breakpoints)
+        params, betas = with_thread(
+            self._messages_create_params(
+                messages, model_settings, prepared, container_param, thinking, thinking_override
+            ),
+            betas,
+            thread,
+        )
 
         async def send(stream: bool) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
             return await client.beta.messages.create(
-                **self._messages_create_params(
-                    messages, model_settings, prepared, container_param, thinking, thinking_override
-                ),
+                **params,
                 betas=sorted(betas) or OMIT,
                 stream=stream,
                 timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
@@ -1823,6 +2127,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             'compaction': prepared.compaction or OMIT,
             'container': container or OMIT,
             'service_tier': _resolve_anthropic_service_tier(model_settings),
+            'inference_geo': prepared.inference_geo,
             'diagnostics': self._cache_diagnostics(messages, model_settings),
             'extra_body': _build_extra_body(
                 model_settings, thinking_override, bedrock=isinstance(self.client, AsyncAnthropicBedrock)
@@ -1836,7 +2141,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         *,
         compaction: BetaCompactionConfigParam | None = None,
+        continues_thread: bool = False,
+        thread_history: Sequence[ModelMessage] = (),
+        record_cache_breakpoints_on_send: bool = False,
     ) -> _PreparedMessagesCreate:
+        """The `messages.create` parameters of a request.
+
+        With `record_cache_breakpoints_on_send`, the request's cache breakpoints are left for each attempt to record
+        as it's sent, rather than recorded here: in a message thread, a continue request leaves some of them out.
+        """
         model_request_parameters = self._declare_newcomers_left_alone(model_settings, model_request_parameters)
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
         # entries are then appended in history order; Anthropic excludes them from its cache key.
@@ -1855,7 +2168,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         _validate_wire_tools_not_all_deferred(tools)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
-        system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
+        system_prompt, anthropic_messages = await self._map_message(
+            messages,
+            model_request_parameters,
+            model_settings,
+            continues_thread=continues_thread,
+            thread_history=thread_history,
+        )
         request_scoped_texts = _request_scoped_tail_texts(messages)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages, request_scoped_texts)
         self._apply_explicit_message_caching(model_settings, anthropic_messages, request_scoped_texts)
@@ -1863,13 +2182,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # ignores it when the TTL is the same, since both mark the same breakpoint. The explicit one wins.
         auto_cache_control = None if last_cacheable_block_has_cache_control(anthropic_messages) else auto_cache_control
         # Only the request records its breakpoints: `count_tokens` builds the same request outside its span.
-        self._limit_cache_points(
+        cache_breakpoints = self._limit_cache_points(
             system_prompt,
             anthropic_messages,
             tools,
             automatic_caching=auto_cache_control is not None,
-            span=current_model_request_span(),
+            return_breakpoints=current_model_request_span() is not None,
         )
+        if not record_cache_breakpoints_on_send:
+            record_cache_breakpoints(cache_breakpoints)
         raise_earlier_breakpoint_ttls(system_prompt, anthropic_messages, tools, auto_cache_control)
         output_config = self._build_output_config(effort_request_parameters, model_settings)
         anthropic_profile = self.profile
@@ -1908,6 +2229,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             mcp_servers=mcp_servers,
             output_config=output_config,
             auto_cache_control=auto_cache_control,
+            cache_breakpoints=cache_breakpoints if record_cache_breakpoints_on_send else None,
             max_tokens=model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile)),
             stop_sequences=stop_sequences,
             effective_thinking=effective_thinking,
@@ -1921,6 +2243,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             initial_betas=initial_betas,
             initial_thinking_override=initial_thinking_override,
             initial_effective_thinking=initial_effective_thinking,
+            inference_geo=self._effective_inference_geo(model_settings, anthropic_profile),
         )
 
     def _stale_thinking_block_recovery_history(
@@ -2067,7 +2390,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if self._messages_use_anthropic_uploaded_file(messages):
             betas.add(_ANTHROPIC_FILES_API_BETA)
         if (native_computer := self._sent_computer(model_settings, model_request_parameters)) and (
-            beta := COMPUTER_TOOL_BETAS.get(native_computer.version)
+            beta := _computer.COMPUTER_TOOL_BETAS.get(native_computer.version)
         ):
             betas.add(beta)
         # `prepare_messages` converts local search returns into availability deltas before this
@@ -2153,6 +2476,30 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
         return OMIT
 
+    def _effective_inference_geo(
+        self, model_settings: AnthropicModelSettings, anthropic_profile: AnthropicModelProfile
+    ) -> str | Omit:
+        """The `inference_geo` to send, or OMIT when it's unset or the client doesn't take it."""
+        inference_geo = model_settings.get('anthropic_inference_geo')
+        if inference_geo is None:
+            return OMIT
+        if self._sends_inference_geo(model_settings, anthropic_profile):
+            return inference_geo
+        warnings.warn(
+            f'`anthropic_inference_geo` is not supported on `{type(self.client).__name__}`, where the endpoint decides '
+            f'the inference region; the setting {inference_geo!r} will be ignored.',
+            UserWarning,
+            stacklevel=2,
+        )
+        return OMIT
+
+    @staticmethod
+    def _sends_inference_geo(model_settings: AnthropicModelSettings, anthropic_profile: AnthropicModelProfile) -> bool:
+        """Whether the request carries `inference_geo`, so where it ran is reported in `provider_details`."""
+        return model_settings.get('anthropic_inference_geo') is not None and anthropic_profile.get(
+            'anthropic_supports_inference_geo', False
+        )
+
     def _client_supports_fast_speed(self, anthropic_profile: AnthropicModelProfile) -> bool:
         """Fast mode is only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry)."""
         return anthropic_profile.get('anthropic_supports_fast_speed', False) and not isinstance(
@@ -2219,7 +2566,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if not self.profile.get('anthropic_accepts_file_and_container_ids', True):
             return None, False
         extra_body = model_settings.get('extra_body')
-        if not (_is_str_mapping(extra_body) and 'tools' in extra_body) and not provisions_code_execution(tools):
+        if not (is_str_mapping(extra_body) and 'tools' in extra_body) and not provisions_code_execution(tools):
             return None, False
         # On pause_turn continuation, pass just the container ID string to reconnect.
         # Re-passing BetaContainerParams triggers a prefill rejection on some models
@@ -2396,8 +2743,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await count(initial_thinking, initial_betas, initial_thinking_override)
-            except APIStatusError as error:
-                if not is_stale_thinking_block_error(anthropic_profile, initial_effective_thinking, error):
+            except (APIStatusError, APIConnectionError) as error:
+                # As in `_messages_create`, a status a retrying transport gave up on is recovered from too.
+                if (response := status_and_body(error)) is None or not is_stale_thinking_block_error(
+                    anthropic_profile, initial_effective_thinking, *response
+                ):
                     raise
 
             result = await count(
@@ -2446,7 +2796,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if isinstance(item, BetaWebFetchToolResultBlock) and (page := fetched_page(item))
             ),
         ]
-        computer = ComputerBatch(self._sent_computer(model_settings, model_request_parameters), self.system)
+        computer = _computer.ComputerBatch(self._sent_computer(model_settings, model_request_parameters), self.system)
         for item in response.content:
             match item:
                 case BetaTextBlock():
@@ -2521,7 +2871,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             canonical_system=self._canonical_system_stamp,
             finish_reason=finish_reason,
             state='suspended' if response.stop_reason == 'pause_turn' else 'complete',
-            provider_details=response_provider_details(response),
+            provider_details=report_inference_geo(
+                response_provider_details(response),
+                response.usage.inference_geo,
+                report=self._sends_inference_geo(model_settings, self.profile),
+            ),
         )
         if (context_input_tokens := last_pass_input_tokens(response.usage)) is not None:
             mark_context_input_tokens(model_response, context_input_tokens)
@@ -2569,6 +2923,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         history_fetched_pages: Sequence[tuple[str, str]] = (),
         *,
         code_execution_in_open_turn: bool = False,
+        thread_record: ThreadRecord | None = None,
     ) -> AnthropicStreamedResponse:
         first_chunk = await response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -2595,6 +2950,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             ),
             _history_fetched_pages=history_fetched_pages,
             _native_computer=self._sent_computer(model_settings, model_request_parameters),
+            _report_inference_geo=self._sends_inference_geo(model_settings, self.profile),
+            _thread_record=thread_record,
         )
         streamed_response.canonical_system = self._canonical_system_stamp
         return streamed_response
@@ -2733,7 +3090,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         supports_dynamic_filtering = self.profile.get('anthropic_supports_dynamic_filtering', False)
         code_execution_may_call = _code_execution_may_call_web_tools(supports_dynamic_filtering, model_settings)
-
         for tool in model_request_parameters.native_tools:
             match tool:
                 case WebSearchTool():
@@ -2804,7 +3160,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # callers. That keeps `_get_enabled_server_tool_names`, which rebuilds the tools through `_add_native_tools`,
         # filtering as if both were unset.
         extra_body = model_settings.get('extra_body')
-        if _is_str_mapping(extra_body) and 'tools' in extra_body:
+        if is_str_mapping(extra_body) and 'tools' in extra_body:
             return
         if (allowed_callers := model_settings.get('anthropic_web_tools_allowed_callers')) is not None:
             for web_tool in tools:
@@ -2856,9 +3212,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     tool_choice_mode == 'required'
                     and len(tool_names) == 1
                     and supports
-                    and _can_force(tool_names, native_computer)
+                    and (forced_name := _forced_tool_name(next(iter(tool_names)), native_computer))
                 ):
-                    tool_choice = {'type': 'tool', 'name': _forced_name(next(iter(tool_names)), native_computer)}
+                    tool_choice = {'type': 'tool', 'name': forced_name}
                 else:
                     # Breaks caching, but Anthropic doesn't support limiting tools via API arg. A tool that can't be
                     # named, such as the computer toolset, or any tool where forcing isn't supported (extended
@@ -2914,7 +3270,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tools: list[BetaToolUnionParam] = [
             self._map_tool_definition(t, model_settings, visibility=model_request_parameters.visibility_of(t.name))
             for t in tool_defs.values()
-            if not _is_computer(t.name, native_computer)
+            if native_computer is None or t.name != native_computer.name
         ]
         tools.extend(_computer_tool_params(native_computer, tool_defs))
 
@@ -2939,12 +3295,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
+        *,
+        continues_thread: bool = False,
+        thread_history: Sequence[ModelMessage] = (),
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
-        """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
+        """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`.
+
+        With `continues_thread`, `messages` are the new messages of a thread continue request, which follow the
+        thread's history, so their first request doesn't open the conversation and its system prompts aren't
+        hoisted into the top-level `system`. The computer calls in `thread_history`, the messages the thread holds,
+        are read so a result in `messages` answers each member call its call was sent back as.
+        """
         messages = self._trim_before_compaction(messages)
         declared_tools = self._tool_choice_declarations(model_settings, model_request_parameters)[0]
-        native_computer = self._native_computer(model_request_parameters)
-        computer_sent = native_computer is not None and native_computer.name in declared_tools
+        sent_computer = self._sent_computer(model_settings, model_request_parameters)
         map_context = _MapMessagesContext(
             model_request_parameters=model_request_parameters,
             include_citations=citations_included(model_settings, model_request_parameters),
@@ -2990,13 +3354,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # one of those would be just as unknown as one naming a tool that's gone.
             # The computer use tool sent in the `computer` tool's place can't be referenced: the API refuses a
             # `tool_addition` naming a toolset entry, as a loaded deferred `ComputerUse` would leave in history.
-            declared_tool_names=set(declared_tools)
-            - ({native_computer.name} if native_computer and computer_sent else set()),
+            declared_tool_names=set(declared_tools) - ({sent_computer.name} if sent_computer else set()),
             tool_defs_by_name={tool.name: tool for tool in model_request_parameters.function_tools},
-            # The same test `_prepare_tools_and_tool_choice` uses to send it.
-            computer_tool_sent=native_computer.version if native_computer and computer_sent else None,
+            sent_computer=sent_computer,
         )
-        leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
+        self._map_held_tool_calls(thread_history, map_context)
+        leading_request = None if continues_thread else next((m for m in messages if isinstance(m, ModelRequest)), None)
         for m in messages:
             if isinstance(m, ModelRequest):
                 standing_prompt_count = _standing_system_prompt_count(m) if m is leading_request else 0
@@ -3316,10 +3679,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 is_error=False,
             )
 
-        # A `computer` result is read as validated, so content stored as a JSON string keeps its screenshot.
-        typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
-        items = list(typed) if typed is not None else part.content_items(mode='str', wrap_if_error=False)
-        tool_result_content = [await self._map_tool_result_item(item, map_context) for item in items]
+        tool_result_content = [await self._map_tool_result_item(item, map_context) for item in _result_items(part)]
 
         return beta_tool_result_block_param.BetaToolResultBlockParam(
             tool_use_id=_guard_tool_call_id(t=part),
@@ -3392,34 +3752,40 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if len(assistant_content_params) > 0:
             anthropic_messages.append({'role': 'assistant', 'content': assistant_content_params})
 
+    def _map_held_tool_calls(self, thread_history: Sequence[ModelMessage], map_context: _MapMessagesContext) -> None:
+        """Map the tool calls a thread holds, so a result in its new messages answers each member call its call was."""
+        for message in thread_history:
+            if isinstance(message, ModelResponse):
+                for part in message.parts:
+                    if isinstance(part, ToolCallPart):
+                        self._map_tool_call_part(part, [], map_context)
+
     def _map_tool_call_part(
         self,
         part: ToolCallPart,
         assistant_content_params: list[_AssistantContentBlockParam],
         map_context: _MapMessagesContext,
     ) -> None:
-        replay = computer_replay(part, self.system) if map_context.computer_tool_sent else None
-        # Calls of another computer use tool version go back as plain calls.
-        if replay is not None and replay['computer_tool'] == map_context.computer_tool_sent:
+        sent_computer = map_context.sent_computer
+        replay = _computer.computer_replay(part, self.system, sent_computer) if sent_computer else None
+        if sent_computer and replay is not None:
             # Sent back as the calls they came as; toolset member calls each need their own result.
             # The first call goes back under the part's ID as fitted for the request, as its result does.
             part_id = _guard_tool_call_id(t=part)
             first, *rest = replay['computer_blocks']
-            replay = ComputerReplay(
-                computer_blocks=[ComputerBlock(id=part_id, name=first['name'], input=first['input']), *rest],
-                computer_tool=replay['computer_tool'],
-                computer_action_counts=replay['computer_action_counts'],
-            )
-            toolset: dict[str, Any] = {}
-            if map_context.computer_tool_sent == 'computer_toolset_20260801':
+            replay['computer_blocks'] = [
+                _computer.ComputerBlock(id=part_id, name=first['name'], input=first['input']),
+                *rest,
+            ]
+            if sent_computer.is_toolset:
                 map_context.computer_calls[part_id] = replay
-                toolset = {'toolset_name': 'computer'}
-            assistant_content_params.extend(
-                BetaToolUseBlockParam(
-                    id=block['id'], type='tool_use', name=block['name'], input=block['input'], **toolset
-                )
-                for block in replay['computer_blocks']
-            )
+                if _computer.splits_batch(part):
+                    map_context.split_computer_calls.add(part_id)
+            for block in replay['computer_blocks']:
+                call = BetaToolUseBlockParam(id=block['id'], type='tool_use', name=block['name'], input=block['input'])
+                if sent_computer.is_toolset:
+                    call['toolset_name'] = 'computer'
+                assistant_content_params.append(call)
         else:
             assistant_content_params.append(
                 BetaToolUseBlockParam(
@@ -3596,7 +3962,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             [q for q in cast('list[Any]', raw_queries) if isinstance(q, str)] if isinstance(raw_queries, list) else []
         )
         wire_key = 'pattern' if strategy == 'regex' else 'query'
-        return native_name, {wire_key: ' '.join(queries)}
+        # Input fields beyond the query (e.g. `limit`) go back as the model sent them.
+        extra_input: dict[str, Any] = details.get('extra_input') or {}
+        return native_name, {wire_key: ' '.join(queries), **extra_input}
 
     def _map_native_tool_return_part(
         self,
@@ -3679,8 +4047,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tools: list[BetaToolUnionParam],
         *,
         automatic_caching: bool = False,
-        span: Span | None = None,
-    ) -> None:
+        return_breakpoints: bool = False,
+    ) -> tuple[list[str], list[str]] | None:
         """Limit the number of cache points in the request to Anthropic's maximum.
 
         Tool definition cache points and the first instruction cache point always take priority; excess
@@ -3689,7 +4057,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         is enabled, the server-applied breakpoint uses 1 of the available slots, reducing the budget for
         explicit breakpoints by one.
 
-        Given the model-request `span`, records the breakpoints the request asked for and the ones it kept on it.
+        With `return_breakpoints`, returns the breakpoints the request asked for and the ones it kept, if it asked
+        for any.
 
         Raises:
             UserError: If system_prompt and tools combined already exceed the budget.
@@ -3699,7 +4068,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             AnthropicModel._cache_breakpoints(
                 system_prompt, anthropic_messages, tools, automatic_caching=automatic_caching
             )
-            if span is not None
+            if return_breakpoints
             else None
         )
         # Anthropic enforces a maximum of 4 cache points per request.
@@ -3727,14 +4096,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             description='Anthropic request',
         ):
             del block_dict['cache_control']
-        if span is not None and requested:
-            span.set_attribute('pydantic_ai.cache.requested_breakpoints', requested)
-            span.set_attribute(
-                'pydantic_ai.cache.applied_breakpoints',
-                AnthropicModel._cache_breakpoints(
-                    system_prompt, anthropic_messages, tools, automatic_caching=automatic_caching
-                ),
-            )
+        if not requested:
+            return None
+        return requested, AnthropicModel._cache_breakpoints(
+            system_prompt, anthropic_messages, tools, automatic_caching=automatic_caching
+        )
 
     @staticmethod
     def _cache_breakpoints(
@@ -3876,8 +4242,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         That's the last block of the last message, skipping request-scoped content: a native request-scoped
         entry (`cache_control` on one is a 400) and trailing text blocks rendering a request-scoped prompt
-        on a model that can't clear it. A breakpoint on either would write a cache entry the next request
-        can't read, since the content is cleared or no longer sent by then.
+        on a model that can't clear it or a downgraded request-scoped capability part. A breakpoint on either
+        would write a cache entry the next request can't read, since the content is cleared or no longer sent by
+        then. Nor can it go on a `system` entry behind such a block, whose position the next request changes.
 
         If the chosen block already has `cache_control` (e.g. from an explicit `CachePoint`),
         it is left unchanged to preserve the user's chosen TTL. On Bedrock, when the previous
@@ -3890,14 +4257,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             previous_tail = previous_tail_needing_breakpoint([message['role'] for message in lasting], block_counts)
             if previous_tail is not None:
                 self._add_message_cache_control(lasting[previous_tail], ttl)
-        remaining = request_scoped_texts
-        for message in reversed(anthropic_messages):
-            if message.get('clear_at') == 'next_user_message':
-                continue
-            blocks, remaining = blocks_before_request_scoped_text(message, remaining)
-            if blocks:
-                self._add_cache_control_to_last_cacheable_param(blocks, ttl)
-                return
+        if blocks := lasting_blocks_at_end(anthropic_messages, request_scoped_texts):
+            self._add_cache_control_to_last_cacheable_param(blocks, ttl)
 
     def _add_message_cache_control(self, message: BetaMessageParam, ttl: Literal['5m', '1h']) -> None:
         """Add `cache_control` to the last cacheable content block of `message`, unless it already has one."""
@@ -3945,7 +4306,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> BetaImageBlockParam | BetaRequestDocumentBlockParam:
         if media_type.startswith('image/'):
             return BetaImageBlockParam(
-                source={'data': base64.b64encode(data).decode(), 'media_type': media_type, 'type': 'base64'},  # pyright: ignore[reportArgumentType]
+                source={
+                    'data': base64.b64encode(data).decode(),
+                    'media_type': registered_media_type(media_type),
+                    'type': 'base64',
+                },  # pyright: ignore[reportArgumentType]
                 type='image',
             )
         elif media_type == 'application/pdf':
@@ -4079,18 +4444,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             'Only image and document (text/application) types are supported.'
         )
 
-    def _native_computer(self, model_request_parameters: ModelRequestParameters) -> NativeComputer | None:
+    def _native_computer(self, model_request_parameters: ModelRequestParameters) -> _computer.NativeComputer | None:
         """The `computer` tool's name and the Anthropic computer use tool sent in its place, for a `ComputerTool`."""
-        version = self.profile.get('anthropic_computer_tool_version')
         computer = next((t for t in model_request_parameters.native_tools if isinstance(t, ComputerTool)), None)
-        if version is None or computer is None:
+        if computer is None:
             return None
-        name = model_request_parameters.tool_name_for_kind(COMPUTER_KIND)
-        return NativeComputer(name, version, computer.display_size) if name is not None else None
+        version = self.profile.get('anthropic_default_computer_tool_version', 'computer_20250124')
+        names = _computer_tool_names(model_request_parameters)
+        return _computer.NativeComputer(names[0], version, computer.display_size) if names else None
 
     def _sent_computer(
         self, model_settings: AnthropicModelSettings, model_request_parameters: ModelRequestParameters
-    ) -> NativeComputer | None:
+    ) -> _computer.NativeComputer | None:
         """The Anthropic computer use tool, when this request sends it.
 
         It isn't sent when `tool_choice` leaves out the `computer` tool, and a call named `computer` is then a function
@@ -4102,77 +4467,91 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         declared = self._tool_choice_declarations(model_settings, model_request_parameters)[0]
         return native_computer if native_computer.name in declared else None
 
+    def _only_the_computer_when_forced(
+        self, model_settings: AnthropicModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> ModelRequestParameters:
+        """Without the other native tools, when the request requires a tool call and offers only the computer use tool.
+
+        Requiring a tool would let Claude call a native one instead, such as web search, and never the computer. Dropped
+        while preparing the request, every later step (history replay, the token count) sees the tools it sends.
+        """
+        native_computer = self._native_computer(model_request_parameters)
+        tool_defs, tool_choice = self._tool_choice_declarations(model_settings, model_request_parameters)
+        if native_computer is None or tool_choice['type'] != 'any' or tool_defs.keys() != {native_computer.name}:
+            return model_request_parameters
+        native_tools = [tool for tool in model_request_parameters.native_tools if isinstance(tool, ComputerTool)]
+        return replace(model_request_parameters, native_tools=native_tools)
+
     async def _map_computer_results(
-        self, part: ToolReturnPart, replay: ComputerReplay, map_context: _MapMessagesContext
+        self, part: ToolReturnPart, replay: _computer.ComputerReplay, map_context: _MapMessagesContext
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
         """One result per toolset member call, as the toolset requires.
 
-        The calls that ran get `OK` and what their actions returned, such as a zoom's image, and the last of them the
-        screenshot, since an error result can hold only text. The failed call gets its error, and the rest Anthropic's
-        not-executed text. When the first call failed, it carries the screenshot, so it states the failure in text
-        rather than as an error. A failed, denied or UI-rebuilt result doesn't say which calls ran, so each call gets
-        its text.
+        The calls that ran get `OK`, and the last of them the whole result, as it is. The failed call gets `Failed.`,
+        and the rest Anthropic's not-executed text. When no call ran, the first one carries the whole result. A failed,
+        denied, UI-rebuilt or changed result doesn't say which calls ran, so the last call carries it whole and the
+        rest say so.
         """
         blocks = replay['computer_blocks']
         if part.outcome != 'success':
             # A denial or an interruption isn't a tool error: only a failed or retried call is (`ERROR_OUTCOMES`).
-            text = BetaTextBlockParam(text=part.model_response_str(wrap_if_error=False), type='text')
-            return [_computer_result(block, part.outcome in ERROR_OUTCOMES, text) for block in blocks]
-        metadata = part.result if isinstance(part, ComputerReturnPart) else None
-        # A summary, what each action returned, then the screen (or the note that replaced it in this request). Read
-        # as validated, so content stored as a JSON string still reads as a list.
-        typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
-        content: list[Any] = list(typed) if typed is not None else part.content_items(mode='str')
-        if metadata is None or metadata.get('changed'):
-            # Not an outcome of these calls, such as a guardrail's text or a call changed before it ran: each call gets
-            # the summary instead of `OK`, and the last one the rest. With no content at all, each still gets a result.
-            mapped = [await self._map_tool_result_item(item, map_context) for item in content]
-            return [
-                _computer_result(block, False, *(mapped if index == len(blocks) - 1 else mapped[:1]))
-                for index, block in enumerate(blocks)
-            ]
-        run = _ComputerRun.of(replay, metadata, content)
-        return [await self._map_member_result(run, index, map_context) for index in range(len(blocks))]
+            # Only the marker's own refusal: a call a hook let run past it gets its real retry text.
+            split = (
+                part.retry is not None
+                and part.retry.cause == 'validation_error'
+                and _guard_tool_call_id(t=part) in map_context.split_computer_calls
+            )
+            text = _computer.SPLIT_BATCH_REFUSAL if split else part.model_response_str(wrap_if_error=False)
+            # An error result can hold only text.
+            whole: list[beta_tool_result_block_param.Content] = [BetaTextBlockParam(text=text, type='text')]
+            is_error = part.outcome in ERROR_OUTCOMES
+        elif not isinstance(part, ComputerReturnPart) or (metadata := part.result) is None or metadata.get('changed'):
+            # Not an outcome of these calls, such as a guardrail's text or a call changed before it ran: which calls ran
+            # isn't known, so each call but the last says where the result is instead of `OK`, and the last carries it.
+            whole = [await self._map_tool_result_item(item, map_context) for item in _result_items(part)]
+            is_error = False
+        else:
+            return await self._map_computer_outcome(replay, metadata, _result_items(part), map_context)
+        on_last = BetaTextBlockParam(text=_computer.COMPUTER_RESULT_ON_LAST, type='text')
+        return [
+            _computer_result(block, is_error, *(whole if index == len(blocks) - 1 else [on_last]))
+            for index, block in enumerate(blocks)
+        ]
 
-    async def _map_member_result(
-        self, run: _ComputerRun, index: int, map_context: _MapMessagesContext
-    ) -> beta_tool_result_block_param.BetaToolResultBlockParam:
-        """The result of one toolset member call: it ran, it failed, or it didn't run."""
-        block = run.blocks[index]
-        if run.ran(index):
-            return await self._map_ran_member(run, index, map_context)
-        if run.error is not None and run.reached(index):
-            return await self._map_failed_member(run, block, run.error, map_context)
-        return _computer_result(block, True, BetaTextBlockParam(text=COMPUTER_NOT_EXECUTED, type='text'))
-
-    async def _map_ran_member(
-        self, run: _ComputerRun, index: int, map_context: _MapMessagesContext
-    ) -> beta_tool_result_block_param.BetaToolResultBlockParam:
-        """`OK` and what the call's action returned; the last call that ran also gets the screen."""
-        block = run.blocks[index]
-        returned = (
-            [await self._map_tool_result_item(run.outputs.pop(0), map_context)]
-            if block['name'] in RETURNS_OUTPUT and run.outputs
-            else []
-        )
-        ok = BetaTextBlockParam(text='OK', type='text')
-        if index != run.last_ran or run.screen is None:
-            return _computer_result(block, False, ok, *returned)
-        if isinstance(run.screen, str):
-            # The screenshot was left out of this request: the call gets the text saying why.
-            text = ' '.join(item for item in (run.summary, run.screen) if isinstance(item, str))
-            return _computer_result(block, False, BetaTextBlockParam(text=text, type='text'), *returned)
-        return _computer_result(block, False, ok, *returned, await self._map_tool_result_item(run.screen, map_context))
-
-    async def _map_failed_member(
-        self, run: _ComputerRun, block: ComputerBlock, error: str, map_context: _MapMessagesContext
-    ) -> beta_tool_result_block_param.BetaToolResultBlockParam:
-        """The call whose action failed gets the error."""
-        if run.last_ran == -1 and run.screen is not None and not isinstance(run.screen, str):
-            # Nothing before it ran to carry the screen, and an error result can't hold an image.
-            failed = BetaTextBlockParam(text=f'Failed: {error}', type='text')
-            return _computer_result(block, False, failed, await self._map_tool_result_item(run.screen, map_context))
-        return _computer_result(block, True, BetaTextBlockParam(text=error, type='text'))
+    async def _map_computer_outcome(
+        self,
+        replay: _computer.ComputerReplay,
+        metadata: ComputerResult,
+        content: list[str | MultiModalContent],
+        map_context: _MapMessagesContext,
+    ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
+        """The results of the calls once the outcome says how many of their actions ran."""
+        blocks, failure = replay['computer_blocks'], metadata.get('error') is not None
+        # The number of actions up to and including each call's: each call may have become several, such as keys.
+        ends = itertools.accumulate(replay['computer_action_counts'])
+        ran = sum(end <= metadata['performed'] for end in ends)
+        whole = [await self._map_tool_result_item(item, map_context) for item in content]
+        results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
+        for index, block in enumerate(blocks):
+            if index < ran - 1:
+                results.append(_computer_result(block, False, BetaTextBlockParam(text='OK', type='text')))
+            elif index == ran - 1:
+                results.append(_computer_result(block, False, *whole))
+            elif index == ran == 0:
+                # An error result can hold only text, so a failed first call carries the result as a success, saying
+                # it failed.
+                failed = [BetaTextBlockParam(text=_computer.COMPUTER_FAILED, type='text')] if failure else []
+                results.append(_computer_result(block, False, *failed, *whole))
+            elif index == ran and failure:
+                # The error itself is only in the content, which a hook may have redacted.
+                results.append(
+                    _computer_result(block, True, BetaTextBlockParam(text=_computer.COMPUTER_FAILED, type='text'))
+                )
+            else:
+                results.append(
+                    _computer_result(block, True, BetaTextBlockParam(text=_computer.COMPUTER_NOT_EXECUTED, type='text'))
+                )
+        return results
 
     def _map_tool_definition(
         self,
@@ -4412,12 +4791,14 @@ class _MapMessagesContext:
     declared_tool_names: set[str]
     tool_defs_by_name: dict[str, ToolDefinition]
     # Without the same computer use tool in this request, past calls of it are sent back as plain `computer` calls.
-    computer_tool_sent: AnthropicComputerToolVersion | None
+    sent_computer: _computer.NativeComputer | None
     system_prompt_parts: list[str] = field(default_factory=list[str])
     anthropic_messages: list[BetaMessageParam] = field(default_factory=list[BetaMessageParam])
     rendered_tool_additions: set[str] = field(default_factory=set[str])
     # The `provider_details` of calls sent back as toolset member calls, by call ID, since each member needs a result.
-    computer_calls: dict[str, ComputerReplay] = field(default_factory=dict[str, ComputerReplay])
+    computer_calls: dict[str, _computer.ComputerReplay] = field(default_factory=dict[str, _computer.ComputerReplay])
+    # The IDs of those calls refused because another tool call came between their members.
+    split_computer_calls: set[str] = field(default_factory=set[str])
 
 
 @dataclass
@@ -4513,50 +4894,33 @@ def _support_tool_forcing(
     )
 
 
-def _computer_tool_version_for_client(
-    version: AnthropicComputerToolVersion | None, client: AsyncAnthropicClient, model_name: str
-) -> AnthropicComputerToolVersion | None:
-    """The computer use tool a client serves for this model: Bedrock and Foundry have only the earlier beta tools."""
-    if version != 'computer_toolset_20260801' or not isinstance(client, _COMPUTER_BETA_TOOLS_ONLY_CLIENTS):
-        return version
-    # The toolset models take `computer_20251124` there, but the Claude 5.5 models only on Bedrock.
-    if model_name.startswith(_CLAUDE_5_5_MODELS) and isinstance(client, AsyncAnthropicFoundry):
-        return None
-    return 'computer_20251124'
+def _forced_tool_name(name: str, native_computer: _computer.NativeComputer | None) -> str | None:
+    """The name `tool_choice` forces a tool by, or `None` for the computer toolset, which has no name to force it by.
 
-
-def _can_force(tool_names: set[str], native_computer: NativeComputer | None) -> bool:
-    """Whether `tool_choice` can name these tools: the computer toolset has no name to force it by."""
-    return not (native_computer and native_computer.is_toolset and native_computer.name in tool_names)
-
-
-def _is_computer(name: str, native_computer: NativeComputer | None) -> bool:
-    """Whether `name` is the `computer` tool sent as Anthropic's computer use tool."""
-    return native_computer is not None and name == native_computer.name
-
-
-def _forced_name(name: str, native_computer: NativeComputer | None) -> str:
-    """The name to force a tool by: an earlier computer use tool is always named `computer`."""
-    return 'computer' if _is_computer(name, native_computer) else name
+    An earlier computer use tool is always named `computer`.
+    """
+    if native_computer is None or name != native_computer.name:
+        return name
+    return None if native_computer.is_toolset else 'computer'
 
 
 def _computer_tool_params(
-    native_computer: NativeComputer | None, tool_defs: Mapping[str, ToolDefinition]
+    native_computer: _computer.NativeComputer | None, tool_defs: Mapping[str, ToolDefinition]
 ) -> list[BetaToolUnionParam]:
     """Anthropic's computer use tool, sent in the `computer` tool's place when it's declared."""
     if native_computer is None or native_computer.name not in tool_defs:
         return []
-    if not native_computer.is_toolset and native_computer.name != 'computer' and 'computer' in tool_defs:
-        # Its calls would be told apart from the function tool's by name alone.
-        raise UserError(
-            f"Anthropic's computer use tool is named `computer`, so the `{native_computer.name}` computer tool "
-            'cannot be sent beside a function tool named `computer`. Rename one of them.'
-        )
     return [native_computer.tool_param()]
 
 
+def _result_items(part: ToolReturnPart) -> list[str | MultiModalContent]:
+    """A result's content items; a `computer` result's as validated, so content stored as a JSON string keeps its images."""
+    typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
+    return list(typed) if typed is not None else part.content_items(mode='str', wrap_if_error=False)
+
+
 def _computer_result(
-    block: ComputerBlock, is_error: bool, *content: beta_tool_result_block_param.Content
+    block: _computer.ComputerBlock, is_error: bool, *content: beta_tool_result_block_param.Content
 ) -> beta_tool_result_block_param.BetaToolResultBlockParam:
     return beta_tool_result_block_param.BetaToolResultBlockParam(
         tool_use_id=block['id'],
@@ -4567,45 +4931,24 @@ def _computer_result(
     )
 
 
-@dataclass
-class _ComputerRun:
-    """How far a `computer` call's actions got, by the toolset member calls it came from."""
-
-    blocks: list[ComputerBlock]
-    ends: list[int]
-    """The number of actions up to and including each call's: each call may have become several, such as keys."""
-    counts: list[int]
-    performed: int
-    error: str | None
-    last_ran: int
-    """The index of the last call whose actions all ran, or -1."""
-    outputs: list[Any]
-    """What each action returned, such as a zoom's image, in order."""
-    summary: Any
-    screen: Any
-    """The closing screenshot, or the note that replaced it in this request."""
-
-    @classmethod
-    def of(cls, replay: ComputerReplay, metadata: ComputerResult, content: list[Any]) -> _ComputerRun:
-        counts = replay['computer_action_counts']
-        ends = list(itertools.accumulate(counts))
-        performed = metadata.get('performed', ends[-1])
-        return cls(
-            blocks=replay['computer_blocks'],
-            ends=ends,
-            counts=counts,
-            performed=performed,
-            error=metadata.get('error'),
-            last_ran=max((index for index, end in enumerate(ends) if end <= performed), default=-1),
-            outputs=list(content[1:-1]),
-            summary=content[0] if content else None,
-            screen=content[-1] if len(content) > 1 else None,
+def __getattr__(name: str) -> object:
+    if name == 'DEPRECATED_ANTHROPIC_MODELS':
+        warnings.warn(
+            '`DEPRECATED_ANTHROPIC_MODELS` is deprecated and will be removed in v3, as Pydantic AI no longer uses it. '
+            'Keep your own list of retired model ids, from '
+            'https://platform.claude.com/docs/en/about-claude/model-deprecations.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
         )
-
-    def ran(self, index: int) -> bool:
-        """Whether all of the call's actions ran."""
-        return self.ends[index] <= self.performed
-
-    def reached(self, index: int) -> bool:
-        """Whether the call's first action was reached, so one of its actions is the one that failed."""
-        return self.ends[index] - self.counts[index] <= self.performed
+        return frozenset(
+            {
+                # Retired 2026-04-20
+                'claude-3-haiku-20240307',
+                # Retired 2026-06-15
+                'claude-opus-4-0',
+                'claude-opus-4-20250514',
+                'claude-sonnet-4-0',
+                'claude-sonnet-4-20250514',
+            }
+        )
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

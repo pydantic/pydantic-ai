@@ -18,7 +18,7 @@ which is not. envd types only a missing path; its other path failures arrive as 
 (`InvalidArgumentException`) or a 500 (`SandboxException`) whose message carries envd's wording
 or Go's errno text, which `_path_error` reads.
 
-The `desktop` template has Xvfb, XFCE (`startxfce4`), `xdotool`, `scrot`, `setsid` and
+The `desktop` template has Xvfb, XFCE (`startxfce4`), `xdotool`, `xwininfo`, `scrot`, `setsid` and
 `google-chrome`, but runs no X server at boot: the `e2b-desktop` package starts its own.
 """
 
@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING
 import anyio
 import anyio.lowlevel
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -63,10 +62,12 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
-from pydantic_ai_harness._x11 import DISPLAY, START_LOCK, start_x_server, wait_until_ready, x11_display
+from pydantic_ai_harness._x11 import DISPLAY, start_x_server, wait_until_ready, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 if TYPE_CHECKING:
+    from e2b import SandboxNetworkOpts
+
     from pydantic_ai.workspaces import WorkspaceCommand
 
 __all__ = ('E2BSandboxBackend',)
@@ -132,51 +133,23 @@ _DESKTOP_TEMPLATE = 'desktop'
 
 _XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
 
-_VIEWER_PORT = 6080
+_XFCE_LOG = '/tmp/pydantic-ai-xfce.log'
 
-_START_VIEWER = (
-    # Under the display's lock, else two calls at once could each write a password or start a viewer.
-    f'{START_LOCK}d=/tmp/pydantic-ai-viewer; mkdir -p "$d"; '
-    '[ -s "$d/password" ] || tr -dc A-Za-z0-9 </dev/urandom | head -c 8 > "$d/password"; '
-    'if ! pgrep -x x11vnc >/dev/null; then '
-    'x11vnc -storepasswd "$(cat "$d/password")" "$d/passwd" >/dev/null 2>&1; '
-    # Empty each log before its program starts: the redirect runs in the background child, so the check could read
-    # an earlier run's line first.
-    ': >"$d/x11vnc.log"; '
-    f'setsid x11vnc -display {DISPLAY} -forever -shared -localhost -noipv6 -rfbport 5900 -rfbauth "$d/passwd" '
-    '>"$d/x11vnc.log" 2>&1 9>&- & '
-    # x11vnc writes its port once it listens, and exits without one if the port is taken. `-noipv6`: with the IPv4
-    # port taken it would listen on IPv6 alone, where the viewer can't connect, and still write the port.
-    + wait_until_ready('grep -q "^PORT=5900" "$d/x11vnc.log" 2>/dev/null', '$!', 'the VNC server', '"$d/x11vnc.log"')
-    + "fi; if ! pgrep -f '[w]ebsockify' >/dev/null; then "
-    ': >"$d/novnc.log"; '
-    f'setsid /opt/noVNC/utils/novnc_proxy --vnc 127.0.0.1:5900 --listen {_VIEWER_PORT} >"$d/novnc.log" 2>&1 9>&- & '
-    + wait_until_ready(
-        'grep -q "Navigate to this URL" "$d/novnc.log" 2>/dev/null', '$!', 'the viewer', '"$d/novnc.log"'
-    )
-    + 'fi; cat "$d/password"'
-)
-"""Starts the template's VNC server and noVNC viewer behind a password, unless they run, and prints the password.
-Both outlive the script, so they close the lock."""
-
-_XFCE_ON_DISPLAY = (
-    '(for p in $(pgrep -x xfce4-session); do '
-    f'tr "\\0" "\\n" </proc/$p/environ 2>/dev/null | grep -qx "DISPLAY={DISPLAY}" && exit 0; done; exit 1)'
-)
-"""Exits 0 when an XFCE session runs on `DISPLAY`. One on another display, such as a template's own on `:0`, doesn't
-count."""
+_XFCE_SHOWS = 'xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1'
+"""Exits 0 when XFCE's desktop window shows on `DISPLAY`."""
 
 _START_DESKTOP = start_x_server(_XVFB_LOG) + (
-    f'if command -v startxfce4 >/dev/null && ! {_XFCE_ON_DISPLAY}; then '
-    'setsid startxfce4 >/dev/null 2>&1 9>&- & i=0; '
-    'until xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1 || [ $i -ge 100 ]; do '
-    'sleep 0.1; i=$((i+1)); done; fi'
+    f'if command -v startxfce4 >/dev/null && ! {_XFCE_SHOWS}; then '
+    f'setsid startxfce4 >{_XFCE_LOG} 2>&1 9>&- & '
+    + wait_until_ready(_XFCE_SHOWS, '$!', 'the XFCE desktop', _XFCE_LOG)
+    + 'fi'
 )
 """Starts an X display of the size `$1` names, such as `1280x800`, unless one runs, and the XFCE desktop.
 
-XFCE starts unless its session runs on the display, which recovers one that died. The script then waits up to 10
-seconds for the desktop window, so the first screenshot isn't black. A template without XFCE gets a display with no
-window manager. Output goes to files, since E2B keeps a command open while a background child holds its output.
+XFCE starts unless its desktop window shows on the display, which recovers one that died. The script then waits up to
+10 seconds for that window, so the first screenshot isn't black, and fails if XFCE exits first or the window never
+shows. A template without XFCE gets a display with no window manager. Output goes to files, since E2B keeps a command
+open while a background child holds its output.
 """
 
 
@@ -237,26 +210,6 @@ def _unavailable_message(sandbox_id: str, *, found: bool) -> str:
     )
 
 
-async def _stopped_message(sandbox_id: str) -> str:
-    """Say why a sandbox E2B still answers for no longer runs, asking E2B whether it is paused or gone."""
-    try:
-        state = (await e2b.AsyncSandbox.get_info(sandbox_id)).state
-    except e2b.SandboxNotFoundException:
-        return (
-            f'The E2B sandbox {sandbox_id!r} no longer exists: it was killed. '
-            "Pass `workspace='new'` to start a fresh sandbox."
-        )
-    except Exception:
-        logger.debug('E2B state lookup for sandbox %s failed', sandbox_id, exc_info=True)
-        state = None
-    if state == 'paused':
-        return (
-            f'The E2B sandbox {sandbox_id!r} is paused; a later run that attaches to it resumes it. '
-            "Pass `workspace='new'` to start a fresh sandbox."
-        )
-    return _unavailable_message(sandbox_id, found=True)
-
-
 def _is_lifetime_refusal(error: e2b.SandboxException) -> bool:
     """Whether E2B refused the requested `sandbox_timeout`, e.g. `400: Timeout cannot be greater than 1 hours`."""
     status = error.status_code
@@ -308,8 +261,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
     `UserError` before it reaches E2B.
 
     With `desktop`, the sandbox gets a display on first use. A custom template needs Xvfb, `xdotool`,
-    `xwininfo`, `scrot` and `setsid`, which the first use installs with `apt-get` if it can, and
-    `startxfce4` for the XFCE desktop, which it doesn't.
+    `xwininfo` (`x11-utils`), `scrot` and `setsid`, which the first use installs with `apt-get` if it can,
+    and `startxfce4` for the XFCE desktop, which it doesn't.
 
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.
@@ -330,6 +283,10 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
             `pwd -P` on first use.
         env: Environment variables every command gets, on a created or an attached sandbox;
             per-command `env` is layered on top. Nothing is read from the host environment.
+        network: E2B's network options for a newly created sandbox, passed to `Sandbox.create`
+            unchanged: egress allow and deny lists, and `rules` that set headers on requests to a
+            host, from E2B's proxy outside the sandbox. An attached sandbox keeps the options it
+            was created with.
         desktop: Whether the sandbox has a display for
             [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or
             its `(width, height)`. Without a `template`, a new sandbox runs E2B's `desktop` template.
@@ -346,6 +303,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        network: SandboxNetworkOpts | None = None,
         desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
@@ -371,6 +329,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         self._sandbox_timeout = sandbox_timeout
         self._env = dict(env) if env is not None else None
         self._allow_internet_access = allow_internet_access
+        self._network = network
         self._probe_setsid = template is not None or sandbox is not None or ref is not None
         if desktop and template is None:
             self._template = _DESKTOP_TEMPLATE
@@ -382,7 +341,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
             None
             if self._desktop_size is None
             else x11_display(
-                self,
+                self._run_argv,
                 self._desktop_size,
                 _START_DESKTOP,
                 lambda: f'E2B sandbox {self.ref.id if self.ref else "(not created)"}',
@@ -504,7 +463,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         if isinstance(error, e2b.TimeoutException):
             sandbox = self._sandbox
             if sandbox is not None and not await _is_running(sandbox):
-                return WorkspaceUnavailableError(await _stopped_message(sandbox.sandbox_id))
+                return WorkspaceUnavailableError(_unavailable_message(sandbox.sandbox_id, found=True))
             return error
         if isinstance(error, e2b.SandboxException) and not isinstance(error, e2b.RateLimitException):
             return WorkspaceError(f'{context}: {error}')
@@ -612,6 +571,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
                         timeout=self._sandbox_timeout,
                         envs=dict(self._env) if self._env is not None else None,
                         allow_internet_access=self._allow_internet_access,
+                        network=self._network,
                         # Pause at the end of the lifetime instead of killing, so the files survive.
                         lifecycle={'on_timeout': 'pause'},
                     )
@@ -702,10 +662,18 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         timeout: float | None = None,
     ) -> CommandResult:
         """Run a command, killing it on timeout, cancellation, or a failed result read."""
+        argv = command_argv(command, shell)
+        check_timeout(timeout)
+        if self._display is not None:
+            # Started first, so a program the command opens shows on the screen.
+            await self._display.start()
+        return await self._run_argv(argv, env=env or {}, timeout=timeout)
+
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        """Run `argv` without starting the display, as the display's own commands do."""
         # `commands.run` takes only a string, which E2B hands to `/bin/bash -l -c`; `shlex.join`
         # keeps each argv element one word, and a `shell=True` string runs under `/bin/sh -c`.
-        line = shlex.join(command_argv(command, shell))
-        check_timeout(timeout)
+        line = shlex.join(argv)
         # Acquiring the sandbox has its own bound; the timeout is the command's alone.
         sandbox = await self._sandbox_for_operation()
         handle: e2b.AsyncCommandHandle | None = None
@@ -742,7 +710,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
                 handle = await sandbox.commands.run(
                     launch,
                     background=True,
-                    envs={**(self._env or {}), **(env or {})},
+                    envs={**(self._env or {}), **env},
                     cwd=self._working_dir,
                     timeout=_SDK_STREAM_UNBOUNDED,
                     user=self._user,
@@ -808,25 +776,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         """The sandbox's desktop, when created with `desktop=True`."""
         return self._display
 
-    async def live_view_url(self) -> str:
-        """A link to watch and use the desktop in a browser, through the template's noVNC viewer.
-
-        The link carries the viewer's password, so anyone with it can see and use the desktop while the sandbox
-        runs. The password is after the `#`, which the browser doesn't send to E2B's servers.
-        """
-        if self._display is None:
-            raise UserError('This E2B sandbox has no display: create it with `desktop=True`.')
-        await self._display.start()
-        result = await self.run(['sh', '-c', _START_VIEWER], timeout=30)
-        if result.exit_code != 0:
-            raise WorkspaceError(
-                f'Could not start the desktop viewer: the template needs x11vnc and noVNC in /opt/noVNC '
-                f'({(result.stderr or result.stdout).strip()})'
-            )
-        sandbox = await self.get_sandbox()
-        host = sandbox.get_host(_VIEWER_PORT)
-        return f'https://{host}/vnc.html?autoconnect=true&resize=scale#password={result.stdout.strip()}'
-
     async def _stop_command(
         self, sandbox: e2b.AsyncSandbox, *, claim: str, pgid_file: str, identify: str, isolated: bool
     ) -> None:
@@ -852,12 +801,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
             await stopper.wait()
         except Exception:
             # A failed control-plane stop must not mask the original failure; the command may
-            # still be running, and the sandbox ref stays available for explicit cleanup. A sandbox
-            # that isn't running, such as a paused one, runs no command, and its error says so.
-            if await _is_running(sandbox):
-                logger.warning('Could not stop E2B command in sandbox %s', sandbox.sandbox_id, exc_info=True)
-            else:
-                logger.debug('Could not stop E2B command in sandbox %s: it is not running', sandbox.sandbox_id)
+            # still be running, and the sandbox ref stays available for explicit cleanup.
+            logger.warning('Could not stop E2B command in sandbox %s', sandbox.sandbox_id, exc_info=True)
 
 
 class _OutputCounter:

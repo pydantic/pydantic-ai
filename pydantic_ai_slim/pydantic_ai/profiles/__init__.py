@@ -106,9 +106,10 @@ class ModelProfile(TypedDict, total=False):
     supports_image_input: bool
     """Whether the model accepts images. Default: `True`.
 
-    The file-input flags (this one, `supports_document_input`, `supported_document_media_types`,
-    `supports_audio_file_input` and `supports_video_input`) say which files can be sent to the model.
-    A model adapter turns off what its message mapping cannot send, whatever the profile says.
+    The file-input flags (this one, `supports_document_input`, `supports_audio_file_input`,
+    `supports_video_input`, and the `supported_*_media_types` sets that narrow each kind to media types)
+    say which files can be sent to the model. A model adapter turns off what its message mapping cannot
+    send, whatever the profile says.
 
     A file a tool returns that the model cannot take is replaced, in the request only, by a note naming
     it: see [Where a returned file is sent](../tools-advanced.md#tool-return-file-provenance). A file in a
@@ -119,6 +120,16 @@ class ModelProfile(TypedDict, total=False):
     Shipped profiles turn these off where an adapter or a model family is known not to take the file; `True`
     means nothing says otherwise, not that the model was checked. A text-only model served through an adapter
     that sends images (a text-only Llama on vLLM, say) needs `profile=ModelProfile(supports_image_input=False)`.
+    """
+
+    supported_image_media_types: frozenset[str]
+    """The image media types the model accepts, when it accepts images at all. Default: unset, so images are
+    judged by `supports_image_input` alone.
+
+    When set, an image of any other media type, such as `image/heic`, counts as one the model can't read.
+    Profiles set it where a provider was seen to reject other types: Anthropic and OpenAI read JPEG, PNG, GIF
+    and WebP, for example, while Gemini also reads HEIC. See `supports_image_input` for how the file-input
+    flags are used.
     """
 
     supports_document_input: bool
@@ -145,6 +156,14 @@ class ModelProfile(TypedDict, total=False):
     `supports_image_input` for how the file-input flags are used.
     """
 
+    supported_audio_media_types: frozenset[str]
+    """The audio media types the model accepts, when it accepts audio files at all. Default: unset, so audio
+    is judged by `supports_audio_file_input` alone.
+
+    When set, audio of any other media type, such as `audio/flac` on OpenAI Chat Completions, counts as audio
+    the model can't read. See `supports_image_input` for how the file-input flags are used.
+    """
+
     supports_video_input: bool
     """Whether the model accepts video. Default: `True`.
 
@@ -152,29 +171,43 @@ class ModelProfile(TypedDict, total=False):
     """
 
     computer_use_coordinate_grid: int
-    """The size of the grid the model points on instead of pixels. Default: unset, meaning pixels.
+    """The size of the grid the model points on instead of pixels, a convention of the model's maker. Default: unset,
+    meaning pixels.
 
     With `1000`, the agent tells the model in the `computer` tool's description that positions run from 0 to 999,
-    and records the grid on its calls as
+    and records the grid on each of the model's calls as
     [`ComputerCallPart.coordinate_grid`][pydantic_ai.computer_use.ComputerCallPart.coordinate_grid] so the tool can
-    scale them to pixels. Gemini 3 profiles set it.
+    scale them to pixels: under `ModelFallback` the tool can't otherwise tell which model made the call. Gemini 3
+    profiles set it.
     """
 
     computer_use_screenshot_max_side: int
-    """The longest side, in pixels, of a screenshot the model takes. Default: unset, meaning no limit.
+    """The longest side, in pixels, of a screenshot the model takes, a limit set by the model's maker. Default: unset,
+    meaning no limit.
 
-    The agent records it on the model's `computer` calls as
-    [`ComputerCallPart.screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side], and a
-    computer use capability such as Pydantic AI Harness's `ComputerUse` refuses a larger screen. Claude profiles set
-    it and `computer_use_screenshot_max_pixels`, since Claude refuses a larger image, or with its older computer use
-    tools gets it scaled down and answers in the smaller image's pixels. OpenAI's computer use models set it too: they
-    take a 4K screenshot but click less accurately on one.
+    The agent records it on each of the model's `computer` calls as
+    [`ComputerCallPart.screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side], since
+    under `ModelFallback` the tool can't otherwise tell which model made the call, and a computer use capability such
+    as Pydantic AI Harness's `ComputerUse` refuses a larger screen. Claude profiles set it
+    and `computer_use_screenshot_max_pixels` for the computer use tools that scale a larger image down, since Claude
+    then answers in the smaller image's pixels.
     """
 
     computer_use_screenshot_max_pixels: int
-    """The most pixels, width times height, in a screenshot the model takes. Default: unset, meaning no limit.
+    """The most pixels, width times height, in a screenshot the model takes, a limit set by the model's maker.
+    Default: unset, meaning no limit.
 
-    See `computer_use_screenshot_max_side`.
+    Recorded on the model's calls as
+    [`ComputerCallPart.screenshot_max_pixels`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_pixels]; see
+    `computer_use_screenshot_max_side`.
+    """
+
+    supported_video_media_types: frozenset[str]
+    """The video media types the model accepts, when it accepts video at all. Default: unset, so video is
+    judged by `supports_video_input` alone.
+
+    When set, video of any other media type counts as video the model can't read. See `supports_image_input`
+    for how the file-input flags are used.
     """
 
     supports_inline_system_prompts: bool
@@ -374,7 +407,8 @@ class ModelProfile(TypedDict, total=False):
 
     DeepSeek's V4 models, for example, only accept forcing while thinking is off. When False and the request
     thinks, a forced tool choice is handled as if `supports_forced_tool_choice` were False. Whether the request
-    thinks accounts for `thinking_enabled_by_default`.
+    thinks accounts for `thinking_enabled_by_default`. On OpenRouter routes other than Anthropic's, which return a
+    400 for it, an explicit forcing raises a `ModelRequestRejectedError` instead of a `UserError`.
     """
 
     forced_tool_choice_disables_thinking: bool
@@ -460,6 +494,39 @@ class ModelProfile(TypedDict, total=False):
     Only the outgoing copy changes: stored message history keeps the original IDs.
     """
 
+    tool_call_ids_are_response_scoped: bool
+    """Whether the model's tool call IDs are only unique within one response. Default: `False`.
+
+    Pydantic AI pairs each tool call with its result by `tool_call_id` across the whole message history, so an API
+    that numbers the calls in every response from scratch (`call_0`, then `call_0` again in the next response) makes
+    two different calls look like one. When set, each tool call ID the provider sends is stored with a suffix derived
+    from its response's [`provider_response_id`][pydantic_ai.messages.ModelResponse.provider_response_id], or from its
+    [`timestamp`][pydantic_ai.messages.ModelResponse.timestamp] when it has none, such as `call_0_k3ZcR9aQ`. The suffix
+    is the same every time the response is replayed, and keeps the ID within the `[a-zA-Z0-9_-]` characters that
+    Anthropic and Bedrock require. IDs Pydantic AI generates itself are already unique and are left alone, and so
+    is a call an `OpenAIResponsesModel` stream receives before the response's ID, which a request continuing that
+    response with `previous_response_id` couldn't restore from the timestamp.
+
+    When the history is sent back to the same provider and endpoint, the suffix is removed again, so the provider gets
+    the IDs it sent. Other providers and endpoints get the stored IDs.
+
+    Supported by [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and
+    [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], and set by the
+    [Bedrock Mantle](../models/bedrock.md) provider for the GPT-5 models it serves on the Responses API.
+    """
+
+    rejects_unpaired_tool_calls: bool
+    """Whether the API rejects a tool call that has no result, or a tool result that names no call. Default: `False`.
+
+    When set, `Model.prepare_messages` pairs the history it translates from another provider's native tool search: a
+    translated `search_tools` result whose ID names no call takes the ID of the oldest call in its response still
+    waiting for one, and a translated call that has no result gets a synthesized interrupted result. It doesn't touch
+    other unanswered tool calls, which the repair every agent run makes already handles. Set by
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], and by
+    [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] for the `AsyncAnthropic` client. See
+    [Configuring `ToolSearch`](../tools-advanced.md#configuring-toolsearch).
+    """
+
     tool_deferral_mode: ToolDeferralMode | None
     """When the provider permits a `tools` entry whose schema is withheld. Default: `None`.
 
@@ -502,6 +569,7 @@ _LEGACY_PROVIDER_PROFILE_KEYS: dict[str, str] = {
     'openai_supports_forced_tool_choice_with_thinking': 'supports_forced_tool_choice_with_thinking',
     'openrouter_supports_forced_tool_choice_with_thinking': 'supports_forced_tool_choice_with_thinking',
     'openai_reasoning_enabled_by_default': 'thinking_enabled_by_default',
+    'openai_responses_tool_call_ids_are_response_scoped': 'tool_call_ids_are_response_scoped',
 }
 """Provider-prefixed profile keys that moved to `ModelProfile`, mapped to their current spelling."""
 
@@ -589,10 +657,12 @@ DEFAULT_PROFILE: ModelProfile = {
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
     'context_window': None,
     'tool_call_id_length': None,
+    'tool_call_ids_are_response_scoped': False,
     'tool_deferral_mode': None,
     'tool_addition_mode': None,
 }
-"""Fully populated default `ModelProfile`. Used as the base layer when resolving a model's effective profile."""
+"""Default `ModelProfile`, with a value for every key except the image, audio and video media-type sets, which are
+unset unless a profile knows them. Used as the base layer when resolving a model's effective profile."""
 
 
 ModelProfileSpec: TypeAlias = ModelProfile | Callable[['ModelProfile'], 'ModelProfile']

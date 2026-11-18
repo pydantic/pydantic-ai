@@ -34,6 +34,7 @@ import e2b
 import pytest
 from pytest_examples import CodeExample
 
+from pydantic_ai.computer_use import Click, TypeText
 from pydantic_ai.workspaces import Workspace, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.e2b_sandbox import (
@@ -42,6 +43,8 @@ from pydantic_ai_harness.e2b_sandbox import (
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
+from ..display_contract_live import check_display_contract, is_blank
+from ..display_fakes import screen
 
 pytestmark = pytest.mark.e2b_live
 
@@ -435,6 +438,48 @@ class TestEnvironment:
 
             result = await backend.run('echo "$FOO"; echo "$PATH"', shell=True, env={'FOO': '1'}, timeout=60)
             assert result.stdout.splitlines() == ['1', path]
+
+
+class TestDesktop:
+    """The display of a sandbox created with `desktop=True`, which runs E2B's `desktop` template."""
+
+    async def test_the_template_runs_no_x_server_until_the_display_starts(self) -> None:
+        """Validates that the start script finds no X server or XFCE session of the template's own to share."""
+        async with _owned(desktop=True, sandbox_timeout=300) as backend:
+            running = await backend.run('pgrep -l "^(Xvfb|Xvnc|Xorg|xfce4-session)$"; ls -A /tmp/.X11-unix', shell=True)
+            assert running.stdout == ''
+
+    async def test_display_contract(self) -> None:
+        """Validates that the template's `scrot`, `xwininfo` and `xdotool` answer as the fake's scripted output does."""
+        async with _owned(desktop=True, sandbox_timeout=300) as backend:
+            await check_display_contract(screen(backend))
+
+    async def test_the_first_screenshot_shows_the_desktop(self) -> None:
+        """Validates that XFCE's desktop window, which the start waits for, is drawn by the first screenshot."""
+        async with _owned(desktop=True, sandbox_timeout=300) as backend:
+            assert backend.display is not None
+            await backend.display.display_size()  # starts the display
+            assert not is_blank(await backend.display.screenshot())
+
+    async def test_typed_text_reaches_the_focused_window(self) -> None:
+        """Validates that the keysyms the fake records type their characters, tab and newline included, under XFCE."""
+        async with _owned(desktop=True, sandbox_timeout=300) as backend:
+            display = backend.display
+            assert display is not None
+            await display.display_size()  # starts the display, so the terminal opens on it
+            await backend.run(
+                'setsid xfce4-terminal --disable-server --geometry 60x10+100+100 -x sh -c "cat > typed.txt" '
+                '>/dev/null 2>&1 &',
+                shell=True,
+            )
+            await backend.run(['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xfce4-terminal'], timeout=30)
+            await display.act(Click(x=300, y=180))
+            await display.act(TypeText(text='hello, Desktop! @#?\t~\n'))
+
+            typed = await backend.run(
+                'until [ -s typed.txt ]; do sleep 0.1; done; cat typed.txt', shell=True, timeout=30
+            )
+            assert typed.stdout == 'hello, Desktop! @#?\t~\n'
 
 
 # The README's Python blocks are the same as this page's.
