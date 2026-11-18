@@ -76,6 +76,27 @@ def test_cli_version(capfd: CaptureFixture[str]):
     assert capfd.readouterr().out.startswith('clai - Pydantic AI CLI')
 
 
+DEPRECATION_NOTICE = (
+    '`clai` is deprecated and will be removed in Pydantic AI v3. Use pax instead: '
+    'run `uvx pydantic-ai-pax`, or install it with `uv tool install pydantic-ai-pax` and run `pax`.'
+)
+
+
+def test_cli_deprecation_notice(capfd: CaptureFixture[str]):
+    assert cli(['--version']) == 0
+    captured = capfd.readouterr()
+    assert captured.err.splitlines() == [DEPRECATION_NOTICE]
+    assert 'deprecated' not in captured.out
+
+
+def test_cli_web_deprecation_notice(capfd: CaptureFixture[str]):
+    with pytest.raises(SystemExit):
+        cli(['web', '--help'])
+    captured = capfd.readouterr()
+    assert captured.err.splitlines() == [DEPRECATION_NOTICE]
+    assert 'deprecated' not in captured.out
+
+
 def test_invalid_model(capfd: CaptureFixture[str]):
     assert cli(['--model', 'potato']) == 1
     assert capfd.readouterr().out.splitlines() == snapshot(['Error initializing potato:', 'Unknown model: potato'])

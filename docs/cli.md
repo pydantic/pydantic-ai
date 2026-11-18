@@ -4,6 +4,17 @@ description: "Chat with LLMs from your terminal using clai, the Pydantic AI comm
 
 # Command Line Interface (CLI)
 
+!!! warning "`clai` is deprecated"
+    `clai` is deprecated in favour of pax, the capability-aware terminal client built on [Pydantic AI Harness](harness/index.md), and will be removed in Pydantic AI v3. Running `clai` prints a deprecation notice. To try pax, run:
+
+    ```bash
+    uvx pydantic-ai-pax
+    ```
+
+    Or install it with `uv tool install pydantic-ai-pax` and run `pax`. `clai` keeps receiving fixes until it's removed, but new features go to pax.
+
+    [`Agent.to_cli()`][pydantic_ai.agent.AbstractAgent.to_cli], [`Agent.to_cli_sync()`][pydantic_ai.agent.AbstractAgent.to_cli_sync] and [`Agent.to_web()`][pydantic_ai.agent.Agent.to_web] are not deprecated.
+
 **Pydantic AI** comes with a CLI, `clai` (pronounced "clay"). You can use it to chat with various LLMs and quickly get answers, right from the command line, or spin up a uvicorn server to chat with your Pydantic AI agents from your browser.
 
 ## Installation

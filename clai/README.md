@@ -8,6 +8,9 @@
 
 (pronounced "clay")
 
+> [!WARNING]
+> `clai` is deprecated in favour of pax and will be removed in Pydantic AI v3. Run `uvx pydantic-ai-pax`, or install it with `uv tool install pydantic-ai-pax` and run `pax`.
+
 Command line interface to chat to LLMs, part of the [Pydantic AI project](https://github.com/pydantic/pydantic-ai).
 
 ## Usage

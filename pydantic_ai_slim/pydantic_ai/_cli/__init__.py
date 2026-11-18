@@ -199,8 +199,18 @@ def _print_intro(
         pass
 
 
+_DEPRECATION_NOTICE = (
+    '`clai` is deprecated and will be removed in Pydantic AI v3. Use pax instead: '
+    'run `uvx pydantic-ai-pax`, or install it with `uv tool install pydantic-ai-pax` and run `pax`.'
+)
+
+
 def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5') -> int:
     """Run the CLI and return the exit code for the process."""
+    # A `DeprecationWarning` is hidden from command line users by default, so the notice goes straight to
+    # stderr, where it reaches the user without mixing into output that's piped or captured.
+    print(_DEPRECATION_NOTICE, file=sys.stderr)
+
     # we don't want to autocomplete or list models that don't include the provider,
     # e.g. we want to show `openai:gpt-5.2` but not `gpt-5.2`
     qualified_model_names = [n for n in known_model_names() if ':' in n]
