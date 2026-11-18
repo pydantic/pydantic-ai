@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
 from abc import ABCMeta
-from dataclasses import MISSING, dataclass, fields
+from dataclasses import MISSING, Field, dataclass, fields
 from typing import Any
 
 from pydantic import ConfigDict, model_serializer
@@ -14,6 +15,17 @@ from pydantic_ai import _utils
 from pydantic_ai._spec import serializes_as_string_keyed_dict
 
 from .spec import EvaluatorSpec
+
+
+def init_fields(evaluator: BaseEvaluator) -> list[Field[Any]]:
+    """The dataclass fields of `evaluator` that its `__init__` takes, which are all a spec holds.
+
+    `__post_init__` or the field's default restores an `init=False` field, but a hand-written `__init__` can
+    still take one, by name or through `**kwargs`.
+    """
+    parameters = inspect.signature(type(evaluator)).parameters
+    takes_any_keyword = any(p.kind is p.VAR_KEYWORD for p in parameters.values())
+    return [field for field in fields(evaluator) if field.init or field.name in parameters or takes_any_keyword]
 
 
 class _StrictABCMeta(ABCMeta):
@@ -80,10 +92,15 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
             arguments = None
         elif len(raw_arguments) == 1:
             # The compact tuple form passes the value as the first positional argument.
-            first_field = next(field for field in fields(self) if field.init)
+            first_field = next(iter(init_fields(self)), None)
             key = next(iter(raw_arguments))
             value = raw_arguments[key]
-            if key == first_field.name and not first_field.kw_only and not serializes_as_string_keyed_dict(value):
+            if (
+                first_field is not None
+                and key == first_field.name
+                and not first_field.kw_only
+                and not serializes_as_string_keyed_dict(value)
+            ):
                 arguments = (value,)
             else:
                 arguments = raw_arguments
@@ -101,10 +118,7 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
             A dictionary of arguments to be used during serialization.
         """
         raw_arguments: dict[str, Any] = {}
-        for field in fields(self):
-            # A spec holds `__init__` arguments; `__post_init__` or the default restores an `init=False` field.
-            if not field.init:
-                continue
+        for field in init_fields(self):
             value = getattr(self, field.name)
             # always exclude defaults:
             if field.default is not MISSING:

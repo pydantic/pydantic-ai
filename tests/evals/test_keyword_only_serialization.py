@@ -128,6 +128,49 @@ with try_import() as imports_successful:
             self.calls += 1
             return len(ctx.output) >= self.minimum
 
+    @dataclass
+    class InitFalseTakenByInit(Evaluator[str, str, str]):
+        """A hand-written `__init__` takes `label`, so a file keeps it."""
+
+        minimum: int
+        label: str = field(init=False)
+
+        def __init__(self, minimum: int, label: str) -> None:
+            self.minimum = minimum
+            self.label = label
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            return len(ctx.output) >= self.minimum
+
+    @dataclass
+    class InitFalseTakenByKwargs(Evaluator[str, str, str]):
+        """A hand-written `__init__` takes `bonus` through `**kwargs`, so a file keeps it."""
+
+        bonus: int = field(default=0, init=False)
+        minimum: int
+
+        def __init__(self, **kwargs: int) -> None:
+            self.minimum = kwargs['minimum']
+            self.bonus = kwargs.get('bonus', 0)
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            return len(ctx.output) + self.bonus >= self.minimum
+
+    @dataclass
+    class InitFalseOnly(Evaluator[str, str, str]):
+        """Every field is `init=False`, and `build_serialization_arguments` saves the `text` that `__init__` takes."""
+
+        _text: str = field(init=False)
+
+        def __init__(self, text: str) -> None:
+            self._text = text
+
+        def build_serialization_arguments(self) -> dict[str, object]:
+            return {'text': self._text}
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            return self._text in ctx.output
+
     @dataclass(kw_only=True)
     class KeywordOnlyReport(ReportEvaluator[str, str, str]):
         value: float
@@ -180,6 +223,15 @@ with try_import() as imports_successful:
         ),
         'InitFalseDefault': RoundTripCase(InitFalseDefault(minimum=4), 4, frozenset({'short_spec'})),
         'InitFalseFirst': RoundTripCase(InitFalseFirst(minimum=4), 4, frozenset({'short_spec'})),
+        'InitFalseTakenByInit': RoundTripCase(
+            InitFalseTakenByInit(4, 'custom'), {'minimum': 4, 'label': 'custom'}, KEYWORD_FORMS
+        ),
+        'InitFalseTakenByKwargs': RoundTripCase(
+            InitFalseTakenByKwargs(minimum=4, bonus=1), {'minimum': 4, 'bonus': 1}, KEYWORD_FORMS
+        ),
+        'InitFalseOnly': RoundTripCase(
+            InitFalseOnly('hello'), {'text': 'hello'}, frozenset({'short_spec'}) | KEYWORD_FORMS
+        ),
     }
 
     @dataclass(frozen=True)
@@ -224,12 +276,16 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals
         'InitFalseKeywordForm',
         'InitFalseDefault',
         'InitFalseFirst',
+        'InitFalseTakenByInit',
+        'InitFalseTakenByKwargs',
+        'InitFalseOnly',
     ],
 )
 def test_evaluator_file_round_trip(tmp_path: Path, fmt: Literal['json', 'yaml'], evaluator_name: str):
     """File persistence retains constructor names without changing existing positional short forms.
 
-    A file holds `__init__` arguments only, so an `init=False` field is left out and rebuilt on load.
+    A file holds `__init__` arguments only, so an `init=False` field `__init__` doesn't take is left out and rebuilt
+    on load.
     """
     case = ROUND_TRIP_CASES[evaluator_name]
     evaluator = case.evaluator
@@ -335,6 +391,22 @@ def test_init_false_state_changed_by_a_run(tmp_path: Path):
     assert yaml.safe_load(path.read_text())['evaluators'] == [{'InitFalseFirst': 4}]
     loaded = Dataset[str, str, str].from_file(path, custom_evaluator_types=[InitFalseFirst])
     assert loaded.evaluators == [InitFalseFirst(minimum=4)]
+
+
+def test_init_false_field_taken_through_kwargs_declared_first(tmp_path: Path):
+    """A one-key spec stays a keyword form when the field before it is `init=False` and `__init__` takes `**kwargs`.
+
+    `__init__` takes no positional value, so a short form would not load. The saved schema of a `**kwargs` target
+    requires every annotated field, so this test loads the file without checking it against that schema.
+    """
+    evaluator = InitFalseTakenByKwargs(minimum=4)
+    dataset = Dataset[str, str, str](name='kwargs', cases=[Case(inputs='hello')], evaluators=[evaluator])
+    path = tmp_path / 'dataset.yaml'
+    dataset.to_file(path, custom_evaluator_types=[InitFalseTakenByKwargs])
+
+    assert yaml.safe_load(path.read_text())['evaluators'] == [{'InitFalseTakenByKwargs': {'minimum': 4}}]
+    loaded = Dataset[str, str, str].from_file(path, custom_evaluator_types=[InitFalseTakenByKwargs])
+    assert loaded.evaluators == [evaluator]
 
 
 @pytest.mark.parametrize('fmt', ['json', 'yaml'])

@@ -333,9 +333,8 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
     type has no JSON form, since no spec entry can then load `target`.
     """
     parameters = inspect.signature(target).parameters
-    # A class target's annotations also name attributes its `__init__` doesn't take, like a `ClassVar` or an
-    # `init=False` dataclass field.
-    hints = get_function_type_hints(target, include_keys=set(parameters))
+    hints = get_function_type_hints(target, include_keys=_spec_annotation_names(target))
+    hints.pop('return', None)
 
     # Filter out non-serializable types (TypeVars, Callables) from unions
     type_hints = {k: fv for k, v in hints.items() if (fv := filter_serializable_type(v)) is not None}
@@ -362,6 +361,17 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
             required_type_hints[p.name] = type_hints.setdefault(p.name, Any)
 
     return type_hints, required_type_hints
+
+
+def _spec_annotation_names(target: Callable[..., object]) -> set[str] | None:
+    """The names of `target`'s annotations that can be spec parameters, or `None` for all of them.
+
+    A class target's annotations also name attributes its `__init__` doesn't take, like a `ClassVar` or an
+    `init=False` dataclass field. A target accepting `**kwargs` can take any of them.
+    """
+    if _accepts_var_keyword(target):
+        return None
+    return set(inspect.signature(target).parameters)
 
 
 def _without_not_required(type_hint: object) -> object:
