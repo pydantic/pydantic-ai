@@ -3,9 +3,11 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Annotated, Any, Literal, assert_never
 
 from openai.types import responses
+from openai.types.responses.response_status import ResponseStatus
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from ..._framing import TOOL_RESULT_TAG, frame
@@ -15,6 +17,7 @@ from ...messages import (
     BinaryImage,
     ModelMessage,
     ModelResponse,
+    ModelResponsePart,
     ToolCallPart,
     ToolReturnPart,
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
@@ -225,13 +228,10 @@ def map_computer_call(
     model_request_parameters: ModelRequestParameters,
     tool_call_id: str,
     provider_name: str,
-    *,
-    response_completed: bool = True,
 ) -> ComputerCallPart | None:
     """A `computer_call` as a call of the `computer` tool, keeping the item to send back as it was.
 
-    `None` when the request has no `computer` tool to run it. In a response that stopped early (incomplete or failed),
-    the call gets arguments that don't parse, even when it finished: OpenAI says to stop there, so none of it runs.
+    `None` when the request has no `computer` tool to run it.
     """
     # A request always has it, but recorded streams are replayed without tools by the stream parity test.
     if not (tool_names := _computer_tool_names(model_request_parameters)):
@@ -241,12 +241,38 @@ def map_computer_call(
     dumped = item.model_dump(mode='json', exclude_none=True, warnings=False)
     return ComputerCallPart(
         tool_name,
-        _call_args(dumped) if response_completed else _UNFINISHED_ARGS,
+        _call_args(dumped),
         tool_call_id=tool_call_id,
         id=item.id,
         provider_name=provider_name,
         provider_details={'computer_call': dumped},
     )
+
+
+def stop_computer_calls_unless_completed(
+    parts: Sequence[ModelResponsePart],
+    model_request_parameters: ModelRequestParameters,
+    *,
+    status: ResponseStatus | None,
+    refused: bool,
+) -> list[ModelResponsePart]:
+    """The parts of a response, with no `computer` call left to run unless the response completed without a refusal.
+
+    OpenAI says to stop when a response is incomplete, failed or refused, even when a call in it finished. A stream
+    knows that only after it announced its calls, so this is decided on the final parts, for both paths and both the
+    native and the function `computer` call: the call keeps its place, with arguments that don't parse, as a cut-off
+    call's. Other function calls are left as they came. A response without a status, as some compatible APIs send,
+    counts as completed.
+    """
+    if status in (None, 'completed') and not refused:
+        return list(parts)
+    tool_names = _computer_tool_names(model_request_parameters)
+    return [
+        replace(part, args=_UNFINISHED_ARGS)
+        if isinstance(part, ToolCallPart) and part.tool_name in tool_names
+        else part
+        for part in parts
+    ]
 
 
 def _call_args(dumped: dict[str, Any]) -> dict[str, Any] | str:

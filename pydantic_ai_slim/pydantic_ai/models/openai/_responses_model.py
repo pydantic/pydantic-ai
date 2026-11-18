@@ -170,7 +170,13 @@ from ._citations import (
     responses_citations_provider_details,
     responses_output_text_annotations_ta,
 )
-from ._computer import computer_calls_by_id, map_computer_call, map_computer_call_output, stored_computer_call
+from ._computer import (
+    computer_calls_by_id,
+    map_computer_call,
+    map_computer_call_output,
+    stop_computer_calls_unless_completed,
+    stored_computer_call,
+)
 from ._errors import (
     check_azure_content_filter,
     is_azure,
@@ -1211,7 +1217,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_details['refusal'] = refusal_text
 
         return ModelResponse(
-            parts=items,
+            parts=stop_computer_calls_unless_completed(
+                items, model_request_parameters, status=response.status, refused=refusal_text is not None
+            ),
             usage=map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
             model_name=response.model,
             provider_response_id=response.id,
@@ -1270,14 +1278,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         provider_response_id=response.id,
                         timestamp=timestamp,
                     )
-                    if computer_call := map_computer_call(
-                        item,
-                        model_request_parameters,
-                        call_id,
-                        self.system,
-                        # A response without a status, as some compatible APIs send, counts as completed.
-                        response_completed=response.status in (None, 'completed'),
-                    ):
+                    if computer_call := map_computer_call(item, model_request_parameters, call_id, self.system):
                         items.append(computer_call)
                 case responses.ResponseCustomToolCall():  # pragma: lax no cover
                     # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572

@@ -613,39 +613,84 @@ async def test_an_unfinished_call_runs_nothing(allow_model_requests: None) -> No
     assert _is_a_valid_png(output['output']['image_url'])
 
 
-@pytest.mark.parametrize('streamed', [False, True], ids=['response', 'stream'])
-async def test_a_finished_call_in_a_filtered_response_runs_nothing(allow_model_requests: None, streamed: bool) -> None:
-    """OpenAI says to stop when a response is incomplete, even when the call itself finished.
+@pytest.mark.parametrize('native', [True, False], ids=['native', 'function'])
+@pytest.mark.parametrize(
+    'ending, streamed',
+    [('incomplete', False), ('incomplete', True), ('refused', True)],
+    ids=['incomplete-response', 'incomplete-stream', 'refused-stream'],
+)
+async def test_a_finished_call_in_a_response_that_did_not_complete_runs_nothing(
+    allow_model_requests: None, native: bool, ending: str, streamed: bool
+) -> None:
+    """OpenAI says to stop when a response is incomplete, failed or refused, even when the computer call finished.
 
-    The call's arguments don't parse, so, as `test_an_unfinished_call_runs_nothing` shows, none of it runs.
+    The call's arguments don't parse, so, as `test_an_unfinished_call_runs_nothing` shows, none of it runs. A refused
+    response that isn't streamed has no parts at all, as for every other call.
     """
-    response = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
-    incomplete = response.model_copy(
+    item: resp.ResponseOutputItem = (
+        _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}).output[0]
+        if native
+        else resp.ResponseFunctionToolCall(
+            id='fc_1',
+            call_id='call_1',
+            name='computer',
+            arguments='{"actions": [{"type": "left_click", "position": [5, 6]}]}',
+            type='function_call',
+            status='completed',
+        )
+    )
+    refusal = resp.ResponseOutputMessage.model_validate(
+        {
+            'id': 'msg_1',
+            'type': 'message',
+            'role': 'assistant',
+            'status': 'completed',
+            'content': [{'type': 'refusal', 'refusal': 'No.'}],
+        }
+    )
+    final = response_message([item]).model_copy(
         update={'status': 'incomplete', 'incomplete_details': resp.response.IncompleteDetails(reason='content_filter')}
+        if ending == 'incomplete'
+        else {'output': [item, refusal]}
     )
     stream: list[resp.ResponseStreamEvent] = [
         resp.ResponseCreatedEvent(response=response_message([]), type='response.created', sequence_number=0),
         resp.ResponseOutputItemDoneEvent(
-            item=response.output[0], output_index=0, type='response.output_item.done', sequence_number=1
+            item=item, output_index=0, type='response.output_item.done', sequence_number=1
         ),
-        resp.ResponseIncompleteEvent(response=incomplete, type='response.incomplete', sequence_number=2),
     ]
-    client = MockOpenAIResponses.create_mock_stream(stream) if streamed else MockOpenAIResponses.create_mock(incomplete)
+    if ending == 'incomplete':
+        stream.append(resp.ResponseIncompleteEvent(response=final, type='response.incomplete', sequence_number=2))
+    else:
+        stream += [
+            resp.ResponseRefusalDoneEvent(
+                item_id='msg_1',
+                output_index=1,
+                content_index=0,
+                refusal='No.',
+                type='response.refusal.done',
+                sequence_number=2,
+            ),
+            resp.ResponseCompletedEvent(response=final, type='response.completed', sequence_number=3),
+        ]
+    client = MockOpenAIResponses.create_mock_stream(stream) if streamed else MockOpenAIResponses.create_mock(final)
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
     computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Go.')]
-    params = ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True)
+    params = ModelRequestParameters(
+        function_tools=[computer], native_tools=[COMPUTER_TOOL] if native else [], allow_text_output=True
+    )
     if streamed:
         async with model.request_stream(messages, None, params) as stream_response:
-            events = [event async for event in stream_response]
+            events = [type(event).__name__ async for event in stream_response]
         stored = stream_response.get()
         # The call was announced at its done event and isn't started a second time.
-        assert [type(event).__name__ for event in events] == ['PartStartEvent', 'PartEndEvent']
+        assert events[:2] == ['PartStartEvent', 'PartEndEvent'] and events.count('PartStartEvent') == 1
     else:
         stored = await model.request(messages, None, params)
 
     (call,) = stored.tool_calls
-    assert isinstance(call, ComputerCallPart) and call.actions is None
+    assert call.args == '{"actions": ['
 
 
 async def test_an_action_with_a_field_that_does_not_map_runs_nothing(allow_model_requests: None) -> None:
