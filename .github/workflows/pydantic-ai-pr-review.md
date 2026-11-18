@@ -45,8 +45,8 @@ on:
   # It gates the actor, not the code — a collaborator can still open a PR from a
   # fork, which `eligibility` rejects separately. gh-aw's own `workflow_run` guard
   # is no help there either: it asserts the triggering run belongs to this repo,
-  # true of a fork PR, whose CI run the base repo owns. Forks are reviewed on
-  # demand via the `douwebot` label path in bots.yml.
+  # true of a fork PR, whose CI run the base repo owns. No workflow reviews a
+  # fork PR: a maintainer recreates it as a same-repository PR.
   roles: [admin, maintainer, write]
   bots: [pydantic-docs]
 # CI Review handles arbitrary PR branch names. Eligibility verifies the triggering
