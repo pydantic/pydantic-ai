@@ -64,10 +64,10 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from google.genai import interactions as gi
+    from google.genai import Client, interactions as gi
     from google.genai._gaos.lib.compat_errors import APIConnectionError, APIError, APITimeoutError
     from google.genai._gaos.utils.serializers import ALLOW_UNKNOWN_UNION_VARIANTS
-    from google.genai.types import HarmBlockThreshold, HarmCategory, MediaResolution
+    from google.genai.types import HarmBlockThreshold, HarmCategory, HttpOptions, MediaResolution
 
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.models.google_interactions import (
@@ -183,6 +183,24 @@ async def test_server_timeout(
     )
 
     assert mock_google.headers[-1].get_list('x-server-timeout') == expected
+
+
+async def test_no_server_timeout_without_a_client_timeout(allow_model_requests: None, mock_google: MockGoogle):
+    """A client built without a timeout sends no `X-Server-Timeout`, as on `GoogleModel`, so the server's deadline applies.
+
+    Not recorded: the claim is about a request header.
+    """
+    client = Client(
+        api_key='test-key',
+        http_options=HttpOptions(
+            httpx_async_client=httpx2.AsyncClient(transport=httpx2.MockTransport(mock_google.handle))
+        ),
+    )
+    model = GoogleInteractionsModel('gemini-3.8-flash', provider=GoogleProvider(client=client))
+
+    await model_request(model, [ModelRequest.user_text_prompt('hello')])
+
+    assert mock_google.headers[-1].get_list('x-server-timeout') == []
 
 
 def test_inference_preserves_instance(monkeypatch: pytest.MonkeyPatch):
