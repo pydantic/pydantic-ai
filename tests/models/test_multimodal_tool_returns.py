@@ -583,7 +583,7 @@ def assert_multimodal_result(
 @pytest.fixture
 def vertex_provider(request: pytest.FixtureRequest, vertex_provider_auth: None) -> Any:
     """Override conftest's vertex_provider to return None for non-vertex tests instead of skipping."""
-    if 'google_vertex' not in request.node.name:  # pyright: ignore[reportUnknownMemberType]
+    if 'google_vertex' not in request.node.name:
         return None
 
     if not google_available():  # pragma: no cover

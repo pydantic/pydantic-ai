@@ -154,6 +154,6 @@ def test_a_marker_without_a_reason_fails(request: pytest.FixtureRequest) -> None
     recorder.record(model, [first], None, _tools())
     recorder.record(model, [first, _response('hello'), _request('more')], None, _tools())
 
-    node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+    node = cast(pytest.Item, request.node)
     with pytest.raises(pytest.fail.Exception, match='requires reason='):
         check_function_model_prefix_stability(node, recorder.requests)

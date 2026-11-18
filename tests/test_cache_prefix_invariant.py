@@ -67,7 +67,7 @@ def test_synthetic_cassette_detects_prefix_violation(prefix_moving_cassette: Pat
 def test_check_cache_prefix_stability_fails_unmarked(
     request: pytest.FixtureRequest, prefix_moving_cassette: Path
 ) -> None:
-    node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+    node = cast(pytest.Item, request.node)
     with pytest.raises(pytest.fail.Exception, match='moves_cache_prefix'):
         check_cache_prefix_stability(node, prefix_moving_cassette)
 
@@ -81,7 +81,7 @@ def test_check_cache_prefix_stability_reads_loaded_cassette(
     assert list(iter_cassette_prefix_violations(cassette)) == list(
         iter_cassette_prefix_violations(prefix_moving_cassette)
     )
-    node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+    node = cast(pytest.Item, request.node)
     with pytest.raises(pytest.fail.Exception, match=rf'{re.escape(str(prefix_moving_cassette))} \[openai-chat\]'):
         check_cache_prefix_stability(node, cassette)
 
@@ -90,14 +90,14 @@ def test_check_cache_prefix_stability_reads_loaded_cassette(
 def test_check_cache_prefix_stability_allows_marked(
     request: pytest.FixtureRequest, prefix_moving_cassette: Path
 ) -> None:
-    node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+    node = cast(pytest.Item, request.node)
     check_cache_prefix_stability(node, prefix_moving_cassette)
 
 
 def test_check_cache_prefix_stability_allows_clean(request: pytest.FixtureRequest, tmp_path: Path) -> None:
     cassette_path = tmp_path / 'clean.yaml'
     cassette_path.write_text('interactions: []\n', encoding='utf-8')
-    node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+    node = cast(pytest.Item, request.node)
     check_cache_prefix_stability(node, cassette_path)
 
 
@@ -160,7 +160,7 @@ def test_check_cache_prefix_stability_requires_reason(
     request: pytest.FixtureRequest, prefix_moving_cassette: Path
 ) -> None:
     """A bare marker without `reason=` must not silently exempt the test."""
-    node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+    node = cast(pytest.Item, request.node)
     with pytest.raises(pytest.fail.Exception, match='requires reason'):
         check_cache_prefix_stability(node, prefix_moving_cassette)
 
@@ -170,7 +170,7 @@ def test_check_cache_prefix_stability_rejects_non_string_reason(
     request: pytest.FixtureRequest, prefix_moving_cassette: Path
 ) -> None:
     """`reason=` must be an explanatory string, not any truthy value."""
-    node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+    node = cast(pytest.Item, request.node)
     with pytest.raises(pytest.fail.Exception, match='requires reason'):
         check_cache_prefix_stability(node, prefix_moving_cassette)
 

@@ -55,7 +55,7 @@ def _finalize_this_tests_garbage(request: pytest.FixtureRequest) -> Iterator[Non
     pytest holds fixture values in `funcargs` until after teardown, which would keep a leaked one out of this collection.
     """
     yield
-    cast(pytest.Function, request.node).funcargs.clear()  # pyright: ignore[reportUnknownMemberType]
+    cast(pytest.Function, request.node).funcargs.clear()
     gc.collect()
 
 

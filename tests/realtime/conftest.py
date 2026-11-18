@@ -217,8 +217,8 @@ def _ws_cassette(
     `subdir` overrides the cassette subdirectory (default: the test module), so a test that also records
     an HTTP VCR cassette (which uses the module-named subdirectory) doesn't collide with the WS cassette.
     """
-    module = cast('str', request.node.fspath.basename).replace('.py', '')  # pyright: ignore[reportUnknownMemberType]
-    name = sanitize_filename(cast('str', request.node.name), 240)  # pyright: ignore[reportUnknownMemberType]
+    module = cast('str', request.node.fspath.basename).replace('.py', '')
+    name = sanitize_filename(cast('str', request.node.name), 240)
     path = CASSETTES_DIR / (subdir or module) / f'{name}.yaml'
     plan = realtime_cassette_plan(cassette_exists=path.exists(), record_mode=_record_mode(request))
     if plan == 'error_missing':
@@ -233,8 +233,8 @@ def _ws_cassette(
         )
     cassette = RealtimeCassette.load(path) if plan == 'replay' else RealtimeCassette()
     try:
-        hold_open = request.node.get_closest_marker('realtime_ws_hold_open') is not None  # pyright: ignore[reportUnknownMemberType]
-        unsent_heartbeat = request.node.get_closest_marker('realtime_ws_unsent_heartbeat')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        hold_open = request.node.get_closest_marker('realtime_ws_hold_open') is not None
+        unsent_heartbeat = request.node.get_closest_marker('realtime_ws_unsent_heartbeat')
         if isinstance(unsent_heartbeat, pytest.Mark):
             assert unsent_heartbeat.kwargs.get('reason'), '`realtime_ws_unsent_heartbeat` requires `reason=...`'
         with patched_ws_connect(

@@ -2106,7 +2106,8 @@ class TestGoogle:
 @pytest.mark.skipif(not sentence_transformers_installed, reason='SentenceTransformers not installed')
 @pytest.mark.usefixtures('sentence_transformers_imported')
 class TestSentenceTransformers:
-    def _load_stsb_bert_tiny_model(self):
+    @staticmethod
+    def _load_stsb_bert_tiny_model():
         from sentence_transformers import SentenceTransformer
 
         # The pinned commit revision lets huggingface_hub serve every model file
@@ -2132,8 +2133,9 @@ class TestSentenceTransformers:
         return model
 
     @pytest.fixture(scope='session')
-    def stsb_bert_tiny_model(self):
-        return self._load_stsb_bert_tiny_model()
+    @classmethod
+    def stsb_bert_tiny_model(cls):
+        return cls._load_stsb_bert_tiny_model()
 
     def test_model_unavailable(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(

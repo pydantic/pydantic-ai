@@ -224,19 +224,19 @@ def cassette_ctx(request: pytest.FixtureRequest, vcr: Cassette) -> CassetteConte
     from tests.cassette_utils import CassetteContext
 
     provider = 'vcr'
-    if callspec := getattr(request.node, 'callspec', None):  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    if callspec := getattr(request.node, 'callspec', None):
         params = cast(dict[str, object], callspec.params)
         p = params.get('provider')
         if isinstance(p, str):  # pragma: no branch
             provider = p
 
-    test_module: str = request.node.fspath.basename.replace('.py', '')  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    test_dir = Path(request.node.fspath).parent  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    test_module: str = request.node.fspath.basename.replace('.py', '')
+    test_dir = Path(request.node.fspath).parent
     return CassetteContext(
         provider=provider,
         vcr=vcr,
-        test_name=request.node.name,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-        test_module=test_module,  # pyright: ignore[reportUnknownArgumentType]
+        test_name=request.node.name,
+        test_module=test_module,
         test_dir=test_dir,
     )
 
