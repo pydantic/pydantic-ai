@@ -980,14 +980,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     events emitted from inside the sandbox dispatch carry the right owner.
     """
 
-    monty_turn: Callable[[RunContext[AgentDepsT], TurnRequest], Awaitable[MontyTurn]] | None = field(
-        default=None, kw_only=True, repr=False
-    )
-    """`CodeMode`'s durable operation that runs one remote sandbox turn, set when the capability has an `id`.
-
-    Inside a Temporal workflow it runs each turn in an activity; see `_durable_turn`.
-    """
-
     speculation: SpeculationCoordinator[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
     """Per-run claim store for calls launched while `run_code` arguments stream.
 
@@ -1317,14 +1309,20 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         path, and `workflow.patched` keeps runs that started before this existed on the path they
         started on.
         """
-        if self.monty_turn is None or self.monty_sandbox is None or self.os_access is not None:
+        from pydantic_ai_harness.code_mode._capability import CodeMode  # imports this module
+
+        # The turn operation is bound only for a `CodeMode` with an `id`.
+        capability = self.capability
+        if not isinstance(capability, CodeMode) or capability.id is None:
+            return None
+        if self.monty_sandbox is None or self.os_access is not None:
             return None
         mounts = self.mount if isinstance(self.mount, list) else [self.mount] if self.mount is not None else []
         if any(mount.mode == 'overlay' or mount.write_bytes_limit is not None for mount in mounts):
             return None
         if not in_durable_execution(ctx) or not _workflow_patched(_DURABLE_TURNS_PATCH):
             return None
-        return partial(self.monty_turn, ctx)
+        return partial(capability._monty_turn, ctx)  # pyright: ignore[reportPrivateUsage]
 
     async def _feed_start(
         self,

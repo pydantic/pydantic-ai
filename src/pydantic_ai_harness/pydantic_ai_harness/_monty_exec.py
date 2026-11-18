@@ -336,20 +336,21 @@ _MONTY_DEFAULT_MAX_SUSPENSIONS = 1000
 """The `max_suspensions` Monty applies when none is set; it cannot be turned off (see `ResourceLimits`)."""
 
 
-def _too_large(message: str) -> MontyTurnFailed:
-    """Tool results too large for one turn, reported as running out of memory.
+def _host_error(type_name: str, message: str) -> MontyTurnFailed:
+    """Results the turn cannot carry, failing the snippet as a live session fails it, and resetting it.
 
-    That resets the session and tells the model to work in smaller batches.
+    The stored record is the paused snippet, which cannot continue, so the session is reset: a
+    `MemoryError` also tells the model to work in smaller batches.
     """
-    return MontyTurnFailed(
-        MontyFailure(
-            'runtime',
-            display=f'MemoryError: {message}',
-            message=message,
-            type_name='MemoryError',
-            exception_types=('MemoryError', 'Exception', 'BaseException'),
-        )
+    failure = MontyFailure(
+        'runtime',
+        display=f'{type_name}: {message}',
+        message=message,
+        type_name=type_name,
+        exception_types=(type_name, 'Exception', 'BaseException'),
+        session_lost=True,
     )
+    return MontyTurnFailed(failure)
 
 
 @dataclass
@@ -377,7 +378,9 @@ class TurnFeed:
         try:
             resume = encode()
         except TurnTooLarge as error:
-            raise _too_large(str(error)) from None
+            raise _host_error('MemoryError', str(error)) from None
+        except TypeError as error:  # a type the sandbox has none for, such as `bytearray`
+            raise _host_error('TypeError', str(error)) from None
         limits = self._limits(restored_pauses=1)
         request = TurnRequest(self.run_state.stored_state, limits, self.capture.unused_bytes, resume=resume)
         return await self._turn(request)
@@ -396,7 +399,7 @@ class TurnFeed:
 
     async def _turn(self, request: TurnRequest) -> TurnSnapshot:
         if (message := oversized(request)) is not None:
-            raise _too_large(message)
+            raise _host_error('MemoryError', message)
         try:
             turn = await self.run_turn(request)
         except Exception as error:

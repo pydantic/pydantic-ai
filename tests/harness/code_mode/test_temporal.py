@@ -1202,6 +1202,11 @@ async def test_remote_turns_report_a_lost_session(client: Client, prompt: str, r
     assert not [result for result in activity_results if b'secret-token' in result]
 
 
+async def raw_bytes() -> object:
+    """Return a `bytearray`, which the sandbox has no type for."""
+    return bytearray(b'hi')
+
+
 async def numbers(count: int) -> list[int]:
     """Return `count` zeros."""
     return [0] * count
@@ -1303,7 +1308,7 @@ snippet_agents = {
     'default': _snippet_agent('default'),
     'unlimited': _snippet_agent('unlimited', resource_limits='unlimited'),
     'factory_error': _snippet_agent('factory_error', monty_sandbox=_refusing_factory),
-    'types': _snippet_agent('types', workflow_tools=(type_names, echo_here)),
+    'types': _snippet_agent('types', workflow_tools=(type_names, echo_here, raw_bytes)),
     'forgetful': _snippet_agent('forgetful', monty_sandbox=_forgetful_pool),
     'numbers': _snippet_agent('numbers', workflow_tools=(numbers,)),
 }
@@ -1600,3 +1605,28 @@ async def test_remote_turns_report_storage_lost_after_the_first_turn(client: Cli
     # Falling back would run the snippet again in workflow code and return its result.
     assert output.startswith('The sandbox connection was lost and the session was reset.')
     assert len(forgetful_pool_calls) == 2
+
+
+async def test_remote_turns_do_not_rerun_a_failed_snippet_whose_save_dropped(client: Client) -> None:
+    """A connection lost while saving the session a snippet error left resets it instead of rerunning the turn."""
+    SERVER.drops_next_dump = ConnectionResetError('the connection dropped')
+    output = await _run_snippet(client, 'test_code_mode_temporal_error_dump_dropped', 'raise ValueError("boom")')
+    # A retried activity would find the connection back and store the session.
+    assert 'ValueError: boom' in output
+    assert 'The sandbox could not keep the session after this error, so it was reset.' in output
+
+
+async def test_remote_turns_return_deep_and_tag_named_dicts(client: Client) -> None:
+    """A 100-level dict returns as in workflow code, and a dict keyed by a tag name stays a dict."""
+    code = 'x = 1\nfor _ in range(100):\n    x = {"a": x}\n[x, {"tuple": [1]}]'
+    output = await _run_snippet(client, 'test_code_mode_temporal_deep_dict', code)
+    assert output == '[' + "{'a': " * 100 + '1' + '}' * 100 + ", {'tuple': [1]}]"
+
+
+async def test_remote_turns_refuse_a_bytearray_tool_result(client: Client) -> None:
+    """A `bytearray` result fails as on a live session instead of reaching the snippet as text."""
+    code = 'try:\n    r = await raw_bytes()\n    got = type(r).__name__\nexcept TypeError as e:\n    got = "TypeError"\ngot'
+    output = await _run_snippet(client, 'test_code_mode_temporal_bytearray', code, agent='types')
+    # A live session raises it on the host, so the snippet cannot catch it.
+    assert output.startswith('Runtime error:\nTypeError: Cannot convert builtins.bytearray to Monty value')
+    assert 'so it was reset' in output

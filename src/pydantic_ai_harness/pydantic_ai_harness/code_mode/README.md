@@ -290,8 +290,9 @@ Nested tool calls also count toward the run's
 pending, and one that would exceed the limit ends the run with `UsageLimitExceeded`, as a top-level tool
 call does. Catching the error inside the snippet does not prevent this.
 
-When `CodeMode` runs inside a Temporal workflow, it disables `max_duration_seconds`, including an
-explicit override. `run_code` is replayed in workflow code, so measuring elapsed time there could
+When `CodeMode` runs snippets in Temporal workflow code, it disables `max_duration_seconds`, including an
+explicit override; turns that run as activities keep it (see
+[Remote turns as activities](#remote-turns-as-activities)). `run_code` is replayed in workflow code, so measuring elapsed time there could
 make replay choose a different path from the recorded workflow. The memory and suspension caps still apply. Put
 time-bounded work behind a Temporal activity instead.
 
@@ -728,8 +729,10 @@ either `__pydantic_ai_agents__` or `AgentPlugin`.
 
 `PydanticAIPlugin` passes `pydantic_monty` through Temporal's workflow sandbox. This makes Monty
 runnable there, but `run_code` still executes in workflow code and is re-executed during replay.
-This works with local workers and with `monty_sandbox`. With a remote worker, replay connects
-to the worker again, so it must be reachable whenever the workflow replays.
+This works with local workers and with `monty_sandbox`. With a remote worker whose snippets run in
+workflow code, replay connects to the worker again, so it must be reachable whenever the workflow
+replays; turns that run as activities replay from history instead (see
+[Remote turns as activities](#remote-turns-as-activities)).
 Model requests and, by default, nested tool calls cross Temporal activity boundaries;
 `asyncio.gather` can schedule nested tool activities concurrently. The REPL is process-local state
 for one agent run, not durable storage. Replay reconstructs it by running the recorded snippets

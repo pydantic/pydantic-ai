@@ -378,7 +378,6 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 monty_sandbox=self.monty_sandbox,
                 repl_store=self.repl_store,
                 capability=self,
-                monty_turn=self._monty_turn if self.id is not None else None,
                 speculation=self._speculation,
             )
         return CodeModeToolset(
@@ -394,7 +393,6 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             monty_sandbox=self.monty_sandbox,
             repl_store=self.repl_store,
             capability=self,
-            monty_turn=self._monty_turn if self.id is not None else None,
             speculation=self._speculation,
         )
 

@@ -80,6 +80,12 @@ def to_wire(value: object) -> object:
     return _Encoder().encode(value)
 
 
+_TAGS = frozenset(
+    {'float', 'bytes', 'tuple', 'dict', 'set', 'frozenset', 'date', 'datetime', 'time', 'timedelta', 'Decimal'}
+)
+"""The keys of a one-key object that `to_wire` wrote for a value JSON has no form of its own for."""
+
+
 class _Encoder:
     """`to_wire`'s walk, which counts the values it writes so it can stop as soon as they cannot fit."""
 
@@ -94,11 +100,29 @@ class _Encoder:
             items = [self.encode(item) for item in value]
             return {'tuple': items} if isinstance(value, tuple) else items
         if is_mapping(value):
-            return {'dict': [[self.encode(key), self.encode(item)] for key, item in value.items()]}
+            return self._mapping(value)
         if isinstance(value, set | frozenset):
             items = cast(set[object] | frozenset[object], value)
             return {type(items).__name__: [self.encode(item) for item in items]}
         return _scalar_to_wire(value)
+
+    def _mapping(self, value: Mapping[Any, Any]) -> object:
+        if all(isinstance(key, str) for key in value) and not (len(value) == 1 and next(iter(value)) in _TAGS):
+            # A plain object, one level deep as in the workflow, so nesting that fits there fits here.
+            return {key: self.encode(item) for key, item in value.items()}
+        return {'dict': [[self.encode(key), self.encode(item)] for key, item in value.items()]}
+
+
+def _output_to_wire(output: object) -> object:
+    """A snippet's result as a turn returns it, or a note saying why it cannot be returned."""
+    try:
+        wired = to_wire(model_safe_result(output))
+        to_json(MontyTurn('complete', output=wired))  # the depth limit applies to the turn as a whole
+    except TurnTooLarge:
+        return f'[the result has more than {TURN_PAYLOAD_BYTES} parts, more than a turn can return]'
+    except PydanticSerializationError:
+        return '[the result is nested more deeply than a turn can return]'
+    return wired
 
 
 def _scalar_to_wire(value: object) -> object:
@@ -115,7 +139,8 @@ def _scalar_to_wire(value: object) -> object:
         return {'timedelta': [value.days, value.seconds, value.microseconds]}
     if isinstance(value, Decimal):
         return {'Decimal': str(value)}
-    return {'json': value}
+    # As a live session does, for example for a `bytearray` tool result.
+    raise TypeError(f'Cannot convert {type(value).__module__}.{type(value).__qualname__} to Monty value')
 
 
 def from_wire(value: object) -> Any:
@@ -124,6 +149,8 @@ def from_wire(value: object) -> Any:
         return [from_wire(item) for item in value]
     if not is_mapping(value):
         return value
+    if len(value) != 1 or next(iter(value)) not in _TAGS:
+        return {key: from_wire(item) for key, item in value.items()}
     ((tag, data),) = value.items()
     match tag:
         case 'float':
@@ -142,10 +169,8 @@ def from_wire(value: object) -> Any:
         case 'timedelta':
             days, seconds, microseconds = cast(list[int], data)
             return timedelta(days, seconds, microseconds)
-        case 'Decimal':
+        case _:  # 'Decimal'
             return Decimal(str(data))
-        case _:
-            return data
 
 
 def _decoded_pair(pair: object) -> tuple[Any, Any]:
@@ -482,16 +507,10 @@ async def _run_turn(
         state = await _dump(session)
     except MontyRuntimeError:
         return MontyTurn('failed', failure=MontyFailure('not_stored', display=_DUMP_REFUSED))
-    except Exception:
-        # The snippet already ran, so retrying the activity would run it again, mount writes included.
-        # CodeMode reports this as a dropped session instead.
+    except Exception:  # see `_dump`; CodeMode reports this as a dropped session
         return MontyTurn('failed', failure=MontyFailure('disconnected'))
     if isinstance(snapshot, MontyComplete):
-        try:
-            output = to_wire(model_safe_result(snapshot.output))
-        except TypeError:  # more parts than a turn can return
-            output = f'[the result has more than {TURN_PAYLOAD_BYTES} parts, more than a turn can return]'
-        return MontyTurn('complete', state=state, suspensions=pauses.count, output=output)
+        return MontyTurn('complete', state=state, suspensions=pauses.count, output=_output_to_wire(snapshot.output))
     if isinstance(snapshot, AsyncFunctionSnapshot):
         call = TurnCall(
             function_name=snapshot.function_name,
@@ -516,7 +535,7 @@ async def _state_after(session: AsyncMontySession, request: TurnRequest, failure
         return None
     try:
         return await _dump(session)
-    except (RuntimeError, MontyRuntimeError):
+    except Exception:  # see `_dump`
         if failure.kind == 'syntax':
             return request.state
         failure.session_lost = True
@@ -529,7 +548,10 @@ class TurnTooLarge(TypeError):
 
 def oversized(request: TurnRequest) -> str | None:
     """Why `request` is more than a turn may take, or `None` when it fits."""
-    size = len(to_json(request))
+    try:
+        size = len(to_json(request))
+    except PydanticSerializationError:
+        return 'the sandbox would receive a value nested more deeply than one step can carry'
     if size <= TURN_PAYLOAD_BYTES:
         return None
     return f'the sandbox would receive {size} bytes in one step, more than the {TURN_PAYLOAD_BYTES} it can take'
@@ -633,6 +655,11 @@ async def _session_id(session: AsyncMontySession) -> bytes | None:
 
 
 async def _dump(session: AsyncMontySession) -> str:
+    """Store the session and return its record ID.
+
+    The snippet has run by then, so callers handle every error here, a dropped connection included,
+    as an unsaved session: letting it escape would make Temporal retry the turn and run it again.
+    """
     return base64.b64encode(await session.dump()).decode()
 
 
