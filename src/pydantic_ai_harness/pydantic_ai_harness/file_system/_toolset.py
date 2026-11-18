@@ -52,7 +52,6 @@ from pydantic_ai_harness.file_system._content import (
     is_binary,
     normalize_replacements,
     sniff_media_type,
-    text_hash,
 )
 from pydantic_ai_harness.file_system._events import (
     MAX_DIFF_SOURCE_CHARS,
@@ -1144,10 +1143,12 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
             if guard is not None:
                 await self._check_guard(scope, resolved, path, guard)
-            await scope.workspace.write_bytes(resolved, content.encode('utf-8'))
+            raw = content.encode('utf-8')
+            await scope.workspace.write_bytes(resolved, raw)
 
-        new_hash = text_hash(content)
-        lines = len(split_lines(content))
+        new_hash = bytes_hash(raw)
+        # Counted as `split_lines` splits: one per line feed, plus a final line without one.
+        lines = content.count('\n') + (content[-1:] not in ('', '\n'))
         if ctx is not None:
             await ctx.emit(FileWrittenEvent(**self._event_location(scope, resolved), content_hash=new_hash))
         return f'Wrote {len(content)} chars ({lines} lines) to {path}.{self._hash_suffix(new_hash)}'

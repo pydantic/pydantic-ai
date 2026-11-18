@@ -2433,6 +2433,12 @@ class TestMutationKillers:
         # Verify hash is a real hex hash not None
         assert 'hash:None' not in result
 
+    async def test_write_file_counts_a_final_line_without_a_line_feed(
+        self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend
+    ) -> None:
+        assert 'Wrote 3 chars (2 lines) to f.txt.' in await toolset.write_file('f.txt', 'a\nb', workspace=ws)
+        assert 'Wrote 0 chars (0 lines) to f.txt.' in await toolset.write_file('f.txt', '', workspace=ws)
+
     async def test_edit_file_output_format(
         self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
     ) -> None:
