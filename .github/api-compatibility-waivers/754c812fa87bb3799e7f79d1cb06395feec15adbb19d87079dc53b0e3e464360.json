@@ -1,0 +1,5 @@
+{
+  "against": "v2.70.0",
+  "reason": "CodeMode.speculation_stats is runtime state, not configuration: `compare=False` keeps `CodeMode.combine` from refusing two identical instances once one has run. The attribute's type, default and value are unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13756"
+}

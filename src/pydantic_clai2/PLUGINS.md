@@ -54,7 +54,8 @@ separately.
  Server Type: http              | Type   http - Streamable HTTP endpoint ...
  URL: https://mcp.example.com   |
  OAuth sign-in: on              |
- On demand: off                 |
+ On demand: on                  |
+ Description: (from the server) |
  JSON Configuration (valid)     | {"type": "http", "url": "https://...", "auth": "oauth", "timeout": 330}
  Load example for http          |
  Save & Install                 | Configuration is valid
@@ -84,13 +85,15 @@ separately.
   or refreshes them instead of signing in again. Tokens belong to the URL they
   were issued for: after changing the URL, sign in again. OAuth needs `https`,
   except for loopback servers.
-- **On demand** sets `"defer_loading": true`, and a **Description** row appears
-  for the line the agent reads about the server; see
+- **On demand** is on by default, with a **Description** row for the line the
+  agent reads about the server. Switching it off sets `"defer_loading": false`
+  and puts the server's tools in every prompt; see
   [Load a server's tools on demand](#load-a-servers-tools-on-demand).
 
 The dashboard shows each server as `running` (connected), `ready` (enabled;
-connects on the next prompt), `stopped`, or `error` (a failed connection, or a
-referenced environment variable that is not set). Saved and enabled servers are
+connects once the agent loads it, or on the next prompt for an eager server),
+`stopped`, or `error` (a failed connection, or a referenced environment variable
+that is not set). Saved and enabled servers are
 available to the agent from the next prompt; `/mcp start` is not required, but
 connects now and lists the tools. Once connected, a server stays connected
 between prompts. A server that cannot connect is marked `error` and left out of
@@ -133,20 +136,18 @@ unset shows as `error` until you set it. Stdio server stderr goes to `mcp_logs/N
 
 Stdio servers also accept `cwd`; `http` and `sse` servers accept `auth: "oauth"`;
 every server accepts `timeout` (seconds for the initialize handshake),
-`enabled: false`, `defer_loading: true`, and `description`. Names start with a letter and contain letters, digits, and
+`enabled: false`, `defer_loading: false`, and `description`. Names start with a letter and contain letters, digits, and
 hyphens. Underscores are reserved for the separator so server/tool name pairs
 cannot produce the same name.
 
 ### Load a server's tools on demand
 
-Every enabled server's tool definitions go into every prompt, which gets
-expensive with a few large servers and makes it harder for the model to pick the
-right tool. Set `defer_loading` to keep a server's tools out until the agent
-needs them:
+Putting every server's tool definitions in every prompt gets expensive with a
+few large servers and makes it harder for the model to pick the right tool, so
+each server keeps its tools out until the agent needs them:
 
 ```json
 {"servers": {"tracker": {"type": "http", "url": "https://mcp.example.com",
-                         "defer_loading": true,
                          "description": "Issue tracker: search, read and update tickets."}}}
 ```
 
@@ -165,8 +166,10 @@ instructions, or its title, once it has connected in this session (after
 before that. A `description` you write is the better choice: the agent decides
 whether to load the server from it. `/mcp tools NAME` lists the tools either way.
 
-Keep a server eager (the default) when most prompts use it: loading it costs
-the agent an extra step.
+Set `"defer_loading": false` (or switch off **On demand** in the form) to keep a
+server eager when most prompts use it: loading it costs the agent an extra step.
+A CLAI build from before on-demand became the default loads a server without the
+key eagerly.
 
 A CLAI build older than these keys rejects a `mcp.json` or project file that uses
 them. When servers given as plugin settings use them, `/plugins add`, `enable`, or
@@ -4318,22 +4321,26 @@ The built-in model catalog and `/set model` completions include
 `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
 For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
-(or your saved Codex model), then **Service Tier / Fast Mode**. Choose
-**Fast (priority)** to request fast processing, or **Standard (default)** to
-turn it off. [Codex fast mode](https://developers.openai.com/codex/speed)
-uses more ChatGPT credits and depends on model and account availability. It does
-not lower reasoning effort. Reset restores the existing model default; it does
-not enable fast mode. The stored values remain `service_tier=priority` and
-`service_tier=default`, so older CLAI versions can read them. A custom
-`service_tier` body parameter still takes precedence.
+(or your saved Codex model), then **Speed**. GPT-6.2 Astra, GPT-6.2 Sol,
+GPT-6.1 Sol, and GPT-6 Astra, the Codex models that offer
+[Ultrafast](https://developers.openai.com/codex/speed), default to
+**ultrafast**. Choose **fast** for priority processing, or **standard** to turn
+both off. Faster speeds use more ChatGPT credits and depend on your plan. They do
+not lower reasoning effort. Reset restores the model's default. Picking a tier in
+the **Service Tier** row replaces the speed, and a custom `service_tier` body
+parameter takes precedence over both. Older CLAI builds see a speed as its nearest
+service tier, `priority` for fast and ultrafast, and a different tier they save picks
+the speed here.
 
 While the active model starts with `openai-codex:`, `/fast` toggles between
-priority and standard processing. `/fast on` and `/fast off` select explicitly.
-It saves the active model's service tier for subsequent prompts and sessions,
-without changing reasoning effort or other preferences. It is absent from help
-and Tab completion on other models, and typing it there reports an unknown command.
-If a custom `service_tier` parameter is set, `/fast` asks you to remove it first
-with `/model settings` rather than saving an ineffective change.
+standard and the model's default speed: ultrafast where it is offered, fast
+elsewhere. `/fast on` selects fast, `/fast off` standard, and
+`/fast ultrafast` ultrafast. It saves the active model's speed for subsequent
+prompts and sessions, without changing reasoning effort or other preferences. It
+is absent from help and Tab completion on other models, and typing it there
+reports an unknown command. If a custom `service_tier` parameter is set, `/fast`
+asks you to remove it first with `/model settings` rather than saving an
+ineffective change.
 
 Model preferences are shared across checkouts. Reading saved preferences ignores
 unknown fields, so newer settings do not break an older reader with this

@@ -5,14 +5,13 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Never
+from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness._workspace import with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_integer,
@@ -34,44 +33,6 @@ if TYPE_CHECKING:
     import modal
 
 UPGRADE_DOCS_URL = 'https://pydantic.dev/docs/ai/harness/modal-sandbox/#upgrading-from-the-previous-modalsandbox'
-
-# Constructor arguments of the previous `ModalSandbox`, which registered its own `run_command`,
-# `read_file`, `write_file`, and `list_directory` tools, that have no counterpart now that the
-# capability only supplies `ctx.workspace`. Each maps to the guidance for moving off it. They are
-# accepted and ignored with a deprecation warning, except `sandbox_id`, which still attaches:
-# ignoring it would run the agent in a new sandbox instead of the one the user named.
-_REMOVED_ARGUMENTS: Mapping[str, str] = {
-    'sandbox_id': (
-        'still attaches to that sandbox for now, but will be removed. Attach per run instead: '
-        "`agent.run(..., workspace=WorkspaceRef(provider='modal', id=sandbox_id))`. "
-        'Later runs that continue the message history reattach to it without being told.'
-    ),
-    'session': (
-        '`ModalSandboxSession` no longer exists. To share a sandbox you own across runs, pass '
-        '`ModalSandboxBackend(sandbox=<modal.Sandbox>)` (or its `WorkspaceRef`) as `workspace=` to '
-        '`agent.run()`. The backend never terminates a sandbox; that stays your job.'
-    ),
-    'default_command_timeout': (
-        'command timeouts belong to the tool that runs commands: use `Shell(default_timeout=...)`.'
-    ),
-    'max_command_timeout': (
-        'there is no direct equivalent, as nothing caps a timeout the model asks for. '
-        '`Shell(default_timeout=...)` sets the timeout of commands that do not give one, and `sandbox_timeout` '
-        'limits the lifetime of a new sandbox, not of an attached one.'
-    ),
-    'max_output_bytes': (
-        'output limits belong to the tools: use `Shell(max_output_chars=...)`, or `ToolOutputLimits` for any tool.'
-    ),
-    'max_output_lines': (
-        'output limits belong to the tools: use `Shell(max_output_chars=...)`, or `ToolOutputLimits` for any tool.'
-    ),
-    'max_read_bytes': 'file read limits belong to the tool: use `FileSystem(max_read_lines=..., max_read_chars=...)`.',
-    'instructions': (
-        'the capability no longer adds instructions; `Shell` and `FileSystem` describe their own tools, and any '
-        "further guidance belongs in the agent's `instructions`."
-    ),
-}
-
 
 # The tools of `Shell` and `FileSystem`, which run against `ctx.workspace`. A run with none of these
 # names most likely has no way to reach the sandbox; custom tools by other names are not detected.
@@ -110,51 +71,15 @@ _LIFETIME_NOTE = (
 )
 
 
-def _no_workspace_tools_message(agent_name: str | None, *, attached: bool) -> str:
+def _no_workspace_tools_message(agent_name: str | None) -> str:
     # Naming the agent tells the user which of several agents lacks the tools.
     run = 'this run' if agent_name is None else f'this run of agent {agent_name!r}'
-    # A `sandbox_id=` sandbox is the user's own, which the previous `ModalSandbox` never terminated either.
-    lifetime = '' if attached else f'{_LIFETIME_NOTE} '
     return (
         "`ModalSandbox` supplies the Modal sandbox as the run's `ctx.workspace` and registers no tools of its own, "
         f'and {run} has no `Shell` or `FileSystem` tool. Add `Coder()`, or `Shell()` and/or `FileSystem()`, '
         'alongside it. If your own code or tools use `ctx.workspace`, pass `ModalSandbox(warn_if_no_tools=False)` '
-        f'to silence this warning. {lifetime}See {UPGRADE_DOCS_URL}'
+        f'to silence this warning. {_LIFETIME_NOTE} See {UPGRADE_DOCS_URL}'
     )
-
-
-def _removed_arguments_message(names: list[str]) -> str:
-    moves = '\n'.join(f'- `{name}`: {_REMOVED_ARGUMENTS[name]}' for name in names)
-    listed = ', '.join(f'{name}=...' for name in names)
-    # `sandbox_id` still attaches, so only say 'ignored' when it is not among them, and the
-    # sandbox it names is the user's own, never one the previous `ModalSandbox` terminated.
-    attached = 'sandbox_id' in names
-    ignored = '' if attached else ' and ignored'
-    lifetime = '' if attached else f'{_LIFETIME_NOTE}\n'
-    return (
-        f"`ModalSandbox({listed})` is deprecated{ignored}. `ModalSandbox` now supplies the Modal sandbox as the run's "
-        '`ctx.workspace` and registers no tools of its own; add `Shell()` and/or `FileSystem()` alongside it '
-        'to give the model command and file tools that run in the sandbox.\n'
-        f'{lifetime}'
-        f'{moves}\n'
-        f'See {UPGRADE_DOCS_URL}'
-    )
-
-
-def _sandbox_id_ref(sandbox_id: object) -> WorkspaceRef | None:
-    """The ref the deprecated `sandbox_id=` names.
-
-    `removed_arguments` is typed `Never` to close the signature, so its values arrive here as
-    `object`, whatever the caller passed, and are checked before they become a ref.
-    """
-    if sandbox_id is None:
-        return None
-    if not isinstance(sandbox_id, str):
-        raise UserError(f'`sandbox_id` must be a string naming a Modal sandbox, got {sandbox_id!r}.')
-    if not sandbox_id:
-        # Treating it as absent would silently create and bill a new sandbox.
-        raise UserError('`sandbox_id` must name a Modal sandbox, got an empty string.')
-    return WorkspaceRef(provider='modal', id=sandbox_id)
 
 
 @dataclass(kw_only=True, init=False)
@@ -206,7 +131,6 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     Only tool names are checked, so custom tools that reach the sandbox under other names do not count.
 
     Set it to `False` for agents that reach the sandbox only from their own tools or hooks.
-    This flag and its warning go away in the stable harness release.
     """
 
     authority: Authority = 'operator'
@@ -221,9 +145,6 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
 
     _warned_no_tools: bool = field(default=False, init=False, repr=False, compare=False)
     """Whether this instance has already warned that the run has no workspace tools."""
-
-    _sandbox_id_ref: WorkspaceRef | None = field(default=None, init=False, repr=False)
-    """The sandbox the deprecated `sandbox_id=` names, attached when the run has no ref of its own."""
 
     def __init__(
         self,
@@ -241,25 +162,8 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         warn_if_no_tools: bool = True,
         authority: Authority = 'operator',
         path_authority: Mapping[str, Authority] | None = None,
-        workdir: str | None = None,
         client: modal.Client | None = None,
-        **removed_arguments: Never,
     ) -> None:
-        # Hand-written, with the same parameters a dataclass would generate, so the previous
-        # `ModalSandbox` arguments reach a message that says where each one went. `**removed_arguments: Never`
-        # keeps the static signature closed.
-        unknown = [argument for argument in removed_arguments if argument not in _REMOVED_ARGUMENTS]
-        if unknown:
-            raise TypeError(f'ModalSandbox.__init__() got an unexpected keyword argument {unknown[0]!r}')
-        # An explicit `None` (say, from a config file) sets nothing, so there is nothing to move off.
-        passed = [argument for argument, value in removed_arguments.items() if value is not None]
-        if passed:
-            warnings.warn(_removed_arguments_message(passed), HarnessDeprecationWarning, stacklevel=2)
-        if workdir is not None:
-            if working_dir is not None:
-                raise UserError('Pass `working_dir` only; `workdir` is its deprecated name.')
-            warn_argument_renamed('ModalSandbox', 'workdir', 'working_dir')
-            working_dir = workdir
         reject_defer_loading('ModalSandbox', defer_loading)
         # Checked here rather than when the backend first creates a sandbox, so a bad value fails
         # where it is written instead of at the first workspace operation of some later run.
@@ -286,7 +190,6 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.authority = authority
         self.path_authority = path_authority
         self._warned_no_tools = False
-        self._sandbox_id_ref = _sandbox_id_ref(removed_arguments.get('sandbox_id'))
 
     @classmethod
     def from_spec(
@@ -312,8 +215,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         to the variadic base `from_spec`, because `__init__`'s `modal.Image` hint is a
         `TYPE_CHECKING` import, and publishes only the bare `'ModalSandbox'`. A spec names an
         image by its registry tag. `**kwargs` reaches
-        `__init__` unchanged, so deprecated arguments keep their guidance and `defer_loading`
-        its refusal.
+        `__init__` unchanged, so `defer_loading` keeps its refusal.
         """
         return cls(
             id=id,
@@ -353,7 +255,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         if ref is not None and ref.provider != 'modal':
             return None
         return ModalSandboxBackend(
-            ref=ref or self._sandbox_id_ref,
+            ref=ref,
             image=self.image,
             app_name=self.app_name,
             create_app_if_missing=self.create_app_if_missing,
@@ -380,7 +282,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             self._warned_no_tools = True
             agent_name = ctx.agent.name if ctx.agent is not None else None
             warnings.warn(
-                _no_workspace_tools_message(agent_name, attached=self._sandbox_id_ref is not None),
+                _no_workspace_tools_message(agent_name),
                 ModalSandboxNoToolsWarning,
                 stacklevel=2,
             )
