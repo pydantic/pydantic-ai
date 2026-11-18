@@ -95,7 +95,7 @@ pytestmark = [
 
 TEMPORAL_PORT = 7244  # avoid conflict with other test suites
 # Fixed because the agent below is built at import time, before any fixture runs.
-MONTY_RELAY_PORT = 7246
+MONTY_RELAY_PORT = 7275  # not 7246: logfire_mcp's Temporal server, which can run beside this module
 TASK_QUEUE = 'pydantic-ai-harness-code-mode-queue'
 BASE_ACTIVITY_CONFIG = ActivityConfig(
     start_to_close_timeout=timedelta(seconds=60),
@@ -267,7 +267,8 @@ storing_code_mode_agent = Agent(
     name='code_mode_temporal_storing_agent',
     toolsets=[FunctionToolset(tools=[add], id='math')],
     capabilities=[
-        CodeMode(id='code', monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
+        # No `id`: the class default is what binds the turn activity.
+        CodeMode(monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
         TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
     ],
 )
@@ -514,7 +515,7 @@ workflow_side_code_mode_agents = {
         name='code_mode_temporal_no_id_agent',
         toolsets=[FunctionToolset(tools=[add], id='math')],
         capabilities=[
-            CodeMode(monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
+            CodeMode(id=None, monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
         ],
     ),
@@ -1012,7 +1013,7 @@ async def test_remote_turns_fall_back_without_storage(client: Client) -> None:
 @pytest.mark.parametrize('reason', ['overlay', 'write_limit', 'os_access', 'no_id', 'local', 'unpatched'])
 async def test_remote_turns_stay_in_the_workflow(client: Client, monkeypatch: pytest.MonkeyPatch, reason: str) -> None:
     """An `'overlay'` mount (the default mode), a mount with `write_bytes_limit`, `os_access`, a `CodeMode`
-    without `id`, a local sandbox, or a workflow that started before this version of Code Mode keeps every
+    given `id=None`, a local sandbox, or a workflow that started before this version of Code Mode keeps every
     turn in the workflow.
 
     Unsandboxed for `'unpatched'`, so `workflow.patched` can be faked.

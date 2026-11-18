@@ -479,7 +479,10 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one Pylon connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
-    'CodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
+    'CodeMode': Narrows(
+        'one `run_code` tool per id; two that differ need their own ids and PrefixTools',
+        lambda cls: (cls(max_retries=1), cls(max_retries=2)),
+    ),
     'IPythonCodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
     'BrowserUse': Collides('its toolset registers its browser tools under fixed names'),
     'SmartSearch': Narrows(

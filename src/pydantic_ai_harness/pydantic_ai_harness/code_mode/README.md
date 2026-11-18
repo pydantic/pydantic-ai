@@ -773,15 +773,12 @@ snippets then run in workflow code as described above. If a storing server canno
 state, for example because its snapshot quota is full, the turn raises `UserError` and the workflow
 fails without retrying the turn.
 
-This needs an `id` on `CodeMode`, which names the turn activity:
-
-```python {test="skip"}
-CodeMode(id='code', monty_sandbox='https://monty.example.com')
-```
+The turn activity is named after the capability's `id`, `'code_mode'` by default. Two `CodeMode`
+on one agent each need their own `id`.
 
 Code Mode keeps running `run_code` in workflow code, as described above, when any of these holds:
 
-- `CodeMode` has no `id`.
+- `CodeMode` is given `id=None`.
 - The agent is wrapped in the deprecated `TemporalAgent`, which runs no capability operations as activities.
 - `os_access` is set: the handler may call `temporalio.workflow` APIs, which work only in workflow code.
 - A `mount` uses `'overlay'` mode, the default, or sets `write_bytes_limit`. Monty does not keep
@@ -1008,7 +1005,7 @@ CodeMode(
     tools='all',          # 'all', list[str], callable, or metadata dict
     max_retries=3,        # retries on sandbox execution errors
     max_tool_calls=100,   # nested tool calls allowed in one run_code call
-    id=None,              # required when defer_loading=True
+    id='code_mode',       # one CodeMode per id; give a second one its own
     description=None,     # one-line catalog entry shown while deferred
     defer_loading=False,
     os_access=None,       # OS behavior; custom handlers may expose host resources

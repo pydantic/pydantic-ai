@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     post_compaction_window,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
+from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._monty_exec import build_remote_pool, session_os_policy
 from pydantic_ai_harness._monty_turns import MontyTurn, TurnRequest, redacted_error_type, run_monty_turn
 from pydantic_ai_harness._warn import renamed_duration_limit
@@ -138,6 +139,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     """Maximum number of retries for the `run_code` tool (syntax errors count as retries)."""
 
     _: KW_ONLY
+
+    id: str | None = 'code_mode'
+    """Stable capability ID, so its instructions are addressable, `defer_loading=True` needs none, and a
+    durable run can send its Monty turns to activities.
+
+    An agent has one `run_code` tool, so two `CodeMode` sharing this `id` are one configuration stated
+    twice when they agree, and an error when they differ. To keep two, give each its own `id` and wrap
+    them in `PrefixTools`, since their tool names are the same.
+    """
 
     max_tool_calls: int = 100
     """Maximum nested tool calls dispatched by one `run_code` invocation.
@@ -271,11 +281,16 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     """Aggregate launch/adopt/evict counters across this instance's runs, when `speculate` is set."""
 
     _durable_operations_need_id: ClassVar[bool] = False
-    """An id-less `CodeMode` binds no `monty_turn` operation and runs every Monty turn in the workflow, as before it existed."""
+    """A `CodeMode` given `id=None` binds no `monty_turn` operation and runs every Monty turn in the workflow."""
 
     _speculation: SpeculationCoordinator[AgentDepsT] | None = field(default=None, init=False, repr=False)
 
     _in_flight_announcements: set[str] = field(default_factory=set[str], init=False, repr=False)
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one configuration stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
 
     def __post_init__(self) -> None:
         # Converted once here, so the per-run copies and the toolsets built from this do not warn again.
@@ -295,7 +310,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         tools: Literal['all'] | Sequence[str] | dict[str, Any] = 'all',
         max_retries: int = 3,
         *,
-        id: str | None = None,
+        id: str | None = 'code_mode',
         description: str | None = None,
         defer_loading: bool = False,
         max_tool_calls: int = 100,
