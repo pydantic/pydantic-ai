@@ -57,7 +57,8 @@ uv tool install --compile-bytecode pydantic-ai-pax
 
 This gives you the `pax` command (and `pydantic-ai-pax`, which does the same).
 The package used to be `pydantic-clai2`, with the command `clai2`. Those names still work and print a note
-pointing here; your settings, sessions, and plugins carry over.
+pointing here; your settings, sessions, and plugins carry over. A plugin that imports `pydantic_clai2` needs
+the `pydantic-clai2` package installed, or its imports changed to `pydantic_ai_pax`.
 `--compile-bytecode` makes the install take a little longer so the first start doesn't, and
 `/update now` uses it too. To try CLAI without installing, run `uvx pydantic-ai-pax`; set
 `UV_COMPILE_BYTECODE=1` to compile the bytecode up front there too.

@@ -833,8 +833,8 @@ jobs:
       # collects it on 3.11: `tests/pax` has pre-3.14 lines and branches that `all-extras` covers otherwise.
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.clai2_only == 'true' && matrix.python-version == '3.11' }}
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
-      # A `pydantic-clai2`-only change skips `all-extras`, so its cells install every `pydantic-clai2`
-      # extra themselves: `tests/clai2` gates tests on `typesafe` and on each `/sandbox` SDK, and only
+      # A `pydantic-ai-pax`-only change skips `all-extras`, so its cells install every `pydantic-ai-pax`
+      # extra themselves: `tests/pax` gates tests on `typesafe` and on each `/sandbox` SDK, and only
       # those tests run their fakes.
       CLAI2_ALL_EXTRAS: ${{ matrix.clai2_only == 'true' }}
     steps:

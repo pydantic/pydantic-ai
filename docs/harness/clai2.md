@@ -5,7 +5,9 @@ Python 3.11+ is required by Termflow. Tracking issue: https://github.com/pydanti
 
 !!! note
     CLAI is now the `pydantic-ai-pax` package, and its command is `pax`. The former `pydantic-clai2` package and
-    `clai2` command still work, printing a deprecation note.
+    `clai2` command still work, printing a deprecation note. A plugin that imports `pydantic_clai2` needs the
+    `pydantic-clai2` package installed, or its imports changed to `pydantic_ai_pax`, as in
+    `from pydantic_ai_pax.plugins import Plugin`.
 
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do
 not protect secret files or repository metadata. OS permissions still apply.
