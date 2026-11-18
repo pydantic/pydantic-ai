@@ -35,11 +35,11 @@ import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import pytest
 from anyio.from_thread import start_blocking_portal
-from pydantic_monty import MontyRefusedError, MountDir
+from pydantic_monty import AsyncMontyRemote, MontyRefusedError, MountDir
 
 try:
     from temporalio import workflow
@@ -82,7 +82,7 @@ from pydantic_ai_harness import CodeMode
 from pydantic_ai_harness._monty_turns import from_wire, to_wire
 from tests.harness._temporal import ignore_source_reads_left_open
 from tests.harness.code_mode.grpc_relay import serve_monty_relay
-from tests.harness.code_mode.stored_sessions import SERVER, StoredSessionPool
+from tests.harness.code_mode.stored_sessions import SERVER, StoredSessionPool, as_remote, stored_session_pool
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
 # Its own group, on its own port: it is the largest harness Temporal module, and in the shared group it
@@ -257,18 +257,17 @@ remote_code_mode_agent = Agent(
 )
 
 
-def _not_storing_pool() -> StoredSessionPool:
-    return StoredSessionPool(stores=False)
+def _not_storing_pool() -> AsyncMontyRemote:
+    return as_remote(StoredSessionPool(stores=False))
 
 
-# The doubles stand in for `AsyncMontyRemote`, which this factory type names.
 storing_code_mode_agent = Agent(
     FunctionModel(_code_mode_model),
     name='code_mode_temporal_storing_agent',
     toolsets=[FunctionToolset(tools=[add], id='math')],
     capabilities=[
         # No `id`: the class default is what binds the turn activity.
-        CodeMode(monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
+        CodeMode(monty_sandbox=stored_session_pool),
         TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
     ],
 )
@@ -277,7 +276,7 @@ not_storing_code_mode_agent = Agent(
     name='code_mode_temporal_not_storing_agent',
     toolsets=[FunctionToolset(tools=[add], id='math')],
     capabilities=[
-        CodeMode(id='code', monty_sandbox=_not_storing_pool),  # pyright: ignore[reportArgumentType]
+        CodeMode(id='code', monty_sandbox=_not_storing_pool),
         TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
     ],
 )
@@ -362,7 +361,7 @@ def _call_site_agent(*, turn_activities: bool) -> Agent:
         capabilities=[
             CodeMode(
                 id='code' if turn_activities else None,
-                monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
+                monty_sandbox=stored_session_pool,
                 mount=MountDir(virtual_path='/tests', host_path=str(Path(__file__).parent), mode='read-only'),
                 resource_limits={'max_suspensions': 16},
             ),
@@ -385,7 +384,7 @@ class CallSiteWorkflow:
 refusing_pool_calls: list[None] = []
 
 
-def _refusing_pool() -> StoredSessionPool:
+def _refusing_pool() -> AsyncMontyRemote:
     refusing_pool_calls.append(None)
     raise ConnectionRefusedError('the Monty server refused the connection')
 
@@ -395,7 +394,7 @@ refusing_code_mode_agent = Agent(
     name='code_mode_temporal_refusing_agent',
     toolsets=[FunctionToolset(tools=[add], id='math')],
     capabilities=[
-        CodeMode(id='code', monty_sandbox=_refusing_pool),  # pyright: ignore[reportArgumentType]
+        CodeMode(id='code', monty_sandbox=_refusing_pool),
         TemporalDurability(
             activity_config=ActivityConfig(
                 start_to_close_timeout=timedelta(seconds=60),
@@ -447,7 +446,7 @@ session_loss_code_mode_agent = Agent(
         # `'unlimited'` too: a turn then has no `max_suspensions` for earlier turns to use up.
         CodeMode(
             id='code',
-            monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
+            monty_sandbox=stored_session_pool,
             resource_limits='unlimited',
         ),
         TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
@@ -472,7 +471,7 @@ workflow_side_code_mode_agents = {
         capabilities=[
             CodeMode(
                 id='code',
-                monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
+                monty_sandbox=stored_session_pool,
                 mount=MountDir(virtual_path='/tests', host_path=str(Path(__file__).parent)),
             ),
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
@@ -485,7 +484,7 @@ workflow_side_code_mode_agents = {
         capabilities=[
             CodeMode(
                 id='code',
-                monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
+                monty_sandbox=stored_session_pool,
                 os_access=_workflow_os,
             ),
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
@@ -499,7 +498,7 @@ workflow_side_code_mode_agents = {
         capabilities=[
             CodeMode(
                 id='code',
-                monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
+                monty_sandbox=stored_session_pool,
                 mount=MountDir(
                     virtual_path='/tests',
                     host_path=str(Path(__file__).parent),
@@ -515,7 +514,7 @@ workflow_side_code_mode_agents = {
         name='code_mode_temporal_no_id_agent',
         toolsets=[FunctionToolset(tools=[add], id='math')],
         capabilities=[
-            CodeMode(id=None, monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
+            CodeMode(id=None, monty_sandbox=stored_session_pool),
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
         ],
     ),
@@ -531,7 +530,7 @@ workflow_side_code_mode_agents = {
         name='code_mode_temporal_unpatched_agent',
         toolsets=[FunctionToolset(tools=[add], id='math')],
         capabilities=[
-            CodeMode(id='code', monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
+            CodeMode(id='code', monty_sandbox=stored_session_pool),
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
         ],
     ),
@@ -1227,10 +1226,10 @@ async def raw_bytes() -> object:
 forgetful_pool_calls: list[None] = []
 
 
-def _forgetful_pool() -> StoredSessionPool:
+def _forgetful_pool() -> AsyncMontyRemote:
     """A pool whose server stores the first turn's session, and whose later checkouts land on one that stores none."""
     forgetful_pool_calls.append(None)
-    return StoredSessionPool(stores=len(forgetful_pool_calls) == 1)
+    return as_remote(StoredSessionPool(stores=len(forgetful_pool_calls) == 1))
 
 
 def repeat(text: str, times: int) -> str:
@@ -1276,7 +1275,8 @@ def _snippet_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo
         if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
     ]
     prompt = next(part.content for part in messages[0].parts if isinstance(part, UserPromptPart))
-    codes = cast(str, prompt).split(NEXT_SNIPPET)
+    assert isinstance(prompt, str)
+    codes = prompt.split(NEXT_SNIPPET)
     if len(returns) == len(codes):
         return ModelResponse(parts=[TextPart(content=str(returns[-1]))])
     code = codes[len(returns)]
@@ -1290,7 +1290,7 @@ NEXT_SNIPPET = '\n# next snippet\n'
 
 def _snippet_agent(
     name: str,
-    monty_sandbox: Callable[[], StoredSessionPool] = StoredSessionPool,
+    monty_sandbox: Callable[[], AsyncMontyRemote] = stored_session_pool,
     resource_limits: Literal['unlimited'] | None = None,
     workflow_tools: tuple[Callable[..., Awaitable[object]], ...] = (bad_csv,),
 ) -> Agent:
@@ -1313,7 +1313,7 @@ def _snippet_agent(
         capabilities=[
             CodeMode(
                 id='code',
-                monty_sandbox=monty_sandbox,  # pyright: ignore[reportArgumentType]
+                monty_sandbox=monty_sandbox,
                 resource_limits=resource_limits,
             ),
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
@@ -1321,7 +1321,7 @@ def _snippet_agent(
     )
 
 
-def _refusing_factory() -> StoredSessionPool:
+def _refusing_factory() -> AsyncMontyRemote:
     raise UserError('secret-sentinel: the pool factory could not read its settings')
 
 
@@ -1483,7 +1483,7 @@ with warnings.catch_warnings():
             FunctionModel(_code_mode_model),
             name='code_mode_temporal_legacy_agent',
             toolsets=[FunctionToolset(tools=[add], id='math')],
-            capabilities=[CodeMode(id='code', monty_sandbox=StoredSessionPool)],  # pyright: ignore[reportArgumentType]
+            capabilities=[CodeMode(id='code', monty_sandbox=stored_session_pool)],
         ),
         activity_config=BASE_ACTIVITY_CONFIG,
     )
@@ -1524,7 +1524,7 @@ dynamic_code_mode_agent = Agent(
     toolsets=[FunctionToolset(tools=[add], id='math')],
     capabilities=[
         DynamicCapability(
-            lambda ctx: CodeMode(id='code', monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
+            lambda ctx: CodeMode(id='code', monty_sandbox=stored_session_pool),
             id='dynamic_code',
         ),
         TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),

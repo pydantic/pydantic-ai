@@ -20,6 +20,7 @@ from typing_extensions import TypedDict, TypeIs
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
+from pydantic_ai.durable_exec._capability_operation import durable_operation_dispatch
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.messages import (
@@ -1314,8 +1315,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         from pydantic_ai_harness.code_mode._capability import CodeMode  # imports this module
 
         capability = self.capability
-        operations = ctx._durable_operations or {}  # pyright: ignore[reportPrivateUsage]
-        if not isinstance(capability, CodeMode) or (capability.id, 'monty_turn') not in operations:
+        if not isinstance(capability, CodeMode) or durable_operation_dispatch(ctx, capability.id, 'monty_turn') is None:
             return None
         if self.monty_sandbox is None or self.os_access is not None:
             return None

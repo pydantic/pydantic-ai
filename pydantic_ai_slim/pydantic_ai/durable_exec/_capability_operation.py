@@ -206,6 +206,20 @@ def _validate_operation_name(name: object) -> str:
     return name
 
 
+def durable_operation_dispatch(
+    ctx: RunContext[Any], capability_id: str | None, name: str
+) -> Callable[[RunContext[Any], tuple[Any, ...], dict[str, Any]], Awaitable[Any]] | None:
+    """The dispatcher the run installed for a capability's `@durable_operation(name)`, or `None` when it runs inline.
+
+    The one place that reads the run's dispatchers, so a caller that needs to know in advance whether
+    an operation leaves the workflow asks the same question `durable_operation` does.
+    """
+    operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
+    if operations is None or capability_id is None:
+        return None
+    return operations.get((capability_id, name))
+
+
 def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
     """Declare an async capability method as a durable operation.
 
@@ -282,10 +296,7 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
             # The run installs one dispatcher per bound operation on every context it builds. A
             # context without them was never prepared by a run (or was rebuilt worker-side, past
             # the boundary already), so the call belongs inline.
-            operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
-            dispatcher = (
-                operations.get((self.id, marker.name)) if operations is not None and self.id is not None else None
-            )
+            dispatcher = durable_operation_dispatch(ctx, self.id, marker.name)
             if dispatcher is None:
                 result = await target.__get__(self, type(self))(*args, **kwargs)
             else:

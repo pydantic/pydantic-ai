@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from pydantic_monty import (
     AsyncMonty,
+    AsyncMontyRemote,
     AsyncMontySession,
     AsyncSnapshot,
     MountDir,
@@ -132,3 +133,13 @@ class StoredSessionPool:
         ) as session:
             # As on a storing server, an ephemeral session is never stored.
             yield StoredSession(session, self.stores and ephemeral is not True, self._pool)
+
+
+def as_remote(pool: StoredSessionPool) -> AsyncMontyRemote:
+    """Type the double as the `AsyncMontyRemote` it stands in for, so `CodeMode(monty_sandbox=...)` accepts it."""
+    return pool  # pyright: ignore[reportReturnType]
+
+
+def stored_session_pool() -> AsyncMontyRemote:
+    """A `monty_sandbox` factory for a server that stores sessions."""
+    return as_remote(StoredSessionPool())

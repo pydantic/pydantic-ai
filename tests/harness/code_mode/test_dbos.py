@@ -45,7 +45,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
-from tests.harness.code_mode.stored_sessions import StoredSessionPool
+from tests.harness.code_mode.stored_sessions import stored_session_pool
 
 pytestmark = pytest.mark.xdist_group(name='harness-dbos')
 
@@ -131,7 +131,7 @@ remote_code_mode_agent = Agent(
     name='remote_code_mode_dbos_agent',
     toolsets=[FunctionToolset(tools=[add], id='math')],
     capabilities=[
-        CodeMode(id='code', monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
+        CodeMode(id='code', monty_sandbox=stored_session_pool),
         DBOSDurability(),
     ],
 )
