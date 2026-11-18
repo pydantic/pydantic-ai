@@ -329,7 +329,7 @@ def refuse_widening(store: SettingsStore, args: list[str]) -> None:
 def _session_only(command: str, args: list[str]) -> ValueError:
     """The agent can run `pax` from its shell, so a change that lets it do more is a `/command` the user types."""
     return ValueError(
-        f'`pax {command} {args[0]}` cannot let the agent do more, since the agent can run clai2 from its shell. '
+        f'`pax {command} {args[0]}` cannot let the agent do more, since the agent can run pax from its shell. '
         f'Run `/{shlex.join([command, *args])}` in a CLAI session instead.'
     )
 

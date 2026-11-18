@@ -91,7 +91,7 @@ def test_startup_without_dotenv_values(
         monkeypatch.setattr('pydantic_ai_pax.__main__.load_dotenv', pytest.fail)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv('PYTHON_DOTENV_DISABLED', '1' if state == 'disabled' else '0')
-    monkeypatch.setattr(sys, 'argv', ['clai2', 'config'])
+    monkeypatch.setattr(sys, 'argv', ['pax', 'config'])
     observed: list[str | None] = []
 
     def run(*, splash: Splash | None = None) -> None:

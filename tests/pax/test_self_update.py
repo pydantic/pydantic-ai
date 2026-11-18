@@ -286,7 +286,7 @@ def _updates(
     fetch: Callable[[UpdateChannel], str] = lambda channel: NEWER if channel == 'main' else '0.53.0',
     codes: list[int] | None = None,
     uv: str | None = '/bin/uv',
-    executable: str | None = '/tools/clai2',
+    executable: str | None = '/tools/pax',
     lines: Sequence[str] = (),
 ) -> tuple[Updates, list[Sequence[str]]]:
     ran: list[Sequence[str]] = []
@@ -364,7 +364,7 @@ async def test_command_installs_and_restarts() -> None:
     updates, ran = _updates(['main'])
     assert await updates.command([]) == 'Updated CLAI to 9e08a34ee (main). Restarting...'
     assert updates.restart_required
-    assert updates.relaunch == '/tools/clai2'
+    assert updates.relaunch == '/tools/pax'
     [command] = ran
     overrides = Path(command[command.index('--overrides') + 1])
     assert command == Update(channel='main', target=NEWER).command(uv='/bin/uv', overrides=overrides)
@@ -718,7 +718,7 @@ async def _relaunch_after(
             session_id=session_id,
         )
     assert raised.value.code == 0
-    assert raised.value.executable == '/tools/clai2'
+    assert raised.value.executable == '/tools/pax'
     return raised.value
 
 
@@ -787,23 +787,23 @@ def _args(**options: object) -> argparse.Namespace:
 
 def test_relaunch_argv(tmp_path: Path) -> None:
     bare = _args()
-    assert relaunch_argv(bare, executable='/b/clai2', session_id=None) == ['/b/clai2']
-    assert relaunch_argv(bare, executable='/b/clai2', session_id=None, new_session_id='u') == [
-        '/b/clai2',
+    assert relaunch_argv(bare, executable='/b/pax', session_id=None) == ['/b/pax']
+    assert relaunch_argv(bare, executable='/b/pax', session_id=None, new_session_id='u') == [
+        '/b/pax',
         '--session-id',
         'u',
     ]
-    assert relaunch_argv(bare, executable='/b/clai2', session_id='s', new_session_id='u') == [
-        '/b/clai2',
+    assert relaunch_argv(bare, executable='/b/pax', session_id='s', new_session_id='u') == [
+        '/b/pax',
         '--resume',
         's',
     ]
     # `--web` stays a web launch; the token stays in its file, off the command line.
     web = _args(web=True)
-    assert relaunch_argv(web, executable='/b/clai2', session_id='s') == ['/b/clai2', '--web', '--resume', 's']
+    assert relaunch_argv(web, executable='/b/pax', session_id='s') == ['/b/pax', '--web', '--resume', 's']
     launcher = _args(web=True, port=0, token_file=tmp_path / 'token')
-    assert relaunch_argv(launcher, executable='/b/clai2', session_id=None) == [
-        '/b/clai2',
+    assert relaunch_argv(launcher, executable='/b/pax', session_id=None) == [
+        '/b/pax',
         '--web',
         '--port',
         '0',
@@ -811,8 +811,8 @@ def test_relaunch_argv(tmp_path: Path) -> None:
         str(tmp_path / 'token'),
     ]
     full = _args(agent='m:a', model='test', request_limit=5, database=tmp_path / 'c.db')
-    assert relaunch_argv(full, executable='/b/clai2', session_id='abc') == [
-        '/b/clai2',
+    assert relaunch_argv(full, executable='/b/pax', session_id='abc') == [
+        '/b/pax',
         '--agent',
         'm:a',
         '--model',
@@ -828,10 +828,10 @@ def test_relaunch_argv(tmp_path: Path) -> None:
 
 def test_cli_execs_the_new_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr('sys.argv', ['clai2', '--database', 'config.db', '--resume', 'old', '-m', 'test'])
+    monkeypatch.setattr('sys.argv', ['pax', '--database', 'config.db', '--resume', 'old', '-m', 'test'])
 
     async def chat(*args: object, **kwargs: object) -> None:
-        raise Relaunch(executable='/b/clai2', session_id='new')
+        raise Relaunch(executable='/b/pax', session_id='new')
 
     execs: list[tuple[str, list[str]]] = []
     monkeypatch.setattr(app, 'chat', chat)
@@ -842,7 +842,7 @@ def test_cli_execs_the_new_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(os, 'execv', execv)
     cli_module.run()
     assert execs == [
-        ('/b/clai2', ['/b/clai2', '--model', 'test', '--database', str(tmp_path / 'config.db'), '--resume', 'new'])
+        ('/b/pax', ['/b/pax', '--model', 'test', '--database', str(tmp_path / 'config.db'), '--resume', 'new'])
     ]
     assert 'CLAI_RELAUNCH_WEB' not in os.environ, 'no web UI to hand over'
 
@@ -856,12 +856,12 @@ def test_cli_hands_the_web_ui_to_the_new_build(tmp_path: Path, monkeypatch: pyte
     token.write_text(WEB_TOKEN)
     token.chmod(0o600)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr('sys.argv', ['clai2', '--web', '--port', '0', '--token-file', 'token', '--database', 'c.db'])
+    monkeypatch.setattr('sys.argv', ['pax', '--web', '--port', '0', '--token-file', 'token', '--database', 'c.db'])
     calls: list[dict[str, object]] = []
 
     async def run_web(**kwargs: object) -> None:
         calls.append(kwargs)
-        raise Relaunch(executable='/b/clai2', session_id='s', web=WebHandoff(port=4321, token=WEB_TOKEN))
+        raise Relaunch(executable='/b/pax', session_id='s', web=WebHandoff(port=4321, token=WEB_TOKEN))
 
     execs: list[list[str]] = []
 
@@ -877,7 +877,7 @@ def test_cli_hands_the_web_ui_to_the_new_build(tmp_path: Path, monkeypatch: pyte
     [argv] = execs
     database = str(tmp_path / 'c.db')
     assert argv == [
-        '/b/clai2',
+        '/b/pax',
         '--web',
         '--port',
         '0',
@@ -906,7 +906,7 @@ def test_a_terminal_session_serves_the_handed_over_web_ui(
     value: str, handoff: WebHandoff | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The handed-over port and token reach the shell, and leave the environment before any tool could read them."""
-    monkeypatch.setattr('sys.argv', ['clai2', '--database', str(tmp_path / 'c.db'), '-m', 'test'])
+    monkeypatch.setattr('sys.argv', ['pax', '--database', str(tmp_path / 'c.db'), '-m', 'test'])
     monkeypatch.setenv('CLAI_RELAUNCH_WEB', value)
     calls: list[dict[str, object]] = []
 
@@ -993,11 +993,11 @@ def test_the_about_menu_says_whether_a_newer_clai_is_out(tmp_path: Path, monkeyp
         raise httpx.ConnectError('offline')
 
     newest, _ = _updates(['stable'], current=Installed(version='0.53.0', tool=True))
-    assert note(newest) == 'clai2 is already on the latest version 0.53.0 on the stable channel (checked just now).'
+    assert note(newest) == 'pax is already on the latest version 0.53.0 on the stable channel (checked just now).'
     newer, _ = _updates(['main'])
-    assert note(newer) == 'a new version 9e08a34ee of clai2 is available on the main channel (checked just now).'
+    assert note(newer) == 'a new version 9e08a34ee of pax is available on the main channel (checked just now).'
     source, _ = _updates(['stable'], current=Installed(version='0.52.0'))
-    assert note(source) == 'a new version 0.53.0 of clai2 is available on the stable channel (checked just now).'
+    assert note(source) == 'a new version 0.53.0 of pax is available on the stable channel (checked just now).'
     assert source.segment() == '', 'the footer still checks only `uv tool` installs'
     failing, _ = _updates(['stable'], fetch=offline)
     assert note(failing) == 'Could not check for a newer CLAI: offline'
@@ -1009,7 +1009,7 @@ def test_the_about_menu_says_whether_a_newer_clai_is_out(tmp_path: Path, monkeyp
     assert note(pending) == 'Checking for a newer CLAI…'
     assert note(pending) == 'Checking for a newer CLAI…' and len(checks) == 1, 'one check per channel'
     checks[0]()
-    assert note(pending) == 'a new version 0.53.0 of clai2 is available on the stable channel (checked just now).'
+    assert note(pending) == 'a new version 0.53.0 of pax is available on the stable channel (checked just now).'
 
 
 def test_a_stale_check_runs_again_and_the_about_note_says_when_it_ran(
@@ -1034,19 +1034,19 @@ def test_a_stale_check_runs_again_and_the_about_note_says_when_it_ran(
     updates.check()
     checks.pop()()
     now[0] = 170.0
-    assert note() == 'clai2 is already on the latest version 0.53.0 on the stable channel (checked 2 min ago).'
+    assert note() == 'pax is already on the latest version 0.53.0 on the stable channel (checked 2 min ago).'
     assert not checks, 'a recent answer is not checked again'
     builds.append('0.54.0')
     now[0] = ABOUT_MAX_AGE + 1
-    assert note() == 'clai2 is already on the latest version 0.53.0 on the stable channel (checked 5 min ago).'
+    assert note() == 'pax is already on the latest version 0.53.0 on the stable channel (checked 5 min ago).'
     assert updates.segment() == '' and len(checks) == 1, 'About checks again; the footer keeps the old answer meanwhile'
     checks.pop()()
-    assert note() == 'a new version 0.54.0 of clai2 is available on the stable channel (checked just now).'
+    assert note() == 'a new version 0.54.0 of pax is available on the stable channel (checked just now).'
     now[0] += 2 * ABOUT_MAX_AGE
     assert updates.segment() == 'update 0.54.0: /update' and not checks, 'the footer checks again only after an hour'
     now[0] += CHECK_MAX_AGE
     assert updates.segment() == 'update 0.54.0: /update' and len(checks) == 1, 'the old answer stays while it re-checks'
-    assert note() == 'a new version 0.54.0 of clai2 is available on the stable channel (checked 1 h ago).'
+    assert note() == 'a new version 0.54.0 of pax is available on the stable channel (checked 1 h ago).'
     assert len(checks) == 1, 'one check at a time'
 
 
@@ -1152,7 +1152,7 @@ def test_update_flag_installs_and_exits_without_restarting(
     held = Mock(return_value=None)
     monkeypatch.setattr(self_update, 'hold_environment', held)
     monkeypatch.setattr(app, 'chat', Mock(side_effect=AssertionError('--update starts no shell')))
-    monkeypatch.setattr('sys.argv', ['clai2', update, '--database', str(context.store.path)])
+    monkeypatch.setattr('sys.argv', ['pax', update, '--database', str(context.store.path)])
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == exit_code
@@ -1177,7 +1177,7 @@ def test_update_flag_refuses_windows_before_scheduling_an_install(
         return updates
 
     monkeypatch.setattr(self_update, 'Updates', build)
-    monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(tmp_path / 'c.db')])
+    monkeypatch.setattr('sys.argv', ['pax', '--update', '--database', str(tmp_path / 'c.db')])
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == 1
@@ -1198,7 +1198,7 @@ def test_update_flag_reports_a_failed_check(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(self_update, 'Updates', build)
-    monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(tmp_path / 'c.db')])
+    monkeypatch.setattr('sys.argv', ['pax', '--update', '--database', str(tmp_path / 'c.db')])
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == 1
@@ -1225,7 +1225,7 @@ def test_update_flag_rejects_session_options_before_installing(
 ) -> None:
     install = AsyncMock(return_value=0)
     monkeypatch.setattr(cli_module, '_update', install)
-    monkeypatch.setattr('sys.argv', ['clai2', update, '--database', str(tmp_path / 'c.db'), *argv])
+    monkeypatch.setattr('sys.argv', ['pax', update, '--database', str(tmp_path / 'c.db'), *argv])
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == 2
@@ -1253,7 +1253,7 @@ def test_update_flag_rejects_session_options_before_installing(
 def test_update_flag_rejects_other_modes(
     update: str, argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr('sys.argv', ['clai2', update, *argv])
+    monkeypatch.setattr('sys.argv', ['pax', update, *argv])
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == 2
@@ -1268,7 +1268,7 @@ def test_update_command_rejects_options_given_before_it(
     argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Options before `update`, and after a repeated `update`, are checked as they are with `--update`."""
-    monkeypatch.setattr('sys.argv', ['clai2', *argv])
+    monkeypatch.setattr('sys.argv', ['pax', *argv])
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == 2
@@ -1276,7 +1276,7 @@ def test_update_command_rejects_options_given_before_it(
 
 
 def test_help_lists_update(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr('sys.argv', ['clai2', '--help'])
+    monkeypatch.setattr('sys.argv', ['pax', '--help'])
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == 0

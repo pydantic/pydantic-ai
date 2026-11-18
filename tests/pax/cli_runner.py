@@ -34,7 +34,7 @@ class CliRunner:
         if cwd is not None:
             # Restored at teardown, including after `--worktree` changes into the checkout.
             self.monkeypatch.chdir(cwd)
-        self.monkeypatch.setattr(sys, 'argv', ['clai2', *args])
+        self.monkeypatch.setattr(sys, 'argv', ['pax', *args])
         # Piped, so `isatty()` is false as in a subprocess fed from a pipe.
         self.monkeypatch.setattr(sys, 'stdin', io.StringIO(input))
         self.capsys.readouterr()

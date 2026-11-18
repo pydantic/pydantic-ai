@@ -111,7 +111,7 @@ def test_entry_point_quiets_warnings_unless_requested(
         warnings.warn('from a library', LibraryWarning)
 
     monkeypatch.setenv('PYDANTIC_AI_NO_BANNER', '1')
-    monkeypatch.setattr(sys, 'argv', ['clai2', 'config'])
+    monkeypatch.setattr(sys, 'argv', ['pax', 'config'])
     monkeypatch.setattr(sys, 'warnoptions', warnoptions)
     monkeypatch.setattr(pydantic_ai_pax.cli.cli, 'run', run)
     with warnings.catch_warnings(record=True) as caught:
@@ -150,7 +150,7 @@ def test_entry_point_keeps_telemetry_export_logs_off_stderr(monkeypatch: pytest.
         logging.getLogger('pydantic_ai_pax.example').warning('not telemetry')
 
     monkeypatch.setenv('PYDANTIC_AI_NO_BANNER', '1')
-    monkeypatch.setattr(sys, 'argv', ['clai2', 'config'])
+    monkeypatch.setattr(sys, 'argv', ['pax', 'config'])
     monkeypatch.setattr(sys, 'stderr', stderr)
     # pytest's log capture sits on the root logger; without it, `logging` falls back to stderr as in the CLI.
     monkeypatch.setattr(logging.root, 'handlers', [])

@@ -312,7 +312,7 @@ async def test_headless_fork(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     ],
 )
 def test_invalid_flag_combinations(monkeypatch: pytest.MonkeyPatch, args: list[str]) -> None:
-    monkeypatch.setattr('sys.argv', ['clai2', *args])
+    monkeypatch.setattr('sys.argv', ['pax', *args])
     with pytest.raises(SystemExit) as error:
         cli.run()
     assert error.value.code == 2
@@ -321,7 +321,7 @@ def test_invalid_flag_combinations(monkeypatch: pytest.MonkeyPatch, args: list[s
 @pytest.mark.parametrize('prompt', [False, True])
 def test_flags_reach_the_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prompt: bool) -> None:
     argv = ['--database', str(tmp_path / 'config.db'), '--resume', 'x', '--fork-session']
-    monkeypatch.setattr('sys.argv', ['clai2', *argv, '--session-id', NEW_ID.upper(), *(['-p', 'hi'] if prompt else [])])
+    monkeypatch.setattr('sys.argv', ['pax', *argv, '--session-id', NEW_ID.upper(), *(['-p', 'hi'] if prompt else [])])
     seen: list[tuple[str | None, bool]] = []
 
     async def launch(*, session_id: str | None, fork_session: bool, **_: object) -> int:
@@ -381,7 +381,7 @@ def test_continue_resumes_the_newest_session_here(
         monkeypatch.chdir(directory)
         monkeypatch.setattr(
             'sys.argv',
-            ['clai2', '--database', str(tmp_path / 'config.db'), '-c', '--fork-session', '--session-id', NEW_ID, *mode],
+            ['pax', '--database', str(tmp_path / 'config.db'), '-c', '--fork-session', '--session-id', NEW_ID, *mode],
         )
         try:
             cli.run()

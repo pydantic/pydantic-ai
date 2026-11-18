@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import re
 import sqlite3
 import stat
 from collections.abc import Generator, Iterable, Mapping
@@ -20,6 +21,8 @@ _CHAIN: TypeAdapter[list[str]] = TypeAdapter(list[str])
 # Keep the original IDs on disk so older builds share the same preferences, without loading a second plugin.
 _PLUGIN_NAMES = {'logfire': 'observability'}
 _STORED_PLUGIN_NAMES = {name: stored for stored, name in _PLUGIN_NAMES.items()}
+_CURRENT_PACKAGE = re.compile(r'^pydantic_ai_pax(?=[.:]|$)')
+"""Factories are stored under `pydantic_clai2`, which older builds import too; `PluginSettings` renames it on read."""
 
 
 def canonical_plugin_id(plugin_id: str) -> str:
@@ -363,7 +366,8 @@ class SettingsStore:
         `overwrite=False` atomically rejects an existing declaration, including a legacy ID alias.
         """
         current_id = canonical_plugin_id(plugin.id)
-        plugin = plugin.model_copy(update={'id': _stored_plugin_id(current_id)})
+        stored_factory = _CURRENT_PACKAGE.sub('pydantic_clai2', plugin.factory)
+        plugin = plugin.model_copy(update={'id': _stored_plugin_id(current_id), 'factory': stored_factory})
         with self._connect() as connection:
             if not overwrite:
                 connection.execute('BEGIN IMMEDIATE')

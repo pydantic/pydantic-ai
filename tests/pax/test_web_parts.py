@@ -769,7 +769,7 @@ async def test_run_web_needs_a_session_id_to_resume(tmp_path: Path) -> None:
 def test_web_flag_rejects(
     argv: list[str], error: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(sys, 'argv', ['clai2', *argv])
+    monkeypatch.setattr(sys, 'argv', ['pax', *argv])
     with pytest.raises(SystemExit):
         cli.run()
     assert error in capsys.readouterr().err
@@ -784,7 +784,7 @@ def test_web_flag_runs_the_web_ui(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr('pydantic_ai_pax.cli.web.run_web', fake_run_web)
     monkeypatch.setattr(
-        sys, 'argv', ['clai2', '--web', '--database', str(tmp_path / 'c.db'), '-m', 'test', '--request-limit', '7']
+        sys, 'argv', ['pax', '--web', '--database', str(tmp_path / 'c.db'), '-m', 'test', '--request-limit', '7']
     )
     with pytest.raises(SystemExit) as exited:
         cli.run()
@@ -823,12 +823,12 @@ def test_web_flag_reads_a_private_token_file(
         return Worktree(path=elsewhere, branch='clai-x', head='0', created=False)
 
     monkeypatch.setattr(cli, '_enter_worktree', enter_worktree)
-    argv = ['clai2', '--web', '--database', 'c.db', '--port', '4567', '--token-file', 'token', '--worktree', 'x']
+    argv = ['pax', '--web', '--database', 'c.db', '--port', '4567', '--token-file', 'token', '--worktree', 'x']
     monkeypatch.setattr(sys, 'argv', argv)
     cli.run()
     [call] = calls
     assert (call['token'], call['port']) == ('a' * 40, 4567)
-    argv = ['clai2', '--web', '--database', str(tmp_path / 'c.db'), '--token-file', str(token)]
+    argv = ['pax', '--web', '--database', str(tmp_path / 'c.db'), '--token-file', str(token)]
     monkeypatch.setattr(sys, 'argv', argv)
     for mode, text, error in (
         (0o644, 'a' * 40, 'must belong to you and be readable by you alone'),
@@ -894,7 +894,7 @@ def test_web_flag_returns_after_the_web_ui(tmp_path: Path, monkeypatch: pytest.M
         await asyncio.sleep(0)
 
     monkeypatch.setattr('pydantic_ai_pax.cli.web.run_web', fake_run_web)
-    monkeypatch.setattr(sys, 'argv', ['clai2', '--web', '--database', str(tmp_path / 'c.db')])
+    monkeypatch.setattr(sys, 'argv', ['pax', '--web', '--database', str(tmp_path / 'c.db')])
     cli.run()
 
 

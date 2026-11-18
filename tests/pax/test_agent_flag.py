@@ -132,7 +132,7 @@ def test_import_agent_errors(path: str, error: type[Exception], message: str) ->
 )
 @pytest.mark.usefixtures('fixture_module')
 def test_cli_rejects_bad_agent(monkeypatch: pytest.MonkeyPatch, args: list[str]) -> None:
-    monkeypatch.setattr('sys.argv', ['clai2', '--database', 'config.db', *args])
+    monkeypatch.setattr('sys.argv', ['pax', '--database', 'config.db', *args])
     with pytest.raises(SystemExit) as error:
         cli.run()
     assert error.value.code == 2
@@ -149,9 +149,7 @@ def test_cli_chats_with_agent_and_no_plugins(
     store.set('model', 'saved:model')
     monkeypatch.delenv('CLAI_MODEL', raising=False)
     model_args = ['-m', cli_model] if cli_model else []
-    monkeypatch.setattr(
-        'sys.argv', ['clai2', '--database', str(store.path), '--agent', f'{_MODULE}:{attr}', *model_args]
-    )
+    monkeypatch.setattr('sys.argv', ['pax', '--database', str(store.path), '--agent', f'{_MODULE}:{attr}', *model_args])
     seen: list[tuple[AbstractAgent[None, object], Settings | None, bool]] = []
 
     async def chat(
@@ -178,7 +176,7 @@ class TestCodeMode:
     ) -> None:
         store = SettingsStore(fixture_module / 'config.db')
         store.set('run.speculative_code_mode', True)
-        monkeypatch.setattr('sys.argv', ['clai2', '--database', str(store.path), '-a', f'{_MODULE}:agent'])
+        monkeypatch.setattr('sys.argv', ['pax', '--database', str(store.path), '-a', f'{_MODULE}:agent'])
         seen: list[Settings] = []
 
         async def chat(_agent: object, *, settings: Settings, **_: object) -> None:
@@ -197,7 +195,7 @@ class TestCodeMode:
 
 
 def test_cli_prompt_passes_agent_to_headless(fixture_module: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr('sys.argv', ['clai2', '--database', 'config.db', '--agent', f'{_MODULE}:agent', '-p', 'hi'])
+    monkeypatch.setattr('sys.argv', ['pax', '--database', 'config.db', '--agent', f'{_MODULE}:agent', '-p', 'hi'])
     seen: list[AbstractAgent[None, object] | None] = []
 
     async def run_headless(*, agent: AbstractAgent[None, object] | None, **_: object) -> int:
