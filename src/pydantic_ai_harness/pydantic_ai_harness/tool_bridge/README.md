@@ -37,11 +37,11 @@ A tool added, removed or changed mid-run changes what `tool_search` finds, not t
 These tools are never bridged, so they reach the model as usual:
 
 - Tools that need approval or run outside the agent (`requires_approval=True`, external tools), so approval requests name the real tool. A bridged tool that raises `ApprovalRequired` or `CallDeferred` itself can be resolved by a [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/) handler, which sees the tool's own name; a denial is recorded as the `tool_call` call's denied outcome. Without a handler that resolves it, the run fails with a `UserError` rather than deferring `tool_call`, whose approval would cover whichever tool the model named. Keep such a tool native with `tools`, for example the tools of a toolset wrapped with `approval_required()`, if it needs approval from outside the run.
-- Framework control tools, such as tool search and `load_capability`.
+- Tools with a `tool_kind`, such as tool search, `load_capability` and `FileSystem`'s `read_file`, which the run and other capabilities find by kind (`ToolOutputLimits`, `Memory` and compaction among them), and tools that step aside for one with `unless_tool_kind`, so the run leaves out the same tools it would without the bridge.
 - Code-execution tools, such as Code Mode's `run_code` and Shell's `run_command`, which take a program as a string argument, so it isn't sent JSON-escaped inside `args_json`.
 - Local fallbacks for a provider-native tool (`unless_native`), so the model can drop them when the provider runs the tool natively.
 
-Tools with `defer_loading=True` are bridged and found with `tool_search`, so [`ToolSearch`](https://pydantic.dev/docs/ai/capabilities/tool-search/) has nothing left to reveal. Deferred tools that a capability owns, such as the tools of a capability with `defer_loading=True`, stay native, so core's tool search and `load_capability` reveal them as usual. Tools that `unless_tool_kind` decides between, one stepping aside for another's kind, stay native, so the run leaves out the same tools it would without the bridge. The tool names `tool_search`, `tool_describe` and `tool_call` are reserved: an agent tool with one of them raises a `UserError`.
+Tools with `defer_loading=True` are bridged and found with `tool_search`, so [`ToolSearch`](https://pydantic.dev/docs/ai/capabilities/tool-search/) has nothing left to reveal. Deferred tools that a capability owns, such as the tools of a capability with `defer_loading=True`, stay native, so core's tool search and `load_capability` reveal them as usual. The tool names `tool_search`, `tool_describe` and `tool_call` are reserved: an agent tool with one of them raises a `UserError`.
 
 ## Trade-offs
 

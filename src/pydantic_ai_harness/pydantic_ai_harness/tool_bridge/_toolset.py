@@ -25,7 +25,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import WrapperToolset
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
-from pydantic_ai_harness._code_tools import FRAMEWORK_CONTROL_TOOL_KINDS, is_code_execution_tool, reserve_nested_call
+from pydantic_ai_harness._code_tools import is_code_execution_tool, reserve_nested_call
 
 SEARCH_TOOL_NAME = 'tool_search'
 DESCRIBE_TOOL_NAME = 'tool_describe'
@@ -121,15 +121,10 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         """Return the dispatcher tools plus the tools that aren't bridged."""
         native: dict[str, ToolsetTool[AgentDepsT]] = {}
         bridged: dict[str, ToolsetTool[AgentDepsT]] = {}
-        tools = await self.wrapped.get_tools(ctx)
-        # The run's `unless_tool_kind` filter only sees native tools, so the tools it decides between stay native.
-        superseding = {kind for tool in tools.values() if (kind := tool.tool_def.unless_tool_kind) is not None}
-        for name, tool in tools.items():
+        for name, tool in (await self.wrapped.get_tools(ctx)).items():
             if name in _DISPATCHERS:
                 raise UserError(f'Tool name {name!r} is reserved for `ToolBridge`. Rename the tool.')
-            tool_def = tool.tool_def
-            steps_aside = tool_def.unless_tool_kind is not None or tool_def.tool_kind in superseding
-            if not steps_aside and await self._bridges(ctx, tool_def):
+            if await self._bridges(ctx, tool.tool_def):
                 # The bridge discloses its tools itself, so tool search must not hold a deferred one back.
                 bridged[name] = replace(tool, tool_def=replace(tool.tool_def, defer_loading=False))
             else:
@@ -155,14 +150,19 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
     async def _bridges(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> bool:
         """Whether a wrapped tool goes behind the bridge.
 
-        Framework control tools, local fallbacks for native tools, tools that need approval or run outside
-        the agent, code-execution tools, whose program would otherwise travel JSON-escaped in `args_json`,
-        and deferred tools a capability owns stay native, the last so core's tool search and capability
-        loading reveal them without changing the tool definitions already sent.
+        Tools that stay native:
+
+        - tools with a `tool_kind`, which capabilities and the run find by kind (framework control tools,
+          `read_file`), and tools that step aside for one (`unless_tool_kind`), so the run's filter sees both;
+        - local fallbacks for native tools, and tools that need approval or run outside the agent;
+        - code-execution tools, whose program would otherwise travel JSON-escaped in `args_json`;
+        - deferred tools a capability owns, so core's tool search and capability loading reveal them without
+          changing the tool definitions already sent.
         """
         return (
             tool_def.kind == 'function'
-            and tool_def.tool_kind not in FRAMEWORK_CONTROL_TOOL_KINDS
+            and tool_def.tool_kind is None
+            and tool_def.unless_tool_kind is None
             and not tool_def.unless_native
             and not is_code_execution_tool(tool_def)
             and not (tool_def.defer_loading and tool_def.capability_id is not None)

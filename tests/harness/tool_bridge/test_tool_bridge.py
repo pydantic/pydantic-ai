@@ -615,3 +615,15 @@ class TestToolBridge:
 
         with pytest.raises(UserError, match=r"Tool 'track' raised `CallDeferred` behind `ToolBridge`"):
             await agent.run('where is my order?')
+
+    async def test_tools_with_a_kind_stay_native(self, tmp_path: Path):
+        seen: list[list[str]] = []
+        agent = Agent(
+            _scripted([], seen),
+            tools=[_get_weather],
+            capabilities=[FileSystem(), LocalWorkspace(tmp_path), ToolBridge()],
+        )
+
+        await agent.run('hi')
+
+        assert 'read_file' in seen[0] and '_get_weather' not in seen[0]
