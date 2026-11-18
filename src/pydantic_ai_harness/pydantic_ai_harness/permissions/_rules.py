@@ -27,13 +27,15 @@ _OPERATOR_CHARS = frozenset('();<>|&')
 _UNSPLITTABLE = ('$', '`', '<(', '>(', '\n', '\r')
 _LOOSE_SPLIT = re.compile(r'[\s;&|()<>`${}]+')
 _UNSPLITTABLE_OPERATOR = re.compile(r'[()]|<<|;;')
-_GLOB = re.compile(r'[*?]|\[[^\]]*\]')
+_GLOB = re.compile(r'[*?]|\[[^\[\]]*\]')
 """A pattern the shell expands: `*`, `?`, or a closed bracket expression, so the `[` builtin isn't one."""
 _LITERAL = re.compile(r'[^*?\[\]]')
 _OPTIONS = re.compile(r'-[A-Za-z]+')
-_REDIRECTION = re.compile(r'\d*[<>]+&?\s*[^\s;&|<>()]*')
+_REDIRECTION = re.compile(r'(?<!\d)\d*[<>]+&?\s*[^\s;&|<>()]*')
 _GLOB_LIMIT = 4096
-"""Longer argument values aren't globbed, which could take quadratic time: ask and deny rules match them, allow rules don't."""
+"""Longer argument values aren't globbed, which could take quadratic time: ask and deny rules match them."""
+_COMMAND_LIMIT = 65536
+"""Longer commands aren't parsed: no rule allows them, and they ask when an ask or deny command rule applies."""
 _HARMLESS_REDIRECTS = frozenset({('>', '/dev/null'), *(('>&', str(fd)) for fd in range(10))})
 
 
@@ -58,16 +60,17 @@ class PermissionRule(Generic[AgentDepsT]):
 
     Only tools that declare a shell command argument (`code_arg_language='shell'` and a `code_arg_name` in their
     metadata) match a rule with a `command`. An `'allow'` rule matches a simple command that starts with these
-    words and has no redirection other than to `/dev/null` or a file descriptor. An `'ask'` or `'deny'` rule
-    matches one that contains its first word followed by the others in order, other words allowed in between, or
-    quoted text that does (where a deny asks instead, as the text may be data), with a short-option cluster such as `-rf` matching those options in any grouping. So `sudo git -C x push`
-    matches `'git push'`, and its
-    first word also matches a path ending in it, so `/bin/rm -rf x` matches `'rm -rf'`. A word that is a pattern, such as
-    `r[m]`, matches the words it could expand to.
+    words and has no redirection other than to `/dev/null` or a file descriptor.
+
+    An `'ask'` or `'deny'` rule matches a simple command that contains its first word followed by the others in order,
+    other words allowed in between, so `sudo git -C x push` matches `'git push'`. A short-option cluster such as `-rf`
+    matches those options in any grouping, the first word also matches a path ending in it, such as `/bin/rm`, and a
+    pattern such as `r[m]` matches the words it could expand to. Quoted text that matches may only be data, so there a
+    deny rule asks instead.
     """
 
     args: Mapping[str, str] = field(default_factory=dict[str, str])
-    """Globs for string arguments by name, such as `{'path': 'docs/*'}`. A missing or non-string argument does not match.
+    """Globs for string arguments by name, such as `{'path': 'docs/*'}`; a missing or non-string argument doesn't match.
 
     An `'allow'` rule that globs a shell tool's command argument never matches: use `command` to allow commands.
 
@@ -110,7 +113,7 @@ def _words(command: str) -> list[str]:
 
 
 def _chars(command: str) -> Iterator[tuple[str, str]]:
-    """Each character of `command` other than quoting syntax, with how it is quoted: unquoted, in single or double quotes, or escaped."""
+    """Each character of `command` other than quoting syntax, with how it is quoted: `''`, a quote, or a backslash."""
     quote = ''
     escaped = comment = False
     previous = ' '
@@ -193,7 +196,7 @@ def _loose(words: Iterable[str]) -> list[str]:
 
 
 def _matches_word(word: str, expected: str) -> bool:
-    """Whether `word` is `expected`, or a pattern with a literal character the shell could expand into it, such as `r[m]`.
+    """Whether `word` is `expected`, or a pattern with a literal character that could expand into it, such as `r[m]`.
 
     A bare wildcard such as `*` stands for any file, not for the program or flag a rule names.
     """
@@ -277,6 +280,20 @@ _UNSPLITTABLE_RULE = PermissionRule[Any](
 )
 
 
+def _restricts(rules: Iterable[PermissionRule[Any]]) -> bool:
+    return any(rule.verdict != 'allow' for rule in rules)
+
+
+def _unquoted(command: str) -> str:
+    """`command` with quoted spaces and punctuation as placeholders, so quoted text stays one word."""
+    return ''.join('\0' if how and _LOOSE_SPLIT.match(char) else char for char, how in _chars(command))
+
+
+def _globbed_name(segments: Iterable[_Segment]) -> bool:
+    """Whether a command name is a pattern, such as `/bin/r[m]`, which the shell expands into the program run."""
+    return any(_GLOB.search(segment.words[0]) for segment in segments if segment.words)
+
+
 def _unsplittable_rule(
     rules: Sequence[PermissionRule[Any]], command: str, *, expands: bool, posix: bool = True
 ) -> PermissionRule[Any] | None:
@@ -285,7 +302,7 @@ def _unsplittable_rule(
     When the shell `expands` part of it, a rule's words could be hidden, so an ask or deny rule makes it ask.
     PowerShell names are case-insensitive, so without `posix` words are compared ignoring case.
     """
-    if all(rule.verdict == 'allow' for rule in rules):
+    if not _restricts(rules):
         return None
     fold = str if posix else str.lower
     restrictive = [(rule, _loose(_words(fold(rule.command or '')))) for rule in rules if rule.verdict != 'allow']
@@ -294,20 +311,19 @@ def _unsplittable_rule(
         words = _loose([fold(_REDIRECTION.sub(' ', text))])
         return _strictest(rule for rule, rule_words in restrictive if _contains(words, rule_words))
 
-    # Quoted text stands in as one placeholder per character, so a match there alone may only be data.
-    unquoted = ''.join(char if not how else '\0' for char, how in _chars(command))
     everywhere = _as_data(strictest_in(re.sub(r'[\'"\\]', '', command)))
-    found = _strictest(rule for rule in (strictest_in(unquoted), everywhere) if rule is not None)
+    found = _strictest(rule for rule in (strictest_in(_unquoted(command)), everywhere) if rule is not None)
     return found or (_UNSPLITTABLE_RULE if expands else None)
 
 
 def _command_rule(rules: Sequence[PermissionRule[Any]], command: str, *, posix: bool) -> PermissionRule[Any] | None:
     """The rule deciding a shell command: the strictest any simple command matches, `'allow'` only if all do."""
+    if len(command) > _COMMAND_LIMIT:
+        return _UNSPLITTABLE_RULE if _restricts(rules) else None
     segments = _segments(command) if posix else None
     if segments is None:
         return _unsplittable_rule(rules, command, expands=_expands(command), posix=posix)
-    if any(_GLOB.search(segment.words[0]) for segment in segments if segment.words):
-        # A pattern in a command name, such as `/bin/r[m]`, is expanded by the shell into the program run.
+    if _globbed_name(segments):
         return _unsplittable_rule(rules, command, expands=True)
     parsed = [_CommandRule(rule, words := _words(rule.command or ''), _loose(words)) for rule in rules]
     deciders = [_segment_rule(parsed, segment) for segment in segments]
@@ -318,7 +334,7 @@ def _command_rule(rules: Sequence[PermissionRule[Any]], command: str, *, posix: 
 
 
 def _arg_matches(rule: PermissionRule[Any], value: object, glob: str, *, posix: bool) -> bool:
-    """Whether a string argument matches `glob`, as given and as a normalized path: both for `'allow'`, either otherwise.
+    """Whether a string argument matches `glob` as given and as a normalized path: both for `'allow'`, else either.
 
     For `'ask'` and `'deny'` the glob also matches the end of a longer path, such as an absolute one. On Windows
     paths are compared case-insensitively, with `/` for separators.

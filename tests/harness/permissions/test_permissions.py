@@ -31,6 +31,7 @@ from pydantic_ai_harness.permissions import (
     PermissionRequest,
     PermissionRule,
     Permissions,
+    PermissionVerdict,
     RememberedApproval,
     ask_permissions,
     permission_requests,
@@ -512,7 +513,7 @@ class TestPermissionRules:
             ('echo a\\ b', 'allow'),
             ('echo "rm -rf /"', 'ask'),
             ('sh -c "rm -rf /"', 'ask'),
-            ('echo $(date); "rm" -rf /', 'ask'),
+            ('echo $(date); "rm" -rf /', 'deny'),
             ('ls; rm -rf /', 'deny'),
             ('sudo rm -rf /', 'deny'),
             ('/bin/rm -rf build', 'deny'),
@@ -589,6 +590,8 @@ class TestPermissionRules:
                 'ask',
             ),
             ('rm -rf / # $(x)', [PermissionRule('deny', command='rm -rf')], 'deny'),
+            ("'rm' -rf /\ntrue", [PermissionRule('deny', command='rm -rf')], 'deny'),
+            ('r\\m -rf /\ntrue', [PermissionRule('deny', command='rm -rf')], 'deny'),
             ('git commit -m "push the fix"', [PermissionRule('ask', command='git push')], 'allow'),
             ('git commit -m "stop using rm -rf in CI"', [PermissionRule('deny', command='rm -rf')], 'ask'),
             ('grep -rn "rm -rf" .', [PermissionRule('deny', command='rm -rf')], 'ask'),
@@ -696,6 +699,15 @@ class TestPermissionRules:
 
         assert await _verdict('git status; python evil.py', rules) == 'ask'
         assert await _verdict('git status', rules) == 'ask'
+
+    @pytest.mark.parametrize(('verdict', 'expected'), [('deny', 'ask'), ('allow', 'allow')])
+    async def test_long_commands_are_not_parsed(
+        self, monkeypatch: pytest.MonkeyPatch, verdict: PermissionVerdict, expected: str
+    ) -> None:
+        """A huge command could block the event loop to parse: ask and deny rules make it ask, else the mode decides."""
+        monkeypatch.setattr('pydantic_ai_harness.permissions._rules._COMMAND_LIMIT', 8)
+
+        assert await _verdict('echo 123456789', [PermissionRule(verdict, command='curl')], 'full') == expected
 
     async def test_long_argument_values_are_not_globbed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Globbing a huge value could take quadratic time, so ask and deny rules match it and allow rules don't."""
