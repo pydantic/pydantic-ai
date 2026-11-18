@@ -1,0 +1,145 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "325"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6.1-sol
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: >-
+            How many integers from 1 to 1000 inclusive are divisible by 3 or 5 but not by
+            7? Work it out carefully, then answer with just the number.
+        reasoning:
+          effort: high
+          context: all_turns
+          summary: auto
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "4435"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0c066b6e4f4b2dce006ada83c04bdc87d198161a4366ef9e93
+        object: response
+        created_at: 1792705472
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1792705476
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6.1-sol
+        moderation: null
+        output:
+        - id: rs_0c066b6e4f4b2dce006ada83c1c1dc87d1a0a2b29723aac4de
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABq2oPEUhxXDoyUSy7OFXABkaLGNH9HSgSlJ_-m8yrA8cgPUsnplJ7jYYlhNwvE49s9vgP6mzAelqYRKp3ZXEyujIF0y-YMP2io6OZmW_6PqNK63U4qRRAqhQ41NDjHPC5DDmjmad7EMs0YOApJY2oUxBWteTbk0-YymupSCE8codrywuQP393u0ZZ5ENQax-CAnMkST752MiMMNey59lfMWnWTdgTqiACpjDA8vdPzL-ZGDkE2c4D1sw5mNlFEUlmN3vVD5nCCHg2jly1W_7654PSm4LiU8Q0JSfFGyWdTRd3bBAnZ0FLtmf9qUjWQtvykp_aYqmnCWuuZyR1XdlStfrq4heb_2ASMLhhxFQZKA0hkpKw5xfLy_HHWyRiJXAJVBq-V1e5al6ELfmWRnburLngTA8knXVs4PXY5pZVY12nifYL7eMMlzLDKdoOY952BCRpGD34KMWLOkJIcQHqV7B1iSknHkaj0HlYDuMTxiPLWpQ0ggatvvGe-YJD7EEOTWCwey-GaS5bUz68-XSHvV5Wm944V9uqmIiHCBFEM-nN_8Sw1cv98lgiIySVaY246WAOkpsoX77iF6hM8gaHcwV6QR6Hk5uAJAADLwrI99i2_iQjmfOMSpzk-KhBBA4tD8aV4A3xOj__Xsy6TOIfB6kgY2DR8KFBOpBzmP1kX-hHr2fjgqjJNka02aSW2rjumbwrHOORGm9CZWbAtqqyk2F16wrfcW9euqRHbZjxApcy2xyfkyF-U5hzgCeNB7JtmP6ohmO94XXThn0RqcUxM_g226o-FRgErldrf4DHfiP2bzoiHT7KnqSDqnaqf1JVL9zZvAgdy6PtStxJOXK1HagDZea-ZgWHVYwf-o77qpaoNJfhNx9qpWrOSdxz2CKrHtxIwevRTdl_A3MY-f8YmTqh9KC_ioB9D6_neMeae2045eD-PGW2m2jKlfHlr7bQUP4w_cRLuCjSUGYM0vBvkTPUsnVEdsseIODhSA80ODzmM-EsBC_lrA1OBOxPdCswLg2oLHI0iJ6aiXd3AvtUuJgqOWZa2hT4CLk3EQjvQuBmHs2egIQktiCzSLXRW8upteC5s-Xb2DhmGDSSh6pDKKbKR-zOzQeL3GkbTBWfwzq-KhcvPWhQUFItHnP4QhZmz-djodc1IgbJbfJuFSoAn38n8QMGLURc4Gq-bBh6EIl2kkG5S5beY_4QsCnDiAlRyaph8Qi3TvIIkXd42wyZDjfbSlsaLOQxqGY8EeX7HCN050qiQFFgbN5nq1PHxRbOJMFpRJvYK_KGSqiTgazy5FokJy7Tcgi-Cf1VU9mN6vi8zrlJHx7C23K7Vk6YQK1GfJzAO_jPAvrsOV0GCvviJmX6RZBdDAkg9KSsJpYWgSxUeQa8dCVwcwnWYnsLoctrLmI-buuNlqmcFbo5g7IFWnZ-EYZHuhbgZuMWyUu9u5Dh7PKOiO9O08hsyOf1z6Y4vay5FJwj8w3BYLHpM2Ter4TDXllSKdmU3LWwHuMAvugXDjm_fqLCzGkD9Ps9h9Wf0nn8jK_-uxEnAJgeKlskJfiUXmK_-Ltd4oMiOYudlpY9zjLDAyoCRNSSm7nYhtugu0U3DAl4aOpewnya1H17aoDLY8Gos2uN_v8nxCyp29c2IgGu1N8YVb0KzOMV_dWGlTTU-7GKnfp_gmWUjhvNR0wviAVBz97InYwMQxIBTQeouPMlIGE_Md-eLt_k26viO6HevAuKmQEjP5oLXVzGDDI-7bKO7vx9dry2X11Z4d17BHBKcy2XcOgKuxe_FIs_BSBagqLD3hMIaBzI_Bg-CgEx-VJuHxGzQFekdnZ30YXD9zUgFUllk7ZFPTl9tvcvzU5yykYOg0FBgS0xral7bzcATB_AAwjTORr3rlHDNhALvWHZ63qXai8gjjgNkp3qJOwpnPVN95DuNYwNRJaoKcpxGixLdyUHRTec7HMPng1-2Wv-aHcRACd0eRvqvodc7U5KlYrz7PulafTugsx5scWzckc1Ie1iPShBT8rOQvMKx6wVDsKyydqkUi2Y7Uvdh_NjOyHgz7WFmsJjxYdeC5VA8IgR-Ut7xpNl7qTWpgIU40OOjZ5M4qZ4aoPU1xy33z4leXVKmuyl5JN2kzoaHezMGGytyXuJkQPFBdFROYHU81Dw=
+          summary:
+          - type: summary_text
+            text: |-
+              **Calculating divisible integers**
+
+              I need to compute the integers divisible by 3 or 5 but not by 7. The calculations start with the total of floor(1000/3), which gives 333, plus 200 and subtracting 66, resulting in 467. I also need to exclude those divisible by 21 or 35, leading me to add 47 and 28, then subtract 9, giving a total of 66. After all checks, the final result is just 401.
+        - id: msg_0c066b6e4f4b2dce006ada83c43fc887d1b9318df58cbeb220
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: "401"
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: high
+          mode: standard
+          summary: detailed
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 43
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 85
+          output_tokens_details:
+            reasoning_tokens: 78
+          total_tokens: 128
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-22T21:44:36.742103+00:00

@@ -1,0 +1,642 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "341"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              How many integers from 1 to 1000 inclusive are divisible by 3 or 5 but not by
+              7? Work it out carefully, then answer with just the number.
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        thinking:
+          type: enabled
+          budget_tokens: 16384
+          display: summarized
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=249
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-c15bd149bc515689710ca9754fae0868-222c9f43a6e6e41a-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CgJcp8w3Po3Rvv3Tf5Bzd","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":78,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"not_available","speed":"standard"},"diagnostics":null} }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}        }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"I need to find integers from 1"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" to 1000 that"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" are divisible by 3 or"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 5 but not by 7"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":".\n\nLet"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" me use"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the inclusion-exclusion principle."}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\nFirst, let me find:"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n- A"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" ="}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" numbers"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" divisible by 3\n- B"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" = numbers divisible by 5"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n- C = numbers divisible by "}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"7"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\nI want"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" |"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"A ∪ B|"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" - "}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"|(A ∪ B)"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" ∩ C|"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\nFirst"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", let me find |A "}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"∪ B|:\n|"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"A ∪ B| ="}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" |A| + |B| -"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" |A ∩ B|"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n|"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"A| = floor"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"(1000/3) = "}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"333\n|B| = floor("}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"1000/5) = 200"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n|A ∩ B"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"| = numbers"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" divisible by both 3 and"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 5 = numbers"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" divisible by 15"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n|A ∩ B|"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" = floor(1000/15)"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" = 66\n\nSo |A "} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"∪ B| = 333"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" + 200 - 66"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" = 467"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\nNow"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" need to subtract"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the numbers that are divisible by "}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"3"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" or 5 AND"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" also divisible by 7."}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n|("}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"A ∪ B) "}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"∩ C| = "}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"|(A ∩"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" C"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":") ∪ (B "}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"∩ C)|"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n= |A ∩ C"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"| + |B ∩"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" C| - |A ∩"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" B ∩ C|"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n|A ∩ C|"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" = numbers"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" divisible by both"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 3 and 7"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" = numbers divisible by 21"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n|A"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" ∩ C| = floor"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"(1000/21) = "}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"47\n\n|"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"B ∩ C| ="}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" numbers divisible by both 5 "}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"and 7 = numbers divisible"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" by 35\n|B "}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"∩ C| = floor(1"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"000/35) = 28"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"|A ∩ B "}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"∩ C| = numb"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ers divisible by lcm"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"(3,5,7) ="}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 105,"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" so floor(1000/105"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":") = 9\n\nThat"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" gives |(A ∪"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" B) ∩ C"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"| = 47 + 28"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" - 9 = 66"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":","}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" so the final count"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" is 467 - 66 "}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"= 401. Let me ver"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ify this."} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Div"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"isible by 3: 333"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", by 5: 200,"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" by 15: 66, so"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" divisible by 3 or"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 5: 333 + "}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"200 - 66 = "}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"467,"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" matching before"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":".\n\nDivisible by "}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"21: 47, by 35"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":": 28, by 105:"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 9, so (3 or"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 5) and 7: "}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"47 + 28 - "}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"9 = 66,"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" also"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" consistent."}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"467"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" - 66 = 401"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", matching my"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" earlier result."}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"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"}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Looking"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" at this problem, I need to find"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" numbers"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" divisible by 3 or "}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"5,"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" then"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" exclude"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" those also"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" divisible by 7.\n\n**"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Step 1: Count"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" numbers divisible by 3 or"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 5**\n\nUsing"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" inclusion"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"-exclusion:"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n-"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Divisible by 3: "}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"⌊1000/3"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"⌋ = 333\n-"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Divisible by 5: "}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"⌊1000/5"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"⌋ = 200  "}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- Divisible by both"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 3 and 5 "}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"(i.e., by"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 15): ⌊1"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"000/15⌋ ="}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 66"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nNumbers"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" divisible by 3 or "}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"5:"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 333 + 200 -"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 66 = 467\n\n**"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Step 2: Count"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" numbers divisible by ("}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"3 or 5) AND"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" "}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"7**\n\nThese"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" are numbers divisible by:"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- Both"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 3 and 7"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" "}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"(i.e., by"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 21): ⌊1"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"000/21⌋ ="}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 47\n- Both 5 "}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"and 7 (i.e"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"., by 35): "}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"⌊1000/35⌋"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" = 28\n- All"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" of"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 3, 5, and "}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"7 (i.e., by"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 105): ⌊1"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"000/105⌋ ="} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 9\n\nUsing"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" inclusion-exclusion:"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 47 + 28 -"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 9 = 66\n\n**"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Step 3:"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Subtract to"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" get"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" final"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" answer**\n\nNumbers divisible by "}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"3 or 5 but NOT"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" by"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 7: 467 - "}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"66 = 401\n\n401"}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1       }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":78,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1197,"output_tokens_details":{"thinking_tokens":824}}       }
+
+        event: message_stop
+        data: {"type":"message_stop"         }
+
+  recorded_at: 2026-10-23T05:29:49.879877+00:00
