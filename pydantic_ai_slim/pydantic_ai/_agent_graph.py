@@ -1600,8 +1600,8 @@ def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_Tool
     # Fail closed, as resuming with `deferred_tool_results` does, rather than run the wrong one again.
     if repeated := [tool_call_id for (_, tool_call_id), count in calls.items() if count > 1]:
         raise exceptions.UserError(
-            'Tool call results cannot be matched unambiguously because the message history contains '
-            f'duplicate tool_call_id values: {repeated}'
+            f'Cannot resume the deferred pause because its model response repeats tool call IDs {repeated}; '
+            'call `repair_messages()` on the message history to abandon the waiting calls.'
         )
     return tuple(answered)
 

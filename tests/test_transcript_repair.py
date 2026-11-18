@@ -730,7 +730,7 @@ async def test_resuming_a_pause_whose_response_repeats_a_call_of_one_tool_fails_
     assert isinstance(paused.output, DeferredToolRequests)
     assert runs == ['notes']
 
-    with pytest.raises(UserError, match='duplicate'):
+    with pytest.raises(UserError, match=r"repeats tool call IDs \['call_1'\]; call `repair_messages\(\)`"):
         await agent.run(message_history=paused.all_messages())
     assert runs == ['notes']
     assert len(received) == 1
