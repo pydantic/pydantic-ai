@@ -119,7 +119,7 @@ _KEYSYMS = {
 keysyms already."""
 
 _COMMAND_TIMEOUT = 150
-"""Seconds one display command may take, on top of the pauses it asks for, such as a `hold_key`'s seconds."""
+"""Seconds one display command may take, on top of the pauses it asks for, such as a `hold_keys`'s seconds."""
 
 _TYPING_DELAY_MS = '12'
 """Milliseconds between typed characters, `xdotool type`'s default, and between the presses of a repeated key."""
