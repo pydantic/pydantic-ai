@@ -3993,7 +3993,7 @@ async def test_reasoning_effort_not_sent_for_always_on_model(
     assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
 
 
-@pytest.mark.parametrize('model_name', ['mistral-small-latest', 'mistral-large-4'])
+@pytest.mark.parametrize('model_name', ['mistral-small-latest', 'mistral-large-4', 'deepseek-v4-1-flash-1017'])
 async def test_reasoning_effort_not_sent_without_config(allow_model_requests: None, model_name: str) -> None:
     """Without any thinking config, reasoning_effort should be UNSET."""
     c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
@@ -4004,6 +4004,34 @@ async def test_reasoning_effort_not_sent_without_config(allow_model_requests: No
     result = await agent.run('hello')
     assert result.output == 'hello'
     assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
+
+
+@pytest.mark.parametrize(
+    'thinking,expected',
+    [
+        pytest.param(False, 'none', id='false'),
+        pytest.param('minimal', 'low', id='minimal'),
+        pytest.param('low', 'low', id='low'),
+        pytest.param('medium', 'high', id='medium'),
+        pytest.param(True, 'high', id='true'),
+        pytest.param('high', 'high', id='high'),
+        pytest.param('xhigh', 'high', id='xhigh'),
+        pytest.param('max', 'high', id='max'),
+    ],
+)
+async def test_reasoning_effort_deepseek_v4_flash_mapping(
+    allow_model_requests: None, thinking: ThinkingLevel, expected: str
+) -> None:
+    """`deepseek-v4-1-flash-1017` accepts `'none'`/`'low'`/`'high'`: `False`→`'none'`,
+    `'minimal'`/`'low'`→`'low'`, and every higher level→`'high'`."""
+    c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel('deepseek-v4-1-flash-1017', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=thinking))
+    assert result.output == 'thought deeply'
+    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == expected
 
 
 @pytest.mark.parametrize(

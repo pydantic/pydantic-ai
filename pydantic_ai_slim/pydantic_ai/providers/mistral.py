@@ -57,6 +57,12 @@ _ADJUSTABLE_REASONING_MODELS = frozenset(
 _LARGE_4_MODELS = frozenset({'mistral-large-4', 'mistral-large-4-0'})
 _LARGE_4_REASONING_EFFORTS: frozenset[MistralReasoningEffort] = frozenset({'low', 'medium', 'high'})
 
+# DeepSeek V4.1 Flash 1017, a third-party model hosted on Mistral's La Plateforme (Public Preview since
+# 2026-10-28). Listed as reasoning-capable at https://docs.mistral.ai/models/deepseek-v4-flash-1017.
+# Accepts `'none'`, `'low'` and `'high'` (confirmed live 2026-11; `'medium'` and `'max'` are unprobed).
+_DEEPSEEK_V4_FLASH_MODELS = frozenset({'deepseek-v4-1-flash-1017'})
+_DEEPSEEK_V4_FLASH_EFFORTS: frozenset[MistralReasoningEffort] = frozenset({'none', 'low', 'high'})
+
 
 class MistralProvider(Provider[Mistral]):
     """Provider for Mistral API."""
@@ -85,6 +91,15 @@ class MistralProvider(Provider[Mistral]):
                     supports_thinking=True,
                     thinking_always_enabled=True,
                     mistral_reasoning_efforts=_LARGE_4_REASONING_EFFORTS,
+                ),
+            )
+        elif model_name in _DEEPSEEK_V4_FLASH_MODELS:
+            profile = merge_profile(
+                profile,
+                MistralModelProfile(
+                    supports_thinking=True,
+                    thinking_always_enabled=False,
+                    mistral_reasoning_efforts=_DEEPSEEK_V4_FLASH_EFFORTS,
                 ),
             )
         return merge_profile(profile, ModelProfile(supports_inline_system_prompts=True))
