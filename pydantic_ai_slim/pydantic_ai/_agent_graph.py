@@ -1593,8 +1593,16 @@ def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_Tool
         for part in request.parts
         if _is_tool_result_part(part) and part.tool_call_id in call_ids
     ]
-    if not Counter((call.tool_name, call.tool_call_id) for call in response.tool_calls) - Counter(answered):
+    calls = Counter((call.tool_name, call.tool_call_id) for call in response.tool_calls)
+    if not calls - Counter(answered):
         return None
+    # A result can't tell apart calls with the same tool and ID, which `'graceful'` runs in separate batches.
+    # Fail closed, as resuming with `deferred_tool_results` does, rather than run the wrong one again.
+    if repeated := [tool_call_id for (_, tool_call_id), count in calls.items() if count > 1]:
+        raise exceptions.UserError(
+            'Tool call results cannot be matched unambiguously because the message history contains '
+            f'duplicate tool_call_id values: {repeated}'
+        )
     return tuple(answered)
 
 
