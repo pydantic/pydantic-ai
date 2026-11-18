@@ -205,6 +205,11 @@ Canonical guidance: [workflow rules](.github/workflows/AGENTS.md) and [securing 
 `LocalWorkspace` and `WindowsWorkspace` do not establish a security isolation boundary. Bypasses of file-tool containment or allow, deny, and read-only patterns that remain within the workspace process's existing OS authority are correctness bugs rather than security vulnerabilities, including when command execution is disabled. Evaluate security reports against documented security boundaries and the configured backend's guarantees. A sandbox protects only its configured boundary; selecting one does not make every file inside it confidential from the agent.
 
 Code Mode pool creation, connection, and checkout errors go to the application caller, not the model.
+When a remote sandbox's turns run as durable activities, the activity worker reads and writes the
+configured mounts, and each turn's prints and result, cut to 1 MiB, are kept in workflow history before
+any model-facing output limit applies. Errors from building or reaching the pool are recorded there by type only.
+Values cross a turn as a pickle whose unpickler loads only listed builtin value types, so a turn read
+back from history, including on replay, cannot import or call code.
 Remote host-side execution failures omit error details from model retries because pool URLs and
 credentials may appear in them. Sandbox diagnostics and nested tool results still reach the model;
 applications must keep secrets out of those outputs.
