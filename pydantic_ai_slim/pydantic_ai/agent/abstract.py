@@ -56,6 +56,7 @@ from ..tool_manager import ToolManager
 from ..tools import (
     AgentDepsT,
     AgentNativeTool,
+    DeferredToolRequests,
     DeferredToolResults,
     RunContext,
     Tool,
@@ -354,6 +355,11 @@ class _RunStreamEventsContext(Generic[OutputDataT], AbstractAsyncContextManager[
             # `run()`/`iter()`. Attached after `aclose()` so teardown-committed history is included.
             if isinstance(exc_value, asyncio.CancelledError):
                 self._iterator._attach_run_state(exc_value)  # pyright: ignore[reportPrivateUsage]
+
+
+def _recorded_at_pause(output: object, added: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
+    """What the run's end added to the history, when it paused for deferred tools; nothing at any other end."""
+    return added if isinstance(output, DeferredToolRequests) else []
 
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
@@ -1169,7 +1175,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
                                 # Like `next()`, but events emitted as the run ends also reach `event_stream_handler`.
                                 # Content queued at a deferred pause is recorded as the run ends, after `messages`
-                                # was copied, so it's carried over even if a handler fails on its event.
+                                # was copied, so it's carried over even if a handler fails on its event. Any other
+                                # end leaves `messages` as copied.
                                 recorded_from = len(graph_ctx.state.message_history)
                                 try:
                                     await agent_run._run_node_with_hooks(  # pyright: ignore[reportPrivateUsage]
@@ -1178,7 +1185,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                         event_stream_handler,
                                     )
                                 finally:
-                                    messages.extend(graph_ctx.state.message_history[recorded_from:])
+                                    messages.extend(
+                                        _recorded_at_pause(
+                                            final_result.output, graph_ctx.state.message_history[recorded_from:]
+                                        )
+                                    )
 
                                 # The tool calls above (and any agents they delegated to) added usage to the run
                                 # after the stream snapshotted it. The final response itself is only recorded once

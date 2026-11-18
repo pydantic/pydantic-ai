@@ -2603,6 +2603,30 @@ async def test_run_that_records_nothing_at_its_end_leaves_events_emitted_after_i
     assert not any(isinstance(event, Finished) for event in seen)
 
 
+async def test_run_stream_that_ends_normally_keeps_its_messages_as_copied():
+    """Only a deferred pause carries what the run's end adds to the history into the streamed result.
+
+    A capability that appends in `after_node_run` at a normal end stays out of `all_messages()`, as it always has.
+    """
+    late = ModelRequest(parts=[UserPromptPart(content='added after the end')])
+
+    @dataclass
+    class AppendAtEnd(AbstractCapability[object]):
+        async def after_node_run(
+            self, ctx: RunContext[object], *, node: AgentNode[object], result: NodeResult[object]
+        ) -> NodeResult[object]:
+            if isinstance(result, End):
+                ctx.messages.append(late)
+            return result
+
+    agent = Agent(TestModel(), capabilities=[AppendAtEnd()])
+
+    async with agent.run_stream('Hello') as result:
+        assert await result.get_output() == 'success (no tool calls)'
+
+    assert late not in result.all_messages()
+
+
 async def test_content_recorded_when_run_stream_finds_a_deferred_result_reaches_the_handler():
     """`run_stream()` ends the run itself once the stream finds a deferred result, and the run's last events get out.
 

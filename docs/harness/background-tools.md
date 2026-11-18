@@ -147,9 +147,9 @@ Running out of retries or raising `CancelledError` also ends the run. The run en
 a model request already in progress finishes first. A tool can call `ctx.cancel()` to stop the run and
 the other background tools.
 
-A run waits for its background tools to finish when it pauses for deferred tools, and a pending call
-counts toward `tool_calls_limit`. At the pause, the results are added to the message history after
-the paused step, in the order the calls were made, so a resumed run sees them, even after a restart.
+A run waits for its background tools to finish, also when it pauses for deferred tools. A pending call
+counts toward `tool_calls_limit`. At a deferred-tool pause, the results are added to the message history
+after the paused step, in the order the calls were made, so a resumed run sees them, even after a restart.
 A failed tool still ends the run.
 
 Results stay queued instead, and `BackgroundTools` doesn't queue them again, in two cases:
