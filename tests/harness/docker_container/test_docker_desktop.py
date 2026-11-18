@@ -147,6 +147,15 @@ async def test_a_shell_command_finds_the_desktop_running(docker: FakeDocker, con
     assert docker.xvfb_starts == 1
 
 
+async def test_a_command_env_with_an_invalid_name_is_refused_before_docker_runs(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    with pytest.raises(ValueError, match="invalid environment variable name: 'A-B'"):
+        await _desktop(container_dir, image='my-desktop').run(['true'], env={'A-B': '1'})
+
+    assert docker.calls == []
+
+
 async def test_a_display_in_env_does_not_move_the_desktop(docker: FakeDocker, container_dir: Path) -> None:
     backend = DockerContainerBackend(
         image='my-desktop', working_dir=str(container_dir), desktop=True, env={'DISPLAY': ':0'}
