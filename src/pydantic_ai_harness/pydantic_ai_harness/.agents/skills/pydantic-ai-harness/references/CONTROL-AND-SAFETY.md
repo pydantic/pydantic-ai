@@ -949,7 +949,9 @@ agent = Agent('test', retries={'output': 3}, capabilities=[Goal(goal='Migrate th
 ```
 
 - Rejections share the `retries={'output': n}` budget with other output validation, and exhaustion
-  raises `UnexpectedModelBehavior`; `UsageLimits` still end the run with no grace request.
+  raises `UnexpectedModelBehavior`; `UsageLimits` still end the run. For a final tool-less answer at the
+  limit add `WrapUpAtLimits`: its answer still goes through `verify`, and a rejection there raises
+  `UsageLimitExceeded` since no request is left for the retry.
 - Verify real evidence (files, tests, external state), not the model's claim. An LLM judge agent
   inside `verify` works: pass `usage=ctx.usage` to its `run()` and give it evidence, not just the answer.
 - Output functions run before the check and can run again after a rejection, so keep them idempotent.

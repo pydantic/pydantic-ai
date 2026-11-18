@@ -12,12 +12,13 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.goal import Goal
+from pydantic_ai_harness.wrap_up_at_limits import WrapUpAtLimits
 from tests.harness._recording_durability import RecordingDurability
 
 
@@ -128,6 +129,26 @@ Continue within the supplied constraints; do not bypass approvals or fabricate s
         agent = Agent(TestModel(), retries={'output': 5}, capabilities=[Goal(goal='Finish', verify=complete)])
         with pytest.raises(UsageLimitExceeded):
             await agent.run('Start', usage_limits=UsageLimits(request_limit=1))
+
+    @pytest.mark.parametrize('final_answer', ['done', 'Which file?'])
+    async def test_wrap_up_answer_still_needs_the_goal_met(self, final_answer: str) -> None:
+        def research(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if info.model_settings and info.model_settings.get('tool_choice') == 'none':
+                return ModelResponse(parts=[TextPart(final_answer)])
+            return ModelResponse(parts=[ToolCallPart('look_up', {'topic': 'x'})])
+
+        agent = Agent(FunctionModel(research), capabilities=[WrapUpAtLimits(), Goal(goal='Finish', verify=complete)])
+
+        @agent.tool_plain
+        def look_up(topic: str) -> str:
+            return topic
+
+        limits = UsageLimits(request_limit=2)
+        if final_answer == 'done':
+            assert (await agent.run('Start', usage_limits=limits)).output == 'done'
+        else:
+            with pytest.raises(UsageLimitExceeded):
+                await agent.run('Start', usage_limits=limits)
 
     async def test_without_verifier_only_instructs(self) -> None:
         goal = Goal(goal='Finish', headless=False)
