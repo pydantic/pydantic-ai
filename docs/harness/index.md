@@ -303,6 +303,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 | [Step Persistence](step-persistence.md) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
 | [Model Fallback](../capabilities/model-fallback.md) | Core | Fall back to other models when a model request fails or its response is rejected, within the run's own request step |
 | [Instrumentation](../capabilities/instrumentation.md) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |
+| [Agent Control](agent-control.md) | Harness | Drive instructions, model, model settings, and tool definitions from one [Logfire](https://pydantic.dev/logfire)-managed variable; version and roll back the whole agent config as one unit |
 | [Managed Prompt](managed-prompt.md) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt; version and roll out without redeploying |
 | [Thread Executor](../capabilities/thread-executor.md) | Core | Run sync tools on a shared thread pool |
 

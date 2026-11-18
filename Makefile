@@ -133,6 +133,10 @@ integration-kubernetes-cluster: ## Run the harness Kubernetes sandbox live tier 
 	KUBECONFIG="$(KUBERNETES_LIVE_KUBECONFIG)" tests/harness/kubernetes_sandbox/cluster/up.sh
 	KUBECONFIG="$(KUBERNETES_LIVE_KUBECONFIG)" PYDANTIC_AI_HARNESS_KUBERNETES_LIVE=1 uv run --all-packages --all-extras pytest -m kubernetes_live tests/harness/kubernetes_sandbox
 
+.PHONY: integration-logfire-platform
+integration-logfire-platform: ## Run the live Harness Agent Control conformance suite (see its README first)
+	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/logfire_platform
+
 .PHONY: update-examples
 update-examples: ## Update documentation examples
 	uv run -m pytest --update-examples tests/test_examples.py

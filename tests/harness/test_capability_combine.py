@@ -77,6 +77,7 @@ from pydantic_ai_harness import (
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
+from pydantic_ai_harness.logfire import AgentControl
 from pydantic_ai_harness.peers import InMemoryPeerNetwork
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
@@ -213,6 +214,12 @@ def _check_background_tools(merged: Any) -> None:
     assert callable(merged.tools)
 
 
+def _check_agent_control(merged: Any) -> None:
+    # The later variable wins, so the merge is one managed config rather than two resolutions.
+    assert merged._variable.name == 'agent__beta'
+    assert merged.render_template is True
+
+
 def _check_benchmark_instructions(merged: BenchmarkInstructions[None]) -> None:
     assert merged.id == 'benchmark_instructions'
 
@@ -302,6 +309,14 @@ COMBINE_POLICY: dict[str, Policy] = {
         ),
         _check_sub_agents,
     ),
+    'AgentControl': Combines(
+        'one managed config per agent; a second resolution would fight the first over model and settings',
+        lambda: (
+            AgentControl[Any](name='alpha'),
+            AgentControl[Any](name='beta', render_template=True),
+        ),
+        _check_agent_control,
+    ),
     'Advisor': Combines(
         'one advisor per agent; its tool name is fixed',
         lambda: (
@@ -382,6 +397,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     'LogfireMCP': Narrows(
         'one Logfire connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
+    ),
+    '_AgentControlOverrides': Anonymous(
+        'never user-constructed: `AgentControl.for_agent` stitches exactly one alongside the control '
+        'it shares state with, so there are as many of these as there are `AgentControl`s -- which is one'
     ),
     'RepoContext': Anonymous('one per workspace root'),
     'ReportContextUsage': Anonymous('a passive observer; several callbacks compose'),

@@ -158,6 +158,7 @@ _CAPABILITY_PAGE_META = {
     'skills.md': ('skills', 'Skills'),
     'filesystem.md': ('file_system', 'FileSystem'),
     'shell.md': ('shell', 'Shell'),
+    'agent-control.md': ('logfire', 'Agent Control'),
     'smart-search.md': ('smart_search', 'Smart Search'),
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
@@ -391,9 +392,12 @@ _MERMAID_FENCE = re.compile(r'^```mermaid\n(.*?)^```', flags=re.DOTALL | re.MULT
 def test_doc_page_diagrams_match_readme(page: Path) -> None:
     module, _ = _CAPABILITY_PAGE_META[page.name]
     readme = _PACKAGE / module / 'README.md'
-    assert _MERMAID_FENCE.findall(readme.read_text(encoding='utf-8')) == _MERMAID_FENCE.findall(
-        page.read_text(encoding='utf-8')
-    ), f'{page.name} and {readme.relative_to(_ROOT)} must carry the same Mermaid diagrams.'
+    # A README shared by several pages (`logfire`) carries every one of their diagrams.
+    pages = [p for p in _CAPABILITY_DOC_PAGES if _CAPABILITY_PAGE_META[p.name][0] == module]
+    expected = sorted(diagram for p in pages for diagram in _MERMAID_FENCE.findall(p.read_text(encoding='utf-8')))
+    assert sorted(_MERMAID_FENCE.findall(readme.read_text(encoding='utf-8'))) == expected, (
+        f'{page.name} and {readme.relative_to(_ROOT)} must carry the same Mermaid diagrams.'
+    )
 
 
 @pytest.mark.parametrize('package', _CAPABILITY_PACKAGES, ids=lambda p: str(p.relative_to(_ROOT)))

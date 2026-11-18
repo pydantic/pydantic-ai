@@ -63,7 +63,7 @@ if TYPE_CHECKING:
     from .keenable import KeenableSearch
     from .kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
     from .localstack import LocalStack
-    from .logfire import ManagedPrompt
+    from .logfire import AgentControl, ManagedPrompt
     from .macroscope import Macroscope
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
@@ -104,6 +104,7 @@ if TYPE_CHECKING:
 __all__ = [
     'AbsurdDurability',
     'Advisor',
+    'AgentControl',
     'ApprovalReviewer',
     'ArtifactScanner',
     'AskUser',
@@ -218,6 +219,7 @@ __all__ = [
 _LAZY_EXPORTS = {
     'AbsurdDurability': 'absurd',
     'Advisor': 'advisor',
+    'AgentControl': 'logfire',
     'ApprovalReviewer': 'approval_reviewer',
     'ArtifactScanner': 'artifact_scanning',
     'AskUser': 'ask_user',
