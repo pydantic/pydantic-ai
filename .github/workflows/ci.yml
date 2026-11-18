@@ -806,7 +806,8 @@ jobs:
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.clai2_only == 'true' && matrix.python-version == '3.11' }}
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
       # A `pydantic-clai2`-only change skips `all-extras`, so its cells install every `pydantic-clai2`
-      # extra themselves: `tests/clai2` gates tests and their fakes on `typesafe` and each `/sandbox` SDK.
+      # extra themselves: `tests/clai2` gates tests on `typesafe` and on each `/sandbox` SDK, and only
+      # those tests run their fakes.
       CLAI2_ALL_EXTRAS: ${{ matrix.clai2_only == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
