@@ -119,6 +119,10 @@ Custom Workspaces.
 `LocalWorkspace` isolates nothing: a command can read and change anything you can, and the directory only
 sets where commands start. Use it for your own, trusted work, and a sandbox for code you don't trust.
 
+A sandbox is a container or a VM. A container shares your machine's kernel, so a kernel flaw can let a
+command escape it. A VM runs its own kernel, which makes it the stronger boundary for code you don't trust.
+Docker's [Containers are not VMs](https://www.docker.com/blog/containers-are-not-vms/) explains the difference.
+
 Commands in a `LocalWorkspace` get your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`, and nothing else
 from the agent's environment, so your API keys don't reach the commands the model runs. Pass what they
 need with `env=`, never the whole `os.environ`:

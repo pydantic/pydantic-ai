@@ -179,7 +179,7 @@ export DOCKER_HOST=ssh://dev@build-box  # or: docker context use build-box
 
 ## Security model
 
-A container shares your machine's kernel, so it is a weaker boundary than a VM such as [Smol Sandbox](https://pydantic.dev/docs/ai/harness/smol-sandbox/), [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/) or [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/). Commands run as the image's user, usually `root`, so anything the agent runs can change anything in the container.
+A container shares your machine's kernel, so it is a weaker boundary than a VM, which runs its own ([Containers are not VMs](https://www.docker.com/blog/containers-are-not-vms/)). Commands run as the image's user, usually `root`, so anything the agent runs can change anything in the container.
 
 - Don't mount the Docker socket or directories holding secrets. A writable mount also lets commands change files your machine runs later, such as a virtualenv, the `docker` CLI inside one, or git hooks.
 - Add hardening such as `--cap-drop ALL`, `--user` or `--read-only` through `docker_args` when the image allows it. With `--user`, point `working_dir` at a directory that user can write, such as a mount, or pass `working_dir=None` to use the image's own. With `--read-only`, mount a writable working directory.
