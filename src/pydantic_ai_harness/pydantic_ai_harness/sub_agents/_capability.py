@@ -5,11 +5,9 @@ from __future__ import annotations
 import dataclasses
 import warnings
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
-
-import anyio
 
 from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
 from pydantic_ai._utils import replace_no_init
@@ -23,7 +21,6 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, RunContext
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness._workspace import require_workspace, secondary_workspace, workspace_path
 from pydantic_ai_harness.sub_agents._control import (
     RUN_OWNER,
@@ -196,14 +193,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     """If `True`, the parent run's `usage` is shared with each sub-agent run, so
     token usage aggregates and usage limits apply across the whole agent tree."""
 
-    inherit_tools: bool = False
-    """Deprecated: setting it to `True` emits a `HarnessDeprecationWarning`.
-
-    If `True`, the parent agent's own tools (registered via `tools=` or `toolsets=`,
-    not those contributed by capabilities) are exposed to each sub-agent run, minus
-    the delegate tool. Bind required tools directly to explicit sub-agents, use
-    `include_self=True` to delegate to an agent with all of the parent's tools and
-    capabilities, or use `tool_resolver` to give disk agents tools."""
+    # Keyword-only since the positional `inherit_tools` was removed, so an old positional call fails instead of
+    # shifting every later option one slot.
+    _: KW_ONLY
 
     shared_capabilities: Sequence[AgentCapability[AgentDepsT]] = ()
     """Capabilities applied to every sub-agent run, in addition to whatever each
@@ -217,10 +209,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     tool_name: str = 'delegate_task'
     """Name of the delegate tool exposed to the model."""
 
-    # Keyword-only on the field rather than through a `KW_ONLY` marker: a marker applies to every
-    # field after it, which would take `tool_retries` and `contain_errors` off the positional
-    # contract they already have.
-    id: str | None = field(default='sub_agents', kw_only=True)
+    id: str | None = 'sub_agents'
     """Fixed, since an agent exposes a single delegate tool. Durable execution requires one.
 
     Two `SubAgents` capabilities would register the same `tool_name` and collide. The shared id
@@ -245,14 +234,14 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     can override this per delegate. See `SubAgent.contain_errors` for the
     containment contract and what always propagates regardless."""
 
-    workspace: WorkspaceBackend | None = field(default=None, kw_only=True)
+    workspace: WorkspaceBackend | None = None
     """A workspace to read `agent_folders` from instead of the run's, such as
     `LocalWorkspaceBackend('/app')` for definitions that ship with the application.
 
     A backend, not the `LocalWorkspace` capability. It is used in-process only: a durable engine
     does not route it through its workflow machinery."""
 
-    workspace_resolver: WorkspaceResolver[AgentDepsT] | None = field(default=None, kw_only=True)
+    workspace_resolver: WorkspaceResolver[AgentDepsT] | None = None
     """Opt into `delegate_task(working_directory=...)` with an async callback receiving the parent
     context and a `DelegationWorkspaceRequest` with the delegate name and requested directory.
     Return the child's `Workspace`; the caller owns
@@ -274,8 +263,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     over, so this capability has to be bound to the `Agent` itself; passing it to `run()`
     raises a `UserError` when the run starts.
 
-    `inherit_tools` does not apply to `self`, whose tools are already the parent's. The
-    delegate can delegate in turn, up to `max_depth`."""
+    The delegate can delegate in turn, up to `max_depth`."""
 
     max_depth: int = DEFAULT_MAX_DEPTH
     """How many levels a delegation tree may have, counting the top-level run as the first.
@@ -302,10 +290,6 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     """Disk delegates built so far, shared with every per-run copy. A definition is built once, so
     runs over unchanged files reuse the same agents and `tool_resolver` is not asked again."""
 
-    _warned_host_folders: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
-    """Whether the no-longer-read host folder warning was given, shared with every per-run copy so it
-    is given once per instance rather than once per run."""
-
     _run_toolset: SubAgentToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
     """This run's delegate toolset, on a per-run copy only. Built once per run, so every step of the
     run sees the same toolset instance."""
@@ -324,7 +308,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     _delegation_off: bool = field(default=False, init=False, repr=False, compare=False)
     """Set on the instance `for_run` returns for a run at `max_depth`, which contributes nothing."""
 
-    task_control: TaskControl | None = field(default=None, kw_only=True)
+    task_control: TaskControl | None = None
     """Let delegations outlive the tool call, and give the model tools to manage them. Off by default.
 
     See `TaskControl`. Only one `SubAgents` on an agent can set it. On Temporal and DBOS, each task runs in a durable
@@ -333,7 +317,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     engines, and a bound `DelegationTasks` owner raise a `UserError`.
     """
 
-    dynamic_agents: DynamicAgents[AgentDepsT] | None = field(default=None, kw_only=True)
+    dynamic_agents: DynamicAgents[AgentDepsT] | None = None
     """Let the model create sub-agents during a run, with a `create_agent` tool. Off by default.
     Only one `SubAgents` on an agent can set it. On Temporal and DBOS, every delegation other than to `self` runs in a
     durable unit of its own, so recovery rebuilds the created agents and reuses the delegations' results. Other durable
@@ -355,15 +339,6 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     toolset and cleared per run in `wrap_run`."""
 
     def __post_init__(self) -> None:
-        if self.inherit_tools:
-            warnings.warn(
-                '`SubAgents(inherit_tools=True)` is deprecated and will be removed in a future release. It passes '
-                "only the parent's own tools, not those of its capabilities. Bind required tools directly to "
-                'explicit sub-agents, use `include_self=True` to delegate to a fresh run of the agent with all '
-                'of its tools and capabilities, or use `tool_resolver` to give disk-loaded agents tools.',
-                category=HarnessDeprecationWarning,
-                stacklevel=3,
-            )
         self._workspace = secondary_workspace(self.workspace, 'SubAgents')
         self._build_roster([])
 
@@ -497,14 +472,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         if workspace is None:
             if isinstance(folders, str) and not ctx.workspace.attached:
                 # Convention discovery: a run with no workspace has no project to look in.
-                await self._warn_host_folder_ignored(folders, [await anyio.Path.cwd(), await anyio.Path.home()])
                 return
             require_workspace(ctx.workspace, 'SubAgents', ctx.messages)
             workspace = ctx.workspace
-            home = await anyio.Path.home()
-            if isinstance(folders, str) and str(home) != await workspace.working_dir():
-                # Earlier releases also read the home folder, which the run's workspace does not reach.
-                await self._warn_host_folder_ignored(folders, [home])
         definitions = await load_definitions(
             workspace, folders if isinstance(folders, str) else [_folder_path(folder) for folder in folders]
         )
@@ -512,25 +482,6 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             return
         self._build_roster(self._disk_agents(definitions))
         self._run_toolset = self._make_toolset()
-
-    async def _warn_host_folder_ignored(self, name: str, roots: Sequence[anyio.Path]) -> None:
-        """Earlier releases read this folder under `roots` on this machine; say so once rather than drop it silently."""
-        if self._warned_host_folders:
-            return
-        for root in roots:
-            for hidden in ('.agents', '.claude'):
-                folder = root / hidden / name
-                if await folder.is_dir():
-                    self._warned_host_folders.add(str(folder))
-                    warnings.warn(
-                        f'`SubAgents` did not load the agent definitions in `{folder}`: definitions are now read '
-                        'through a workspace only. Pass '
-                        f'`SubAgents(workspace=LocalWorkspaceBackend({str(root)!r}))` to keep loading them, or '
-                        '`agent_folders=None` to turn discovery off.',
-                        category=HarnessDeprecationWarning,
-                        stacklevel=2,
-                    )
-                    return
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Run the parent agent, then drop this run's delegation counts so they don't accumulate.
@@ -781,7 +732,6 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         return SubAgentToolset(
             agents=self._by_name,
             forward_usage=self.forward_usage,
-            inherit_tools=self.inherit_tools,
             shared_capabilities=self.shared_capabilities,
             event_stream_handler=self.event_stream_handler,
             tool_name=self.tool_name,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import sys
 import threading
 import warnings
@@ -2071,35 +2072,46 @@ async def test_abandoned_stream_keeps_answering_keepalive_pings(allow_model_requ
 
 @pytest.mark.parametrize('interrupt', ['early_exit', 'explicit_close', 'cancel'])
 async def test_interruption(allow_model_requests: None, sockets: SocketHarness, interrupt: str):
+    """An interrupted response leaves the socket reusable and leaves no task running.
+
+    The garbage collector runs only at the end of the leak-checked block, so a generator left for it to close fails
+    every run: its finalizer would close it in a detached `aclose()` task, which the block would find pending.
+    """
     socket = sockets.pending[0]
     socket.responses = deque([text_events()[:-1], text_events(response_id='resp_next')])
     model = websocket_model()
-    with no_leaked_tasks():
-        async with model:
-            if interrupt == 'early_exit':
-                async with Agent(model).run_stream('hello') as result:
-                    async for _ in result.stream_text(delta=True):  # pragma: no branch
-                        break
-            elif interrupt == 'explicit_close':
-                async with model.request_stream(user_prompt('hello'), None, ModelRequestParameters()) as response:
-                    await response.close_stream()
-            else:
-                started = anyio.Event()
-
-                async def consume() -> None:
+    gc.disable()
+    try:
+        with no_leaked_tasks():
+            async with model:
+                if interrupt == 'early_exit':
                     async with Agent(model).run_stream('hello') as result:
-                        async for _ in result.stream_text(delta=True):
-                            started.set()
+                        async for _ in result.stream_text(delta=True):  # pragma: no branch
+                            break
+                elif interrupt == 'explicit_close':
+                    async with model.request_stream(user_prompt('hello'), None, ModelRequestParameters()) as response:
+                        await response.close_stream()
+                else:
+                    started = anyio.Event()
 
-                async with anyio.create_task_group() as tasks:
-                    tasks.start_soon(consume)
-                    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                        await started.wait()
-                    tasks.cancel_scope.cancel()
-            assert (await Agent(model).run('reuse')).output == 'ready'
-            assert socket.close_count == 0
-        assert [frame.get('stream_id') for frame in socket.sent] == [None, 'lane-1']
-        assert socket.close_count == 1
+                    async def consume() -> None:
+                        async with Agent(model).run_stream('hello') as result:
+                            async for _ in result.stream_text(delta=True):
+                                started.set()
+
+                    async with anyio.create_task_group() as tasks:
+                        tasks.start_soon(consume)
+                        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                            await started.wait()
+                        tasks.cancel_scope.cancel()
+                assert (await Agent(model).run('reuse')).output == 'ready'
+                assert socket.close_count == 0
+            gc.collect()
+            await anyio.lowlevel.checkpoint()
+    finally:
+        gc.enable()
+    assert [frame.get('stream_id') for frame in socket.sent] == [None, 'lane-1']
+    assert socket.close_count == 1
 
 
 async def test_stream_cancel_during_receive(allow_model_requests: None, sockets: SocketHarness):

@@ -6,9 +6,9 @@ import inspect
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Literal, Self, TypeVar
+from typing import Any, Literal, Self, TypeVar
 
-from typing_extensions import TypeIs, deprecated
+from typing_extensions import TypeIs
 
 from pydantic_ai import Agent
 from pydantic_ai._utils import replace_no_init
@@ -23,7 +23,6 @@ from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai_harness._durable import RetryRequest, raise_retry
 from pydantic_ai_harness._usage import run_with_count_tokens_fallback
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 _LIMIT_REACHED = 'Advisor consultation limit reached for this model request. Continue without further advice.'
 
@@ -68,10 +67,6 @@ def _executor_service(model: AbstractModel) -> str:
     provider = model.provider if _is_request_response_model(model) else None
     return provider.canonical_system if provider is not None else model.system
 
-
-# TODO(harness 1.0, #12997): remove `_Mode` along with the deprecated `Advisor.mode`.
-_Mode = Literal['auto', 'native', 'local']
-"""The deprecated `Advisor.mode` values."""
 
 _T = TypeVar('_T')
 
@@ -154,20 +149,6 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     _local_uses: int = field(init=False, repr=False, compare=False, default=0)
     _local_max_uses: int | None = field(init=False, repr=False, compare=False, default=None)
 
-    # TODO(harness 1.0, #12997): remove `_MODE_DECLARATIONS` and `_MODE_REPLACEMENTS` along with `mode`.
-    _MODE_DECLARATIONS: ClassVar[dict[_Mode, tuple[bool, bool]]] = {
-        'auto': (True, True),
-        'native': (True, False),
-        'local': (False, True),
-    }
-    """The `(native, local)` pair each deprecated `mode` stands for."""
-
-    _MODE_REPLACEMENTS: ClassVar[dict[_Mode, str]] = {
-        'auto': 'omit `mode`; the defaults use the native advisor where it applies and the local tool otherwise',
-        'native': 'pass `local=False`',
-        'local': 'pass `native=False`',
-    }
-
     def __init__(
         self,
         model: ModelSelection,
@@ -184,9 +165,6 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         id: str | None = None,
         defer_loading: bool = False,
         description: str | None = None,
-        # TODO(harness 1.0, #12997): remove the deprecated `mode` parameter, its docstring entry and the block
-        # that maps it below, and drop the `mode='auto'` comparison from the `local` docstring.
-        mode: _Mode | None = None,
     ) -> None:
         """Create an advisor capability.
 
@@ -203,9 +181,8 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
                 built tool, so they are rejected with a replacement, as is `max_uses` on OpenRouter,
                 where it would leave only the unlimited replacement. Otherwise `max_uses`,
                 `max_tokens` and `caching` still shape the native advisor. `None` is stored as
-                `True`, so that, as with the earlier `mode='auto'`, a later default `Advisor` in a
-                merge restores the built local fallback, replacing an earlier `False` or replacement
-                tool.
+                `True`, so that a later default `Advisor` in a merge restores the built local
+                fallback, replacing an earlier `False` or replacement tool.
             output_type: Output specification for local consultations.
             max_uses: Maximum consultations in one executor model request.
             max_tokens: Maximum output tokens for each consultation.
@@ -214,8 +191,6 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             id: The capability id. Defaults to the class-level `id`: `'advisor'`, or a subclass's own.
             defer_loading: Whether to make this an on-demand capability, whose tools the model loads by `id`.
             description: The capability description.
-            mode: Deprecated: use `native` and `local`. Combined with a non-default `native` or
-                `local`, it raises `UserError`; a default value is overridden by `mode`.
         """
         if local is None:
             # `None` and `True` build the same tool; stating `True` makes them merge the same way too.
@@ -223,18 +198,6 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         if id is None:
             # A subclass that sets its own class-level `id` kept it before `id` was a parameter.
             id = type(self).id
-        # TODO(harness 1.0, #12997): remove this deprecated `mode` mapping.
-        if mode is not None:
-            self._check_mode(mode)
-            if native is not True or local is not True:
-                raise UserError('`Advisor`: pass either the deprecated `mode` or `native`/`local`, not both')
-            warnings.warn(
-                f'`Advisor(mode={mode!r})` is deprecated: {self._MODE_REPLACEMENTS[mode]}. '
-                '`mode` will be removed in pydantic-ai-harness 1.0.',
-                HarnessDeprecationWarning,
-                stacklevel=_caller_stacklevel(),
-            )
-            native, local = self._MODE_DECLARATIONS[mode]
         self.model = model
         self.output_type = output_type
         self.max_uses = max_uses
@@ -243,49 +206,6 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         self.forward_history = forward_history
         self._local_uses = 0
         super().__init__(native=native, local=local, id=id, defer_loading=defer_loading, description=description)
-
-    # TODO(harness 1.0, #12997): remove the deprecated `mode` property, its setter and `_check_mode`.
-    # `category=None` only marks it for type checkers; the body warns at runtime, naming the exact replacement.
-    @property
-    @deprecated('`Advisor.mode` is deprecated; use `native` and `local` instead.', category=None)
-    def mode(self) -> _Mode:
-        """Deprecated: read the `native` and `local` declarations instead.
-
-        `'native'` when the local fallback is disabled, `'local'` when the native advisor is, and
-        `'auto'` otherwise.
-        """
-        warnings.warn(
-            '`Advisor.mode` is deprecated: `native=False` means local only, and `local=False` means native only. '
-            '`mode` will be removed in pydantic-ai-harness 1.0.',
-            HarnessDeprecationWarning,
-            stacklevel=2,
-        )
-        if self._declared_native is False:
-            return 'local'
-        return 'native' if self._declared_local is False else 'auto'
-
-    @mode.setter
-    @deprecated('`Advisor.mode` is deprecated; use `native` and `local` instead.', category=None)
-    def mode(self, mode: _Mode) -> None:
-        self._check_mode(mode)
-        warnings.warn(
-            f'`Advisor.mode` is deprecated: {self._MODE_REPLACEMENTS[mode]}. '
-            '`mode` will be removed in pydantic-ai-harness 1.0.',
-            HarnessDeprecationWarning,
-            stacklevel=2,
-        )
-        previous = self.native, self.local
-        self.native, self.local = self._MODE_DECLARATIONS[mode]
-        try:
-            self.__post_init__()
-        except Exception:
-            self.native, self.local = previous
-            raise
-
-    @classmethod
-    def _check_mode(cls, mode: str) -> None:
-        if mode not in cls._MODE_DECLARATIONS:
-            raise ValueError("Advisor.mode must be 'auto', 'native', or 'local'")
 
     @classmethod
     def from_spec(
@@ -301,9 +221,6 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         id: str | None = None,
         defer_loading: bool = False,
         description: str | None = None,
-        # TODO(harness 1.0, #12997): remove the deprecated `mode` spec field, its docstring mention
-        # and `mode=mode` below.
-        mode: _Mode | None = None,
         **kwargs: Any,
     ) -> Advisor[Any]:
         """Build from an agent spec, covering the fields a spec can express.
@@ -311,7 +228,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         Every JSON-expressible parameter is named because that signature is what core reads to
         generate the spec's JSON schema. A spec names the model by string and can only switch the
         native and local halves on or off. `output_type` has no JSON form, so it is passed through
-        `**kwargs`, which the schema omits. `mode` is deprecated, as on the constructor.
+        `**kwargs`, which the schema omits.
         """
         return cls(
             model,
@@ -324,7 +241,6 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             id=id,
             defer_loading=defer_loading,
             description=description,
-            mode=mode,
             **kwargs,
         )
 
@@ -347,7 +263,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         super().__post_init__()
         if self.output_type is not str and self._declared_native is True:
             # The native advisor returns text, so a typed advisor consults locally. Resolving it off
-            # rather than declaring it off keeps merges and `mode` reading the stated default.
+            # rather than declaring it off keeps merges reading the stated default.
             self.native = False
 
     def _check_typed_output(self) -> None:

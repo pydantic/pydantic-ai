@@ -336,7 +336,7 @@ Removing a capability while workflows using it are still running changes their r
 
 ## Upgrading from the previous `ModalSandbox`
 
-The previous `ModalSandbox` registered its own `run_command`, `read_file`, `write_file`, and `list_directory` tools and terminated its sandbox when the run ended. Now it only supplies the sandbox, so add `Coder()`, or `Shell()` and `FileSystem()`, as shown above. Old arguments still construct, with a deprecation warning that names the replacement, and are ignored (`sandbox_id` still attaches). Removed imports fail with an error that names the replacement. The warnings use `HarnessDeprecationWarning` from `pydantic_ai_harness`.
+The previous `ModalSandbox` registered its own `run_command`, `read_file`, `write_file`, and `list_directory` tools and terminated its sandbox when the run ended. Now it only supplies the sandbox, so add `Coder()`, or `Shell()` and `FileSystem()`, as shown above. The old arguments are removed: passing one raises `TypeError`. Removed imports fail with an error that names the replacement.
 
 ### What changed in the lifecycle
 
@@ -351,15 +351,15 @@ The previous `ModalSandbox` registered its own `run_command`, `read_file`, `writ
 | Sandbox terminated when the run ends | No longer: it keeps running, and billing, until its `sandbox_timeout` (24 hours by default) ends it. Set `idle_timeout=`, or call `await ModalSandbox().destroy(result.workspace.ref)`. |
 | `image`, `app_name`, `create_app_if_missing`, `env` | Unchanged. `image` also takes a `modal.Image`, and its default now has `git` and `ripgrep`. |
 | `sandbox_timeout` | Unchanged name. The default is now `86_400` (24 hours) instead of `300`. |
-| `workdir` | Renamed `working_dir`. `workdir=` still works, with a deprecation warning. |
+| `workdir` | Renamed `working_dir`. |
 | Default working directory | `/root` on the default image, where the old default image (`python:3.12-slim`) started commands in `/`. A custom image keeps its own `WORKDIR`. |
-| `sandbox_id` | Deprecated; still attaches to that sandbox when the run has no ref of its own, even with `workspace='new'`. Use `agent.run(..., workspace=WorkspaceRef(provider='modal', id=sandbox_id))`. |
-| `session`, `ModalSandboxSession` | `session` is deprecated and ignored; `ModalSandboxSession` is removed. Use `agent.run(..., workspace=ModalSandboxBackend(sandbox=<modal.Sandbox>))`. |
-| `default_command_timeout` | Deprecated and ignored. Use `Shell(default_timeout=...)`. |
-| `max_command_timeout` | Deprecated and ignored, with no direct equivalent: nothing caps a timeout the model asks for. `Shell(default_timeout=...)` sets the timeout of commands that don't give one; `sandbox_timeout` limits the lifetime of a new sandbox and does not apply to attached sandboxes. |
-| `max_output_bytes`, `max_output_lines` | Deprecated and ignored. Use `Shell(max_output_chars=...)` or `ToolOutputLimits`. A command whose combined stdout and stderr pass 10 MiB is stopped and raises `WorkspaceOutputLimitError`. |
-| `max_read_bytes` | Deprecated and ignored. Use `FileSystem(max_read_lines=..., max_read_chars=...)`. |
-| `instructions` | Deprecated and ignored. Use the agent's `instructions`. |
+| `sandbox_id` | Removed. Use `agent.run(..., workspace=WorkspaceRef(provider='modal', id=sandbox_id))`. |
+| `session`, `ModalSandboxSession` | Removed. Use `agent.run(..., workspace=ModalSandboxBackend(sandbox=<modal.Sandbox>))`. |
+| `default_command_timeout` | Removed. Use `Shell(default_timeout=...)`. |
+| `max_command_timeout` | Removed, with no direct equivalent: nothing caps a timeout the model asks for. `Shell(default_timeout=...)` sets the timeout of commands that don't give one; `sandbox_timeout` limits the lifetime of a new sandbox and does not apply to attached sandboxes. |
+| `max_output_bytes`, `max_output_lines` | Removed. Use `Shell(max_output_chars=...)` or `ToolOutputLimits`. A command whose combined stdout and stderr pass 10 MiB is stopped and raises `WorkspaceOutputLimitError`. |
+| `max_read_bytes` | Removed. Use `FileSystem(max_read_lines=..., max_read_chars=...)`. |
+| `instructions` | Removed. Use the agent's `instructions`. |
 | `run_command` tool | Removed. Use `Shell()`. |
 | `read_file`, `write_file`, `list_directory` tools | Removed. Use `FileSystem()`. It only reaches the working directory and below; `FileSystem(root_dir='/')` reaches the whole sandbox, as the old tools did. `read_file`'s `offset` is now zero-based: the old tool counted lines from 1. |
 | `PrefixTools(ModalSandbox(...), prefix='modal')` next to `Shell()` or `FileSystem()` | The `modal_*` tools are gone, and the unprefixed `Shell` and `FileSystem` tools, which used to act on your machine, now run in the sandbox. Drop `PrefixTools`. |

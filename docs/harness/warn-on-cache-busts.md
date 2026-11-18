@@ -85,9 +85,6 @@ Models such as Anthropic's (including on the Bedrock and Vertex AI SDK clients),
 
 - `min_missed_ratio` (default `0.05`): only warn when a request falls short of the established prefix by more than this fraction of it. The default only keeps provider rounding out. It must be at least `0.0` and less than `1.0` -- a request can't miss more than the whole prefix.
 - `min_missed_tokens` (default `2000`): only warn when a request falls short of the established prefix by at least this many tokens, which keeps small partial misses on small prefixes out. Lower both to catch smaller regressions, such as in a test with a small prompt.
-- `collapse_ratio`: deprecated, with a `HarnessDeprecationWarning`. It warned when a request read back less than this fraction of the established prefix, and is still honored as `min_missed_ratio=1 - collapse_ratio`; pass that instead.
-- `min_prefix_tokens`: deprecated, with a `HarnessDeprecationWarning`, and still honored as a floor on the established prefix. `min_missed_tokens` implies a prefix at least that large; pass it instead.
-- `cache_ttl_seconds`: deprecated and ignored, with a `HarnessDeprecationWarning`. The retention window now comes from the model, as described above; remove the argument. To classify against a longer window, request it through the model's settings (such as `anthropic_cache='1h'`) or a `CachePoint(ttl='1h')`.
 
 ## Silencing and escalation
 

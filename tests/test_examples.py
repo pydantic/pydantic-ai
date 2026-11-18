@@ -134,10 +134,14 @@ RUNNABLE_HARNESS_PAGES = frozenset(
         'artifact-scanning.md',
         'aws-lambda.md',
         'azure-durable-task.md',
+        'deny-unanswered.md',
         'detect-loops.md',
         'memory.md',
         'permissions.md',
+        'report-remaining-budget.md',
+        'report-tool-errors.md',
         'tool-budgets.md',
+        'wrap-up-at-limits.md',
     }
 )
 """`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
