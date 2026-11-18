@@ -1183,7 +1183,7 @@ class TestProcessGroupKill:
 
         async with anyio.create_task_group() as tg:
             tg.start_soon(run_until_cancelled)
-            with anyio.fail_after(60):
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
                 while not started.exists():
                     await anyio.sleep(0.01)
             tg.cancel_scope.cancel()
