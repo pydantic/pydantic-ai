@@ -27,8 +27,8 @@ from pydantic_ai.computer_use import (
     Drag,
     HoldKeys,
     MouseDown,
+    MouseMove,
     MouseUp,
-    MoveMouse,
     Point,
     PressKeys,
     Region,
@@ -75,9 +75,11 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
         pytest.param(Click(), ['get_position', 'click 7 8 left clicks=1 modifiers=[]'], id='click-at-pointer'),
         # Daytona refuses the side buttons itself.
         pytest.param(Click(x=1, y=2, button='back'), ['click 1 2 back clicks=1 modifiers=[]'], id='side-button'),
-        pytest.param(MoveMouse(x=5, y=6), ['move 5 6'], id='move'),
+        pytest.param(MouseMove(x=5, y=6), ['move 5 6'], id='mouse_move'),
         pytest.param(
-            MoveMouse(x=5, y=6, modifiers=('alt',)), ['keydown alt', 'move 5 6', 'keyup alt'], id='move-with-modifier'
+            MouseMove(x=5, y=6, modifiers=('alt',)),
+            ['keydown alt', 'move 5 6', 'keyup alt'],
+            id='mouse_move-with-modifier',
         ),
         pytest.param(
             Drag(path=(Point(x=1, y=1), Point(x=2, y=2), Point(x=3, y=3)), modifiers=('ctrl',)),
@@ -289,7 +291,7 @@ async def test_a_key_whose_hold_answer_cannot_be_read_is_let_go(fake_daytona: Fa
     assert sandbox.desktop_calls == ['keydown ctrl', 'keyup ctrl']
 
 
-HOLDING_CTRL = MoveMouse(x=1, y=1, modifiers=('ctrl',))
+HOLDING_CTRL = MouseMove(x=1, y=1, modifiers=('ctrl',))
 
 
 @pytest.mark.parametrize(
@@ -347,7 +349,7 @@ async def test_rejected_credentials_end_the_run_without_their_text_when_a_releas
     sandbox.computer_use.mouse.move = rejected
     sandbox.computer_use.keyboard.up = failing
     with pytest.raises(WorkspaceUnavailableError) as raised:
-        await screen(backend).act(MoveMouse(x=1, y=1, modifiers=('ctrl',)))
+        await screen(backend).act(MouseMove(x=1, y=1, modifiers=('ctrl',)))
     assert 'secret-value' not in str(raised.value)
 
 
@@ -371,7 +373,7 @@ async def test_input_daytona_did_not_confirm_ends_the_run(
 
     sandbox.computer_use.mouse.move = unconfirmed
     with pytest.raises(WorkspaceError) as raised:
-        await screen(backend).act(MoveMouse(x=1, y=1, modifiers=('ctrl',)))
+        await screen(backend).act(MouseMove(x=1, y=1, modifiers=('ctrl',)))
 
     assert isinstance(raised.value, WorkspaceUnavailableError) is ends_run
     assert sandbox.desktop_calls == ['keydown ctrl', 'keyup ctrl']

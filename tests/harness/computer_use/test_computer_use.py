@@ -44,8 +44,8 @@ from pydantic_ai.computer_use import (
     ComputerReturnPart,
     Drag,
     MouseDown,
+    MouseMove,
     MouseUp,
-    MoveMouse,
     Point,
     PressKeys,
     Scroll,
@@ -170,8 +170,8 @@ class TestComputerUse:
         provider = ScreenProvider()
         agent = Agent(
             _scripted(
-                [{'type': 'screenshot'}, {'type': 'click', 'x': 10, 'y': 20}, {'type': 'type', 'text': 'hi'}],
-                [{'type': 'keypress', 'keys': ['ctrl+s']}, {'type': 'wait', 'seconds': 0.01}],
+                [{'type': 'screenshot'}, {'type': 'click', 'x': 10, 'y': 20}, {'type': 'type_text', 'text': 'hi'}],
+                [{'type': 'press_keys', 'keys': ['ctrl+s']}, {'type': 'wait', 'seconds': 0.01}],
             ),
             name='computer',
             capabilities=[provider.capability(), ComputerUse(), *durability],
@@ -193,18 +193,18 @@ class TestComputerUse:
             pytest.param(
                 [
                     {'type': 'click', 'x': 1, 'y': 1},
-                    {'type': 'hold_key', 'keys': ['shift'], 'seconds': 1},
-                    {'type': 'type', 'text': 'never typed'},
+                    {'type': 'hold_keys', 'keys': ['shift'], 'seconds': 1},
+                    {'type': 'type_text', 'text': 'never typed'},
                 ],
                 [Click(x=1, y=1)],
-                "Action 2 of 3 (hold_key) failed: the fake display cannot perform 'hold_key'. The 1 action after it "
+                "Action 2 of 3 (hold_keys) failed: the fake display cannot perform 'hold_keys'. The 1 action after it "
                 'did not run. Screenshot attached (1280x800).',
                 id='stops-the-rest',
             ),
             pytest.param(
-                [{'type': 'hold_key', 'keys': ['shift'], 'seconds': 1}],
+                [{'type': 'hold_keys', 'keys': ['shift'], 'seconds': 1}],
                 [],
-                "Action 1 of 1 (hold_key) failed: the fake display cannot perform 'hold_key'. Screenshot attached "
+                "Action 1 of 1 (hold_keys) failed: the fake display cannot perform 'hold_keys'. Screenshot attached "
                 '(1280x800).',
                 id='last-skips-nothing',
             ),
@@ -221,7 +221,7 @@ class TestComputerUse:
         assert tool_return.content == [summary, SCREENSHOT]
         assert tool_return.metadata == {
             'performed': len(ran),
-            'error': "the fake display cannot perform 'hold_key'",
+            'error': "the fake display cannot perform 'hold_keys'",
         }
 
     @pytest.mark.parametrize(
@@ -314,7 +314,7 @@ class TestComputerUse:
                 {'type': 'drag', 'path': [{'x': 0, 'y': 0}, {'x': 999, 'y': 999}]},
                 {'type': 'scroll', 'direction': 'down'},
                 {'type': 'scroll', 'direction': 'up', 'x': 500, 'y': 250},
-                {'type': 'move', 'x': 250, 'y': 750},
+                {'type': 'mouse_move', 'x': 250, 'y': 750},
             ],
             profile=ModelProfile(computer_use_coordinate_grid=1000),
         )
@@ -326,7 +326,7 @@ class TestComputerUse:
             Drag(path=(Point(x=0, y=0), Point(x=1279, y=799))),
             Scroll(direction='down'),
             Scroll(direction='up', x=640, y=200),
-            MoveMouse(x=320, y=600),
+            MouseMove(x=320, y=600),
         ]
         assert tool_return.content == ['Ran 5 actions. Screenshot attached.', SCREENSHOT]
 
@@ -712,7 +712,7 @@ The `computer` tool shows and controls this computer's screen.
     @pytest.mark.parametrize(
         'actions, gone',
         [
-            ([{'type': 'type', 'text': 'a'}], 'act'),
+            ([{'type': 'type_text', 'text': 'a'}], 'act'),
             ([{'type': 'screenshot'}], 'screenshot'),
             ([{'type': 'click', 'x': 1, 'y': 1}], 'display_size'),
         ],
@@ -804,7 +804,7 @@ The `computer` tool shows and controls this computer's screen.
                 return NoSize(self, ref)
 
         provider = Provider()
-        model = _scripted([{'type': 'type', 'text': 'a'}, {'type': 'click', 'x': 1, 'y': 1}])
+        model = _scripted([{'type': 'type_text', 'text': 'a'}, {'type': 'click', 'x': 1, 'y': 1}])
         agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
@@ -1020,7 +1020,7 @@ The `computer` tool shows and controls this computer's screen.
         """The approver's actions can hold what the model must not see, such as a password typed in."""
         provider = ScreenProvider()
         agent = Agent(
-            _scripted([{'type': 'click', 'x': 1, 'y': 1}, {'type': 'type', 'text': 'placeholder'}]),
+            _scripted([{'type': 'click', 'x': 1, 'y': 1}, {'type': 'type_text', 'text': 'placeholder'}]),
             capabilities=[provider.capability(), ComputerUse(), _ask_before_acting()],
             output_type=[str, DeferredToolRequests],
         )
@@ -1028,7 +1028,7 @@ The `computer` tool shows and controls this computer's screen.
         assert isinstance(paused.output, DeferredToolRequests)
         (call,) = paused.output.approvals
 
-        with_the_password = ToolApproved(override_args={'actions': [{'type': 'type', 'text': 'hunter2'}]})
+        with_the_password = ToolApproved(override_args={'actions': [{'type': 'type_text', 'text': 'hunter2'}]})
         resumed = await agent.run(
             message_history=paused.all_messages(),
             deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: with_the_password}),
@@ -1113,7 +1113,7 @@ The `computer` tool shows and controls this computer's screen.
 
         agents = [
             Agent(
-                _scripted([{'type': 'click', 'x': x, 'y': 1}, {'type': 'type', 'text': text}]),
+                _scripted([{'type': 'click', 'x': x, 'y': 1}, {'type': 'type_text', 'text': text}]),
                 capabilities=[*capabilities, ComputerUse()],
             )
             for x, text in [(1, 'first'), (2, 'second')]
@@ -1153,7 +1153,7 @@ The `computer` tool shows and controls this computer's screen.
 
         screen = Turning(provider, None)
         agents = [
-            Agent(_scripted([{'type': 'type', 'text': 'first'}]), capabilities=[turns.capability, ComputerUse()]),
+            Agent(_scripted([{'type': 'type_text', 'text': 'first'}]), capabilities=[turns.capability, ComputerUse()]),
             Agent(
                 _scripted(
                     [{'type': 'click', 'x': 500, 'y': 500}], profile=ModelProfile(computer_use_coordinate_grid=1000)
@@ -1297,7 +1297,7 @@ The `computer` tool shows and controls this computer's screen.
         # Claude's earlier computer tools press, move and release in separate calls.
         provider = ScreenProvider()
         agent = Agent(
-            _scripted([{'type': 'mouse_down'}], [{'type': 'move', 'x': 5, 'y': 5}], [{'type': 'mouse_up'}]),
+            _scripted([{'type': 'mouse_down'}], [{'type': 'mouse_move', 'x': 5, 'y': 5}], [{'type': 'mouse_up'}]),
             name='computer',
             capabilities=[provider.capability(), ComputerUse(), *durability],
         )
@@ -1308,7 +1308,7 @@ The `computer` tool shows and controls this computer's screen.
             ['Ran 1 action. The left mouse button is still pressed. Screenshot attached (1280x800).', SCREENSHOT],
             ['Ran 1 action. Screenshot attached (1280x800).', SCREENSHOT],
         ]
-        assert provider.actions == [MouseDown(), MoveMouse(x=5, y=5), MouseUp()]
+        assert provider.actions == [MouseDown(), MouseMove(x=5, y=5), MouseUp()]
 
     async def test_a_mouse_up_with_nothing_pressed_runs(self) -> None:
         provider = ScreenProvider()
@@ -1390,14 +1390,14 @@ The `computer` tool shows and controls this computer's screen.
 
         provider = Provider()
         agent = Agent(
-            _scripted([{'type': 'mouse_down'}], [{'type': 'move', 'x': 5, 'y': 5}]),
+            _scripted([{'type': 'mouse_down'}], [{'type': 'mouse_move', 'x': 5, 'y': 5}]),
             name='computer',
             capabilities=[provider.capability(), ComputerUse(), PrepareTools(with_timeout), *durability],
         )
         await agent.run('Go.')
 
         # The run's end releases it again, as a call that never reported may have left it pressed.
-        assert provider.actions == [MouseDown(), MouseUp(), MoveMouse(x=5, y=5), MouseUp()]
+        assert provider.actions == [MouseDown(), MouseUp(), MouseMove(x=5, y=5), MouseUp()]
 
     async def test_a_call_refused_before_it_acts_leaves_nothing_to_release(
         self, durability: list[AbstractCapability[object]]
@@ -1493,14 +1493,16 @@ The `computer` tool shows and controls this computer's screen.
             if len(messages) == 3:
                 return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'mouse_down'}]})])
             if len(messages) == 5:
-                return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'move', 'x': 5, 'y': 5}]})])
+                return ModelResponse(
+                    parts=[ToolCallPart('computer', {'actions': [{'type': 'mouse_move', 'x': 5, 'y': 5}]})]
+                )
             return ModelResponse(parts=[TextPart('done')])
 
         agent = Agent(FunctionModel(respond), capabilities=[provider.capability(), ComputerUse(defer_loading=True)])
         _, pressed, _ = _returns((await agent.run('Go.')).all_messages())
 
         assert pressed.content == ['Ran 1 action. Screenshot attached (1280x800).', SCREENSHOT]
-        assert provider.actions == [MouseDown(), MouseUp(), MoveMouse(x=5, y=5)]
+        assert provider.actions == [MouseDown(), MouseUp(), MouseMove(x=5, y=5)]
 
     async def test_a_call_whose_screenshot_fails_releases_the_buttons_it_holds(self) -> None:
         class FirstScreenshotFails(ScreenBackend):
@@ -1518,7 +1520,7 @@ The `computer` tool shows and controls this computer's screen.
 
         provider = Provider()
         agent = Agent(
-            _scripted([{'type': 'mouse_down'}], [{'type': 'move', 'x': 5, 'y': 5}]),
+            _scripted([{'type': 'mouse_down'}], [{'type': 'mouse_move', 'x': 5, 'y': 5}]),
             capabilities=[provider.capability(), ComputerUse()],
         )
         failed, moved = _returns((await agent.run('Go.')).all_messages())
@@ -1528,18 +1530,18 @@ The `computer` tool shows and controls this computer's screen.
             'Ran 1 action. Taking the screenshot failed: the capture failed. The left mouse button was released.'
         )
         assert moved.content == ['Ran 1 action. Screenshot attached (1280x800).', SCREENSHOT]
-        assert provider.actions == [MouseDown(), MouseUp(), MoveMouse(x=5, y=5)]
+        assert provider.actions == [MouseDown(), MouseUp(), MouseMove(x=5, y=5)]
 
     async def test_a_button_a_call_presses_and_releases_is_released_once(self) -> None:
         provider = ScreenProvider()
         agent = Agent(
-            _scripted([{'type': 'mouse_down'}, {'type': 'move', 'x': 5, 'y': 5}, {'type': 'mouse_up'}]),
+            _scripted([{'type': 'mouse_down'}, {'type': 'mouse_move', 'x': 5, 'y': 5}, {'type': 'mouse_up'}]),
             capabilities=[provider.capability(), ComputerUse()],
         )
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert tool_return.metadata is not None and tool_return.metadata['performed'] == 3
-        assert provider.actions == [MouseDown(), MoveMouse(x=5, y=5), MouseUp()]
+        assert provider.actions == [MouseDown(), MouseMove(x=5, y=5), MouseUp()]
 
     async def test_a_button_pressed_by_a_call_that_fails_is_released(self) -> None:
         provider = ScreenProvider()
@@ -1548,7 +1550,7 @@ The `computer` tool shows and controls this computer's screen.
                 [
                     {'type': 'mouse_down'},
                     # The fake display can't hold keys, so the call fails with the button pressed.
-                    {'type': 'hold_key', 'keys': ['shift'], 'seconds': 1},
+                    {'type': 'hold_keys', 'keys': ['shift'], 'seconds': 1},
                     {'type': 'mouse_up'},
                 ]
             ),
@@ -1559,7 +1561,7 @@ The `computer` tool shows and controls this computer's screen.
         assert tool_return.metadata is not None and tool_return.metadata['performed'] == 1
         assert tool_return.content == [
             snapshot(
-                "Action 2 of 3 (hold_key) failed: the fake display cannot perform 'hold_key'. The 1 action after it did not run. The left mouse button was released. Screenshot attached (1280x800)."
+                "Action 2 of 3 (hold_keys) failed: the fake display cannot perform 'hold_keys'. The 1 action after it did not run. The left mouse button was released. Screenshot attached (1280x800)."
             ),
             SCREENSHOT,
         ]
@@ -1568,14 +1570,14 @@ The `computer` tool shows and controls this computer's screen.
     async def test_a_failed_call_says_it_released_the_button_an_earlier_call_pressed(self) -> None:
         provider = ScreenProvider()
         agent = Agent(
-            _scripted([{'type': 'mouse_down'}], [{'type': 'hold_key', 'keys': ['shift'], 'seconds': 1}]),
+            _scripted([{'type': 'mouse_down'}], [{'type': 'hold_keys', 'keys': ['shift'], 'seconds': 1}]),
             capabilities=[provider.capability(), ComputerUse()],
         )
         _, failed = _returns((await agent.run('Go.')).all_messages())
 
         assert failed.content == [
             snapshot(
-                "Action 1 of 1 (hold_key) failed: the fake display cannot perform 'hold_key'. The left mouse button was released. Screenshot attached (1280x800)."
+                "Action 1 of 1 (hold_keys) failed: the fake display cannot perform 'hold_keys'. The left mouse button was released. Screenshot attached (1280x800)."
             ),
             SCREENSHOT,
         ]
@@ -1651,7 +1653,7 @@ The `computer` tool shows and controls this computer's screen.
 
         provider = Provider()
         agent = Agent(
-            _scripted([{'type': 'mouse_down'}, {'type': 'move', 'x': 5, 'y': 5}, {'type': 'mouse_up'}]),
+            _scripted([{'type': 'mouse_down'}, {'type': 'mouse_move', 'x': 5, 'y': 5}, {'type': 'mouse_up'}]),
             capabilities=[provider.capability(), ComputerUse()],
         )
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
@@ -1675,7 +1677,7 @@ The `computer` tool shows and controls this computer's screen.
             _scripted(
                 [
                     {'type': 'mouse_down'},
-                    {'type': 'hold_key', 'keys': ['shift'], 'seconds': 1},
+                    {'type': 'hold_keys', 'keys': ['shift'], 'seconds': 1},
                     {'type': 'mouse_up'},
                 ]
             ),
@@ -1685,7 +1687,7 @@ The `computer` tool shows and controls this computer's screen.
 
         assert tool_return.outcome == 'failed'
         assert tool_return.content == snapshot(
-            "Action 2 of 3 (hold_key) failed: the fake display cannot perform 'hold_key'. The 1 action after it did not run. Releasing the left mouse button failed, so it may still be held."
+            "Action 2 of 3 (hold_keys) failed: the fake display cannot perform 'hold_keys'. The 1 action after it did not run. Releasing the left mouse button failed, so it may still be held."
         )
 
     async def test_losing_the_environment_while_releasing_a_button_ends_the_run(self) -> None:
@@ -1701,7 +1703,7 @@ The `computer` tool shows and controls this computer's screen.
 
         agent = Agent(
             _scripted(
-                [{'type': 'mouse_down'}, {'type': 'hold_key', 'keys': ['shift'], 'seconds': 1}, {'type': 'mouse_up'}]
+                [{'type': 'mouse_down'}, {'type': 'hold_keys', 'keys': ['shift'], 'seconds': 1}, {'type': 'mouse_up'}]
             ),
             capabilities=[Provider().capability(), ComputerUse()],
         )
@@ -1724,7 +1726,7 @@ The `computer` tool shows and controls this computer's screen.
     ) -> None:
         provider = ScreenProvider()
         agent = Agent(
-            _scripted([{'type': 'click', 'x': 1, 'y': 1}, looking, {'type': 'type', 'text': 'not typed'}]),
+            _scripted([{'type': 'click', 'x': 1, 'y': 1}, looking, {'type': 'type_text', 'text': 'not typed'}]),
             capabilities=[ComputerUse()],
         )
         result = await agent.run('Go.', workspace=DisplayOnlyBackend(provider.backend(None)))
