@@ -18,9 +18,12 @@ def _deprecated(old: str, new: str) -> None:
 
 
 def __getattr__(name: str) -> object:
-    value = getattr(importlib.import_module('pydantic_ai_pax'), name)
+    package = importlib.import_module('pydantic_ai_pax')
+    # Only its exports: a submodule it happens to hold, such as `__main__`, is not this package's.
+    if name not in package.__all__:
+        raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
     _deprecated(f'{__name__}.{name}', f'pydantic_ai_pax.{name}')
-    return value
+    return getattr(package, name)
 
 
 class _Alias(MetaPathFinder, Loader):

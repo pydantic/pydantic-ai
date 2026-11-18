@@ -128,6 +128,11 @@ def test_run_griffe_reports_real_griffe_findings(tmp_path: Path, monkeypatch: py
     with pytest.raises(SystemExit, match='griffecli check missing_pkg failed with exit code 1'):
         run_griffe('missing_pkg', '.', 'v1')
 
+    # Added since the release, as `pydantic_ai_pax` was when `pydantic-clai2` was renamed: nothing to compare.
+    (tmp_path / 'new_pkg').mkdir()
+    (tmp_path / 'new_pkg' / '__init__.py').write_text('def greet(name): ...\n', encoding='utf-8')
+    assert run_griffe('new_pkg', '.', 'v1') == []
+
 
 def test_load_waivers_treats_a_missing_directory_as_empty(tmp_path: Path):
     assert load_waivers(tmp_path / 'waivers') == {}
