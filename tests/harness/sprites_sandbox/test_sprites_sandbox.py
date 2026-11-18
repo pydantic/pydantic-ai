@@ -573,6 +573,16 @@ class TestSpritesSandbox:
         assert (await backend.get_sandbox()).name == backend.ref.id
         assert transport.created == [backend.ref.id]
 
+    async def test_lost_create_whose_lookup_also_fails_reports_the_create_error(
+        self, transport: SpriteTransport
+    ) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error = NetworkError('lost request')
+        transport.get_error = NetworkError('lookup lost too')
+        with pytest.raises(NetworkError, match='lost request'):
+            await backend.get_sandbox()
+        assert backend.ref is not None
+
     async def test_stalled_create_sent_again_reports_a_creation_timeout(
         self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -432,7 +432,12 @@ async def _recover_create(client: AsyncSpritesClient, name: str, error: Exceptio
     """Look up a Sprite whose failed create may have committed, re-raising the create's `error` if it is not visible."""
     try:
         return await client.get_sprite(name)
-    except (NotFoundError, NetworkError, TimeoutError):
+    except NotFoundError:
+        if _conflict(error):
+            # The Sprite exists, but lookups do not see it yet.
+            raise NetworkError(f'Sprite {name!r} may still be becoming visible') from error
+        raise error from None
+    except (NetworkError, TimeoutError):
         raise error from None
 
 
@@ -467,8 +472,9 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         check_env_types(env)
         self._sandbox = sandbox
         self._ref = ref if sandbox is None else WorkspaceRef(provider='sprites', id=sandbox.name)
-        self._new_sprite_name = f'pydantic-ai-{uuid.uuid4().hex}'
-        self._uncertain_create = False
+        # The name of the Sprite this backend creates, until a create or lookup confirms it exists. Every attempt
+        # until then sends the create again: Sprites refuses a name that exists, so this cannot make a second one.
+        self._pending_name = f'pydantic-ai-{uuid.uuid4().hex}' if sandbox is None and ref is None else None
         self._runtime = runtime
         self._working_dir = absolute_path('working_dir', working_dir)
         # A Sprite this backend creates starts without `working_dir`; it is made on first acquisition.
@@ -558,8 +564,10 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             self._client = client
 
         ref = self._ref
+        pending = self._pending_name
         if (
             not fetched
+            and pending is None
             and ref is not None
             and (ref.id == self._attached_name or _lookups.exists(_LookupCache.key(client, ref.id)))
         ):
@@ -568,14 +576,13 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             self._unfetched = True
             return sandbox
 
-        # A create that may not have reached Sprites is still a creation: it may be sent again.
-        sprite_name = None if ref is None or self._uncertain_create else ref.id
+        sprite_name = None if pending is not None or ref is None else ref.id
         try:
             # Creation runs to completion even if the caller is cancelled, so a Sprite that
             # was created is never left unnamed; attaching creates nothing and stays cancellable.
             return await (
                 run_to_completion(functools.partial(self._acquire, client, ref))
-                if sprite_name is None
+                if pending is not None
                 else self._acquire(client, ref)
             )
         except SpriteError as error:
@@ -589,11 +596,15 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     async def _acquire(self, client: AsyncSpritesClient, ref: WorkspaceRef | None) -> AsyncSprite:
         """Attach to the Sprite `ref` names, or create one, within `_ACQUIRE_TIMEOUT`, and record it."""
         with anyio.move_on_after(_ACQUIRE_TIMEOUT):
-            sandbox = await (self._create(client) if ref is None else self._look_up(client, ref))
+            if (name := self._pending_name) is not None:
+                sandbox = await self._create(client, name)
+            else:
+                assert ref is not None
+                sandbox = await client.get_sprite(ref.id)
             # Recorded as soon as the SDK returns, so a cancelled caller still leaves it named.
             self._sandbox = sandbox
             self._ref = WorkspaceRef(provider='sprites', id=sandbox.name)
-            self._uncertain_create = False
+            self._pending_name = None
             self._attached_name = sandbox.name
             self._unfetched = False
             _lookups.record(_LookupCache.key(client, sandbox.name))
@@ -601,44 +612,24 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         # Only our own bound lands here; an SDK `TimeoutError` propagates as raised. A stalled
         # control plane is a transport failure, which propagates for a retry;
         # `WorkspaceTimeoutError` is reserved for command deadlines.
-        if ref is None:
-            # A timed-out create may have committed; a subsequent call looks it up first.
-            self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
-            self._uncertain_create = True
-        # A lost create sent again by `_look_up` is a creation too, though it has a ref.
-        action = 'creation' if self._uncertain_create else 'connection'
+        if (name := self._pending_name) is not None:
+            # A timed-out create may have committed: report its name, so cleanup can find it.
+            self._ref = WorkspaceRef(provider='sprites', id=name)
+        action = 'connection' if name is None else 'creation'
         raise TimeoutError(
             f'Sprite {action} did not complete within {_ACQUIRE_TIMEOUT:g}s; '
             'the Sprites control plane may be unreachable.'
         )
 
-    async def _look_up(self, client: AsyncSpritesClient, ref: WorkspaceRef) -> AsyncSprite:
+    async def _create(self, client: AsyncSpritesClient, name: str) -> AsyncSprite:
         try:
-            return await client.get_sprite(ref.id)
-        except NotFoundError as error:
-            if not self._uncertain_create:
-                raise
-            # The lost create may never have reached Sprites, so send it again under the same
-            # name. Sprites refuses a name that exists with a 409, so this cannot make a second Sprite.
-            try:
-                return await self._create(client)
-            except SpriteError as resent:
-                if not _conflict(resent):
-                    raise
-                # The first create committed, but lookups do not see the Sprite yet.
-                raise NetworkError(f'Sprite {ref.id!r} may still be becoming visible') from error
-
-    async def _create(self, client: AsyncSpritesClient) -> AsyncSprite:
-        try:
-            sandbox = await client.create_sprite(self._new_sprite_name, runtime=self._runtime)
+            sandbox = await client.create_sprite(name, runtime=self._runtime)
         except (NetworkError, TimeoutError, SpriteError) as error:
             if _create_refused(error):
                 raise
-            # The create may have committed even if lookup is not yet visible. Keep its
-            # preallocated name for failure hooks, and look it up first on future attempts.
-            self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
-            self._uncertain_create = True
-            sandbox = await _recover_create(client, self._new_sprite_name, error)
+            # The create may have committed, now or on an earlier attempt: report its name, so cleanup can find it.
+            self._ref = WorkspaceRef(provider='sprites', id=name)
+            sandbox = await _recover_create(client, name, error)
         # Logged as soon as it exists: a Sprite persists until deleted, whatever ends the run later.
         logger.info('Created Sprite %s', sandbox.name)
         return sandbox
