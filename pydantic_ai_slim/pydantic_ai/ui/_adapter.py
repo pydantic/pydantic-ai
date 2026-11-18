@@ -70,7 +70,14 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
-from ._event_stream import NativeEvent, OnCancelFunc, OnCompleteFunc, UIEventStream, dispatch_callback
+from ._event_stream import (
+    DEFAULT_KEEPALIVE_INTERVAL,
+    NativeEvent,
+    OnCancelFunc,
+    OnCompleteFunc,
+    UIEventStream,
+    dispatch_callback,
+)
 from ._messages_builder import MessagesBuilder
 from ._utils import get_ui_message_id, set_ui_message_id, without_ui_message_id
 
@@ -836,11 +843,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     accept: str | None = None
     """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""
 
-    keepalive_interval: float | None = 15
+    keepalive_interval: float | None = DEFAULT_KEEPALIVE_INTERVAL
     """Seconds without an event after which the SSE stream sends a `: keepalive` comment, or `None` to send none.
 
-    Set on the event stream by [`encode_stream()`][pydantic_ai.ui.UIAdapter.encode_stream] and
-    [`streaming_response()`][pydantic_ai.ui.UIAdapter.streaming_response]. See
+    [`encode_stream()`][pydantic_ai.ui.UIAdapter.encode_stream] and
+    [`streaming_response()`][pydantic_ai.ui.UIAdapter.streaming_response] set it on the event stream that
+    [`build_event_stream()`][pydantic_ai.ui.UIAdapter.build_event_stream] returns, replacing any value set there. See
     [`UIEventStream.keepalive_interval`][pydantic_ai.ui.UIEventStream.keepalive_interval].
     """
 

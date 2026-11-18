@@ -71,6 +71,7 @@ from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
+from ._timeouts import READINESS_WAIT_TIMEOUT
 from .conftest import IsDatetime, conversation_view, message, message_part, try_import
 from .workspace_fakes import ConnectOnlyWorkspaceCapability
 
@@ -3520,26 +3521,35 @@ async def test_encode_stream_sends_keepalive_while_source_is_quiet(anyio_backend
             released.set()
         elif chunk == stop_after:
             break
+    pump = next(task for task in asyncio.all_tasks() if task.get_name() == 'pydantic-ai-ui-keepalive-pump')
 
     expected = ['first', KEEPALIVE, 'second'] if stop_after == 'second' else ['first']
     assert list(dict.fromkeys(chunks)) == expected
-    with anyio.fail_after(5):
-        await source_closed.wait()
+    await asyncio.wait({pump}, timeout=READINESS_WAIT_TIMEOUT)
+    assert pump.done()
+    assert source_closed.is_set()
 
 
 @pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
 async def test_encode_stream_keepalive_surfaces_source_error(anyio_backend: str):
     """A source error surfaces on both backends; on Trio, which the keepalive pump doesn't support, no keepalives are sent."""
 
+    keepalive_seen = anyio.Event()
+
     async def events() -> AsyncIterator[str]:
         yield 'first'
-        await anyio.sleep(0.05)
+        # On asyncio the keepalive releases this wait. Trio sends none, so only a quiet gap can show that; 0.05 s is
+        # five intervals.
+        with anyio.move_on_after(0.05):
+            await keepalive_seen.wait()
         raise ValueError('boom')
 
     chunks: list[str] = []
     with pytest.raises(ValueError, match='boom'):
         async for chunk in DummyUIEventStream(keepalive_interval=0.01).encode_stream(events()):
             chunks.append(chunk)
+            if chunk == KEEPALIVE:
+                keepalive_seen.set()
     assert (KEEPALIVE in chunks) == (anyio_backend == 'asyncio')
 
 
@@ -3572,7 +3582,7 @@ async def test_encode_stream_sends_no_keepalive_for_non_sse_content(anyio_backen
 
     async def events() -> AsyncIterator[str]:
         yield 'first'
-        await anyio.sleep(0.05)
+        await anyio.sleep(0.05)  # five intervals; only a quiet gap can show that no keepalive is sent
         yield 'second'
 
     stream = ProtobufEventStream(keepalive_interval=0.01)

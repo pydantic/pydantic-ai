@@ -70,6 +70,7 @@ if TYPE_CHECKING:
 
 
 SSE_CONTENT_TYPE = 'text/event-stream'
+DEFAULT_KEEPALIVE_INTERVAL = 15
 """Content type header value for Server-Sent Events (SSE)."""
 
 
@@ -149,7 +150,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     accept: str | None = None
     """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""
 
-    keepalive_interval: float | None = field(default=15, kw_only=True)
+    keepalive_interval: float | None = field(default=DEFAULT_KEEPALIVE_INTERVAL, kw_only=True)
     """Seconds without an event after which the SSE stream sends a `: keepalive` comment, so proxies and load balancers
     don't close a quiet connection. `None` sends none. Only applies when
     [`content_type`][pydantic_ai.ui.UIEventStream.content_type] is SSE."""
@@ -279,7 +280,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 finally:
                     queue.put_nowait(None)  # end of stream
 
-        pump_task = asyncio.create_task(pump())
+        pump_task = asyncio.create_task(pump(), name='pydantic-ai-ui-keepalive-pump')
         try:
             while True:
                 event: EventT | None = None
