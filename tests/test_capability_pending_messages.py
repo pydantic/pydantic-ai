@@ -2416,17 +2416,12 @@ async def test_content_recorded_at_a_deferred_pause_is_reported_once_to_listener
         async def delivered(self, ctx: RunContext[object], event: EnqueuedMessagesEvent) -> None:
             self.seen.append(event.enqueue_id)
 
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[ToolCallPart(tool_name='gated', tool_call_id='call-gated')])
-
     async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         yield {0: DeltaToolCall(name='gated', json_args='{}', tool_call_id='call-gated')}
 
     listener = Listener(seen=[])
     agent = Agent(
-        FunctionModel(model_fn, stream_function=stream_fn),
-        output_type=[str, DeferredToolRequests],
-        capabilities=[listener],
+        FunctionModel(stream_function=stream_fn), output_type=[str, DeferredToolRequests], capabilities=[listener]
     )
     enqueue_ids: list[str | None] = []
 

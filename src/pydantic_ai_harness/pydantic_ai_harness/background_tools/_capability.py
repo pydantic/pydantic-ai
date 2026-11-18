@@ -482,8 +482,9 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         self._unsettled.append(outcome)
 
     def _enqueue(self, ctx: RunContext[AgentDepsT], completion: _Completion) -> None:
-        if (enqueue_id := ctx.enqueue(completion.result)) is not None:
-            self._queued[enqueue_id] = completion
+        enqueue_id = ctx.enqueue(completion.result)
+        assert enqueue_id is not None  # Only an empty call queues nothing.
+        self._queued[enqueue_id] = completion
 
     def _completed_at_pause(self, ctx: RunContext[AgentDepsT], outcome: _Outcome) -> _Completion:
         completion = _completed(outcome)

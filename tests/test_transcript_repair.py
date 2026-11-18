@@ -892,20 +892,17 @@ async def test_content_queued_at_a_second_pause_keeps_the_pause():
 def _mixed_pause_agent(received: list[list[ModelMessage]]) -> Agent[None, str | DeferredToolRequests]:
     """An agent whose first response calls `get_data`, which runs, and `create_file`, which waits for approval.
 
-    `create_file` queues a note, so the pause records a request after the step's results. Later model requests
-    reply with text.
+    `create_file` queues a note, so the pause records a request after the step's results.
     """
 
     def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         received.append(messages)
-        if len(received) == 1:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart('get_data', {}, tool_call_id='call_data'),
-                    ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_file'),
-                ]
-            )
-        return ModelResponse(parts=[TextPart('All done.')])
+        return ModelResponse(
+            parts=[
+                ToolCallPart('get_data', {}, tool_call_id='call_data'),
+                ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_file'),
+            ]
+        )
 
     agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
 
