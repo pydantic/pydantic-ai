@@ -270,7 +270,7 @@ For a complete list of available models, see the [SambaNova supported models doc
 
 ## Stav
 
-[Stav](https://stav.ai) is a European AI inference gateway: one API key for models from many labs, addressed as `creator/model` (for example `deepseek-ai/deepseek-v4-flash-0731` or `mistral-ai/mistral-large-2411`), with the option to keep compute in the EU or EEA. Create an API key in the [Stav dashboard](https://stav.ai).
+[Stav](https://stav.ai) is a European AI inference gateway: one API key for models from many labs, addressed as `creator/model` (for example `deepseek-ai/deepseek-v4-flash-0731` or `mistral-ai/mistral-large-4`), with the option to keep compute in the EU or EEA. Create an API key on the [API keys page](https://stav.ai/app/connect/api-keys) of your Stav workspace.
 
 You can set the `STAV_API_KEY` environment variable and use [`StavProvider`][pydantic_ai.providers.stav.StavProvider] by name:
 
@@ -283,7 +283,7 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
-By default Stav may route a request to any region. To keep compute inside the EU or the EEA, or in one country, pass `region`: `'eu'`, `'eea'`, an ISO 3166-1 alpha-2 country code such as `'no'`, or a list such as `['no', 'se']` that allows any of them. This is a jurisdiction, not a cloud site. The provider sends it as the `X-Stav-Runs-In` header on every request; it can narrow, but never widen, a region already set on the API key or workspace. Stav refuses a request it cannot serve inside the region instead of sending it elsewhere:
+By default Stav may route a request to any region. To keep compute inside the EU or the EEA, or in one country, pass `region`: `'eu'`, `'eea'`, an ISO 3166-1 alpha-2 country code such as `'no'`, or a list such as `['no', 'se']` that allows any of them. This is a jurisdiction, not a cloud site. The provider sends it as the `X-Stav-Runs-In` header on every request; it can narrow, but never widen, your workspace's own region policy. Stav refuses a request it cannot serve inside the region instead of sending it elsewhere:
 
 ```python
 from pydantic_ai import Agent
@@ -291,7 +291,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.stav import StavProvider
 
 model = OpenAIChatModel(
-    'mistral-ai/mistral-large-2411',
+    'mistral-ai/mistral-large-4',
     provider=StavProvider(api_key='your-stav-api-key', region='eu'),
 )
 agent = Agent(model)
@@ -302,7 +302,7 @@ print(result.output)
 
 Set `STAV_BASE_URL` or pass `base_url` to point the provider at another Stav endpoint.
 
-Stav also serves the Responses API, so you can use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with the same provider. Models whose upstream has its own Responses API, such as OpenAI's, are passed through to it; Stav translates other models onto Chat Completions and lists any request parameters it had to drop in the `X-Stav-Dropped-Params` response header. Unlike OpenAI, Stav doesn't store responses unless you set [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store].
+Stav also serves the Responses API, so you can use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with the same provider. OpenAI and xAI models are passed through to their own Responses API; Stav translates other models onto Chat Completions and lists any request parameters it had to drop in the `X-Stav-Dropped-Params` response header. Unlike OpenAI, Stav doesn't store responses unless you set [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], which only passed-through models accept.
 
 ```python
 from pydantic_ai import Agent

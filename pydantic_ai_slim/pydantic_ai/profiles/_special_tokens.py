@@ -26,6 +26,7 @@ _SpecialTokenRoute = Literal[
     'openrouter',
     'ovhcloud',
     'sambanova',
+    'stav',
     'together',
     'vercel',
     'vllm',

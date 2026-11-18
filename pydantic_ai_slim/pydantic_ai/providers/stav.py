@@ -7,17 +7,10 @@ from typing import Literal, overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
-from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import google_model_profile
-from pydantic_ai.profiles.grok import grok_model_profile
-from pydantic_ai.profiles.harmony import harmony_model_profile
-from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles._family import vendor_family_model_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
-from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.profiles.zai import zai_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 
 try:
     from openai import AsyncOpenAI
@@ -47,13 +40,6 @@ def _runs_in_header_value(region: str | Sequence[str] | None) -> str | None:
     return ','.join(parts)
 
 
-def _openai_model_profile(model_name: str) -> ModelProfile | None:
-    # Stav serves OpenAI's open-weight gpt-oss models alongside the proprietary ones.
-    if model_name.startswith('gpt-oss'):
-        return harmony_model_profile(model_name)
-    return openai_model_profile(model_name)
-
-
 class StavProvider(_OpenAISDKProvider):
     """Provider for the [Stav](https://stav.ai) European AI inference gateway.
 
@@ -75,35 +61,16 @@ class StavProvider(_OpenAISDKProvider):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        provider_to_profile = {
-            'anthropic': anthropic_model_profile,
-            'deepseek-ai': deepseek_model_profile,
-            'google': google_model_profile,
-            'meta-llama': meta_model_profile,
-            'mistral-ai': mistral_model_profile,
-            'mistralai': mistral_model_profile,
-            'moonshotai': moonshotai_model_profile,
-            'openai': _openai_model_profile,
-            'qwen': qwen_model_profile,
-            'x-ai': grok_model_profile,
-            'xai': grok_model_profile,
-            'zai-org': zai_model_profile,
-        }
-
-        profile = None
-
-        model_name = model_name.lower()
-        if '/' in model_name:
-            provider, model_name = model_name.split('/', 1)
-            if provider in provider_to_profile:
-                profile = provider_to_profile[provider](model_name)
+        # Stav spells Mistral's creator `mistral-ai`; the shared map knows the other creators Stav routes to.
+        profile = vendor_family_model_profile(model_name, overrides={'mistral-ai': mistral_model_profile})
 
         # As StavProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
-
-    @overload
-    def __init__(self) -> None: ...
+        # we need to maintain that behavior unless json_schema_transformer is set explicitly.
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            special_token_route_profile('stav', model_name),
+        )
 
     @overload
     def __init__(
@@ -138,7 +105,7 @@ class StavProvider(_OpenAISDKProvider):
                 code such as `'no'`, or a list of these (`['no', 'se']`), which allows any of them. This is a
                 jurisdiction, not a cloud site like Bedrock's `region_name='eu-north-1'`. `None` (the default)
                 lets Stav route globally. The region is sent as the `X-Stav-Runs-In` header on every request,
-                and can only narrow a region already set on the API key or workspace. Stav refuses a request it
+                and can only narrow the workspace's own region policy. Stav refuses a request it
                 cannot serve inside the region rather than sending it elsewhere.
             openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key`, `base_url`, `region`
                 and `http_client` must be `None`.
@@ -161,7 +128,7 @@ class StavProvider(_OpenAISDKProvider):
                 'to use the Stav provider.'
             )
 
-        self._base_url = base_url or os.getenv('STAV_BASE_URL', 'https://api.stav.ai/v1')
+        self._base_url = base_url or os.getenv('STAV_BASE_URL') or 'https://api.stav.ai/v1'
         runs_in = _runs_in_header_value(region)
         default_headers = {_RUNS_IN_HEADER: runs_in} if runs_in is not None else None
         self._client = self._create_openai_client(

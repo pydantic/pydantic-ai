@@ -4045,22 +4045,32 @@ def test_nebius_moonshotai():
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_stav_bare_name():
     profile = StavProvider.model_profile('auto')
-    assert _normalize(profile) == snapshot({'json_schema_transformer': OpenAIJsonSchemaTransformer})
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_stav_deepseek():
     profile = StavProvider.model_profile('deepseek-ai/deepseek-v4-flash-0731')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'supports_thinking': True}
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
     )
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_stav_mistral():
-    profile = StavProvider.model_profile('mistral-ai/mistral-large-2411')
+    profile = StavProvider.model_profile('mistral-ai/mistral-large-4')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'tool_call_id_length': 9}
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
+            'may_tokenize_special_tokens_in_content': True,
+        }
     )
 
 
@@ -4069,15 +4079,17 @@ def test_stav_gpt_oss():
     profile = StavProvider.model_profile('openai/gpt-oss-120b')
     assert _normalize(profile) == snapshot(
         {
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
+            'default_framing_announcement': 'always',
             'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
+            'may_tokenize_special_tokens_in_content': True,
         }
     )
 
@@ -4101,6 +4113,7 @@ def test_stav_openai():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'openai_reasoning_efforts': frozenset({'high', 'low', 'medium', 'minimal'}),
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
@@ -4111,6 +4124,7 @@ def test_stav_anthropic():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
@@ -4120,6 +4134,7 @@ def test_stav_anthropic():
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_binds_thinking_blocks': False,
@@ -4129,6 +4144,7 @@ def test_stav_anthropic():
                 {CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
+            'may_tokenize_special_tokens_in_content': False,
         }
     )
 
