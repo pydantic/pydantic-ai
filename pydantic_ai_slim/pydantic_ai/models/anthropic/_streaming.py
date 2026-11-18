@@ -385,7 +385,15 @@ class AnthropicStreamedResponse(StreamedResponse):
         if event.index in self._ignored_server_tool_use_indices:
             self._ignored_server_tool_use_indices.remove(event.index)
         elif isinstance(current_block, BetaMCPToolUseBlock):
-            yield from self._parts_manager.handle_tool_call_delta_events(vendor_part_id=event.index, args='}')
+            # A call with no arguments streams no input JSON, so restore the `{}` dropped at block start.
+            no_input = (
+                isinstance(part, NativeToolCallPart)
+                and isinstance(part.args, str)
+                and part.args.endswith('"tool_args":')
+            )
+            yield from self._parts_manager.handle_tool_call_delta_events(
+                vendor_part_id=event.index, args='{}}' if no_input else '}'
+            )
         elif isinstance(current_block, BetaServerToolUseBlock) and current_block.name in (
             'tool_search_tool_regex',
             'tool_search_tool_bm25',
