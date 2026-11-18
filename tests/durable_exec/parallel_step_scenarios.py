@@ -17,6 +17,7 @@ from pydantic_ai import Agent, FunctionToolset, ModelMessage, ModelResponse, Run
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ToolsetTool, WrapperToolset
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 Variant = Literal['copy', 'nested', 'inplace']
 """How the factory's toolset prepares each step.
@@ -27,8 +28,6 @@ returns `self`, as `docs/toolsets.md` describes.
 """
 
 VARIANTS: tuple[Variant, ...] = ('copy', 'nested', 'inplace')
-
-READINESS_WAIT_TIMEOUT = 10
 
 
 @dataclass

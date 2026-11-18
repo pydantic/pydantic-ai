@@ -159,9 +159,9 @@ class RunHeldToolset(Generic[AgentDepsT]):
     not connecting — an `MCPToolset` opens nothing until it is entered — but the factory, and the
     `for_run` of the toolset it returns, are arbitrary user code that runs in the durable container
     rather than in a unit, so I/O inside them is not checkpointed and re-runs when the container
-    replays. Like the capability factories that have
-    always run there, it has to be deterministic given the run's dependencies and leave its I/O to
-    the units — which is what the engine docs tell users.
+    replays. Like the capability factories that have always run there, they have to be deterministic
+    given the run's dependencies and leave their I/O to the units — which is what the engine docs
+    tell users.
 
     Only used where the durable unit runs in the same process as the container. Engines that
     serialize the run context across the boundary never see one and each unit enters its own, as
@@ -958,17 +958,18 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
             # their I/O to the units, which use the toolset as `RunHeldToolset.stepped` prepares it
             # once per run step. Only units handed the run's own `RunContext` can reach what the run
             # holds; where the engine's transports carry the context to the unit in another form,
-            # every unit resolves its own, so nothing is resolved here. A `per_run_step=True` factory is re-evaluated per
-            # unit as before: its `for_run_step` swaps the inner toolset in place, which parallel
-            # tool-call units must not share.
+            # every unit resolves its own, so nothing is resolved here. A `per_run_step=True`
+            # factory is re-evaluated per unit as before: its `for_run_step` swaps the inner toolset
+            # in place, which parallel tool-call units must not share.
             run_copy._run_held = RunHeldToolset(toolset_id, await self._dynamic_toolset.for_run(ctx))
         return run_copy
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         # The per-run copy is stable across steps: a `per_run_step=True` factory is re-evaluated
         # inside the durable units, not in workflow/flow code here, and a `per_run_step=False` one
-        # was resolved once in `for_run` or is resolved by each unit. (Outside the durable context this wrapper isn't in the
-        # run's tree at all — `for_run` above replaced it with the resolved toolset.)
+        # was resolved once in `for_run` or is resolved by each unit. (Outside the durable context
+        # this wrapper isn't in the run's tree at all — `for_run` above replaced it with the
+        # resolved toolset.)
         return self
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:

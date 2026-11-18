@@ -65,7 +65,8 @@ process; connecting still happens inside a unit, so the engine retries it. A `Dy
 with `per_run_step=False` is held the same way, except that the run resolves it first: that factory,
 and the `for_run` of the toolset it returns, run in container code, so they carry the same
 determinism requirement as every other factory that runs there. It needs no lifecycle declaration:
-`_build_dynamic_toolset` holds it when the engine's dynamic toolset transports are the default
+`_build_dynamic_toolset` passes `units_share_run_context=True`, and `DurableDynamicToolset.for_run`
+holds it, only when the engine's dynamic toolset transports are the default
 `IdentityParameterTransport`, which hands each unit the run's own `RunContext`. An engine whose
 `ParameterTransports` carry the context to another process gets per-unit resolution without declaring
 anything.
