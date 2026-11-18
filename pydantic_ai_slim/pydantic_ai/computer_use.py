@@ -519,8 +519,9 @@ class ComputerCallPart(ToolCallPart[_ComputerArgs], kind=COMPUTER_KIND):
     def coordinate_grid(self) -> int | None:
         """The size of the grid the call's positions are on, such as `1000` for 0 to 999, or `None` for pixels.
 
-        The agent sets it from the model profile's `computer_use_coordinate_grid`. A history that lost the call's
-        `provider_details`, such as one a UI rebuilt, reads `None`.
+        This is the answering model's profile value, `computer_use_coordinate_grid`: a convention of the model's maker.
+        The agent records it on the call, because under `ModelFallback` the tool can't otherwise tell which model made
+        the call. A history that lost the call's `provider_details`, such as one a UI rebuilt, reads `None`.
         """
         return _label(self, _COORDINATE_GRID, minimum=2)
 
@@ -528,9 +529,11 @@ class ComputerCallPart(ToolCallPart[_ComputerArgs], kind=COMPUTER_KIND):
     def screenshot_max_side(self) -> int | None:
         """The longest side, in pixels, of a screenshot the call's model takes, or `None` for no limit.
 
-        The agent sets it from the profile's `computer_use_screenshot_max_side`, using the smallest across a
-        `FallbackModel`'s models. A computer use capability can then refuse a screen the model can't see before the
-        call acts. A history a UI rebuilt reads `None`.
+        This is the answering model's profile value, `computer_use_screenshot_max_side`: a limit set by the model's
+        maker. The agent records it on the call, because under `ModelFallback` the tool can't otherwise tell which
+        model made the call. A `FallbackModel` doesn't say which of its models answered, so its calls get the smallest
+        limit across them. A computer use capability can then refuse a screen the model can't see before the call
+        acts. A history a UI rebuilt reads `None`.
         """
         return _label(self, _SCREENSHOT_MAX_SIDE)
 
@@ -538,8 +541,8 @@ class ComputerCallPart(ToolCallPart[_ComputerArgs], kind=COMPUTER_KIND):
     def screenshot_max_pixels(self) -> int | None:
         """The most pixels in a screenshot the call's model takes, or `None` for no limit.
 
-        Set from the profile's `computer_use_screenshot_max_pixels`; see
-        [`screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side].
+        The answering model's profile value, `computer_use_screenshot_max_pixels`, recorded as
+        [`screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side] is.
         """
         return _label(self, _SCREENSHOT_MAX_PIXELS)
 
