@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -54,6 +55,16 @@ __all__ = (
 
 # Prevent accidental real model requests during tests.
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Capture the harness's INFO lifecycle lines, such as which sandbox it created, in a live tier's failure report.
+
+    Only the harness logger is raised: raising the root logger with `--log-level=INFO` would also capture SDK lines
+    such as httpx's request URLs, which a failure prints into public CI output.
+    """
+    if str(config.getoption('markexpr')).endswith('_live'):
+        logging.getLogger('pydantic_ai_harness').setLevel(logging.INFO)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
