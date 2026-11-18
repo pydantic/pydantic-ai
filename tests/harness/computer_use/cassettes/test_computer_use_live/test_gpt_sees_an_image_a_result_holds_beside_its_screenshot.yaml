@@ -49,7 +49,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "1077"
+      - "1144"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -59,15 +59,15 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0bfac2f4882c7f26006afd8c8b9c9c87d2a36bdfcddc5b688a
+        id: resp_067635dea37c5e3a006afde246776487d2950d6fa13063d0db
         object: response
-        created_at: 1795001483
+        created_at: 1795023430
         status: completed
         access_programs: null
         background: false
         billing:
           payer: developer
-        completed_at: 1795001484
+        completed_at: 1795023431
         error: null
         frequency_penalty: 0.0
         image:
@@ -83,12 +83,12 @@ interactions:
         model: gpt-5.4-mini-2026-03-17
         moderation: null
         output:
-        - id: cu_0bfac2f4882c7f26006afd8c8c0ff087d29c02c94ec64d391a
+        - id: cu_067635dea37c5e3a006afde246ee5c87d2bde9217180077d50
           type: computer_call
           status: completed
           actions:
           - type: screenshot
-          call_id: call_Z1PtgvX8wYgn0ngiEHwqTKjS
+          call_id: call_njo1pLPEiLrscaN8owStFmTM
         parallel_tool_calls: true
         presence_penalty: 0.0
         previous_response_id: null
@@ -140,7 +140,7 @@ interactions:
           total_tokens: 913
         user: null
         metadata: {}
-  recorded_at: 2026-11-18T11:31:24.608684+00:00
+  recorded_at: 2026-11-18T17:37:11.635301+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -152,7 +152,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "5539"
+      - "5746"
       content-type:
       - application/json
       host:
@@ -167,14 +167,14 @@ interactions:
         input:
         - role: user
           content: "Take one screenshot. Besides the screenshot you get a small square image: reply with its colour only."
-        - id: cu_0bfac2f4882c7f26006afd8c8c0ff087d29c02c94ec64d391a
-          call_id: call_Z1PtgvX8wYgn0ngiEHwqTKjS
+        - id: cu_067635dea37c5e3a006afde246ee5c87d2bde9217180077d50
+          call_id: call_njo1pLPEiLrscaN8owStFmTM
           status: completed
           type: computer_call
           actions:
           - type: screenshot
         - type: computer_call_output
-          call_id: call_Z1PtgvX8wYgn0ngiEHwqTKjS
+          call_id: call_njo1pLPEiLrscaN8owStFmTM
           output:
             type: computer_screenshot
             image_url: >-
@@ -185,11 +185,18 @@ interactions:
           - type: input_text
             text: >-
               <pyai:tool_result tool_name="computer"
-              tool_call_id="call_Z1PtgvX8wYgn0ngiEHwqTKjS">Ran 1 action. Screenshot attached (1280x800).</pyai:tool_result>
+              tool_call_id="call_njo1pLPEiLrscaN8owStFmTM">Ran 1 action. Screenshot attached (1280x800). See file
+              8ceb70.</pyai:tool_result>
+          - type: input_text
+            text: >-
+              <pyai:tool_result tool_name="computer"
+              tool_call_id="call_njo1pLPEiLrscaN8owStFmTM" file_id="8ceb70">
           - type: input_image
             image_url: >-
               data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAb0lEQVR4nO3PAQkAAAyEwO9feoshgnABdLep8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3IPanc8OLDQitxAAAAAElFTkSuQmCC
             detail: original
+          - type: input_text
+            text: </pyai:tool_result>
         instructions: |-
           The `computer` tool shows and controls this computer's screen.
           - Put actions whose outcome you can predict in one call, and end the call where you need to see the screen to choose the next action.
@@ -213,7 +220,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "1307"
+      - "1169"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -223,15 +230,15 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0bfac2f4882c7f26006afd8c8cc92487d2a11e2d0d114166db
+        id: resp_067635dea37c5e3a006afde247d44887d286d1f52e60f857e2
         object: response
-        created_at: 1795001484
+        created_at: 1795023431
         status: completed
         access_programs: null
         background: false
         billing:
           payer: developer
-        completed_at: 1795001485
+        completed_at: 1795023432
         error: null
         frequency_penalty: 0.0
         image:
@@ -247,7 +254,7 @@ interactions:
         model: gpt-5.4-mini-2026-03-17
         moderation: null
         output:
-        - id: msg_0bfac2f4882c7f26006afd8c8d70b887d29c15d20942a0e3aa
+        - id: msg_067635dea37c5e3a006afde2484ddc87d29f9f497dd09acfea
           type: message
           status: completed
           content:
@@ -295,7 +302,7 @@ interactions:
         top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 2185
+          input_tokens: 2238
           input_tokens_details:
             cache_write_tokens: 0
             cache_write_tokens_details:
@@ -305,7 +312,7 @@ interactions:
           output_tokens: 5
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 2190
+          total_tokens: 2243
         user: null
         metadata: {}
-  recorded_at: 2026-11-18T11:31:26.004575+00:00
+  recorded_at: 2026-11-18T17:37:12.968340+00:00
