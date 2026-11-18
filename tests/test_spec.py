@@ -712,6 +712,47 @@ class TestBuildSchemaTypes:
             ]
         )
 
+    def test_variadic_keyword_dataclass_target_omits_classvar(self):
+        """A class target whose `__init__` takes `**kwargs` keeps every field in its schema, `init=False` included.
+
+        `**kwargs` can take any field, but never a `ClassVar`. Each field is required, since the signature gives no
+        defaults: https://github.com/pydantic/pydantic-ai/issues/13490.
+        """
+
+        @dataclass
+        class Stateful:
+            kind: ClassVar[str] = 'stateful'
+            threshold: int
+            derived: str = field(default='', init=False)
+
+            def __init__(self, **kwargs: object) -> None: ...  # pragma: no cover
+
+        types = build_schema_types({'Stateful': Stateful})
+        assert [TypeAdapter(t).json_schema() for t in types] == snapshot(
+            [
+                {'const': 'Stateful', 'type': 'string'},
+                {
+                    '$defs': {
+                        'spec_params_Stateful': {
+                            'additionalProperties': False,
+                            'properties': {
+                                'threshold': {'title': 'Threshold', 'type': 'integer'},
+                                'derived': {'title': 'Derived', 'type': 'string'},
+                            },
+                            'required': ['threshold', 'derived'],
+                            'title': 'spec_params_Stateful',
+                            'type': 'object',
+                        }
+                    },
+                    'additionalProperties': False,
+                    'properties': {'Stateful': {'$ref': '#/$defs/spec_params_Stateful'}},
+                    'required': ['Stateful'],
+                    'title': 'spec_Stateful',
+                    'type': 'object',
+                },
+            ]
+        )
+
     def test_custom_schema_target(self):
         def my_factory(name: str, count: int = 1) -> None: ...  # pragma: no cover
 
