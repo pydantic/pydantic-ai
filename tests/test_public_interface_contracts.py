@@ -43,7 +43,8 @@ with try_import() as prefect_imports:
 # "Public" here means the defining module path and the class name carry no leading underscore, and
 # the class is not a `StreamedResponse` implementation -- see `kw_only_walker.py`, which owns both
 # rules and explains why. Classes that hand-write a keyword-only `__init__` under
-# `@dataclass(init=False)` are already safe and are deliberately absent.
+# `@dataclass(init=False)` are already safe and are deliberately absent, and so are subclasses that
+# take their public base's constructor unchanged, since the base's entry already covers it.
 #
 # This list only ever shrinks. Converting an entry to keyword-only breaks positional callers, so
 # the drain path is a major version: drop entries here in the same change that flips them,
@@ -55,10 +56,6 @@ _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
         'pydantic_ai.capabilities.prefix_tools.PrefixTools',
         'pydantic_ai.common_tools.exa.ExaFindSimilarTool',
         'pydantic_ai.common_tools.exa.ExaSearchTool',
-        # Typed kinds of the allowlisted `ToolCallPart` and `ToolReturnPart`: they add no fields, and a subclass can't
-        # make its parent's fields keyword-only.
-        'pydantic_ai.computer_use.ComputerCallPart',
-        'pydantic_ai.computer_use.ComputerReturnPart',
         'pydantic_ai.concurrency.ConcurrencyLimit',
         'pydantic_ai.embeddings.instrumented.InstrumentedEmbeddingModel',
         'pydantic_ai.function_signature.GenericTypeExpr',

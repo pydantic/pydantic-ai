@@ -1271,8 +1271,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             supported_native_tools = supported_native_tools - {AdvisorTool}
         if isinstance(client, _CODE_EXECUTION_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {CodeExecutionTool}
-        if isinstance(client, _COMPUTER_UNSUPPORTED_CLIENTS):
-            supported_native_tools = supported_native_tools - {ComputerTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
@@ -1345,6 +1343,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         Anthropic's strict-schema limits are only checked on the clients they were verified on, and a user whose
         Vertex or Foundry deployment is known to enforce them can opt in with `anthropic_enforces_strict_schema_limits`.
 
+        `ComputerTool` is left out of `supported_native_tools` on the Vertex AI, Foundry and Claude Platform on AWS
+        clients, where the computer use tool isn't recorded driving a screen, so a user who has checked it there can
+        list it in their own `supported_native_tools`.
+
         `anthropic_calls_cited_web_tools_directly` is on for `AsyncAnthropic` clients and off for every client in
         `_CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS`, Claude Platform on AWS included, unless the provider's profile
         already sets it.
@@ -1390,6 +1392,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
         if isinstance(client, _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS):
             profile = merge_profile(profile, AnthropicModelProfile(anthropic_enforces_strict_schema_limits=False))
+        if isinstance(client, _COMPUTER_UNSUPPORTED_CLIENTS):
+            profile = merge_profile(
+                profile,
+                AnthropicModelProfile(
+                    supported_native_tools=profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+                    - {ComputerTool}
+                ),
+            )
         if 'anthropic_calls_cited_web_tools_directly' not in profile:
             profile = merge_profile(
                 profile,

@@ -446,7 +446,12 @@ class TestDesktop:
     async def test_the_template_runs_no_x_server_until_the_display_starts(self) -> None:
         """Validates that the start script finds no X server or XFCE session of the template's own to share."""
         async with _owned(desktop=True, sandbox_timeout=300) as backend:
-            running = await backend.run('pgrep -l "^(Xvfb|Xvnc|Xorg|xfce4-session)$"; ls -A /tmp/.X11-unix', shell=True)
+            # Through the native handle, since `backend.run` starts the display first. E2B raises on a nonzero exit,
+            # which `pgrep` finding nothing is.
+            native = await backend.get_sandbox()
+            running = await native.commands.run(
+                'pgrep -l "^(Xvfb|Xvnc|Xorg|xfce4-session)$"; ls -A /tmp/.X11-unix 2>/dev/null; true'
+            )
             assert running.stdout == ''
 
     async def test_display_contract(self) -> None:
