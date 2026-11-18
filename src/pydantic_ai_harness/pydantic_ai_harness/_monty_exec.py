@@ -61,7 +61,6 @@ try:
         TurnCall,
         TurnRequest,
         TurnResume,
-        TurnTooLarge,
         from_wire,
         oversized,
         settled_data,
@@ -377,8 +376,6 @@ class TurnFeed:
         """Resume with what `encode` returns: the results, as data a turn can carry."""
         try:
             resume = encode()
-        except TurnTooLarge as error:
-            raise _host_error('MemoryError', str(error)) from None
         except TypeError as error:  # a type the sandbox has none for, such as `bytearray`
             raise _host_error('TypeError', str(error)) from None
         limits = self._limits(restored_pauses=1)
@@ -415,6 +412,7 @@ class TurnFeed:
             case 'waiting':
                 return TurnFutureSnapshot(self, turn.pending_call_ids)
             case 'complete':
+                assert turn.output is not None
                 return TurnComplete(from_wire(turn.output))
             case _:  # 'failed'
                 assert turn.failure is not None

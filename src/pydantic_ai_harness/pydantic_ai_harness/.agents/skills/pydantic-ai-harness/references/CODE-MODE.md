@@ -251,9 +251,8 @@ the workflow with `ActivityError`. In a turn activity `max_duration_seconds` app
 `start_to_close_timeout` above it: Temporal's timeout does not stop a running turn. A retried turn
 repeats its `'read-write'` mount writes. Recorded pool errors keep their type name, so
 `non_retryable_error_types` still match. A `DynamicCapability` that returns such a `CodeMode` raises
-`UserError`. Tool results and call arguments keep their types across turns (dates, `Decimal` and sets
-included), and the model sees the same result; nested-call
-arguments with no JSON form raise `TypeError`.
+`UserError`. Tool results and call arguments keep their types across turns, and the model sees the
+same result; nested-call arguments of a type Monty does not hand the host raise `TypeError`.
 
 Setup errors reach workflow code with their original types. `PydanticAIPlugin` treats `UserError`
 as a workflow failure. Uncaught `RuntimeError`, `MontyRefusedError`, and other unclassified factory

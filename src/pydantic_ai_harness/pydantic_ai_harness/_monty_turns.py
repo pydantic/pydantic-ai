@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import math
+import pickle
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from functools import cache
 from typing import Any, Literal, TypeGuard, TypeVar, cast, get_args
@@ -63,120 +65,91 @@ for _name in get_args(ExcType):
     _EXCEPTION_TYPES.setdefault(_name.rpartition('.')[2], []).append(_name)
 
 
-def to_wire(value: object) -> object:
-    """`value` as JSON that `from_wire` turns back into an equal value of the same types.
+_UNDOTTED_MODULES = {'FrozenInstanceError': 'dataclasses'}
+"""The module of each exception Monty names without one that is not a builtin."""
 
-    Temporal's converter writes activity inputs and results as JSON, which would turn bytes into text
-    and tuples into lists, and fails on bytes that are not UTF-8. Every value whose JSON form would
-    differ is tagged, and every dict is tagged too, so a dict the snippet built is never read as a tag.
-    That covers every type Monty hands the host: dates, times, `timedelta`, `Decimal` and sets too. A
-    value of any other type crosses as its JSON form and comes back as that form, as a tool result
-    does when CodeMode hands it to the sandbox.
 
-    Raises `TypeError` once it has written more values than `TURN_PAYLOAD_BYTES`. Each value
-    takes at least one byte of JSON, so the result could not cross anyway, and a list that holds the
-    same list many times stops being expanded here instead of growing exponentially.
+def to_wire(value: object) -> str:
+    """`value` as text that `from_wire` turns back into an equal value of the same types.
+
+    Temporal's converter writes activity inputs and results as JSON, which would turn bytes into text,
+    tuples into lists, and has no form for sets, dates, `Decimal`, `complex` or `...`; its decoder also
+    refuses deep nesting and very large integers. So a value crosses as one string: its pickle, which
+    keeps every type Monty hands the host and the values a snippet shares, in base64.
+
+    Only the types in `_WIRE_CLASSES` are written, and `from_wire` loads only those, so loading a
+    recorded turn never imports or calls anything else. A subclass of a container crosses as the
+    container, as Monty itself hands it to the host. Raises `TypeError` for any other type, with the
+    message a live session gives for a host value it cannot convert, and for a value nested too
+    deeply to write.
     """
-    return _Encoder().encode(value)
-
-
-_TAGS = frozenset(
-    {'float', 'bytes', 'tuple', 'dict', 'set', 'frozenset', 'date', 'datetime', 'time', 'timedelta', 'Decimal'}
-)
-"""The keys of a one-key object that `to_wire` wrote for a value JSON has no form of its own for."""
-
-
-class _Encoder:
-    """`to_wire`'s walk, which counts the values it writes so it can stop as soon as they cannot fit."""
-
-    def __init__(self) -> None:
-        self.values_left = TURN_PAYLOAD_BYTES
-
-    def encode(self, value: object) -> object:
-        self.values_left -= 1
-        if self.values_left < 0:
-            raise TurnTooLarge(f'a value with more than {TURN_PAYLOAD_BYTES} parts cannot cross as JSON')
-        if _is_list_or_tuple(value):
-            items = [self.encode(item) for item in value]
-            return {'tuple': items} if isinstance(value, tuple) else items
-        if is_mapping(value):
-            return self._mapping(value)
-        if isinstance(value, set | frozenset):
-            items = cast(set[object] | frozenset[object], value)
-            return {type(items).__name__: [self.encode(item) for item in items]}
-        return _scalar_to_wire(value)
-
-    def _mapping(self, value: Mapping[Any, Any]) -> object:
-        if all(isinstance(key, str) for key in value) and not (len(value) == 1 and next(iter(value)) in _TAGS):
-            # A plain object, one level deep as in the workflow, so nesting that fits there fits here.
-            return {key: self.encode(item) for key, item in value.items()}
-        return {'dict': [[self.encode(key), self.encode(item)] for key, item in value.items()]}
-
-
-def _output_to_wire(output: object) -> object:
-    """A snippet's result as a turn returns it, or a note saying why it cannot be returned."""
+    buffer = io.BytesIO()
     try:
-        wired = to_wire(model_safe_result(output))
-        to_json(MontyTurn('complete', output=wired))  # the depth limit applies to the turn as a whole
-    except TurnTooLarge:
-        return f'[the result has more than {TURN_PAYLOAD_BYTES} parts, more than a turn can return]'
-    except PydanticSerializationError:
-        return '[the result is nested more deeply than a turn can return]'
-    return wired
+        _WirePickler(buffer, protocol=5).dump(value)
+    except RecursionError:
+        raise TypeError('the value is nested too deeply to send') from None
+    return base64.b64encode(buffer.getvalue()).decode()
 
 
-def _scalar_to_wire(value: object) -> object:
-    if value is None or isinstance(value, bool | int | str):
-        return value
-    if isinstance(value, float):
-        return value if math.isfinite(value) else {'float': repr(value)}
-    if isinstance(value, bytes):
-        return {'bytes': base64.b64encode(value).decode()}
-    # The other types Monty hands the host, tagged so they come back as themselves.
-    if isinstance(value, date | time):  # `datetime` is a `date`
-        return {type(value).__name__: value.isoformat()}
-    if isinstance(value, timedelta):
-        return {'timedelta': [value.days, value.seconds, value.microseconds]}
-    if isinstance(value, Decimal):
-        return {'Decimal': str(value)}
-    # As a live session does, for example for a `bytearray` tool result.
-    raise TypeError(f'Cannot convert {type(value).__module__}.{type(value).__qualname__} to Monty value')
+def from_wire(data: str) -> Any:
+    """The value `to_wire` encoded as `data`."""
+    return _WireUnpickler(io.BytesIO(base64.b64decode(data))).load()
 
 
-def from_wire(value: object) -> Any:
-    """The value `to_wire` encoded."""
-    if _is_list_or_tuple(value):
-        return [from_wire(item) for item in value]
-    if not is_mapping(value):
-        return value
-    if len(value) != 1 or next(iter(value)) not in _TAGS:
-        return {key: from_wire(item) for key, item in value.items()}
-    ((tag, data),) = value.items()
-    match tag:
-        case 'float':
-            return float(str(data))
-        case 'bytes':
-            return base64.b64decode(str(data))
-        case 'tuple':
-            return tuple(from_wire(data))
-        case 'dict':
-            assert _is_list_or_tuple(data)
-            return dict(_decoded_pair(pair) for pair in data)
-        case 'set' | 'frozenset':
-            return (set if tag == 'set' else frozenset)(from_wire(data))
-        case 'date' | 'datetime' | 'time':
-            return {'date': date, 'datetime': datetime, 'time': time}[str(tag)].fromisoformat(str(data))
-        case 'timedelta':
-            days, seconds, microseconds = cast(list[int], data)
-            return timedelta(days, seconds, microseconds)
-        case _:  # 'Decimal'
-            return Decimal(str(data))
+_WIRE_CLASSES: dict[tuple[str, str], type] = {
+    (cls.__module__, cls.__qualname__): cls
+    for cls in (
+        tuple,
+        list,
+        dict,
+        set,
+        frozenset,
+        complex,
+        type(...),
+        date,
+        datetime,
+        time,
+        timedelta,
+        timezone,
+        Decimal,
+    )
+}
+"""The classes a wire value may name, by module and name. `...` pickles as the name `builtins.Ellipsis`."""
+
+_CONTAINERS = (tuple, list, dict, set, frozenset)
 
 
-def _decoded_pair(pair: object) -> tuple[Any, Any]:
-    assert _is_list_or_tuple(pair)
-    key, item = pair
-    return from_wire(key), from_wire(item)
+class _WirePickler(pickle.Pickler):
+    def reducer_override(self, obj: object, /) -> Any:
+        # Called for every value except `None`, `bool`, and exact `int`, `float`, `str`, `bytes` and
+        # containers, and for each class the pickle names.
+        if obj is ... or type(obj) in _WIRE_CLASSES.values() or obj in _WIRE_CLASSES.values():
+            return NotImplemented
+        for container in _CONTAINERS:
+            if isinstance(obj, container):
+                return container, (container(cast(Any, obj)),)
+        if is_mapping(obj):
+            return dict, (dict(obj),)
+        cls = type(obj)
+        raise TypeError(f'Cannot convert {cls.__module__}.{cls.__qualname__} to Monty value')
+
+
+class _WireUnpickler(pickle.Unpickler):
+    def find_class(self, module: str, name: str) -> Any:
+        if module == 'builtins' and name == 'Ellipsis':
+            return ...
+        if (cls := _WIRE_CLASSES.get((module, name))) is None:
+            raise pickle.UnpicklingError(f'{module}.{name} is not a wire type')
+        return cls
+
+
+def _output_to_wire(output: object) -> str:
+    """A snippet's result as a turn returns it; one that cannot cross returns as its `repr`."""
+    safe = model_safe_result(output)
+    try:
+        return to_wire(safe)
+    except TypeError:
+        return to_wire(repr(safe))
 
 
 def settled_data(result: ExternalSettledResult) -> SettledData:
@@ -198,7 +171,7 @@ def settled_data(result: ExternalSettledResult) -> SettledData:
         name
         for base in type(exc).__mro__
         for name in _EXCEPTION_TYPES.get(base.__name__, ())
-        if base.__module__.partition('.')[0] in ('builtins', name.partition('.')[0])
+        if base.__module__.partition('.')[0] in ('builtins', _UNDOTTED_MODULES.get(name, name.partition('.')[0]))
     )
     message = exc.args[0] if len(exc.args) == 1 and isinstance(exc.args[0], str) else str(exc)
     return ExternalExceptionData(exc_type=exc_type, message=message)
@@ -289,9 +262,9 @@ class TurnCall:
     """The external call a turn paused at."""
 
     function_name: str
-    args: object
+    args: str
     """The positional arguments, as `to_wire` encodes them."""
-    kwargs: object
+    kwargs: str
     """The keyword arguments, as `to_wire` encodes them."""
     call_id: int
     is_os_function: bool
@@ -380,7 +353,7 @@ class MontyTurn:
     """How many times the snippet paused in this turn; each pause counts toward `max_suspensions`."""
     call: TurnCall | None = None
     pending_call_ids: list[int] = field(default_factory=list[int])
-    output: object = None
+    output: str | None = None
     """The snippet's result, as `to_wire` encodes it."""
     failure: MontyFailure | None = None
 
@@ -542,16 +515,9 @@ async def _state_after(session: AsyncMontySession, request: TurnRequest, failure
         return None
 
 
-class TurnTooLarge(TypeError):
-    """A value has more parts than a turn can carry."""
-
-
 def oversized(request: TurnRequest) -> str | None:
     """Why `request` is more than a turn may take, or `None` when it fits."""
-    try:
-        size = len(to_json(request))
-    except PydanticSerializationError:
-        return 'the sandbox would receive a value nested more deeply than one step can carry'
+    size = len(to_json(request))
     if size <= TURN_PAYLOAD_BYTES:
         return None
     return f'the sandbox would receive {size} bytes in one step, more than the {TURN_PAYLOAD_BYTES} it can take'
@@ -564,7 +530,7 @@ def _fit_turn(turn: MontyTurn) -> MontyTurn:
     are never cut: `_answer_in_turn` keeps them to half the budget, so the texts always hold the excess.
     """
     while (excess := len(to_json(turn)) - TURN_PAYLOAD_BYTES) > 0:
-        output = turn.output if isinstance(turn.output, str) else repr(from_wire(turn.output))
+        output = '' if turn.output is None else repr(from_wire(turn.output))
         failure = turn.failure or MontyFailure('other')
         texts = {'prints': turn.prints, 'output': output, 'display': failure.display, 'message': failure.message}
         name = max(texts, key=lambda name: len(texts[name]))
@@ -578,8 +544,10 @@ def _fit_turn(turn: MontyTurn) -> MontyTurn:
             turn = replace(turn, failure=replace(failure, message=cut, message_sha256=_sha256(failure.message)))
         elif name in ('display', 'message'):
             turn = replace(turn, failure=replace(failure, **{name: cut}))
+        elif name == 'output':
+            turn = replace(turn, output=to_wire(cut))
         else:
-            turn = replace(turn, **{name: cut})
+            turn = replace(turn, prints=cut)
     return turn
 
 
@@ -607,8 +575,8 @@ async def _answer_in_turn(
             snapshot = pauses.seen(await snapshot.resume_auto())
         elif not _args_cross(snapshot):
             message = (
-                f'{snapshot.function_name}() got arguments that cannot be sent to the tool: they need a JSON '
-                f'form and at most {TURN_PAYLOAD_BYTES // 2} bytes'
+                f'{snapshot.function_name}() got arguments that cannot be sent to the tool: they need types '
+                f'the sandbox can hand the host and at most {TURN_PAYLOAD_BYTES // 2} bytes'
             )
             snapshot = pauses.seen(await snapshot.resume({'exception': TypeError(message)}))
         else:
@@ -617,9 +585,8 @@ async def _answer_in_turn(
 
 def _args_cross(snapshot: AsyncFunctionSnapshot) -> bool:
     try:
-        wired = to_wire((snapshot.args, snapshot.kwargs))
-        return len(to_json(wired)) <= TURN_PAYLOAD_BYTES // 2
-    except (TypeError, PydanticSerializationError):
+        return len(to_wire((snapshot.args, snapshot.kwargs))) <= TURN_PAYLOAD_BYTES // 2
+    except TypeError:
         return False
 
 

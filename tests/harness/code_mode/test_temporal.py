@@ -21,9 +21,12 @@ runs `temporalite` automatically.
 
 from __future__ import annotations
 
+import base64
 import contextvars
 import csv
+import dataclasses
 import json
+import pickle
 import re
 import subprocess
 import sys
@@ -75,6 +78,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness._monty_turns import from_wire, to_wire
 from tests.harness._temporal import ignore_source_reads_left_open
 from tests.harness.code_mode.grpc_relay import serve_monty_relay
 from tests.harness.code_mode.stored_sessions import SERVER, StoredSessionPool
@@ -1080,7 +1084,7 @@ async def test_remote_turns_resume_calls_in_place(client: Client, monkeypatch: p
     )
     assert no_json_form == [
         "MontyClassProxy(name='P', attributes={'x': 1})",
-        'add() got arguments that cannot be sent to the tool: they need a JSON form and at most 524288 bytes',
+        'add() got arguments that cannot be sent to the tool: they need types the sandbox can hand the host and at most 524288 bytes',
     ]
     # On the workflow-side path that argument fails the tool's validation, which fails the snippet.
     assert [type_error, added, call_sites, syntax_error, values, not_utf8] == [
@@ -1202,14 +1206,14 @@ async def test_remote_turns_report_a_lost_session(client: Client, prompt: str, r
     assert not [result for result in activity_results if b'secret-token' in result]
 
 
+async def frozen() -> None:
+    """Raise the error a frozen dataclass raises on assignment."""
+    raise dataclasses.FrozenInstanceError('cannot assign to field')
+
+
 async def raw_bytes() -> object:
     """Return a `bytearray`, which the sandbox has no type for."""
     return bytearray(b'hi')
-
-
-async def numbers(count: int) -> list[int]:
-    """Return `count` zeros."""
-    return [0] * count
 
 
 forgetful_pool_calls: list[None] = []
@@ -1308,9 +1312,8 @@ snippet_agents = {
     'default': _snippet_agent('default'),
     'unlimited': _snippet_agent('unlimited', resource_limits='unlimited'),
     'factory_error': _snippet_agent('factory_error', monty_sandbox=_refusing_factory),
-    'types': _snippet_agent('types', workflow_tools=(type_names, echo_here, raw_bytes)),
+    'types': _snippet_agent('types', workflow_tools=(type_names, echo_here, raw_bytes, frozen)),
     'forgetful': _snippet_agent('forgetful', monty_sandbox=_forgetful_pool),
-    'numbers': _snippet_agent('numbers', workflow_tools=(numbers,)),
 }
 
 
@@ -1553,20 +1556,6 @@ async def test_remote_turns_keep_module_exception_types(client: Client) -> None:
     assert output == 'csv.Error'
 
 
-async def test_remote_turns_stop_encoding_a_value_that_cannot_fit(client: Client) -> None:
-    """A list holding the same list many times is refused while it is encoded, not after expanding it.
-
-    Monty keeps the shared references, so the snippet builds this cheaply; fully expanded it would
-    have 2**26 parts.
-    """
-    code = (
-        'x = []\nfor _ in range(25):\n    x = [x, x]\n'
-        'try:\n    await echo(value=x)\n    sent = "sent"\nexcept TypeError as e:\n    sent = str(e)\nsent'
-    )
-    output = await _run_snippet(client, 'test_code_mode_temporal_shared_list', code)
-    assert output.startswith('echo() got arguments that cannot be sent to the tool')
-
-
 async def test_remote_turns_keep_a_cut_tool_failure(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
     """A nested `ToolFailed` whose message the turn has to cut still fails `run_code` without a retry."""
     monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 2500)
@@ -1574,18 +1563,6 @@ async def test_remote_turns_keep_a_cut_tool_failure(client: Client, monkeypatch:
         client, 'test_code_mode_temporal_cut_tool_failed', 'await give_up_at_length(length=1800)'
     )
     assert output == 'x' * 1800
-
-
-async def test_remote_turns_refuse_tool_results_with_too_many_parts(
-    client: Client, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A tool result with more parts than a turn carries resets the session and tells the model to batch."""
-    monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 2500)
-    output = await _run_snippet(
-        client, 'test_code_mode_temporal_many_parts', 'await numbers(count=3000)', agent='numbers'
-    )
-    assert 'MemoryError: a value with more than 2500 parts cannot cross as JSON' in output
-    assert 'the session was reset' in output
 
 
 async def test_remote_turns_do_not_rerun_a_snippet_whose_save_dropped(client: Client) -> None:
@@ -1624,9 +1601,44 @@ async def test_remote_turns_return_deep_and_tag_named_dicts(client: Client) -> N
 
 
 async def test_remote_turns_refuse_a_bytearray_tool_result(client: Client) -> None:
-    """A `bytearray` result fails as on a live session instead of reaching the snippet as text."""
+    """A `bytearray` result fails with the error a live session gives instead of reaching the snippet as text."""
     code = 'try:\n    r = await raw_bytes()\n    got = type(r).__name__\nexcept TypeError as e:\n    got = "TypeError"\ngot'
     output = await _run_snippet(client, 'test_code_mode_temporal_bytearray', code, agent='types')
     # A live session raises it on the host, so the snippet cannot catch it.
-    assert output.startswith('Runtime error:\nTypeError: Cannot convert builtins.bytearray to Monty value')
-    assert 'so it was reset' in output
+    assert output == (
+        'Runtime error:\nTypeError: Cannot convert builtins.bytearray to Monty value'
+        ' — wrap class instances in pydantic_monty.ClassInstance(...)'
+    )
+
+
+async def test_remote_turns_keep_every_value_monty_holds(client: Client) -> None:
+    """Values JSON cannot carry cross a turn both ways, and a tool's error keeps its `dataclasses` type."""
+    code = (
+        'import dataclasses\n'
+        'names = await type_names(values=[1j, {1}])\n'
+        'try:\n    await frozen()\n    caught = "no"\nexcept dataclasses.FrozenInstanceError:\n    caught = "FrozenInstanceError"\n'
+        '[names, ..., 1j, caught]'
+    )
+    output = await _run_snippet(client, 'test_code_mode_temporal_monty_values', code, agent='types')
+    assert output == "[['complex', 'set'], 'Ellipsis', '1j', 'FrozenInstanceError']"
+
+
+def test_turn_values_keep_what_temporal_json_cannot() -> None:
+    """Deep nesting, huge integers and shared values come back as they went in, as one short string."""
+    deep: object = 0
+    for _ in range(500):
+        deep = [deep]
+    shared = [[1, 2]] * 2
+    values = (deep, 10**5000, shared, (1j, ..., {1}, frozenset({2}), b'\xff', bytearray(b'x')))
+    data = to_wire(values)
+    assert isinstance(data, str)
+    back = from_wire(data)
+    assert back == values
+    assert back[2][0] is back[2][1]
+
+
+def test_turn_values_load_only_wire_types() -> None:
+    """A recorded turn value that names any other class is refused instead of loaded."""
+    data = base64.b64encode(pickle.dumps(subprocess.run)).decode()
+    with pytest.raises(pickle.UnpicklingError, match=r'subprocess\.run is not a wire type'):
+        from_wire(data)
