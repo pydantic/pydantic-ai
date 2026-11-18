@@ -9,11 +9,11 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness.peers._inbox import LocalPeerInbox
-from pydantic_ai_harness.peers._types import PeerDelivery, PeerInfo, PeerMessage, PeerNetwork, PeerSender
+from pydantic_ai_harness.peers._types import PeerConnection, PeerDelivery, PeerInfo, PeerMessage, PeerSender
 
 
 @dataclass(kw_only=True)
-class _Peer(PeerNetwork):
+class _Peer(PeerConnection):
     members: dict[str, _Peer]
     info: PeerInfo
     inbox: LocalPeerInbox
@@ -49,6 +49,8 @@ class _Peer(PeerNetwork):
 class InMemoryPeerNetwork:
     """Join several agents in one process. The network does not run turns or own their lifetime.
 
+    `Peers(network)` joins each agent under its `name` when the agent is built.
+
     Members stay joined, and their handles taken, for the network's lifetime. To retire a session, set its
     inbox's `accepting` to `False`, or create a new network.
     """
@@ -58,11 +60,12 @@ class InMemoryPeerNetwork:
 
     def join(
         self, *, handle: str, inbox: LocalPeerInbox | None = None, workspace: str = '', title: str = ''
-    ) -> PeerNetwork:
-        """Join as `handle`; return this peer's network view.
+    ) -> PeerConnection:
+        """Join as `handle`; return this peer's connection.
 
-        Pass the same `inbox` to `Peers(inbox=...)` when constructing the receiving agent.
-        With no inbox, this peer can send but refuses incoming messages.
+        `Peers(network)` calls this for you. Call it yourself to set `workspace` or `title`, or to join a peer
+        that is not one agent. Pass the same `inbox` to `Peers(connection, inbox=...)` when constructing the
+        receiving agent. With no inbox, this peer can send but refuses incoming messages.
         """
         if any(peer.info.handle == handle for peer in self._members.values()):
             raise UserError(f'Peer handle {handle!r} is already in use.')
