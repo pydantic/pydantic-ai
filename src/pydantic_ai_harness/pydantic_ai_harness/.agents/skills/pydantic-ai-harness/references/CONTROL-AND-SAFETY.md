@@ -35,6 +35,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Cap calls per tool or per run, or refuse exact repeats, and let the run continue | `ToolBudgets(per_tool=..., total=..., refuse_repeats=...)` |
 | Have the agent review and revise its answer before the run ends | `RefineOutput` |
 | Send a coding agent back to run its checks before it finishes after an edit | `RequireVerification` |
+| End the run with a final answer instead of `UsageLimitExceeded` at a usage limit | `WrapUpAtLimits` |
 
 ## RepairToolArguments
 
@@ -965,6 +966,56 @@ agent = Agent('test', capabilities=[FileSystem(), Shell(), RequireVerification()
 - Emits `verification required` (`require_verification.attempt`) and `completion unverified`
   (`require_verification.attempts`) spans.
 
+## WrapUpAtLimits
+
+When the run's `UsageLimits` leave room for one more model request but not another, makes that request
+the last: `tool_choice='none'` with the tool definitions kept (cached tools and instructions match), plus a
+request-scoped `WrapUpPart` (an `InstructionCapabilityPart` from `pydantic_ai_harness.wrap_up_at_limits`)
+with `prompt` (default `DEFAULT_WRAP_UP_PROMPT`). The answer is the
+run's output instead of `UsageLimitExceeded`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import UsageLimits
+
+from pydantic_ai_harness import WrapUpAtLimits
+
+
+def research(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if info.model_settings and info.model_settings.get('tool_choice') == 'none':
+        return ModelResponse(parts=[TextPart('partial answer')])
+    return ModelResponse(parts=[ToolCallPart('look_up', {'topic': 'x'})])
+
+
+agent = Agent(FunctionModel(research), capabilities=[WrapUpAtLimits()])
+
+
+@agent.tool_plain
+def look_up(topic: str) -> str:
+    return topic
+
+
+print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).output)
+#> partial answer
+```
+
+- Triggers on `request_limit` (the last allowed request), `tool_calls_limit` (fewer calls left than the
+  largest batch so far), and input/output/total token limits (projected from the run's responses).
+  `cost_limit` and `per_request_input_tokens_limit` are not projected. A larger batch that goes over
+  `tool_calls_limit` still raises. With no `usage_limits`, the default `request_limit=50` applies.
+- `wrapped_up_by(result.new_messages())` returns the `LimitName` that cut the run short, or `None`; it reads
+  the `WrapUpPart` on the final request, found by type.
+- With tool output, `tool_choice='none'` sends only the output tools; Anthropic caches messages per
+  `tool_choice`.
+- List it after capabilities that spend from the run's usage before a request, so it sees what they spent.
+- For a sub-agent, give it its own `SubAgent.usage_limits`; sharing the parent's budget spends the parent's
+  last request.
+- Compaction still runs on the final request; a summarizing strategy has no request left there, so wrap
+  it in `FallbackCompaction(fallback_on=(..., UsageLimitExceeded))`. Stateless and durable-safe. Span: `run wrapped up`
+  (`wrap_up_at_limits.limit`).
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/repair-tool-arguments/
@@ -979,4 +1030,5 @@ agent = Agent('test', capabilities=[FileSystem(), Shell(), RequireVerification()
 - https://pydantic.dev/docs/ai/harness/detect-loops/
 - https://pydantic.dev/docs/ai/harness/refine-output/
 - https://pydantic.dev/docs/ai/harness/require-verification/
+- https://pydantic.dev/docs/ai/harness/wrap-up-at-limits/
 - https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/ (core tool approval and deferred tools)

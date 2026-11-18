@@ -578,6 +578,9 @@ navigation:
             slug: "harness/warn-on-cache-busts"
             aliases:
               - "harness/cache-stability"
+          - page: "Label Cross Model History"
+            path: "harness/label-cross-model-history.md"
+            slug: "harness/label-cross-model-history"
       - section: "Knowledge & Memory"
         slug: ""
         contents:
@@ -646,6 +649,9 @@ navigation:
           - page: "Require Verification"
             path: "harness/require-verification.md"
             slug: "harness/require-verification"
+          - page: "Wrap Up At Limits"
+            path: "harness/wrap-up-at-limits.md"
+            slug: "harness/wrap-up-at-limits"
           - page: "Tool Call Judge"
             path: "harness/tool-call-judge.md"
             slug: "harness/tool-call-judge"
