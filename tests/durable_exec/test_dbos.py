@@ -173,6 +173,7 @@ from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from .._inline_snapshot import snapshot
+from .._timeouts import READINESS_WAIT_TIMEOUT
 from ..append_only import drain_events
 from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from ..clock_utils import LONG_TIMEOUT, Clock
@@ -6838,13 +6839,15 @@ async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
                 if not recovering:
                     # `call-a`'s child starts first. With `before_second_child`, the process then dies before
                     # `call-b`'s child starts.
-                    await moon_researched.wait()
+                    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+                        await moon_researched.wait()
                     if crash == 'before_second_child':
                         raise _ProcessCrash
             elif recovering and not run_id_changes:
                 # On recovery, `call-b` reaches its child workflow first, when the next step position holds the
                 # child `call-a` started there.
-                await call_b_arrived.wait()
+                async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+                    await call_b_arrived.wait()
             return args
 
         async def on_tool_execute_error(
