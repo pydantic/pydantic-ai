@@ -58,6 +58,9 @@ if TYPE_CHECKING:
 
 T = TypeVar('T')
 
+_child_workflow_executions: WeakKeyDictionary[DBOSContext, dict[str, int]] = WeakKeyDictionary()
+"""Executions of each tool call's child workflow, per workflow execution, to give each its own child ID."""
+
 _default_run_ids_by_step: WeakKeyDictionary[DBOSContext, dict[int, int]] = WeakKeyDictionary()
 """Agent runs that drew a default `run_id` at each step position, per workflow execution.
 
@@ -561,6 +564,12 @@ async def _call_child_workflow(
     context = get_local_dbos_context()
     assert parent_id is not None and context is not None
     child_id = f'{parent_id}-{ctx.run_id}-{ctx.run_step}-{ctx.tool_call_id}'
+    # A capability can execute a tool call more than once, and each execution gets a child of its own.
+    executions = _child_workflow_executions.setdefault(context, {})
+    execution = executions.get(child_id, 0)
+    executions[child_id] = execution + 1
+    if execution:
+        child_id = f'{child_id}-{execution}'
 
     @contextmanager
     def child_options() -> Generator[None]:
@@ -568,7 +577,7 @@ async def _call_child_workflow(
             yield
 
     async def handed_another_child() -> bool:
-        steps = await DBOS.list_workflow_steps_async(parent_id, load_output=False)
+        steps = await DBOS.list_workflow_steps_async(parent_id, load_output=False, shard_key=context.shard_key)
         recorded = next((step['child_workflow_id'] for step in steps if step['function_id'] == step_id), None)
         # A child started before child IDs were derived has a positional ID, and keeps its positional result.
         return recorded is not None and recorded != child_id and not recorded.endswith(f'{parent_id}-{step_id}')

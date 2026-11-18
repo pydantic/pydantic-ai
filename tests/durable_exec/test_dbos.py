@@ -6749,6 +6749,43 @@ async def test_dbos_child_workflow_via_set_tool_metadata(dbos: DBOS) -> None:
     assert (await agent.run('Go.', deps='deps')).output == '{"delegate":"deps in None"}'
 
 
+async def test_dbos_child_workflow_tool_executed_again_by_capability(dbos: DBOS) -> None:
+    """A capability that executes a tool call again gets a new child workflow, not the first one's result."""
+    attempts: list[str | None] = []
+
+    async def flaky() -> str:
+        attempts.append(DBOS.workflow_id)
+        if len(attempts) == 1:
+            raise ValueError('Try again.')
+        return 'ok'
+
+    class RetryOnce(AbstractCapability[object]):
+        async def wrap_tool_execute(
+            self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+        ) -> Any:
+            try:
+                return await handler(args)
+            except ValueError:
+                return await handler(args)
+
+    agent = Agent(
+        TestModel(),
+        name='child_wf_retried',
+        tools=[Tool(flaky, metadata={'dbos': {'child_workflow': {}}})],
+        capabilities=[RetryOnce(), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Go.')).output
+
+    workflow_id = f'child-wf-retried-{uuid.uuid4()}'
+    with SetWorkflowID(workflow_id):
+        assert await run_agent() == '{"flaky":"ok"}'
+    child_id = f'{workflow_id}-{workflow_id}:1-1-pyd_ai_tool_call_id__flaky'
+    assert attempts == [child_id, f'{child_id}-1']
+
+
 @pytest.mark.parametrize(
     ('crash', 'moon_fails'),
     [('after_both_children', False), ('after_both_children', True), ('before_second_child', False)],
