@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from copy import copy
 from dataclasses import dataclass, replace
 from typing import Any, overload
 
@@ -37,14 +36,6 @@ from ..tools import (
     ToolPrepareFunc,
 )
 from .abstract import AbstractToolset, ToolsetTool
-
-
-@dataclass(frozen=True)
-class _ToolInstanceDefaults:
-    """A toolset's values for a `Tool` instance, as they were when the toolset added it."""
-
-    strict: bool | None
-    include_return_schema: bool | None
 
 
 @dataclass(kw_only=True)
@@ -178,9 +169,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         ]
 
         self.tools = {}
-        # This toolset's `strict` and `include_return_schema` when it added each `Tool` instance, which the instance
-        # gets when the toolset lists it. A function added with `add_function` already has them.
-        self._tool_instance_defaults: dict[str, _ToolInstanceDefaults] = {}
         for tool in tools:
             if isinstance(tool, Tool):
                 self.add_tool(tool)  # pyright: ignore[reportUnknownArgumentType]
@@ -768,7 +756,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             include_return_schema=include_return_schema,
         )
         self.add_tool(tool)
-        del self._tool_instance_defaults[tool.name]
         # `add_tool` applies the toolset's `sequential`, `requires_approval`, and `defer_loading` when they're
         # `True`; a `Tool`'s plain booleans can't distinguish an explicit `False`, so restore the overrides
         # passed here.
@@ -782,11 +769,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Add a tool to the toolset.
 
-        The toolset's `durable` applies to the tool when the tool leaves it unset, its `sequential`,
-        `requires_approval`, and `defer_loading` apply when they're set to `True`, its `metadata` is merged into the
-        tool's, and its `max_retries` applies when the tool sets none. Its `strict` and `include_return_schema`, as
-        they are when the tool is added, apply when the toolset lists the tool and the tool leaves them unset,
-        without changing the tool, so another toolset or agent holding the same `Tool` lists it with its own.
+        The toolset's `strict`, `include_return_schema`, and `durable` apply to the tool when the tool leaves them
+        unset, its `sequential`, `requires_approval`, and `defer_loading` apply when they're set to `True`, its
+        `metadata` is merged into the tool's, and its `max_retries` applies when the tool sets none.
 
         Args:
             tool: The tool to add.
@@ -795,6 +780,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
         if tool.max_retries is None and self.max_retries is not None:
             tool.max_retries = self.max_retries
+        if tool.strict is None and self.strict is not None:
+            tool.strict = self.strict
+        if tool.include_return_schema is None and self.include_return_schema is not None:
+            tool.include_return_schema = self.include_return_schema
         if tool.durable is None:
             tool.durable = self.durable
         if self.sequential and not tool.sequential:
@@ -808,30 +797,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool
-        self._tool_instance_defaults[tool.name] = _ToolInstanceDefaults(
-            strict=self.strict, include_return_schema=self.include_return_schema
-        )
-
-    def _listed_tool(self, name: str, tool: Tool[AgentDepsT]) -> Tool[AgentDepsT]:
-        """`tool` as this toolset lists it under `name`.
-
-        A `Tool` instance that leaves `strict` or `include_return_schema` unset gets the toolset's value from when it
-        was added, on a copy, so the `Tool` itself keeps its own value for every other toolset and agent holding it.
-        When that changes nothing, the toolset lists the `Tool` itself.
-        """
-        defaults = self._tool_instance_defaults.get(name)
-        if defaults is None:
-            return tool
-        strict = tool.strict if tool.strict is not None else defaults.strict
-        include_return_schema = (
-            tool.include_return_schema if tool.include_return_schema is not None else defaults.include_return_schema
-        )
-        if (strict, include_return_schema) == (tool.strict, tool.include_return_schema):
-            return tool
-        listed = copy(tool)
-        listed.strict = strict
-        listed.include_return_schema = include_return_schema
-        return listed
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[InstructionPart] | None:
         if not self._instructions:
@@ -855,9 +820,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
-        for original_name, stored in self.tools.items():
-            tool = self._listed_tool(original_name, stored)
-            max_retries = self._max_retries_for(tool, ctx)
+        for original_name, tool in self.tools.items():
+            max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
+            if max_retries is None:
+                max_retries = ctx.max_retries
             # `retries` is keyed by the name the model calls the tool by, computed here by applying
             # the layers `PrefixedToolset` and `RenamedToolset` pushed, innermost first, the way they
             # name the tools they list. That name is wrong when the tool's own `prepare` renames it,
@@ -914,11 +880,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         """
         original_name = original_name if original_name is not None else tool_def.name
         tool = self.tools[original_name]
-        return self._tool_for(tool, tool_def, self._max_retries_for(tool, ctx), original_name)
-
-    def _max_retries_for(self, tool: Tool[AgentDepsT], ctx: RunContext[AgentDepsT]) -> int:
         max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
-        return max_retries if max_retries is not None else ctx.max_retries
+        return self._tool_for(
+            tool, tool_def, max_retries if max_retries is not None else ctx.max_retries, original_name
+        )
 
     def _tool_for(
         self, tool: Tool[AgentDepsT], tool_def: ToolDefinition, max_retries: int, original_name: str
