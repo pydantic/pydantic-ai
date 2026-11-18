@@ -327,6 +327,11 @@ def _without_computer_tool(profile: ModelProfile) -> ModelProfile:
         pytest.param(
             True, AnthropicModelProfile(anthropic_computer_tool_version=None), id='a-profile-that-turns-it-off'
         ),
+        pytest.param(
+            True,
+            AnthropicModelProfile(supported_native_tools=frozenset()),
+            id='a-profile-whose-native-tools-leave-it-out',
+        ),
         # As `ComputerUse(native=False)` asks, so Claude gets the tool's own actions.
         pytest.param(False, None, id='a-tool-that-opts-out'),
     ],
@@ -344,9 +349,11 @@ async def test_the_computer_tool_stays_a_function_on_a_model_without_one_or_when
 
 
 async def test_a_profile_that_sets_a_version_gets_the_computer_use_tool(allow_model_requests: None) -> None:
-    """The version set through `profile=` decides, also on a model the compatibility table doesn't list."""
+    """The version and native tools set through `profile=` decide, also on a model the compatibility table doesn't list."""
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='done', type='text')))
-    profile = AnthropicModelProfile(anthropic_computer_tool_version='computer_20251124')
+    profile = AnthropicModelProfile(
+        anthropic_computer_tool_version='computer_20251124', supported_native_tools=frozenset({ComputerTool})
+    )
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client), profile=profile)
     await Agent(model, capabilities=[FakeComputer(), InMemoryProvider().capability()]).run('Go.')
 
