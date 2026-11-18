@@ -142,7 +142,8 @@ jobs:
         id: check-label
         run: |
           LABELS=$(gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json labels --jq '.labels[].name')
-          CATEGORY_LABELS=("bug" "feature" "docs" "chore" "dependency")
+          # The PR author applies `bug:unreleased`; the classifier never picks it, so `ALLOWED` leaves it out.
+          CATEGORY_LABELS=("bug" "bug:unreleased" "feature" "docs" "chore" "dependency")
 
           for label in "${CATEGORY_LABELS[@]}"; do
             if echo "$LABELS" | grep -q "^${label}$"; then
@@ -172,7 +173,7 @@ jobs:
         if: steps.check-label.outputs.has_label == 'false'
         id: classify
         continue-on-error: true
-        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
+        uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
@@ -568,7 +569,7 @@ jobs:
       # The next step fails the job unless the execution file is a subscription-limit rejection.
       - id: review
         continue-on-error: true
-        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
+        uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
         env:
           # Native tracing exports from Claude itself, retaining subprocess credential scrubbing.
           # https://code.claude.com/docs/en/monitoring-usage#traces-beta

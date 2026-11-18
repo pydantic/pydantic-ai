@@ -771,7 +771,7 @@ _PUBLIC_ENGINE_LOCK = """
 jobs:
   agent:
     env:
-      GH_AW_ENGINE_VERSION: '0.64.0'
+      GH_AW_ENGINE_VERSION: '0.70.0'
     steps:
       - id: agentic_execution
         run: >-
@@ -798,11 +798,11 @@ def test_compiled_runner_contract_accepts_the_public_engine(tmp_path: Path):
     assert check_compiled_runner_contract(lock) == []
 
 
-@pytest.mark.parametrize('version', ['0.59.0', '0.64.0', '0.65.1', 'invalid'])
+@pytest.mark.parametrize('version', ['0.64.0', '0.70.0', '0.71.1', 'invalid'])
 def test_compiled_runner_contract_allows_compatible_runtime_upgrades(tmp_path: Path, version: str):
-    lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK.replace('0.64.0', version))
+    lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK.replace('0.70.0', version))
     violations = check_compiled_runner_contract(lock)
-    assert bool(violations) == (version in {'0.59.0', 'invalid'})
+    assert bool(violations) == (version in {'0.64.0', 'invalid'})
 
 
 @pytest.mark.parametrize(
