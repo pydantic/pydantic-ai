@@ -23,7 +23,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from functools import cache
-from typing import Any, Literal, TypeGuard, cast, get_args
+from typing import Any, Literal, get_args
 
 from pydantic_core import PydanticSerializationError, to_json
 from pydantic_monty import (
@@ -51,7 +51,15 @@ from pydantic_monty import (
 )
 
 from pydantic_ai.messages import is_multi_modal_content
-from pydantic_ai_harness._typeguards import is_mapping
+from pydantic_ai_harness._typeguards import (
+    is_mapping,
+    is_object_dict,
+    is_object_frozenset,
+    is_object_list,
+    is_object_list_or_tuple,
+    is_object_set,
+    is_object_tuple,
+)
 
 SettledData = ExternalReturnValue | ExternalExceptionData
 """A settled call result as plain data, which a turn in another process can resume the sandbox with."""
@@ -90,7 +98,7 @@ def to_wire(value: object) -> str:
     return base64.b64encode(buffer.getvalue()).decode()
 
 
-def from_wire(data: str) -> Any:
+def from_wire(data: str) -> object:
     """The value `to_wire` encoded as `data`."""
     return _WireUnpickler(io.BytesIO(base64.b64decode(data))).load()
 
@@ -119,8 +127,6 @@ _WIRE_CLASSES: dict[tuple[str, str], type] = {
 }
 """The classes a wire value may name, by module and name. `...` pickles as the name `builtins.Ellipsis`."""
 
-_CONTAINERS = (tuple, list, dict, set, frozenset)
-
 
 class _WirePickler(pickle.Pickler):
     def reducer_override(self, obj: object, /) -> Any:
@@ -128,9 +134,16 @@ class _WirePickler(pickle.Pickler):
         # `bytearray` and containers, and for each class the pickle names.
         if type(obj) in _WIRE_CLASSES.values() or obj in _WIRE_CLASSES.values():
             return NotImplemented
-        for container in _CONTAINERS:
-            if isinstance(obj, container):
-                return container, (container(cast(Any, obj)),)
+        if is_object_tuple(obj):
+            return tuple, (tuple(obj),)
+        if is_object_list(obj):
+            return list, (list(obj),)
+        if is_object_dict(obj):
+            return dict, (dict(obj),)
+        if is_object_frozenset(obj):
+            return frozenset, (frozenset(obj),)
+        if is_object_set(obj):
+            return set, (set(obj),)
         # A live session takes an `IntEnum` or `StrEnum` as the plain value, so the wire does too.
         if isinstance(obj, int):
             return int, (int(obj),)
@@ -214,7 +227,7 @@ def model_safe_result(value: object) -> object:
         return value
     if is_mapping(value):
         return _model_safe_mapping(value)
-    if _is_list_or_tuple(value):
+    if is_object_list_or_tuple(value):
         items = [model_safe_result(item) for item in value]
         return tuple(items) if isinstance(value, tuple) else items
     return value if _serializes(value) else repr(value)
@@ -226,10 +239,6 @@ def _model_safe_mapping(value: Mapping[object, object]) -> object:
     # A rendered key can equal an existing one (`{int: 1, "<class 'int'>": 2}`), and
     # the dict would silently drop an entry; the whole mapping's `repr` loses nothing.
     return rendered if len(rendered) == len(value) else repr(value)
-
-
-def _is_list_or_tuple(value: object) -> TypeGuard[list[object] | tuple[object, ...]]:
-    return isinstance(value, (list, tuple))
 
 
 def _serializes(value: object) -> bool:
@@ -473,7 +482,8 @@ async def _run_turn(
         snapshot = await _answer_in_turn(snapshot, pauses)
     except BaseException as error:
         failure = MontyFailure.from_error(error)
-        if failure is None:  # pragma: no cover -- an activity cancelled while the snippet runs
+        # An activity cancelled while the snippet runs.
+        if failure is None:  # pragma: no cover
             raise
         if failure.kind == 'other':
             # A remote error's text can carry the pool's URL or credentials, and this result is kept
@@ -641,7 +651,8 @@ async def _session_id(session: AsyncMontySession) -> bytes | None:
     on checkout.
     """
     get_session_id = getattr(session, 'get_session_id', None)
-    if get_session_id is None:  # pragma: no cover -- Monty 1.5; the tests' storing server models 1.6
+    # Monty 1.5; the tests' storing server models 1.6.
+    if get_session_id is None:  # pragma: no cover
         return session.session_id
     session_id: bytes | None = await get_session_id()
     return session_id

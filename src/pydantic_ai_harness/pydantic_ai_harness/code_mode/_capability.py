@@ -427,7 +427,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             # Temporal records an activity's failure, cause included, in workflow history, and a pool
             # or connection error's text can carry the pool's URL or credentials, so only the type's
             # name is kept, and the retry policy matches it. A `UserError` stays one, which Temporal
-            # does not retry.
+            # does not retry; the `monty_sandbox` factory can raise one, so its text is dropped too.
             name = type(error).__name__
             raise (UserError if isinstance(error, UserError) else redacted_error_type(name))(name) from None
 

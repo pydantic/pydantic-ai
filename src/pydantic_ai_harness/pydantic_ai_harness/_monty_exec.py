@@ -23,12 +23,14 @@ from collections.abc import Awaitable, Callable, Container, Coroutine
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, TypeVar
+from typing import Any, TypeVar, assert_never
 
 import anyio
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 from opentelemetry import context as otel_context
 from typing_extensions import TypeVarTuple, Unpack
+
+from pydantic_ai_harness._typeguards import is_object_tuple, is_str_keyed_dict
 
 try:
     from pydantic_monty import (
@@ -411,9 +413,11 @@ class TurnFeed:
                 return TurnComplete(from_wire(turn.output))
             case 'no_storage':
                 raise MontyStoresNoSessions
-            case _:  # 'failed'
+            case 'failed':
                 assert turn.failure is not None
                 raise MontyTurnFailed(turn.failure)
+            case _:
+                assert_never(turn.kind)
 
 
 @dataclass
@@ -422,14 +426,15 @@ class TurnFunctionSnapshot:
 
     feed: TurnFeed
     function_name: str
-    args: tuple[Any, ...]
-    kwargs: dict[str, Any]
+    args: tuple[object, ...]
+    kwargs: dict[str, object]
     call_id: int
     is_os_function: bool
 
     @classmethod
     def from_call(cls, feed: TurnFeed, call: TurnCall) -> TurnFunctionSnapshot:
         args, kwargs = from_wire(call.args), from_wire(call.kwargs)
+        assert is_object_tuple(args) and is_str_keyed_dict(kwargs), 'a turn call carries a tuple and a dict'
         return cls(feed, call.function_name, args, kwargs, call.call_id, call.is_os_function)
 
     def trace_context(self) -> otel_context.Context:
@@ -458,7 +463,7 @@ class TurnFutureSnapshot:
 class TurnComplete:
     """A `MontyComplete` stand-in for a turn that finished the snippet."""
 
-    output: Any
+    output: object
 
 
 TurnSnapshot = TurnFunctionSnapshot | TurnFutureSnapshot | TurnComplete
@@ -609,9 +614,10 @@ class MontyExecutor:
     async def _sleep(self, snapshot: FunctionSnapshot) -> Snapshot:
         """Wait for a sandbox sleep here rather than in Monty, charging it to `max_sleep_seconds`.
 
-        Monty has already validated the duration: `args` is one non-negative float.
+        Monty has already validated the duration: `args` is one non-negative number.
         """
-        seconds: float = snapshot.args[0]
+        seconds = snapshot.args[0]
+        assert isinstance(seconds, int | float), 'Monty validates the sleep duration'
         if self.max_sleep_seconds is not None and self._slept_seconds + seconds > self.max_sleep_seconds:
             remaining = self.max_sleep_seconds - self._slept_seconds
             return await self._raise_in_sandbox(
