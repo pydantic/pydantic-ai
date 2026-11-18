@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 import pytest
-from mcp.server.fastmcp import FastMCP
 
 import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext, Tool
@@ -114,19 +113,15 @@ from ..append_only import (
     run_conversation,
     skip_unless_installed,
 )
+from ._mcp_server import MCPServer
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
 
-# MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
-pytestmark = pytest.mark.filterwarnings(
-    "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
-)
 
-
-def _hosted_server() -> FastMCP:
+def _hosted_server() -> MCPServer:
     """An in-process stand-in for a hosted MCP service, with server instructions and one tool."""
-    server = FastMCP('hosted', instructions='Hosted service instructions.')
+    server = MCPServer('hosted', instructions='Hosted service instructions.')
 
     @server.tool()
     def search() -> str:

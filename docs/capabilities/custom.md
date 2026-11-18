@@ -1048,7 +1048,7 @@ A tool call can only be [deferred](../deferred-tools.md) once its arguments have
 
 An [external tool](../deferred-tools.md#external-tool-execution) is executed outside the run, which therefore can't approve its calls, so raising `ApprovalRequired` while validating one is a [`UserError`][pydantic_ai.exceptions.UserError]. Raise `CallDeferred` instead, with any `metadata` the code that executes the call needs to approve it.
 
-Whoever resolves the deferral is shown the arguments as the model sent them, not as a validation hook rewrote them. If they approve the call, the validation hooks run again and the tool runs with the rewritten arguments. [Human-in-the-Loop Tool Approval](../deferred-tools.md#human-in-the-loop-tool-approval) shows where to change arguments instead.
+Whoever resolves the deferral can see the arguments as a validation hook rewrote them in [`validated_args`][pydantic_ai.tools.DeferredToolRequests.validated_args], while the deferred `ToolCallPart` keeps the model's. If they approve the call, the validation hooks run again on the model's arguments. [Human-in-the-Loop Tool Approval](../deferred-tools.md#human-in-the-loop-tool-approval) covers a hook whose rewrite can differ the second time.
 
 `after_tool_validate` stays a reliable gate when the tool's `args_validator` defers: the deferral is held while the gate runs, so rejecting there (with `ModelRetry` or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed]) wins, deferring there replaces the held deferral, and the args it returns are the ones the deferred call carries. A deferral raised by `wrap_tool_validate` after its handler returns happens after this gate has already run, so the gate cannot reject or replace that wrapper deferral.
 
