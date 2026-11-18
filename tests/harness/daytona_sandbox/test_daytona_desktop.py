@@ -73,8 +73,6 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
             id='click',
         ),
         pytest.param(Click(), ['get_position', 'click 7 8 left clicks=1 modifiers=[]'], id='click-at-pointer'),
-        # Daytona refuses the side buttons itself.
-        pytest.param(Click(x=1, y=2, button='back'), ['click 1 2 back clicks=1 modifiers=[]'], id='side-button'),
         pytest.param(MouseMove(x=5, y=6), ['move 5 6'], id='mouse_move'),
         pytest.param(
             MouseMove(x=5, y=6, modifiers=('alt',)),
@@ -118,8 +116,6 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
             id='combination-repeated',
         ),
         pytest.param(PressKeys(keys=('Return',)), ['press enter modifiers=[]'], id='alias'),
-        # Daytona refuses a key it has no name for itself, and its desktop keeps working.
-        pytest.param(PressKeys(keys=('printscreen',)), ['press printscreen modifiers=[]'], id='key-daytona-refuses'),
         pytest.param(
             PressKeys(keys=('numlock', 'numpad5')),
             ['keydown num_lock', 'keydown num5', 'keyup num5', 'keyup num_lock'],
@@ -152,6 +148,10 @@ async def test_each_action_maps_onto_daytona_calls(
         pytest.param(TypeText(text='done 😀'), 'cannot type characters beyond U\\+FFFF', id='emoji'),
         pytest.param(PressKeys(keys=('f13',)), "cannot press the key 'f13'", id='key-that-crashes-the-desktop'),
         pytest.param(PressKeys(keys=('numpad_add',)), "cannot press the key 'numpad_add'", id='numpad-key'),
+        # Daytona refuses these itself (live, 2026-11-18): sent, they'd count as held until let go.
+        pytest.param(HoldKeys(keys=('ctrl', 'printscreen'), seconds=1), "cannot press the key 'printscreen'", id='key'),
+        pytest.param(MouseDown(button='back'), "cannot press the mouse button 'back'", id='side-button-down'),
+        pytest.param(Click(x=1, y=2, button='forward'), "cannot press the mouse button 'forward'", id='side-button'),
         pytest.param(object(), 'cannot perform <object', id='unknown-action-type'),
     ],
 )
@@ -240,24 +240,6 @@ async def test_a_failed_release_still_lets_go_of_the_other_keys(fake_daytona: Fa
     ]
 
 
-async def test_a_key_daytona_refuses_to_hold_is_not_reported_held(fake_daytona: FakeDaytona) -> None:
-    """Daytona refuses `keyboard.down` of a key it hasn't with a 500 (observed live 2026-11-16), as it refuses `press`."""
-    backend, sandbox = await _started(fake_daytona)
-    down = sandbox.computer_use.keyboard.down
-    refusal = 'Failed to press key down: internal server error: unsupported key "printscreen"'
-
-    async def down_refusing(key: str, request_timeout: float | None = None) -> None:
-        if key == 'printscreen':
-            raise DaytonaInternalServerError(refusal, status_code=500)
-        await down(key, request_timeout)
-
-    sandbox.computer_use.keyboard.down = down_refusing
-    with pytest.raises(WorkspaceError, match=f': {refusal}$'):
-        await screen(backend).act(HoldKeys(keys=('ctrl', 'printscreen'), seconds=1))
-
-    assert sandbox.desktop_calls == ['keydown ctrl', 'keyup ctrl']
-
-
 async def test_a_key_daytona_did_not_confirm_holding_is_let_go(fake_daytona: FakeDaytona) -> None:
     """Daytona may still press a key whose `keyboard.down` timed out, so it is released like one it pressed."""
     backend, sandbox = await _started(fake_daytona)
@@ -275,17 +257,24 @@ async def test_a_key_daytona_did_not_confirm_holding_is_let_go(fake_daytona: Fak
     assert sandbox.desktop_calls == ['keydown ctrl', 'keydown a', 'keyup a', 'keyup ctrl']
 
 
-async def test_a_key_whose_hold_answer_cannot_be_read_is_let_go(fake_daytona: FakeDaytona) -> None:
-    """An answer the SDK can't decode comes without an HTTP status, so the key may be down and is released."""
+@pytest.mark.parametrize(
+    'error',
+    [
+        pytest.param(DaytonaError('Failed to press key down: Expecting property name'), id='unreadable'),
+        pytest.param(DaytonaInternalServerError('Failed to press key down: internal error', status_code=500), id='500'),
+    ],
+)
+async def test_a_key_whose_hold_failed_is_let_go(fake_daytona: FakeDaytona, error: DaytonaError) -> None:
+    """A failed `keyboard.down` may follow a press, whatever its status, so the key is released."""
     backend, sandbox = await _started(fake_daytona)
     down = sandbox.computer_use.keyboard.down
 
-    async def down_unreadable(key: str, request_timeout: float | None = None) -> None:
+    async def down_failing(key: str, request_timeout: float | None = None) -> None:
         await down(key, request_timeout)
-        raise DaytonaError('Failed to press key down: Expecting property name enclosed in double quotes')
+        raise error
 
-    sandbox.computer_use.keyboard.down = down_unreadable
-    with pytest.raises(WorkspaceError, match='Expecting property name'):
+    sandbox.computer_use.keyboard.down = down_failing
+    with pytest.raises(WorkspaceError, match='Failed to press key down'):
         await screen(backend).act(HoldKeys(keys=('ctrl',), seconds=1))
 
     assert sandbox.desktop_calls == ['keydown ctrl', 'keyup ctrl']
