@@ -42,6 +42,7 @@ from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, infe
 from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction
+from tests.models.conftest import json_objects
 
 from ...conftest import RequestCapture, try_import
 from ..display_fakes import FAKE_DISPLAY_SIZE, ScreenProvider, png
@@ -69,19 +70,12 @@ TASK = 'Take a screenshot, then click at x=100 y=200, type "hello", and reply "d
 DONE = [Click(x=100, y=200), TypeText(text='hello')]
 
 
-def _objects(body: dict[str, JsonValue], key: str) -> list[dict[str, JsonValue]]:
-    """The objects in a request body's list under `key`, such as `tools` or `input`."""
-    value = body[key]
-    assert isinstance(value, list)
-    return [item for item in value if isinstance(item, dict)]
-
-
 def _is_object_list(value: object) -> TypeGuard[list[object]]:
     return isinstance(value, list)
 
 
 def _items(body: dict[str, JsonValue], type: str) -> list[dict[str, JsonValue]]:
-    return [item for item in _objects(body, 'input') if item.get('type') == type]
+    return [item for item in json_objects(body['input']) if item.get('type') == type]
 
 
 def _gpt(openai_api_key: str, capture: RequestCapture, name: str = 'gpt-5.5') -> OpenAIResponsesModel:
@@ -89,7 +83,7 @@ def _gpt(openai_api_key: str, capture: RequestCapture, name: str = 'gpt-5.5') ->
 
 
 def _kinds(body: dict[str, JsonValue]) -> list[JsonValue]:
-    return [item.get('type', item.get('role')) for item in _objects(body, 'input')]
+    return [item.get('type', item.get('role')) for item in json_objects(body['input'])]
 
 
 def _computer_request(*extra_tools: str) -> ModelRequestParameters:
@@ -121,8 +115,8 @@ async def test_gpt_drives_the_screen_through_the_native_computer_tool(
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     first, *_, last = request_capture.bodies('/responses')
     # The capability's `computer` tool went out as OpenAI's own, not as a function.
-    assert {'type': 'computer'} in _objects(first, 'tools')
-    assert not any(tool.get('name') == 'computer' for tool in _objects(first, 'tools'))
+    assert {'type': 'computer'} in json_objects(first['tools'])
+    assert not any(tool.get('name') == 'computer' for tool in json_objects(first['tools']))
     # And its results came back as screenshots in `computer_call_output`s, at full detail.
     outputs = _items(last, 'computer_call_output')
     assert outputs and all(
@@ -143,11 +137,11 @@ async def test_gpt_drives_the_screen_after_loading_a_deferred_computer(
     first, second, *_ = bodies = request_capture.bodies('/responses')
     # Before loading, the model has only `load_capability`; after it, the native computer tool. The API refuses a
     # function named `computer`, in `tools` or in an `additional_tools` item.
-    assert {'type': 'computer'} not in _objects(first, 'tools')
-    assert {'type': 'computer'} in _objects(second, 'tools')
+    assert {'type': 'computer'} not in json_objects(first['tools'])
+    assert {'type': 'computer'} in json_objects(second['tools'])
     for body in bodies:
-        declared = _objects(body, 'tools')
-        declared += [tool for item in _items(body, 'additional_tools') for tool in _objects(item, 'tools')]
+        declared = json_objects(body['tools'])
+        declared += [tool for item in _items(body, 'additional_tools') for tool in json_objects(item['tools'])]
         assert not any(tool.get('name') == 'computer' for tool in declared)
 
 
@@ -170,7 +164,7 @@ async def test_gpt_computer_calls_go_back_to_a_request_without_the_computer_tool
     # As function calls without their `cu_` ids, which the API refuses on a function call, answered by function
     # call outputs.
     last = request_capture.bodies('/responses')[-1]
-    kinds = [item.get('type') for item in _objects(last, 'input')]
+    kinds = [item.get('type') for item in json_objects(last['input'])]
     assert 'computer_call' not in kinds and 'computer_call_output' not in kinds
     calls = _items(last, 'function_call')
     assert calls and all(call['name'] == 'computer' and 'id' not in call for call in calls)
@@ -194,11 +188,11 @@ async def test_gpt_continues_a_native_history_after_the_tool_opts_out(
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello'), PressKeys(keys=('enter',))]
     first_native, *_, last = request_capture.bodies('/responses')
-    assert {'type': 'computer'} in _objects(first_native, 'tools')
+    assert {'type': 'computer'} in json_objects(first_native['tools'])
     # The opted-out agent declares a function, and the earlier native calls go back as function calls without
     # their `cu_` ids, after the reasoning that made them.
-    assert [tool['name'] for tool in _objects(last, 'tools')] == ['computer']
-    kinds = [item.get('type') for item in _objects(last, 'input')]
+    assert [tool['name'] for tool in json_objects(last['tools'])] == ['computer']
+    kinds = [item.get('type') for item in json_objects(last['input'])]
     assert 'computer_call' not in kinds and 'computer_call_output' not in kinds
     calls = _items(last, 'function_call')
     assert calls and all(call['name'] == 'computer' for call in calls)
@@ -221,7 +215,7 @@ async def test_gpt_on_bedrock_mantle_drives_the_screen_through_the_native_comput
 
     assert provider.actions == DONE
     first, *_, last = request_capture.bodies('/responses')
-    assert {'type': 'computer'} in _objects(first, 'tools')
+    assert {'type': 'computer'} in json_objects(first['tools'])
     assert _items(last, 'computer_call_output')
 
 
@@ -425,7 +419,7 @@ async def test_gpt_uses_the_computer_beside_a_function_found_by_tool_search(
 
     assert provider.actions == [Click(x=100, y=200)]
     first, *_, last = request_capture.bodies('/responses')
-    assert {'type': 'computer'} in _objects(first, 'tools')
+    assert {'type': 'computer'} in json_objects(first['tools'])
     assert {'tool_search_call', 'function_call', 'computer_call_output'} <= set(_kinds(last))
 
 
@@ -460,7 +454,7 @@ async def test_gpt_is_told_why_a_denied_call_has_a_blank_screenshot(
     assert isinstance(result.output, str) and 'said no' in result.output.lower()
     last = request_capture.bodies('/responses')[-1]
     (output,) = [item for item in _items(last, 'computer_call_output') if item['call_id'] == approval.tool_call_id]
-    note = _objects(last, 'input')[_objects(last, 'input').index(output) + 1]
+    note = json_objects(last['input'])[json_objects(last['input']).index(output) + 1]
     # The API needs an image, so a 1x1 one stands in, and the note says why.
     assert isinstance(screenshot := output['output'], dict)
     assert str(screenshot['image_url']).startswith('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB')
@@ -498,7 +492,7 @@ async def test_gpt_sees_an_image_a_result_holds_beside_its_screenshot(
 
     assert 'red' in result.output.lower()
     last = request_capture.bodies('/responses')[-1]
-    message = _objects(last, 'input')[-1]
+    message = json_objects(last['input'])[-1]
     # The output can carry only the screenshot, so the image goes in a message after it.
     assert isinstance(content := message['content'], list)
     assert [part['type'] for part in content if isinstance(part, dict)] == ['input_text', 'input_image']
@@ -516,7 +510,7 @@ async def test_gpt_is_told_how_a_pixel_scroll_ran(
 
     assert provider.actions == [Scroll(x=640, y=400, direction='down', amount=2)]
     last = request_capture.bodies('/responses')[-1]
-    assert 'scroll_y=250 ran as 2 wheel clicks of about 114 pixels each.' in str(_objects(last, 'input')[-1])
+    assert 'scroll_y=250 ran as 2 wheel clicks of about 114 pixels each.' in str(json_objects(last['input'])[-1])
 
 
 @pytest.mark.vcr
