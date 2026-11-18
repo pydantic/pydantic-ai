@@ -109,7 +109,7 @@ from pydantic_ai import DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.capabilities import HandleDeferredToolCalls
 
 
-async def approve_other_calls(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
+async def approve_other_calls(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
     return DeferredToolResults(
         approvals={
             call.tool_call_id: input(f'Run {call.tool_name}({call.args_as_dict()})? [y/N] ') == 'y'
@@ -152,3 +152,11 @@ permissions = Permissions(lambda ctx: current)
 - [Approval Reviewer](approval-reviewer.md): let a second model approve the low-risk calls that need approval.
 - [Tool Call Judge](tool-call-judge.md): let a second model block calls.
 - [Ask User](ask-user.md): let the model ask a person multiple-choice questions.
+
+## API reference
+
+::: pydantic_ai_harness.permissions.Permissions
+
+::: pydantic_ai_harness.permissions.PermissionRule
+
+::: pydantic_ai_harness.permissions.PermissionRuleSpec

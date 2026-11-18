@@ -105,7 +105,7 @@ from pydantic_ai import DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.capabilities import HandleDeferredToolCalls
 
 
-async def approve_other_calls(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
+async def approve_other_calls(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
     return DeferredToolResults(
         approvals={
             call.tool_call_id: input(f'Run {call.tool_name}({call.args_as_dict()})? [y/N] ') == 'y'
