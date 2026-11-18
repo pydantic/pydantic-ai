@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from ..._framing import TOOL_RESULT_TAG, frame
 from ..._utils import is_str_dict
-from ...computer_use import ComputerCallPart, ComputerResult, ComputerReturnPart
+from ...computer_use import COMPUTER_KIND, ComputerCallPart, ComputerResult, ComputerReturnPart
 from ...messages import (
     BinaryImage,
     ModelMessage,
@@ -262,11 +262,11 @@ def stop_computer_calls_unless_completed(
     knows that only after it announced its calls, so this is decided on the final parts, for both paths and both the
     native and the function `computer` call: the call keeps its place, with arguments that don't parse, as a cut-off
     call's. Other function calls are left as they came. A response without a status, as some compatible APIs send,
-    counts as completed.
+    counts as completed. A deferred `computer` tool counts too: tool search may reveal it in this same response.
     """
     if status in (None, 'completed') and not refused:
         return list(parts)
-    tool_names = _computer_tool_names(model_request_parameters)
+    tool_names = {tool.name for tool in model_request_parameters.function_tools if tool.tool_kind == COMPUTER_KIND.id}
     return [
         replace(part, args=_UNFINISHED_ARGS)
         if isinstance(part, ToolCallPart) and part.tool_name in tool_names
@@ -337,7 +337,7 @@ def map_computer_call_output(
 
     The API needs a screenshot in every output, so a result without one sends a blank image instead. A `changed` call,
     one a hook renamed or gave other actions after the API stored it, is answered by its ID all the same, with a note
-    saying what ran: the API's item still says what it made.
+    saying what ran when it ran: the API's item still says what it made.
     """
     # A failed or denied call is a base part, without a screenshot.
     computer_return = part if isinstance(part, ComputerReturnPart) else None
@@ -360,7 +360,8 @@ def map_computer_call_output(
     images = [item for item in content if isinstance(item, BinaryImage)]
     extra_images = images[:-1] if image is not None else images
     notes = _scroll_notes(call, computer_return.result) if computer_return else []
-    if changed:
+    # A denied or interrupted call didn't run, so its note would be wrong.
+    if changed and part.outcome in ('success', 'failed'):
         notes.append(f'The call ran as {call.tool_name} with the arguments {call.args_as_json_str()}.')
     if computer_return is None or image is None or _needs_summary(computer_return.result) or extra_images or notes:
         items.append(_summary_message(part, content, extra_images, notes))

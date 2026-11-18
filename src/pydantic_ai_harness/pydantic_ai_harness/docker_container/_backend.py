@@ -500,14 +500,18 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
     ) -> CommandResult:
         check_timeout(timeout)
         argv = command_argv(command, shell)
+        checked_env = _checked_env(env or {})
         if self._display is not None:
             # Started first, so a program the command opens shows on the screen.
             await self._display.start()
-        return await self._run_argv(argv, env=env or {}, timeout=timeout)
+        return await self._run_argv(argv, env=checked_env, timeout=timeout)
 
     async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
-        """Run `argv` in the container without starting its display, as the display's own commands do."""
-        merged_env = {**self._env, **_checked_env(env)}
+        """Run `argv` in the container without starting its display, as the display's own commands do.
+
+        `env`'s names are already checked: `run` checks a caller's, and the display's own are valid.
+        """
+        merged_env = {**self._env, **env}
         # The first command also creates the container, which isn't bounded by the command's timeout:
         # pulling an image can take minutes.
         # Commands start where `working_dir()` says they do, even if a symlink on the way changes.
