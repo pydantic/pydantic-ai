@@ -632,6 +632,14 @@ ALLOWED: dict[str, Allowed] = {
         records=('request-scoped system prompt',),
         providers=('openai-responses', 'openai-chat'),
     ),
+    'ReportRemainingBudget': Allowed(
+        f'Request-scoped system prompt ({_ISSUES}9019): sent for one request, then left out. Anthropic clears it '
+        'natively with `clear_at`; elsewhere it is a request-only tail',
+        (('messages', 'system-prompt'),),
+        tail=True,
+        records=('request-scoped system prompt',),
+        providers=('openai-responses', 'openai-chat'),
+    ),
     'ReportStaleFiles': Allowed(
         'Request-scoped stale-file notice: sent for one request, then left out. Anthropic clears it natively with '
         '`clear_at`; elsewhere it is a request-only tail',
