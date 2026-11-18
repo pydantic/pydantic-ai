@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import copy
 import json
 import os
 import re
@@ -53,9 +54,13 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
     WebCitationSource,
+    messages as _messages,
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
-from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
+from pydantic_ai._utils import (
+    has_yaml_structured_suffix as _has_yaml_structured_suffix,
+    is_text_like_media_type as _is_text_like_media_type,
+)
 from pydantic_ai.capabilities import AbstractCapability, ModelFallback, NativeTool, Thinking, ToolSearch
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, OutputTokenLimitExceeded
@@ -2049,7 +2054,6 @@ def test_is_text_like_media_type():
     assert _is_text_like_media_type('application/toml') is True
     assert _is_text_like_media_type('application/ld+json') is True
     assert _is_text_like_media_type('application/soap+xml') is True
-    assert _is_text_like_media_type('application/openapi+yaml') is True
     assert _is_text_like_media_type('application/pdf') is False
     assert _is_text_like_media_type('image/png') is False
     # Parameters (RFC 2045) are ignored: classification happens on the bare type.
@@ -2060,7 +2064,6 @@ def test_is_text_like_media_type():
     assert _is_text_like_media_type('application/toml;charset=utf-8') is True
     assert _is_text_like_media_type('application/ld+json;charset=utf-8') is True
     assert _is_text_like_media_type('application/soap+xml;charset=utf-8') is True
-    assert _is_text_like_media_type('application/openapi+yaml;charset=utf-8') is True
     assert _is_text_like_media_type('application/pdf;charset=binary') is False
 
 
@@ -2173,6 +2176,14 @@ async def test_parameterized_structured_suffix_media_type_inlined(allow_model_re
     )
 
 
+def test_has_yaml_structured_suffix():
+    """`+yaml` types match with or without parameters (RFC 2045); bare YAML and other suffixes don't."""
+    assert _has_yaml_structured_suffix('application/openapi+yaml') is True
+    assert _has_yaml_structured_suffix('application/openapi+yaml; charset=utf-8') is True
+    assert _has_yaml_structured_suffix('application/yaml') is False
+    assert _has_yaml_structured_suffix('application/ld+json') is False
+
+
 async def test_openapi_yaml_structured_suffix_inlined(allow_model_requests: None):
     """A `+yaml` structured-suffix media type is inlined as text, like bare YAML is.
 
@@ -2203,6 +2214,45 @@ info:
 -----END FILE id="f455cb"-----\
 """,
                         'type': 'text',
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_yaml_structured_suffix_document_sent_as_file(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+):
+    """A `+yaml` type the mime table knows an extension for is a document, and is sent as a file part.
+
+    Unit test, not VCR: the outcome is decided by the request mapping. The mime table is patched so the type
+    is a document on every platform, as `application/cwl+yaml` is where the OS mime files list it.
+    """
+    mime_types = copy.deepcopy(_messages._mime_types)  # pyright: ignore[reportPrivateUsage]
+    mime_types.add_type('application/cwl+yaml', '.cwl.yaml')
+    monkeypatch.setattr(_messages, '_mime_types', mime_types)
+    cwl_content = BinaryContent(data=b'cwlVersion: v1.2\n', media_type='application/cwl+yaml')
+    assert cwl_content.is_document
+
+    c = completion_message(ChatCompletionMessage(content='A CWL document.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run(['What is this file?', cwl_content])
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is this file?', 'type': 'text'},
+                    {
+                        'file': {
+                            'file_data': 'data:application/cwl+yaml;base64,Y3dsVmVyc2lvbjogdjEuMgo=',
+                            'filename': 'filename.cwl.yaml',
+                        },
+                        'type': 'file',
                     },
                 ],
             }
