@@ -599,7 +599,8 @@ skipped over. While running with a draft or a queued message, the input box
 shows both shortcuts. If Option+Enter queues like Enter, see
 [Option keys on macOS](#option-keys-on-macos).
 Shift-Enter inserts a newline when the terminal reports it separately from Enter.
-Ctrl-J inserts a newline in the editor; plain Enter submits. Some terminals, including
+Ctrl-J inserts a newline in the editor (it steers on Windows, see
+[Windows Terminal](#windows-terminal)); plain Enter submits. Some terminals, including
 GNOME Terminal/VTE on Ubuntu, send the same input for Shift-Enter and Enter.
 Use Ctrl-J there, or a terminal that supports modified-key reporting, such as
 Kitty or xterm. CLAI enables xterm and Kitty keyboard reporting only while the
@@ -1377,9 +1378,9 @@ so on Windows Ctrl+Enter steers instead, and the input box shows Ctrl+Enter.
 CLAI treats a session as Windows when it runs on Windows or when `WT_SESSION`
 is set, which Windows Terminal also passes into WSL. Alt+Enter still steers
 wherever it reaches CLAI, and elsewhere Ctrl+Enter works like Enter.
-Ctrl+Enter needs a terminal that reports modified keys, such as Windows
-Terminal 1.25 or later. Older versions send Ctrl+Enter as Ctrl-J, which inserts
-a newline.
+Terminals that do not report modified keys send Ctrl+Enter as Ctrl-J, so on
+Windows Ctrl-J steers too. Shift+Enter inserts a newline when the terminal
+reports it separately from Enter, such as Windows Terminal 1.25 or later.
 SSH does not forward `WT_SESSION`, so a remote session started from Windows
 Terminal has no working steer chord. Set `WT_SESSION` on the remote host, for
 example with `export WT_SESSION=1` in the shell you start CLAI from.

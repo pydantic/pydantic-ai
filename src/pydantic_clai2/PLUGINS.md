@@ -3175,7 +3175,8 @@ commands, and exit signals are never steered: such a draft, or any draft the run
 does not accept, is taken as Enter would take it, and such a queued message stays
 queued and is not skipped over. When idle, Enter starts a turn. Shift-Enter inserts
 a newline when the terminal distinguishes it from Enter. Ctrl-J inserts a newline
-on terminals that do not, including GNOME Terminal/VTE on Ubuntu. xterm and Kitty
+on terminals that do not, including GNOME Terminal/VTE on Ubuntu; on Windows it
+steers, since terminals there send Ctrl+Enter as Ctrl-J. xterm and Kitty
 keyboard reporting is enabled only while the editor owns input and released for
 menus and on exit.
 Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
