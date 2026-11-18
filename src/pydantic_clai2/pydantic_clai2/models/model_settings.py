@@ -223,7 +223,7 @@ class ModelSettingsForm(BaseModel):
         return anthropic
 
     def _anthropic_thinking(self) -> 'BetaThinkingConfigParam | None':
-        """The `thinking` object, carrying Fable 5.1's `display` and `block_binding` keys.
+        """The `thinking` object, carrying the `display` and `block_binding` keys.
 
         `display` and `block_binding` only exist on the enabled and adaptive shapes, so asking
         for one picks adaptive unless a mode was chosen. Core adds the block-binding beta when

@@ -163,7 +163,7 @@ def _validate_classic_thinking(*, form: ModelSettingsForm) -> None:
 _FABLE_5_1_TAGS: tuple[str, ...] = ('fable-5-1', '5-1-fable', 'fable-5.1', '5.1-fable')
 # Opus 5.5 and Sonnet 5.5 return the notes they write between tool calls as thinking blocks, empty
 # at Anthropic's default `display: 'omitted'`; `summarized` shows them.
-_NOTES_BETWEEN_TOOLS_TAGS: tuple[str, ...] = ('opus-5-5', 'sonnet-5-5', 'opus-5.5', 'sonnet-5.5')
+_NOTES_BETWEEN_TOOLS_TAGS: tuple[str, ...] = ('opus-5-5', 'sonnet-5-5')
 
 
 def _glm_version(*, name: str) -> tuple[int, int] | None:
