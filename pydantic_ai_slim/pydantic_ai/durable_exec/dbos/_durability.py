@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 from collections import deque
-from collections.abc import Mapping
-from contextlib import nullcontext
-from contextvars import ContextVar
+from collections.abc import Coroutine, Generator, Mapping
+from contextlib import contextmanager, nullcontext
+from contextvars import Context, ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 from weakref import WeakKeyDictionary
 
-from dbos import DBOS, SetWorkflowTimeout
+from dbos import DBOS, SetWorkflowID, SetWorkflowTimeout
 from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 from pydantic import TypeAdapter, ValidationError
 
@@ -54,6 +55,8 @@ from ._utils import ChildWorkflowConfig, StepConfig, guard_enqueue_in_workflow, 
 if TYPE_CHECKING:
     from dbos import StepReservation
     from dbos._context import DBOSContext
+
+T = TypeVar('T')
 
 _default_run_ids_by_step: WeakKeyDictionary[DBOSContext, dict[int, int]] = WeakKeyDictionary()
 """Agent runs that drew a default `run_id` at each step position, per workflow execution.
@@ -364,17 +367,36 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             config: Mapping[str, Any],
         ) -> Any:
             assert isinstance(tool, FunctionToolsetTool)  # `_child_workflow_config` admits only these
+            # Stable across recovery, so the call finds its own child however parallel calls' starts interleave.
+            child_id = f'{DBOS.workflow_id}-{ctx.run_id}-{ctx.run_step}-{ctx.tool_call_id}'
+            args = (
+                name,
+                tool_args,
+                tool.tool_def,
+                tool.original_name,
+                DurableRunContext.serialize_run_context(ctx),
+                ctx.deps,
+            )
             timeout = config.get('workflow_timeout_sec')
-            with SetWorkflowTimeout(timeout) if timeout is not None else nullcontext():
-                payload = await call_tool_workflow(
-                    name,
-                    tool_args,
-                    tool.tool_def,
-                    tool.original_name,
-                    DurableRunContext.serialize_run_context(ctx),
-                    ctx.deps,
-                )
-            return self._unwrap_tool_result(payload)
+
+            @contextmanager
+            def child_options() -> Generator[None]:
+                with SetWorkflowID(child_id), SetWorkflowTimeout(timeout) if timeout is not None else nullcontext():
+                    yield
+
+            async def own_child_result() -> CallToolResult:
+                # Starting an existing workflow ID returns a handle to it rather than running it again.
+                with child_options():
+                    handle = await DBOS.start_workflow_async(call_tool_workflow, *args)
+                return await handle.get_result()
+
+            # Recorded at the next step position, which keeps the parent's history aligned on recovery.
+            with child_options():
+                await call_tool_workflow(*args)
+            # But DBOS hands a recovered call the child recorded at its position, which is another call's when
+            # parallel calls start in a different order, so the result comes from the call's own child, by ID.
+            # That child is missing if the call never started one before, and then starts now.
+            return self._unwrap_tool_result(await _outside_workflow(own_child_result()))
 
         self._child_workflow_toolsets[toolset_id] = DurableFunctionToolset(
             toolset,
@@ -536,6 +558,11 @@ def _child_workflow_config(tool: ToolsetTool[Any] | None, name: str) -> ChildWor
             f'DBOS metadata for tool {name!r} selects a child workflow, but only async function tools can run as one.'
         )
     return child_config
+
+
+async def _outside_workflow(awaitable: Coroutine[Any, Any, T]) -> T:
+    """Await DBOS calls in an empty context, where DBOS records them as no step of the current workflow."""
+    return await asyncio.create_task(awaitable, context=Context())
 
 
 async def _reject_unregistered_child_workflow(
