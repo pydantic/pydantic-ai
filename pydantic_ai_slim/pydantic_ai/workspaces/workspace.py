@@ -479,14 +479,21 @@ class Workspace(WorkspaceBackend):
         rather than asking again when the text is sent.
         """
         root = await self.working_dir()
+        layers = await self._resolved_authority_layers(root)
+        written = await self.resolve(path)
+        target = await self.realpath(written)
+        return await self._authority_at(written, target, root, layers)
+
+    async def _resolved_authority_layers(self, root: str) -> list[AuthorityLayer]:
         layers: list[AuthorityLayer] = []
         for level, path_authority in self._authority_layers():
             layers.append((level, await self._resolve_path_authority(path_authority, level, root)))
-        zones = [root, *(key for _, path_authority in layers for key in path_authority)]
+        return layers
 
+    async def _authority_at(self, written: str, target: str, root: str, layers: list[AuthorityLayer]) -> Authority:
+        """The level of a path resolved to `written`, which leads to `target`; see `authority_of`."""
+        zones = [root, *(key for _, path_authority in layers for key in path_authority)]
         paths = self.paths
-        written = await self.resolve(path)
-        target = await self.realpath(written)
         if not any(is_within(target, zone, sep=paths.sep) for zone in zones):
             return 'none'
         locations = [target]
@@ -510,18 +517,18 @@ class Workspace(WorkspaceBackend):
         root = await self.working_dir()
         written = await self.resolve(directory)
         target = await self.realpath(written)
-        layers = self._authority_layers()
         lowers = any(
-            level != 'operator' or lowest_authority(entries.values()) != 'operator' for level, entries in layers
+            level != 'operator' or lowest_authority(entries.values()) != 'operator'
+            for level, entries in self._authority_layers()
         )
         if not lowers and all(is_within(location, root, sep=paths.sep) for location in (written, target)):
             # No wrapper lowers any path, and the directory is in the working directory where it's written and where it
             # leads, so it's at `'operator'`.
             return 'operator'
+        resolved_layers = await self._resolved_authority_layers(root)
         locations = {written.casefold(), target.casefold()}
-        levels: list[Authority] = [await self.authority_of(directory)]
-        for level, path_authority in layers:
-            resolved = await self._resolve_path_authority(path_authority, level, root)
+        levels: list[Authority] = [await self._authority_at(written, target, root, resolved_layers)]
+        for _, resolved in resolved_layers:
             levels.extend(
                 entry_level
                 for entry, entry_level in resolved.items()

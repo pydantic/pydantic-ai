@@ -73,6 +73,13 @@ _DEFAULT_GUIDANCE = (
 )
 
 
+_LoadedSnapshot: TypeAlias = tuple[MemoryFile | None, list[str], bool, str | None, CapabilityPartSource]
+"""What `Memory._load_snapshot` journals: the main file, the subfile listing, whether it was truncated, a load error's
+type, and who wrote the snapshot."""
+
+_LoadedSnapshotWithoutSource: TypeAlias = tuple[MemoryFile | None, list[str], bool, str | None]
+"""What `Memory._load_snapshot` journaled up to v2.70.0, without the source, so a run journaled then still replays."""
+
 _MEMORY_SOURCE: Final = ModelSource('agent in an earlier run')
 """Who wrote a memory snapshot: the agent, through its memory tools, in earlier runs: another model's text, with no
 authority. Stores don't record which entries a user edited."""
@@ -379,12 +386,18 @@ class Memory(AbstractCapability[AgentDepsT]):
                     }
                 )
             try:
-                main, subfiles, files_truncated, error_type, source = await self._load_snapshot(ctx)
+                loaded = await self._load_snapshot(ctx)
             except Exception as exc:
                 _record_load_error(span, type(exc).__name__)
                 if self.injection_errors == 'raise':
                     raise
                 return request_context
+            if len(loaded) == 4:
+                # Journaled before the read recorded its source, which was always the agent's then.
+                main, subfiles, files_truncated, error_type = loaded
+                source = _MEMORY_SOURCE
+            else:
+                main, subfiles, files_truncated, error_type, source = loaded
 
             if error_type is not None:
                 # The snapshot this run keeps is still the one history recorded, with the source it was recorded with.
@@ -485,9 +498,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         return rendered, False
 
     @durable_operation('load_snapshot')
-    async def _load_snapshot(
-        self, ctx: RunContext[AgentDepsT]
-    ) -> tuple[MemoryFile | None, list[str], bool, str | None, CapabilityPartSource]:
+    async def _load_snapshot(self, ctx: RunContext[AgentDepsT]) -> _LoadedSnapshot | _LoadedSnapshotWithoutSource:
         store, scope = self.resolve_scope(ctx)
         try:
             main = await store.read(f'{scope}/{MAIN_FILENAME}', max_chars=self.max_memory_size)
