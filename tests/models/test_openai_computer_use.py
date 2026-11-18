@@ -428,6 +428,47 @@ async def test_a_call_changed_since_gpt_made_it_is_never_replayed_as_made(
         assert json.dumps(f'The call ran as {name} with the arguments {call.args_as_json_str()}.')[1:-1] in notes
 
 
+async def test_a_changed_held_call_that_was_denied_is_not_said_to_have_run(allow_model_requests: None) -> None:
+    """A hook changed the click GPT made, and the user then denied it: the conversation hears only the denial."""
+    computer_call: dict[str, Any] = {
+        'type': 'computer_call',
+        'id': 'cu_1',
+        'call_id': 'call_1',
+        'status': 'completed',
+        'actions': [_CLICK],
+    }
+    call = ToolCallPart(
+        'computer',
+        {'actions': [{**_CLICK, 'x': 50, 'modifiers': []}]},
+        tool_call_id='call_1',
+        tool_kind=COMPUTER_KIND.id,
+        provider_name='openai',
+        provider_details={'computer_call': computer_call},
+    )
+    held = ModelResponse(
+        parts=[call],
+        provider_name='openai',
+        provider_response_id='resp_1',
+        provider_details={'conversation_id': 'conv_1'},
+    )
+    denied = ToolReturnPart(
+        'computer', 'The user denied this call.', tool_call_id='call_1', tool_kind=COMPUTER_KIND.id, outcome='denied'
+    )
+    history: list[ModelMessage] = [ModelRequest.user_text_prompt('Click.'), held, ModelRequest(parts=[denied])]
+    client = MockOpenAIResponses.create_mock(_done())
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    params = ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True)
+    await model.request(
+        with_history_digests(history), OpenAIResponsesModelSettings(openai_conversation_id='conv_1'), params
+    )
+
+    (request,) = get_mock_responses_kwargs(client)
+    notes = json.dumps([item for item in request['input'] if item.get('role') == 'user'])
+    assert 'The user denied this call.' in notes
+    assert 'The call ran as' not in notes
+
+
 async def test_a_refused_action_reaches_gpt_beside_the_screenshot(allow_model_requests: None) -> None:
     # Otherwise GPT would take the click on the read-only workspace to have run.
     provider, computer = InMemoryProvider(), FakeComputer()
@@ -658,20 +699,22 @@ async def test_an_unfinished_call_runs_nothing(allow_model_requests: None) -> No
     assert _is_a_valid_png(output['output']['image_url'])
 
 
-@pytest.mark.parametrize('native', [True, False], ids=['native', 'function'])
+@pytest.mark.parametrize('tool', ['native', 'function', 'searched-function'])
 @pytest.mark.parametrize(
     'ending, streamed',
     [('incomplete', False), ('incomplete', True), ('refused', True)],
     ids=['incomplete-response', 'incomplete-stream', 'refused-stream'],
 )
 async def test_a_finished_call_in_a_response_that_did_not_complete_runs_nothing(
-    allow_model_requests: None, native: bool, ending: str, streamed: bool
+    allow_model_requests: None, tool: str, ending: str, streamed: bool
 ) -> None:
     """OpenAI says to stop when a response is incomplete, failed or refused, even when the computer call finished.
 
     The call's arguments don't parse, so, as `test_an_unfinished_call_runs_nothing` shows, none of it runs. A refused
-    response that isn't streamed has no parts at all, as for every other call.
+    response that isn't streamed has no parts at all, as for every other call. A deferred `computer` tool is stopped
+    too: tool search can reveal it inside the response, and the run then finds it before running the response's calls.
     """
+    native = tool == 'native'
     item: resp.ResponseOutputItem = (
         _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}).output[0]
         if native
@@ -720,7 +763,12 @@ async def test_a_finished_call_in_a_response_that_did_not_complete_runs_nothing(
         ]
     client = MockOpenAIResponses.create_mock_stream(stream) if streamed else MockOpenAIResponses.create_mock(final)
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    computer = ToolDefinition(
+        name='computer',
+        parameters_json_schema={'type': 'object'},
+        tool_kind=COMPUTER_KIND.id,
+        defer_loading=tool == 'searched-function',
+    )
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Go.')]
     params = ModelRequestParameters(
         function_tools=[computer], native_tools=[COMPUTER_TOOL] if native else [], allow_text_output=True
