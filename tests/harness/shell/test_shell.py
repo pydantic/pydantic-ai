@@ -595,6 +595,18 @@ class TestDurableCwd:
             await fresh.run_command(ctx, 'pwd')
         assert str(shell_dir) in await fresh.run_command(ctx, 'pwd')
 
+    async def test_non_utf8_saved_directory_retries_start_command(
+        self, persist_toolset: ShellToolset[None], shell_dir: Path
+    ) -> None:
+        # macOS refuses non-UTF-8 file names, so write the saved path a Linux `cd` would leave.
+        ctx = _ctx(shell_dir)
+        await persist_toolset.run_command(ctx, 'cd subdir')
+        (state_file,) = (shell_dir / '.pydantic-ai-harness/shell/run-state').iterdir()
+        state_file.write_bytes(bytes(shell_dir / 'subdir') + b'/\xff')
+        with pytest.raises(ModelRetry, match=f'The previous directory was removed; now in {shell_dir}'):
+            await persist_toolset.start_command(ctx, 'pwd')
+        assert not state_file.exists()
+
     async def test_clearing_the_run_cwd_outside_a_run_resets_the_directory(
         self, persist_toolset: ShellToolset[None], shell_dir: Path
     ) -> None:

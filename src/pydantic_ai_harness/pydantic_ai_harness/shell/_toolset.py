@@ -307,7 +307,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 self._lost_cwd()
             return await ctx.workspace.working_dir()
         except UnicodeDecodeError:
-            return await ctx.workspace.working_dir()
+            # `run_command` can `cd` into a non-UTF-8 path, which a background command can't be given.
+            recorded = ''
         try:
             entry = await ctx.workspace.stat(recorded) if posixpath.isabs(recorded) else None
         except (FileNotFoundError, NotADirectoryError):
