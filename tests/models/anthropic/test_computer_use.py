@@ -648,6 +648,19 @@ async def _streamed(events: list[BetaRawMessageStreamEvent], *function_tools: To
     return stream.get()
 
 
+async def test_a_streamed_member_call_whose_input_came_with_its_start_keeps_it(allow_model_requests: None) -> None:
+    block = _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]})
+    events = _stream(block)
+    # Without deltas, as an ordinary tool call's input may come: whole, with the block's start.
+    events[1] = BetaRawContentBlockStartEvent(type='content_block_start', index=0, content_block=block)
+    del events[2]
+    (call,) = (await _streamed(events)).parts
+    assert isinstance(call, ComputerCallPart)
+    assert call.args_as_dict() == {
+        'actions': [{'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'count': 1, 'modifiers': []}]
+    }
+
+
 async def test_member_calls_in_one_response_are_one_call_streamed_or_not(allow_model_requests: None) -> None:
     # Anthropic runs a response's member calls as one batch, stopped at the first failure, so text between them
     # doesn't split it.
