@@ -627,3 +627,15 @@ class TestToolBridge:
         await agent.run('hi')
 
         assert 'read_file' in seen[0] and '_get_weather' not in seen[0]
+
+    async def test_metadata_selector_picks_tagged_tools(self):
+        seen: list[list[str]] = []
+        agent = Agent(
+            _scripted([], seen),
+            tools=[_get_weather, _get_time],
+            capabilities=[SetToolMetadata(tools=['_get_time'], bridge=True), ToolBridge({'bridge': True})],
+        )
+
+        await agent.run('hi')
+
+        assert seen == [['_get_weather', 'tool_search', 'tool_describe', 'tool_call']]

@@ -448,7 +448,8 @@ from pydantic_ai_harness import ToolBridge
 agent = Agent('test', capabilities=[ToolBridge(['github_search', 'github_get_issue'])])
 ```
 
-Options: `tools` (`'all'`, a list of names, or a `(ctx, tool_def) -> bool` callable; the rest stay
+Options: `tools` (`'all'`, a list of names, a metadata dict such as `{'bridge': True}`, or a
+`(ctx, tool_def) -> bool` callable; the rest stay
 native), `search` (a `ToolSearchFunc`; `None` matches query words against names and descriptions), `max_results=10`, `max_retries=None` (the agent's tool retry budget).
 Gotchas: approval-required and external tools, tools with a `tool_kind` or `unless_tool_kind` (control
 tools, `read_file`, so kind-based capabilities still find them), code-execution tools (`run_code`,

@@ -32,6 +32,7 @@ class ToolBridge(AbstractCapability[AgentDepsT]):
 
     - `'all'` (default): every eligible tool.
     - `Sequence[str]`: the tools with these names.
+    - `dict[str, Any]`: the tools whose metadata contains these entries, such as those `SetToolMetadata` tags.
     - Callable `(ctx, tool_def) -> bool | Awaitable[bool]`: the tools it returns `True` for.
     """
 
