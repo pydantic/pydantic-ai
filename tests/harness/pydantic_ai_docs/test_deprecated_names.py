@@ -71,6 +71,7 @@ class TestPreRenameSpecCompatibility:
         assert set(definitions['spec_params_PyaiDocs']['properties']) == {
             'local_docs_path',
             'cache',
+            'remote_ref',
             'id',
             'description',
             'defer_loading',

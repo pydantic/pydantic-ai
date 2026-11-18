@@ -106,7 +106,7 @@ The request-level effort is part of the provider's [prompt cache](caching.md) ke
 |---|---|---|
 | OpenAI Responses | a `configuration_update` input item | GPT-6 family |
 | Anthropic | an effort-only `system` entry with a per-message `output_config`, under the `mid-conversation-output-config-2026-07-01` beta | Claude Fable 5.1 and 5.2, Mythos 5.1 and 5.2, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5 on the Claude API and Google Cloud; Fable 5.1 and Opus 5.5 on the legacy Bedrock InvokeModel client; Opus 5.5 on the Bedrock Messages API client |
-| OpenRouter | a content-less `system` message carrying a `configuration_update`, which OpenRouter sends on in the routed model's own form | Claude Fable 5.1 and 5.2, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5; GPT-6 Astra, Sol and Luna and GPT-6.1 Sol, but not their `-pro` variants |
+| OpenRouter | a content-less `system` message carrying a `configuration_update`, which OpenRouter sends on in the routed model's own form | Claude Fable 5.1 and 5.2, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5; GPT-6 Astra, Sol and Luna, GPT-6.1 Sol, and GPT-6.2 Sol and Astra, but not their `-pro` variants |
 
 Every other API and model gets the new level as the request-level setting, as before. So do these cases, where the API doesn't take a mid-conversation change:
 
@@ -449,7 +449,10 @@ Models with adjustable reasoning (the Mistral Large 4, Small 4, and Medium 3.5 f
 
 Thinking is supported by the `command-a-reasoning-08-2025` model, which thinks by default. The unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting maps to Cohere's [`thinking` parameter](https://docs.cohere.com/docs/reasoning): `thinking=False` turns reasoning off with `type='disabled'`, and an effort level caps it with a `token_budget` (`'minimal'` → 512 tokens, `'low'` → 2048, `'medium'` → 8192, `'high'` → 16384, `'xhigh'` and `'max'` → 31000).
 
+When the model returns a [`tool_plan`](https://docs.cohere.com/docs/tool-use-overview), the plan it writes before its tool calls, [`CohereModel`][pydantic_ai.models.cohere.CohereModel] keeps it as a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] with `provider_details={'tool_plan': True}` and sends it back to Cohere as `tool_plan` beside those tool calls.
+
 ## Hugging Face
 
 Text output inside `<think>` tags is automatically converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
+Reasoning that an Inference Provider returns in the separate `reasoning` field also becomes a `ThinkingPart`, and both kinds are sent back in thinking tags on later requests.
 You can customize the tags using the [`thinking_tags`][pydantic_ai.profiles.ModelProfile.thinking_tags] field on the [model profile](../models/compatible-apis.md#model-profile).
