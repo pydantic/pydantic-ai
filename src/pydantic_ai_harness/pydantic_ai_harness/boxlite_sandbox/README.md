@@ -228,7 +228,7 @@ async def main():
 
 The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use, with no window manager, so apps the agent starts from the shell open on it without title bars. Commands get `DISPLAY` set for it.
 
-Without an `image`, a new box runs `debian:bookworm-slim`, since BoxLite's default Alpine image has no `apt-get`. The first start installs [the programs the display needs](../computer_use/#what-the-display-needs), which needs `allow_internet_access=True`, with any `allowed_hosts` including the Debian mirrors. For a box without network access, use an `image` that already has them.
+Without an `image`, a new box runs `debian:bookworm-slim`, since BoxLite's default Alpine image has no `apt-get`. The first start installs [the programs the display needs](../computer_use/#what-the-display-needs), which needs `allow_internet_access=True`, with any `allowed_hosts` including the Debian mirrors. For a box without network access, use an `image` that already has them. A new box's disk has little room past its image, about 140 MB once the display is installed, which is too little for a browser: pass `box_options={'disk_size_gb': 4}` for a box that installs one.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
