@@ -85,6 +85,8 @@ class LivePrompt:
         `panel` receives the current spinner frame and returns styled rows painted above the queue,
         such as running forks; it is read on every repaint, including between turns.
         `queue_changed` is told whenever a prompt joins, leaves, or is rewritten in the queue.
+        `queue_in_toolbar=None` appends the queue count here; a callback leaves it to the toolbar,
+        except over a notice when the callback returns `True`.
         """
         self.console = console
         self.commands = commands

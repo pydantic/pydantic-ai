@@ -657,7 +657,7 @@ class _ConversationFooter:
     status: Status
     fire: Callable[[ConversationChanged], Awaitable[None]]
     shown: str
-    history: Callable[[], Sequence[ModelMessage]] = lambda: ()
+    history: Callable[[], Sequence[ModelMessage]]
 
     async def changed(self, event: ConversationChanged) -> None:
         # The footer belongs to one conversation: any switch, by command or plugin, starts it afresh.
