@@ -781,7 +781,7 @@ RequestTimeoutSetting: TypeAlias = Literal['request_timeout', 'first_event_timeo
 
 
 class ModelConnectionError(ModelAPIError):
-    """Raised when the request could not reach the provider or its response could not be read.
+    """Raised when the request could not reach the provider, its response could not be read, or the provider timed it out.
 
     For example a refused connection, a reset connection, or a dropped stream. The transport library's exception
     is available as `__cause__`.
@@ -796,7 +796,8 @@ class ModelConnectionError(ModelAPIError):
     - `'read'`: receiving the response, including a stream that broke off. The request was sent, so the provider
       may have acted on it.
 
-    `None` when the transport error doesn't say, e.g. a connection closed at an unknown point.
+    `None` when the transport error doesn't say, e.g. a connection closed at an unknown point, and for a timeout the
+    provider reports, which is not a transport error.
     """
 
     def __init__(
