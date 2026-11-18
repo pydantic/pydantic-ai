@@ -463,7 +463,7 @@ class TestCwdCapture:
 class TestForRunIsolation:
     """B3: `get_toolset` builds one shared instance at agent construction, so
     `for_run` must hand each run a fresh copy -- otherwise concurrent runs share
-    `_cwd` and corrupt each other."""
+    which run last saved a directory and mistake each other's saves."""
 
     async def test_for_run_returns_fresh_instance(self, persist_toolset: ShellToolset[None], tmp_path: Path) -> None:
         run1 = await persist_toolset.for_run(_ctx(tmp_path))
@@ -579,14 +579,14 @@ class TestDurableCwd:
             await fresh.run_command(ctx, 'pwd')
         assert str(shell_dir) in await fresh.run_command(ctx, 'pwd')
 
-    async def test_clearing_the_run_cwd_outside_a_run_keeps_the_directory(
+    async def test_clearing_the_run_cwd_outside_a_run_resets_the_directory(
         self, persist_toolset: ShellToolset[None], shell_dir: Path
     ) -> None:
-        # Without a run ID the directory is kept by the toolset, not saved per run in the workspace.
+        # Without a run ID the directory is saved under the toolset instance, and clearing removes it.
         ctx = _ctx(shell_dir)
         await persist_toolset.run_command(ctx, 'cd subdir')
         await persist_toolset.clear_run_cwd(ctx)
-        assert str(shell_dir / 'subdir') in await persist_toolset.run_command(ctx, 'pwd')
+        assert await persist_toolset.run_command(ctx, 'pwd') == f'[stdout]\n{shell_dir.resolve()}\n'
 
 
 class TestCancelledRunCwd:
@@ -1098,6 +1098,22 @@ class TestRunCommand:
             allow_interactive=False,
         )
         await ts.run_command(_ctx(shell_dir), 'cd subdir; false')
+        assert await ts.run_command(_ctx(shell_dir), 'pwd') == f'[stdout]\n{shell_dir}\n'
+
+    async def test_persist_cwd_not_updated_when_an_exit_trap_fails_the_command(self, shell_dir: Path) -> None:
+        """The directory is saved on the command's final status, after any `EXIT` trap it set has run."""
+        ts = ShellToolset(
+            allowed_commands=[],
+            denied_commands=[],
+            denied_operators=[],
+            default_timeout=10.0,
+            max_output_chars=50_000,
+            persist_cwd=True,
+            allow_interactive=False,
+        )
+        assert await ts.run_command(_ctx(shell_dir), "trap 'exit 1' EXIT; cd subdir") == snapshot(
+            '(no output)\n[exit code: 1]'
+        )
         assert await ts.run_command(_ctx(shell_dir), 'pwd') == f'[stdout]\n{shell_dir}\n'
 
 

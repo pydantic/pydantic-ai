@@ -159,9 +159,9 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         """Return a fresh instance per run when `persist_cwd` tracks a cwd, so each run has its own.
 
         `get_toolset` builds one shared instance at agent construction (see
-        `AbstractToolset.for_run`, which defaults to returning `self`). The tracked
-        `_cwd` is per-run state, so without a copy two concurrent runs would corrupt
-        each other's cwd. Without `persist_cwd` there is no per-run state and every run
+        `AbstractToolset.for_run`, which defaults to returning `self`). Which run last
+        saved a directory is per-run state, so without a copy two concurrent runs would
+        mistake each other's saves. Without `persist_cwd` there is no per-run state and every run
         shares this instance, which durable execution requires of the toolset it registered.
         """
         if not self._persist_cwd:
@@ -278,11 +278,11 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
 
     async def clear_run_cwd(self, ctx: RunContext[AgentDepsT]) -> None:
         """Remove the run's saved directory once its agent run ends."""
-        if ctx.run_id is not None:
-            try:
-                await ctx.workspace.remove(await self._cwd_state_path(ctx))
-            except FileNotFoundError:
-                pass
+        self._saved_cwd_run = None
+        try:
+            await ctx.workspace.remove(await self._cwd_state_path(ctx))
+        except FileNotFoundError:
+            pass
 
     async def _jobs_base(self, ctx: RunContext[AgentDepsT]) -> str:
         """The workspace directory holding job and capture files, looked up once per workspace."""
@@ -364,26 +364,30 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         # One line, so the shell numbers the command's lines as before. `$(...)` drops a path's trailing
         # newlines; the `x` sentinel keeps them. `command -p` finds the tools whatever the command's `PATH` is.
         # A run's first command saves the working directory with `ln`, which never replaces a parallel save.
+        # A lost state file is reported only when that save works, so a workspace that can't save runs on.
         start = (
             f'__harness_state={state}; '
             '__harness_put() { { command -p mkdir -p -- "${__harness_state%/*}" && '
             'printf %s "$__harness_cwd" > "$__harness_state.$$" && '
-            'command -p "$@" -- "$__harness_state.$$" "$__harness_state"; '
-            'command -p rm -f -- "$__harness_state.$$"; } 2>/dev/null; }; '
+            'command -p "$@" -- "$__harness_state.$$" "$__harness_state"; } 2>/dev/null; '
+            '__harness_ok=$?; command -p rm -f -- "$__harness_state.$$" 2>/dev/null; return $__harness_ok; }; '
             'if test -e "$__harness_state"; then '
-            '__harness_cwd=$(command -p cat -- "$__harness_state" 2>/dev/null; printf x); '
+            '__harness_cwd=$(test -f "$__harness_state" && command -p cat -- "$__harness_state" 2>/dev/null; printf x); '
             '__harness_cwd=${__harness_cwd%x}; '
             'case $__harness_cwd in /*) test -d "$__harness_cwd" ;; *) false ;; esac || '
             f'{{ command -p rm -f -- "$__harness_state"; printf %s {marker}removed; exit 1; }}; '
-            f'elif {lost}; then printf %s {marker}lost; exit 1; '
-            f'else __harness_cwd={working_dir}; __harness_put ln; '
-            'fi; cd "$__harness_cwd" || exit\n'
+            f'else __harness_cwd={working_dir}; __harness_put ln && {lost} && {{ printf %s {marker}lost; exit 1; }}; '
+            'fi; cd "$__harness_cwd" || exit; (\n'
         )
+        # The command runs in a subshell, so an `EXIT` trap it sets has run before the outer shell reads its
+        # final status. The subshell leaves its directory in a file that the outer shell saves only on exit `0`.
         save = (
-            '\n__harness_ec=$?; if [ "$__harness_ec" -eq 0 ]; then '
-            '__harness_cwd=$(pwd 2>/dev/null; printf x); __harness_cwd=${__harness_cwd%?x}; '
-            'case $__harness_cwd in /*) test -d "$__harness_cwd" && __harness_put mv -f ;; esac; '
-            'fi; exit $__harness_ec'
+            '\n__harness_ec=$?; __harness_cwd=$(pwd 2>/dev/null; printf x); __harness_cwd=${__harness_cwd%?x}; '
+            'case $__harness_cwd in /*) test -d "$__harness_cwd" && '
+            '{ printf %s "$__harness_cwd" > "$__harness_state.$$.new"; } 2>/dev/null ;; esac; exit $__harness_ec\n'
+            '); __harness_ec=$?; [ "$__harness_ec" -eq 0 ] && '
+            'command -p mv -f -- "$__harness_state.$$.new" "$__harness_state" 2>/dev/null; '
+            'command -p rm -f -- "$__harness_state.$$.new" 2>/dev/null; exit $__harness_ec'
         )
         return lambda command: f'{start}{command}{save}'
 
