@@ -818,11 +818,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         return self._toolset
 
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
-        """The provider's native computer tool, which runs this capability's tool, unless `native` is `False`.
-
-        Resolved either way, as resolving it starts the display.
-        """
-        return [self._native_computer]
+        """The provider's native computer tool, which runs this capability's tool, unless `native` is `False`."""
+        return [self._native_computer] if self.native else []
 
     async def _native_computer(self, ctx: RunContext[AgentDepsT]) -> ComputerTool | None:
         """The provider's native computer tool, sized to the screenshot the model points on.
@@ -832,15 +829,13 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         if (seen := _last_screenshot_size(ctx.messages)) is not None:
             # The display isn't read once there's a screenshot, so a reply that doesn't use the screen doesn't start
             # it. Whether it's read depends only on the messages, so a durable run reads it at the same steps on replay.
-            return ComputerTool(display_size=seen, optional=True) if self.native else None
-        # Read even without the native tool: it starts the display, so a program the model starts from its shell
-        # before any screenshot opens on the screen.
+            return ComputerTool(display_size=seen, optional=True)
         size = await self._screen_size(ctx)
         if isinstance(size, _NotRun):
             if size.kind == 'tool':
                 return None  # the call itself will report the display's error
             raise size.error()
-        return ComputerTool(display_size=size, optional=True) if self.native else None
+        return ComputerTool(display_size=size, optional=True)
 
     @durable_operation('display_size')
     async def _screen_size(self, ctx: RunContext[AgentDepsT]) -> tuple[int, int] | _NotRun:
