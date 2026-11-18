@@ -106,11 +106,10 @@ def _clixml_text(objects: str) -> str:
 
 def _decode_clixml(stderr: str) -> str:
     """`stderr` with the CLIXML records Windows PowerShell writes for its error stream replaced by their text."""
-    if not _CLIXML_HEADER.search(stderr):
+    if (header := _CLIXML_HEADER.search(stderr)) is None:
         return stderr
-    stderr = _CLIXML_HEADER.sub('', stderr)
-    pieces: list[str] = []
-    position = 0
+    pieces = [stderr[: header.start()]]
+    position = header.end()
     # `str.find`, not a regex, so unclosed records can't make this quadratic.
     while (start := stderr.find('<Objs ', position)) != -1 and (end := stderr.find('</Objs>', start)) != -1:
         pieces += (stderr[position:start], _clixml_text(stderr[start:end]))
@@ -298,10 +297,10 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
             self._jobs[process.pid] = job
         return process
 
-    @staticmethod
-    def _decode_stderr(data: bytes | bytearray) -> str:
-        # Windows PowerShell writes its error stream as CLIXML for an `-EncodedCommand` script.
-        return _decode_clixml(HostWorkspaceBackend._decode_stderr(data))
+    def _decode_stderr(self, data: bytes | bytearray, *, shell: bool) -> str:
+        stderr = super()._decode_stderr(data, shell=shell)
+        # Windows PowerShell writes its error stream as CLIXML for the `-EncodedCommand` a `shell=True` command runs as.
+        return _decode_clixml(stderr) if shell else stderr
 
     def _kill_tree(self, process: anyio.abc.Process) -> tuple[PermissionError | None, PermissionError | None]:
         job = self._jobs.get(process.pid)

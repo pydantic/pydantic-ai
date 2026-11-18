@@ -56,10 +56,24 @@ class TestWindowsCommands:
     async def test_windows_powershell_errors_are_text(self, tmp_path: Path) -> None:
         """Windows PowerShell 5.1 writes its error stream as CLIXML when the script comes from `-EncodedCommand`."""
         backend = WindowsWorkspaceBackend(tmp_path, powershell='powershell.exe')
-        result = await backend.run("Write-Error 'a <b> & _x000A_ \U0001f600'", shell=True)
+        script = (
+            "[Console]::Error.WriteLine('<Objs a><S S=\"x\">y</S></Objs>')\nWrite-Error 'a <b> & _x000A_ \U0001f600'"
+        )
+        result = await backend.run(script, shell=True)
         assert result.exit_code == 1
-        assert 'a <b> & _x000A_ \U0001f600' in result.stderr
-        assert 'CLIXML' not in result.stderr
+        assert result.stderr == snapshot(
+            '<Objs a><S S="x">y</S></Objs>\r\n'
+            "Write-Error 'a <b> & _x000A_ \U0001f600' : a <b> & _x000A_ \U0001f600\r\n"
+            '    + CategoryInfo          : NotSpecified: (:) [Write-Error], WriteErrorException\r\n'
+            '    + FullyQualifiedErrorId : Microsoft.PowerShell.Commands.WriteErrorException\r\n'
+            ' \r\n'
+        )
+
+    async def test_argv_stderr_is_not_decoded(self, tmp_path: Path) -> None:
+        clixml = '#< CLIXML\r\n<Objs a><S S="x">y</S></Objs>\r\n'
+        (tmp_path / 'clixml.txt').write_bytes(clixml.encode())
+        result = await WindowsWorkspaceBackend(tmp_path).run(['cmd', '/c', 'type clixml.txt 1>&2'])
+        assert result.stderr == clixml
 
     async def test_timeout_ends_the_whole_process_tree(self, tmp_path: Path) -> None:
         backend = WindowsWorkspaceBackend(tmp_path)
@@ -138,14 +152,19 @@ class TestWindowsCommands:
         assert result.workspace.platform == 'windows'
 
 
-def _decode_stderr(stderr: str) -> str:
-    return WindowsWorkspaceBackend._decode_stderr(stderr.encode())  # pyright: ignore[reportPrivateUsage]
+def test_clixml_stderr_is_decoded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real Windows PowerShell 5.1 error output, decoded on every runner; only the Windows job can produce it.
 
+    Also a truncated record, which only a timeout's stderr can hold.
+    """
+    monkeypatch.setattr('pydantic_ai.workspaces.windows._on_windows', lambda: True)
+    backend = WindowsWorkspaceBackend(tmp_path)
 
-def test_clixml_stderr_is_decoded() -> None:
-    """Real Windows PowerShell 5.1 error output, decoded where it can't be produced: on non-Windows CI runners."""
+    def decode(stderr: str, *, shell: bool = True) -> str:
+        return backend._decode_stderr(stderr.encode(), shell=shell)  # pyright: ignore[reportPrivateUsage]
+
     clixml = (
-        '[Console]::Error output\r\n'
+        '<Objs a><S S="x">y</S></Objs>\r\n'
         '#< CLIXML\r\n'
         '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">'
         '<S S="Error">Get-Item : Cannot find path \'C:\\work\\missing.txt\' because it does not exist._x000D__x000A_</S>'
@@ -159,9 +178,9 @@ def test_clixml_stderr_is_decoded() -> None:
         '<S S="Error">a &lt;b&gt; &amp; _x005F_x000A_ _xD83D__xDE00__x000D__x000A_</S>'
         '</Objs>'
     )
-    assert _decode_stderr(clixml) == snapshot(
+    assert decode(clixml) == snapshot(
         """\
-[Console]::Error output\r
+<Objs a><S S="x">y</S></Objs>\r
 Get-Item : Cannot find path 'C:\\work\\missing.txt' because it does not exist.\r
 At line:4 char:1\r
 + Get-Item missing.txt\r
@@ -173,7 +192,8 @@ At line:4 char:1\r
 a <b> & _x000A_ \U0001f600\r
 """
     )
-    assert _decode_stderr('plain <S S="Error">text</S>\n') == 'plain <S S="Error">text</S>\n'
+    assert decode(clixml, shell=False) == clixml
+    assert decode('<Objs a><S S="x">y</S></Objs>\n') == '<Objs a><S S="x">y</S></Objs>\n'
     record = '<Objs Version="1.1.0.1"><S S="Error">boom</S></Objs>'
     unclosed = '<Objs ><S S="Error">cut</S><Objs >'
-    assert _decode_stderr(f'#< CLIXML\n{record}{unclosed}') == f'boom{unclosed}'
+    assert decode(f'#< CLIXML\n{record}{unclosed}') == f'boom{unclosed}'

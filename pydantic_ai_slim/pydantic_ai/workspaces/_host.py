@@ -404,7 +404,7 @@ class HostWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                 _raise_command_timeout(
                     timeout,
                     stdout_buffer,
-                    self._decode_stderr(stderr_buffer),
+                    self._decode_stderr(stderr_buffer, shell=shell),
                     error=error,
                     denial=denial,
                     child_denial=child_denial,
@@ -416,11 +416,11 @@ class HostWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         return CommandResult(
             exit_code=exit_code,
             stdout=stdout_buffer.decode('utf-8', errors='replace'),
-            stderr=self._decode_stderr(stderr_buffer),
+            stderr=self._decode_stderr(stderr_buffer, shell=shell),
         )
 
-    @staticmethod
-    def _decode_stderr(data: bytes | bytearray) -> str:
+    def _decode_stderr(self, data: bytes | bytearray, *, shell: bool) -> str:
+        """The text of a command's stderr, for its result and its timeout error."""
         return data.decode('utf-8', errors='replace')
 
     async def _start_dir(self, cwd: str | None) -> Path:
@@ -488,7 +488,7 @@ class HostWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                 'output to a file and read part of it instead',
                 limit=_MAX_CAPTURE_BYTES,
                 stdout=stdout_buffer[: 64 * 1024].decode('utf-8', errors='replace'),
-                stderr=self._decode_stderr(stderr_buffer[: 64 * 1024]),
+                stderr=stderr_buffer[: 64 * 1024].decode('utf-8', errors='replace'),
             )
         if exit_code is None:
             raise TimeoutError
