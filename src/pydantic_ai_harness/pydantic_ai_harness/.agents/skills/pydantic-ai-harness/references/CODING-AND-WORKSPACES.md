@@ -496,6 +496,7 @@ Python up to 3.14.
 - `desktop=True` gives the box a plain 1280x800 Xvfb (no window manager) for `ComputerUse()`, or pass
   `desktop=(w, h)`. The first start installs the display programs with `apt-get`, which needs
   `allow_internet_access=True` (and the Debian mirrors in any `allowed_hosts`), or an `image` that has them.
+  A new box has about 140 MB free after that, too little for a browser: pass `box_options={'disk_size_gb': 4}`.
 
 ### DockerContainer
 
