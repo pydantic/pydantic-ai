@@ -3409,14 +3409,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         Iterates content directly to preserve order of mixed file/data content.
         """
-        if not part.files:
+        # A `computer` result is read as validated content, so content stored as a JSON string keeps its screenshot.
+        typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
+        if typed is None and not part.files:
             return part.model_response_str()
 
         output: list[
             ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam
         ] = []
 
-        for item in part.content_items(mode='str'):
+        for item in part.content_items(mode='str') if typed is None else typed:
             if isinstance(item, UploadedFile):
                 output.append(self._map_uploaded_file_to_response_content(item))
             elif is_multi_modal_content(item):

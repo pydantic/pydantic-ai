@@ -91,5 +91,5 @@ def label_calls(model: Model, params: ModelRequestParameters, response: _message
         return
     for part in response.parts:
         if isinstance(part, _messages.ToolCallPart) and part.tool_name in names:
-            part.provider_name = part.provider_name or response.provider_name
+            # `provider_name` stays as sent, as the response digest includes it; when unset, the response's applies.
             part.provider_details = {**(part.provider_details or {}), **labels}
