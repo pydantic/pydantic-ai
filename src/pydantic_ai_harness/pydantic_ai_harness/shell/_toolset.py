@@ -377,15 +377,18 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             'case $__harness_cwd in /*) test -d "$__harness_cwd" ;; *) false ;; esac || '
             f'{{ command -p rm -f -- "$__harness_state"; printf %s {marker}removed; exit 1; }}; '
             f'else __harness_cwd={working_dir}; __harness_put ln && {lost} && {{ printf %s {marker}lost; exit 1; }}; '
-            'fi; cd "$__harness_cwd" || exit; (\n'
+            'fi; cd "$__harness_cwd" || exit; exec 3>&2; { ( exec 2>&3 3>&-\n'
         )
+        # The shell's own report of a subshell killed by a signal goes to /dev/null; the command keeps stderr.
         # The command runs in a subshell, so an `EXIT` trap it sets has run before the outer shell reads its
-        # final status. The subshell leaves its directory in a file that the outer shell saves only on exit `0`.
+        # final status. The subshell leaves its directory in a file that the outer shell saves only on exit `0`,
+        # and only when that file was written in full, so a failed write never replaces the saved directory.
         save = (
             '\n__harness_ec=$?; __harness_cwd=$(pwd 2>/dev/null; printf x); __harness_cwd=${__harness_cwd%?x}; '
             'case $__harness_cwd in /*) test -d "$__harness_cwd" && '
-            '{ printf %s "$__harness_cwd" > "$__harness_state.$$.new"; } 2>/dev/null ;; esac; exit $__harness_ec\n'
-            '); __harness_ec=$?; [ "$__harness_ec" -eq 0 ] && '
+            '{ { test -d "${__harness_state%/*}" || command -p mkdir -p -- "${__harness_state%/*}"; } && '
+            'printf %s "$__harness_cwd" > "$__harness_state.$$.new"; } 2>/dev/null ;; esac; exit $__harness_ec\n'
+            '); } 2>/dev/null; __harness_ec=$?; exec 3>&-; [ "$__harness_ec" -eq 0 ] && test -s "$__harness_state.$$.new" && '
             'command -p mv -f -- "$__harness_state.$$.new" "$__harness_state" 2>/dev/null; '
             'command -p rm -f -- "$__harness_state.$$.new" 2>/dev/null; exit $__harness_ec'
         )
