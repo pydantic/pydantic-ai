@@ -1531,6 +1531,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             # A single inaccessible file should not hide matches in the rest of the tree.
             skipped.append(scope.relative(file.path, scope.bounds.cwd))
             return None
+        if len(raw) > _MAX_SEARCH_FILE_BYTES:
+            skipped.append(scope.relative(file.path, scope.bounds.cwd))
+            return None
         if is_binary(raw):
             return None
         return raw.decode('utf-8', errors='replace')
