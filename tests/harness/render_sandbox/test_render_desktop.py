@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shlex
 from pathlib import Path
 
@@ -21,7 +22,10 @@ with try_import() as imports_successful:
     from ..display_fakes import FAKE_SCREENSHOT, look_click_then_finish, screen
     from .workspace_helpers import WorkspaceHarness
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='render not installed')
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='render not installed'),
+    pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host'),
+]
 
 _DISPLAY_PROGRAMS = ('Xvfb', 'xwininfo', 'scrot', 'xdotool')
 
