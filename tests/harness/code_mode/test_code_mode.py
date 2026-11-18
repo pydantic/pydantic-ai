@@ -94,6 +94,7 @@ from pydantic_ai_harness.code_mode import (
     CodeModeResourceLimits,
     CodeModeReturnSchemaWarning,
     CodeModeToolset,
+    DiscoveryAnnouncementPart,
 )
 from pydantic_ai_harness.code_mode._capability import (
     _extract_discovered_names,  # pyright: ignore[reportPrivateUsage]
@@ -3946,7 +3947,7 @@ class TestDynamicCatalog:
     1. **Catalog placement** — `CodeModeToolset` strips signatures from `run_code.description`
        and re-exposes them as a dynamic `InstructionPart` via `get_instructions`.
     2. **Discovery announcements** — `CodeMode.after_tool_execute` (local search) and
-       `after_model_request` (native search) enqueue a `SystemPromptPart` so the model
+       `after_model_request` (native search) enqueue a `DiscoveryAnnouncementPart` so the model
        learns that freshly-discovered tools are callable.
     """
 
@@ -4137,9 +4138,9 @@ class TestDynamicCatalog:
         [request] = ctx.pending_messages[0].messages
         assert isinstance(request, ModelRequest)
         [part] = request.parts
-        assert isinstance(part, SystemPromptPart)
+        assert isinstance(part, DiscoveryAnnouncementPart)
         assert '`weather`' in part.content
-        assert part.metadata == {'origin': 'pydantic-ai-harness.code_mode.discovery.v1', 'tools': ['weather']}
+        assert part.tools == ('weather',)
 
     async def test_no_announce_when_disabled(self) -> None:
         """With `dynamic_catalog=False`, the hooks are inert even on a real search return."""
@@ -4419,7 +4420,7 @@ class TestDynamicCatalog:
             for m in result.all_messages()
             if isinstance(m, ModelRequest)
             for p in m.parts
-            if isinstance(p, SystemPromptPart)
+            if isinstance(p, DiscoveryAnnouncementPart)
         ]
         assert len(announcements) == 1
         assert announcements[0].endswith(': `weather`.')
@@ -4440,7 +4441,7 @@ class TestDynamicCatalog:
         [request] = ctx.pending_messages[0].messages
         assert isinstance(request, ModelRequest)
         [part] = request.parts
-        assert isinstance(part, SystemPromptPart)
+        assert isinstance(part, DiscoveryAnnouncementPart)
         assert part.content == snapshot(
             'New functions are now available inside `run_code`. Their signatures have been added to the '
             'available-functions catalog in the system prompt: `weather`, `get_forecast`.'
@@ -4496,7 +4497,7 @@ class TestDynamicCatalog:
         """The announcement names a remote tool only by the identifier `run_code` calls it by.
 
         An MCP server chooses its tool names, so one can carry markup, line breaks or prose. Only letters,
-        digits and underscores reach the system-voice text; the name as found stays in the metadata. These
+        digits and underscores reach the system-voice text; the name as found stays in the part's `tools` field. These
         names come from remote servers, so the announcement is driven directly rather than through one.
         """
         cap = CodeMode[object](dynamic_catalog=True)
@@ -4513,12 +4514,12 @@ class TestDynamicCatalog:
         [request] = ctx.pending_messages[0].messages
         assert isinstance(request, ModelRequest)
         [part] = request.parts
-        assert isinstance(part, SystemPromptPart)
+        assert isinstance(part, DiscoveryAnnouncementPart)
         assert part.content == (
             'New functions are now available inside `run_code`. Their signatures have been added to the '
             f'available-functions catalog in the system prompt: `{function}`.'
         )
-        assert part.metadata == {'origin': 'pydantic-ai-harness.code_mode.discovery.v1', 'tools': [name]}
+        assert part.tools == (name,)
 
     async def test_announcement_shaped_text_is_not_an_announcement(self) -> None:
         """A system prompt that reads like an announcement doesn't stop the real one."""
@@ -4580,7 +4581,7 @@ class TestDynamicCatalog:
         [request] = ctx.pending_messages[0].messages
         assert isinstance(request, ModelRequest)
         [part] = request.parts
-        assert isinstance(part, SystemPromptPart) and part.content.endswith(': `weather`.')
+        assert isinstance(part, DiscoveryAnnouncementPart) and part.content.endswith(': `weather`.')
 
     async def test_rediscovery_in_a_continued_conversation_is_not_announced_again(self) -> None:
         """A tool announced in an earlier run isn't announced again when the conversation continues.
@@ -4635,13 +4636,13 @@ class TestDynamicCatalog:
         assert len(announcements) == 1
         assert '`weather`' in announcements[0]
         marked = [
-            p.metadata
+            p.tools
             for m in second.all_messages()
             if isinstance(m, ModelRequest)
             for p in m.parts
-            if isinstance(p, SystemPromptPart) and p.metadata is not None
+            if isinstance(p, DiscoveryAnnouncementPart)
         ]
-        assert marked == [{'origin': 'pydantic-ai-harness.code_mode.discovery.v1', 'tools': ['weather']}]
+        assert marked == [('weather',)]
 
     # -- discovery announcement: native search path -----------------------
 
@@ -4668,7 +4669,7 @@ class TestDynamicCatalog:
         [request] = ctx.pending_messages[0].messages
         assert isinstance(request, ModelRequest)
         [part] = request.parts
-        assert isinstance(part, SystemPromptPart) and '`weather`' in part.content
+        assert isinstance(part, DiscoveryAnnouncementPart) and '`weather`' in part.content
 
     async def test_no_announce_for_unrelated_response_parts(self) -> None:
         cap = CodeMode[object](dynamic_catalog=True)
@@ -4705,7 +4706,7 @@ class TestDynamicCatalog:
         Two-step run:
           1. Model calls `search_tools(['weather'])` (the discovery surface).
           2. After the local tool-search returns, `CodeMode.after_tool_execute` enqueues a
-             `SystemPromptPart`; the pending-message queue drains it into the next request.
+             `DiscoveryAnnouncementPart`; the pending-message queue drains it into the next request.
              On the wire it renders as an (XML-wrapped) `UserPromptPart` — mid-conversation
              system content is no longer hoisted (pydantic/pydantic-ai#5509) — so the model
              sees the announcement inline and replies.
@@ -5104,14 +5105,9 @@ class TestDynamicCatalog:
         )
         result = await agent.run('Weather in Paris?')
 
-        [announcement] = [
-            p for m in result.all_messages() for p in m.parts if isinstance(p, SystemPromptPart) and p.metadata
-        ]
+        [announcement] = [p for m in result.all_messages() for p in m.parts if isinstance(p, DiscoveryAnnouncementPart)]
         assert announcement.content.endswith(': `get_weather`.')
-        assert announcement.metadata == {
-            'origin': 'pydantic-ai-harness.code_mode.discovery.v1',
-            'tools': ['get-weather'],
-        }
+        assert announcement.tools == ('get-weather',)
         run_code_returns = [
             p.content
             for m in result.all_messages()

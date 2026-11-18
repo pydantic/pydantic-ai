@@ -1303,6 +1303,11 @@ def is_str_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
     return all(isinstance(key, str) for key in value)  # pyright: ignore[reportUnknownVariableType]
 
 
+def is_list(obj: Any) -> TypeGuard[list[Any]]:
+    """Check if obj is a list, narrowing the type to `list[Any]`."""
+    return isinstance(obj, list)
+
+
 def is_google_files_api_url(url: str) -> bool:
     """Whether a URL uses the Google Files API prefix recognized by the Google adapters.
 

@@ -33,14 +33,25 @@ class TruncationStrategy(str, Enum):  # noqa: UP042
     """Keep the first and last characters, eliding the middle."""
 
 
-# CSI sequences, OSC sequences, and simple escapes. Terminal tool output is full of color
-# codes that waste tokens and can confuse models.
-_ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07|\x1b[^[\]()]')
+# CSI sequences, OSC sequences (BEL-terminated, on one line), and simple escapes. Terminal tool
+# output is full of color codes that waste tokens and can confuse models.
+_CSI_OR_SIMPLE = r'\x1b\[[0-9;]*[a-zA-Z]|\x1b[^[\]()]'
+_NON_OSC_RE = re.compile(_CSI_OR_SIMPLE)
+# An OSC match runs to its BEL, or else to the end of its line, so an unterminated one is scanned
+# once rather than once per `ESC ]` in it: no OSC inside that span can be terminated either.
+_ANSI_ESCAPE_RE = re.compile(rf'\x1b\][^\x07\n]*(?:\x07|\n?)|{_CSI_OR_SIMPLE}')
+
+
+def _strip_escape(match: re.Match[str]) -> str:
+    escape = match.group()
+    if escape.startswith('\x1b]') and not escape.endswith('\x07'):
+        return '\x1b]' + _NON_OSC_RE.sub('', escape[2:])
+    return ''
 
 
 def strip_ansi(text: str) -> str:
-    """Remove ANSI escape sequences from `text`."""
-    return _ANSI_ESCAPE_RE.sub('', text)
+    """Remove ANSI escape sequences from `text`, in linear time."""
+    return _ANSI_ESCAPE_RE.sub(_strip_escape, text)
 
 
 def is_binary(value: object) -> bool:
