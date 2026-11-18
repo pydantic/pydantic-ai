@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Callable, Coroutine, Generator, Mapping
-from contextlib import contextmanager, nullcontext
+from collections.abc import Callable, Coroutine, Mapping
+from contextlib import nullcontext
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -53,7 +53,7 @@ from ._operation_names import DBOSOperationNamer
 from ._utils import ChildWorkflowConfig, StepConfig, guard_enqueue_in_workflow, in_workflow_code, using_durable_sleep
 
 if TYPE_CHECKING:
-    from dbos import StepReservation
+    from dbos import StepReservation, WorkflowHandleAsync
     from dbos._context import DBOSContext
 
 T = TypeVar('T')
@@ -575,48 +575,52 @@ async def _call_child_workflow(
     executions[call_key] = execution + 1
     child_id = f'{parent_id}-{ctx.run_id}-{ctx.run_step}-{execution}-{ctx.tool_call_id}'
 
-    @contextmanager
-    def child_options() -> Generator[None]:
-        with SetWorkflowID(child_id), SetWorkflowTimeout(timeout) if timeout is not None else nullcontext():
-            yield
-
-    async def handed_another_child() -> bool:
-        recorded_children = _recorded_children.get(context)
-        if recorded_children is None:
-            # Listed once per workflow execution: a position recorded before the execution started is in the list,
-            # and one recorded since was recorded by its own call, so it holds that call's own child.
-            steps = await DBOS.list_workflow_steps_async(parent_id, load_output=False, shard_key=context.shard_key)
-            recorded_children = _recorded_children[context] = {s['function_id']: s['child_workflow_id'] for s in steps}
-        recorded = recorded_children.get(step_id)
-        # A child started before child IDs were derived has DBOS's positional ID, and keeps its positional result.
-        positional_id = f'{parent_id}-{step_id}'
-        return (
-            recorded is not None
-            and recorded != child_id
-            and recorded != positional_id
-            and not recorded.endswith(f':{positional_id}')  # DBOS's positional ID for a child under another shard key
-        )
-
-    async def own_child_result() -> CallToolResult:
-        # Starting an existing ID returns a handle to it rather than running it again. A call that never started
-        # its child before (it was handed another's) starts it now, as a workflow of its own rather than a child:
-        # DBOS links a child to its parent only through a step position, which recovery has already given away.
-        with child_options():
-            handle = await DBOS.start_workflow_async(workflow, *args)
-        return await handle.get_result()
-
-    # The child takes the next step position here, with no wait before it, so parallel calls keep their order.
-    step_id = context.function_id + 1
-    try:
-        with child_options():
-            payload = await workflow(*args)
-    except Exception:
-        if not await _outside_workflow(handed_another_child()):
+    async def positional_result() -> tuple[CallToolResult] | None:
+        """Call the child at the next step position, or return `None` if recovery handed it another call's child."""
+        # The child takes the next step position here, with no wait before it, so parallel calls keep their order.
+        step_id = context.function_id + 1
+        try:
+            with SetWorkflowID(child_id), SetWorkflowTimeout(timeout) if timeout is not None else nullcontext():
+                payload = await workflow(*args)
+        except Exception:
+            if await _outside_workflow(_handed_another_child(context, parent_id, step_id, child_id)):
+                return None
             raise
-    else:
-        if not await _outside_workflow(handed_another_child()):
-            return payload
-    return await _outside_workflow(own_child_result())
+        handed = await _outside_workflow(_handed_another_child(context, parent_id, step_id, child_id))
+        return None if handed else (payload,)
+
+    while (result := await positional_result()) is None:
+        # The call's own child, if it started before, is a child of the parent at another position, so take its
+        # result. Otherwise it starts at the next position, which recovery hasn't handed to another call's child.
+        if await _outside_workflow(DBOS.get_workflow_status_async(child_id)) is not None:
+            return await _outside_workflow(_workflow_result(child_id))
+    return result[0]
+
+
+async def _handed_another_child(context: DBOSContext, parent_id: str, step_id: int, child_id: str) -> bool:
+    """Whether the child recorded at `step_id` of the parent is another call's than `child_id`."""
+    recorded_children = _recorded_children.get(context)
+    if recorded_children is None:
+        # Listed once per workflow execution: a position recorded before the execution started is in the list,
+        # and one recorded since was recorded by its own call, so it holds that call's own child.
+        steps = await DBOS.list_workflow_steps_async(parent_id, load_output=False, shard_key=context.shard_key)
+        recorded_children = _recorded_children[context] = {s['function_id']: s['child_workflow_id'] for s in steps}
+    recorded = recorded_children.get(step_id)
+    # A child started before child IDs were derived has DBOS's positional ID, and keeps its positional result.
+    positional_id = f'{parent_id}-{step_id}'
+    return (
+        recorded is not None
+        and recorded != child_id
+        and recorded != positional_id
+        and not recorded.endswith(f':{positional_id}')  # DBOS's positional ID for a child under another shard key
+    )
+
+
+async def _workflow_result(workflow_id: str) -> CallToolResult:
+    handle: WorkflowHandleAsync[CallToolResult] = await DBOS.retrieve_workflow_async(
+        workflow_id, existing_workflow=False
+    )
+    return await handle.get_result()
 
 
 async def _outside_workflow(awaitable: Coroutine[Any, Any, T]) -> T:

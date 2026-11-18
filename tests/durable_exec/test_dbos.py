@@ -6876,15 +6876,12 @@ async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
     assert sorted(await handle.get_result()) == [f'call-a={moon}', 'call-b=sun']
     # Recovery reuses the children that finished before the crash.
     assert sorted(researched) == ['moon', 'sun']
-    # A call whose child hadn't started before the crash, and whose step position recovery gave to another call's
-    # child, starts its child as a workflow of its own, outside the parent's workflow tree.
+    # Even a call whose child hadn't started before the crash, and whose step position recovery gave to another
+    # call's child, starts its child as a child of the parent, at the next position.
     children = await DBOS.list_workflows_async(workflow_id_prefix=f'{workflow_id}-')
     assert {
         w.workflow_id.removeprefix(f'{workflow_id}-{workflow_id}:1-1-0-'): w.parent_workflow_id for w in children
-    } == {
-        'call-a': workflow_id,
-        'call-b': None if crash == 'before_second_child' else workflow_id,
-    }
+    } == {'call-a': workflow_id, 'call-b': workflow_id}
 
 
 @pytest.mark.parametrize(
