@@ -2767,6 +2767,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         ]
         for item in response.content:
             match item:
+                # The SDK builds a block type it doesn't know as a `BetaTextBlock` carrying that type.
+                case BetaTextBlock() if item.type != 'text':
+                    warnings.warn(
+                        f'Handling of this content block type is not yet implemented, so it was skipped. Please report on our GitHub: {item.type!r}',
+                        UserWarning,
+                    )
                 case BetaTextBlock():
                     items.append(self._map_text_block(item, fetched_pages))
                 case BetaServerToolUseBlock():
