@@ -2,14 +2,13 @@ from __future__ import annotations as _annotations
 
 import base64
 import warnings
-from collections.abc import AsyncGenerator, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from functools import cached_property, partial
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, assert_never, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, assert_never, cast, overload
 
-from opentelemetry.trace import Span
 from typing_extensions import TypedDict
 
 from ... import UnexpectedModelBehavior, _utils, usage
@@ -20,7 +19,8 @@ from ..._instrumentation import current_model_request_span
 from ..._run_context import RunContext
 from ..._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinking
 from ..._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
-from ..._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
+from ..._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict, is_str_mapping
+from ..._warnings import PydanticAIDeprecationWarning
 from ...capabilities.abstract import AbstractCapability
 from ...exceptions import UserError
 from ...messages import (
@@ -113,6 +113,7 @@ from .. import (
 from .._anthropic_max_tokens import cap_max_tokens
 from .._anthropic_schema_limits import default_output_mode_within_limits, limit_exceeded_error, model_exceeded_limit
 from .._decode_errors import check_json_response, map_decode_errors
+from .._history_digest import history_hasher
 from .._prompt_cache import (
     excess_cache_points,
     instruction_cache_boundaries,
@@ -284,6 +285,7 @@ try:
         lasting_blocks_at_end,
         lasting_messages,
         raise_earlier_breakpoint_ttls,
+        record_cache_breakpoints,
     )
     from ._citations import (
         check_citations_tool_choice,
@@ -306,7 +308,14 @@ try:
         without_unanswered_tool_calls,
     )
     from ._containers import is_tool_result_only
-    from ._errors import is_expired_container_error, map_api_errors, status_and_body
+    from ._errors import (
+        is_expired_container_error,
+        is_thread_replay_error,
+        is_thread_unsupported_error,
+        map_api_errors,
+        status_and_body,
+        thread_error_code,
+    )
     from ._message_passes import (
         anchor_system_messages,
         drop_unpaired_native_tool_calls,
@@ -360,6 +369,17 @@ try:
         thinking_with_stale_block_history,
         warn_stale_thinking_block_recovery,
     )
+    from ._threads import (
+        MESSAGE_THREADS_BETA,
+        Thread,
+        ThreadRecord,
+        may_use_thread,
+        served_by_fallback_model,
+        thread_continuation,
+        thread_fingerprint,
+        thread_unsupported,
+        with_thread,
+    )
 except ImportError as _import_error:
     raise ImportError(
         'Please install `anthropic` to use the Anthropic model, '
@@ -378,7 +398,6 @@ __all__ = (
     'AnthropicStreamedResponse',
     'AnthropicTaskBudget',
     'AnthropicWebToolCaller',
-    'DEPRECATED_ANTHROPIC_MODELS',
     'LatestAnthropicModelNames',
     'advisor_tool_result_content_ta',
     'bash_code_execution_tool_result_content_ta',
@@ -531,6 +550,9 @@ _INFERENCE_GEO_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
+# Anthropic offers message threads on the Claude API, Claude Platform on AWS, Claude on Google Cloud (Anthropic
+# managed) and Microsoft Foundry, not on Bedrock or Vertex AI (Google managed).
+_MESSAGE_THREADS_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
 
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
@@ -569,19 +591,10 @@ The `Literal` lists the models to pick from, for autocomplete. Any other model i
 See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
 
-DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset(
-    {
-        # https://platform.claude.com/docs/en/about-claude/model-deprecations
-        # Retired 2026-04-20
-        'claude-3-haiku-20240307',
-        # Retired 2026-06-15
-        'claude-opus-4-0',
-        'claude-opus-4-20250514',
-        'claude-sonnet-4-0',
-        'claude-sonnet-4-20250514',
-    }
-)
-"""Models that have been retired by Anthropic but are still present in the SDK's type definitions."""
+if TYPE_CHECKING:
+    # TODO(v3): remove this deprecated constant and the `__getattr__` at the bottom of this module.
+    DEPRECATED_ANTHROPIC_MODELS: frozenset[str]
+    """Deprecated, to be removed in v3: a partial list of Claude API model ids that Anthropic has retired."""
 
 _AssistantContentBlockParam: TypeAlias = (
     BetaTextBlockParam
@@ -699,6 +712,42 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Bedrock, Google Cloud Vertex AI and Microsoft Foundry. Defaults to `False`. The ID comes from the message
     history, which [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent, so leave this off
     with history from a client; see [Loading untrusted history](../../message-history.md#loading-untrusted-history).
+    """
+
+    anthropic_previous_message_id: Literal['auto']
+    """Continue the conversation in an Anthropic [message thread](https://platform.claude.com/docs/en/build-with-claude/message-threads), omitting the messages the thread holds.
+
+    - `'auto'`: continue the thread of the most recent usable `provider_response_id` in the message history, as
+      the thread's `previous_message_id`. If the history contains no such response, the request creates a thread
+      with the full history.
+
+    Only `'auto'` is supported for now. A concrete message ID to continue from, like the response ID
+    [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]
+    takes, may come later.
+
+    A continue request leaves out the messages before the chosen response, and `system` and `tools`, which the
+    thread keeps. A response records the thread's fixed fields under `'thread_fingerprint'` in
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], and its
+    [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest] covers it and the history before it. A
+    response is only chosen while both still match, so changed instructions, tools, betas or other fixed fields, an
+    edited history, a refusal, or a response from another model start a new thread with the full history. So does a
+    thread Anthropic can no longer continue, and the response to that replay records `'thread_replayed': True`. A
+    request using something threads don't support is sent without one, with a warning, and its response records
+    `'thread_unsupported': True`. So is a continue from a replayed response that fails because the thread can't be
+    found either, as Anthropic may be unable to store that conversation. See
+    [Message threads](../../models/anthropic.md#message-threads-beta) for every case.
+
+    The response ID comes from the message history, which
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent. With history from a client, pass
+    a `history_digest_key` to [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], so the client can't
+    swap in another conversation's response ID, or another configuration's fingerprint, to continue a thread, or
+    leave this off; see
+    [Loading untrusted history](../../message-history.md#loading-untrusted-history).
+
+    Threads are available on the Claude API, Claude Platform on AWS, Claude on Google Cloud (Anthropic managed) and
+    Microsoft Foundry. On Bedrock and Vertex AI, the setting is ignored with a `UserWarning`; see
+    [`anthropic_supports_message_threads`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_message_threads].
+    Threads aren't eligible for Zero Data Retention. By default, no thread is used.
     """
 
     anthropic_effort: AnthropicEffort | None
@@ -872,7 +921,7 @@ def _build_extra_body(
     extra_body = model_settings.get('extra_body')
     if not fields:
         return extra_body
-    if not _is_str_mapping(extra_body):
+    if not is_str_mapping(extra_body):
         return fields
     merged = {**fields, **extra_body}
     if thinking_override is not None:
@@ -890,19 +939,12 @@ def _extra_body_thinking(model_settings: AnthropicModelSettings) -> dict[str, ob
     retried over.
     """
     extra_body = model_settings.get('extra_body')
-    if not _is_str_mapping(extra_body):
+    if not is_str_mapping(extra_body):
         return None
     thinking = extra_body.get('thinking')
-    if not _is_str_mapping(thinking):
+    if not is_str_mapping(thinking):
         return None
     return dict(thinking)
-
-
-def _is_str_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
-    """Whether a value is a mapping whose keys are all strings."""
-    if not isinstance(value, Mapping):
-        return False
-    return all(isinstance(key, str) for key in value)  # pyright: ignore[reportUnknownVariableType]
 
 
 def _effective_thinking(
@@ -970,6 +1012,11 @@ class _PreparedMessagesCreate:
     mcp_servers: list[BetaRequestMCPServerURLDefinitionParam]
     output_config: BetaOutputConfigParam | None
     auto_cache_control: BetaCacheControlEphemeralParam | None
+    cache_breakpoints: tuple[list[str], list[str]] | None
+    """The cache breakpoints the request asks for and the ones it keeps, for each attempt to record as it's sent.
+
+    `None` when there are none, or when `_prepare_messages_create` recorded them already.
+    """
     max_tokens: int
     stop_sequences: list[str] | Omit
     effective_thinking: dict[str, object] | Omit
@@ -1068,6 +1115,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     _model_name: AnthropicModelName = field(repr=False)
     _provider: Provider[AsyncAnthropicClient] = field(repr=False)
+    _history_digest_key: bytes | None = field(default=None, repr=False)
 
     def __init__(
         self,
@@ -1076,6 +1124,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         provider: Literal['anthropic', 'gateway'] | Provider[AsyncAnthropicClient] = 'anthropic',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
+        history_digest_key: bytes | None = None,
     ):
         """Initialize an Anthropic model.
 
@@ -1087,8 +1136,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
                 The default 'anthropic' provider will use the default `..profiles.anthropic.anthropic_model_profile`.
             settings: Default model settings for this model instance.
+            history_digest_key: A secret to key each thread response's
+                [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest] and `'thread_fingerprint'`
+                with (an HMAC-SHA256), so stored history can't be used to test guesses at content redacted from
+                it later, and a client sending the history can't swap in another conversation's response ID, or
+                another configuration's fingerprint, to continue a thread. Every model continuing the same
+                conversations needs the same key; a response recorded with another key, or none, starts a new
+                thread rather than being continued.
         """
         self._model_name = model_name
+        self._history_digest_key = history_digest_key
 
         if isinstance(provider, str):
             provider = infer_provider('gateway/anthropic' if provider == 'gateway' else provider)
@@ -1264,6 +1321,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         `anthropic_supports_inference_geo` is on for `AsyncAnthropic` clients and off for the Bedrock, Vertex AI and
         Foundry clients, where the endpoint decides the inference region, unless the provider's profile already sets it.
 
+        `anthropic_supports_message_threads` is on for the `AsyncAnthropic` and Foundry clients and off for the Bedrock
+        and Vertex AI clients, where Anthropic doesn't offer threads, unless the provider's profile already sets it.
+
         The legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't serve
         from the Messages API infrastructure, so `supports_auto_cache` is narrowed by model on the legacy Bedrock
         client, and `anthropic_cache` and the unified `cache` setting place a breakpoint on the last block there
@@ -1307,6 +1367,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 profile,
                 AnthropicModelProfile(
                     anthropic_supports_inference_geo=not isinstance(client, _INFERENCE_GEO_UNSUPPORTED_CLIENTS)
+                ),
+            )
+        if 'anthropic_supports_message_threads' not in profile:
+            profile = merge_profile(
+                profile,
+                AnthropicModelProfile(
+                    anthropic_supports_message_threads=not isinstance(client, _MESSAGE_THREADS_UNSUPPORTED_CLIENTS)
                 ),
             )
         if isinstance(client, _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS):
@@ -1363,8 +1430,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
-        response = await self._messages_create(messages, False, model_settings, model_request_parameters)
-        model_response = await self._finish_response(response, messages, model_settings, model_request_parameters)
+        thread_record = ThreadRecord()
+        response = await self._messages_create(
+            messages, False, model_settings, model_request_parameters, thread_record=thread_record
+        )
+        model_response = await self._finish_response(
+            response, messages, model_settings, model_request_parameters, thread_record=thread_record
+        )
         mark_continuation_context_input_tokens(messages, model_response)
         return model_response
 
@@ -1374,18 +1446,26 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         messages: list[ModelMessage],
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        thread_record: ThreadRecord | None = None,
     ) -> ModelResponse:
-        """Turn the response to a non-streaming `_messages_create` call into a `ModelResponse`."""
+        """Turn the response to a non-streaming `_messages_create` call into a `ModelResponse`.
+
+        With `thread_record`, the response records the message thread its request was sent in, if any.
+        """
         response = check_json_response(self.model_name, response)
         code_execution_in_open_turn = open_turn_has_code_execution(messages, self.system)
         if isinstance(response, BetaMessage):
-            return self._process_response(
+            model_response = self._process_response(
                 response,
                 model_request_parameters,
                 model_settings,
                 fetched_pages_from_history(messages),
                 code_execution_in_open_turn=code_execution_in_open_turn,
             )
+            if thread_record is None:
+                return model_response
+            return thread_record.stamp(model_response, from_fallback_model=served_by_fallback_model(response.usage))
         # The request was streamed behind the scenes, see `_messages_create`. `map_api_errors` maps a transport
         # error that breaks the stream off, both while it opens and while it's read.
         async with response.source:
@@ -1395,6 +1475,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 model_settings,
                 fetched_pages_from_history(messages),
                 code_execution_in_open_turn=code_execution_in_open_turn,
+                thread_record=thread_record,
             )
             async for _ in streamed_response:
                 pass
@@ -1502,7 +1583,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
-        response = await self._messages_create(messages, True, model_settings, model_request_parameters)
+        thread_record = ThreadRecord()
+        response = await self._messages_create(
+            messages, True, model_settings, model_request_parameters, thread_record=thread_record
+        )
         async with response.source:
             streamed_response = await self._process_streamed_response(
                 response,
@@ -1510,6 +1594,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 model_settings,
                 fetched_pages_from_history(messages),
                 code_execution_in_open_turn=open_turn_has_code_execution(messages, self.system),
+                thread_record=thread_record,
             )
             yield streamed_response
             mark_continuation_context_input_tokens(messages, streamed_response)
@@ -1573,6 +1658,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         profile = self.profile
         merged = merge_model_settings(self.settings, model_settings) or {}
 
+        # Typed budget thinking fails here with a `UserError`, kept for backward compatibility. Budget thinking in
+        # `extra_body['thinking']` is sent as is: the API rejects it with a 400, which `FallbackModel`, `ModelFallback`
+        # and `model_request_batch` handle as a failure of that one request, and a check before sending would turn it
+        # into a hard failure for them.
         if (
             profile.get('anthropic_disallows_budget_thinking', False)
             and (anthropic_thinking := merged.get('anthropic_thinking'))
@@ -1674,6 +1763,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         *,
         compaction: BetaCompactionConfigParam | None = None,
+        thread_record: ThreadRecord | None = None,
     ) -> AnthropicEventStream:
         pass
 
@@ -1686,6 +1776,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         *,
         compaction: BetaCompactionConfigParam | None = None,
+        thread_record: ThreadRecord | None = None,
     ) -> BetaMessage | AnthropicEventStream:
         pass
 
@@ -1697,6 +1788,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         *,
         compaction: BetaCompactionConfigParam | None = None,
+        thread_record: ThreadRecord | None = None,
     ) -> BetaMessage | AnthropicEventStream:
         """Calls the Anthropic API to create a message.
 
@@ -1709,9 +1801,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         With `compaction`, this is a compaction request, which samples no reply: the parameters Anthropic rejects
         on one are settled here, on the request as it would otherwise be sent, so the rest of the request (and the
         prompt cache it reads) stays the same.
+
+        With `thread_record`, the request uses a message thread when `anthropic_previous_message_id` applies (see
+        `may_use_thread` and `_first_attempt`), and the record gets the fingerprint to stamp on the response when it
+        did, or when threads don't support the request.
         """
+        if thread_record is not None and not may_use_thread(self, model_settings, compaction):
+            thread_record = None
         prepared = await self._prepare_messages_create(
-            messages, model_settings, model_request_parameters, compaction=compaction
+            messages,
+            model_settings,
+            model_request_parameters,
+            compaction=compaction,
+            record_cache_breakpoints_on_send=thread_record is not None,
         )
         anthropic_profile = self.profile
         client = _with_max_retries(self.client, model_settings)
@@ -1723,7 +1825,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         retry_container = prepared.container
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
-                return await create(prepared.container, initial_thinking, initial_betas, initial_thinking_override)
+                return await self._first_attempt(
+                    messages,
+                    model_settings,
+                    model_request_parameters,
+                    prepared,
+                    lambda thread: create(
+                        prepared.container, initial_thinking, initial_betas, initial_thinking_override, thread
+                    ),
+                    thread_record,
+                )
             except (APIStatusError, APIConnectionError) as error:
                 # `status_and_body` also reads a status a retrying transport gave up on, which `anthropic` wraps in
                 # `APIConnectionError`, so the recoveries below run for it as for the SDK's own error.
@@ -1760,6 +1871,146 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             warn_stale_thinking_block_recovery(self.model_name)
             return result
 
+    async def _first_attempt(
+        self,
+        messages: list[ModelMessage],
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        prepared: _PreparedMessagesCreate,
+        send: Callable[[Thread | None], Awaitable[BetaMessage | AnthropicEventStream]],
+        thread_record: ThreadRecord | None,
+    ) -> BetaMessage | AnthropicEventStream:
+        """Send the first attempt of a request, in a message thread when it has a `thread_record`.
+
+        In a thread it's a continue request when possible, else a create. A continue request needs the most recent
+        response in the history to have been stored in a thread whose fixed fields match this request's. A continue
+        request that the API can't serve is replayed as a create request with the full conversation. If the API
+        can't find the thread of a replayed response either, it may be unable to store the conversation, so the
+        request is sent without a thread. So is a create request that threads don't support, sent again without one.
+        Either way the response records it, so the next request with the same fingerprint is sent without a thread
+        straight away. The recovery retries in `_messages_create` send no thread, as they change fixed fields, so a
+        response is only stamped with the fingerprint of a thread request that succeeded, or of a request sent
+        without a thread as above (see `ThreadRecord`).
+        """
+        if thread_record is None:
+            return await send(None)
+        params = self._messages_create_params(
+            messages,
+            model_settings,
+            prepared,
+            prepared.container,
+            prepared.initial_thinking,
+            prepared.initial_thinking_override,
+        )
+        fingerprint = thread_fingerprint(
+            params, prepared.initial_betas | {MESSAGE_THREADS_BETA}, self._history_digest_key
+        )
+        if thread_unsupported(messages, fingerprint):
+            thread_record.fingerprint = fingerprint
+            return await send(None)
+        thread = await self._continue_thread(messages, model_settings, model_request_parameters, fingerprint)
+        if (
+            thread is not None
+            and (response := await self._send_continue(messages, send, thread, thread_record, fingerprint)) is not None
+        ):
+            return response
+        try:
+            response = await send(Thread(cache_breakpoints=prepared.cache_breakpoints))
+        except (APIStatusError, APIConnectionError) as error:
+            failure = status_and_body(error)
+            if failure is None or not is_thread_unsupported_error(failure[1]):
+                raise
+            # The request uses something threads don't support, like context management: send it without one.
+            warnings.warn(
+                f"Threads don't support this request to {self.model_name!r}, so it's sent without a thread, "
+                'and so are later requests in this conversation with the same instructions, tools and other fixed '
+                f'fields: {error.message}',
+                UserWarning,
+                stacklevel=2,
+            )
+            thread_record.fingerprint = fingerprint
+            return await send(None)
+        thread_record.fingerprint = fingerprint
+        thread_record.history = history_hasher(messages, self._history_digest_key)
+        thread_record.replayed = thread is not None
+        return response
+
+    async def _send_continue(
+        self,
+        messages: list[ModelMessage],
+        send: Callable[[Thread | None], Awaitable[BetaMessage | AnthropicEventStream]],
+        thread: Thread,
+        thread_record: ThreadRecord,
+        fingerprint: str,
+    ) -> BetaMessage | AnthropicEventStream | None:
+        """Send the continue request `thread`, or return `None` when the API can't serve it, so the caller replays.
+
+        If the API can't find the thread of a replayed response either, it may be unable to store the conversation,
+        so the request is sent without a thread instead, and the response records that (see `_first_attempt`).
+        """
+        try:
+            response = await send(thread)
+        except (APIStatusError, APIConnectionError) as error:
+            # Like the recoveries in `_messages_create`, this reads a status a retrying transport gave up on too.
+            failure = status_and_body(error)
+            if failure is None or not is_thread_replay_error(failure[1]):
+                raise
+            if not thread.continues_replay or thread_error_code(failure[1]) != 'thread_not_found':
+                return None
+            warnings.warn(
+                f"The thread of this conversation with {self.model_name!r} can't be continued right after it was "
+                "replayed, so Anthropic may be unable to store it. It's sent without a thread, and so are later "
+                'requests in this conversation with the same instructions, tools and other fixed fields.',
+                UserWarning,
+                stacklevel=3,
+            )
+            thread_record.fingerprint = fingerprint
+            return await send(None)
+        thread_record.fingerprint = fingerprint
+        thread_record.history = history_hasher(messages, self._history_digest_key)
+        return response
+
+    async def _continue_thread(
+        self,
+        messages: list[ModelMessage],
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        fingerprint: str,
+    ) -> Thread | None:
+        """The continue request of a thread, if the history allows one and its new messages can be sent on their own."""
+        continuation = thread_continuation(self, messages, fingerprint, self._history_digest_key)
+        if continuation is None:
+            return None
+        previous_message_id, new_messages, continues_replay = continuation
+        # This maps the new messages a second time, so a file URL that mapping downloads (a text `DocumentUrl`, or
+        # one with `force_download`) is downloaded twice. A slice of `prepared.anthropic_messages` would avoid that
+        # once the mapping can say where each history message starts (#13804). `continues_thread` keeps their
+        # `SystemPromptPart`s where the full mapping puts them: none of them opens the conversation, so none is
+        # hoisted into `system`, which a continue request doesn't send.
+        try:
+            new_prepared = await self._prepare_messages_create(
+                new_messages,
+                model_settings,
+                model_request_parameters,
+                continues_thread=True,
+                record_cache_breakpoints_on_send=True,
+            )
+        except UserError:
+            # The full history mapped, so the new messages need what came before them: a `CachePoint` with nothing
+            # before it in them marks the end of the previous response, which a continue request can't send again.
+            # A create request with the full history keeps the boundary where it was put.
+            return None
+        # A continue request leaves out `system` and `tools`, so their breakpoints aren't in it.
+        requested, applied = (
+            [path for path in paths if not path.startswith(('system[', 'tools['))]
+            for paths in new_prepared.cache_breakpoints or ([], [])
+        )
+        return Thread(
+            continuation=(previous_message_id, new_prepared.anthropic_messages),
+            cache_breakpoints=(requested, applied) if requested else None,
+            continues_replay=continues_replay,
+        )
+
     async def _create_message(
         self,
         client: AsyncAnthropicClient,
@@ -1771,16 +2022,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         thinking: BetaThinkingConfigParam | Omit,
         betas: set[str],
         thinking_override: dict[str, object] | None,
+        thread: Thread | None = None,
     ) -> BetaMessage | AnthropicEventStream:
-        """Send one attempt of `_messages_create`, with the container and thinking object this attempt uses."""
+        """Send one attempt of `_messages_create`, with the container, thinking object and thread this attempt uses."""
         max_tokens = prepared.max_tokens
         anthropic_profile = self.profile
+        record_cache_breakpoints(prepared.cache_breakpoints if thread is None else thread.cache_breakpoints)
+        params, betas = with_thread(
+            self._messages_create_params(
+                messages, model_settings, prepared, container_param, thinking, thinking_override
+            ),
+            betas,
+            thread,
+        )
 
         async def send(stream: bool) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
             return await client.beta.messages.create(
-                **self._messages_create_params(
-                    messages, model_settings, prepared, container_param, thinking, thinking_override
-                ),
+                **params,
                 betas=sorted(betas) or OMIT,
                 stream=stream,
                 timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
@@ -1858,7 +2116,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         *,
         compaction: BetaCompactionConfigParam | None = None,
+        continues_thread: bool = False,
+        record_cache_breakpoints_on_send: bool = False,
     ) -> _PreparedMessagesCreate:
+        """The `messages.create` parameters of a request.
+
+        With `record_cache_breakpoints_on_send`, the request's cache breakpoints are left for each attempt to record
+        as it's sent, rather than recorded here: in a message thread, a continue request leaves some of them out.
+        """
         model_request_parameters = self._declare_newcomers_left_alone(model_settings, model_request_parameters)
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
         # entries are then appended in history order; Anthropic excludes them from its cache key.
@@ -1877,7 +2142,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         _validate_wire_tools_not_all_deferred(tools)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
-        system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
+        system_prompt, anthropic_messages = await self._map_message(
+            messages, model_request_parameters, model_settings, continues_thread=continues_thread
+        )
         request_scoped_texts = _request_scoped_tail_texts(messages)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages, request_scoped_texts)
         self._apply_explicit_message_caching(model_settings, anthropic_messages, request_scoped_texts)
@@ -1885,13 +2152,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # ignores it when the TTL is the same, since both mark the same breakpoint. The explicit one wins.
         auto_cache_control = None if last_cacheable_block_has_cache_control(anthropic_messages) else auto_cache_control
         # Only the request records its breakpoints: `count_tokens` builds the same request outside its span.
-        self._limit_cache_points(
+        cache_breakpoints = self._limit_cache_points(
             system_prompt,
             anthropic_messages,
             tools,
             automatic_caching=auto_cache_control is not None,
-            span=current_model_request_span(),
+            return_breakpoints=current_model_request_span() is not None,
         )
+        if not record_cache_breakpoints_on_send:
+            record_cache_breakpoints(cache_breakpoints)
         raise_earlier_breakpoint_ttls(system_prompt, anthropic_messages, tools, auto_cache_control)
         output_config = self._build_output_config(effort_request_parameters, model_settings)
         anthropic_profile = self.profile
@@ -1930,6 +2199,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             mcp_servers=mcp_servers,
             output_config=output_config,
             auto_cache_control=auto_cache_control,
+            cache_breakpoints=cache_breakpoints if record_cache_breakpoints_on_send else None,
             max_tokens=model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile)),
             stop_sequences=stop_sequences,
             effective_thinking=effective_thinking,
@@ -2262,7 +2532,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if not self.profile.get('anthropic_accepts_file_and_container_ids', True):
             return None, False
         extra_body = model_settings.get('extra_body')
-        if not (_is_str_mapping(extra_body) and 'tools' in extra_body) and not provisions_code_execution(tools):
+        if not (is_str_mapping(extra_body) and 'tools' in extra_body) and not provisions_code_execution(tools):
             return None, False
         # On pause_turn continuation, pass just the container ID string to reconnect.
         # Re-passing BetaContainerParams triggers a prefill rejection on some models
@@ -2614,6 +2884,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         history_fetched_pages: Sequence[tuple[str, str]] = (),
         *,
         code_execution_in_open_turn: bool = False,
+        thread_record: ThreadRecord | None = None,
     ) -> AnthropicStreamedResponse:
         first_chunk = await response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -2640,6 +2911,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             ),
             _history_fetched_pages=history_fetched_pages,
             _report_inference_geo=self._sends_inference_geo(model_settings, self.profile),
+            _thread_record=thread_record,
         )
         streamed_response.canonical_system = self._canonical_system_stamp
         return streamed_response
@@ -2847,7 +3119,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # callers. That keeps `_get_enabled_server_tool_names`, which rebuilds the tools through `_add_native_tools`,
         # filtering as if both were unset.
         extra_body = model_settings.get('extra_body')
-        if _is_str_mapping(extra_body) and 'tools' in extra_body:
+        if is_str_mapping(extra_body) and 'tools' in extra_body:
             return
         if (allowed_callers := model_settings.get('anthropic_web_tools_allowed_callers')) is not None:
             for web_tool in tools:
@@ -2971,8 +3243,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
+        *,
+        continues_thread: bool = False,
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
-        """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
+        """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`.
+
+        With `continues_thread`, `messages` are the new messages of a thread continue request, which follow the
+        thread's history, so their first request doesn't open the conversation and its system prompts aren't
+        hoisted into the top-level `system`.
+        """
         messages = self._trim_before_compaction(messages)
         map_context = _MapMessagesContext(
             model_request_parameters=model_request_parameters,
@@ -3020,7 +3299,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             declared_tool_names=set(self._tool_choice_declarations(model_settings, model_request_parameters)[0]),
             tool_defs_by_name={tool.name: tool for tool in model_request_parameters.function_tools},
         )
-        leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
+        leading_request = None if continues_thread else next((m for m in messages if isinstance(m, ModelRequest)), None)
         for m in messages:
             if isinstance(m, ModelRequest):
                 standing_prompt_count = _standing_system_prompt_count(m) if m is leading_request else 0
@@ -3581,7 +3860,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             [q for q in cast('list[Any]', raw_queries) if isinstance(q, str)] if isinstance(raw_queries, list) else []
         )
         wire_key = 'pattern' if strategy == 'regex' else 'query'
-        return native_name, {wire_key: ' '.join(queries)}
+        # Input fields beyond the query (e.g. `limit`) go back as the model sent them.
+        extra_input: dict[str, Any] = details.get('extra_input') or {}
+        return native_name, {wire_key: ' '.join(queries), **extra_input}
 
     def _map_native_tool_return_part(
         self,
@@ -3664,8 +3945,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tools: list[BetaToolUnionParam],
         *,
         automatic_caching: bool = False,
-        span: Span | None = None,
-    ) -> None:
+        return_breakpoints: bool = False,
+    ) -> tuple[list[str], list[str]] | None:
         """Limit the number of cache points in the request to Anthropic's maximum.
 
         Tool definition cache points and the first instruction cache point always take priority; excess
@@ -3674,7 +3955,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         is enabled, the server-applied breakpoint uses 1 of the available slots, reducing the budget for
         explicit breakpoints by one.
 
-        Given the model-request `span`, records the breakpoints the request asked for and the ones it kept on it.
+        With `return_breakpoints`, returns the breakpoints the request asked for and the ones it kept, if it asked
+        for any.
 
         Raises:
             UserError: If system_prompt and tools combined already exceed the budget.
@@ -3684,7 +3966,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             AnthropicModel._cache_breakpoints(
                 system_prompt, anthropic_messages, tools, automatic_caching=automatic_caching
             )
-            if span is not None
+            if return_breakpoints
             else None
         )
         # Anthropic enforces a maximum of 4 cache points per request.
@@ -3712,14 +3994,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             description='Anthropic request',
         ):
             del block_dict['cache_control']
-        if span is not None and requested:
-            span.set_attribute('pydantic_ai.cache.requested_breakpoints', requested)
-            span.set_attribute(
-                'pydantic_ai.cache.applied_breakpoints',
-                AnthropicModel._cache_breakpoints(
-                    system_prompt, anthropic_messages, tools, automatic_caching=automatic_caching
-                ),
-            )
+        if not requested:
+            return None
+        return requested, AnthropicModel._cache_breakpoints(
+            system_prompt, anthropic_messages, tools, automatic_caching=automatic_caching
+        )
 
     @staticmethod
     def _cache_breakpoints(
@@ -4396,3 +4675,26 @@ def _support_tool_forcing(
         unavailable_reason,
         disables_thinking=thinking_type == 'adaptive' and profile.get('forced_tool_choice_disables_thinking', False),
     )
+
+
+def __getattr__(name: str) -> object:
+    if name == 'DEPRECATED_ANTHROPIC_MODELS':
+        warnings.warn(
+            '`DEPRECATED_ANTHROPIC_MODELS` is deprecated and will be removed in v3, as Pydantic AI no longer uses it. '
+            'Keep your own list of retired model ids, from '
+            'https://platform.claude.com/docs/en/about-claude/model-deprecations.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return frozenset(
+            {
+                # Retired 2026-04-20
+                'claude-3-haiku-20240307',
+                # Retired 2026-06-15
+                'claude-opus-4-0',
+                'claude-opus-4-20250514',
+                'claude-sonnet-4-0',
+                'claude-sonnet-4-20250514',
+            }
+        )
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

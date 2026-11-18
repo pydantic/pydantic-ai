@@ -115,6 +115,7 @@ from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ..conftest import IsDatetime, IsNow, IsStr
 from ..realtime_connections import InferredConnection
+from .span_utils import drop_fastmcp_client_spans
 
 # Skips only when `dbos` itself is missing, so an import below that a supported `dbos` version lacks fails loudly.
 pytest.importorskip('dbos')
@@ -151,7 +152,9 @@ except ImportError:  # pragma: lax no cover
 try:
     from fastmcp.client.transports import StdioTransport
 
+    from pydantic_ai._mcp_compat import MCP_SDK_V2
     from pydantic_ai.mcp import MCPToolset
+    from tests.mcp_task_server import TASK_SERVER_UNAVAILABLE
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -572,6 +575,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                 _strip_volatile_fields(cast(dict[str, Any], v))
 
     assert root_span is not None
+    drop_fastmcp_client_spans(root_span)
     _normalize_json_spans(root_span)
 
     # Assert the root span and its structure matches expected hierarchy
@@ -1536,7 +1540,8 @@ async def test_dbos_agent_run_in_workflow_with_runtime_external_toolset(dbos: DB
     )
 
     assert result.output == DeferredToolRequests(
-        calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
+        calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')],
+        validated_args={'call-1': {'query': 'runtime'}},
     )
 
 
@@ -2455,12 +2460,26 @@ _mcp_task_dbos_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
 )
 
 
+_OPTIONAL_TASK_ROUTING = 'optional_task' if MCP_SDK_V2 else 'optional_sync'
+
+
 @pytest.mark.subprocess(reason='connects to `tests.mcp_task_server` over stdio')
+@pytest.mark.skipif(TASK_SERVER_UNAVAILABLE, reason='fastmcp-tasks not installed')
 async def test_dbos_mcptoolset_preserves_task_routing(dbos: DBOS):
-    """Effective task routing in `ToolDefinition.metadata` survives DBOS steps."""
+    """Effective task routing in `ToolDefinition.metadata` survives DBOS steps.
+
+    Which way the *optional* tool routes is the installed generation's call, not ours: FastMCP 3
+    speaks SEP-1686, where the client asks and `prefer_tasks` is off, so the tool runs inline;
+    FastMCP 4 speaks SEP-2663, where the server directs task creation and takes it up on the offer.
+    What this pins either way is that the routing the toolset resolved survives the round trip
+    through DBOS steps rather than collapsing to the default.
+    """
     result = await _mcp_task_dbos_agent.run('Call both tools')
 
-    assert result.output == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
+    assert (
+        result.output
+        == f'{{"required_task_tool":"required_completed","optional_task_tool":"{_OPTIONAL_TASK_ROUTING}"}}'
+    )
 
 
 def _call_mcp_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -6537,7 +6556,7 @@ async def test_dbos_mcp_server_keeps_one_session_per_workflow(dbos: DBOS, deprec
         return (await durable_agent.run('go')).output
 
     assert await run_workflow() == 'done'
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
     # The workflow closed the session it held; nothing keeps the server connected between runs.
     assert not toolset.is_running
 
