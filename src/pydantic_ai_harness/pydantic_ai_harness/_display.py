@@ -48,6 +48,7 @@ class LazyDisplay:
     """The display a backend hands out for its lifetime: started on first use, and again after a failure.
 
     Building it does nothing. `start` brings the display up and leaves a running one alone; `driver` then drives it.
+    The backend also starts it before each shell command, so a program the command opens shows on the screen.
 
     A call that only looks, such as a screenshot, is retried once after a failure, which restarts a lost display. An
     action isn't retried, so nothing is done twice.
@@ -62,7 +63,8 @@ class LazyDisplay:
         """Whether the display is known to be running, so a call needn't start it first."""
         self._lock = anyio.Lock()
 
-    async def _start_unless_running(self) -> None:
+    async def start(self) -> None:
+        """Start the display unless it is known to run."""
         # One start at a time: two would both find no display and start two.
         async with self._lock:
             if not self._running:
@@ -73,7 +75,7 @@ class LazyDisplay:
         retry = observe
         while True:
             try:
-                await self._start_unless_running()
+                await self.start()
                 return await call(self._driver)
             except UnsupportedActionError:
                 raise  # a refused action, such as an unknown key: the display is fine
