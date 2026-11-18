@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import warnings
-from collections.abc import AsyncIterator, Awaitable, MutableMapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from typing import Any, Literal
@@ -3554,20 +3554,24 @@ async def test_encode_stream_keepalive_surfaces_source_error(anyio_backend: str)
 
 
 @pytest.mark.parametrize('anyio_backend', ['asyncio'])
-async def test_adapter_keepalive_interval_reaches_the_response(anyio_backend: str):
-    released = anyio.Event()
-
+@pytest.mark.parametrize('method', ['encode_stream', 'streaming_response'])
+async def test_adapter_keepalive_interval_reaches_the_event_stream(anyio_backend: str, method: str):
     async def events() -> AsyncIterator[str]:
         yield 'first'
-        await released.wait()
+        # A gap of five intervals rather than an event: without the adapter's setting the stream's own 15 s default
+        # applies, no keepalive comes, and waiting for one would hang instead of failing.
+        await anyio.sleep(0.05)
         yield 'second'
 
     enabled = DummyUIAdapter(Agent(TestModel()), DummyUIRunInput(), keepalive_interval=0.01)
+    stream: AsyncIterable[object] = (
+        enabled.encode_stream(events())
+        if method == 'encode_stream'
+        else enabled.streaming_response(events()).body_iterator
+    )
     chunks: list[object] = []
-    async for chunk in enabled.streaming_response(events()).body_iterator:
+    async for chunk in stream:
         chunks.append(chunk)
-        if chunk == KEEPALIVE:
-            released.set()
     assert KEEPALIVE in chunks
     disabled = DummyUIAdapter(Agent(TestModel()), DummyUIRunInput(), keepalive_interval=None)
     assert [chunk async for chunk in disabled.encode_stream(events())] == ['first', 'second']

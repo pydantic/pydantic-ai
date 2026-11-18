@@ -70,8 +70,10 @@ if TYPE_CHECKING:
 
 
 SSE_CONTENT_TYPE = 'text/event-stream'
-DEFAULT_KEEPALIVE_INTERVAL = 15
 """Content type header value for Server-Sent Events (SSE)."""
+
+DEFAULT_KEEPALIVE_INTERVAL = 15
+"""Default seconds of silence before a UI event stream sends a `: keepalive` SSE comment."""
 
 
 class _PendingToolCall(NamedTuple):
