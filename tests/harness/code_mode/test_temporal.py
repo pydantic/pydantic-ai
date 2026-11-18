@@ -1422,6 +1422,13 @@ async def test_remote_turns_record_a_pool_user_error_by_type(client: Client) -> 
     assert 'secret-sentinel' not in history.to_json()
 
 
+async def test_remote_turns_return_a_note_for_a_result_nested_too_deeply(client: Client) -> None:
+    """A result too deep to convert returns as a note, rather than failing the turn after the snippet ran."""
+    code = 'value = 0\nfor i in range(1050):\n    value = [value]\nvalue'
+    output = await _run_snippet(client, 'test_code_mode_temporal_nested_too_deeply', code)
+    assert output == '[the result is nested too deeply to show]'
+
+
 async def test_remote_turns_count_a_shared_argument_as_it_is_sent(
     client: Client, monkeypatch: pytest.MonkeyPatch
 ) -> None:

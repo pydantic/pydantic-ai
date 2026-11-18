@@ -185,11 +185,15 @@ class _WireUnpickler(pickle.Unpickler):
 
 def _output_to_wire(output: object) -> str:
     """A snippet's result as a turn returns it; one that cannot cross returns as its `repr`."""
-    safe = model_safe_result(output)
     try:
-        return to_wire(safe)
-    except TypeError:
-        return to_wire(repr(safe))
+        safe = model_safe_result(output)
+        try:
+            return to_wire(safe)
+        except TypeError:
+            return to_wire(repr(safe))
+    except RecursionError:
+        # The snippet already ran, so failing here would let the activity retry run it again.
+        return to_wire('[the result is nested too deeply to show]')
 
 
 def settled_data(result: ExternalSettledResult) -> SettledData:
@@ -618,7 +622,7 @@ def _shown(value: object) -> str:
         return value
     try:
         return repr(value)
-    except ValueError:  # an integer with more digits than Python converts to text
+    except (ValueError, RecursionError):  # too many digits to convert to text, or nested too deeply
         return f'[a {type(value).__name__} too large to show]'
 
 
