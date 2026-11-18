@@ -428,6 +428,8 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 - `ModalSandbox(desktop=True)` gives the sandbox a plain 1280x800 Xvfb (no window manager) for `ComputerUse()`,
   or pass `desktop=(w, h)`. The default image has the display programs; a custom `image` gets them installed on
   first use. The agent can type only ASCII.
+- `SpritesSandbox(desktop=True)` gives the Sprite the same plain Xvfb, whose programs the first use installs (about
+  a minute). A cold wake stops the display and its apps; it starts again empty.
 
 ### KubernetesSandbox
 
