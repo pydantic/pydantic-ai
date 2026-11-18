@@ -245,7 +245,7 @@ Machines on boxd's current default image have a desktop, and the agent drives it
 
 The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. The agent can type any text, including accented letters and emoji.
 
-There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](computer-use.md#watching-a-run).
+Anyone in your boxd organization can watch the desktop live in the boxd console's Desktop view, and may be able to act on it, so everything the agent sees is visible to them. To keep a record of a run, save each screenshot as it arrives; see [Watching a run](computer-use.md#watching-a-run).
 
 ## Clean up
 
