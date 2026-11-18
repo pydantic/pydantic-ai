@@ -13,10 +13,10 @@ description: "Chat with LLMs from your terminal using clai, the Pydantic AI comm
 
 pax is a terminal client built on [Pydantic AI Harness](harness/index.md). Install it with `uv tool install pydantic-ai-pax`, or try it with `uvx pydantic-ai-pax`.
 
-Unlike `clai`, pax is a coding agent by default: without `-a`, it loads the Harness's `coder`, which reads and edits files and runs shell commands in the current directory. To chat with your own agent, pass it with `-a`; pax then loads no plugins for that session.
+Unlike `clai`, pax is a coding agent by default: without `-a`, it loads the Harness's `coder`, which runs shell commands and reads and edits files, including ones outside the current directory. To chat with your own agent, pass it with `-a`; pax then loads no plugins for that session.
 
-| `clai` | `pax` |
-|--------|-------|
+| `clai` command | `pax` equivalent |
+|----------------|------------------|
 | `clai` | `pax` |
 | `clai "prompt"` | `pax -p "prompt"` |
 | `clai -m <model>` | `pax -m <model>` |
