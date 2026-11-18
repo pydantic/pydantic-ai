@@ -149,6 +149,11 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     accept: str | None = None
     """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""
 
+    keepalive_interval: float | None = field(default=15, kw_only=True)
+    """Seconds without an event after which the SSE stream sends a `: keepalive` comment, so proxies and load balancers
+    don't close a quiet connection. `None` sends none. Only applies when
+    [`content_type`][pydantic_ai.ui.UIEventStream.content_type] is SSE."""
+
     message_id: str = field(default_factory=lambda: str(uuid4()))
     """The message ID to use for the next event."""
 
@@ -235,17 +240,13 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         """Encode a protocol-specific event as a string."""
         raise NotImplementedError
 
-    def encode_stream(
-        self, stream: AsyncIterator[EventT], *, keepalive_interval: float | None = 15
-    ) -> AsyncIterator[str]:
+    def encode_stream(self, stream: AsyncIterator[EventT]) -> AsyncIterator[str]:
         """Encode a stream of protocol-specific events as strings according to the `Accept` header value.
 
-        Args:
-            stream: The stream of protocol-specific events to encode.
-            keepalive_interval: Seconds without an event after which an SSE comment (`: keepalive`) is sent, so
-                proxies and load balancers don't close a quiet connection. `None` sends none. Only applies when
-                [`content_type`][pydantic_ai.ui.UIEventStream.content_type] is SSE.
+        While the stream is quiet, an SSE stream also yields a `: keepalive` comment every
+        [`keepalive_interval`][pydantic_ai.ui.UIEventStream.keepalive_interval] seconds.
         """
+        keepalive_interval = self.keepalive_interval
         if keepalive_interval is not None and keepalive_interval <= 0:
             raise UserError(f'`keepalive_interval` must be positive or `None`, got {keepalive_interval!r}.')
         if keepalive_interval is None or self.content_type != SSE_CONTENT_TYPE:
@@ -295,16 +296,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             await _utils.cancel_and_drain(pump_task)
         pump_task.result()  # re-raise an error from `stream`
 
-    def streaming_response(
-        self, stream: AsyncIterator[EventT], *, keepalive_interval: float | None = 15
-    ) -> StreamingResponse:
-        """Generate a streaming response from a stream of protocol-specific events.
-
-        Args:
-            stream: The stream of protocol-specific events to encode.
-            keepalive_interval: Seconds without an event after which an SSE comment (`: keepalive`) is sent, or
-                `None` to send none. See [`encode_stream()`][pydantic_ai.ui.UIEventStream.encode_stream].
-        """
+    def streaming_response(self, stream: AsyncIterator[EventT]) -> StreamingResponse:
+        """Generate a streaming response from a stream of protocol-specific events."""
         try:
             from starlette.responses import StreamingResponse
         except ImportError as e:  # pragma: no cover
@@ -314,7 +307,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             ) from e
 
         return StreamingResponse(
-            self.encode_stream(stream, keepalive_interval=keepalive_interval),
+            self.encode_stream(stream),
             headers=self.response_headers,
             media_type=self.content_type,
         )

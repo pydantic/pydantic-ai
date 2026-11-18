@@ -836,6 +836,14 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     accept: str | None = None
     """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""
 
+    keepalive_interval: float | None = 15
+    """Seconds without an event after which the SSE stream sends a `: keepalive` comment, or `None` to send none.
+
+    Set on the event stream by [`encode_stream()`][pydantic_ai.ui.UIAdapter.encode_stream] and
+    [`streaming_response()`][pydantic_ai.ui.UIAdapter.streaming_response]. See
+    [`UIEventStream.keepalive_interval`][pydantic_ai.ui.UIEventStream.keepalive_interval].
+    """
+
     manage_system_prompt: Literal['server', 'client'] = 'server'
     """Who owns the system prompt and request-level instructions in client-submitted messages.
 
@@ -1452,29 +1460,25 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
         return announce
 
-    def encode_stream(
-        self, stream: AsyncIterator[EventT], *, keepalive_interval: float | None = 15
-    ) -> AsyncIterator[str]:
+    def encode_stream(self, stream: AsyncIterator[EventT]) -> AsyncIterator[str]:
         """Encode a stream of protocol-specific events as strings according to the `Accept` header value.
 
         Args:
             stream: The stream of protocol-specific events to encode.
-            keepalive_interval: Seconds without an event after which an SSE comment (`: keepalive`) is sent, or
-                `None` to send none. See [`UIEventStream.encode_stream()`][pydantic_ai.ui.UIEventStream.encode_stream].
         """
-        return self.build_event_stream().encode_stream(stream, keepalive_interval=keepalive_interval)
+        event_stream = self.build_event_stream()
+        event_stream.keepalive_interval = self.keepalive_interval
+        return event_stream.encode_stream(stream)
 
-    def streaming_response(
-        self, stream: AsyncIterator[EventT], *, keepalive_interval: float | None = 15
-    ) -> StreamingResponse:
+    def streaming_response(self, stream: AsyncIterator[EventT]) -> StreamingResponse:
         """Generate a streaming response from a stream of protocol-specific events.
 
         Args:
             stream: The stream of protocol-specific events to encode.
-            keepalive_interval: Seconds without an event after which an SSE comment (`: keepalive`) is sent, or
-                `None` to send none. See [`UIEventStream.encode_stream()`][pydantic_ai.ui.UIEventStream.encode_stream].
         """
-        return self.build_event_stream().streaming_response(stream, keepalive_interval=keepalive_interval)
+        event_stream = self.build_event_stream()
+        event_stream.keepalive_interval = self.keepalive_interval
+        return event_stream.streaming_response(stream)
 
     def run_stream_native(
         self,

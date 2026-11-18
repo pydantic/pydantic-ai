@@ -3515,7 +3515,7 @@ async def test_encode_stream_sends_keepalive_while_source_is_quiet(anyio_backend
             source_closed.set()
 
     chunks: list[str] = []
-    async for chunk in DummyUIEventStream().encode_stream(events(), keepalive_interval=0.01):  # pragma: no branch
+    async for chunk in DummyUIEventStream(keepalive_interval=0.01).encode_stream(events()):  # pragma: no branch
         chunks.append(chunk)
         if chunk == KEEPALIVE:
             released.set()
@@ -3539,23 +3539,22 @@ async def test_encode_stream_keepalive_surfaces_source_error(anyio_backend: str)
 
     chunks: list[str] = []
     with pytest.raises(ValueError, match='boom'):
-        async for chunk in DummyUIEventStream().encode_stream(events(), keepalive_interval=0.01):
+        async for chunk in DummyUIEventStream(keepalive_interval=0.01).encode_stream(events()):
             chunks.append(chunk)
     assert (KEEPALIVE in chunks) == (anyio_backend == 'asyncio')
 
 
 @pytest.mark.parametrize('anyio_backend', ['asyncio'])
-async def test_streaming_response_forwards_keepalive_interval(anyio_backend: str):
+async def test_adapter_keepalive_interval_reaches_the_response(anyio_backend: str):
     async def events() -> AsyncIterator[str]:
         yield 'first'
         await anyio.sleep(0.03)
         yield 'second'
 
-    adapter = DummyUIAdapter(Agent(TestModel()), DummyUIRunInput())
-    enabled = adapter.streaming_response(events(), keepalive_interval=0.01)
-    assert KEEPALIVE in [chunk async for chunk in enabled.body_iterator]
-    disabled = adapter.streaming_response(events(), keepalive_interval=None)
-    assert [chunk async for chunk in disabled.body_iterator] == ['first', 'second']
+    enabled = DummyUIAdapter(Agent(TestModel()), DummyUIRunInput(), keepalive_interval=0.01)
+    assert KEEPALIVE in [chunk async for chunk in enabled.streaming_response(events()).body_iterator]
+    disabled = DummyUIAdapter(Agent(TestModel()), DummyUIRunInput(), keepalive_interval=None)
+    assert [chunk async for chunk in disabled.streaming_response(events()).body_iterator] == ['first', 'second']
 
 
 @pytest.mark.parametrize('interval', [0, -1])
@@ -3564,4 +3563,4 @@ def test_encode_stream_rejects_non_positive_keepalive_interval(interval: float):
         yield 'never pulled'  # pragma: no cover
 
     with pytest.raises(UserError, match='`keepalive_interval` must be positive or `None`'):
-        DummyUIEventStream().encode_stream(events(), keepalive_interval=interval)
+        DummyUIEventStream(keepalive_interval=interval).encode_stream(events())
