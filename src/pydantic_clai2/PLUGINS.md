@@ -1173,6 +1173,7 @@ settings using the former import paths are redirected to the new modules.
 | `compaction` | `pydantic_clai2.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `refinement` | `pydantic_clai2.builtin_plugins.refinement` | `{}` | `/refine`: the model reviews and revises its last answer |
 | `hooks` | `pydantic_clai2.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
+| `sandbox` | `pydantic_clai2.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a cloud sandbox whose provider's proxy holds your GitHub token; see [Cloud sandboxes](docs/reference.md#cloud-sandboxes-sandbox) |
 | `slack` (off until enabled) | `pydantic_clai2.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
@@ -1255,8 +1256,8 @@ are still run-level capabilities, so self-delegation requires binding `Coder` an
 the capabilities it should carry when constructing that agent.
 
 `task_control` gives delegation task control: `delegate_task` gains `background`
-and `resume`, the model gets `list_tasks`, `message_task`, `answer_task`, and
-`cancel_task`, and a delegated task gets `ask_parent`. It has no effect unless
+and `resume`, the model gets `list_tasks`, `check_task`, `message_task`, `answer_task`,
+and `cancel_task`, and a delegated task gets `ask_parent`. It has no effect unless
 `sub_agents` is on. It defaults to `true`, also for saved `coder` declarations
 that omit it, so an upgrade gives a saved `coder` with `sub_agents: true` the
 task tools. Unlike `sub_agents` and `agent_folders`, it turns on no new
@@ -4311,7 +4312,8 @@ searchable. Esc, Ctrl-C, or **Save & close** goes back. Enter opens a picker for
 fixed choices; numeric fields accept typed values, and empty input resets.
 
 The built-in model catalog and `/set model` completions include
-`openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
+`openai-codex:gpt-6.2-sol`, `openai-codex:gpt-6.2-astra`, `openai-codex:gpt-6.1-sol`,
+`openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
 For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
