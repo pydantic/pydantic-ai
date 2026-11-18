@@ -62,10 +62,11 @@ class TestWindowsCommands:
         )
         result = await backend.run(script, shell=True)
         assert result.exit_code == 1
-        # A top-level `Write-Error` quotes the whole script it ran in.
+        # A top-level `Write-Error` quotes the whole script it ran in, with Windows line endings.
+        quoted = powershell_script(script).replace('\n', '\r\n')
         assert result.stderr == (
             '<Objs a><S S="x">y</S></Objs>\r\n'
-            f'{powershell_script(script)} : a <b> & _x000A_ \U0001f600\r\n'
+            f'{quoted} : a <b> & _x000A_ \U0001f600\r\n'
             '    + CategoryInfo          : NotSpecified: (:) [Write-Error], WriteErrorException\r\n'
             '    + FullyQualifiedErrorId : Microsoft.PowerShell.Commands.WriteErrorException\r\n'
             ' \r\n'
