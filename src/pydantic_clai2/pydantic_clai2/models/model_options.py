@@ -18,6 +18,8 @@ def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
     options: dict[str, tuple[str, ...]] = {key: () for key in ('max_tokens', 'temperature', 'seed', 'custom_params')}
     if provider in ('openai', 'openai-chat', 'openai-responses', 'openai-codex'):
         options = _openai_options(provider=provider, name=name, family_defaults=family_defaults)
+        if provider == 'openai-codex':
+            options['openai_codex_speed'] = ()
     elif provider in ('anthropic', 'gateway/anthropic', 'claude-code'):
         options = _anthropic_options(name=name)
     elif provider in ('google', 'google-gla', 'google-vertex'):

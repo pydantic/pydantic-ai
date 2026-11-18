@@ -69,26 +69,13 @@ class ModelSettingsSource:
         for key, info in ModelSettingsForm.model_fields.items():
             if key not in options and key not in saved:
                 continue
-            codex_tier = key == 'service_tier' and provider_of(self._settings_as) == 'openai-codex'
             rows.append(
                 FieldRow(
                     key=key,
-                    label='Service Tier / Fast Mode' if codex_tier else setting_label(key),
+                    label=setting_label(key),
                     allow_custom=False,
-                    description=(
-                        'Fast mode uses more ChatGPT credits.\n'
-                        'Requests priority processing on supported Codex models.\n'
-                        'Availability depends on your model and account.\n'
-                        'Standard turns fast mode off.\n'
-                        'Reasoning effort is unchanged.\n'
-                        'Custom service_tier parameters override this setting.'
-                        if codex_tier
-                        else info.description or ''
-                    ),
-                    choice_labels={'priority': 'Fast (priority)', 'default': 'Standard (default)'}
-                    if codex_tier
-                    else {},
-                    default=shown(model_defaults(model=self._settings_as).get(key)),
+                    description=info.description or '',
+                    default=shown(model_defaults(model=self._settings_as, saved=saved).get(key)),
                     choices=options.get(key, ()) or _choices(info.annotation),
                     note=self._environment_key() if key == 'api_key' and 'api_key' not in saved else '',
                 )
@@ -120,7 +107,8 @@ class ModelSettingsSource:
 
     def current(self, row: FieldRow) -> str:
         """The effective value, without persisting inherited defaults."""
-        values = {**model_defaults(model=self._settings_as), **self._store.model_settings(self.model)}
+        saved = self._store.model_settings(self.model)
+        values = {**model_defaults(model=self._settings_as, saved=saved), **saved}
         return shown(values.get(row.key))
 
     def problem(self, row: FieldRow, text: str) -> str | None:
@@ -182,6 +170,7 @@ def setting_label(key: str) -> str:
         'base_url': 'Base URL',
         'api_key': 'API Key',
         'openai_text_verbosity': 'Verbosity',
+        'openai_codex_speed': 'Speed',
         'anthropic_thinking_mode': 'Extended Thinking',
         'anthropic_thinking_budget': 'Thinking Budget',
         'anthropic_effort': 'Effort',
@@ -544,7 +533,8 @@ def build_model_settings_picker(*, context: CommandContext, current: str | None)
 
 def model_settings_summary(*, store: SettingsStore, model: str, settings_as: str | None = None) -> str:
     """Preview effective settings without mutating the model or its saved overrides."""
-    values = {**model_defaults(model=settings_as or model), **store.model_settings(model)}
+    saved = store.model_settings(model)
+    values = {**model_defaults(model=settings_as or model, saved=saved), **saved}
     # Never empty: every model has at least CLAI's prompt caching default.
     lines = [model, '', 'Configured settings:']
     lines.extend(f'{setting_label(key)}: {shown(value)}' for key, value in values.items())

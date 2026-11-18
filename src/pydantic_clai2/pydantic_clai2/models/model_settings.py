@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from pydantic_ai.settings import CacheRetention, ModelSettings
 from pydantic_clai2.models.custom_params import expand_params
-from pydantic_clai2.models.profiles import KEY_NAME
+from pydantic_clai2.models.profiles import KEY_NAME, provider_of
 
 if TYPE_CHECKING:
     # Typing only: the provider modules load the Anthropic and OpenAI SDKs, and every turn loads this module.
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     )
 
     from pydantic_ai.models.anthropic import AnthropicModelSettings
-    from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+    from pydantic_ai.models.openai_codex import OpenAICodexModelSettings
 
 
 class ModelSettingsForm(BaseModel):
@@ -70,6 +70,13 @@ class ModelSettingsForm(BaseModel):
     )
     openai_text_verbosity: Literal['low', 'medium', 'high'] | None = Field(
         default=None, description='OpenAI answer verbosity.'
+    )
+    openai_codex_speed: Literal['standard', 'fast', 'ultrafast'] | None = Field(
+        default=None,
+        description=(
+            'Codex speed. Fast and ultrafast use more ChatGPT credits; availability depends on your model and '
+            'account. Overrides service_tier.'
+        ),
     )
     anthropic_cache: bool | Literal['5m', '1h'] | None = Field(
         default=None, description='Claude conversation caching: off, on (5 minutes), or a TTL.'
@@ -189,8 +196,8 @@ class ModelSettingsForm(BaseModel):
             settings['extra_body'] = body
         return settings or None
 
-    def _openai_settings(self) -> 'OpenAIResponsesModelSettings':
-        openai: OpenAIResponsesModelSettings = {}
+    def _openai_settings(self) -> 'OpenAICodexModelSettings':
+        openai: OpenAICodexModelSettings = {}
         if self.openai_reasoning_effort is not None:
             openai['openai_reasoning_effort'] = self.openai_reasoning_effort
         if self.openai_reasoning_context is not None:
@@ -201,6 +208,8 @@ class ModelSettingsForm(BaseModel):
             openai['openai_reasoning_summary'] = self.openai_reasoning_summary
         if self.openai_text_verbosity is not None:
             openai['openai_text_verbosity'] = self.openai_text_verbosity
+        if self.openai_codex_speed is not None:
+            openai['openai_codex_speed'] = self.openai_codex_speed
         return openai
 
     def _anthropic_settings(self) -> 'AnthropicModelSettings':
@@ -277,14 +286,18 @@ class ModelSettingsForm(BaseModel):
         return body
 
 
-def model_defaults(*, model: str) -> dict[str, JsonValue]:
-    """CLAI's prompt caching default for every model, and reasoning defaults for GPT families.
+def model_defaults(*, model: str, saved: Mapping[str, JsonValue] | None = None) -> dict[str, JsonValue]:
+    """CLAI's prompt caching default for every model, reasoning defaults for GPT families, and ultrafast for Codex.
 
     Caching uses the unified `cache` setting, which providers without configurable caching ignore. A
     saved `anthropic_cache*` override still applies, since provider-specific cache settings take
-    precedence over it.
+    precedence over it. A `service_tier` in `saved`, as `/fast` saved before Codex speeds, keeps
+    Codex at that tier instead of ultrafast.
     """
-    return {'cache': True, **gpt_defaults(model=model)}
+    defaults: dict[str, JsonValue] = {'cache': True, **gpt_defaults(model=model)}
+    if provider_of(model) == 'openai-codex' and 'service_tier' not in (saved or {}):
+        defaults['openai_codex_speed'] = 'ultrafast'
+    return defaults
 
 
 def gpt_defaults(*, model: str) -> dict[str, JsonValue]:
@@ -310,7 +323,7 @@ def default_model_settings(*, model: str, saved: Mapping[str, JsonValue]) -> Mod
     Every default fills exactly one `ModelSettings` key, so merging the saved settings over these
     gives the same settings as `model_settings_from_json(saved, model=model)`.
     """
-    defaults = {key: value for key, value in model_defaults(model=model).items() if key not in saved}
+    defaults = {key: value for key, value in model_defaults(model=model, saved=saved).items() if key not in saved}
     return ModelSettingsForm.model_validate(defaults).to_model_settings()
 
 
@@ -320,5 +333,5 @@ def model_settings_from_json(values: dict[str, JsonValue], *, model: str | None 
     Known fields still validate normally. New edits use the strict form directly. With `model`, its
     family defaults fill the fields `values` leaves unset; without it, only `values` are read.
     """
-    defaults = model_defaults(model=model) if model is not None else {}
+    defaults = model_defaults(model=model, saved=values) if model is not None else {}
     return ModelSettingsForm.model_validate({**defaults, **values}, extra='ignore')

@@ -168,20 +168,23 @@ def _fast_command(
     context: CommandContext,
     store: SettingsStore,
 ) -> str:
-    """`/fast [on|off]`: set the session model's `service_tier` to `priority` or `default`; no argument toggles it."""
-    if args not in ([], ['on'], ['off']):
-        raise ValueError('Usage: /fast [on|off]')
+    """`/fast [on|off|ultrafast]`: set the session model's Codex speed; no argument toggles standard and ultrafast."""
+    if args not in ([], ['on'], ['off'], ['ultrafast']):
+        raise ValueError('Usage: /fast [on|off|ultrafast]')
     model = session.model or _model_label(agent)
     current = context.model_settings(model) or {}
     saved = store.model_settings(model)
     custom = saved.get('custom_params')
     if isinstance(custom, dict) and any(key.partition('.')[0] == 'service_tier' for key in custom):
-        raise ValueError('Custom service_tier overrides fast mode. Remove it with /model settings first.')
-    enabled = args == ['on'] or (not args and current.get('service_tier') != 'priority')
-    tier = 'priority' if enabled else 'default'
-    store.save_model_settings(model, {**saved, 'service_tier': tier})
-    return f'Fast mode {"on" if enabled else "off"} for {model} (service_tier={tier}). Applies on the next prompt.' + (
-        ' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else ''
+        raise ValueError('Custom service_tier overrides the Codex speed. Remove it with /model settings first.')
+    if args:
+        speed = {'on': 'fast', 'off': 'standard'}.get(args[0], args[0])
+    else:
+        enabled = current.get('openai_codex_speed', 'fast' if current.get('service_tier') == 'priority' else 'standard')
+        speed = 'ultrafast' if enabled == 'standard' else 'standard'
+    store.save_model_settings(model, {**saved, 'openai_codex_speed': speed})
+    return f'Codex speed {speed} for {model}. Applies on the next prompt.' + (
+        ' Uses more ChatGPT credits; availability depends on your model and account.' if speed != 'standard' else ''
     )
 
 
@@ -291,9 +294,9 @@ def create_shell(
     commands.register(
         Command(
             name='fast',
-            description='Toggle Codex priority processing: /fast [on|off] (uses more ChatGPT credits)',
+            description='Set the Codex speed: /fast [on|off|ultrafast] (faster uses more ChatGPT credits)',
             handler=partial(_fast_command, session=session, agent=agent, context=context, store=store),
-            complete=lambda args: ('on', 'off') if len(args) <= 1 else (),
+            complete=lambda args: ('on', 'off', 'ultrafast') if len(args) <= 1 else (),
             available=lambda: (
                 provider_of(context.settings_model(session.model or _model_label(agent))) == 'openai-codex'
             ),
