@@ -35,7 +35,7 @@ Both fields take any [`ThinkingLevel`][pydantic_ai.settings.ThinkingLevel].
 
 ## Custom policy
 
-Pass `select` to replace the default policy. It is called once per step with the run's [`RunContext`][pydantic_ai.tools.RunContext], where the last `ModelRequest` in `ctx.messages` is the one the step answers. When the step resumes a turn the provider paused, `ctx.messages` ends in the suspended `ModelResponse` instead. Return `None` to leave `thinking` as the model, agent and earlier capabilities set it.
+Pass `select` to replace the default policy; `deliberate` and `routine` then don't apply. It is called once per step with the run's [`RunContext`][pydantic_ai.tools.RunContext], where the last `ModelRequest` in `ctx.messages` is the one the step answers. When the step resumes a turn the provider paused, `ctx.messages` ends in the suspended `ModelResponse` instead. Return `None` to leave `thinking` as the model, agent and earlier capabilities set it.
 
 ```python
 from pydantic_ai import Agent, RunContext

@@ -36,7 +36,7 @@ class AdaptiveReasoning(AbstractCapability[AgentDepsT]):
     """The effort for a request that only returns successful tool results."""
 
     select: Callable[[RunContext[AgentDepsT]], ThinkingLevel | None] | None = None
-    """Replaces the default policy. Called once per step with the run's `RunContext`.
+    """Replaces the default policy, so `deliberate` and `routine` don't apply. Called once per step with the `RunContext`.
 
     The last `ModelRequest` in `ctx.messages` is the one the step answers. `ctx.messages` ends in a suspended
     `ModelResponse` instead when the step resumes a turn the provider paused.
