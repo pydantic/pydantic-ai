@@ -15,8 +15,8 @@ from pydantic_ai.computer_use import (
     Drag,
     HoldKeys,
     MouseDown,
+    MouseMove,
     MouseUp,
-    MoveMouse,
     Point,
     PressKeys,
     Region,
@@ -56,7 +56,7 @@ def _path(points: int) -> tuple[Point, ...]:
             id='click',
         ),
         pytest.param(Click(), ["click pointer left count=1 modifiers=''"], id='click-at-pointer'),
-        pytest.param(MoveMouse(x=5, y=6), ['mouse_move 5 6'], id='move'),
+        pytest.param(MouseMove(x=5, y=6), ['mouse_move 5 6'], id='mouse_move'),
         pytest.param(
             Drag(path=(Point(x=1, y=2), Point(x=3, y=4), Point(x=5, y=6)), modifiers=('ctrl',)),
             ["drag 1 2 3 4 5 6 modifiers='ctrl'"],
@@ -122,7 +122,7 @@ async def test_each_action_maps_onto_boxd_calls(host: FakeBoxd, action: DisplayA
 @pytest.mark.parametrize(
     'action',
     [
-        pytest.param(MoveMouse(x=1, y=1, modifiers=('alt',)), id='move-holding-a-key'),
+        pytest.param(MouseMove(x=1, y=1, modifiers=('alt',)), id='mouse_move-holding-a-key'),
         pytest.param(Drag(path=_path(101), modifiers=('shift',)), id='long-drag-holding-a-key'),
         pytest.param(object(), id='unknown-action-type'),
     ],

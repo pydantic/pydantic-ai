@@ -31,8 +31,8 @@ from pydantic_ai.computer_use import (
     Drag,
     HoldKeys,
     MouseDown,
+    MouseMove,
     MouseUp,
-    MoveMouse,
     Point,
     PressKeys,
     Region,
@@ -142,7 +142,7 @@ class BoxdDesktop:
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
                 await computer.click(machine_id, x, y, button=button, count=count, modifiers=modifiers)
-            case MoveMouse(x=x, y=y, modifiers=modifiers):
+            case MouseMove(x=x, y=y, modifiers=modifiers):
                 if modifiers:
                     raise UnsupportedActionError("boxd's desktop cannot hold keys while it moves the pointer.")
                 await computer.move(machine_id, x, y)
