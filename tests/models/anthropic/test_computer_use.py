@@ -150,7 +150,7 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
     ]
     assert [r['content'][0]['text'] for r in results] == [
         'OK',
-        "Ran 3 of 5 actions. The next one failed: the fake display cannot perform 'hold_key'",
+        "Ran 3 of 5 actions. The next one failed: the fake display cannot perform 'hold_keys'",
         'Failed.',
         NOT_EXECUTED,
     ]
