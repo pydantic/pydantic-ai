@@ -266,6 +266,11 @@ _COLLECTION_ENTRY_CHANGES: list[tuple[str, tuple[list[str], list[str]] | None]] 
     ('{c.name: c for c in (A, B) if c.ok} -> {c.name: c for c in (A, B, C)}', None),
     ('{c.name: c for c in (A, B)} -> {c for c in (A, B, C)}', None),
     ('{c.name: c for c in TYPES} -> {c.name: c for c in TYPES}', None),
+    ("tuple(f'p:{m}' for m in ('a', 'b')) -> tuple(f'p:{m}' for m in ('c', 'a', 'b'))", (["'c'"], [])),
+    ("tuple(f'p:{m}' for m in ('a', 'b')) -> tuple(f'p:{m}' for m in ('a',))", ([], ["'b'"])),
+    ("tuple(f'p:{m}' for m in ('a',)) -> tuple(f'q:{m}' for m in ('a', 'b'))", None),
+    ("tuple(f'p:{m}' for m in ('a',)) -> list(f'p:{m}' for m in ('a', 'b'))", None),
+    ("(f'p:{m}' for m in ('a',)) -> (f'p:{m}' for m in ('a', 'b'))", None),
 ]
 
 

@@ -31,6 +31,7 @@ from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import (
     Agent,
+    DeferredToolRequests,
     FunctionToolset,
     ModelMessage,
     ModelRequest,
@@ -88,10 +89,10 @@ with try_import() as mcp_installed:
     from fastmcp import Client, FastMCP
     from fastmcp.client.transports import StreamableHttpTransport
 
-    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
+    from pydantic_ai import _mcp_compat
     from pydantic_ai.mcp import MCPToolset
 
-MCP_SDK_V2 = mcp_installed() and is_mcp_sdk_v2()
+MCP_SDK_V2 = mcp_installed() and _mcp_compat.MCP_SDK_V2
 
 pytestmark = [
     pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed'),
@@ -105,6 +106,7 @@ SECRETS = {
     'system_prompt': 'SENTINEL-system-prompt',
     'message_history': 'SENTINEL-message-history',
     'tool_args': 'SENTINEL-tool-args',
+    'validated_args': 'SENTINEL-validated-args',
     'tool_return': 'SENTINEL-tool-return',
     'tool_retry': 'SENTINEL-tool-retry',
     'tool_failed': 'SENTINEL-tool-failed',
@@ -911,6 +913,40 @@ async def test_no_content_reaches_telemetry_from_message_history(include_content
     await agent.run(SECRETS['user_prompt'], message_history=history)
 
     check(exporter, include_content, {'user_prompt', 'message_history', 'model_text'})
+
+
+class AddAccount(AbstractCapability[Any]):
+    """A validation hook that adds a value the model never sent, so only the deferred call's `validated_args` holds it."""
+
+    async def after_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {**args, 'account': SECRETS['validated_args']}
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_a_deferred_calls_validated_args(include_content: bool) -> None:
+    """The run's `DeferredToolRequests` output carries the arguments as a validation hook left them."""
+    settings, exporter = redacted_setup(include_content)
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('transfer', {'amount': 1})])
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[AddAccount(), Instrumentation(settings=settings)],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def transfer(amount: int) -> str:  # pragma: no cover
+        # Never approved: the run ends on the approval request.
+        return str(amount)
+
+    result = await agent.run(SECRETS['user_prompt'])
+    assert isinstance(result.output, DeferredToolRequests)
+
+    check(exporter, include_content, {'user_prompt', 'validated_args'})
 
 
 @dataclass(kw_only=True)
