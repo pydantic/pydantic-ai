@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import douwebot_opencode_run
 import run_pr_review_check
-from douwebot_opencode_run import OPENCODE_GO, ZAI, ZAI_BACKUP, Provider, run_with_fallback
+from douwebot_opencode_run import CHAIN_LINKS, OPENCODE_GO, ZAI, ZAI_BACKUP, Provider, run_with_fallback
 from pr_review_checks import CHECKS, GENERAL, ReviewCheck
 from run_pr_review_check import (
     Usage,
@@ -696,6 +696,40 @@ def test_review_that_fails_before_opencode_runs_exports_its_span(
         'pr_review_checks.outcome': 'FAILED',
         'pr_review_checks.exception': 'ValueError',
     }
+
+
+def test_review_runs_on_the_chain_its_repository_variable_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exported: list[dict[str, object]]
+) -> None:
+    """`PR_REVIEW_MODEL_CHAIN` replaces the review's chain, and Zen's free tier reviews without any key."""
+    launches = _fake_opencode(
+        tmp_path,
+        monkeypatch,
+        f'printf "%s\\n" {shlex.quote(GO_REFUSAL)}; exit 1',
+        f'printf "%s\\n" {" ".join(shlex.quote(line) for line in ANSWER)}',
+    )
+    chain = [
+        {'model': 'opencode-go/hy4-flash-free', 'secret': 'OPENCODE_API_KEY'},
+        {'model': 'opencode/hy4-flash-free', 'secret': None},
+    ]
+    monkeypatch.setenv('PR_REVIEW_MODEL_CHAIN', json.dumps(chain))
+    run_pr_review_check.main()
+    assert launches.read_text().splitlines() == ['opencode-go/hy4-flash-free go-key ', 'opencode/hy4-flash-free  ']
+
+
+def test_only_a_repository_variable_picks_the_reviews_secrets() -> None:
+    """The review step passes each provider secret by a fixed name, and the chain only by a repository variable.
+
+    A chain entry can name only the secrets `CHAIN_LINKS` lists, so nothing a pull request controls picks a secret.
+    """
+    workflow = (WORKSPACE / '.github' / 'workflows' / 'pr-review-checks.yml').read_text(encoding='utf-8')
+    assert 'secrets[' not in workflow
+    steps = yaml.load(workflow, Loader=yaml.BaseLoader)['jobs']['review']['steps']
+    [env] = [step['env'] for step in steps if step.get('name') == 'Review with OpenCode']
+    assert env['PR_REVIEW_MODEL_CHAIN'] == '${{ vars.PR_REVIEW_MODEL_CHAIN }}'
+    linked = {secret for _, secret in CHAIN_LINKS if secret}
+    assert linked == {'OPENCODE_API_KEY', 'ZAI_API_KEY', 'ZAI_BACKUP_API_KEY'}
+    assert {name: env[name] for name in linked} == {name: f'${{{{ secrets.{name} }}}}' for name in linked}
 
 
 def test_complete_review_keeps_the_models_outcome(tmp_path: Path) -> None:
