@@ -26,6 +26,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
 )
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
+from pydantic_ai.workspaces.windows import powershell_script
 
 windows_only = pytest.mark.skipif(sys.platform != 'win32', reason='`WindowsWorkspaceBackend` runs only on Windows')
 
@@ -61,9 +62,10 @@ class TestWindowsCommands:
         )
         result = await backend.run(script, shell=True)
         assert result.exit_code == 1
-        assert result.stderr == snapshot(
+        # A top-level `Write-Error` quotes the whole script it ran in.
+        assert result.stderr == (
             '<Objs a><S S="x">y</S></Objs>\r\n'
-            "Write-Error 'a <b> & _x000A_ \U0001f600' : a <b> & _x000A_ \U0001f600\r\n"
+            f'{powershell_script(script)} : a <b> & _x000A_ \U0001f600\r\n'
             '    + CategoryInfo          : NotSpecified: (:) [Write-Error], WriteErrorException\r\n'
             '    + FullyQualifiedErrorId : Microsoft.PowerShell.Commands.WriteErrorException\r\n'
             ' \r\n'
