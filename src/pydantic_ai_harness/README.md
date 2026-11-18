@@ -262,6 +262,7 @@ How the agent spends its context window over a long run, and how often it pays f
 | [Compaction](pydantic_ai_harness/compaction/) | Harness | Model-agnostic strategies: tool-result clearing, sliding-window trimming, LLM summarization, tiered; all window-relative, with live usage reporting |
 | [Tool Output Limits](pydantic_ai_harness/tool_output_limits/) | Harness | Truncate, spill to a queryable file, or summarize oversized tool returns at the source |
 | [Warn On Cache Busts](pydantic_ai_harness/warn_on_cache_busts/) | Harness | Detect prompt-cache prefix collapses between requests, from the provider's own numbers |
+| [Label Cross Model History](pydantic_ai_harness/label_cross_model_history/) | Harness | Tell the model when earlier assistant turns came from another model, after a model switch or handoff |
 
 ### Knowledge & memory
 
@@ -301,6 +302,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Tool Budgets](pydantic_ai_harness/tool_budgets/) | Harness | Cap calls per tool and per run, and refuse exact repeats, with a tool result the model can act on instead of an exception |
 | [Trajectory Judge](pydantic_ai_harness/trajectory_judge/) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
 | [Refine Output](pydantic_ai_harness/refine_output/) | Harness | Send the agent back to review and revise its output before the run ends |
+| [Wrap Up At Limits](pydantic_ai_harness/wrap_up_at_limits/) | Harness | End the run with a final answer, not `UsageLimitExceeded`, when a usage limit would stop it |
 
 ### Self-extension
 
