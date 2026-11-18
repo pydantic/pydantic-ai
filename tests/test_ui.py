@@ -3495,8 +3495,9 @@ READINESS_WAIT_TIMEOUT = 5
 # validation that raises before any request is made.
 
 
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
 @pytest.mark.parametrize('stop_after', ['first', 'second'])
-async def test_encode_stream_sends_keepalive_while_source_is_quiet(stop_after: str):
+async def test_encode_stream_sends_keepalive_while_source_is_quiet(anyio_backend: str, stop_after: str):
     """A quiet source gets keepalive comments without its pending pull being cancelled.
 
     A plain `async for ... break` with no `aclosing()` still closes the source: the event loop's async generator
@@ -3529,18 +3530,22 @@ async def test_encode_stream_sends_keepalive_while_source_is_quiet(stop_after: s
 
 @pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
 async def test_encode_stream_keepalive_surfaces_source_error(anyio_backend: str):
-    """On Trio, which the keepalive pump doesn't support, the stream is still encoded, without keepalives."""
+    """A source error surfaces on both backends; on Trio, which the keepalive pump doesn't support, no keepalives are sent."""
 
     async def events() -> AsyncIterator[str]:
         yield 'first'
+        await anyio.sleep(0.2)
         raise ValueError('boom')
 
+    chunks: list[str] = []
     with pytest.raises(ValueError, match='boom'):
-        async for _ in DummyUIEventStream().encode_stream(events(), keepalive_interval=0.01):
-            pass
+        async for chunk in DummyUIEventStream().encode_stream(events(), keepalive_interval=0.01):
+            chunks.append(chunk)
+    assert (KEEPALIVE in chunks) == (anyio_backend == 'asyncio')
 
 
-async def test_streaming_response_forwards_keepalive_interval():
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_streaming_response_forwards_keepalive_interval(anyio_backend: str):
     async def events() -> AsyncIterator[str]:
         yield 'first'
         await anyio.sleep(0.03)
