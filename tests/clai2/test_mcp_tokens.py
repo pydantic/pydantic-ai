@@ -50,7 +50,10 @@ def token() -> OAuthToken:
 
 
 def test_browser_sign_in_callback_server_loads() -> None:
-    """FastMCP's callback server imports `websockets`, which `fastmcp-slim[client]` does not declare."""
+    """FastMCP 3's callback server imports `websockets`, which `fastmcp-slim[client]` does not declare.
+
+    `load()` raises if the import fails. FastMCP 4 turns the server's websockets off (`ws="none"`).
+    """
     requires = importlib.metadata.metadata('pydantic-clai2').get_all('Requires-Dist') or []
     websockets = [req for req in requires if req.startswith('websockets')]
     assert websockets, 'websockets must be a pydantic-clai2 dependency'
@@ -58,7 +61,6 @@ def test_browser_sign_in_callback_server_loads() -> None:
 
     server = create_oauth_callback_server(port=0, server_url=URL)
     server.config.load()
-    assert server.config.ws_protocol_class is not None
 
 
 async def test_tokens_survive_a_restart_in_the_keyring(vault: Vault) -> None:
