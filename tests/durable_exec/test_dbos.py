@@ -6790,12 +6790,22 @@ async def test_dbos_child_workflow_tool_executed_again_by_capability(dbos: DBOS)
 
 @pytest.mark.parametrize(
     ('crash', 'moon_fails'),
-    [('after_both_children', False), ('after_both_children', True), ('before_second_child', False)],
+    [
+        ('after_both_children', False),
+        ('after_both_children', True),
+        ('before_second_child', False),
+        ('after_both_children_then_run_id_changes', False),
+    ],
 )
 async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
     dbos: DBOS, crash: str, moon_fails: bool
 ) -> None:
-    """A recovered run whose parallel child workflows start in another order still gets each tool call its own child's result."""
+    """A recovered run whose parallel child workflows start in another order still gets each tool call its own child's result.
+
+    With `after_both_children_then_run_id_changes`, the explicit `run_id=` differs on recovery, so the recorded
+    children aren't the recovered calls': recovery keeps DBOS's positional match instead of waiting for them.
+    """
+    run_id_changes = crash == 'after_both_children_then_run_id_changes'
     researched: list[str] = []
     recovering = False
     moon_researched = asyncio.Event()
@@ -6831,7 +6841,7 @@ async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
                     await moon_researched.wait()
                     if crash == 'before_second_child':
                         raise _ProcessCrash
-            elif recovering:
+            elif recovering and not run_id_changes:
                 # On recovery, `call-b` reaches its child workflow first, when the next step position holds the
                 # child `call-a` started there.
                 await call_b_arrived.wait()
@@ -6851,7 +6861,7 @@ async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
 
     @DBOS.workflow()
     async def run_agent() -> list[str]:
-        result = await agent.run('Research.')
+        result = await agent.run('Research.', run_id=f'run-{recovering}' if run_id_changes else None)
         if not recovering:
             raise _ProcessCrash
         # The model's final response replays from its step, so check what each tool call returned to it.
@@ -6865,7 +6875,7 @@ async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
     workflow_id = f'child-wf-reordered-{uuid.uuid4()}'
     with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
         await run_agent()
-    assert sorted(researched) == (['moon', 'sun'] if crash == 'after_both_children' else ['moon'])
+    assert sorted(researched) == (['moon'] if crash == 'before_second_child' else ['moon', 'sun'])
     recorded = [
         (s['function_id'], s['function_name'], s['child_workflow_id'])
         for s in await dbos.list_workflow_steps_async(workflow_id)
@@ -6874,14 +6884,19 @@ async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
     recovering = True
     call_b_arrived.clear()
     handle = await DBOS.resume_workflow_async(workflow_id)
-    moon = 'failed: No moon tonight.' if moon_fails else 'moon'
-    assert sorted(await handle.get_result()) == [f'call-a={moon}', 'call-b=sun']
+    returned = await handle.get_result()
     # Recovery reuses the children that finished before the crash.
     assert sorted(researched) == ['moon', 'sun']
-    # Recovery keeps every step the parent recorded before the crash, so a later recovery replays the same history,
-    # and each call's child, `call-b`'s too when it hadn't started, is a child of the parent at its own position.
+    # Recovery keeps every step the parent recorded before the crash, so a later recovery replays the same history.
     steps = await dbos.list_workflow_steps_async(workflow_id)
     assert [(s['function_id'], s['function_name'], s['child_workflow_id']) for s in steps][: len(recorded)] == recorded
+    if run_id_changes:
+        # The positional match hands each call whichever child is recorded at the position it reaches.
+        assert sorted(part.split('=')[1] for part in returned) == ['moon', 'sun']
+        return
+    moon = 'failed: No moon tonight.' if moon_fails else 'moon'
+    assert sorted(returned) == [f'call-a={moon}', 'call-b=sun']
+    # Each call's child, `call-b`'s too when it hadn't started, is a child of the parent at its own position.
     child_name = 'child_wf_reordered__function_toolset__<agent>.call_tool__child_workflow'
     child_prefix = f'{workflow_id}-{workflow_id}:1-1-0-'
     assert [(step['function_name'], step['child_workflow_id']) for step in steps if step['child_workflow_id']] == [

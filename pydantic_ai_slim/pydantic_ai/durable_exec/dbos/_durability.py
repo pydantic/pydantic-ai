@@ -64,6 +64,9 @@ _child_workflow_executions: WeakKeyDictionary[DBOSContext, dict[tuple[str | None
 _recorded_children_by_execution: WeakKeyDictionary[DBOSContext, dict[int, str | None]] = WeakKeyDictionary()
 """The child workflow ID recorded at each step position, per workflow execution, listed when it first runs a child."""
 
+_children_taken: WeakKeyDictionary[DBOSContext, set[str]] = WeakKeyDictionary()
+"""The child workflows that took a step position, per workflow execution, so no call waits for one to take another."""
+
 _position_events: WeakKeyDictionary[DBOSContext, asyncio.Event] = WeakKeyDictionary()
 """Set when a child workflow call takes a step position, per workflow execution, to wake the calls waiting for theirs."""
 
@@ -575,13 +578,23 @@ async def _call_child_workflow(
     call_key = (ctx.run_id, ctx.run_step, ctx.tool_call_id)
     execution = executions.get(call_key, 0)
     executions[call_key] = execution + 1
-    child_id = f'{parent_id}-{ctx.run_id}-{ctx.run_step}-{execution}-{ctx.tool_call_id}'
+    siblings_prefix = f'{parent_id}-{ctx.run_id}-{ctx.run_step}-'
+    child_id = f'{siblings_prefix}{execution}-{ctx.tool_call_id}'
 
     recorded = await _recorded_children(context, parent_id)
-    while _holds_another_calls_child(recorded, parent_id, context.function_id + 1, child_id):
-        await _next_position_taken(context)
+    taken = _children_taken.setdefault(context, set())
+    while (
+        (sibling := recorded.get(context.function_id + 1)) is not None
+        and sibling != child_id
+        # Only a parallel call of the same run step can take the position in turn. Any other recorded child keeps
+        # DBOS's positional match: a child started before child IDs were derived, or under a `run_id` that changed.
+        and sibling.startswith(siblings_prefix)
+        and sibling not in taken
+    ):
+        await _position_events.setdefault(context, asyncio.Event()).wait()
     # The child takes the next position when `workflow` is called, with no wait before it, so wake the waiting
     # calls now: they run once this call waits for its child, after it took the position.
+    taken.add(child_id)
     _position_events.pop(context, asyncio.Event()).set()
     with SetWorkflowID(child_id), SetWorkflowTimeout(timeout) if timeout is not None else nullcontext():
         return await workflow(*args)
@@ -604,22 +617,6 @@ async def _recorded_children(context: DBOSContext, parent_id: str) -> dict[int, 
             context, {step['function_id']: step['child_workflow_id'] for step in steps}
         )
     return recorded
-
-
-def _holds_another_calls_child(recorded: dict[int, str | None], parent_id: str, step_id: int, child_id: str) -> bool:
-    child = recorded.get(step_id)
-    # A child started before child IDs were derived has DBOS's positional ID, and keeps its positional match.
-    positional_id = f'{parent_id}-{step_id}'
-    return (
-        child is not None
-        and child != child_id
-        and child != positional_id
-        and not child.endswith(f':{positional_id}')  # DBOS's positional ID for a child under another shard key
-    )
-
-
-async def _next_position_taken(context: DBOSContext) -> None:
-    await _position_events.setdefault(context, asyncio.Event()).wait()
 
 
 async def _reject_unregistered_child_workflow(
