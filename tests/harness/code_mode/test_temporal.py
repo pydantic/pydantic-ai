@@ -32,14 +32,14 @@ import re
 import subprocess
 import sys
 import warnings
+from collections import namedtuple
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 from anyio.from_thread import start_blocking_portal
-from pydantic_core import to_json
 from pydantic_monty import MontyRefusedError, MountDir
 
 try:
@@ -80,12 +80,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
-from pydantic_ai_harness._monty_turns import (
-    MontyTurn,
-    _fit_turn,  # pyright: ignore[reportPrivateUsage]
-    from_wire,
-    to_wire,
-)
+from pydantic_ai_harness._monty_turns import from_wire, to_wire
 from tests.harness._temporal import ignore_source_reads_left_open
 from tests.harness.code_mode.grpc_relay import serve_monty_relay
 from tests.harness.code_mode.stored_sessions import SERVER, StoredSessionPool
@@ -1252,6 +1247,11 @@ async def type_names(values: list[object]) -> list[str]:
     return [type(value).__name__ for value in values]
 
 
+async def same(first: object, second: object) -> bool:
+    """Whether `first` equals `second`."""
+    return first == second
+
+
 async def echo_here(value: object) -> object:
     """Return `value`. It runs in the workflow, so the value crosses only the turn boundary."""
     return value
@@ -1263,7 +1263,10 @@ async def bad_csv() -> str:
 
 
 def _snippet_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
-    """Model that runs the user prompt as one snippet, then returns what `run_code` returned."""
+    """Model that runs each `NEXT_SNIPPET`-separated part of the prompt as a snippet, then returns the last result.
+
+    Only a run's first snippet is type-checked, so a later one can make calls the checker would reject.
+    """
     returns = [
         part.content
         for msg in messages
@@ -1271,10 +1274,17 @@ def _snippet_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo
         for part in msg.parts
         if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
     ]
-    if returns:
-        return ModelResponse(parts=[TextPart(content=str(returns[0]))])
-    code = next(part.content for part in messages[0].parts if isinstance(part, UserPromptPart))
-    return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='snippet')])
+    prompt = next(part.content for part in messages[0].parts if isinstance(part, UserPromptPart))
+    codes = cast(str, prompt).split(NEXT_SNIPPET)
+    if len(returns) == len(codes):
+        return ModelResponse(parts=[TextPart(content=str(returns[-1]))])
+    code = codes[len(returns)]
+    return ModelResponse(
+        parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id=f'snippet{len(returns) or ""}')]
+    )
+
+
+NEXT_SNIPPET = '\n# next snippet\n'
 
 
 def _snippet_agent(
@@ -1319,7 +1329,7 @@ snippet_agents = {
     'default': _snippet_agent('default'),
     'unlimited': _snippet_agent('unlimited', resource_limits='unlimited'),
     'factory_error': _snippet_agent('factory_error', monty_sandbox=_refusing_factory),
-    'types': _snippet_agent('types', workflow_tools=(type_names, echo_here, raw_bytes, frozen)),
+    'types': _snippet_agent('types', workflow_tools=(type_names, echo_here, raw_bytes, frozen, same)),
     'forgetful': _snippet_agent('forgetful', monty_sandbox=_forgetful_pool),
 }
 
@@ -1410,6 +1420,22 @@ async def test_remote_turns_record_a_pool_user_error_by_type(client: Client) -> 
     assert (activity_error.cause.type, activity_error.cause.message) == ('UserError', 'UserError')
     history = await client.get_workflow_handle(workflow_id).fetch_history()
     assert 'secret-sentinel' not in history.to_json()
+
+
+async def test_remote_turns_count_a_shared_argument_as_it_is_sent(
+    client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A value passed both positionally and by keyword is sent twice, so the argument limit counts it twice.
+
+    Counted once, the call passed the limit and then made the turn too large to return after the snippet ran.
+    """
+    monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 2000)
+    code = f'0{NEXT_SNIPPET}s = "x" * 450\ntry:\n    await same(s, second=s)\nexcept TypeError as e:\n    error = str(e)\nerror'
+    output = await _run_snippet(client, 'test_code_mode_temporal_shared_argument', code, agent='types')
+    assert output == (
+        'same() got arguments that cannot be sent to the tool: they need types the sandbox can hand'
+        ' the host and at most 1000 bytes'
+    )
 
 
 async def test_remote_turns_keep_the_types_monty_hands_the_host(client: Client) -> None:
@@ -1636,12 +1662,14 @@ def test_turn_values_keep_what_temporal_json_cannot() -> None:
     for _ in range(500):
         deep = [deep]
     shared = [[1, 2]] * 2
-    values = (deep, 10**5000, shared, (1j, ..., {1}, frozenset({2}), b'\xff', bytearray(b'x')))
+    pair = namedtuple('Pair', ['a', 'b'])(1, 2)  # pyright: ignore[reportUntypedNamedTuple]
+    values = (deep, 10**5000, shared, (1j, ..., {1}, frozenset({2}), b'\xff', bytearray(b'x')), pair)
     data = to_wire(values)
     assert isinstance(data, str)
     back = from_wire(data)
     assert back == values
     assert back[2][0] is back[2][1]
+    assert (type(back[4]).__name__, back[4].a) == ('Pair', 1)
 
 
 def test_turn_values_load_only_wire_types() -> None:
@@ -1666,11 +1694,19 @@ def test_turn_values_send_enum_members_as_their_values() -> None:
     assert [type(value) for value in back] == [str, int]
 
 
-@pytest.mark.parametrize('output', ['\\\n' * 4000, 10**5000], ids=['escaped_text', 'huge_int'])
-def test_cutting_a_turn_result_always_shrinks_it(monkeypatch: pytest.MonkeyPatch, output: object) -> None:
-    """A result is rendered as text once and that text is cut, so text that `repr` escapes still fits."""
+@pytest.mark.parametrize(
+    ('code', 'expected'),
+    [
+        ('"\\\\\\n" * 3000', 'more bytes not shown: a turn returns at most 2000 bytes]'),
+        ('10**5000', '[a int too large to show]'),
+    ],
+    ids=['escaped_text', 'huge_int'],
+)
+async def test_remote_turns_cut_any_result_to_fit(
+    client: Client, monkeypatch: pytest.MonkeyPatch, code: str, expected: str
+) -> None:
+    """A result is rendered as text once and that text is cut, so text `repr` escapes and huge integers fit."""
     monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 2000)
-    turn = _fit_turn(MontyTurn('complete', output=to_wire(output)))
-    assert turn.output is not None
-    assert len(to_json(turn)) <= 2000
-    assert 'more bytes not shown' in from_wire(turn.output) or 'too large to show' in from_wire(turn.output)
+    output = await _run_snippet(client, f'test_code_mode_temporal_cut_{len(code)}', code)
+    assert expected in output
+    assert len(output) < 2000

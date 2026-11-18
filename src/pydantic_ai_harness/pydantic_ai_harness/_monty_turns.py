@@ -19,6 +19,7 @@ import hashlib
 import io
 import math
 import pickle
+from collections import namedtuple
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta, timezone
@@ -129,6 +130,11 @@ class _WirePickler(pickle.Pickler):
         # containers, and for each class the pickle names.
         if obj is ... or type(obj) in _WIRE_CLASSES.values() or obj in _WIRE_CLASSES.values():
             return NotImplemented
+        if obj is _named_tuple:
+            return NotImplemented
+        if (named := _named_tuple_parts(obj)) is not None:
+            # Monty makes a named tuple's class on the host as it hands one over, so no module holds it.
+            return _named_tuple, named
         for container in _CONTAINERS:
             if isinstance(obj, container):
                 return container, (container(cast(Any, obj)),)
@@ -147,10 +153,31 @@ class _WirePickler(pickle.Pickler):
         raise TypeError(f'Cannot convert {cls.__module__}.{cls.__qualname__} to Monty value')
 
 
+def _named_tuple_parts(obj: object) -> tuple[str, tuple[str, ...], tuple[Any, ...]] | None:
+    """The name, fields and values of a named tuple, or `None` for any other value."""
+    cls = type(obj)
+    fields: tuple[str, ...] | None = getattr(cls, '_fields', None)
+    if fields is None or not issubclass(cls, tuple):
+        return None
+    return cls.__name__, tuple(fields), tuple(cast(tuple[Any, ...], obj))
+
+
+@cache
+def _named_tuple_class(name: str, fields: tuple[str, ...]) -> type[tuple[Any, ...]]:
+    return namedtuple(name, fields)  # pyright: ignore[reportUntypedNamedTuple] -- fields known only at run time
+
+
+def _named_tuple(name: str, fields: tuple[str, ...], values: tuple[Any, ...]) -> tuple[Any, ...]:
+    """A named tuple with `name`, `fields` and `values`, as Monty makes one on the host."""
+    return _named_tuple_class(name, fields)(*values)
+
+
 class _WireUnpickler(pickle.Unpickler):
     def find_class(self, module: str, name: str) -> Any:
         if module == 'builtins' and name == 'Ellipsis':
             return ...
+        if module == __name__ and name == _named_tuple.__name__:
+            return _named_tuple
         if (cls := _WIRE_CLASSES.get((module, name))) is None:
             raise pickle.UnpicklingError(f'{module}.{name} is not a wire type')
         return cls
@@ -629,7 +656,8 @@ async def _answer_in_turn(
 
 def _args_cross(snapshot: AsyncFunctionSnapshot) -> bool:
     try:
-        return len(to_wire((snapshot.args, snapshot.kwargs))) <= TURN_PAYLOAD_BYTES // 2
+        # Encoded as `TurnCall` encodes them, so a value both share is counted twice, as it is sent.
+        return len(to_wire(snapshot.args)) + len(to_wire(snapshot.kwargs)) <= TURN_PAYLOAD_BYTES // 2
     except TypeError:
         return False
 
