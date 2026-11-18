@@ -30,7 +30,7 @@ import re
 import secrets
 import shutil
 from collections.abc import Mapping, Sequence
-from pathlib import Path
+from importlib.resources import as_file, files
 from typing import Literal
 
 import anyio
@@ -240,9 +240,9 @@ async def remove_container(name: str, *, executable: str = 'docker') -> None:
         raise WorkspaceError(f'could not remove container {name}: {result.stderr.strip()}')
 
 
-_DESKTOP_DOCKERFILE_PATH = Path(__file__).parent / 'desktop.Dockerfile'
+_DESKTOP_DOCKERFILE_FILE = files('pydantic_ai_harness.docker_container').joinpath('desktop.Dockerfile')
 
-DESKTOP_DOCKERFILE = _DESKTOP_DOCKERFILE_PATH.read_text()
+DESKTOP_DOCKERFILE = _DESKTOP_DOCKERFILE_FILE.read_text()
 """The image `DockerContainer(desktop=True)` builds on first use: an X server, a window manager, a panel that launches
 Firefox and a terminal, and fonts for most scripts and emoji. Firefox starts without first-run pages, and new
 windows fill the screen."""
@@ -277,18 +277,9 @@ async def _build_desktop_image(runner: LocalWorkspaceBackend, executable: str) -
     if (await runner.run([executable, 'image', 'inspect', '--', _DESKTOP_IMAGE])).exit_code == 0:
         return
     # The Dockerfile copies nothing in, so any directory does as the build context.
-    result = await runner.run(
-        [
-            executable,
-            'build',
-            '--tag',
-            _DESKTOP_IMAGE,
-            '--file',
-            str(_DESKTOP_DOCKERFILE_PATH),
-            '--',
-            str(_DESKTOP_DOCKERFILE_PATH.parent),
-        ]
-    )
+    with as_file(_DESKTOP_DOCKERFILE_FILE) as dockerfile:
+        build = [executable, 'build', '--tag', _DESKTOP_IMAGE, '--file', str(dockerfile), '--', str(dockerfile.parent)]
+        result = await runner.run(build)
     if result.exit_code != 0:
         raise WorkspaceUnavailableError(f'could not build the desktop image: {result.stderr.strip()[-2000:]}')
 
@@ -358,7 +349,7 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
             None
             if self._desktop_size is None
             else x11_display(
-                self,
+                self._run_argv,
                 self._desktop_size,
                 _START_DESKTOP,
                 lambda: f'Docker workspace {self._name}',
@@ -509,7 +500,14 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
     ) -> CommandResult:
         check_timeout(timeout)
         argv = command_argv(command, shell)
-        merged_env = {**self._env, **_checked_env(env or {})}
+        if self._display is not None:
+            # Started first, so a program the command opens shows on the screen.
+            await self._display.start()
+        return await self._run_argv(argv, env=env or {}, timeout=timeout)
+
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        """Run `argv` in the container without starting its display, as the display's own commands do."""
+        merged_env = {**self._env, **_checked_env(env)}
         # The first command also creates the container, which isn't bounded by the command's timeout:
         # pulling an image can take minutes.
         # Commands start where `working_dir()` says they do, even if a symlink on the way changes.

@@ -12,11 +12,11 @@ How Daytona's default snapshot behaves. Re-run the live display tests in
 - `keyboard.type` types Unicode up to U+FFFF and newlines as Enter, and drops characters beyond U+FFFF, such as most
   emoji.
 - `keyboard.press` refuses shifted symbols such as `!`, X keysyms such as `KP_Enter`, and print screen, pause,
-  scroll lock and media keys (`unsupported key "printscreen"`), and the desktop keeps working. `keyboard.down`
-  refuses print screen the same way, with a 500.
-- The mouse has no `back` or `forward` button (`unsupported mouse button "back"`).
+  scroll lock, media and volume keys (`unsupported key "printscreen"`), and the desktop keeps working.
+  `keyboard.down` refuses the same keys with a 500, as it does `menu` (live, 2026-11-18).
+- The mouse has `left`, `right` and `middle` buttons only (`unsupported mouse button "back"`, a 400).
 - Its keypad digits are `num0` to `num9`, which follow Num Lock, and Num Lock is `num_lock`. Its other keypad names
-  type other keys (`num_plus` types `n`), and the display refuses `menu`.
+  type other keys (`num_plus` types `n`).
 - Pressing `f13` to `f24` crashes the computer-use process for good.
 - After the sandbox stops and starts, `get_status()` says `inactive` until `start()`. Input sent before that start
   breaks the desktop until the sandbox stops and starts again: input answers 500 (`connection is shut down`), and
@@ -36,7 +36,6 @@ from daytona import (
     DaytonaAuthenticationError,
     DaytonaBadGatewayError,
     DaytonaConnectionError,
-    DaytonaError,
     DaytonaForbiddenError,
     DaytonaTimeoutError,
     ScreenshotRegion,
@@ -99,10 +98,25 @@ _REFUSED_KEYS = frozenset(
         'numpad_multiply',
         'numpad_divide',
         'numpad_decimal',
+        'printscreen',
+        'pause',
+        'scrolllock',
+        'menu',
+        'mediaplay',
+        'mediaprev',
+        'medianext',
+        'volumeup',
+        'volumedown',
+        'volumemute',
     }
 )
-"""Normalized key names Daytona would get wrong: `f13` to `f24` crash its desktop, and its keypad operator and Enter
-keys type other characters."""
+"""Normalized key names Daytona would get wrong or refuses: `f13` to `f24` crash its desktop, its keypad operator and
+Enter keys type other characters, and it answers the rest with an error that may not mean nothing was pressed.
+
+Refused before they're sent, as anything sent counts as possibly held until its release is confirmed."""
+
+_BUTTONS = frozenset({'left', 'right', 'middle'})
+"""The mouse buttons Daytona has; it refuses the side buttons."""
 
 _SHIFTED = dict(zip('~!@#$%^&*()_+{}|:"<>?', "`1234567890-=[]\\;',./"))
 """A symbol typed with shift, and the key it is on: Daytona's display has a US keyboard layout."""
@@ -151,6 +165,12 @@ async def _let_go(error: BaseException, held: list[str], release: Callable[[str]
             f'{error}; releasing {" and ".join(held)} failed too, so {"it" if len(held) == 1 else "they"} '
             'may still be held'
         ) from error
+
+
+def _button(button: str) -> str:
+    if button not in _BUTTONS:
+        raise UnsupportedActionError(f"Daytona's desktop cannot press the mouse button {button!r}.")
+    return button
 
 
 def _keys(keys: Sequence[str]) -> list[str]:
@@ -217,15 +237,10 @@ class DaytonaDesktop:
         pressed: list[str] = []
         try:
             for key in keys:
-                pressed.append(key)  # before the request, which may press the key without confirming it
-                try:
-                    await _send_input(partial(keyboard.down, key, request_timeout=REQUEST_TIMEOUT))
-                except DaytonaError as error:
-                    # Daytona answered that it didn't press it, such as `unsupported key "printscreen"`; any other
-                    # failure, such as an answer that can't be read, may follow a press, so the key is let go.
-                    if error.status_code is not None:
-                        pressed.pop()
-                    raise
+                # Before the request, which may press the key whatever its answer: a key Daytona refuses is refused
+                # before it is sent, so any failure here leaves the key to let go.
+                pressed.append(key)
+                await _send_input(partial(keyboard.down, key, request_timeout=REQUEST_TIMEOUT))
             yield
             while pressed:
                 await _send_input(partial(keyboard.up, pressed[-1], request_timeout=REQUEST_TIMEOUT))
@@ -268,6 +283,7 @@ class DaytonaDesktop:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
                 held = _keys(modifiers)
                 x, y = await self._at(x, y)
+                button = _button(button)
                 await _send_input(
                     partial(mouse.click, x, y, button, clicks=count, modifiers=held, request_timeout=REQUEST_TIMEOUT)
                 )
@@ -278,9 +294,9 @@ class DaytonaDesktop:
                 async with self._holding(_keys(modifiers)):
                     await self._drag(path)
             case MouseDown(button=button):
-                await _send_input(partial(mouse.down, button=button, request_timeout=REQUEST_TIMEOUT))
+                await _send_input(partial(mouse.down, button=_button(button), request_timeout=REQUEST_TIMEOUT))
             case MouseUp(button=button):
-                await _send_input(partial(mouse.up, button=button, request_timeout=REQUEST_TIMEOUT))
+                await _send_input(partial(mouse.up, button=_button(button), request_timeout=REQUEST_TIMEOUT))
             case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
                 held = _keys(modifiers)
                 await self._scroll(*await self._at(x, y), direction, amount, held)

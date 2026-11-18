@@ -33,7 +33,7 @@ import pytest
 from pytest_examples import CodeExample
 
 from pydantic_ai.computer_use import Click, PressKeys, Scroll, TypeText
-from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceError, WorkspaceTimeoutError, WorkspaceUnavailableError
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
 
@@ -398,21 +398,6 @@ class TestLiveDaytonaDesktop:
 
         typed = await backend.run('until [ -s typed.txt ]; do sleep 0.1; done; cat typed.txt', shell=True, timeout=30)
         assert typed.stdout == 'hello,\tdesktop!\n'
-
-    async def test_daytona_refuses_keys_and_buttons_it_has_not_and_keeps_working(
-        self, backend: WorkspaceBackend
-    ) -> None:
-        """Validates that the display can leave these refusals to Daytona: it names what it can't do, and its desktop
-        keeps working."""
-        assert isinstance(backend, DaytonaSandboxBackend)
-        display = backend.display
-        assert display is not None
-        with pytest.raises(WorkspaceError, match='unsupported key "printscreen"'):
-            await display.act(PressKeys(keys=('printscreen',)))
-        with pytest.raises(WorkspaceError, match='unsupported mouse button "back"'):
-            await display.act(Click(x=10, y=10, button='back'))
-        await display.act(PressKeys(keys=('a',)))
-        assert png_size(await display.screenshot()) == (1280, 800)
 
 
 # The README's Python blocks are the same as this page's.
