@@ -42,7 +42,14 @@ def _shell(store: SettingsStore, model: str | None, agent_model: str = 'test') -
 
 @pytest.mark.parametrize(
     ('name', 'default'),
-    [('gpt-6-astra', 'ultrafast'), ('gpt-6.2-sol', 'ultrafast'), ('gpt-5.6-luna', None), ('gpt-5.4', None)],
+    [
+        ('gpt-6.2-astra', 'ultrafast'),
+        ('gpt-6.2-sol', 'ultrafast'),
+        ('gpt-6.1-sol', 'ultrafast'),
+        ('gpt-6-astra', 'ultrafast'),
+        ('gpt-5.6-luna', None),
+        ('gpt-5.4', None),
+    ],
 )
 def test_codex_speed_row(tmp_path: Path, name: str, default: str | None) -> None:
     """Ultrafast is the default speed only of the Codex models that offer it."""
@@ -111,6 +118,7 @@ async def test_speed_reaches_codex_request(
     adapter = TypeAdapter(dict[str, JsonValue])
 
     def respond(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith('/responses')
         bodies.append(adapter.validate_json(request.content))
         response: dict[str, JsonValue] = {
             'id': 'resp_test',

@@ -41,7 +41,11 @@ _CODEX_SERVICE_TIERS: dict[CodexSpeed, Literal['default', 'priority', 'ultrafast
 _TIER_SPEEDS: dict[str, CodexSpeed] = {'default': 'standard', 'priority': 'fast'}
 """The Codex speed a saved `service_tier` stands for."""
 
-_SPEED_TIERS: dict[str, str] = {'standard': 'default', 'fast': 'priority', 'ultrafast': 'priority'}
+_SPEED_TIERS: dict[CodexSpeed, Literal['default', 'priority']] = {
+    'standard': 'default',
+    'fast': 'priority',
+    'ultrafast': 'priority',
+}
 """The `service_tier` saved beside each Codex speed for older CLAI builds, its nearest for ultrafast."""
 
 
@@ -323,7 +327,7 @@ def with_codex_speed(saved: Mapping[str, JsonValue], speed: CodexSpeed | None) -
 def chosen_codex_speed(saved: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
     """`saved` with the Codex speed last chosen: a tier an older CLAI build changed since outranks `codex_speed`."""
     speed, tier = saved.get('codex_speed'), saved.get('service_tier')
-    if isinstance(speed, str) and isinstance(tier, str) and tier in _TIER_SPEEDS and _SPEED_TIERS.get(speed) != tier:
+    if speed in _SPEED_TIERS and isinstance(tier, str) and tier in _TIER_SPEEDS and _SPEED_TIERS[speed] != tier:
         return {**saved, 'codex_speed': _TIER_SPEEDS[tier]}
     return dict(saved)
 
