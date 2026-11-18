@@ -11,9 +11,14 @@ import pytest
 import pydantic_ai_pax
 import pydantic_ai_pax.commands
 import pydantic_ai_pax.plugins
-import pydantic_clai2
-from pydantic_clai2 import __main__ as clai2_main
+from tests.conftest import try_import
 
+with try_import() as shim_installed:
+    import pydantic_clai2
+    from pydantic_clai2 import __main__ as clai2_main
+
+# The `pydantic-ai-pax` test cell installs no `pydantic-clai2`; the cells with every workspace package do.
+requires_shim = pytest.mark.skipif(not shim_installed(), reason='pydantic-clai2 not installed')
 SOURCES = Path(__file__).parents[2] / 'src'
 
 
@@ -39,6 +44,7 @@ def test_pax_is_the_command_and_clai2_its_deprecated_name() -> None:
     }
 
 
+@requires_shim
 def test_clai2_points_at_pax_then_runs_it(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     ran: list[bool] = []
     monkeypatch.setattr(clai2_main, 'pax_main', lambda: ran.append(True))
@@ -50,6 +56,7 @@ def test_clai2_points_at_pax_then_runs_it(monkeypatch: pytest.MonkeyPatch, capsy
     )
 
 
+@requires_shim
 @pytest.mark.parametrize(
     ('old', 'new'),
     [('pydantic_clai2.plugins', pydantic_ai_pax.plugins), ('pydantic_clai2.commands', pydantic_ai_pax.commands)],
@@ -60,6 +67,7 @@ def test_old_import_paths_are_the_new_modules(monkeypatch: pytest.MonkeyPatch, o
         assert importlib.import_module(old) is new
 
 
+@requires_shim
 def test_old_top_level_names_are_the_new_ones() -> None:
     with pytest.warns(
         DeprecationWarning, match=r'^`pydantic_clai2.create_agent` is deprecated, import `pydantic_ai_pax.create_agent`'
@@ -70,6 +78,7 @@ def test_old_top_level_names_are_the_new_ones() -> None:
         pydantic_clai2.missing
 
 
+@requires_shim
 def test_the_old_entry_point_stays_its_own_module() -> None:
     """`pydantic_ai_pax.__main__`, once imported, is an attribute of that package but not an export to forward."""
     assert importlib.import_module('pydantic_ai_pax.__main__') is not clai2_main

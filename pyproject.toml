@@ -324,6 +324,7 @@ include = [
     "clai/**/*.py",
     "src/pydantic_ai_harness/**/*.py",
     "src/pydantic_ai_pax/**/*.py",
+    "src/pydantic_clai2/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
     "scripts/typecheck_changed.py",
@@ -403,7 +404,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
-known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph", "pydantic_ai_harness", "pydantic_ai_pax"]
+known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph", "pydantic_ai_harness", "pydantic_ai_pax", "pydantic_clai2"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -506,6 +507,7 @@ include = [
     "clai",
     "src/pydantic_ai_harness",
     "src/pydantic_ai_pax",
+    "src/pydantic_clai2",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
     "scripts/check_complexity.py",

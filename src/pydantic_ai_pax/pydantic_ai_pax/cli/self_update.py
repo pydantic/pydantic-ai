@@ -42,7 +42,11 @@ if TYPE_CHECKING:
 
 DISTRIBUTION = 'pydantic-ai-pax'
 LEGACY_DISTRIBUTION = 'pydantic-clai2'
-"""CLAI's former name: a `uv tool` environment installed under it keeps updating under it, keeping `clai2`."""
+"""CLAI's former name: a `uv tool` environment installed under it keeps updating under it, keeping `clai2`.
+
+That needs a `pydantic-clai2` release for every version, so the shim cannot stop being released until `/update`
+moves these environments to `pydantic-ai-pax`.
+"""
 _COMMANDS = {DISTRIBUTION: 'pax', LEGACY_DISTRIBUTION: 'clai2'}
 PACKAGES = (
     'pydantic-ai-pax',
