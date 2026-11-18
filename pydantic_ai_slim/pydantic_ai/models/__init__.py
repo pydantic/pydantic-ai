@@ -4142,8 +4142,8 @@ def _callable_now(tool: ToolDefinition, params: ModelRequestParameters) -> bool:
 def _computer_tool_names(params: ModelRequestParameters, sent_ids: Collection[str] = ()) -> list[str]:
     """The function tools of the `computer` kind that the model can call: not deferred, or revealed by history.
 
-    A model adapter sends a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] in place of the first of them, and
-    turns the provider's calls into calls of it. A tool dropped because a native tool in `sent_ids` is sent in its place
+    A model adapter sends a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] in place of the one tool
+    `_natives_with_computer_tool` allows, and turns the provider's calls into calls of it. A tool dropped because a native tool in `sent_ids` is sent in its place
     can't run any calls.
     """
     return [
