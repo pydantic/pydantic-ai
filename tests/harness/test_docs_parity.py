@@ -199,6 +199,7 @@ _CAPABILITY_PAGE_META = {
     'detect-loops.md': ('detect_loops', 'Detect Loops'),
     'tool-budgets.md': ('tool_budgets', 'Tool Budgets'),
     'report-remaining-budget.md': ('report_remaining_budget', 'Report Remaining Budget'),
+    'report-tool-errors.md': ('report_tool_errors', 'Report Tool Errors'),
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
     'refine-output.md': ('refine_output', 'Refine Output'),
     'wrap-up-at-limits.md': ('wrap_up_at_limits', 'Wrap Up At Limits'),
@@ -517,6 +518,7 @@ _PROBLEM_TO_SKILL_ROUTE = (
     ('spend ceiling', 'spend limits'),
     ('without making progress', 'loop detection'),
     ('malformed JSON', 'repair malformed tool arguments'),
+    ('the whole run ends', 'report tool exceptions to the model'),
 )
 
 

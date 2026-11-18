@@ -85,6 +85,7 @@ if TYPE_CHECKING:
     from .repo_context import RepoContext
     from .report_remaining_budget import ReportRemainingBudget
     from .report_stale_files import ReportStaleFiles
+    from .report_tool_errors import ReportToolErrors
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
@@ -196,6 +197,7 @@ __all__ = [
     'ReportContextUsage',
     'ReportRemainingBudget',
     'ReportStaleFiles',
+    'ReportToolErrors',
     'RepoContext',
     'Researcher',
     'SSHWorkspace',
@@ -321,6 +323,7 @@ _LAZY_EXPORTS = {
     'ReportContextUsage': 'compaction',
     'ReportRemainingBudget': 'report_remaining_budget',
     'ReportStaleFiles': 'report_stale_files',
+    'ReportToolErrors': 'report_tool_errors',
     'Researcher': 'researcher',
     'Shell': 'shell',
     'Skills': 'skills',

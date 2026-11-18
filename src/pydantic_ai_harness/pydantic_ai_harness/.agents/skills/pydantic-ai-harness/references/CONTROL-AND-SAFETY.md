@@ -36,6 +36,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Interrupt an agent that keeps repeating the same tool call, result, or response, or repeats itself within a streaming response | `DetectLoops` |
 | Cap calls per tool or per run, or refuse exact repeats, and let the run continue | `ToolBudgets(per_tool=..., total=..., refuse_repeats=...)` |
 | Have the agent review and revise its answer before the run ends | `RefineOutput` |
+| Send an exception a tool raises to the model instead of ending the run | `ReportToolErrors(format_error=...)` |
 | End the run with a final answer instead of `UsageLimitExceeded` at a usage limit | `WrapUpAtLimits` |
 
 ## RepairToolArguments
@@ -900,6 +901,55 @@ print([part.metadata for part in parts if isinstance(part, ToolReturnPart) and p
   rounds the budget is per round, not per task.
 - Emits a `tool call refused` span (`tool_budgets.reason`, `tool_budgets.tool_name`).
 
+## ReportToolErrors
+
+Wraps the agent's toolset and turns an exception a function tool raises into `ToolFailed`, as if the
+tool raised it, so the model gets a failed tool result (`outcome='failed'`) and the run continues.
+
+```python
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from pydantic_ai_harness import ReportToolErrors
+
+
+def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('divide', {'a': 1, 'b': 0})])
+    return ModelResponse(parts=[TextPart("Can't divide by zero.")])
+
+
+agent = Agent(FunctionModel(model), capabilities=[ReportToolErrors()])
+
+
+@agent.tool_plain
+def divide(a: int, b: int) -> float:
+    return a / b
+
+
+result = agent.run_sync('What is 1 / 0?')
+parts = [part for message in result.all_messages() for part in message.parts]
+print([part.content for part in parts if isinstance(part, ToolReturnPart)])
+#> ['`divide` raised ZeroDivisionError']
+```
+
+- The default text leaves out the exception's message (it can carry paths, hosts, connection strings).
+- `format_error(ctx, info) -> str` replaces the text, for example to include `info.error`; `info` is a
+  `ToolErrorInfo` (`name`, `args`, `tool_call_id`, `error`) from `pydantic_ai_harness.report_tool_errors`;
+  `exceptions=(TimeoutError, ...)` reports only those types (default `(Exception,)`), the rest propagate.
+- No limit of its own and the tool stays available; `UsageLimits.request_limit` stops a model that keeps
+  failing (`tool_calls_limit` counts only successful calls; `ToolBudgets` caps one tool).
+- Under Temporal, a failed tool activity reaches the workflow as `ActivityError` after its retry policy gives
+  up; `ReportToolErrors` leaves it alone, so the run fails as without it.
+- `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution`, `RunCancelled` pass
+  through; `UsageLimitExceeded` and `UserError` still end the run, and so does a tool that exhausts its
+  `retries` (`Coder` reports those instead). Output tools and argument validation aren't affected.
+- A `ToolGuardrail` `result_guard` screens the reported text. `on_tool_execute_error` hooks aren't called
+  for a reported exception, in any order; narrow `exceptions` to leave a type to such a hook. Under `CodeMode`, a
+  snippet's nested tool call raises the `ToolFailed`, not the original exception. With several,
+  the last listed formats the error. Emits no spans.
+
 ## ReportRemainingBudget
 
 In `before_model_request`, enqueues a request-scoped `RemainingBudgetPart` (`InstructionCapabilityPart`) with what is left of the run's
@@ -1032,5 +1082,6 @@ print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).outp
 - https://pydantic.dev/docs/ai/harness/trajectory-judge/
 - https://pydantic.dev/docs/ai/harness/detect-loops/
 - https://pydantic.dev/docs/ai/harness/refine-output/
+- https://pydantic.dev/docs/ai/harness/report-tool-errors/
 - https://pydantic.dev/docs/ai/harness/wrap-up-at-limits/
 - https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/ (core tool approval and deferred tools)
