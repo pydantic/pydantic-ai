@@ -857,6 +857,24 @@ class TestReadFile:
         )
         assert walked == 'dos.txt:2:needle'
 
+    async def test_walked_search_numbers_lines_up_to_the_cap(self, tmp_path: Path) -> None:
+        (tmp_path / 'f.txt').write_text('needle\nskip\nneedle\nneedle')
+        workspace = ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+        walked = await _unhashed_toolset().search_files('needle', workspace=workspace)
+        assert walked == 'f.txt:1:needle\nf.txt:3:needle\nf.txt:4:needle'
+        capped = FileSystemToolset(
+            allowed_patterns=[],
+            denied_patterns=[],
+            max_read_lines=2000,
+            max_list_results=1000,
+            max_search_results=2,
+            max_find_results=1000,
+            content_hashes=False,
+        )
+        assert await capped.search_files('needle', workspace=workspace) == (
+            'f.txt:1:needle\nf.txt:3:needle\n[... truncated at 2 matches]'
+        )
+
     async def test_oversized_file_is_described_without_reading_it(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

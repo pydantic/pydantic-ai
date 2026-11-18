@@ -9,7 +9,6 @@ import re
 from collections.abc import Sequence
 
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai_harness.file_system._changes import split_lines
 
 
 def matching_lines(text: str, compiled: re.Pattern[str], rel_str: str, limit: int) -> tuple[list[str], bool]:
@@ -20,8 +19,13 @@ def matching_lines(text: str, compiled: re.Pattern[str], rel_str: str, limit: in
     `limit` of zero or less keeps nothing.
     """
     matches: list[str] = []
-    for line_num, line in enumerate(split_lines(text), start=1):
-        line = line.removesuffix('\n').removesuffix('\r')
+    start = line_num = 0
+    # Lines end at line feeds only, as `rg` numbers them; found one at a time so a capped search stops early.
+    while start < len(text):
+        end = text.find('\n', start)
+        end = len(text) if end < 0 else end
+        line = text[start:end].removesuffix('\r')
+        start, line_num = end + 1, line_num + 1
         if compiled.search(line):
             if len(matches) >= limit:
                 return matches, True
