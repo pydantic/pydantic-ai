@@ -233,7 +233,7 @@ def _embedded_ipv4s(ip: ipaddress.IPv6Address, *, exhaustive: bool) -> set[ipadd
     additionally covers operator-chosen NAT64 prefixes that we cannot enumerate.
     """
     if exhaustive:
-        return _all_embedded_ipv4s(ip)
+        return _exhaustive_embedded_ipv4s(ip)
 
     packed = ip.packed
     candidates: set[ipaddress.IPv4Address] = set()
@@ -251,7 +251,7 @@ def _embedded_ipv4s(ip: ipaddress.IPv6Address, *, exhaustive: bool) -> set[ipadd
     return candidates
 
 
-def _all_embedded_ipv4s(ip: ipaddress.IPv6Address) -> set[ipaddress.IPv4Address]:
+def _exhaustive_embedded_ipv4s(ip: ipaddress.IPv6Address) -> set[ipaddress.IPv4Address]:
     """Return the IPv4 at every standardized embedding position of `ip`, for `_embedded_ipv4s(exhaustive=True)`."""
     packed = ip.packed
     candidates = {_ipv4_at(packed, offsets) for offsets in _ALL_EMBEDDED_OFFSETS}
@@ -762,7 +762,7 @@ async def safe_download(
                 # Drop caller-supplied credentials when the redirect crosses origins, as
                 # RFC 9110 section 15.4 advises for headers added by the calling context.
                 if not _keeps_credentials(previous_url, current_url):
-                    effective_headers = _without_credentials(effective_headers)
+                    effective_headers = _without_sensitive_headers(effective_headers)
 
                 continue
 
@@ -816,7 +816,7 @@ def _redirect_target(response: httpx2.Response, current_url: str, redirects_foll
     return resolve_redirect_url(current_url, location)
 
 
-def _without_credentials(headers: dict[str, str]) -> dict[str, str]:
+def _without_sensitive_headers(headers: dict[str, str]) -> dict[str, str]:
     """Return `headers` without the ones in `_SENSITIVE_HEADERS`, matching names case-insensitively."""
     return {k: v for k, v in headers.items() if k.lower() not in _SENSITIVE_HEADERS}
 
