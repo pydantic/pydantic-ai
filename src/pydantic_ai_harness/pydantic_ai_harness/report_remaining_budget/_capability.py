@@ -91,8 +91,8 @@ class ReportRemainingBudget(AbstractCapability[AgentDepsT]):
 
     The report is enqueued as a [request-scoped][pydantic_ai.messages.CapabilityPart.scope]
     `RemainingBudgetPart` in the application's voice: the model sees it for the request it's part of
-    only, and it stays in the message history, so the cached prefix stays valid. This only discloses the budget; `UsageLimits` and `SpendLimits`
-    still enforce it.
+    only, and it stays in the message history; the prefix before it is still read from cache. This only
+    discloses the budget; `UsageLimits` and `SpendLimits` still enforce it.
 
     Example:
         ```python
