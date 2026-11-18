@@ -2489,8 +2489,8 @@ a new session; `--session-id` then names it. `--continue` works with `-p` and
 Inside CLAI, `/resume` opens the same browser and `/resume SESSION-ID` restores a
 session directly. Opening or restoring a session does not call the coding model
 or execute pending tools. Background naming, when turned on, may make a separate,
-tool-free model request. Your current model, working directory, credentials, and approved plugins
-remain in effect. The saved model name is shown for reference.
+tool-free model request. Your current model, working directory, credentials, and
+approved plugins remain in effect. The saved model name is shown for reference.
 
 Resuming shows the restored conversation in the terminal: the last 10 prompts
 with their answers, reasoning, and tool calls, drawn the way they streamed.
