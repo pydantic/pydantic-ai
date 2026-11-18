@@ -425,6 +425,9 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   sandbox gets no desktop: its first desktop use or shell command raises `UserError`.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
+- `ModalSandbox(desktop=True)` gives the sandbox a plain 1280x800 Xvfb (no window manager) for `ComputerUse()`,
+  or pass `desktop=(w, h)`. The default image has the display programs; a custom `image` gets them installed on
+  first use. The agent can type only ASCII.
 
 ### KubernetesSandbox
 
