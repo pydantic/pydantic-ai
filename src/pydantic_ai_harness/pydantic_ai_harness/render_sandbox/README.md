@@ -37,12 +37,12 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 `Coder`'s shell and file tools now run in the sandbox. For a narrower agent, use [`Shell`](https://pydantic.dev/docs/ai/harness/shell/), [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) or your own tools on [`ctx.workspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#using-the-workspace-in-tools).
 
-- **`Coder` creates it when the run starts**, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
-- **It keeps running, and billing, after the run**, even when idle, until `sandbox_timeout` runs out. `RenderSandbox` turns off Render's idle suspension. See [Clean up](#clean-up).
-- **It lives for 1 hour.** Pass up to `sandbox_timeout=86400` for longer.
-- **Commands start in the sandbox's home directory.** Pass `working_dir=` for another absolute directory. It is created on a new sandbox.
-- **It can reach the internet.** Pass `allow_internet_access=False` to block it.
-- **The image needs `python3`.** Render's default image has it.
+- `Coder` creates it when the run starts, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
+- It keeps running, and billing, after the run, even when idle, until `sandbox_timeout` runs out. `RenderSandbox` turns off Render's idle suspension. See [Clean up](#clean-up).
+- It lives for 1 hour. Pass up to `sandbox_timeout=86400` for longer.
+- Commands start in the sandbox's home directory. Pass `working_dir=` for another absolute directory. It is created on a new sandbox.
+- It can reach the internet. Pass `allow_internet_access=False` to block it.
+- The image needs `python3`. Render's default image has it.
 
 ## Continue in the same sandbox
 

@@ -56,11 +56,11 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 `Coder`'s shell and file tools now run in a Sprite. For a narrower agent, use [`Shell`](https://pydantic.dev/docs/ai/harness/shell/), [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) or your own tools on [`ctx.workspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#using-the-workspace-in-tools).
 
-- **`Coder` creates it when the run starts**, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
-- **It has no lifetime limit.** It sleeps when idle, keeps its files and installed packages, and costs money until you delete it. See [Clean up](#clean-up).
-- **Processes pause between commands** unless you run them as a [Sprites service](https://docs.fly.io/sprites/concepts/services/).
-- **Commands run as the non-root `sprite` user in `/home/sprite`.** Pass `working_dir='/home/sprite/project'` to give the agent a project directory. It is created on a new Sprite.
-- **A new Sprite has git, Python and Node.js**, but not pytest or `rg`. See its [preinstalled tools](https://docs.fly.io/sprites/working-with-sprites/). Install what your project needs once and reuse the Sprite by its ref. For faster `Coder` searches, run `sudo apt-get update && sudo apt-get install ripgrep`.
+- `Coder` creates it when the run starts, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
+- It has no lifetime limit. It sleeps when idle, keeps its files and installed packages, and costs money until you delete it. See [Clean up](#clean-up).
+- Processes pause between commands unless you run them as a [Sprites service](https://docs.fly.io/sprites/concepts/services/).
+- Commands run as the non-root `sprite` user in `/home/sprite`. Pass `working_dir='/home/sprite/project'` to give the agent a project directory. It is created on a new Sprite.
+- A new Sprite has git, Python and Node.js, but not pytest or `rg`. See its [preinstalled tools](https://docs.fly.io/sprites/working-with-sprites/). Install what your project needs once and reuse the Sprite by its ref. For faster `Coder` searches, run `sudo apt-get update && sudo apt-get install ripgrep`.
 
 ## Continue in the same Sprite
 

@@ -53,12 +53,12 @@ result = agent.run_sync('Write a script that prints the first 10 primes, and run
 
 `Coder`'s shell and file tools now run in the container. For a narrower agent, use [`Shell`](shell.md), [`FileSystem`](filesystem.md) or your own tools on [`ctx.workspace`](../workspace.md#using-the-workspace-in-tools).
 
-- **`Coder` creates it when the run starts**, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
-- **It keeps running after the run.** Nothing removes it, and there is no idle or lifetime limit. See [Clean up](#clean-up).
-- **It starts empty.** To work on files on your machine, [mount a project directory](#work-on-a-project-directory).
-- **Commands run as the image's user, usually `root`, in `/workspace`**, which is created if missing. The image needs a POSIX `sh` and the usual file utilities; Docker pulls it the first time.
-- **It reaches the internet, your local network and services on this machine** through Docker's default bridge. Pass `allow_internet_access=False` to run it with `--network none`.
-- **The image's entrypoint doesn't run**, so a service the image would start on boot isn't running; start it with a command.
+- `Coder` creates it when the run starts, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
+- It keeps running after the run. Nothing removes it, and there is no idle or lifetime limit. See [Clean up](#clean-up).
+- It starts empty. To work on files on your machine, [mount a project directory](#work-on-a-project-directory).
+- Commands run as the image's user, usually `root`, in `/workspace`, which is created if missing. The image needs a POSIX `sh` and the usual file utilities; Docker pulls it the first time.
+- It reaches the internet, your local network and services on this machine through Docker's default bridge. Pass `allow_internet_access=False` to run it with `--network none`.
+- The image's entrypoint doesn't run, so a service the image would start on boot isn't running; start it with a command.
 
 ## Continue in the same container
 

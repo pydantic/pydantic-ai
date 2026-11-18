@@ -61,11 +61,11 @@ result = agent.run_sync('Write a script that prints the first 10 primes, and run
 
 `Coder`'s shell and file tools now run in a VM with its own kernel and filesystem. For a narrower agent, use [`Shell`](shell.md), [`FileSystem`](filesystem.md) or your own tools on [`ctx.workspace`](../workspace.md#using-the-workspace-in-tools).
 
-- **`Coder` creates it when the run starts**, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
-- **Its disk stays on this machine after the run.** The VM shuts down when your process exits, but nothing deletes it. See [Clean up](#clean-up).
-- **It has no network access.** Pass `allow_internet_access=True` to install packages or clone repositories. That access is unrestricted and comes from this machine, so the VM can reach anything this machine can, such as your local network or a cloud metadata endpoint.
-- **Commands run as the image's user, usually `root`, in `/workspace`**, which is created if missing.
-- **Without an `image`, the VM runs smolvm's own Alpine Linux**, which has BusyBox but no Python, git or ripgrep. An `image` is any OCI image with a POSIX `/bin/sh`; smolvm pulls it the first time.
+- `Coder` creates it when the run starts, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
+- Its disk stays on this machine after the run. The VM shuts down when your process exits, but nothing deletes it. See [Clean up](#clean-up).
+- It has no network access. Pass `allow_internet_access=True` to install packages or clone repositories. That access is unrestricted and comes from this machine, so the VM can reach anything this machine can, such as your local network or a cloud metadata endpoint.
+- Commands run as the image's user, usually `root`, in `/workspace`, which is created if missing.
+- Without an `image`, the VM runs smolvm's own Alpine Linux, which has BusyBox but no Python, git or ripgrep. An `image` is any OCI image with a POSIX `/bin/sh`; smolvm pulls it the first time.
 
 ## Continue in the same VM
 

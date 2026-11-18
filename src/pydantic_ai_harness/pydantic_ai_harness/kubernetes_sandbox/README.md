@@ -118,11 +118,11 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 `Coder`'s shell and file tools now run in a sandbox pod claimed from the warm pool. For a narrower agent, use [`Shell`](https://pydantic.dev/docs/ai/harness/shell/), [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) or your own tools on [`ctx.workspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#using-the-workspace-in-tools).
 
-- **`Coder` creates it when the run starts**, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
-- **It keeps running after the run, and is deleted 24 hours after it was claimed**, whether or not anyone still uses it. Change that with `sandbox_timeout`, in seconds, or pass `None` to keep it until you delete it. See [Clean up](#clean-up).
-- **Commands start in sandboxd's root directory**, `/workspace` in the template above, and run as the container's user.
-- **The image needs a POSIX shell with coreutils and `find`**, since file operations run as shell commands.
-- **Files are lost if the pod is lost.** When a node fails, agent-sandbox starts a new pod that keeps only what the template puts on a persistent volume; the template above uses `emptyDir`.
+- `Coder` creates it when the run starts, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
+- It keeps running after the run, and is deleted 24 hours after it was claimed, whether or not anyone still uses it. Change that with `sandbox_timeout`, in seconds, or pass `None` to keep it until you delete it. See [Clean up](#clean-up).
+- Commands start in sandboxd's root directory, `/workspace` in the template above, and run as the container's user.
+- The image needs a POSIX shell with coreutils and `find`, since file operations run as shell commands.
+- Files are lost if the pod is lost. When a node fails, agent-sandbox starts a new pod that keeps only what the template puts on a persistent volume; the template above uses `emptyDir`.
 
 ## Continue in the same sandbox
 

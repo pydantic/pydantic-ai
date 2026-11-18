@@ -61,13 +61,13 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 `Coder`'s shell and file tools now run in the sandbox. For a narrower agent, use [`Shell`](https://pydantic.dev/docs/ai/harness/shell/), [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) or your own tools on [`ctx.workspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#using-the-workspace-in-tools). `ModalSandbox` warns when the agent has no `Shell` or `FileSystem` tool. If only your own tools use the sandbox, pass `warn_if_no_tools=False`.
 
-- **`Coder` creates it when the run starts**, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
-- **It keeps running, and billing, after the run.** See [Clean up](#clean-up).
-- **It lives for up to 24 hours**, Modal's maximum. Pass `sandbox_timeout=3600` to end it sooner, or `idle_timeout=` to end it when unused.
-- **The first use can take several minutes** while Modal builds or pulls the image.
-- **Commands run as `root` in `/root`.** Pass `working_dir='/root/project'` to keep the project out of the home directory. It is created on a new sandbox.
-- **The default image has Python 3.12, `git` and `rg`**, but not your project's dependencies. Bake them into a custom `image`, or install them [before the run](#prepare-a-sandbox-before-the-run).
-- **It can reach the internet.** For network restrictions such as Modal's `block_network`, create the `modal.Sandbox` yourself and [pass it to the run](#continue-in-the-same-sandbox). The model can read every `env` value you pass.
+- `Coder` creates it when the run starts, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
+- It keeps running, and billing, after the run. See [Clean up](#clean-up).
+- It lives for up to 24 hours, Modal's maximum. Pass `sandbox_timeout=3600` to end it sooner, or `idle_timeout=` to end it when unused.
+- The first use can take several minutes while Modal builds or pulls the image.
+- Commands run as `root` in `/root`. Pass `working_dir='/root/project'` to keep the project out of the home directory. It is created on a new sandbox.
+- The default image has Python 3.12, `git` and `rg`, but not your project's dependencies. Bake them into a custom `image`, or install them [before the run](#prepare-a-sandbox-before-the-run).
+- It can reach the internet. For network restrictions such as Modal's `block_network`, create the `modal.Sandbox` yourself and [pass it to the run](#continue-in-the-same-sandbox). The model can read every `env` value you pass.
 
 ## Continue in the same sandbox
 

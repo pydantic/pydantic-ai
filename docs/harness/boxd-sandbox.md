@@ -55,11 +55,11 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 `Coder`'s shell and file tools now run in a boxd machine. For a narrower agent, use [`Shell`](shell.md), [`FileSystem`](filesystem.md) or your own tools on [`ctx.workspace`](../workspace.md#using-the-workspace-in-tools).
 
-- **`Coder` creates it when the run starts**, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
-- **It keeps its disk until you delete it.** boxd suspends it when idle, but never deletes it unless your organization's defaults say so. See [Clean up](#clean-up).
-- **Commands run as the non-root `boxd` user in `/home/boxd`**, with passwordless `sudo`. Pass `working_dir='/home/boxd/project'` to give the agent a project directory. It is created on a new machine.
-- **The default image is Ubuntu 24.04 with git, Python 3, uv, Node.js and `rg`**, but not your project's dependencies. Install them in a machine and save it as a snapshot, a copy new machines can start from, with `boxd snapshots save`. Then pass `snapshot='my-snapshot'`. An unknown snapshot, or one still saving, fails on first use with `WorkspaceUnavailableError`.
-- **It can reach the internet, and has a public HTTPS address** that serves the port its code listens on. See [Security model](#security-model).
+- `Coder` creates it when the run starts, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
+- It keeps its disk until you delete it. boxd suspends it when idle, but never deletes it unless your organization's defaults say so. See [Clean up](#clean-up).
+- Commands run as the non-root `boxd` user in `/home/boxd`, with passwordless `sudo`. Pass `working_dir='/home/boxd/project'` to give the agent a project directory. It is created on a new machine.
+- The default image is Ubuntu 24.04 with git, Python 3, uv, Node.js and `rg`, but not your project's dependencies. Install them in a machine and save it as a snapshot, a copy new machines can start from, with `boxd snapshots save`. Then pass `snapshot='my-snapshot'`. An unknown snapshot, or one still saving, fails on first use with `WorkspaceUnavailableError`.
+- It can reach the internet, and has a public HTTPS address that serves the port its code listens on. See [Security model](#security-model).
 
 ## Continue in the same machine
 

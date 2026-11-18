@@ -56,11 +56,11 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 `Coder`'s shell and file tools now run in the sandbox. For a narrower agent, use [`Shell`](https://pydantic.dev/docs/ai/harness/shell/), [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) or your own tools on [`ctx.workspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#using-the-workspace-in-tools).
 
-- **`Coder` creates it when the run starts**, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
-- **It keeps running, and billing, after the run.** See [Clean up](#clean-up).
-- **It pauses after 1 hour**, and the next run resumes it. That is `sandbox_timeout=3600`, the most E2B's Hobby plan allows. On a Pro plan, pass up to `sandbox_timeout=86400`.
-- **Commands start in `/home/user`.** Pass `working_dir='/home/user/project'` to keep the project out of the home directory. It is created on a new sandbox.
-- **The default template has Python and git**, but not your project's dependencies or ripgrep. A template is the image a new sandbox starts from. Bake them into your own E2B [template](https://e2b.dev/docs/template/quickstart) and pass `template='my-template'`, or install them [before the run](#prepare-a-sandbox-before-the-run).
+- `Coder` creates it when the run starts, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
+- It keeps running, and billing, after the run. See [Clean up](#clean-up).
+- It pauses after 1 hour, and the next run resumes it. That is `sandbox_timeout=3600`, the most E2B's Hobby plan allows. On a Pro plan, pass up to `sandbox_timeout=86400`.
+- Commands start in `/home/user`. Pass `working_dir='/home/user/project'` to keep the project out of the home directory. It is created on a new sandbox.
+- The default template has Python and git, but not your project's dependencies or ripgrep. A template is the image a new sandbox starts from. Bake them into your own E2B [template](https://e2b.dev/docs/template/quickstart) and pass `template='my-template'`, or install them [before the run](#prepare-a-sandbox-before-the-run).
 
 ## Continue in the same sandbox
 
