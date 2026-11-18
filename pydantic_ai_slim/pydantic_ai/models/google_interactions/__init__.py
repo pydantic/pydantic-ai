@@ -427,8 +427,9 @@ class GoogleInteractionsModel(Model[Client]):
         if 'google_labels' in settings:
             request['labels'] = _LABELS.validate_python(settings['google_labels'])
         tier = settings.get('google_interactions_service_tier')
-        # Google Cloud documents its tiers only as headers that use Provisioned Throughput first; a body tier
-        # could silently skip that reserved capacity, so the shared setting applies on the Gemini API only.
+        # Google Cloud documents Flex and Priority only as headers that use Provisioned Throughput first, and its one
+        # body tier, `deferred`, only for stored background requests. A body tier could silently skip that reserved
+        # capacity, so the shared setting applies on the Gemini API only.
         if tier is None and not self.client.vertexai:
             tier = {'default': 'standard', 'flex': 'flex', 'priority': 'priority'}.get(
                 settings.get('service_tier', 'auto')
@@ -778,7 +779,8 @@ class GoogleInteractionsModel(Model[Client]):
         if not signed:
             # Gemini rejects a turn whose first function call has no signature, which is the case for history from
             # another provider or transport. The SDK's step type has no `signature`, but the API accepts the documented
-            # placeholder that `GoogleModel` also sends: https://ai.google.dev/gemini-api/docs/thought-signatures#faqs
+            # placeholder that `GoogleModel` also sends:
+            # https://cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures#using-rest-or-manual-handling
             step['signature'] = _SKIP_THOUGHT_SIGNATURE
         return step
 
