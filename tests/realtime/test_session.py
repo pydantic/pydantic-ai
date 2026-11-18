@@ -9869,13 +9869,17 @@ async def test_tools_from_one_response_share_a_run_step() -> None:
     assert seen_steps[0] == seen_steps[1]
 
 
-def _ordered_events_agent() -> Agent[None, str]:
-    """Two tools where the *second* call finishes first, so completion order != call order."""
+def _ordered_events_agent(quick_landed: asyncio.Event) -> Agent[None, str]:
+    """Two tools where the *second* call finishes first, so completion order != call order.
+
+    `slow` returns only once `quick_landed` is set.
+    """
     agent: Agent[None, str] = Agent()
 
     @agent.tool_plain
     async def slow() -> str:
-        await asyncio.sleep(0.05)
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await quick_landed.wait()
         return 'slow'
 
     @agent.tool_plain
@@ -9889,8 +9893,16 @@ async def test_parallel_ordered_events_emits_results_in_call_order() -> None:
     # `parallel_ordered_events` promises parallel execution with events in call order. The session used
     # to read the mode only to spot `'sequential'`, so this fell through to plain parallel and results
     # streamed in completion order — the setting silently did nothing.
-    agent = _ordered_events_agent()
-    conn = FakeRealtimeConnection(
+    quick_result_sent = asyncio.Event()
+
+    class _QuickResultConnection(FakeRealtimeConnection):
+        async def send_input(self, content: RealtimeInput) -> None:
+            await super().send_input(content)
+            if isinstance(content, ToolResult) and content.tool_call_id == 'tc2':
+                quick_result_sent.set()
+
+    agent = _ordered_events_agent(quick_result_sent)
+    conn = _QuickResultConnection(
         [
             ToolCall(tool_call_id='tc1', tool_name='slow', args='{}'),
             ToolCall(tool_call_id='tc2', tool_name='quick', args='{}'),
@@ -9913,7 +9925,8 @@ async def test_parallel_ordered_events_emits_results_in_call_order() -> None:
 async def test_parallel_default_still_emits_results_in_completion_order() -> None:
     # The other side of the branch: the default mode is unchanged, so the ordering buffer only engages
     # where it was asked for.
-    agent = _ordered_events_agent()
+    quick_result_seen = asyncio.Event()
+    agent = _ordered_events_agent(quick_result_seen)
     conn = FakeRealtimeConnection(
         [
             ToolCall(tool_call_id='tc1', tool_name='slow', args='{}'),
@@ -9922,10 +9935,14 @@ async def test_parallel_default_still_emits_results_in_completion_order() -> Non
         ]
     )
     model = FakeRealtimeModel(conn)
+    results: list[str] = []
     async with agent.realtime(model).session() as session:
-        events = [e async for e in session]
+        async for e in session:
+            if isinstance(e, FunctionToolResultEvent):
+                results.append(e.part.tool_name)
+                if e.part.tool_name == 'quick':
+                    quick_result_seen.set()
 
-    results = [e.part.tool_name for e in events if isinstance(e, FunctionToolResultEvent)]
     assert results == ['quick', 'slow']
 
 
