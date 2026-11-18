@@ -28,8 +28,9 @@ messages = result.all_messages()
 assert isinstance(result.output, DeferredToolRequests)
 results = DeferredToolResults()
 for call in result.output.approvals:
-    # Your decision logic (ask a human, check a policy); here an exact-match allowlist
-    allowed = call.args_as_dict()['path'] in {'tmp/cache.txt'}
+    # Your decision logic (ask a human, check a policy) on the validated args the tool will receive;
+    # here an exact-match allowlist
+    allowed = result.output.validated_args[call.tool_call_id]['path'] in {'tmp/cache.txt'}
     # True approves; ToolDenied(message) denies and tells the model why
     results.approvals[call.tool_call_id] = allowed or ToolDenied('That file may not be deleted')
 

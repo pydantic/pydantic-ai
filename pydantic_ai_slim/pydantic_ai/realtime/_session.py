@@ -139,9 +139,9 @@ from ._utils import (
     InstructionChangeContext,
     SystemPromptContext,
     SystemPromptText,
+    pcm_from_wav,
     render_instruction_change,
     replay_recorded_system_prompts_in_place,
-    seed_pcm_audio,
 )
 from .codec import (
     AudioDelta,
@@ -1991,10 +1991,10 @@ class RealtimeSession:
             # raw PCM — matching the seeding path — so a natural round-trip (retain a turn's audio,
             # then `send()` it back) doesn't stream the WAV header into the buffer as noise.
             await self.send_audio(
-                seed_pcm_audio(
-                    audio=content,
-                    provider_name=self._provider_name or 'realtime',
+                pcm_from_wav(
+                    content.data,
                     sample_rate=self.audio_input_sample_rate,
+                    error_prefix='Cannot send WAV audio through `session.send()`',
                 )
             )
         elif content.media_type == 'audio/pcm':
