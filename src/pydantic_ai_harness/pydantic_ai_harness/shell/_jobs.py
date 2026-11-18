@@ -14,11 +14,13 @@ PowerShell there.
 from __future__ import annotations
 
 import base64
+import heapq
 import json
 import shlex
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import AnyStr
 
 import anyio
 
@@ -434,11 +436,18 @@ class Job:
             raise WorkspaceError(result.stderr.strip() or f'Unable to read job log {path!r}.')
         return base64.b64decode(result.stdout)
 
-    async def tail(self, path: str, max_bytes: int) -> bytes:
-        """The last `max_bytes` bytes of `path`."""
+    async def tail(self, path: str, max_bytes: int, *, secrets: Sequence[bytes] = ()) -> bytes:
+        """The last `max_bytes` bytes of `path`, starting after any of `secrets` the cut would split."""
+        return (await self.read_tail(path, max_bytes, secrets=secrets))[1]
+
+    async def read_tail(self, path: str, max_bytes: int, *, secrets: Sequence[bytes] = ()) -> tuple[int, bytes]:
+        """The offset and bytes of `tail`, so a split secret leaves no fragment for masking to miss."""
         size = await self.size(path)
         start = max(0, size - max_bytes)
-        return await self.read(path, start, size - start)
+        pad = min(start, max(map(len, secrets), default=0))
+        data = await self.read(path, start - pad, size - start + pad)
+        cut = past_secrets(data, pad, secrets)
+        return start - pad + cut, data[cut:]
 
     async def kill(self) -> None:
         """Stop the job's process group: `SIGTERM`, then `SIGKILL` if it is still running after the grace period."""
@@ -504,3 +513,29 @@ class Job:
             await self.workspace.remove(self.directory)
         except FileNotFoundError:
             pass
+
+
+def secret_spans(data: AnyStr, secrets: Sequence[AnyStr], start: int = 0) -> Iterator[tuple[int, int, int]]:
+    """Every occurrence of a secret in `data` that ends after `start`, overlapping ones included.
+
+    Each is `(start, -length, index in secrets)`, by start and, at a shared start, longest first. The occurrences of
+    each secret are merged as they are found, so memory grows with the number of secrets, not of occurrences.
+    """
+    return heapq.merge(*(_occurrences(data, secret, number, start) for number, secret in enumerate(secrets)))
+
+
+def _occurrences(data: AnyStr, secret: AnyStr, number: int, start: int) -> Iterator[tuple[int, int, int]]:
+    index = data.find(secret, max(0, start - len(secret) + 1))
+    while index != -1:
+        yield index, -len(secret), number
+        index = data.find(secret, index + 1)
+
+
+def past_secrets(data: AnyStr, cut: int, secrets: Sequence[AnyStr]) -> int:
+    """`cut`, moved past the end of every occurrence of a secret in `data` that spans it, or that a move makes span."""
+    # By start, so a span the cut moves into is still ahead of it, and none after one that starts at the cut is.
+    for start, negative_length, _ in secret_spans(data, secrets, cut):
+        if start >= cut:
+            break
+        cut = max(cut, start - negative_length)
+    return cut
