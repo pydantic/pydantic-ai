@@ -252,29 +252,22 @@ async def _close_quietly(client: AsyncDaytona) -> None:
     with anyio.move_on_after(_TEARDOWN_TIMEOUT, shield=True) as deadline:
         try:
             try:
-                await _settle_event_socket(client)
+                # Every `client.get()` starts the SDK's event-socket connect in the background, and
+                # `close()` landing between the websocket upgrade and engine.io's OPEN packet leaks the
+                # websocket's connection, as destroying a sandbox through a client of its own did. The SDK
+                # has no public way to wait for the connect, which it bounds at 5 seconds; both attributes
+                # are present in `daytona` 0.226.1, the declared floor.
+                # TODO: Drop once the SDK closes the websocket itself: https://github.com/daytonaio/clients/issues/676
+                dispatcher = client._event_dispatcher  # pyright: ignore[reportPrivateUsage]
+                connecting = None if dispatcher is None else dispatcher._connect_task  # pyright: ignore[reportPrivateUsage]
+                if connecting is not None and not connecting.done():
+                    await asyncio.wait([connecting])
             finally:
                 await client.close()
         except Exception as error:
-            logger.warning('Could not close the Daytona API client: %r', error)
+            logger.warning('Could not cleanly close the Daytona API client: %r', error)
     if deadline.cancelled_caught:
         logger.warning('Closing the Daytona API client did not complete within %ss.', _TEARDOWN_TIMEOUT)
-
-
-async def _settle_event_socket(client: AsyncDaytona) -> None:
-    """Wait for the SDK's event-socket connect in flight, so closing the client does not leak it.
-
-    Every `client.get()` starts that connect in the background, and `close()` landing between the
-    websocket upgrade and engine.io's OPEN packet leaks the websocket's connection. Destroying a sandbox
-    through a client of its own closes it within that window. The SDK bounds the connect at 5 seconds.
-
-    TODO: Drop once the SDK closes the websocket itself: https://github.com/daytonaio/clients/issues/676
-    """
-    # The SDK has no public way to wait for the connect; both attributes exist since `daytona` 0.226.1.
-    dispatcher = client._event_dispatcher  # pyright: ignore[reportPrivateUsage]
-    connecting = None if dispatcher is None else dispatcher._connect_task  # pyright: ignore[reportPrivateUsage]
-    if connecting is not None and not connecting.done():
-        await asyncio.wait([connecting])
 
 
 async def _delete_session(sandbox: AsyncSandbox, session_id: str) -> None:
