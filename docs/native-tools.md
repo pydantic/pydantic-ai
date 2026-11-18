@@ -779,7 +779,7 @@ The local tool is found by its kind, not its name. The native tool is sent when 
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI Responses | ✅ | On models whose profile sets [`openai_responses_supports_computer_tool`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_computer_tool]. OpenAI's tool can't zoom, triple-click, hold a key, press or release a mouse button, or read the pointer position. |
+| OpenAI Responses | ✅ | On GPT-5.4 (not nano), GPT-5.5, GPT-5.6 and GPT-6 through OpenAI and Bedrock Mantle. OpenAI's tool can't zoom, triple-click, hold a key, press or release a mouse button, or read the pointer position. |
 
 ## Memory Tool
 

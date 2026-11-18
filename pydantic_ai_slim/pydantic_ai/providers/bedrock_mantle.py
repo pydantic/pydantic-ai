@@ -5,6 +5,7 @@ from typing import Literal, assert_never, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import (
     OpenAIModelProfile,
@@ -73,12 +74,11 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
         # represented by Pydantic AI (web search, code interpreter, file search, image generation, ...):
         # https://docs.aws.amazon.com/bedrock/latest/userguide/tool-use-server-side.html
         # Disable the base profile's native tools to fail with a clean UserError rather than an opaque
-        # provider error.
-        supported_native_tools=frozenset(),
-        # OpenAI's native `computer` tool works on the `/openai/v1` endpoint as on OpenAI's own API, for the
-        # models that take it there.
-        openai_responses_supports_computer_tool=interface == 'openai-responses'
-        and _is_computer_use_model(base_model_name),
+        # provider error. OpenAI's native `computer` tool is the exception: it works on the `/openai/v1` endpoint
+        # as on OpenAI's own API, for the models that take it there.
+        supported_native_tools=frozenset({ComputerTool})
+        if interface == 'openai-responses' and _is_computer_use_model(base_model_name)
+        else frozenset(),
     )
     if interface == 'responses':
         # Mantle's `/v1/responses` endpoint rejects `tool_choice='required'` for GPT-OSS ("Supported options:
