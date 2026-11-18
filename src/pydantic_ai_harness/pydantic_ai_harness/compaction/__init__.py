@@ -16,6 +16,7 @@ from pydantic_ai_harness.compaction._events import REPORT_CONTEXT_USAGE_EVENTS, 
 from pydantic_ai_harness.compaction._fallback_compaction import FallbackCompaction
 from pydantic_ai_harness.compaction._manual import compact_now
 from pydantic_ai_harness.compaction._pinning import PinSource, is_pinned, pin, reinject_pinned
+from pydantic_ai_harness.compaction._prune_tool_results import PruneToolResults
 from pydantic_ai_harness.compaction._receipts import TranscriptHandleProvider
 from pydantic_ai_harness.compaction._relevance_compaction import RelevanceCompaction
 from pydantic_ai_harness.compaction._report_context_usage import ReportContextUsage
@@ -29,7 +30,7 @@ from pydantic_ai_harness.compaction._shared import (
 from pydantic_ai_harness.compaction._sliding_window_compaction import SlidingWindowCompaction
 from pydantic_ai_harness.compaction._summarizing_compaction import SummarizingCompaction, drain_summary_events
 from pydantic_ai_harness.compaction._tiered_compaction import TieredCompaction
-from pydantic_ai_harness.compaction._warn_near_limits import WarningKind, WarnNearLimits
+from pydantic_ai_harness.compaction._warn_near_limits import LimitWarningPart, WarningKind, WarnNearLimits
 
 __all__ = [
     'DEFAULT_CONTEXT_WINDOW',
@@ -43,7 +44,9 @@ __all__ = [
     'ReportContextUsage',
     'DeduplicateFileReads',
     'FallbackCompaction',
+    'LimitWarningPart',
     'PinSource',
+    'PruneToolResults',
     'SlidingWindowCompaction',
     'SummarizingCompaction',
     'SupportsFocus',

@@ -9,6 +9,9 @@ description: "Save Pydantic AI agent run snapshots to memory, files, SQLite, Mon
 
 A snapshot holds the run's message history, not everything around it: capability state outside the messages, workspace files, and resuming from the middle of a step are tracked separately (see `pydantic-ai-harness` issues #149 and #196). For recovery inside a step, run the agent on [durable execution](../durable_execution/overview.md), which `StepPersistence` works alongside.
 
+!!! note "Storing sessions"
+    To store a chat session or any other conversation you pick up later, use core's [`ConversationStore`](../persistence.md#using-a-conversation-store): it keeps the conversation's usage and deferred tool requests along with its messages, stores each message once, and catches conflicting saves. `StepPersistence` remains supported for recovering runs: the step-event trail, the tool-effect ledger, and continuing or forking a run from a settled step. To move sessions you already stored with it, see [Moving sessions to a `ConversationStore`](#moving-sessions-to-a-conversationstore).
+
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/step_persistence/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
@@ -367,9 +370,9 @@ pip/uv-add "pydantic-ai-harness[mongodb]"
 
 ### What `PostgresStepStore` creates on first use
 
-The store creates its schema on the first operation of each store instance, reads included: the five tables listed under [Backends](#backends), indexes on `conversation_id` and `parent_run_id` on `{table}_runs`, `(run_id, seq)` indexes on `{table}_events` and `{table}_snapshots`, and a unique index on `(run_id, idempotency_key)` on `{table}_events` that covers only rows whose key is not `NULL`, so `None` retains append behavior. Every statement is `CREATE ... IF NOT EXISTS`, and they run in one transaction that first takes `pg_advisory_xact_lock` on a hash of `table`. Its default `PostgresMediaStore` creates `{table}_media` the same way on its own first use. Four consequences worth knowing before pointing the store at an existing database:
+The store creates its schema on the first operation of each store instance, reads included: the six tables listed under [Backends](#backends), indexes on `conversation_id` and `parent_run_id` on `{table}_runs`, `(run_id, seq)` indexes on `{table}_events` and `{table}_snapshots`, and a unique index on `(run_id, idempotency_key)` on `{table}_events` that covers only rows whose key is not `NULL`, so `None` retains append behavior. Every statement is `CREATE ... IF NOT EXISTS`, and they run in one transaction that first takes `pg_advisory_xact_lock` on a hash of `table`. Its default `PostgresMediaStore` creates `{table}_media` the same way on its own first use. Four consequences worth knowing before pointing the store at an existing database:
 
-- The statements are skipped when all of the store's tables already exist, so only the call that creates them needs `CREATE` on the schema. After that, a role granted `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the tables is enough. A role without `CREATE` on a database missing a table fails on the first operation, not at construction.
+- The statements are skipped when all of the store's tables already exist, so only the call that creates them needs `CREATE` on the schema. After that, a role granted `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the tables is enough, plus `SELECT` and `INSERT` on `{table}_media` unless you pass `media_store=None`. A role without `CREATE` on a database missing a table fails on the first operation, not at construction.
 - Processes that start together wait on the advisory lock instead of colliding in the catalog, which `CREATE TABLE IF NOT EXISTS` alone does not rule out. The lock is released when the transaction ends.
 - `table` must match `[a-z_][a-z0-9_]*` and is limited to 40 characters, so that every derived table, index, and constraint name fits PostgreSQL's 63-byte identifier limit. Lowercase only, because PostgreSQL folds unquoted identifiers and `'Orders'` would share tables with `'orders'`. Anything else raises `ValueError` at construction.
 - There is no migration step. An existing table with one of these names and a different layout is left as it is, and the mismatch surfaces on the first statement that uses a missing column.
@@ -567,11 +570,70 @@ Pydantic AI providers download the bytes from a URL when the target model does n
 
 DynamoDB, Redis, GCS, and other backends are not built in. Write your own `StepStore` (about ten methods on a Protocol) or your own `MediaStore` (five methods: `put`, `get`, `exists`, `public_url`, `get_metadata`) and pass it via `store=` / `media_store=`.
 
+## Moving sessions to a `ConversationStore`
+
+Save each session to a `ConversationStore` once, then load and save around each run as [Using a conversation store](../persistence.md#using-a-conversation-store) shows. Where a session's history lives decides what to copy:
+
+- If you saved [conversation heads](#conversation-heads-and-background-names) with `SqliteConversationStore`, each head is the conversation, including edits between runs such as compaction. `move_heads` copies every head.
+- Otherwise, a run's latest `complete` snapshot holds the history it continued plus what the run added, so the newest run of a conversation that has one holds the conversation up to that point. Call `move_conversation` for each ID your application passed as `conversation_id=` for a session. `list_runs()` lists every run, but core gives each run a fresh conversation ID when none is passed, so one-shot runs and delegates each have one of their own.
+
+Run `move_heads` while nothing else writes to the store: `listing` pages by last activity, so a head saved during the move can shift the pages and be skipped.
+
+```python
+from pydantic_ai import Conversation
+from pydantic_ai.conversation_store import ConversationConflict, ConversationStore
+from pydantic_ai_harness.step_persistence import StepStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+
+
+async def save_once(conversations: ConversationStore, conversation: Conversation, scope: str | None) -> None:
+    try:
+        await conversations.save(conversation, scope=scope)
+    except ConversationConflict:
+        pass  # moved by an earlier pass
+
+
+async def move_conversation(
+    steps: StepStore, conversations: ConversationStore, conversation_id: str, *, scope: str | None = None
+) -> None:
+    runs = [run for run in await steps.list_runs(conversation_id=conversation_id) if run.parent_run_id is None]
+    if not runs:
+        return
+    snapshot = await steps.latest_snapshot(run_id=runs[-1].run_id)
+    events = await steps.list_events(run_id=runs[-1].run_id)
+    responses = [event.timestamp for event in events if event.kind == 'model_request_completed']
+    if snapshot is None or (responses and snapshot.timestamp < max(responses)):
+        raise ValueError(f'{conversation_id!r} has a turn no complete snapshot holds: settle its tool calls first')
+    conversation = Conversation(messages=snapshot.messages, conversation_id=conversation_id)
+    await save_once(conversations, conversation, scope)
+
+
+async def move_heads(
+    heads: SqliteConversationStore, conversations: ConversationStore, *, scope: str | None = None
+) -> None:
+    offset = 0
+    while page := await heads.listing(offset=offset):
+        for summary in page:
+            saved = await heads.get(conversation_id=summary.id)
+            await save_once(conversations, Conversation(messages=saved.messages, conversation_id=summary.id), scope)
+        offset += len(page)
+```
+
+- The moved conversation starts with empty `usage` and no `deferred_tool_requests`, since neither source records them.
+- `move_conversation` raises for a session whose newest run got a model response after its latest `complete` snapshot, such as a run waiting on an approval or a deferred result, or one stopped mid-tool. No `complete` snapshot holds that turn, so settle the calls first by continuing the run, then move the session.
+- `save_once` skips a conversation the store already has, so a pass that stops partway can be run again to move the rest, and leaves conversations already moved, or saved since, unchanged. Pass `scope=` to record whose conversation it is, and the same `scope=` on every pass: a conversation the store has under another scope is skipped too.
+- `move_heads` moves archived heads too, and saves each head as a conversation of its own, so the `forked_from` link a head records isn't kept.
+- Keep `StepPersistence` on the agent if you still need the step-event trail, the tool-effect ledger, or [Conversation Search](conversation-search.md), which reads its store.
+
 ## Conversation heads and background names
 
 `pydantic_ai_harness.step_persistence.conversations` provides
-`SqliteConversationStore`, `ConversationSummary`, and `SavedConversation` for
-multi-turn applications. A conversation head is separate from per-run checkpoints:
+`SqliteConversationStore`, `ConversationSummary`, and `SavedConversation`, the
+local session store behind CLAI's resume browser: alongside the messages it keeps
+CLAI's workspace, title, naming, and busy-process metadata. For conversations in
+an application, use core's `ConversationStore` instead, and see
+[Moving sessions to a `ConversationStore`](#moving-sessions-to-a-conversationstore)
+to copy heads already saved here. A conversation head is separate from per-run checkpoints:
 it includes accepted prompts and between-run edits such as compaction. Do not
 reconstruct it by concatenating overlapping run snapshots.
 

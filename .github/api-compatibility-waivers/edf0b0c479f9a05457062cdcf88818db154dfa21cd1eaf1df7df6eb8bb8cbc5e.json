@@ -1,5 +1,5 @@
 {
-  "against": "v2.69.0",
+  "against": "v2.70.0",
   "reason": "Harness 1.0 removes the 0.x deprecation shims (#12997): `pydantic_ai_harness.sub_agents._capability`, SubAgents.id: Attribute value was changed: field(default='sub_agents', kw_only=True) -> 'sub_agents'. Each removed path emitted a `HarnessDeprecationWarning` naming its replacement during 0.x. The options after a removed positional field are keyword-only, so an old positional call fails instead of shifting onto the next field.",
   "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13687"
 }

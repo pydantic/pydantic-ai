@@ -72,6 +72,7 @@ def test_moved_module_paths_are_gone(module: str) -> None:
         ('pydantic_ai_harness.media', 'DiskMediaStore'),
         ('pydantic_ai_harness.memory', 'FileStore'),
         ('pydantic_ai_harness.memory', 'InMemoryStore'),
+        ('pydantic_ai_harness.peers', 'PeerNetwork'),
         ('pydantic_ai_harness.planning', 'EventCallback'),
         ('pydantic_ai_harness.planning', 'PlanEvent'),
         ('pydantic_ai_harness.planning', 'PlanEventEmitter'),
