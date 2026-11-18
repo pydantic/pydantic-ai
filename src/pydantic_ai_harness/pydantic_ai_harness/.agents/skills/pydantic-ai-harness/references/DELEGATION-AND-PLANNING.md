@@ -449,7 +449,7 @@ Gotchas:
 
 Sets the unified `thinking` setting per model request. By default a request that only returns
 successful tool results gets `routine` effort (`'medium'`), and any other request (a user prompt, a
-failed, retried or denied tool result, output retry feedback) gets `deliberate` effort (`'high'`).
+tool result that isn't successful, output retry feedback) gets `deliberate` effort (`'high'`).
 
 ```python
 from pydantic_ai import Agent, RunContext
@@ -475,6 +475,8 @@ Gotchas:
   provider-specific settings (`anthropic_thinking`, `openai_reasoning_effort`) override it.
 - Each change is recorded as a `ModelSettingsDeltaPart`. Models with `supports_mid_conversation_effort`
   send it in place and keep the prompt cache; on others a change can invalidate the cache.
+- Only OpenAI Responses (GPT-6) applies an in-place change within a run. Anthropic and OpenRouter Claude
+  apply it from the next user turn, so routine steps inside a turn keep the turn's opening effort.
 
 ## BackgroundTools
 

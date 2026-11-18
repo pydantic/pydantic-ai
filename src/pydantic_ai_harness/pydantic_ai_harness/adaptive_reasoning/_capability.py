@@ -18,14 +18,14 @@ class AdaptiveReasoning(AbstractCapability[AgentDepsT]):
     """Set the unified `thinking` setting per model request instead of once per run.
 
     By default a request that only returns successful tool results gets `routine` effort, and every other request
-    (a new user prompt, a failed or retried tool call, retry feedback) gets `deliberate` effort. Pass `select` to
+    (a new user prompt, a tool result that isn't successful, retry feedback) gets `deliberate` effort. Pass `select` to
     replace that policy.
 
     ```python
     from pydantic_ai import Agent
     from pydantic_ai_harness import AdaptiveReasoning
 
-    agent = Agent('anthropic:claude-opus-5-5', capabilities=[AdaptiveReasoning(deliberate='high', routine='low')])
+    agent = Agent('openai:gpt-6-astra', capabilities=[AdaptiveReasoning(deliberate='high', routine='low')])
     ```
     """
 

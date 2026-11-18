@@ -21,7 +21,7 @@ pip/uv-add pydantic-ai-harness
 from pydantic_ai import Agent
 from pydantic_ai_harness import AdaptiveReasoning
 
-agent = Agent('{{ anthropic:large }}', capabilities=[AdaptiveReasoning(deliberate='high', routine='low')])
+agent = Agent('{{ openai:large }}', capabilities=[AdaptiveReasoning(deliberate='high', routine='low')])
 ```
 
 `AdaptiveReasoning` sets the unified `thinking` setting for each model request, the same setting the core [Thinking](../capabilities/thinking.md) capability sets once per run. Each provider maps the level to its own parameter, and a model that doesn't support thinking ignores it.
@@ -29,7 +29,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[AdaptiveReasoning(deliberat
 | The last request in the history | Effort |
 |---|---|
 | Only returns tool results, all successful | `routine` (default `'medium'`) |
-| Has a user prompt, a failed, retried or denied tool result, or retry feedback on the model's output | `deliberate` (default `'high'`) |
+| Has a user prompt, a tool result that isn't successful (failed, retried, denied or interrupted), or retry feedback on the model's output | `deliberate` (default `'high'`) |
 
 Both fields take any [`ThinkingLevel`][pydantic_ai.settings.ThinkingLevel].
 
@@ -47,7 +47,7 @@ def by_step(ctx: RunContext[object]) -> ThinkingLevel | None:
     return 'high' if ctx.run_step <= 2 else 'low'
 
 
-agent = Agent('{{ anthropic:large }}', capabilities=[AdaptiveReasoning(select=by_step)])
+agent = Agent('{{ openai:large }}', capabilities=[AdaptiveReasoning(select=by_step)])
 ```
 
 ## Composition
@@ -60,6 +60,8 @@ agent = Agent('{{ anthropic:large }}', capabilities=[AdaptiveReasoning(select=by
 ## Prompt caching
 
 Each change of effort is recorded in the request as a [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart]. A model whose profile sets `supports_mid_conversation_effort` sends the change in place in the conversation, so the cached prefix stays valid. On other models the effort is a request-level parameter, and changing it between requests can invalidate the provider's prompt cache. If that costs more than the reasoning tokens saved, use one effort for the run.
+
+Only OpenAI Responses applies an in-place change to the next step of the same run. Anthropic, and Claude models on OpenRouter, apply it from the next user turn with new input (see [Changing effort mid-conversation](../capabilities/thinking.md#changing-effort-mid-conversation)), so on those models the default policy's routine steps inside a turn keep the turn's opening effort and save no reasoning tokens.
 
 ## Durable execution
 
