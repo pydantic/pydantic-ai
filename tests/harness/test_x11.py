@@ -1,6 +1,7 @@
 """Tests for the desktop display's input and capture: `xdotool` and `scrot` commands, run through a backend's commands.
 
-`ScriptedDesktop` is a desktop `DockerContainerBackend` whose commands answer from a script instead of a container.
+`ScriptedDesktop` is a desktop `DockerContainerBackend` whose display commands answer from a script instead of a
+container.
 """
 
 from __future__ import annotations
@@ -69,6 +70,9 @@ PNG_OUTPUT = CommandResult(exit_code=0, stdout=base64.encodebytes(FAKE_SCREENSHO
 class ScriptedDesktop(DockerContainerBackend):
     """Records each display command and answers with the next scripted result (exit 0 and no output by default).
 
+    The display runs its commands through `_run_argv`, which doesn't start the display first, so that is what this
+    scripts.
+
     Starting the display always succeeds and is only counted. With `block_first`, the first command blocks until
     cancelled.
     """
@@ -76,7 +80,7 @@ class ScriptedDesktop(DockerContainerBackend):
     def __init__(self, *results: CommandResult | Exception, block_first: bool = False) -> None:
         super().__init__(image='my-desktop', desktop=True)
         self.results = list(results)
-        self.calls: list[tuple[WorkspaceCommand, bool, Mapping[str, str] | None]] = []
+        self.calls: list[tuple[WorkspaceCommand, Mapping[str, str]]] = []
         self.timeouts: list[float | None] = []
         self.starts = 0
         self.block_first = block_first
@@ -84,20 +88,13 @@ class ScriptedDesktop(DockerContainerBackend):
         assert self.display is not None
         self.screen: Display = self.display
 
-    async def run(
-        self,
-        command: WorkspaceCommand,
-        *,
-        shell: bool = False,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> CommandResult:
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
         await anyio.lowlevel.checkpoint()  # as a real command does, so a deadline can cut it short
-        if 'Xvfb' in str(command):
+        if 'Xvfb' in str(argv):
             self.starts += 1
             await anyio.sleep(0)  # a start takes a moment, so concurrent first uses overlap
             return CommandResult(exit_code=0, stdout='', stderr='')
-        self.calls.append((command, shell, env))
+        self.calls.append((argv, env))
         self.timeouts.append(timeout)
         if self.block_first and len(self.calls) == 1:
             self.started.set()
@@ -109,7 +106,7 @@ class ScriptedDesktop(DockerContainerBackend):
 
     @property
     def argvs(self) -> list[WorkspaceCommand]:
-        return [command for command, _, _ in self.calls]
+        return [command for command, _ in self.calls]
 
 
 @pytest.mark.parametrize(
@@ -164,7 +161,7 @@ class ScriptedDesktop(DockerContainerBackend):
 async def test_x11_computer_runs_one_xdotool_command_per_action(action: DisplayAction, argv: list[str]) -> None:
     desktop = ScriptedDesktop()
     await desktop.screen.act(action)
-    assert desktop.calls == [(['sh', '-c', INPUT, 'sh', *argv], False, {'DISPLAY': ':1'})]
+    assert desktop.calls == [(['sh', '-c', INPUT, 'sh', *argv], {'DISPLAY': ':1'})]
 
 
 @pytest.mark.parametrize(
