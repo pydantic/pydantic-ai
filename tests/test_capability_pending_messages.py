@@ -2238,6 +2238,7 @@ async def test_enqueue_at_deferred_tool_pause_is_recorded_without_another_model_
             timestamp=IsDatetime(),
             run_id=IsStr(),
             conversation_id=IsStr(),
+            metadata={'__pydantic_ai__': {'deferred_pause': True}},
         )
     )
 
