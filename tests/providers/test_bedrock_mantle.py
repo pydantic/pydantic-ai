@@ -223,11 +223,11 @@ def test_bedrock_converse_rejects_proprietary_openai() -> None:
 
 
 def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
-    # AWS serves GPT-5.6 Sol/Luna/Terra (#7793), GPT-6 Sol/Luna/Astra, and GPT-6.1 Sol on the Converse API (see
+    # AWS serves GPT-5.6 Sol/Luna/Terra (#7793), GPT-6 Sol/Luna/Astra, and GPT-6.1 Sol/Terra on the Converse API (see
     # `test_bedrock_openai_converse`) — unlike every other proprietary GPT model, they construct on
     # `BedrockConverseModel`. Converse rejects their sampling settings and takes their reasoning effort in the
     # Responses API shape; GPT-6 Astra and GPT-6.1 Sol can't turn reasoning off. Bedrock documents a 30-minute
-    # prompt-cache TTL for GPT-5.6.
+    # prompt-cache TTL for all of them.
     for base_name in (
         'gpt-5.6-sol',
         'gpt-5.6-luna',
@@ -236,16 +236,17 @@ def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
         'gpt-6-luna',
         'gpt-6-astra',
         'gpt-6.1-sol',
+        'gpt-6.1-terra',
     ):
-        retention = {'default_cache_retention': timedelta(minutes=30)} if base_name.startswith('gpt-5.6') else {}
         assert BedrockProvider.model_profile(f'openai.{base_name}') == {
             'bedrock_disallows_sampling_settings': True,
+            'bedrock_supports_stop_sequences': False,
             'bedrock_thinking_variant': 'openai_responses',
             'supports_thinking': True,
             'thinking_always_enabled': base_name in ('gpt-6-astra', 'gpt-6.1-sol'),
             # Converse takes video only on Nova.
             'supports_video_input': False,
-            **retention,
+            'default_cache_retention': timedelta(minutes=30),
         }
         model = BedrockConverseModel(f'us.openai.{base_name}', provider=BedrockProvider(region_name='us-west-2'))
         assert {
@@ -263,12 +264,15 @@ def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
     # GPT-6.1 Sol is served under both Converse routing prefixes.
     assert isinstance(infer_model('bedrock:global.openai.gpt-6.1-sol'), BedrockConverseModel)
     BedrockConverseModel('global.openai.gpt-6.1-sol', provider=BedrockProvider(region_name='us-west-2'))
+    assert isinstance(infer_model('bedrock:global.openai.gpt-6.1-terra'), BedrockConverseModel)
+    BedrockConverseModel('global.openai.gpt-6.1-terra', provider=BedrockProvider(region_name='us-west-2'))
 
 
-async def test_bedrock_converse_gpt_6_1_sol_drops_sampling_settings(
-    allow_model_requests: None, mocker: MockerFixture
+@pytest.mark.parametrize('model_name', ['us.openai.gpt-6.1-sol', 'us.openai.gpt-6.1-terra'])
+async def test_bedrock_converse_gpt_6_1_drops_sampling_settings(
+    allow_model_requests: None, mocker: MockerFixture, model_name: str
 ) -> None:
-    model = BedrockConverseModel('us.openai.gpt-6.1-sol', provider=BedrockProvider(region_name='us-west-2'))
+    model = BedrockConverseModel(model_name, provider=BedrockProvider(region_name='us-west-2'))
     agent = Agent(model=model, model_settings=ModelSettings(temperature=1.0, top_p=0.9))
 
     mock_converse = mocker.patch.object(model.client, 'converse')
@@ -345,7 +349,7 @@ def test_bedrock_mantle_profiles() -> None:
             'openai_supports_prompt_cache_breakpoints': True,
             'bedrock_mantle_interface': 'openai-responses',
             'openai_supports_minimal_reasoning_effort': False,
-            'openai_responses_tool_call_ids_are_response_scoped': True,
+            'tool_call_ids_are_response_scoped': True,
             'supported_native_tools': frozenset(),
         }
     )
@@ -357,19 +361,11 @@ def test_bedrock_mantle_profiles() -> None:
     # Every GPT-5.x model on Mantle's `/openai/v1` Responses endpoint resets tool-call IDs across
     # separate responses (verified live on 5.5 and 5.6), so response-scoping keys on the interface,
     # not the model version.
-    assert (
-        infer_model_profile('bedrock-mantle:openai.gpt-5.4').get('openai_responses_tool_call_ids_are_response_scoped')
-        is True
-    )
-    assert (
-        infer_model_profile('bedrock-mantle:openai.gpt-5.5').get('openai_responses_tool_call_ids_are_response_scoped')
-        is True
-    )
+    assert infer_model_profile('bedrock-mantle:openai.gpt-5.4').get('tool_call_ids_are_response_scoped') is True
+    assert infer_model_profile('bedrock-mantle:openai.gpt-5.5').get('tool_call_ids_are_response_scoped') is True
     # GPT-OSS on `/v1/responses` keeps globally-unique IDs, so it is not response-scoped.
     assert (
-        infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get(
-            'openai_responses_tool_call_ids_are_response_scoped', False
-        )
+        infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('tool_call_ids_are_response_scoped', False)
         is False
     )
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('bedrock_mantle_interface') == 'responses'

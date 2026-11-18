@@ -18,6 +18,7 @@ from ._warnings import (
 )
 
 if TYPE_CHECKING:
+    from .conversation import Conversation
     from .messages import (
         ModelMessage,
         ModelRequestAttempt,
@@ -265,7 +266,8 @@ class RetryModelRequest(Exception):
     [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] for
     the model that is about to serve it, so preparation a capability does there for that model is
     redone rather than inherited from the previous attempt, as are the model's own message preparation
-    and token counting.
+    and token counting. An attempt at another model than the step's also resolves the instructions
+    and model settings again, with that model as `ctx.model`.
     `before_model_request` and `wrap_model_request` are *not* re-run: they belong to the request as a
     whole, not to a single attempt.
     """
@@ -332,9 +334,25 @@ class AgentRunError(RuntimeError):
     message: str
     """The error message."""
 
+    _pydantic_ai_conversation: Conversation | None = None
+
     def __init__(self, message: str):
         self.message = message
         super().__init__(message)
+
+    @property
+    def conversation(self) -> Conversation | None:
+        """The conversation of the run that raised this, with the messages it got to, so it can still be stored.
+
+        It includes a partial response with `state='interrupted'`, and saving it to a
+        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] appends just what the run
+        added. It's set once the error leaves the `run`, `iter` or `run_stream` call or `async with` block,
+        so it's `None` when caught inside an `iter` or `run_stream` block, if the error didn't come out of
+        an [`Agent`][pydantic_ai.agent.Agent] run, or if it came out of a realtime session. To get the
+        conversation there, or for an exception raised by a tool's own code, use
+        [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation].
+        """
+        return self._pydantic_ai_conversation
 
     def __str__(self) -> str:
         return self.message
@@ -590,8 +608,10 @@ class UnexpectedModelBehavior(AgentRunError):
                 self.body = body
         super().__init__(message)
 
-    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
-        return self.__class__, (self.message, self.body)
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Keeps the state Pydantic AI attaches on the error's way out, like the failed run's conversation.
+        attached = {key: value for key, value in vars(self).items() if key.startswith(_ATTACHED_ATTR_PREFIX)}
+        return self.__class__, (self.message, self.body), attached or None
 
     def __str__(self) -> str:
         if self.body:
@@ -641,7 +661,7 @@ class ModelAPIError(AgentRunError):
     """The provider's machine-readable error code, if it sent one.
 
     For example `'rate_limit_exceeded'` or `'context_length_exceeded'` (OpenAI), `'ThrottlingException'` (Bedrock),
-    `'RESOURCE_EXHAUSTED'` (Google, xAI), or `'3051'` (Mistral).
+    `'RESOURCE_EXHAUSTED'` (Google, xAI), or `'3059'` (Mistral).
     """
 
     provider_error_type: str | None
@@ -718,8 +738,8 @@ class ModelQuotaExceededError(ModelAPIError):
     """Raised when the provider refused the request because the account's quota, credits, or billing is exhausted.
 
     Only raised when the provider says so explicitly, e.g. an HTTP 402, OpenAI's `insufficient_quota`,
-    Anthropic's `billing_error`, Bedrock's `ServiceQuotaExceededException`, a Gemini API `RESOURCE_EXHAUSTED` that
-    names a daily quota, or its `FAILED_PRECONDITION` asking to enable billing. Unlike a
+    Anthropic's `billing_error` or a reached spend limit, Bedrock's `ServiceQuotaExceededException`, a Gemini API
+    `RESOURCE_EXHAUSTED` that names a daily quota, or its `FAILED_PRECONDITION` asking to enable billing. Unlike a
     [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError], retrying after a wait won't help.
     """
 
@@ -819,8 +839,8 @@ class ModelTimeoutError(ModelConnectionError):
 class ModelRequestRejectedError(ModelAPIError):
     """Raised when the provider rejected the request itself, so sending it again unchanged won't succeed.
 
-    For example an HTTP 400 or 422, or a gRPC `INVALID_ARGUMENT`, when no more specific category applies. Its
-    subclasses say why, where the provider does:
+    For example an HTTP 400, 413 or 422, or a gRPC `INVALID_ARGUMENT`, when no more specific category applies.
+    Its subclasses say why, where the provider does:
     [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
     [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError], and
     [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError].

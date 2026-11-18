@@ -42,8 +42,11 @@ Set the light model's effort from the PR's complexity.
 Judge an S PR trivial only for string fixes or a clearly positive one-file docs update.
 State that judgment in the PR body.
 Until a size label exists, do not claim the trivial-S exception.
-Clean means douwebot `APPROVE` on the current head, with no douwebot comments on that head.
-Address every douwebot comment, including non-blocking comments.
+Clean means douwebot's latest non-dismissed completed verdict on the current head is `APPROVE`.
+It also means no douwebot findings on that head except settled optional findings.
+A settled optional finding is an inline comment on that approval that starts with `Optional:` and whose review thread is resolved.
+Blocking findings and review-body findings block, resolved or not. An unresolved optional finding blocks.
+Address every douwebot comment, including `Optional:` comments.
 After addressing comments, obtain a clean approval on the resulting head.
 Resolve every review thread.
 
@@ -57,7 +60,7 @@ A human approval does not substitute for douwebot.
 
 `PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
 Size S remains a manual judgment; review enforcement skips merge groups after admission.
-On M, L and XL, the `Gate: clean douwebot approval` status reads `failure` until douwebot approves the head.
+On M, L and XL, the `Gate: clean douwebot approval` status reads `failure` until the head has a clean douwebot approval.
 Its description `Requires a marked, successful douwebot approval on the current head.` means douwebot has not approved this head.
 If douwebot already reviewed the head, triage its findings in step 4; otherwise trigger douwebot as step 3 of the loop says. Do not debug that failure as a CI failure.
 
@@ -204,9 +207,34 @@ Commit refreshed catalog changes.
 The helper uses at most two requests and verifies completeness before replacing the catalog.
 Never fetch labels individually or pass raw label API responses.
 
-Keep the category label aligned with the PR's purpose: `bug`, `feature`, `docs`, `chore` or `dependency`. A refactor also carries `refactor`, alongside `chore`.
-A PR labelled `test-suite` or `github-actions` takes `chore`, never `bug`; `.github/workflows/package-label.yml` fails it otherwise.
+Keep the category label aligned with the PR's purpose: `bug`, `bug:unreleased`, `feature`, `docs`, `chore` or `dependency`. A refactor also carries `refactor`, alongside `chore`.
+A bug fix takes `bug:unreleased` in place of `bug` when no release shipped the defect. Remove `bug` if the PR carries it.
+Release notes leave `bug:unreleased` PRs out, because no user saw the bug.
+To check, find the commit that introduced the defect and the PR that merged it.
+A `v1` backport PR names that PR in its body.
+`gh pr list -R pydantic/pydantic-ai --base v1 --state merged --search '<number> in:body' --json mergeCommit` prints each backport's commit.
+Fetch the tags of `pydantic/pydantic-ai`, then run `git tag --contains <sha> --list 'v[0-9]*'` on the introducing commit and each backport commit.
+Ignore pre-release tags such as `v2.0.0b7`.
+When every output is then empty, no release shipped the defect.
+When you cannot identify the introducing commit, use `bug`.
+A PR labelled `test-suite` or `github-actions` takes `chore`, never `bug` or `bug:unreleased`.
+`.github/workflows/package-label.yml` fails such a PR when it lacks `chore` or carries `bug`.
 Add existing topic labels for every subject materially covered by the final title, body, and diff.
+Choose the `area:` and `provider:` topic labels this way:
+
+- Apply one or two `area:` labels when the change touches a subsystem in the catalog. The repo's own agentic workflows and bots take `area:agentic-workflows`; other repository infrastructure (CI, tests, routine dependency updates, contributor docs and skills) takes none.
+  A change to a package's extras or version constraints takes `area:packaging`.
+  Choose the subsystem whose code changes, not the API a reporter called.
+  A Harness capability built on a core concept takes that concept's area.
+  An engine label (`area:temporal`, `area:dbos`, `area:prefect`, `area:absurd` or `area:pgtask`) also takes `area:durable-exec`, which does not count toward the two.
+  A change labelled `pkg:evals`, `pkg:graph`, `pkg:clai2` or `pkg:clai` takes no `area:` label: its package label is its segment. The exception is `area:clai2-web-ui`, for a `pkg:clai2` change to its web UI.
+  `clai web` and `Agent.to_web()` live in `pydantic_ai_slim/pydantic_ai/` (`_cli/web.py`, `ui/_web/`), so a change to them is `pkg:core` and takes `area:web-chat-ui`.
+- Apply zero to two `provider:` labels, only when the behavior depends on a vendor endpoint. Leave them off when the change reproduces with `TestModel`.
+- Label a provider adapter's request or response mapping `area:models`. Label any other adapter change with the area of the feature it implements, such as `area:thinking` or `area:streaming`.
+- For an OpenAI-compatible vendor, apply `provider:<vendor>` when the catalog has one.
+  Add `provider:openai-compatible` when the change lands in the shared OpenAI classes, and apply it alone for a vendor without its own label or a custom `base_url`.
+  Never apply `provider:openai` to a compatible vendor.
+
 Ignore incidental references, checklist text, and verification boilerplate when choosing topics.
 Remove topic labels only when the final scope no longer supports those labels.
 Preserve size, priority, review, and automation labels. Do not create or rename labels unless the user requests that change or approves a cluster name under [PR clusters](#pr-clusters).
@@ -235,7 +263,7 @@ If creating or applying the label fails, apply neither. Tell the person driving 
 After the prefix, the title follows the root `AGENTS.md` convention.
 
 A `cluster:` label marks a time-bound work stream. It adds to the PR's topic labels and never replaces them.
-It is not an `area:` label. An `area:` label such as `area:ui-adapters` marks a permanent ownership area.
+It is not an `area:` label. An `area:` label such as `area:ui-adapters` marks a permanent subsystem.
 
 Detect clusters yourself. The people driving agents rarely name them, and a subagent does not know your sibling PRs.
 You usually notice a cluster because you started after another agent's work on the same theme, or because you coordinate with sibling PRs.
@@ -506,7 +534,7 @@ if the head changes, capture the new SHA and restart the loop.
      that access, or when the diff does not change guarded paths, apply the `douwebot` label. Do not
      push or touch review threads while the label is present. Require the triggered run to succeed,
      and verify that the PR head still equals the captured SHA after the label is removed.
-     Require douwebot `APPROVE` on that SHA with no douwebot comments on that head.
+     Require a clean douwebot approval on that SHA, as the [Merge bar](#merge-bar) defines it.
      A successful run alone does not satisfy the merge bar. A failure comment leaves the gate unsatisfied.
 
    Recheck that the live head is unchanged. Do not substitute a `pydanty:*` surface or another reviewer for a required review. Any valid
@@ -519,7 +547,7 @@ if the head changes, capture the new SHA and restart the loop.
    a finding exactly as they bind your first commit, and a bot cannot approve a scope expansion —
    its severity label carries no authority, so a `HIGH` on a defect that does not reproduce is a 👎.
    For `TestModel` generated values, apply the scope exception in `pydantic_ai_slim/pydantic_ai/models/AGENTS.md`.
-   Address every douwebot comment, including non-blocking comments, using the same evidence-based triage.
+   Address every douwebot comment, including `Optional:` comments, using the same evidence-based triage.
    Address every `PR Review Checks` finding the same way, `medium` findings included.
    Its findings sit inline, keyed `<!-- pr-review-checks finding=… -->`, or in its review body when GitHub rejected inline comments.
    An inline finding that an earlier run posted is not posted again, but it still counts toward the status. Find it in the earlier `PR Review Checks` threads.

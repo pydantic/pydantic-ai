@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import builtins
 import inspect
 import math
 import re
@@ -12,7 +11,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, TypeAlias, TypeGuard
+from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias, TypeGuard
 from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter
@@ -50,6 +49,7 @@ try:
         MountDir,
         OsFunction,
         OsHandler,
+        OSPolicy,
         ResourceLimits,
     )
 except ImportError as _import_error:  # pragma: no cover
@@ -87,6 +87,8 @@ if TYPE_CHECKING:
 CodeModeOSCallback = Callable[[OsFunction, tuple[object, ...], dict[str, object]], object]
 # Accepted by `CodeMode.os_access`: a ready-made OS implementation or a handler that decides each call.
 CodeModeOS = AbstractOS | OsHandler | CodeModeOSCallback
+# Accepted by `CodeMode.os_policy`: Monty's session policies, merged key by key over the defaults.
+CodeModeOSPolicy = OSPolicy
 # Accepted by `CodeMode.mount`: one or more host-directory mounts.
 CodeModeMount = MountDir | list[MountDir]
 
@@ -388,7 +390,7 @@ def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited
     }
 
 
-class _RunCodeArguments(RunCodeArgs):
+class _RunCodeArgs(RunCodeArgs):
     # Keeps the schema title the model has always been sent; the fields come from `RunCodeArgs`.
     pass
 
@@ -445,7 +447,7 @@ def _split_by_placement(
     return sandboxed, native
 
 
-_RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
+_RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArgs)
 _RUN_CODE_JSON_SCHEMA = _RUN_CODE_ADAPTER.json_schema()
 _RUN_CODE_ARGS_VALIDATOR: SchemaValidatorProt = _RUN_CODE_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
 # Used to serialize tool return values before sending into Monty (dump_python)
@@ -513,22 +515,38 @@ The sandbox uses Monty, a subset of Python. Key restrictions:
 # configured. Three states, because `mount` and `os` enable different things:
 # a `mount` only exposes filesystem paths, while environment and clock calls
 # require an `os` handler.
+_SLEEP_SENTENCE = '`time.sleep` and `asyncio.sleep` really wait.'
+_POLICY_CLOCK_SENTENCE = f'`datetime.datetime.now()`, `datetime.date.today()`, and `time.time()` read the clock configured for this sandbox. {_SLEEP_SENTENCE}'
 _NO_OS_RESTRICTION = (
     '- **No filesystem, environment, or clock**: `pathlib.Path` I/O, `os.getenv`/`os.environ`, '
     '`datetime.datetime.now()`, `datetime.date.today()`, and `time.time()` are unavailable here '
     '(no filesystem mount or OS handler is configured). `os` and `pathlib` import successfully, but '
-    'their I/O operations are not supported in this configuration. `time.sleep` and `asyncio.sleep` really wait.'
+    f'their I/O operations are not supported in this configuration. {_SLEEP_SENTENCE}'
 )
 _MOUNT_ONLY_NOTE = (
     '- **Mounted filesystem access**: `pathlib.Path` operations under the configured mount '
     'point(s) are routed to the host. `os.getenv`/`os.environ`, `datetime.datetime.now()`, '
-    '`datetime.date.today()`, and `time.time()` remain unavailable. `time.sleep` and `asyncio.sleep` really wait.'
+    f'`datetime.date.today()`, and `time.time()` remain unavailable. {_SLEEP_SENTENCE}'
 )
 _OS_ENABLED_NOTE = (
     '- **Configured OS access**: `pathlib.Path` operations, `os.getenv`/`os.environ`, '
     '`datetime.datetime.now()`, `datetime.date.today()`, and `time.time()` are routed to the OS '
-    'handler configured for this agent (availability depends on that configuration). '
-    '`time.sleep` and `asyncio.sleep` really wait.'
+    f'handler configured for this agent (availability depends on that configuration). {_SLEEP_SENTENCE}'
+)
+# The variants used when `os_policy` gives the sandbox a clock of its own: the notes above without
+# their "clock unavailable" or "clock routed to the handler" claim, plus the clock sentence.
+_NO_OS_WITH_CLOCK_NOTE = (
+    '- **No filesystem or environment**: `pathlib.Path` I/O and `os.getenv`/`os.environ` are unavailable here '
+    '(no filesystem mount or OS handler is configured). `os` and `pathlib` import successfully, but their I/O '
+    f'operations are not supported in this configuration. {_POLICY_CLOCK_SENTENCE}'
+)
+_MOUNT_ONLY_WITH_CLOCK_NOTE = (
+    '- **Mounted filesystem access**: `pathlib.Path` operations under the configured mount '
+    f'point(s) are routed to the host. `os.getenv`/`os.environ` remain unavailable. {_POLICY_CLOCK_SENTENCE}'
+)
+_OS_ENABLED_WITH_CLOCK_NOTE = (
+    '- **Configured OS access**: `pathlib.Path` operations and `os.getenv`/`os.environ` are routed to the OS '
+    f'handler configured for this agent (availability depends on that configuration). {_POLICY_CLOCK_SENTENCE}'
 )
 _MOUNT_LIFETIME_NOTE = (
     "- **Mount write lifetime**: writes through a `mode='overlay'` mount last only for the current "
@@ -561,19 +579,26 @@ final expression, returns a list with the printed text followed by the native co
 """
 
 
-def _base_description(*, has_os: bool, has_mount: bool) -> str:
+def _policy_has_clock(os_policy: CodeModeOSPolicy | None) -> bool:
+    """Whether `os_policy` gives the sandbox a clock of its own rather than routing it to `os_access`."""
+    return os_policy is not None and os_policy.get('datetime', 'call_host') != 'call_host'
+
+
+def _base_description(*, has_os: bool, has_mount: bool, has_clock: bool) -> str:
     """Assemble the `run_code` base description with the right OS-access restriction line.
 
     `os` routes environment, clock, and filesystem calls; a `mount` alone only
     exposes filesystem paths, so a mount-only sandbox must not advertise env or
     clock access (the model would generate calls that fail and burn retries).
+    `has_clock` says `os_policy` gives the sandbox a clock of its own, which the
+    note then advertises instead of calling it unavailable or routed to `os`.
     """
     if has_os:
-        restriction = _OS_ENABLED_NOTE
+        restriction = _OS_ENABLED_WITH_CLOCK_NOTE if has_clock else _OS_ENABLED_NOTE
     elif has_mount:
-        restriction = _MOUNT_ONLY_NOTE
+        restriction = _MOUNT_ONLY_WITH_CLOCK_NOTE if has_clock else _MOUNT_ONLY_NOTE
     else:
-        restriction = _NO_OS_RESTRICTION
+        restriction = _NO_OS_WITH_CLOCK_NOTE if has_clock else _NO_OS_RESTRICTION
     if has_mount:
         restriction = f'{restriction}\n{_MOUNT_LIFETIME_NOTE}'
     return f'{_RUN_CODE_DESCRIPTION_HEAD}\n{restriction}\n{_RUN_CODE_DESCRIPTION_TAIL}'
@@ -871,11 +896,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     stability), pass a `tool_selector` that excludes tools with `with_native` set.
     """
 
-    # Monty resolves builtins before host names, so a tool with one of these names would never run.
-    # All of CPython's builtins, not just Monty's current set, so a builtin Monty adds later can't
-    # take over a tool that works today.
-    _BUILTIN_NAMES: ClassVar[frozenset[str]] = frozenset(dir(builtins))
-
     tool_selector: ToolSelector[AgentDepsT] = 'all'
     """Which wrapped tools to sandbox inside `run_code`. Non-matching tools
     are exposed as native tools."""
@@ -907,6 +927,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
+
+    os_policy: CodeModeOSPolicy | None = field(default=None, kw_only=True)
+    """Monty session policies (clock, timezone, sleep, randomness), merged key by key over the defaults.
+
+    See [`CodeMode.os_policy`][pydantic_ai_harness.CodeMode.os_policy].
+    """
 
     monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
         default=None, kw_only=True, repr=False
@@ -1007,9 +1033,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         sandbox = self.monty_sandbox
         if isinstance(sandbox, str):
             _check_monty_sandbox_url(sandbox)
-            run_state = MontyRunState(monty_sandbox_url=sandbox)
+            run_state = MontyRunState(monty_sandbox_url=sandbox, os_policy=self.os_policy)
         elif sandbox is None or callable(sandbox):
-            run_state = MontyRunState(pool_factory=sandbox)
+            run_state = MontyRunState(pool_factory=sandbox, os_policy=self.os_policy)
         else:
             raise UserError('`monty_sandbox` takes a URL or a function that returns the pool, not the pool itself.')
         await self.wrapped.__aenter__()
@@ -1137,11 +1163,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # static (it doesn't change per discovery), so it belongs in the cached description.
         has_os = self.os_access is not None
         has_mount = self.mount is not None
+        has_clock = _policy_has_clock(self.os_policy)
         if self.dynamic_catalog:
-            description = _base_description(has_os=has_os, has_mount=has_mount)
+            description = _base_description(has_os=has_os, has_mount=has_mount, has_clock=has_clock)
             self._last_catalog = self._render_catalog(callable_defs)
         else:
-            description = self._build_description(callable_defs, has_os=has_os, has_mount=has_mount)
+            description = self._build_description(
+                callable_defs, has_os=has_os, has_mount=has_mount, has_clock=has_clock
+            )
             self._last_catalog = ''
 
         if RUN_CODE_TOOL_NAME in native_tools:
@@ -1529,12 +1558,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         missing_return_schema: list[str] = []
         for safe_name, td in callable_defs.items():
             name = sanitized_to_original.get(safe_name, safe_name)
-            if safe_name in self._BUILTIN_NAMES:
-                raise UserError(
-                    f'Tool name {name!r} is a Python builtin, so code in `run_code` would call the builtin '
-                    'instead of the tool. Rename the tool, for example with `toolset.prefixed(...)` or '
-                    '`toolset.renamed(...)`.'
-                )
             if td.return_schema is None and name not in self._warned_missing_return_schema:
                 missing_return_schema.append(name)
         _warn_missing_return_schemas(missing_return_schema)
@@ -1543,9 +1566,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         return callable_defs, sanitized_to_original
 
     @staticmethod
-    def _build_description(callable_defs: dict[str, ToolDefinition], *, has_os: bool, has_mount: bool) -> str:
+    def _build_description(
+        callable_defs: dict[str, ToolDefinition], *, has_os: bool, has_mount: bool, has_clock: bool
+    ) -> str:
         """Render the `run_code` description: base prose + TypedDicts + function signatures."""
-        base = _base_description(has_os=has_os, has_mount=has_mount)
+        base = _base_description(has_os=has_os, has_mount=has_mount, has_clock=has_clock)
         catalog = CodeModeToolset._render_catalog(callable_defs)
         if not catalog:
             return base

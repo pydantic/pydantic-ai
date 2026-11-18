@@ -21,7 +21,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapWorkspace
-from pydantic_ai_harness.subagents import DelegationTasks, DelegationWorkspaceRequest
+from pydantic_ai_harness.sub_agents import DelegationTasks, DelegationWorkspaceRequest
 from pydantic_clai2 import open_stock_agent
 from pydantic_clai2.builtin_plugins.coder import CoderPlugin, CoderSettings, CoderSource
 from pydantic_clai2.config import Settings
@@ -291,8 +291,13 @@ def test_delegate_menu_settings_validate_save_and_reset() -> None:
         '{"light":{"model":"fixture:"}}',
         '{"light":{"model":"fixture:light","settings":{"thinking":"invalid"}}}',
         '{"light":{"model":"fixture:light","settings":{"base_url":"https://gateway.example/v1"}}}',
+        '{"light":{"model":"fixture:light","settings":{"api_key":"TEAM_KEY"}}}',
     ):
         assert source.problem(row, value) is not None
+    both = (
+        '{"light":{"model":"fixture:light","settings":{"base_url":"https://gateway.example/v1","api_key":"TEAM_KEY"}}}'
+    )
+    assert 'Set api_key and base_url in /model settings' in (source.problem(row, both) or '')
     with pytest.raises(ValidationError):
         CoderSettings.model_validate({'delegate_models': {'light': {'model': 'fixture:light', 'unexpected': True}}})
 

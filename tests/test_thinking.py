@@ -64,6 +64,7 @@ with try_import() as openai_imports:
         CerebrasModelSettings,
         _cerebras_settings_to_openai_settings,
     )
+    from pydantic_ai.models.ollama import OllamaModel
     from pydantic_ai.models.openai import (
         OpenAIChatModel,
         OpenAIChatModelSettings,
@@ -84,6 +85,7 @@ with try_import() as openai_imports:
     from pydantic_ai.models.zai import ZaiModel, _zai_settings_to_openai_settings
     from pydantic_ai.profiles.zai import _GLM_5_3_REASONING_EFFORT_MAPPING
     from pydantic_ai.providers.cerebras import CerebrasProvider
+    from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
@@ -845,6 +847,26 @@ class TestGoogleThinkingTranslation:
         settings: ModelSettings = {}
         result = GoogleModel._translate_thinking(flash_lite_image_model, settings, params)
         assert result == snapshot({'include_thoughts': True, 'thinking_level': 'HIGH'})
+
+    @pytest.mark.parametrize(
+        ('model_name', 'effort', 'expected'),
+        [
+            ('gemini-3-flash-preview', 'xhigh', 'HIGH'),
+            ('gemini-3-flash-preview', 'max', 'HIGH'),
+            ('gemini-4-hydrogen', 'high', 'HIGH'),
+            ('gemini-4-hydrogen', 'xhigh', 'XHIGH'),
+            ('gemini-4-hydrogen', 'max', 'XHIGH'),
+        ],
+    )
+    def test_thinking_xhigh_reaches_only_models_that_list_it(
+        self, model_name: str, effort: ThinkingEffort, expected: str
+    ):
+        """Only a model that lists `XHIGH` gets it: Gemini 3 models reject it, so they snap to `HIGH`."""
+        model = FunctionModel(_echo, profile=google_model_profile(model_name))
+        params = ModelRequestParameters(thinking=effort)
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(model, settings, params)
+        assert result == {'include_thoughts': True, 'thinking_level': expected}
 
     def test_thinking_false_maps_to_lowest_supported_level(self, flash_lite_image_model: FunctionModel):
         """`thinking=False` resolves through the lowest supported level, here `MINIMAL`."""
@@ -3230,3 +3252,20 @@ class TestCrossScopeThinkingOverrideWarning:
             "instead of `thinking`, or remove it from the model's `settings`."
         ]
         assert get_mock_chat_completion_kwargs(client)[0]['reasoning_effort'] == 'low'
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(('thinking', 'reasoning_effort'), [(False, 'none'), ('high', 'high')])
+async def test_ollama_gemma_4_maps_thinking(
+    allow_model_requests: None, thinking: ThinkingLevel, reasoning_effort: str
+) -> None:
+    """Gemma 4 on Ollama takes unified `thinking` as `reasoning_effort`, through the Google family profile.
+
+    Mocked because no Ollama Cloud key is available to record Gemma 4 with.
+    """
+    client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='4', role='assistant')))
+    model = OllamaModel('gemma4:31b', provider=OllamaProvider(openai_client=client))
+
+    await Agent(model).run('What is 2+2?', model_settings=ModelSettings(thinking=thinking))
+
+    assert get_mock_chat_completion_kwargs(client)[0]['reasoning_effort'] == reasoning_effort

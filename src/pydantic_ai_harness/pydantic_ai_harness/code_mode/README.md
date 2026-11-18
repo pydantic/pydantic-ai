@@ -146,7 +146,7 @@ Tools that match the selector are wrapped inside `run_code`. Non-matching tools 
 
 When you mark tools or whole toolsets `defer_loading=True` ([Tool Search](https://ai.pydantic.dev/tools-advanced/#tool-search)), `CodeMode` keeps them out of `run_code` while they're undiscovered and leaves their discovery to Tool Search; how they're offered until then depends on `dynamic_catalog`, below. `CodeMode` uses `RunContext.is_tool_available` to follow that reveal state. Once the model discovers a tool -- or loads the deferred capability that owns it -- `CodeMode` folds it into `run_code` like any other tool from then on, so it's callable from generated code. (The tool keeps `defer_loading=True`, which records what its author asked for; what changes is its availability for the run.)
 
-By default (`dynamic_catalog=True`), a discovery appends to the conversation instead of rewriting it, so the prompt cache survives it. The catalog of sandboxed-tool signatures goes into the agent instructions rather than `run_code`'s description, as a dynamic [`InstructionPart`](https://ai.pydantic.dev/api/messages/#pydantic_ai.messages.InstructionPart) with the id `toolset:code_mode:catalog` and [`on_change='append'`](https://ai.pydantic.dev/agent/#appending-instruction-changes): when a discovery adds a function, the updated catalog is appended to the message history. When Tool Search found the tool, a short system prompt part sent through [`ctx.enqueue`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.enqueue) also names the new functions; loading a capability appends only the catalog update. Deferred tools that `run_code` will take over are kept off the wire until they're found: the model finds them with the local `search_tools` tool, or by loading the capability that owns them, and from then on calls them from `run_code` only. The tool definitions and the instructions of earlier requests stay as they were sent.
+By default (`dynamic_catalog=True`), a discovery appends to the conversation instead of rewriting it, so the prompt cache survives it. The catalog of sandboxed-tool signatures goes into the agent instructions rather than `run_code`'s description, as a dynamic [`InstructionPart`](https://ai.pydantic.dev/api/messages/#pydantic_ai.messages.InstructionPart) with the id `toolset:code_mode:catalog` and [`on_change='append'`](https://ai.pydantic.dev/agent/#appending-instruction-changes): when a discovery adds a function, the updated catalog is appended to the message history. When Tool Search found the tool, a short `DiscoveryAnnouncementPart` (a [capability part](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts) in the application's voice, whose `tools` field lists the tools it announces) sent through [`ctx.enqueue`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.enqueue) also names the new functions; loading a capability appends only the catalog update. Deferred tools that `run_code` will take over are kept off the wire until they're found: the model finds them with the local `search_tools` tool, or by loading the capability that owns them, and from then on calls them from `run_code` only. The tool definitions and the instructions of earlier requests stay as they were sent.
 
 The catalog renders tool definitions into the instructions, including the names, descriptions and schemas an MCP server supplies. Tool definitions are trusted operator configuration: the model already receives them in the request's tool definitions with the same authority, so moving them into instructions gives them no authority they didn't have. Connect only MCP servers you trust. The discovery announcement names functions only by their Python identifiers, and keeps the tool names as found in its metadata.
 
@@ -820,8 +820,8 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(), RecordSni
 
 ## Filesystem and OS access
 
-Sandboxed code starts with no access to the host's files, environment, or clock. Two parameters add
-controlled filesystem, environment, or clock behavior.
+Sandboxed code starts with no access to the host's files, environment, or clock. Three parameters add
+controlled filesystem, environment, or clock behavior: `mount`, `os_access`, and `os_policy`.
 
 **`mount` -- share host directories.** Reach for this when the agent works with real files: analyzing
 a dataset you've dropped in a folder and writing a report back, editing a checkout, or processing a
@@ -894,7 +894,23 @@ made during the current `run_code` call, but Monty discards those writes before 
 do **not** reach the host. Pass `mode='read-write'` when later calls need to read the writes, or
 `mode='read-only'` to forbid writes.
 
-> Monty-specific: these parameters use Monty's `AbstractOS`/`MountDir` types.
+**`os_policy` -- set the sandbox's own clock and time zone.** Reach for this when the agent should
+see the current date in a particular time zone. It takes Monty's `OSPolicy`, merged key by key over
+`CodeMode`'s defaults, which route the clock, sleeps, and random seeding to `os_access`:
+
+```python
+from pydantic_ai_harness import CodeMode
+
+CodeMode(os_policy={'datetime': 'system', 'timezone': 'Europe/Paris'})
+```
+
+Sandboxed code then reads the worker's clock in that zone with no handler: `datetime.datetime.now()`,
+`astimezone()`, `%Z`, and `time.tzname` all agree. A `datetime` value in place of `'system'` freezes
+the clock; `{'timezone': 'Europe/Paris'}` alone keeps the clock on `os_access` but reads its naive
+local time in that zone rather than as UTC. Inside a Temporal workflow a `'system'` clock or
+`random_start` is read again on replay, so keep the defaults (or fixed values) there.
+
+> Monty-specific: these parameters use Monty's `AbstractOS`/`MountDir`/`OSPolicy` types.
 
 ## Sandbox restrictions
 
@@ -906,7 +922,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
   `hashlib`, `os.path`, `tomllib`, `annotationlib`)
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation
   and wait APIs are unavailable
-- No clock or randomness by default (`datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, unseeded `random`) -- they become available when an `os_access` handler implements them (the built-in `OSAccess` does); `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer
+- No clock or randomness by default (`datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, unseeded `random`) -- they become available when an `os_access` handler implements them (the built-in `OSAccess` does), or, for the clock, when `os_policy` sets one; `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer
 - No `import *`
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv`/`os.environ` need an `os_access` handler
 - Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability on the agent to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
@@ -928,6 +944,7 @@ CodeMode(
     defer_loading=False,
     os_access=None,       # OS behavior; custom handlers may expose host resources
     mount=None,           # host directories to share with the sandbox
+    os_policy=None,       # Monty clock/timezone/sleep/random policies over the defaults
     resource_limits=None, # sandbox time and memory caps; 'unlimited' removes them
     eager=False,          # run statements while the run_code call is still streaming
     speculate=None,       # read-only tool names, or 'declared', to start while run_code streams

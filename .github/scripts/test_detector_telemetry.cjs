@@ -18,7 +18,10 @@ const stepFinish = (input, output, cacheRead, cost) => JSON.stringify({
   part: { type: 'step-finish', reason: 'stop', cost, tokens: { input, output, reasoning: 6, cache: { read: cacheRead, write: 0 } } },
 });
 
-async function report(files, outcome = 'success', cancelled = false) {
+// The step outputs the detector writes for the plan of its last OpenCode run.
+const servedPlan = { DETECTOR_PROVIDER: 'zai-coding-plan', DETECTOR_PLAN: 'the backup Coding Plan' };
+
+async function report(files, outcome = 'success', cancelled = false, plan = servedPlan) {
   const spans = [];
   await execute(name => {
     if (name === 'fs') return {
@@ -32,7 +35,7 @@ async function report(files, outcome = 'success', cancelled = false) {
   }, {
     env: {
       RUNNER_TEMP: '/runner', DETECTOR_OUTCOME: outcome,
-      DETECTOR_JOB_STATUS: cancelled ? 'cancelled' : 'success', GITHUB_AW_OTEL_JOB_START_MS: '1000',
+      DETECTOR_JOB_STATUS: cancelled ? 'cancelled' : 'success', GITHUB_AW_OTEL_JOB_START_MS: '1000', ...plan,
     },
   });
   return spans;
@@ -55,6 +58,8 @@ test('OpenCode step usage is summed without model-authored text', async () => {
     'gh-aw.detector.outcome': 'success',
     'gh-aw.detector.reason': 'result_recorded',
     'gh-aw.detector.verdict': 'clean',
+    'gh-aw.detector.provider': 'zai-coding-plan',
+    'gh-aw.detector.plan': 'the backup Coding Plan',
     'gh-aw.detector.attempts': 1,
     'gh-aw.detector.requests': 2,
     'gh-aw.detector.usage_available': true,
@@ -131,6 +136,13 @@ test('a threat verdict is a completed detector result', async () => {
   });
   assert.equal(spans[0].attributes['gh-aw.detector.verdict'], 'blocked');
   assert.equal(spans[0].options.isError, false);
+});
+
+test('a detector that never ran OpenCode names no plan', async () => {
+  // A step that wrote no outputs leaves GitHub's expressions empty.
+  const spans = await report({}, 'failure', false, { DETECTOR_PROVIDER: '', DETECTOR_PLAN: '' });
+  assert.equal(spans[0].attributes['gh-aw.detector.provider'], 'unknown');
+  assert.equal(spans[0].attributes['gh-aw.detector.plan'], 'unknown');
 });
 
 test('missing evidence never reports a successful verdict or known zero usage', async () => {

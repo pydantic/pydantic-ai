@@ -69,6 +69,9 @@ they agree in the same PR.
   launch directory only after every `for_run`, and harness `Skills` (which reads its
   libraries in `for_run`) fails the turn. Wrap a function that never returns a
   workspace in `runtime/session.py`'s `WorkspacelessCapability`.
+  The one exception is a built-in that moves some conversations elsewhere, as
+  `sandbox` does: subclass `ConversationWorkspace` and answer `supplies` from the
+  run's own history, the same history `get_workspace` resolves from.
 - **CLAI moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a
   plugin method.
@@ -244,7 +247,8 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   A `run.permissions` no wider than the user's own applies at once, since it
   cannot widen anything. `update_channel` is user-only, rejected in a project file.
   Approval is a `/command` only, never a `clai2` subcommand, because the agent
-  can run `clai2` from its shell. Unapproved `instructions` go to the model as
+  can run `clai2` from its shell. For the same reason `clai2 config` refuses a
+  change `widens` (`refuse_widening`), and `clai2 plugins` only lists. Unapproved `instructions` go to the model as
   `ProjectInstructions` user-channel data, never as `Session.instructions`.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin

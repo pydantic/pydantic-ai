@@ -12,17 +12,24 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace, local_workspace
 from pydantic_ai.exceptions import ModelHTTPError, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    BinaryContent,
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceRef
 from pydantic_ai_harness import coder
 from pydantic_ai_harness.coder import FILE_TOOL_NAMES, Coder, coder_agent
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import Shell
-from pydantic_ai_harness.subagents import SubAgents, TaskControl
+from pydantic_ai_harness.sub_agents import SubAgents, TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 from tests.harness._strict_requests import PROVIDERS, capturing_model, strict_tools
 
@@ -157,7 +164,33 @@ async def test_no_workspace_fails_the_run_naming_coder() -> None:
     assert '- LocalWorkspace: .' in str(raised.value)
 
 
-CONTROL_TOOLS = {'list_tasks', 'message_task', 'answer_task', 'cancel_task'}
+async def test_coder_read_file_returns_a_large_image_as_a_file(tmp_path: Path) -> None:
+    image = b'\x89PNG\r\n\x1a\n' + b'x' * 100_000
+    (tmp_path / 'large.png').write_bytes(image)
+    requests: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        requests.append(messages.copy())
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='read_file', args={'path': 'large.png'})])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent[object](
+        FunctionModel(respond), capabilities=[LocalWorkspace(tmp_path), Coder[object](repo_context=False)]
+    )
+    result = await agent.run('read large.png')
+
+    # The follow-up request is what the model receives; history is what later requests replay.
+    for messages in (requests[1], result.all_messages()):
+        tool_return = messages[2].parts[0]
+        assert isinstance(tool_return, ToolReturnPart)
+        assert tool_return.content == [
+            '[large.png | image/png | 100008 bytes]\n',
+            BinaryContent(data=image, media_type='image/png'),
+        ]
+
+
+CONTROL_TOOLS = {'list_tasks', 'check_task', 'message_task', 'answer_task', 'cancel_task'}
 CODER_TOOLS = {*FILE_TOOL_NAMES, 'shell', 'delegate_task', *CONTROL_TOOLS}
 
 
