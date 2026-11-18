@@ -49,8 +49,9 @@ class StoredSession:
     session: AsyncMontySession
     stores: bool
 
-    @property
-    def session_id(self) -> bytes | None:
+    async def get_session_id(self) -> bytes | None:
+        # As in Monty 1.6, which reads the ID only once a request has opened the session. Its
+        # `session_id` property is `None` until then, so the double leaves it out.
         return b'session' if self.stores else None
 
     async def dump(self) -> bytes:

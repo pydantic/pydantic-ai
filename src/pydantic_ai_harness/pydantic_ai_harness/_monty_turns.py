@@ -344,7 +344,7 @@ async def run_monty_turn(
         os_policy=os_policy,
         ephemeral=False,
     ) as session:
-        if session.session_id is None:
+        if await _session_id(session) is None:
             # A server can also fail to store one session in time. Only a run with nothing stored yet
             # can move to the workflow; later, the state the run has built is lost.
             return MontyTurn('not_stored') if request.state is None else _session_lost()
@@ -449,6 +449,20 @@ async def _load(
         await session.load_session(state)
         return None
     return await session.load_snapshot(state, mount=mount, print_callback=capture)
+
+
+async def _session_id(session: AsyncMontySession) -> bytes | None:
+    """The ID a storing server gave `session`, or `None` from a server that stores nothing.
+
+    Monty 1.6 opens a remote session on its first request, so its `session_id` property reads `None`
+    until then; `get_session_id()` opens the session to answer. Monty 1.5 has only the property, set
+    on checkout.
+    """
+    get_session_id = getattr(session, 'get_session_id', None)
+    if get_session_id is None:  # pragma: no cover -- Monty 1.5; the tests' storing server models 1.6
+        return session.session_id
+    session_id: bytes | None = await get_session_id()
+    return session_id
 
 
 async def _dump(session: AsyncMontySession) -> str:
