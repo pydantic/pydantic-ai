@@ -904,12 +904,12 @@ class MemoryTool(AbstractNativeTool):
 class ComputerTool(AbstractNativeTool):
     """A provider's native computer use tool, whose calls the request's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool runs.
 
-    Pydantic AI Harness's `ComputerUse` adds it. A model adapter sends it in place of that tool, turns the provider's
-    calls into [`ComputerCallPart`][pydantic_ai.computer_use.ComputerCallPart] calls, and turns the results back into the
+    A model adapter sends it in place of that tool, turns the provider's calls into
+    [`ComputerCallPart`][pydantic_ai.computer_use.ComputerCallPart] calls, and turns the results back into the
     provider's format. It is only sent when the request has exactly one tool of that kind that the model can call: not
     deferred, or revealed by history. With none, it is left out when it is
     [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional], and the request is refused when it isn't. With
-    more than one, the request is refused. See [Computer Tool](../native-tools.md#computer-tool).
+    more than one, the request is refused.
     """
 
     display_size: tuple[int, int]
@@ -917,6 +917,10 @@ class ComputerTool(AbstractNativeTool):
 
     kind: str = 'computer'
     """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        if min(self.display_size) < 1:
+            raise UserError(f'`ComputerTool.display_size` must be positive, got {self.display_size}.')
 
 
 @dataclass(kw_only=True)
