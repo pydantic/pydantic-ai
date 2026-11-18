@@ -39,6 +39,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -49,6 +50,8 @@ from pydantic_ai_harness._workspace_provider import (
     require_asyncio,
     run_to_completion,
 )
+from pydantic_ai_harness._x11 import DISPLAY, start_x_server, x11_display
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 try:
     from render import RenderAsync
@@ -70,6 +73,10 @@ _POLL_INTERVAL = 1.0
 _MIN_BYTES_PER_SECOND = 256 * 1024
 _HELPER = files('pydantic_ai_harness.render_sandbox').joinpath('_file_transfer.py').read_text()
 
+_START_DISPLAY = start_x_server('/tmp/pydantic-ai-xvfb.log')
+"""Starts an X display of the size `$1` names unless one runs, installing its programs on first use: Render's
+default image runs as root on Debian and has none of them."""
+
 
 def check_sandbox_timeout(value: int) -> None:
     """Raise `UserError` unless `value` is a lifetime Render accepts."""
@@ -81,7 +88,7 @@ def check_sandbox_timeout(value: int) -> None:
 _ASYNCIO_ONLY = 'Render sandbox needs the asyncio event loop: the backend runs its calls on asyncio tasks.'
 
 
-class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay):
     """A [Render sandbox](https://render.com/docs/sandboxes) as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Building one does no I/O. Built without a ref, the first operation creates a sandbox; built with one,
@@ -101,6 +108,9 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             new sandbox; an attached sandbox must already have it. `None` uses the sandbox's home directory.
         env: Environment variables every command gets; per-command `env` is layered on top. Nothing is
             read from the host environment.
+        desktop: Whether the sandbox has a display for
+            [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or its
+            `(width, height)`. The first use installs Xvfb, `xdotool`, `x11-utils` and `scrot` with `apt-get`.
     """
 
     def __init__(
@@ -112,6 +122,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'render')
@@ -130,6 +141,25 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         self._resolved_working_dir: str | None = None
         # A sandbox this backend created still needs its `working_dir` made, even if readiness is retried.
         self._working_dir_pending = False
+        size = desktop_size(desktop)
+        if size is not None:
+            # Commands see the desktop too, so a program the agent starts from the shell opens on it.
+            self._env = {'DISPLAY': DISPLAY, **self._env}
+        self._display = (
+            None
+            if size is None
+            else x11_display(
+                self._run_argv,
+                size,
+                _START_DISPLAY,
+                lambda: f'Render sandbox {self._ref.id if self._ref else "(not created)"}',
+            )
+        )
+
+    @property
+    def display(self) -> Display | None:
+        """The sandbox's desktop, when created with `desktop=True`."""
+        return self._display
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -232,8 +262,16 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         prepare_command(
             argv, working_dir=self._resolved_working_dir or self._working_dir or '/', env=values, timeout=timeout
         )
+        if self._display is not None:
+            # Started first, so a program the command opens shows on the screen.
+            await self._display.start()
         async with self._operation() as client:
             return await self._run(client, argv, values, timeout)
+
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        """Run `argv` without starting the display, as the display's own commands do."""
+        async with self._operation() as client:
+            return await self._run(client, argv, {**self._env, **env}, timeout)
 
     async def _run(
         self, client: RenderAsync, argv: list[str], env: Mapping[str, str], timeout: float | None

@@ -235,6 +235,7 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
         'authority',
         'defer_loading',
         'description',
+        'desktop',
         'env',
         'id',
         'path_authority',
@@ -251,5 +252,6 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         'env': {'FOO': 'bar'},
         'allow_internet_access': False,
         'sandbox_timeout': 120,
+        'desktop': (1280, 800),
     }
     assert RenderSandbox[None].from_spec(**spec_fields) == RenderSandbox[None](**spec_fields)

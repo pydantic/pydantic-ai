@@ -71,6 +71,10 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
     path wins. Paths are sandbox paths: relative ones resolve against the working directory, and `~` isn't expanded.
     See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
 
+    desktop: bool | tuple[int, int] = False
+    """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
+    for 1280x800, or its `(width, height)`. The first use installs the display's programs with `apt-get`."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('RenderSandbox', self.defer_loading)
         check_sandbox_timeout(self.sandbox_timeout)
@@ -90,6 +94,7 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
         env: Mapping[str, str] | None = None,
         authority: Authority = 'operator',
         path_authority: Mapping[str, Authority] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> RenderSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -106,11 +111,14 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
             env=env,
             authority=authority,
             path_authority=path_authority,
+            desktop=desktop,
         )
 
     def backend(self, ref: WorkspaceRef) -> RenderSandboxBackend:
         """Attach lazily to an existing Render sandbox."""
-        return RenderSandboxBackend(client=self.client, ref=ref, working_dir=self.working_dir, env=self.env)
+        return RenderSandboxBackend(
+            client=self.client, ref=ref, working_dir=self.working_dir, env=self.env, desktop=self.desktop
+        )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Terminate the sandbox identified by `ref`; an already terminated or unknown one returns quietly.
@@ -136,4 +144,5 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
             sandbox_timeout=self.sandbox_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            desktop=self.desktop,
         )
