@@ -204,6 +204,7 @@ from ._response_fields import (
     map_compaction_item,
     map_logprobs,
     map_usage,
+    report_input_transformations,
     response_refusal,
     response_status_to_state,
 )
@@ -1161,6 +1162,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_details['service_tier'] = response.service_tier
         if response.prompt_cache_diagnostics is not None:
             provider_details['prompt_cache_diagnostics'] = response.prompt_cache_diagnostics.model_dump(mode='json')
+        if response.input_transformations:
+            provider_details['input_transformations'] = report_input_transformations(response.input_transformations)
 
         state = response_status_to_state(response.status, background=bool(response.background))
         if refusal_text is not None:

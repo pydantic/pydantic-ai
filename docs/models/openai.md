@@ -353,6 +353,20 @@ agent = Agent(model, model_settings=settings)
 
 `auto` and `current_turn` are sent to any model that supports reasoning. `all_turns` is sent only to models whose profile sets [`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context] (currently the GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 families); on other models it is ignored.
 
+### Reasoning after history edits {#reasoning-after-history-edits}
+
+Starting with GPT-6.2, the Responses API [drops replayed reasoning items](https://developers.openai.com/api/docs/guides/keep-prefix-unchanged) that follow a change to the earlier conversation, and after some model switches, so the model may have to redo that reasoning. When the API reports a drop, Pydantic AI puts the report in the response's [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `'input_transformations'`, as OpenAI returns it, such as `[{'id': 'rs_…', 'action': 'removed', 'reason': 'prefix_mismatch', 'type': 'reasoning'}]`. With [instrumentation](../logfire.md) on, it also adds the report to the model request's span as an `openai.input_transformations` event.
+
+A response without `'input_transformations'` doesn't mean no reasoning was dropped. In testing on `gpt-6.2-sol` with the default [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], the API dropped reasoning without reporting it. With `openai_store=False`, the same requests reported each drop.
+
+What happened to earlier reasoning in that testing:
+
+- **Changed instructions:** instructions that changed between runs of a conversation dropped the previous turn's last reasoning item in some tests and not in others. Instructions with [`on_change='append'`](../agent.md#appending-instruction-changes) kept it in every test, including with [`openai_previous_response_id`](#referencing-earlier-responses).
+- **History edits:** [history processors](../message-history.md#processing-message-history) and [Pydantic AI Harness compaction](../harness/compaction.md) strategies that edit or drop earlier messages, such as clearing old tool results or dropping the oldest messages, dropped the reasoning after the edit. [OpenAI's own compaction](#message-compaction) [keeps it](https://developers.openai.com/api/docs/guides/keep-prefix-unchanged). To shorten a large tool result, shorten it before it's first sent.
+- **Model switches:** switching from `gpt-6.2-astra` to `gpt-6.2-sol`, or from `gpt-6.2-sol` to `gpt-6.1-sol`, dropped every earlier reasoning item, with `'reason': 'model_mismatch'`. Switching from `gpt-6.2-sol` to `gpt-6.2-astra` kept it. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or a run-level `model=` that makes such a switch continues without that reasoning.
+
+GPT-6.2 also [appends the top-level `instructions` after the input and bills them at the uncached rate](https://developers.openai.com/api/docs/guides/prompt-caching). Pydantic AI sends an agent's instructions in that field unless [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions] moves them into the input, where they can be cached. The unified `cache=True` setting turns it on, as [prompt caching](#prompt-caching) describes.
+
 ### Native tools
 
 The Responses API has native tools that you can use instead of building your own:
