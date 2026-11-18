@@ -1146,9 +1146,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     def _retain_images(self) -> None:
         """Let go of images that neither the draft nor a queued prompt of this session uses."""
         self.images.retain(
-            [self.editor.buffer.text, *self.editor.queued_messages]
-            if self.editor is not None
-            else [entry.text for entry in self._inbox.entries]
+            self.editor.drafts if self.editor is not None else [entry.text for entry in self._inbox.entries]
         )
 
     def bind(self, editor: LivePrompt | None) -> None:
