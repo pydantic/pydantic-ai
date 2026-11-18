@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from .ipython_code_mode import IPythonCodeMode
     from .keenable import KeenableSearch
     from .kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
+    from .label_cross_model_history import DEFAULT_CROSS_MODEL_NOTICE, LabelCrossModelHistory
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -104,6 +105,7 @@ if TYPE_CHECKING:
     from .tool_output_limits import ToolOutputLimits
     from .trajectory_judge import TrajectoryJudge
     from .warn_on_cache_busts import WarnOnCacheBusts
+    from .wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT, WrapUpAtLimits, wrapped_up_by
     from .youdotcom import YouResearch, YouSearch
 
 __all__ = [
@@ -129,8 +131,10 @@ __all__ = [
     'Coder',
     'CompactOnRequest',
     'ConversationSearch',
+    'DEFAULT_CROSS_MODEL_NOTICE',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
+    'DEFAULT_WRAP_UP_PROMPT',
     'DayAI',
     'DaytonaSandbox',
     'DaytonaSandboxBackend',
@@ -159,6 +163,7 @@ __all__ = [
     'KeenableSearch',
     'KubernetesSandbox',
     'KubernetesSandboxBackend',
+    'LabelCrossModelHistory',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
@@ -223,6 +228,8 @@ __all__ = [
     'TrajectoryJudge',
     'WarnNearLimits',
     'WarnOnCacheBusts',
+    'WrapUpAtLimits',
+    'wrapped_up_by',
     'YouResearch',
     'YouSearch',
 ]
@@ -254,8 +261,10 @@ _LAZY_EXPORTS = {
     'DaytonaSandbox': 'daytona_sandbox',
     'DaytonaSandboxBackend': 'daytona_sandbox',
     'DeduplicateFileReads': 'compaction',
+    'DEFAULT_CROSS_MODEL_NOTICE': 'label_cross_model_history',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS': 'refine_output',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
+    'DEFAULT_WRAP_UP_PROMPT': 'wrap_up_at_limits',
     'DenyUnanswered': 'deny_unanswered',
     'DetectLoops': 'detect_loops',
     'DockerContainer': 'docker_container',
@@ -279,6 +288,7 @@ _LAZY_EXPORTS = {
     'KeenableSearch': 'keenable',
     'KubernetesSandbox': 'kubernetes_sandbox',
     'KubernetesSandboxBackend': 'kubernetes_sandbox',
+    'LabelCrossModelHistory': 'label_cross_model_history',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
@@ -342,6 +352,8 @@ _LAZY_EXPORTS = {
     'TrajectoryJudge': 'trajectory_judge',
     'WarnNearLimits': 'compaction',
     'WarnOnCacheBusts': 'warn_on_cache_busts',
+    'WrapUpAtLimits': 'wrap_up_at_limits',
+    'wrapped_up_by': 'wrap_up_at_limits',
     'YouResearch': 'youdotcom',
     'YouSearch': 'youdotcom',
     # Pre-rename names; the target module's `__getattr__` emits the
