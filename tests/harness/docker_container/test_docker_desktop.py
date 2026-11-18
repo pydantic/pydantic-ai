@@ -273,6 +273,12 @@ async def test_a_desktop_refuses_a_podman_namespace_path(docker: FakeDocker, con
     assert docker.xdotool_calls == []
 
 
+@pytest.mark.parametrize('desktop', [(0, 0), (1280, -1), (1280,)])
+def test_a_desktop_size_must_be_a_width_and_height_of_at_least_1(desktop: tuple[int, int]) -> None:
+    with pytest.raises(UserError, match=r'`desktop` must be a `\(width, height\)` of at least 1 pixel each'):
+        DockerContainerBackend(desktop=desktop)
+
+
 def test_a_desktop_sandbox_reattaches_with_its_display(docker: FakeDocker) -> None:
     ref = WorkspaceRef(provider='docker', id='pydantic-ai-abc')
 

@@ -10,6 +10,7 @@ from typing import Protocol, TypeVar
 import anyio
 
 from pydantic_ai.computer_use import Point, Region
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError, WorkspaceUnavailableError
 
 from ._png import PNG_SIGNATURE
@@ -20,7 +21,13 @@ T = TypeVar('T')
 
 def desktop_size(desktop: bool | tuple[int, int]) -> tuple[int, int] | None:
     """The display size `desktop=` asks for, or `None` for no display."""
-    return (1280, 800) if desktop is True else desktop or None
+    if desktop is True:
+        return (1280, 800)
+    if not desktop:
+        return None
+    if len(desktop) != 2 or min(desktop) < 1:
+        raise UserError(f'`desktop` must be a `(width, height)` of at least 1 pixel each, got {desktop!r}.')
+    return desktop
 
 
 def png_from_base64(encoded: str | None, source: str) -> bytes:

@@ -39,6 +39,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import AbstractNativeTool, ComputerTool, MemoryTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
 SCREEN = BinaryImage(data=b'png', media_type='image/png')
@@ -133,9 +134,7 @@ def test_computer_tool_is_sent_once_history_reveals_its_deferred_computer_tool()
 def test_computer_tool_needs_a_computer_tool_the_model_can_call(function_tools: list[ToolDefinition]) -> None:
     optional = ComputerTool(display_size=(1280, 800), optional=True)
     assert _prepare(ModelRequestParameters(function_tools=function_tools, native_tools=[optional])).native_tools == []
-    with pytest.raises(
-        UserError, match=r"`ComputerTool` needs a tool of each of the kinds \['computer_use.computer'\]"
-    ):
+    with pytest.raises(UserError, match='needs a `computer` tool the model can call, and this request has none'):
         _prepare(
             ModelRequestParameters(function_tools=function_tools, native_tools=[ComputerTool(display_size=(1, 1))])
         )
@@ -143,7 +142,9 @@ def test_computer_tool_needs_a_computer_tool_the_model_can_call(function_tools: 
 
 def test_computer_tool_refuses_two_computer_tools_that_could_run_its_calls() -> None:
     other = ToolDefinition(name='other_computer', tool_kind=COMPUTER_KIND)
-    with pytest.raises(UserError, match=r'needs one tool of each of the kinds .* more than one the model can call'):
+    with pytest.raises(
+        UserError, match='needs a `computer` tool the model can call, and this request has more than one'
+    ):
         _prepare(
             ModelRequestParameters(
                 function_tools=[_computer_tool_def(), other],
@@ -159,7 +160,7 @@ def test_computer_tool_does_not_count_a_computer_tool_another_native_tool_replac
     params = _prepare(ModelRequestParameters(function_tools=[replaced, _computer_tool_def()], native_tools=natives))
     assert params.native_tools == natives
     assert [t.name for t in params.function_tools] == ['my_computer']
-    with pytest.raises(UserError, match=r'needs a tool of each of the kinds .* has none the model can call'):
+    with pytest.raises(UserError, match='needs a `computer` tool the model can call, and this request has none'):
         _prepare(ModelRequestParameters(function_tools=[replaced], native_tools=natives))
 
 
@@ -170,7 +171,9 @@ def test_computer_tool_counts_a_computer_tool_kept_because_an_empty_tool_search_
     params = _prepare(ModelRequestParameters(function_tools=[stand_in], native_tools=natives))
     assert params.native_tools == [ComputerTool(display_size=(1, 1))]
     assert [t.name for t in params.function_tools] == ['search_computer']
-    with pytest.raises(UserError, match=r'needs one tool of each of the kinds .* more than one the model can call'):
+    with pytest.raises(
+        UserError, match='needs a `computer` tool the model can call, and this request has more than one'
+    ):
         _prepare(ModelRequestParameters(function_tools=[stand_in, _computer_tool_def()], native_tools=natives))
 
 
@@ -301,6 +304,33 @@ async def test_a_wrapped_fallback_of_grid_models_is_told_its_grid() -> None:
     assert descriptions == [f'Act on the screen. {GRID_SENTENCE}'] * 2
     [call] = _computer_calls(messages)
     assert call.coordinate_grid == 1000
+
+
+async def test_a_wrapper_that_picks_its_own_model_is_not_told_the_grid_of_the_one_it_wraps() -> None:
+    # A wrapper with its own `profile` may answer with another model than `wrapped`, as `TemporalModel.using_model()`
+    # does, so the grid of the model it wraps may be the wrong one.
+    descriptions: list[str | None] = []
+    respond, _ = _click_then_stop(descriptions)
+    pixels = FunctionModel(respond)
+
+    class PicksAnotherModel(WrapperModel):
+        @property
+        def profile(self) -> ModelProfile:
+            raise NotImplementedError('The model it picks has the profile.')
+
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return await pixels.request(messages, model_settings, model_request_parameters)
+
+    model = PicksAnotherModel(FallbackModel(FunctionModel(respond, profile=GRID_PROFILE)))
+    messages = (await _grid_agent(model).run('Click.')).all_messages()
+    assert descriptions == ['Act on the screen.'] * 2
+    [call] = _computer_calls(messages)
+    assert call.coordinate_grid is None
 
 
 def _limited(max_side: int | None, max_pixels: int | None) -> ModelProfile:

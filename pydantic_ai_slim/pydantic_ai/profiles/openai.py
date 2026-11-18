@@ -33,7 +33,7 @@ _OPENAI_BASE_BUILTINS = frozenset(
 )
 """Builtin tool types OpenAI supports — the union of what `OpenAIChatModel` and
 `OpenAIResponsesModel` can handle. `ToolSearchTool` is gated per-model in the
-profile below, and `OpenAIResponsesModel` adds `ComputerTool` by `openai_supports_computer_tool`."""
+profile below, and `OpenAIResponsesModel` adds `ComputerTool` by `openai_responses_supports_computer_tool`."""
 
 OpenAIReasoningEffort = Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 """A `reasoning_effort` value accepted by the OpenAI API, from least to most reasoning."""
@@ -555,12 +555,13 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Responses APIs. When disabled, `CachePoint` markers are filtered out.
     """
 
-    openai_supports_computer_tool: bool
+    openai_responses_supports_computer_tool: bool
     """Whether the Responses API accepts the native `computer` tool for this model. Default: False.
 
-    When enabled, `OpenAIResponsesModel` sends a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] as OpenAI's
-    native computer tool in place of the request's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool.
-    Otherwise that tool is a function tool.
+    When enabled, `OpenAIResponsesModel` adds [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] to
+    `supported_native_tools` and sends it as OpenAI's native computer tool in place of the request's
+    [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool. Otherwise that tool is a function tool. A
+    `supported_native_tools` set in the model's `profile=` without `ComputerTool` also keeps the function tool.
     """
 
     openai_responses_tool_choice_accepts_additional_tools: bool

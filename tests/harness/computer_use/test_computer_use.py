@@ -258,6 +258,10 @@ class TestComputerUse:
         await agent.run('Go.')
         assert slept == pauses
 
+    def test_a_negative_settle_time_is_refused(self) -> None:
+        with pytest.raises(UserError, match=r'`ComputerUse.settle_seconds` must be 0 or more, got -1'):
+            ComputerUse(settle_seconds=-1)
+
     @pytest.mark.parametrize(
         'settle,frames,settles',
         [
@@ -600,6 +604,7 @@ The `computer` tool shows and controls this computer's screen.
         assert [(r['performed'], r.get('error')) for r in results if r] == [(1, None), (1, None)]
         calls = [part.tool_call_id for message in messages for part in message.parts if isinstance(part, ToolCallPart)]
         assert [event.tool_call_id for event in events] == calls
+        assert {event.kind for event in events} == {'computer_use.actions_performed'}
 
     @pytest.mark.parametrize('native', [pytest.param(True, id='native-tool'), pytest.param(False, id='function-tool')])
     @pytest.mark.parametrize(
