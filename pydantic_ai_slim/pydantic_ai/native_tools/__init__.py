@@ -922,6 +922,10 @@ class ComputerTool(AbstractNativeTool):
     kind: str = 'computer'
     """The kind of tool."""
 
+    def __post_init__(self) -> None:
+        if min(self.display_size) < 1:
+            raise UserError(f'`ComputerTool.display_size` must be positive, got {self.display_size}.')
+
 
 @dataclass(kw_only=True)
 class MCPServerTool(AbstractNativeTool):
