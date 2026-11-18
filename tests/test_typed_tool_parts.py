@@ -501,6 +501,20 @@ def test_the_parameterized_base_must_match_the_kind() -> None:
     assert OpenCallPart('t').tool_kind == 'test.open'
 
 
+def test_a_shape_set_through_a_generic_subclass_must_match_the_kind() -> None:
+    class GenericCallPart(ToolCallPart[_T], Generic[_T]):
+        pass
+
+    mismatched = ToolKind('test', 'via-generic-mismatch', args=LookupArgs)
+    with pytest.raises(
+        UserError,
+        match=r"ViaGenericMismatch parameterizes ToolCallPart with ImageResult, but its kind 'test\.via-generic-mismatch' declares `args=LookupArgs`",
+    ):
+
+        class ViaGenericMismatch(GenericCallPart[ImageResult], kind=mismatched):  # pyright: ignore[reportUnusedClass,reportGeneralTypeIssues,reportArgumentType]
+            pass
+
+
 def test_redefining_the_same_class_replaces_its_registration() -> None:
     def define() -> type[ToolCallPart]:
         class RedefinedCallPart(ToolCallPart, kind=ToolKind('test', 'redefined')):
