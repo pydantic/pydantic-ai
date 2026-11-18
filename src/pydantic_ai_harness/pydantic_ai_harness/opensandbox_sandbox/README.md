@@ -248,7 +248,7 @@ async def main():
     print(result.output)
 ```
 
-The screen needs Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid`. When the image's user is root or has passwordless `sudo`, the first use installs any that are missing with `apt-get`, from the Debian packages `xvfb`, `xdotool`, `x11-utils`, `scrot` and `util-linux`; otherwise build them into the image, or the first use of the screen raises `WorkspaceUnavailableError` naming what is missing. The screen starts empty, with no window manager or browser: install the programs the agent should use in the image or before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run), or let the agent install them with `Shell`. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another.
+The screen needs Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid`. When the image's user is root or has passwordless `sudo`, [the first use installs](../computer_use/#what-the-display-needs) any that are missing with `apt-get`, from the Debian packages `xvfb`, `xdotool`, `x11-utils`, `scrot` and `util-linux`; otherwise build them into the image, or the first use of the screen raises `WorkspaceUnavailableError` naming what is missing. The screen starts empty, with no window manager or browser: install the programs the agent should use in the image or before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run), or let the agent install them with `Shell`. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another.
 
 Every screen action is a command, so use execd 1.2 or later: older versions take about a second per command.
 
