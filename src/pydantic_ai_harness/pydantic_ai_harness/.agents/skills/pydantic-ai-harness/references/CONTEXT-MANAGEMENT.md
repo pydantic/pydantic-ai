@@ -328,19 +328,27 @@ point onward.
 
 Reduces an oversized tool return once, when produced, so it is not re-sent at full size on every
 later request. Actions: `Truncate` (zero-LLM, lossy), `Spill` (lossless: stores the payload and
-returns a handle plus preview), `Summarize` (one LLM call), `Passthrough`. The spill preview reads
+returns a handle plus preview), `Summarize` (one LLM call), `Passthrough`. The lossy markers tell
+the model to rerun the tool: `[truncated: ...; rerun the original tool for the full output]`, and a
+summary opens with `[summary of N chars of output; rerun the original tool for the full output]`.
+The spill preview reads
 `[Tool output too large (N chars); stored to handle '<handle>'. Read it with read_tool_result(...)]`,
 then a `shape:` line for JSON and a head/tail excerpt; the model pages it with the registered
-`read_tool_result(handle, offset=0, limit=200, from_end=False, pattern=None)` (`pattern` is a literal
-substring; at most 1,000 lines / 50,000 chars per call). Default with no `bands`:
+`read_tool_result(handle, offset=0, limit=200, from_end=False, pattern=None, unit='lines')`
+(`pattern` is a literal substring; at most 1,000 lines / 50,000 chars per call; `unit='bytes'`
+slices raw bytes, at most 50,000, for output without line breaks) and searches it with
+`grep_tool_result(handle, pattern, context=2, max_matches=20, offset=0)`, which returns 1-based
+`N:` match and `N-` context lines (at most 200 matches and 10 context lines). Default with no
+`bands`:
 `Band(over=10_000, action=Spill(then=Truncate()))`, measured in characters.
 
-With `FileSystem` on the agent and the default `WorkspaceOverflowStore()` (no `workspace=` of its own),
-`read_tool_result` is left out (`unless_tool_kind=READ_FILE_KIND`) and the marker reads
-`... Read it with read_file(path='<handle>').]`, naming the tool as it is called in the run
-(`fs_read_file` under `FileSystem().prefix_tools('fs')`). `read_file` calls on paths under `.pydantic-ai-harness/tool-output/`
-are not reduced, so a spill read is never re-spilled. `read_file` has no `from_end`. Scripted tests
-should pick the reader by kind (`READ_FILE_KIND`, `READ_TOOL_RESULT_KIND`), not by name.
+With `FileSystem` on the agent and the default `WorkspaceOverflowStore()` (no `workspace=` of its
+own), `read_tool_result` and `grep_tool_result` are left out (`unless_tool_kind=READ_FILE_KIND`) and
+the marker reads `... Read it with read_file(path='<handle>').]`, naming the tool as it is called in
+the run (`fs_read_file` under `FileSystem().prefix_tools('fs')`). `read_file` calls on paths under
+`.pydantic-ai-harness/tool-output/` are not reduced, so a spill read is never re-spilled; searches of
+a spill are reduced as usual. `read_file` has no `from_end`. Scripted tests should pick the reader by
+kind (`READ_FILE_KIND`, `READ_TOOL_RESULT_KIND`, `GREP_TOOL_RESULT_KIND`), not by name.
 
 ```python
 from pydantic_ai import Agent
