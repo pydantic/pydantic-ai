@@ -1317,8 +1317,7 @@ class TestSafeDownload:
 
         response = await safe_download('https://example.com/file.txt')
         assert response.content == b'ok'
-        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request)) as default_client:
-            assert seen == [default_client.headers['accept-encoding']]
+        assert seen == [httpx2.AsyncClient().headers['accept-encoding']]
 
     async def test_max_bytes_rejects_oversized_preloaded_body(
         self, serve_requests: Callable[[RequestHandler], None]
