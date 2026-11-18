@@ -12,8 +12,8 @@
 # # No workflow runs this script (#12796): the workflows run the shim on the published
 # # engine runtime `.github/workflows/shared/engine-zai.md` pins, which CI's "Import the
 # # gh-aw shim on the pinned engine runtime" step checks. These sources install this
-# # checkout's `pydantic-ai-slim` and harness, so CI's smoke test of this runner imports
-# # a `pydantic_ai` symbol missing from that runtime without failing. Both are editable
+# # checkout's `pydantic-ai-slim` and harness, so CI's smoke test of this runner cannot
+# # catch a `pydantic_ai` symbol missing from that runtime. Both are editable
 # # because the harness's own workspace source for `pydantic-ai-slim` is, and uv refuses
 # # two sources for one package. The paths are relative to this script.
 # [tool.uv.sources]
