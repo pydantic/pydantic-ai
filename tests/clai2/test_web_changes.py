@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai_harness.filesystem import WRITE_FILE_KIND, EditFileCallPart, WriteFileCallPart
+from pydantic_ai_harness.file_system import WRITE_FILE_KIND, EditFileCallPart, WriteFileCallPart
 from pydantic_clai2.builtin_plugins.web import changes as changes_module
 from pydantic_clai2.builtin_plugins.web.changes import Changes, ChangeScope, session_changes
 from pydantic_clai2.runtime.session import STEERING
@@ -284,6 +284,7 @@ async def test_files_changed_outside_the_file_tools_are_listed_in_their_scope(re
     (repo / 'new.txt').write_text('x\n')
     (repo / 'a.py').write_text('def a():\n    return 1\ny\n')
     (repo / 'c.py').write_text(C1)
+    # A file the shell deleted is not seen here; it shows only in Uncommitted.
     (repo / 'b.py').unlink()
 
     turn = await session_changes(history.messages, repo, scope='turn')

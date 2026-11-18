@@ -80,14 +80,15 @@ agent = Agent(
 ```
 
 Non-matching tools remain regular tool calls. Some tools always stay native even with `tools='all'`:
-framework control tools, undiscovered deferred (`defer_loading=True`) tools, native fallbacks, and other
+framework control tools, undiscovered deferred (`defer_loading=True`) tools, `requires_approval=True` and external tools, native fallbacks, and other
 code-execution tools (any tool with `code_arg_name` metadata) -- including `Shell`'s `run_command`, `start_command`, and `shell`, and `CapabilityCreation`'s
 `author_capability`. `Shell`'s `check_command`/`stop_command` and all `FileSystem` tools are folded in.
 Provider-native tools (`native=True`) execute server-side and never reach `run_code`.
 
-With the default `tools='all'`, approval-gated tools and every tool from MCP or hosted-integration
-capabilities (for example `GitHub` or `Linear` write tools) move behind `run_code` too, where an
-approval-gated call fails as a retry unless a `HandleDeferredToolCalls` capability resolves it inline. When only some tools should be batched, tag those tools'
+With the default `tools='all'`, every tool from MCP or hosted-integration capabilities (for example
+`GitHub` or `Linear` write tools) moves behind `run_code` too. Only tools registered with `requires_approval=True` and external tools stay
+native: tools gated with `.approval_required()` are still sandboxed, where a gated call fails as a retry
+unless a `HandleDeferredToolCalls` capability resolves it inline. When only some tools should be batched, tag those tools'
 toolset with `.with_metadata(code_mode=True)` and use `CodeMode(tools={'code_mode': True})`, so
 approval-gated and integration tools stay regular tool calls.
 
@@ -169,7 +170,7 @@ Key restrictions:
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` require an `os_access` handler (or, for the clock, `os_policy`); `time.sleep` and `asyncio.sleep` really wait, within the sleep allowance
 - Filesystem I/O requires an `os_access` handler or a `mount`; `os.getenv` and `os.environ` require an `os_access` handler
 - A sandboxed tool named after a Python builtin (`list`, `open`, `print`, ...) raises `UserError`; rename it or use `toolset.prefixed(...)`
-- Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
+- Approval-required (`requires_approval=True`) and external (`kind='external'`) tools stay native under `tools='all'`, so their deferred calls pause the run as usual. An explicit selector can still sandbox them. A sandboxed call that needs approval or is deferred, including one from a toolset wrapped with `.approval_required()` or a tool that raises `ApprovalRequired` or `CallDeferred` from its body (both keep `kind='function'`), needs a `HandleDeferredToolCalls` (or equivalent) capability to resolve it inline; without one, it raises an error that surfaces to the model as a retry
 
 The sandbox constrains the model-generated Python, not the implementation of the tools it calls.
 Wrapped tools retain their normal host and network access, so expose only tools with the authority and
@@ -219,7 +220,7 @@ CodeMode(
 )
 ```
 
-- `dynamic_catalog=True` (default): moves sandboxed-tool signatures out of `run_code`'s description into an instruction block (`toolset:code_mode:catalog`, `on_change='append'`), keeps deferred tools that `run_code` will take over off the wire until they're found, and appends the updated catalog when one is found (plus a short announcement when Tool Search found it), so discoveries don't rewrite the cached prompt. Discovery then goes through the local `search_tools` or `load_capability`, which also searches deferred tools a selector keeps native (the native tool search isn't sent then); with the `'bm25'`/`'regex'` strategies, such tools are still declared for the native search. The catalog takes the toolset id `code_mode`, so another instruction-contributing toolset with that id raises a duplicate-id `UserError`; rename it. A callable selector must give the same answer for a tool before and after it's revealed, or the cache moves. `dynamic_catalog=False` keeps the catalog in `run_code`'s description instead (the default in earlier releases), so a reveal rewrites the description and the cached prompt.
+- `dynamic_catalog=True` (default): moves sandboxed-tool signatures out of `run_code`'s description into an instruction block (`toolset:code_mode:catalog`, `on_change='append'`), keeps deferred tools that `run_code` will take over off the wire until they're found, and appends the updated catalog when one is found (plus a short `DiscoveryAnnouncementPart`, an `InstructionCapabilityPart` whose `tools` field lists what it announces, when Tool Search found it), so discoveries don't rewrite the cached prompt. Discovery then goes through the local `search_tools` or `load_capability`, which also searches deferred tools a selector keeps native (the native tool search isn't sent then); with the `'bm25'`/`'regex'` strategies, such tools are still declared for the native search. The catalog takes the toolset id `code_mode`, so another instruction-contributing toolset with that id raises a duplicate-id `UserError`; rename it. A callable selector must give the same answer for a tool before and after it's revealed, or the cache moves. `dynamic_catalog=False` keeps the catalog in `run_code`'s description instead (the default in earlier releases), so a reveal rewrites the description and the cached prompt.
 - `eager=True`: side effects from early statements cannot be rolled back, and hooks/approval on `run_code` run only after the call finishes streaming. Only applies when `run_code` is the first tool call in the response.
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).

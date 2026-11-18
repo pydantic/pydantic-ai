@@ -21,13 +21,13 @@ from pydantic_ai_harness.coder._instructions import (
     project_instructions,
 )
 from pydantic_ai_harness.compaction import ClearToolResults
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT, Shell
-from pydantic_ai_harness.subagents import SubAgents, TaskControl
-from pydantic_ai_harness.subagents._control import ASK_PARENT_TOOL_NAME
-from pydantic_ai_harness.subagents._toolset import CONTROL_TOOL_NAMES, delegation_depth
+from pydantic_ai_harness.sub_agents import SubAgents, TaskControl
+from pydantic_ai_harness.sub_agents._tasks import ASK_PARENT_TOOL_NAME
+from pydantic_ai_harness.sub_agents._toolset import CONTROL_TOOL_NAMES, delegation_depth
 from pydantic_ai_harness.tool_output_limits import Band, ToolOutputLimits, Truncate
 
 if TYPE_CHECKING:
@@ -178,7 +178,7 @@ def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:
         max_retries=MAX_FILE_TOOL_RETRIES,
     )
     if unrestricted:
-        # Workspace paths are POSIX, so the filesystem root is `/` whatever the host platform.
+        # `/` is the filesystem root, or on Windows the working directory's drive.
         return replace(file_system, root_dir='/', read_only_patterns=[])
     return file_system
 
@@ -188,10 +188,10 @@ class Coder(CombinedCapability[AgentDepsT]):
     """Autonomous coding with six tools, delegation, and context management, in the run's workspace.
 
     Files and commands go through `ctx.workspace`, and the project directory is
-    its working directory: attach `LocalWorkspace('.')` for a local checkout, or
-    a sandbox provider's capability for untrusted work, alongside `Coder()`. A
-    run without a workspace fails at its start. Commands are unrestricted and
-    can outlive runs.
+    its working directory: attach `LocalWorkspace('.')` (or `WindowsWorkspace('.')`
+    on Windows) for a local checkout, or a sandbox provider's capability for
+    untrusted work, alongside `Coder()`. A run without a workspace fails at its
+    start. Commands are unrestricted and can outlive runs.
 
     Args:
         workspace: Deprecated and ignored; attach a workspace capability instead.

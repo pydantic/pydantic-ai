@@ -31,7 +31,7 @@ from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, Mode
 from pydantic_ai.models import Model, infer_model_profile
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_ai_harness.subagents import DelegationTask, TaskQuestionAskedEvent
+from pydantic_ai_harness.sub_agents import DelegationTask, TaskQuestionAskedEvent
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
 from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff
@@ -76,7 +76,7 @@ from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.git_actions import git_commands
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
 from pydantic_clai2.runtime.live_runtimes import Served
-from pydantic_clai2.runtime.permissions import permissions_command, session_permissions
+from pydantic_clai2.runtime.permissions import permissions_command, session_permissions, unattended_only
 from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.project_instructions import ProjectInstructions
 from pydantic_clai2.runtime.question_status import QuestionStatus
@@ -912,14 +912,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         mount stays within every `FileSystem`, `ToolGuardrail`, `ToolCallJudge`, `Hooks` and `Permissions`
         the run has.
         """
-        granted = (*self.plugins, *self.loader.capabilities(), *self.permissions)
-        bound = (
-            *self.plugins,
-            *self.loader.run_capabilities(),
-            *self.permissions,
-            self._question_status,
-            NON_STRICT_SCHEMAS,
-        )
+        supplied = (*self.plugins, *self.loader.run_capabilities())
+        permissions = unattended_only(self.permissions, supplied)
+        granted = (*self.plugins, *self.loader.capabilities(), *permissions)
+        bound = (*supplied, *permissions, self._question_status, NON_STRICT_SCHEMAS)
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)

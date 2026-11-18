@@ -10,7 +10,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import ErrorDetails
 
-from pydantic_ai import ModelRetry, ToolFailed
+from pydantic_ai import Conversation, ModelRequest, ModelRetry, ToolFailed
 from pydantic_ai._json_schema import InlinedSchemaTooLargeError
 from pydantic_ai._model_errors import transport_phase
 from pydantic_ai._output import build_retried_tool_return
@@ -36,6 +36,7 @@ from pydantic_ai.exceptions import (
     ModelTimeoutError,
     ModelUnavailableError,
     OutputTokenLimitExceeded,
+    RunCancelled,
     ToolFailedError,
     ToolRetryError,
     UnexpectedModelBehavior,
@@ -300,6 +301,36 @@ def test_exceptions_pickle_round_trip(exc_factory: Callable[[], Exception], chec
     assert str(restored) == str(exc)
     for attr, expected in check_attrs.items():
         assert getattr(restored, attr) == expected
+
+
+@pytest.mark.parametrize(
+    'make_error',
+    [
+        pytest.param(lambda: AgentRunError('failed'), id='AgentRunError'),
+        pytest.param(lambda: UsageLimitExceeded('limit'), id='UsageLimitExceeded'),
+        pytest.param(lambda: RunCancelled('cancelled'), id='RunCancelled'),
+        pytest.param(lambda: UnexpectedModelBehavior('odd', '{"a": 1}'), id='UnexpectedModelBehavior'),
+        pytest.param(lambda: ContentFilterError('filtered'), id='ContentFilterError'),
+        pytest.param(lambda: OutputTokenLimitExceeded('cut off'), id='OutputTokenLimitExceeded'),
+        pytest.param(lambda: ModelAPIError('model', 'down'), id='ModelAPIError'),
+        pytest.param(lambda: ModelTimeoutError('model', 'slow'), id='ModelTimeoutError'),
+        pytest.param(lambda: ModelRequestTimeout('model', 5.0), id='ModelRequestTimeout'),
+        pytest.param(lambda: ModelHTTPError(500, 'model', 'oops'), id='ModelHTTPError'),
+        pytest.param(
+            lambda: ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='model'),
+            id='ModelRateLimitError',
+        ),
+    ],
+)
+def test_a_failed_runs_conversation_survives_pickling(make_error: Callable[[], AgentRunError]):
+    """Durable engines like DBOS pickle a workflow's error, so the conversation a failed run gives it must survive."""
+    error = make_error()
+    conversation = Conversation(messages=[ModelRequest.user_text_prompt('Hello')])
+    error._pydantic_ai_conversation = conversation  # pyright: ignore[reportPrivateUsage]
+
+    restored = pickle.loads(pickle.dumps(error))
+
+    assert restored.conversation == conversation
 
 
 def test_categorized_http_error_reads_as_its_category():
@@ -864,6 +895,7 @@ _HTTP_CATEGORIES = [
     ModelUnavailableError,
     ModelOverloadedError,
     ModelServerError,
+    ModelTimeoutError,
     ModelContextWindowExceededError,
     ModelRequestRejectedError,
     ModelAuthenticationError,
@@ -929,9 +961,7 @@ def test_model_http_error_for_category_rejects_a_non_http_category():
         )
 
 
-@pytest.mark.parametrize(
-    'category', [*_HTTP_CATEGORIES, ModelConnectionError, ModelTimeoutError], ids=lambda c: c.__name__
-)
+@pytest.mark.parametrize('category', [*_HTTP_CATEGORIES, ModelConnectionError], ids=lambda c: c.__name__)
 def test_model_error_categories_pickle_round_trip(category: type[ModelAPIError]):
     error = category('gpt-4', 'failed', body={'error': 'x'}, provider_error_code='code', in_stream=True)
     restored = pickle.loads(pickle.dumps(error))

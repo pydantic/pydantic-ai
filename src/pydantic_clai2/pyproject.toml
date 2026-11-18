@@ -48,7 +48,9 @@ dependencies = [
     "pydantic-monty>=1.5.0,<2",
     # Built-in MCP client: https://github.com/pydantic/pydantic-ai/issues/9267.
     "pydantic-ai-slim[anthropic,mcp,openai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
-    # FastMCP's browser sign-in (`/mcp` OAuth and the day_ai, notion, ordinal, posthog, pylon, and grain
+    # Above the `[mcp]` extra's 3.3.0: browser sign-in passes `OAuth(callback_host=...)`, new in FastMCP 3.4.0.
+    "fastmcp-slim[client]>=3.4.0,<5",
+    # FastMCP 3's browser sign-in (`/mcp` OAuth and the day_ai, notion, ordinal, posthog, pylon, and grain
     # plugins) runs a uvicorn callback server with `ws="websockets-sansio"`, which imports `websockets`
     # on start. `fastmcp-slim[client]` does not declare it, so without this the sign-in fails.
     # 15 for `connect(proxy=None)`, which keeps `web.client`'s loopback WebSocket off any configured proxy.
@@ -77,6 +79,15 @@ dependencies = [
 # Providers whose SDK CLAI does not install by default. `/model` names the extra when it is missing.
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 typesafe = ["pydantic-ai-slim[typesafe]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+# `/sandbox PROVIDER`: each installs the harness backend for that provider.
+boxd = ["pydantic-ai-harness[boxd]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+daytona = ["pydantic-ai-harness[daytona]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+e2b = ["pydantic-ai-harness[e2b]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+kubernetes = ["pydantic-ai-harness[kubernetes]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+modal = ["pydantic-ai-harness[modal]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+opensandbox = ["pydantic-ai-harness[opensandbox]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+render = ["pydantic-ai-harness[render]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+sprites = ["pydantic-ai-harness[sprites]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 
 [project.urls]
 Homepage = "https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2"

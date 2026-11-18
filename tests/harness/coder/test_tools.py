@@ -20,7 +20,7 @@ from pydantic_ai_harness.coder import Autonomy, BenchmarkInstructions, Coder
 from pydantic_ai_harness.coder._capability import MAX_FILE_TOOL_RETRIES
 from pydantic_ai_harness.coder._instructions import coder_instructions
 from pydantic_ai_harness.repo_context import RepoContext
-from pydantic_ai_harness.subagents import TaskControl
+from pydantic_ai_harness.sub_agents import TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
 from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
@@ -160,7 +160,7 @@ class TestCoder:
         )
         assert model.last_model_request_parameters is not None
         tools = [tool.name for tool in model.last_model_request_parameters.function_tools]
-        assert tools[-5:] == ['delegate_task', 'list_tasks', 'message_task', 'answer_task', 'cancel_task']
+        assert tools[-6:] == ['delegate_task', 'list_tasks', 'check_task', 'message_task', 'answer_task', 'cancel_task']
         with pytest.raises(ValueError, match='`task_control` requires `sub_agents=True`'):
             Coder(sub_agents=False, task_control=TaskControl())
 

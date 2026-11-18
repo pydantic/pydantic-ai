@@ -13,7 +13,7 @@ from rich.console import Console
 from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.filesystem import FileChangeRequestedEvent, FileWrittenEvent
+from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
 from pydantic_clai2.builtin_plugins.aoe import AoePlugin
@@ -331,6 +331,18 @@ def test_task_model_display_preference_survives_reopen(tmp_path: Path) -> None:
     assert reopened.overrides() == {'display.task_models': False}
     reopened.reset('display.task_models')
     assert SettingsStore(path).load().task_models is True
+
+
+def test_session_naming_is_opt_in_and_keeps_saved_choices(tmp_path: Path) -> None:
+    """Naming costs a model request, so it is off unless a user turned it on, as older builds' rows may say."""
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    assert store.load().session_namer is False
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute("INSERT INTO settings VALUES ('sessions.naming', 'true')")
+    assert SettingsStore(path).load().session_namer is True
+    store.reset('sessions.naming')
+    assert SettingsStore(path).load().session_namer is False
 
 
 @pytest.mark.parametrize('value_json', ['false', 'true'])

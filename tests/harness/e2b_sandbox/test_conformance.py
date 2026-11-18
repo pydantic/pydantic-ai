@@ -1,12 +1,13 @@
 """Pydantic AI's workspace backend conformance suite, run against `E2BSandboxBackend`.
 
-`TestFakeE2BSandboxBackend` runs everywhere, over the fake E2B SDK in host mode, where
+`TestFakeE2BSandboxBackend` runs on POSIX hosts, over the fake E2B SDK in host mode, where
 commands and file operations act on a temporary host directory. `TestLiveE2BSandboxBackend`
 runs the same rules against a real sandbox and is gated like `test_e2b_live.py`.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 
@@ -29,6 +30,7 @@ async def _kill(backend: WorkspaceBackend) -> None:
     await sandbox.kill()
 
 
+@pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 class TestFakeE2BSandboxBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, fake_e2b: FakeE2B, tmp_path: Path) -> E2BSandboxBackend:

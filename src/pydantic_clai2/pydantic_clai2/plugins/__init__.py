@@ -28,7 +28,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.step_persistence.conversations import ConversationOrder, ConversationSummary, SavedConversation
-from pydantic_ai_harness.subagents import DelegationOutcome
+from pydantic_ai_harness.sub_agents import DelegationOutcome
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.plugin_requirements import Requirements, declared_requirements
@@ -124,7 +124,7 @@ class SessionCatalog(Protocol):
         conversations listed do not change as older ones are used again.
         Archived ones are left out unless `archived` is `True`, which lists only them, or `None`, which lists both.
         As when `/resume` opens, the newest untitled ones are queued for background naming, which
-        calls the naming model, so poll it no more often than a person would look.
+        calls the naming model when `sessions.naming` is on, so poll it no more often than a person would look.
         """
         ...
 
