@@ -59,6 +59,7 @@ from pydantic_ai_harness import (
     Advisor,
     BackgroundTools,
     BenchmarkInstructions,
+    CodeMode,
     Coder,
     CompactOnRequest,
     CurrentTime,
@@ -454,6 +455,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'ToolBudgets': Anonymous('only a hook; each counts the calls it lets run, so stacked budgets all apply'),
     'RefineOutput': Anonymous('only a hook; each counts its own rounds and adds its instructions to a round'),
+    'RequireVerification': Anonymous('only hooks; each keeps its own record of edits, checks, and attempts'),
     'WrapUpAtLimits': Anonymous('only hooks; several on one agent each add their prompt to the final request'),
     'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
@@ -539,7 +541,10 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one Pylon connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
-    'CodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
+    'CodeMode': Narrows(
+        'one `run_code` tool per id; two that differ need their own ids and PrefixTools',
+        lambda cls: (cls(max_retries=1), cls(max_retries=2)),
+    ),
     'IPythonCodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
     'BrowserUse': Collides('its toolset registers its browser tools under fixed names'),
     'SmartSearch': Narrows(
@@ -837,6 +842,17 @@ def test_sub_agents_compose_the_roster_and_nothing_else(
 
     with pytest.raises(UserError, match=f'disagree on {field_name!r}'):
         SubAgents.combine([first, second])
+
+
+def test_code_mode_merges_after_a_run_changed_its_stats() -> None:
+    """Two identical `CodeMode` still merge once one has been used: its counters are state, not configuration.
+
+    Not a VCR test: `combine` makes no request.
+    """
+    first, second = CodeMode[Any](), CodeMode[Any]()
+    first.speculation_stats.launched += 1
+
+    assert CodeMode.combine([first, second]) is first
 
 
 def test_system_reminders_keep_two_llm_reminders_whose_models_differ_only_in_settings() -> None:

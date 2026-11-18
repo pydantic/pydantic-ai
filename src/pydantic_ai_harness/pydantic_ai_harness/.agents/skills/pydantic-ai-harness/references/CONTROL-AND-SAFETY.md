@@ -38,6 +38,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Cap calls per tool or per run, or refuse exact repeats, and let the run continue | `ToolBudgets(per_tool=..., total=..., refuse_repeats=...)` |
 | Have the agent review and revise its answer before the run ends | `RefineOutput` |
 | Send an exception a tool raises to the model instead of ending the run | `ReportToolErrors(format_error=...)` |
+| Send a coding agent back to run its checks before it finishes after an edit | `RequireVerification` |
 | End the run with a final answer instead of `UsageLimitExceeded` at a usage limit | `WrapUpAtLimits` |
 
 ## RepairToolArguments
@@ -1057,6 +1058,44 @@ agent = Agent('test', retries={'output': 3}, capabilities=[Goal(goal='Migrate th
   `ctx.messages` is unavailable, and a verifier exception retries the activity instead of propagating.
 - Emits a `goal.verify` span (`goal.met`; `goal.description`/`goal.gap` with `trace_include_content`).
 
+## RequireVerification
+
+When a run would end after an edit (a `FileSystem` `write_file`/`edit_file` call, matched by tool kind, or a
+shell command matching `edit_commands`) and the latest run of every check since then (a shell command
+matching `verification_commands`) did not pass, adds an instruction telling the model to run its checks or
+explain the blocker. Up to `max_attempts=2` times per run; after that the run ends and emits a
+`CompletionUnverifiedEvent` (`attempts`, `failed_commands`), dispatched immediately so `Hooks.on.event`
+listeners get it before the run returns; at most once per run.
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import FileSystem, RequireVerification, Shell
+
+agent = Agent('test', capabilities=[FileSystem(), Shell(), RequireVerification()])
+```
+
+- Any edit makes every earlier check stale. `write_file`/`edit_file` edits to `exempt_paths` (`*.md`, `*.mdx`,
+  `*.rst`) don't count; shell edit commands always count, since the file they touch isn't known.
+- Commands come from tools whose metadata sets `code_arg_language='shell'` and `code_arg_name`, as
+  `Shell`'s do. A check is an `&&`-joined step of the last `;`/newline statement that starts with a
+  `verification_commands` match (`cd pkg; pytest` counts, `pytest; echo done` does not). `|`, `||`,
+  background `&`, command substitution, and `exit`/`exec`/`return` disqualify it; `2>&1` and quoted
+  text are ignored. Pass/fail is read from `Shell`'s `[exit code: N]`/timeout/file-limit trailer, the `shell`
+  tool's `exit_code`, or ACP's `[exited with code N]`/`[terminated by signal S]` (other formats pass); a background or still-running command never counts and clears that
+  command's earlier result. A check that an edit in a parallel call of the same response overtook
+  records nothing. Results are keyed by command text, not working directory; probes (`--version`, `--help`,
+  `--collect-only`) are not checks; results are read inside `ToolOutputLimits`. `edit_commands` match outside quotes (defaults include formatters, `--fix`, `sed -i`,
+  `git checkout`/`stash`/..., `mv`/`cp`/`rm`, `sh -c`/`python -c`/`node -e`, and `>` except `->`, `>&`, `/dev/null`).
+- The redirect is a `VerificationRequiredPart` (an `InstructionCapabilityPart` from
+  `pydantic_ai_harness.require_verification`, with `attempt`); find it by `isinstance`, never by text.
+- State is per run (`for_run`); a run resumed after a deferred-tool pause recovers earlier `write_file`/`edit_file`
+  and shell edits of the turn from history (not check results). An answer to a redirect with no tool call ends the redirects
+  and emits the event. Hooks run in workflow code under Temporal, DBOS, and Prefect. Skipped like
+  `RefineOutput`: deferred or pending output, output from no model request, and `run_stream()`.
+- Emits `verification required` (`require_verification.attempt`) and `completion unverified`
+  (`require_verification.attempts`) spans.
+
 ## WrapUpAtLimits
 
 When the run's `UsageLimits` leave room for one more model request but not another, makes that request
@@ -1122,5 +1161,6 @@ print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).outp
 - https://pydantic.dev/docs/ai/harness/detect-loops/
 - https://pydantic.dev/docs/ai/harness/refine-output/
 - https://pydantic.dev/docs/ai/harness/report-tool-errors/
+- https://pydantic.dev/docs/ai/harness/require-verification/
 - https://pydantic.dev/docs/ai/harness/wrap-up-at-limits/
 - https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/ (core tool approval and deferred tools)

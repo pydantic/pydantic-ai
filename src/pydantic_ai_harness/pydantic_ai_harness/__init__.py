@@ -87,6 +87,7 @@ if TYPE_CHECKING:
     from .report_remaining_budget import ReportRemainingBudget
     from .report_stale_files import ReportStaleFiles
     from .report_tool_errors import ReportToolErrors
+    from .require_verification import DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS, RequireVerification
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
@@ -134,6 +135,7 @@ __all__ = [
     'CurrentTime',
     'DEFAULT_CROSS_MODEL_NOTICE',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS',
+    'DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
     'DEFAULT_WRAP_UP_PROMPT',
     'DayAI',
@@ -202,6 +204,7 @@ __all__ = [
     'ReportStaleFiles',
     'ReportToolErrors',
     'RepoContext',
+    'RequireVerification',
     'Researcher',
     'SSHWorkspace',
     'SSHWorkspaceBackend',
@@ -267,6 +270,7 @@ _LAZY_EXPORTS = {
     'DeduplicateFileReads': 'compaction',
     'DEFAULT_CROSS_MODEL_NOTICE': 'label_cross_model_history',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS': 'refine_output',
+    'DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS': 'require_verification',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'DEFAULT_WRAP_UP_PROMPT': 'wrap_up_at_limits',
     'DenyUnanswered': 'deny_unanswered',
@@ -329,6 +333,7 @@ _LAZY_EXPORTS = {
     'ReportRemainingBudget': 'report_remaining_budget',
     'ReportStaleFiles': 'report_stale_files',
     'ReportToolErrors': 'report_tool_errors',
+    'RequireVerification': 'require_verification',
     'Researcher': 'researcher',
     'Shell': 'shell',
     'Skills': 'skills',
