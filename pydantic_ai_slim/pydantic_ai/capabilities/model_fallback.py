@@ -416,6 +416,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         return cls(*model_names, fallback_on=error_types, sticky=sticky)
 
 
+@dataclass(init=False)
 class _JudgingSettingsModel(WrapperModel):
     """Raises the `UnsupportedSettingWarning` its model would emit for a request, so `ModelFallback` moves on from it.
 
