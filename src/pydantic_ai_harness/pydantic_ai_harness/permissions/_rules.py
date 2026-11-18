@@ -30,6 +30,7 @@ _UNSPLITTABLE_OPERATOR = re.compile(r'[()]|<<|;;')
 _GLOB = re.compile(r'[*?]|\[[^\]]*\]')
 """A pattern the shell expands: `*`, `?`, or a closed bracket expression, so the `[` builtin isn't one."""
 _LITERAL = re.compile(r'[^*?\[\]]')
+_OPTIONS = re.compile(r'-[A-Za-z]+')
 _REDIRECTION = re.compile(r'\d*[<>]+&?\s*[^\s;&|<>()]*')
 _GLOB_LIMIT = 4096
 """Longer argument values aren't globbed, which could take quadratic time: ask and deny rules match them, allow rules don't."""
@@ -58,7 +59,9 @@ class PermissionRule(Generic[AgentDepsT]):
     Only tools that declare a shell command argument (`code_arg_language='shell'` and a `code_arg_name` in their
     metadata) match a rule with a `command`. An `'allow'` rule matches a simple command that starts with these
     words and has no redirection other than to `/dev/null` or a file descriptor. An `'ask'` or `'deny'` rule
-    matches one that contains them anywhere, inside quotes too, so `sudo git push` matches `'git push'`, and its
+    matches one that contains its first word followed by the others in order, other words allowed in between and inside
+    quotes too, with a short-option cluster such as `-rf` matching those options in any grouping. So `sudo git -C x push`
+    matches `'git push'`, and its
     first word also matches a path ending in it, so `/bin/rm -rf x` matches `'rm -rf'`. A word that is a pattern, such as
     `r[m]`, matches the words it could expand to.
     """
@@ -200,13 +203,30 @@ def _matches_word(word: str, expected: str) -> bool:
 
 
 def _contains(words: Sequence[str], rule: Sequence[str]) -> bool:
-    """Whether `rule`'s words run consecutively in `words`; its first word also matches a path ending in it."""
+    """Whether `rule`'s first word is in `words`, followed by the rest in order, other words allowed in between.
+
+    The first word also matches a path ending in it. A short-option cluster such as `-rf` matches when the options
+    after the first word include its letters in any grouping or case, as in `-fr`, `-Rf`, or `-r -f`.
+    """
     head, rest = rule[0], rule[1:]
-    return any(
-        (_matches_word(word, head) or _matches_word(posixpath.basename(word), head))
-        and len(following := words[i + 1 : i + len(rule)]) == len(rest)
-        and all(map(_matches_word, following, rest))
-        for i, word in enumerate(words)
+    start = next(
+        (
+            i
+            for i, word in enumerate(words)
+            if _matches_word(word, head) or _matches_word(posixpath.basename(word), head)
+        ),
+        None,
+    )
+    if start is None:
+        return False
+    following = words[start + 1 :]
+    letters = {letter for word in following if _OPTIONS.fullmatch(word) for letter in word[1:].lower()}
+    remaining = iter(following)
+    return all(
+        set(expected[1:].lower()) <= letters or any(_matches_word(word, expected) for word in following)
+        if _OPTIONS.fullmatch(expected)
+        else any(_matches_word(word, expected) for word in remaining)
+        for expected in rest
     )
 
 
@@ -218,14 +238,18 @@ class _CommandRule(NamedTuple):
 
 def _segment_rule(rules: Sequence[_CommandRule], segment: _Segment) -> PermissionRule[Any] | None:
     """The strictest rule matching one simple command: allow rules by prefix, others anywhere in it."""
-    arguments = _loose(word for index, word in enumerate(segment.words) if index not in segment.descriptors)
+    # A number before a redirection may be its file descriptor or an argument, so either reading can match.
+    readings = (
+        _loose(segment.words),
+        _loose(word for index, word in enumerate(segment.words) if index not in segment.descriptors),
+    )
     return _strictest(
         parsed.rule
         for parsed in rules
         if (
             not segment.redirected and segment.words[: len(parsed.words)] == parsed.words
             if parsed.rule.verdict == 'allow'
-            else _contains(arguments, parsed.loose)
+            else any(_contains(reading, parsed.loose) for reading in readings)
         )
     )
 
@@ -244,27 +268,28 @@ _UNSPLITTABLE_RULE = PermissionRule[Any](
 
 
 def _unsplittable_rule(
-    rules: Sequence[PermissionRule[Any]], command: str, *, expands: bool
+    rules: Sequence[PermissionRule[Any]], command: str, *, expands: bool, posix: bool = True
 ) -> PermissionRule[Any] | None:
     """Match a command too complex to split word by word, quotes removed; no rule allows it.
 
     When the shell `expands` part of it, a rule's words could be hidden, so an ask or deny rule makes it ask.
+    PowerShell names are case-insensitive, so without `posix` words are compared ignoring case.
     """
     if all(rule.verdict == 'allow' for rule in rules):
         return None
-    words = _loose([_REDIRECTION.sub(' ', re.sub(r'[\'"\\]', '', command))])
+    fold = str if posix else str.lower
+    words = _loose([fold(_REDIRECTION.sub(' ', re.sub(r'[\'"\\]', '', command)))])
     restrictive = _strictest(
-        rule for rule in rules if rule.verdict != 'allow' and _contains(words, _loose(_words(rule.command or '')))
+        rule for rule in rules if rule.verdict != 'allow' and _contains(words, _loose(_words(fold(rule.command or ''))))
     )
     return restrictive or (_UNSPLITTABLE_RULE if expands else None)
 
 
-def _command_rule(
-    rules: Sequence[PermissionRule[Any]], command: str, segments: list[_Segment] | None
-) -> PermissionRule[Any] | None:
+def _command_rule(rules: Sequence[PermissionRule[Any]], command: str, *, posix: bool) -> PermissionRule[Any] | None:
     """The rule deciding a shell command: the strictest any simple command matches, `'allow'` only if all do."""
+    segments = _segments(command) if posix else None
     if segments is None:
-        return _unsplittable_rule(rules, command, expands=_expands(command))
+        return _unsplittable_rule(rules, command, expands=_expands(command), posix=posix)
     if any(_GLOB.search(segment.words[0]) for segment in segments if segment.words):
         # A pattern in a command name, such as `/bin/r[m]`, is expanded by the shell into the program run.
         return _unsplittable_rule(rules, command, expands=True)
@@ -317,7 +342,7 @@ def decide(
     found = [rule for rule in applicable if rule.command is None]
     command_rules = [rule for rule in applicable if rule.command is not None]
     if command is not None and command_rules:
-        decided = _command_rule(command_rules, command, _segments(command) if posix else None)
+        decided = _command_rule(command_rules, command, posix=posix)
         if decided is not None:
             found.append(decided)
     return _strictest(found)

@@ -566,6 +566,13 @@ class TestPermissionRules:
             ('sudo /bin/r[m] -rf build', [PermissionRule('deny', command='rm -rf')], 'deny'),
             ('FOO=1 /bin/r? -r[f] build', [PermissionRule('deny', command='rm -rf')], 'deny'),
             ('env /usr/bin/gi[t] push', [PermissionRule('ask', command='git push')], 'ask'),
+            ('chmod 777 >/dev/null f', [PermissionRule('deny', command='chmod 777')], 'deny'),
+            ('rm -fr build', [PermissionRule('deny', command='rm -rf')], 'deny'),
+            ('rm -Rfv build', [PermissionRule('deny', command='rm -rf')], 'deny'),
+            ('rm -r -f build', [PermissionRule('deny', command='rm -rf')], 'deny'),
+            ('rm -r build', [PermissionRule('deny', command='rm -rf')], 'allow'),
+            ('git -C repo push', [PermissionRule('ask', command='git push')], 'ask'),
+            ('git -c user.name=x push origin', [PermissionRule('ask', command='git push')], 'ask'),
             ('ls *', [PermissionRule('deny', command='curl')], 'allow'),
             ('git commit -m "Add * support"', [PermissionRule('deny', command='curl')], 'allow'),
             ('[ -f setup.py ] && ls', [PermissionRule('deny', command='rm -rf')], 'allow'),
@@ -597,6 +604,14 @@ class TestPermissionRules:
         result = await agent.run('go', workspace=Workspace(_WindowsBackend()))
 
         assert isinstance(result.output, DeferredToolRequests)
+
+    async def test_powershell_command_names_ignore_case(self) -> None:
+        rules = [PermissionRule('deny', command='Remove-Item')]
+        agent = _rules_agent(_calls(('run_command', {'command': 'remove-item -LiteralPath x'})), rules)
+
+        result = await agent.run('go', workspace=Workspace(_WindowsBackend()))
+
+        assert result.output == 'A permission rule denied this command, so it did not run. Do not retry it.'
 
     async def test_a_tool_wide_allow_needs_no_split(self) -> None:
         """An allow rule without a `command` doesn't look at the command, so it holds even where commands can't be split."""
@@ -678,14 +693,15 @@ class TestPermissionRules:
         assert await _verdict('git status; python evil.py', rules) == 'ask'
         assert await _verdict('git status', rules) == 'ask'
 
-    async def test_long_argument_values_are_not_globbed(self) -> None:
+    async def test_long_argument_values_are_not_globbed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Globbing a huge value could take quadratic time, so ask and deny rules match it and allow rules don't."""
+        monkeypatch.setattr('pydantic_ai_harness.permissions._rules._GLOB_LIMIT', 8)
 
         def save(path: str, content: str) -> str:
             raise NotImplementedError
 
         tool = Tool(save, tool_kind=WRITE_FILE_KIND)
-        call = ('save', {'path': 'a/' * 3000, 'content': 'x'})
+        call = ('save', {'path': 'a/b/c/d/e', 'content': 'x'})
         deny = [PermissionRule('deny', tools=['save'], args={'path': 'secrets/*'})]
         allow = [PermissionRule('allow', tools=['save'], args={'path': 'a/*'})]
 
