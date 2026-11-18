@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - "370"
+      - "440"
       content-type:
       - application/json
       host:
@@ -31,11 +31,14 @@ interactions:
             properties: {}
             type: object
           type: function
+        - type: code_execution
         input:
         - type: user_input
           content:
           - type: text
-            text: Call get_secret to get the secret phrase.
+            text: >-
+              Use code execution to compute 17 * 23, then call get_secret to get the secret
+              phrase.
   response:
     status: 200
     headers:
@@ -44,7 +47,7 @@ interactions:
       content-type:
       - application/json
       server-timing:
-      - gfet4t7; dur=11754
+      - gfet4t7; dur=4646
       transfer-encoding:
       - chunked
       vary:
@@ -56,30 +59,47 @@ interactions:
       content:
         status: requires_action
         usage:
-          total_tokens: 240
-          total_input_tokens: 38
+          total_tokens: 591
+          total_input_tokens: 196
           input_tokens_by_modality:
           - modality: text
-            tokens: 38
+            tokens: 196
           total_cached_tokens: 0
-          total_output_tokens: 10
-          total_tool_use_tokens: 0
-          total_thought_tokens: 192
-          initial_input_tokens: 27
-        created: 2026-11-05T15:43:39Z
-        updated: 2026-11-05T15:43:39Z
+          total_output_tokens: 33
+          total_tool_use_tokens: 211
+          tool_use_tokens_by_modality:
+          - modality: text
+            tokens: 211
+          total_thought_tokens: 151
+          initial_input_tokens: 196
+        created: 2026-11-18T23:02:13Z
+        updated: 2026-11-18T23:02:13Z
         service_tier: standard
         steps:
         - signature: >-
-            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
+            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
           type: thought
-        - id: call_5558020211210808372
+        - id: call_15694601286943330234
+          type: code_execution_call
+          arguments:
+            language: python
+            code: |
+              print(17 * 23)
+        - call_id: call_15694601286943330234
+          type: code_execution_result
+          is_error: false
+          result: |
+            391
+        - signature: >-
+            EqgBCqUBAWkUfRNJ6do3PR1B2I5c45ogrLqQ3TrijMOBHeXSYYR56TFxZVFokyg682V7m3GirHcp9wI3z+YrPaxfJRRm6kWcgxdie3olKKI6yEPk+8j/poPxv2IsuMwM4JOH87DLG/fJeVvT462pBI394Uf4ftJDqpp7CcuCNZgNvBng1td6Zm+71rzXMILtr69J6VGdC/Rdy5V3KHvo3num4wEUoIdD0Uj9
+          type: thought
+        - id: call_609750235272550639
           type: function_call
           name: get_secret
           arguments: {}
         object: interaction
         model: gemini-3.8-flash
-  recorded_at: 2026-11-05T15:43:39.977302+00:00
+  recorded_at: 2026-11-18T23:02:13.825564+00:00
 - request:
     method: POST
     uri: https://generativelanguage.googleapis.com/v1beta/interactions
@@ -87,11 +107,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - "1767"
+      - "2142"
       content-type:
       - application/json
       host:
@@ -111,21 +131,38 @@ interactions:
             properties: {}
             type: object
           type: function
+        - type: code_execution
         input:
         - type: user_input
           content:
           - type: text
-            text: Call get_secret to get the secret phrase.
+            text: >-
+              Use code execution to compute 17 * 23, then call get_secret to get the secret
+              phrase.
         - signature: >-
-            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
+            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
           type: thought
-        - arguments: {}
-          id: call_5558020211210808372
+        - id: call_15694601286943330234
+          type: code_execution_call
+          arguments:
+            code: |
+              print(17 * 23)
+            language: python
+        - call_id: call_15694601286943330234
+          is_error: false
+          type: code_execution_result
+          result: |
+            391
+        - signature: >-
+            EqgBCqUBAWkUfRNJ6do3PR1B2I5c45ogrLqQ3TrijMOBHeXSYYR56TFxZVFokyg682V7m3GirHcp9wI3z+YrPaxfJRRm6kWcgxdie3olKKI6yEPk+8j/poPxv2IsuMwM4JOH87DLG/fJeVvT462pBI394Uf4ftJDqpp7CcuCNZgNvBng1td6Zm+71rzXMILtr69J6VGdC/Rdy5V3KHvo3num4wEUoIdD0Uj9
+          type: thought
+        - id: call_609750235272550639
           name: get_secret
           type: function_call
+          arguments: {}
         - type: function_result
           name: get_secret
-          call_id: call_5558020211210808372
+          call_id: call_609750235272550639
           is_error: false
           result:
           - type: text
@@ -138,7 +175,7 @@ interactions:
       content-type:
       - application/json
       server-timing:
-      - gfet4t7; dur=3933
+      - gfet4t7; dur=2822
       transfer-encoding:
       - chunked
       vary:
@@ -150,30 +187,32 @@ interactions:
       content:
         status: completed
         usage:
-          total_tokens: 276
-          total_input_tokens: 248
+          total_tokens: 290
+          total_input_tokens: 225
           input_tokens_by_modality:
           - modality: text
-            tokens: 248
+            tokens: 225
           total_cached_tokens: 0
-          total_output_tokens: 8
+          total_output_tokens: 28
           total_tool_use_tokens: 0
-          total_thought_tokens: 20
-          initial_input_tokens: 238
-        created: 2026-11-05T15:43:44Z
-        updated: 2026-11-05T15:43:44Z
+          total_thought_tokens: 37
+          initial_input_tokens: 225
+        created: 2026-11-18T23:02:16Z
+        updated: 2026-11-18T23:02:16Z
         service_tier: standard
         steps:
         - signature: >-
-            EsABCr0BAWkUfRMwxQ+Jb9E3b/T4zK7JAvhX9Zli3GY8aSde/dHvipNz1CZBSJ4bNqxBxzPspTTzA8WAd+1Ww8RL0SQtQlSAp3+2vhCfiR48EbhduY0YU2C/UmAHVWc1ve6Zn9EkRvU1b9woaRu8o7jKqS+2VQGz6ic12QVZCWut1jR3MqIxxDHoltn1lQn4aeenwFYVUEHe++ipd+/xeTDDjnSD8J9cXdCzv07mY9XU/G7CjVRo7Si7aThcXwoEE4Tl
+            EokCCoYCAWkUfRMpSLLS9eRGBqoYB9SgUbjh0siZUdIdv1jjoWXFNsnketLaES9L8zybGqB7Wv8kcOWNIK5/RZKU+Mw0gaMNHdH+/LdXo5MyEnobVgNxTSLgf2XWYWYR1K6OnAl+CcV5+Ovt/o+3iPD1RNajmPPewEQMt9CTtaJAlVQuOs5gVFzyBFRmO+lUhzMYBb3RbfjRTaCwc+zFeUFF1+dzwtA/uBME0X1Ophd8i2alxuzw04ATGQVu0EUROU/2SoXcO3ap9Uh4+Wl9gn4hb79LbMMnxcGniZImkf4NVKGeBI4VPyohSRJThcbvP00YgiPfXJtveFcU6bg3yLwJgJtJh9tT2tJKrg==
           type: thought
         - content:
-          - text: The secret phrase is **emerald tiger**.
+          - text: |-
+              1. **Computation:** $17 \times 23 = 391$
+              2. **Secret Phrase:** emerald tiger
             type: text
           type: model_output
         object: interaction
         model: gemini-3.8-flash
-  recorded_at: 2026-11-05T15:43:44.110592+00:00
+  recorded_at: 2026-11-18T23:02:16.665372+00:00
 - request:
     method: POST
     uri: >-
@@ -182,11 +221,11 @@ interactions:
       accept:
       - "*/*"
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - "2272"
+      - "1626"
       content-type:
       - application/json
       host:
@@ -196,32 +235,37 @@ interactions:
       content:
         contents:
         - parts:
-          - text: Call get_secret to get the secret phrase.
+          - text: >-
+              Use code execution to compute 17 * 23, then call get_secret to get the secret
+              phrase.
           role: user
         - parts:
           - functionCall:
-              id: call_5558020211210808372
+              id: call_609750235272550639
               args: {}
               name: get_secret
             thoughtSignature: >-
-              EsQGCsEGAWkUfRPEDr4TD9ssrqUGgifc6RkCx2b-bvIRD4zKyp6uPX_8picBg59jASZWcRRtywAU9NfrH0fx4TP4x33rFMXy0ZyvXTg9Oy1Q08qsjlViDuqbMC41WmweUkUMBRhOj4auPWRBxBhoHOndIQizvys0vIjII9gU47LVlp9pQOrRLYZS11xLCpNblGvzue0af54feeYnJ0_v5GU0nnYHib7gHETK8egoRGK7PqlVcYuNQf4HvMubh_UW540PIHqYYdPW2OKRi2DEb8HxiRSfcaiPRA7BhgZsBBCxlVg-iMDPaVst84hBJWlCb4cGKmApmLtzmKPyJ0PTNsXA8dS07FNnDUt83rUaX6dMOUPCaMNbg2RBidk8Jhl8-IfjclMxli3NA4b0ni-jDfe7oO5Z8bh3SycCLtMULheKMw9V2zDPzEuBqptsC7JwUBDliQ5YzPZ8mTLo5gTzYhOmRQY0xn9LJo8CMNRVCU-shKToCFt2SR8ALdZI1fLgG1zmBnwxVDUmh3GyeBemmRPLsUPVA4e6YOHXnuIw9r5S5fDIelWXU6-KuYNM40JBMD5Eaj7ztBvoctdnHea3-jmcy0WQV6Jk-vy36M7Gwd-dcm1OYy4OpJRxRu8ub8Fwh39knWVTDtqIE2d5MBOi-M10_zgYuIlHlU9AfogqIdjhZVkgjTGO0gfep0SNKb-YcDgqORgfuxowsU_bPClKEGAkyLuC6lJTCtLCS1h62iMBWm5KAUQI2V7wDGa5uX8boUwI9AwPVwiF3okim11NFpuKevnwkJmFZ_jiOEKyWORsYQDTe6ZqFb1teR0DXn_KjXWscWY14TiP9KgrRCZljxDp9TBtmfACzhDrwMbc-vNmI4O85osuScgu45OXk_szesNBVZggS3ZubhuymAbgtWCHmVnwIvaZ77fP7kYr9neSiMy5-5GMqqhLj0QhY7l0OhOD0_Xhnn7fU7avupdyqmWPFoa_IyB3Rh727XGCqty0nCYNc5axbyRtmOW98tsNt-8Ndsix3_uspjGvtAubFHbVKqc1Wm3hi93bKeL1Ae9C0FLlGZzIelmrKCQYKyRQRTAdh5SvuBCOBEu9wrUm_V7X8j1Z5mw=
+              EqgBCqUBAWkUfRNJ6do3PR1B2I5c45ogrLqQ3TrijMOBHeXSYYR56TFxZVFokyg682V7m3GirHcp9wI3z-YrPaxfJRRm6kWcgxdie3olKKI6yEPk-8j_poPxv2IsuMwM4JOH87DLG_fJeVvT462pBI394Uf4ftJDqpp7CcuCNZgNvBng1td6Zm-71rzXMILtr69J6VGdC_Rdy5V3KHvo3num4wEUoIdD0Uj9
           role: model
         - parts:
           - functionResponse:
-              id: call_5558020211210808372
+              id: call_609750235272550639
               name: get_secret
               response:
                 return_value: emerald tiger
           role: user
         - parts:
-          - text: The secret phrase is **emerald tiger**.
+          - text: |-
+              1. **Computation:** $17 \times 23 = 391$
+              2. **Secret Phrase:** emerald tiger
             thoughtSignature: >-
-              EsABCr0BAWkUfRMwxQ-Jb9E3b_T4zK7JAvhX9Zli3GY8aSde_dHvipNz1CZBSJ4bNqxBxzPspTTzA8WAd-1Ww8RL0SQtQlSAp3-2vhCfiR48EbhduY0YU2C_UmAHVWc1ve6Zn9EkRvU1b9woaRu8o7jKqS-2VQGz6ic12QVZCWut1jR3MqIxxDHoltn1lQn4aeenwFYVUEHe--ipd-_xeTDDjnSD8J9cXdCzv07mY9XU_G7CjVRo7Si7aThcXwoEE4Tl
+              EokCCoYCAWkUfRMpSLLS9eRGBqoYB9SgUbjh0siZUdIdv1jjoWXFNsnketLaES9L8zybGqB7Wv8kcOWNIK5_RZKU-Mw0gaMNHdH-_LdXo5MyEnobVgNxTSLgf2XWYWYR1K6OnAl-CcV5-Ovt_o-3iPD1RNajmPPewEQMt9CTtaJAlVQuOs5gVFzyBFRmO-lUhzMYBb3RbfjRTaCwc-zFeUFF1-dzwtA_uBME0X1Ophd8i2alxuzw04ATGQVu0EUROU_2SoXcO3ap9Uh4-Wl9gn4hb79LbMMnxcGniZImkf4NVKGeBI4VPyohSRJThcbvP00YgiPfXJtveFcU6bg3yLwJgJtJh9tT2tJKrg==
           role: model
         - parts:
           - text: Repeat the secret phrase.
           role: user
         tools:
+        - codeExecution: {}
         - functionDeclarations:
           - description: Look up the secret phrase.
             name: get_secret
@@ -232,6 +276,7 @@ interactions:
         toolConfig:
           functionCallingConfig:
             mode: VALIDATED
+          includeServerSideToolInvocations: true
         generationConfig:
           responseModalities:
           - TEXT
@@ -243,7 +288,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=4180
+      - gfet4t7; dur=3080
       transfer-encoding:
       - chunked
       vary:
@@ -258,19 +303,18 @@ interactions:
             parts:
             - text: The secret phrase is **emerald tiger**.
               thoughtSignature: >-
-                EtYBCtMBAWkUfRO/XI67h0VwhlqmcDO4OKQQ/KGunLxgNH+s2p35qnt4ZgQOm4rmB4FYqJiGRajdoLWYo+g0s7o8ZQnnpCM/+GT7GBjxDz1jgcGCNc1ou9Bgfgm8uCu0yhytVLJWYX09fxuog/vNGq1fqpWEgN9ox817rRPtgXYB1r2xtORkGWTPRW+K7bOI2ingJYPIjYi6XwqTlrKrVr6uvM1vGXCcLNZpQqTmZr3vm55p1Mv27LLFXDSgUNFqqxfbthoAB/KVm5zKnbkPgS4mf3JixQkFEw==
+                EpIBCo8BAWkUfRPP50EdE51D1NJBdBwCkWqyH/rdKKxAtK4E4HZOmPAGkdAW9WskcoCKew7wD1mEPoXb378inYj3+/tCzjKRTn2CaO11r3v23M896oW1AqqZN/ouYmOTBOiCcbQm2yIO1EKo6OOzykSDue2nI+l06EBHp9GKO4albwCFl0wL5f7NIFfMZW6/K1zkZwY=
             role: model
           finishReason: STOP
           index: 0
         usageMetadata:
-          promptTokenCount: 292
+          promptTokenCount: 158
           candidatesTokenCount: 8
-          totalTokenCount: 324
+          totalTokenCount: 166
           promptTokensDetails:
           - modality: TEXT
-            tokenCount: 292
-          thoughtsTokenCount: 24
+            tokenCount: 158
           serviceTier: standard
         modelVersion: gemini-3.8-flash
-        responseId: MKTsavHfGvva0_gP4-uU-Qk
-  recorded_at: 2026-11-05T15:43:48.464235+00:00
+        responseId: eC7-apifL6eE3boP_a6s2Qg
+  recorded_at: 2026-11-18T23:02:19.787293+00:00

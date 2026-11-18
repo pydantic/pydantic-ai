@@ -3886,7 +3886,12 @@ The secret phrase retrieved is **"emerald tiger"**.\
         messages=snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='Call get_secret to get the secret phrase.', timestamp=IsDatetime())],
+                    parts=[
+                        UserPromptPart(
+                            content='Use code execution to compute 17 * 23, then call get_secret to get the secret phrase.',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3902,23 +3907,63 @@ The secret phrase retrieved is **"emerald tiger"**.\
                                 'google_interactions_content_index': 0,
                             },
                         ),
+                        NativeToolCallPart(
+                            tool_name='code_execution',
+                            args={'code': 'print(17 * 23)\n', 'language': 'python'},
+                            tool_call_id='call_15694601286943330234',
+                            provider_name='google',
+                            provider_details={
+                                'id': 'call_15694601286943330234',
+                                'type': 'code_execution_call',
+                                'google_interactions_step_index': 1,
+                                'google_interactions_content_index': 0,
+                            },
+                        ),
+                        NativeToolReturnPart(
+                            tool_name='code_execution',
+                            content='391\n',
+                            tool_call_id='call_15694601286943330234',
+                            timestamp=IsDatetime(),
+                            provider_name='google',
+                            provider_details={
+                                'call_id': 'call_15694601286943330234',
+                                'is_error': False,
+                                'type': 'code_execution_result',
+                                'google_interactions_step_index': 2,
+                                'google_interactions_content_index': 0,
+                            },
+                        ),
+                        ThinkingPart(
+                            content='',
+                            signature='EqgBCqUBAWkUfRNJ6do3PR1B2I5c45ogrLqQ3TrijMOBHeXSYYR56TFxZVFokyg682V7m3GirHcp9wI3z+YrPaxfJRRm6kWcgxdie3olKKI6yEPk+8j/poPxv2IsuMwM4JOH87DLG/fJeVvT462pBI394Uf4ftJDqpp7CcuCNZgNvBng1td6Zm+71rzXMILtr69J6VGdC/Rdy5V3KHvo3num4wEUoIdD0Uj9',
+                            provider_name='google',
+                            provider_details={
+                                'google_interactions_step_index': 3,
+                                'google_interactions_content_index': 0,
+                            },
+                        ),
                         ToolCallPart(
                             tool_name='get_secret',
                             args={},
-                            tool_call_id='call_5558020211210808372',
+                            tool_call_id='call_609750235272550639',
                             provider_name='google',
                             provider_details={
-                                'google_interactions_step_index': 1,
+                                'google_interactions_step_index': 4,
                                 'google_interactions_content_index': 0,
                             },
                         ),
                     ],
                     usage=RequestUsage(
-                        input_tokens=38,
-                        output_tokens=202,
-                        output_reasoning_tokens=192,
-                        details={'thoughts_tokens': 192, 'tool_use_tokens': 0, 'input_text_tokens': 38},
-                        cost=Decimal('0.0007860'),
+                        input_tokens=196,
+                        output_tokens=184,
+                        output_reasoning_tokens=151,
+                        details={
+                            'thoughts_tokens': 151,
+                            'tool_use_tokens': 211,
+                            'input_text_tokens': 196,
+                            'tool_use_text_tokens': 211,
+                        },
+                        cost=Decimal('0.000837'),
                     ),
                     model_name='gemini-3.8-flash',
                     model_id='google:gemini-3.8-flash',
@@ -3930,17 +3975,28 @@ The secret phrase retrieved is **"emerald tiger"**.\
                         'status': 'requires_action',
                         'google_interactions_steps': [
                             {'signature': IsStr(), 'type': 'thought'},
-                            {'id': 'call_5558020211210808372', 'name': 'get_secret', 'type': 'function_call'},
+                            {'id': 'call_15694601286943330234', 'type': 'code_execution_call'},
+                            {
+                                'call_id': 'call_15694601286943330234',
+                                'is_error': False,
+                                'type': 'code_execution_result',
+                            },
+                            {
+                                'signature': 'EqgBCqUBAWkUfRNJ6do3PR1B2I5c45ogrLqQ3TrijMOBHeXSYYR56TFxZVFokyg682V7m3GirHcp9wI3z+YrPaxfJRRm6kWcgxdie3olKKI6yEPk+8j/poPxv2IsuMwM4JOH87DLG/fJeVvT462pBI394Uf4ftJDqpp7CcuCNZgNvBng1td6Zm+71rzXMILtr69J6VGdC/Rdy5V3KHvo3num4wEUoIdD0Uj9',
+                                'type': 'thought',
+                            },
+                            {'id': 'call_609750235272550639', 'name': 'get_secret', 'type': 'function_call'},
                         ],
                         'usage': {
-                            'input_tokens_by_modality': [{'modality': 'text', 'tokens': 38}],
+                            'input_tokens_by_modality': [{'modality': 'text', 'tokens': 196}],
+                            'tool_use_tokens_by_modality': [{'modality': 'text', 'tokens': 211}],
                             'total_cached_tokens': 0,
-                            'total_input_tokens': 38,
-                            'total_output_tokens': 10,
-                            'total_thought_tokens': 192,
-                            'total_tokens': 240,
-                            'total_tool_use_tokens': 0,
-                            'initial_input_tokens': 27,
+                            'total_input_tokens': 196,
+                            'total_output_tokens': 33,
+                            'total_thought_tokens': 151,
+                            'total_tokens': 591,
+                            'total_tool_use_tokens': 211,
+                            'initial_input_tokens': 196,
                         },
                         'service_tier': 'standard',
                     },
@@ -3953,7 +4009,7 @@ The secret phrase retrieved is **"emerald tiger"**.\
                         ToolReturnPart(
                             tool_name='get_secret',
                             content='emerald tiger',
-                            tool_call_id='call_5558020211210808372',
+                            tool_call_id='call_609750235272550639',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -3973,21 +4029,24 @@ The secret phrase retrieved is **"emerald tiger"**.\
                             },
                         ),
                         TextPart(
-                            content='The secret phrase is **emerald tiger**.',
+                            content="""\
+1. **Computation:** $17 \\times 23 = 391$
+2. **Secret Phrase:** emerald tiger\
+""",
                             provider_name='google',
                             provider_details={
                                 'google_interactions_step_index': 1,
                                 'google_interactions_content_index': 0,
-                                'google_interactions_text_sha256': 'b190fc3d927af64b5a41654ba9934c431857c4d36dd16a94301fdf77b1a7a16d',
+                                'google_interactions_text_sha256': '8c55be4ea41aa46f94ca8c9ce815d4ee5ebcfaaa14300d709c416e9b28644fab',
                             },
                         ),
                     ],
                     usage=RequestUsage(
-                        input_tokens=248,
-                        output_tokens=28,
-                        output_reasoning_tokens=20,
-                        details={'thoughts_tokens': 20, 'tool_use_tokens': 0, 'input_text_tokens': 248},
-                        cost=Decimal('0.000291'),
+                        input_tokens=225,
+                        output_tokens=65,
+                        output_reasoning_tokens=37,
+                        details={'thoughts_tokens': 37, 'tool_use_tokens': 0, 'input_text_tokens': 225},
+                        cost=Decimal('0.00041250'),
                     ),
                     model_name='gemini-3.8-flash',
                     model_id='google:gemini-3.8-flash',
@@ -4002,14 +4061,14 @@ The secret phrase retrieved is **"emerald tiger"**.\
                             {'content': [{'type': 'text'}], 'type': 'model_output'},
                         ],
                         'usage': {
-                            'input_tokens_by_modality': [{'modality': 'text', 'tokens': 248}],
+                            'input_tokens_by_modality': [{'modality': 'text', 'tokens': 225}],
                             'total_cached_tokens': 0,
-                            'total_input_tokens': 248,
-                            'total_output_tokens': 8,
-                            'total_thought_tokens': 20,
-                            'total_tokens': 276,
+                            'total_input_tokens': 225,
+                            'total_output_tokens': 28,
+                            'total_thought_tokens': 37,
+                            'total_tokens': 290,
                             'total_tool_use_tokens': 0,
-                            'initial_input_tokens': 238,
+                            'initial_input_tokens': 225,
                         },
                         'service_tier': 'standard',
                     },
@@ -4032,12 +4091,11 @@ The secret phrase retrieved is **"emerald tiger"**.\
                         )
                     ],
                     usage=RequestUsage(
-                        details={'thoughts_tokens': 24, 'text_prompt_tokens': 292},
-                        input_tokens=292,
-                        input_text_tokens=292,
-                        output_tokens=32,
-                        output_reasoning_tokens=24,
-                        cost=Decimal('0.000339'),
+                        details={'text_prompt_tokens': 158},
+                        input_tokens=158,
+                        input_text_tokens=158,
+                        output_tokens=8,
+                        cost=Decimal('0.0001485'),
                     ),
                     model_name='gemini-3.8-flash',
                     model_id='google:gemini-3.8-flash',
@@ -4046,7 +4104,7 @@ The secret phrase retrieved is **"emerald tiger"**.\
                     provider_url='https://generativelanguage.googleapis.com/',
                     canonical_system='google',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='MKTsavHfGvva0_gP4-uU-Qk',
+                    provider_response_id='eC7-apifL6eE3boP_a6s2Qg',
                     finish_reason='stop',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -4059,7 +4117,12 @@ The secret phrase retrieved is **"emerald tiger"**.\
                     'input': [
                         {
                             'type': 'user_input',
-                            'content': [{'type': 'text', 'text': 'Call get_secret to get the secret phrase.'}],
+                            'content': [
+                                {
+                                    'type': 'text',
+                                    'text': 'Use code execution to compute 17 * 23, then call get_secret to get the secret phrase.',
+                                }
+                            ],
                         }
                     ],
                     'tools': [
@@ -4068,18 +4131,39 @@ The secret phrase retrieved is **"emerald tiger"**.\
                             'name': 'get_secret',
                             'parameters': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
                             'type': 'function',
-                        }
+                        },
+                        {'type': 'code_execution'},
                     ],
                 },
                 {
                     'input': [
                         {
                             'type': 'user_input',
-                            'content': [{'type': 'text', 'text': 'Call get_secret to get the secret phrase.'}],
+                            'content': [
+                                {
+                                    'type': 'text',
+                                    'text': 'Use code execution to compute 17 * 23, then call get_secret to get the secret phrase.',
+                                }
+                            ],
                         },
                         {'signature': IsStr(), 'type': 'thought'},
                         {
-                            'id': 'call_5558020211210808372',
+                            'id': 'call_15694601286943330234',
+                            'type': 'code_execution_call',
+                            'arguments': {'code': 'print(17 * 23)\n', 'language': 'python'},
+                        },
+                        {
+                            'call_id': 'call_15694601286943330234',
+                            'is_error': False,
+                            'type': 'code_execution_result',
+                            'result': '391\n',
+                        },
+                        {
+                            'signature': 'EqgBCqUBAWkUfRNJ6do3PR1B2I5c45ogrLqQ3TrijMOBHeXSYYR56TFxZVFokyg682V7m3GirHcp9wI3z+YrPaxfJRRm6kWcgxdie3olKKI6yEPk+8j/poPxv2IsuMwM4JOH87DLG/fJeVvT462pBI394Uf4ftJDqpp7CcuCNZgNvBng1td6Zm+71rzXMILtr69J6VGdC/Rdy5V3KHvo3num4wEUoIdD0Uj9',
+                            'type': 'thought',
+                        },
+                        {
+                            'id': 'call_609750235272550639',
                             'name': 'get_secret',
                             'type': 'function_call',
                             'arguments': {},
@@ -4087,7 +4171,7 @@ The secret phrase retrieved is **"emerald tiger"**.\
                         {
                             'type': 'function_result',
                             'name': 'get_secret',
-                            'call_id': 'call_5558020211210808372',
+                            'call_id': 'call_609750235272550639',
                             'is_error': False,
                             'result': [{'type': 'text', 'text': 'emerald tiger'}],
                         },
@@ -4098,17 +4182,25 @@ The secret phrase retrieved is **"emerald tiger"**.\
                             'name': 'get_secret',
                             'parameters': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
                             'type': 'function',
-                        }
+                        },
+                        {'type': 'code_execution'},
                     ],
                 },
                 {
                     'contents': [
-                        {'parts': [{'text': 'Call get_secret to get the secret phrase.'}], 'role': 'user'},
+                        {
+                            'parts': [
+                                {
+                                    'text': 'Use code execution to compute 17 * 23, then call get_secret to get the secret phrase.'
+                                }
+                            ],
+                            'role': 'user',
+                        },
                         {
                             'parts': [
                                 {
                                     'functionCall': {
-                                        'id': 'call_5558020211210808372',
+                                        'id': 'call_609750235272550639',
                                         'args': {},
                                         'name': 'get_secret',
                                     },
@@ -4121,7 +4213,7 @@ The secret phrase retrieved is **"emerald tiger"**.\
                             'parts': [
                                 {
                                     'functionResponse': {
-                                        'id': 'call_5558020211210808372',
+                                        'id': 'call_609750235272550639',
                                         'name': 'get_secret',
                                         'response': {'return_value': 'emerald tiger'},
                                     }
@@ -4132,7 +4224,10 @@ The secret phrase retrieved is **"emerald tiger"**.\
                         {
                             'parts': [
                                 {
-                                    'text': 'The secret phrase is **emerald tiger**.',
+                                    'text': """\
+1. **Computation:** $17 \\times 23 = 391$
+2. **Secret Phrase:** emerald tiger\
+""",
                                     'thoughtSignature': IsStr(),
                                 }
                             ],
@@ -4141,6 +4236,7 @@ The secret phrase retrieved is **"emerald tiger"**.\
                         {'parts': [{'text': 'Repeat the secret phrase.'}], 'role': 'user'},
                     ],
                     'tools': [
+                        {'codeExecution': {}},
                         {
                             'functionDeclarations': [
                                 {
@@ -4153,7 +4249,7 @@ The secret phrase retrieved is **"emerald tiger"**.\
                                     },
                                 }
                             ]
-                        }
+                        },
                     ],
                 },
             ]
@@ -4235,7 +4331,11 @@ async def test_cross_api_history(
     direction: str,
     allow_model_requests: None,
 ):
-    """GenerateContent native parts carry no Interactions steps, so continuing on Interactions omits them."""
+    """Each API omits the other's native tool parts when a conversation continues on it.
+
+    GenerateContent native parts carry no Interactions steps, and Interactions native steps include tools and result
+    shapes GenerateContent can't replay, such as a string code execution result.
+    """
 
     provider = interactions_model.provider
     assert provider is not None
@@ -4245,19 +4345,14 @@ async def test_cross_api_history(
         if direction == 'to_interactions'
         else (interactions_model, generate_content)
     )
-    native = direction == 'to_interactions'
-    agent = Agent(source, capabilities=[NativeTool(CodeExecutionTool())] if native else [])
+    agent = Agent(source, capabilities=[NativeTool(CodeExecutionTool())])
 
     @agent.tool_plain
     def get_secret() -> str:
         """Look up the secret phrase."""
         return 'emerald tiger'
 
-    first = await agent.run(
-        'Use code execution to compute 17 * 23, then call get_secret to get the secret phrase.'
-        if native
-        else 'Call get_secret to get the secret phrase.'
-    )
+    first = await agent.run('Use code execution to compute 17 * 23, then call get_secret to get the secret phrase.')
     history = ModelMessagesTypeAdapter.validate_json(first.all_messages_json())
     final = await agent.run('Repeat the secret phrase.', model=target, message_history=history)
     expected = CROSS_API_HISTORY[direction]

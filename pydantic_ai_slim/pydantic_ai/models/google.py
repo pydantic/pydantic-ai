@@ -2070,11 +2070,17 @@ def _content_model_response(
                 part = _thinking_part_dict(item, item_signature)
             case NativeToolCallPart():
                 part = _native_tool_call_part_dict(
-                    item, accepts(m, item), item_signature, supports_tool_combination=supports_tool_combination
+                    item,
+                    accepts(m, item) and not _is_interactions_step(item),
+                    item_signature,
+                    supports_tool_combination=supports_tool_combination,
                 )
             case NativeToolReturnPart():
                 part = _native_tool_return_part_dict(
-                    item, accepts(m, item), item_signature, supports_tool_combination=supports_tool_combination
+                    item,
+                    accepts(m, item) and not _is_interactions_step(item),
+                    item_signature,
+                    supports_tool_combination=supports_tool_combination,
                 )
             case FilePart():
                 inline_data_dict: BlobDict = {'data': item.content.data, 'mime_type': item.content.media_type}
@@ -2140,6 +2146,15 @@ def _function_call_part_dict(item: ToolCallPart, signature: bytes | None, *, nee
         # both reject a first function call without one (verified live, 2026-10-27).
         part['thought_signature'] = b'skip_thought_signature_validator'
     return part
+
+
+def _is_interactions_step(item: NativeToolCallPart | NativeToolReturnPart) -> bool:
+    """Whether `item` came from `GoogleInteractionsModel`, which shares the `google` canonical system.
+
+    Interactions native steps include tools and result shapes GenerateContent can't replay, such as remote MCP calls
+    or a string code execution result, so they're omitted, as Interactions omits GenerateContent's native parts.
+    """
+    return 'google_interactions_step_index' in (item.provider_details or {})
 
 
 def _native_tool_call_part_dict(
