@@ -10,13 +10,15 @@ import os
 from collections.abc import AsyncIterable, AsyncIterator, Mapping
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import Tracer
+from pydantic import ConfigDict, TypeAdapter, with_config
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -176,6 +178,17 @@ async def test_file_store_hides_mutations_on_read_only_run(tmp_path: Path) -> No
 
 
 _MAIN_SCOPE_HASH = hashlib.sha256(b'main').hexdigest()[:16]
+
+
+@with_config(ConfigDict(extra='forbid'))
+class _JournaledOperation(TypedDict):
+    """A durable operation's result as `RecordingDurability` journals it."""
+
+    value: tuple[object, object, object, object, object]
+    usage_delta: dict[str, object]
+
+
+_JOURNALED_OPERATION = TypeAdapter(_JournaledOperation)
 
 
 class _RefusingRenameBackend(LocalWorkspaceBackend):
@@ -1660,10 +1673,9 @@ class TestInjection:
         recorded = RecordingDurability()
         first = await run(LocalWorkspace(untrusted, authority='none'), recorded)
         [(name, result)] = [(name, result) for name, result in recorded.results if name.endswith('.load_snapshot')]
-        assert isinstance(result, dict)
-        recorded_result = cast(dict[str, Any], result)
-        assert len(recorded_result['value']) == 5
-        journal = {name: {**recorded_result, 'value': recorded_result['value'][:4]}}
+        recorded_result = _JOURNALED_OPERATION.validate_python(result)
+        main, subfiles, files_truncated, error_type, _ = recorded_result['value']
+        journal = {name: {**recorded_result, 'value': [main, subfiles, files_truncated, error_type]}}
         replay = await run(LocalWorkspace(empty), RecordingDurability(journal=journal))
         assert replay.content == first.content
         assert replay.source == ModelSource('agent in an earlier run')
