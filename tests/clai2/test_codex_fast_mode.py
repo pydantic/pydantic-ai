@@ -249,6 +249,20 @@ async def test_fast_toggle_turns_a_saved_priority_tier_off(tmp_path: Path) -> No
     assert store.model_settings(model) == {'service_tier': 'default', 'codex_speed': 'standard'}
 
 
+@pytest.mark.parametrize(('tier', 'sent'), [('priority', 'priority'), ('default', 'default'), ('flex', 'flex')])
+async def test_service_tier_row_decides_over_a_saved_speed(tmp_path: Path, tier: str, sent: str) -> None:
+    """Ultrafast and fast both save `priority`, so a tier picked afterwards replaces the speed outright."""
+    context, _ = make_context(tmp_path)
+    model = 'openai-codex:gpt-6-astra'
+    await _shell(context.store, model).commands.execute_async('/fast ultrafast')
+    source = ModelSettingsSource(context.store, model)
+    row = FieldMenu(source).row_for('service_tier')
+    assert row is not None and source.apply(row, tier).startswith('Saved')
+    assert context.store.model_settings(model) == {'service_tier': tier}
+    settings = context.model_settings(model) or {}
+    assert (settings.get('openai_service_tier') or settings.get('service_tier')) == sent
+
+
 @pytest.mark.parametrize('command', ['/fast ultrafast', '/fast on', '/fast off'])
 async def test_resetting_speed_restores_the_default(tmp_path: Path, command: str) -> None:
     """Resetting the Speed row also drops the tier `/fast` saved beside it for older builds."""

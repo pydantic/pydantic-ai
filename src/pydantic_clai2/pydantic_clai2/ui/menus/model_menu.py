@@ -133,6 +133,8 @@ class ModelSettingsSource:
         values = {**saved, **form.model_dump(exclude_none=True)}
         if row.key == 'codex_speed':
             values = with_codex_speed(values, form.codex_speed)
+        elif row.key == 'service_tier':  # The tier just picked decides the Codex speed.
+            values.pop('codex_speed', None)
         self._store.save_model_settings(self.model, values)
         return f'Saved {row.key} for {self.model}. Applies when this model is selected.'
 
