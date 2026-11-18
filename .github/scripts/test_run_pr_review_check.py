@@ -731,6 +731,7 @@ def test_review_runs_on_the_chain_its_repository_variable_names(
         {'model': 'opencode/hy4-flash-free', 'secret': None},
     ]
     monkeypatch.setenv('PR_REVIEW_MODEL_CHAIN', json.dumps(chain))
+    monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
     run_pr_review_check.main()
     assert launches.read_text().splitlines() == ['opencode-go/hy4-flash-free go-key ', 'opencode/hy4-flash-free  ']
     # The review span names the model that served it, so reviews compare by model without a join to their runs.
