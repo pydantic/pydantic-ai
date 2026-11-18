@@ -447,6 +447,20 @@ class TestCwdCapture:
         command_id = _parse_command_id(await persist_toolset.start_command(ctx, 'pwd'))
         assert str(shell_dir / 'subdir') in await _check_until(persist_toolset, shell_dir, command_id, 'subdir')
 
+    async def test_start_command_without_a_saved_directory(
+        self, persist_toolset: ShellToolset[None], shell_dir: Path
+    ) -> None:
+        # Before any `cd` there's nothing saved; once this run saved one, a missing file means it was lost.
+        ctx = _ctx(shell_dir)
+        ctx.run_id = 'start-without-state-run'
+        command_id = _parse_command_id(await persist_toolset.start_command(ctx, 'pwd'))
+        assert str(shell_dir) in await _check_until(persist_toolset, shell_dir, command_id, str(shell_dir))
+        await persist_toolset.run_command(ctx, 'cd subdir')
+        for state_file in (shell_dir / '.pydantic-ai-harness/shell/run-state').iterdir():
+            state_file.unlink()
+        with pytest.raises(ModelRetry, match='saved working directory was lost'):
+            await persist_toolset.start_command(ctx, 'pwd')
+
     async def test_output_cannot_spoof_cwd(self, persist_toolset: ShellToolset[None], shell_dir: Path) -> None:
         # The wrapper's own reports carry a random per-call marker, so output shaped like one is just output.
         ctx = _ctx(shell_dir)
