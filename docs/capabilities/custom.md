@@ -263,6 +263,8 @@ print(result.output)
 
 1. The date changes between runs of a conversation. With `on_change='append'`, a new date is added to the history instead of rewriting the instructions, so the provider can keep reusing the conversation it cached; see [Instructions that change during a conversation](#instructions-that-change-during-a-conversation). The capability needs an `id` for this. Text that changes on every request, such as the current time down to the second, belongs in the user prompt or a tool instead.
 
+`date.today()` reads the host's clock in its local time zone. Pydantic AI Harness's [Current Time](../harness/current-time.md) capability is a ready-made version that takes the date from the request's timestamp instead, in a time zone you pick, so it also works in [durable execution](../durable_execution/overview.md) workflow code.
+
 Instructions can also use [template strings](../agent-spec.md#template-strings) ([`TemplateStr('Hello {{name}}')`][pydantic_ai.template.TemplateStr]) for Handlebars-style templates rendered against the agent's [dependencies](../dependencies.md). In Python code, a callable with [`RunContext`][pydantic_ai.tools.RunContext] is generally preferred for IDE autocomplete.
 
 Instructions from a capability with an [`id`][pydantic_ai.capabilities.AbstractCapability.id] reach the model as their own [instruction parts](../agent.md#instruction-parts), identified by `'capability:<capability id>'` — literal and computed alike, so an application that overrides that key controls everything the capability tells the model. To make one part addressable on its own, name it with [`@capability.instructions(name=...)`][pydantic_ai.capabilities.Capability.instructions], which keys it as `'capability:<capability id>:<name>'`. A capability without an `id` has no key for either.
@@ -1048,7 +1050,7 @@ A tool call can only be [deferred](../deferred-tools.md) once its arguments have
 
 An [external tool](../deferred-tools.md#external-tool-execution) is executed outside the run, which therefore can't approve its calls, so raising `ApprovalRequired` while validating one is a [`UserError`][pydantic_ai.exceptions.UserError]. Raise `CallDeferred` instead, with any `metadata` the code that executes the call needs to approve it.
 
-Whoever resolves the deferral is shown the arguments as the model sent them, not as a validation hook rewrote them. If they approve the call, the validation hooks run again and the tool runs with the rewritten arguments. [Human-in-the-Loop Tool Approval](../deferred-tools.md#human-in-the-loop-tool-approval) shows where to change arguments instead.
+Whoever resolves the deferral can see the arguments as a validation hook rewrote them in [`validated_args`][pydantic_ai.tools.DeferredToolRequests.validated_args], while the deferred `ToolCallPart` keeps the model's. If they approve the call, the validation hooks run again on the model's arguments. [Human-in-the-Loop Tool Approval](../deferred-tools.md#human-in-the-loop-tool-approval) covers a hook whose rewrite can differ the second time.
 
 `after_tool_validate` stays a reliable gate when the tool's `args_validator` defers: the deferral is held while the gate runs, so rejecting there (with `ModelRetry` or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed]) wins, deferring there replaces the held deferral, and the args it returns are the ones the deferred call carries. A deferral raised by `wrap_tool_validate` after its handler returns happens after this gate has already run, so the gate cannot reject or replace that wrapper deferral.
 

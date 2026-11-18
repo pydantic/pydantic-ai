@@ -27,7 +27,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/model settings [NAME]` | Edit a saved model's request and thinking settings |
 | `/model chains` | Open the `/model` picker on its fallback chains (alias `/chain`) |
 | `/effort [VALUE\|reset]` | View or set the active model's reasoning effort |
-| `/fast [on\|off]` | Codex priority processing, shown only for `openai-codex:` models |
+| `/fast [on\|off\|ultrafast]` | Codex speed (ultrafast by default where offered), shown only for `openai-codex:` models |
 | `/login [NAME[@PROFILE]]` | Sign in: `openai-codex`, `github-copilot`, or one a plugin adds; `@PROFILE` adds another account |
 | `/accounts` | Add, rename, reorder, and sign out of accounts |
 | `/keys` | Manage saved API keys |
@@ -108,7 +108,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `run.permissions` | `"full"` | What runs without asking: full runs everything; auto asks before commands that delete, push, install, or reach the network; read-only asks before every file write and command. /permissions sets it. |
 | `run.instructions` | `""` | Your own instructions, sent after CLAI's built-in, AGENTS.md, and plugin instructions. /system_prompt edits them. |
 | `accounts.pool` | `true` | A model without @PROFILE runs on every signed-in account of its provider, in /accounts order, as @* does. PROVIDER@default:MODEL runs the default account alone. |
-| `sessions.naming` | `true` | Name saved sessions in the background using a model. |
+| `sessions.naming` | `false` | Name saved sessions in the background using a model, at extra cost. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
 | `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main. |
 | `repo_context.walk_up_roots` | `["~"]` | User-only JSON list of inclusive stops for instruction autoload when the plugin's `walk_up` is on; the nearest one containing the workspace applies, and with none the walk stops at the repository root. |
@@ -599,7 +599,8 @@ skipped over. While running with a draft or a queued message, the input box
 shows both shortcuts. If Option+Enter queues like Enter, see
 [Option keys on macOS](#option-keys-on-macos).
 Shift-Enter inserts a newline when the terminal reports it separately from Enter.
-Ctrl-J inserts a newline in the editor; plain Enter submits. Some terminals, including
+Ctrl-J inserts a newline in the editor (it steers on Windows, see
+[Windows Terminal](#windows-terminal)); plain Enter submits. Some terminals, including
 GNOME Terminal/VTE on Ubuntu, send the same input for Shift-Enter and Enter.
 Use Ctrl-J there, or a terminal that supports modified-key reporting, such as
 Kitty or xterm. CLAI enables xterm and Kitty keyboard reporting only while the
@@ -719,22 +720,26 @@ does the same, with a file list and the drafts to edit first. A plugin's own
 by them, and CLAI says so.
 
 First select `openai-codex:gpt-6-astra` with `/model`, then open `/model settings openai-codex:gpt-6-astra`
-(or your saved Codex model), then **Service Tier / Fast Mode**. Choose
-**Fast (priority)** to request fast processing, or **Standard (default)** to
-turn it off. [Codex fast mode](https://developers.openai.com/codex/speed)
-uses more ChatGPT credits and depends on model and account availability. It does
-not lower reasoning effort. Reset restores the existing model default; it does
-not enable fast mode. The stored values remain `service_tier=priority` and
-`service_tier=default`, so older CLAI versions can read them. A custom
-`service_tier` body parameter still takes precedence.
+(or your saved Codex model), then **Speed**. GPT-6.2 Astra, GPT-6.2 Sol,
+GPT-6.1 Sol, and GPT-6 Astra, the Codex models that offer
+[Ultrafast](https://developers.openai.com/codex/speed), default to
+**ultrafast**. Choose **fast** for priority processing, or **standard** to turn
+both off. Faster speeds use more ChatGPT credits and depend on your plan. They do
+not lower reasoning effort. Reset restores the model's default. Picking a tier in
+the **Service Tier** row replaces the speed, and a custom `service_tier` body
+parameter takes precedence over both. Older CLAI builds see a speed as its nearest
+service tier, `priority` for fast and ultrafast, and a different tier they save picks
+the speed here.
 
 While the active model starts with `openai-codex:`, `/fast` toggles between
-priority and standard processing. `/fast on` and `/fast off` select explicitly.
-It saves the active model's service tier for subsequent prompts and sessions,
-without changing reasoning effort or other preferences. It is absent from help
-and Tab completion on other models, and typing it there reports an unknown command.
-If a custom `service_tier` parameter is set, `/fast` asks you to remove it first
-with `/model settings` rather than saving an ineffective change.
+standard and the model's default speed: ultrafast where it is offered, fast
+elsewhere. `/fast on` selects fast, `/fast off` standard, and
+`/fast ultrafast` ultrafast. It saves the active model's speed for subsequent
+prompts and sessions, without changing reasoning effort or other preferences. It
+is absent from help and Tab completion on other models, and typing it there
+reports an unknown command. If a custom `service_tier` parameter is set, `/fast`
+asks you to remove it first with `/model settings` rather than saving an
+ineffective change.
 
 Model preferences are shared across checkouts. Reading saved preferences ignores
 unknown fields, so newer settings do not break an older reader with this
@@ -788,12 +793,17 @@ For native Anthropic models, **Preserved Thinking** controls
 `thinking.block_binding.prefix_mismatch_behavior`: `error` rejects a mismatched
 prefix; `drop_block` continues without the mismatched reasoning block. It appears
 on adaptive-capable Claude models. Fable 5.1 also exposes **Thinking Display**:
-`updates` or `summarized`. Setting either control without a thinking mode selects
-adaptive thinking; neither can be combined with disabled thinking. Resetting the
-mode clears its budget, display, and binding overrides. **Interleaved Thinking**
-adds the beta header on classic Claude 4 models. CLAI adds the display beta when
-requesting updates; core adds the block-binding beta. These native controls do
-not add Anthropic protocol support to third-party Chat Completions endpoints.
+`updates` or `summarized`. Opus 5.5 and Sonnet 5.5 expose it with `summarized`,
+which shows the notes they write between tool calls. Setting either control
+without a thinking mode selects adaptive thinking; neither can be combined with
+disabled or `between_tools` thinking. **Extended Thinking** offers only the
+modes the model accepts: Fable, Mythos, and Opus 5.5 always think, so they offer
+`adaptive` alone, and Sonnet 5.5 offers `between_tools`, its off switch, in place
+of `disabled`. Resetting the mode clears its budget, display, and binding
+overrides. **Interleaved Thinking** adds the beta header on classic Claude 4
+models. CLAI adds the display beta when requesting updates; core adds the
+block-binding beta. These native controls do not add Anthropic protocol support
+to third-party Chat Completions endpoints.
 
 GLM-4.5 and newer expose **Thinking (GLM)** and **Clear Thinking (GLM)**;
 GLM-5.2 and newer also expose **Reasoning Effort (GLM)**. Clear Thinking set to
@@ -889,6 +899,10 @@ The built-in model catalog and `/set model` completions include
 `/login openai-codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
 authorization code with PKCE, state validation, and a callback at
 `http://localhost:1455/auth/callback`. It times out after five minutes.
+Login adds every model your account's Codex catalog lists to `/model`
+(`openai-codex@PROFILE:ID` for a profile), skipping models the catalog hides. If
+listing the models fails, the login stays saved, CLAI reports why, and it adds the
+built-in Codex models instead.
 
 If the browser cannot reach that callback on the machine running CLAI (for
 example over SSH), the redirect fails in the browser. Copy the URL from the
@@ -1368,9 +1382,9 @@ so on Windows Ctrl+Enter steers instead, and the input box shows Ctrl+Enter.
 CLAI treats a session as Windows when it runs on Windows or when `WT_SESSION`
 is set, which Windows Terminal also passes into WSL. Alt+Enter still steers
 wherever it reaches CLAI, and elsewhere Ctrl+Enter works like Enter.
-Ctrl+Enter needs a terminal that reports modified keys, such as Windows
-Terminal 1.25 or later. Older versions send Ctrl+Enter as Ctrl-J, which inserts
-a newline.
+Terminals that do not report modified keys send Ctrl+Enter as Ctrl-J, so on
+Windows Ctrl-J steers too. Shift+Enter inserts a newline when the terminal
+reports it separately from Enter, such as Windows Terminal 1.25 or later.
 SSH does not forward `WT_SESSION`, so a remote session started from Windows
 Terminal has no working steer chord. Set `WT_SESSION` on the remote host, for
 example with `export WT_SESSION=1` in the shell you start CLAI from.
@@ -2019,7 +2033,11 @@ the coding tools' file writes and commands only; other tools, such as MCP server
 only reach files inside the session's folder, so `auto` lets them write. In `full` and `auto`, where code mode's
 sandbox mounts the folder read-write, `pathlib` there can also delete and rename files in it without asking; in
 `read-only`, the sandbox gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
-can be asked in, such as `clai2 -p`, denies held calls. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
+can be asked in, such as `clai2 -p` or a web session with questions turned off, uses harness
+[`DenyUnanswered`](../../../docs/harness/deny-unanswered.md): it denies the calls `Permissions` held, saying
+`/permissions full` lets them run, denies any other call that needs approval (such as an MCP tool's) with the
+harness default text, and answers questions from `AskUser` with "No one is available to answer in this run", so
+the run finishes. A session with the terminal picker or the web UI's approval cards does not deny these. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
 sub-agent, or a delegation to `self` from an agent you supply (`clai2 --agent`), which gets `/permissions`
 per run rather than bound to the agent. The model is told to do the work itself instead.
 
@@ -2484,9 +2502,9 @@ a new session; `--session-id` then names it. `--continue` works with `-p` and
 
 Inside CLAI, `/resume` opens the same browser and `/resume SESSION-ID` restores a
 session directly. Opening or restoring a session does not call the coding model
-or execute pending tools. Background naming may make a separate, tool-free model
-request. Your current model, working directory, credentials, and approved plugins
-remain in effect. The saved model name is shown for reference.
+or execute pending tools. Background naming, when turned on, may make a separate,
+tool-free model request. Your current model, working directory, credentials, and
+approved plugins remain in effect. The saved model name is shown for reference.
 
 Resuming shows the restored conversation in the terminal: the last 10 prompts
 with their answers, reasoning, and tool calls, drawn the way they streamed.
@@ -2611,9 +2629,10 @@ later turns in Claude Code or Codex are not merged into it.
 
 #### Background names
 
-A saved session immediately gets a fallback title from its first prompt. A
-single background worker can replace it with a short title, subtitle, and up to
-four topic tags. The browser refreshes names while idle without moving selection.
+A saved session immediately gets a fallback title from its first prompt. With
+`sessions.naming` on, a single background worker can replace it with a short
+title, subtitle, and up to four topic tags. The browser refreshes names while
+idle without moving selection.
 
 The worker uses up to 2,400 characters of recent user/assistant text, plus the
 previous summary once a model has generated one. Until then, the fallback title
@@ -2630,17 +2649,19 @@ output size, and a 60-second deadline bound the work. Exiting cancels and joins
 the worker.
 
 ```text
-/set sessions.naming false
+/set sessions.naming true
 /set sessions.naming_model openai:gpt-5-mini
 /set sessions.naming_model null
 ```
 
-Naming is enabled by default and uses the current model unless overridden.
-It sends conversation excerpts to that model's provider and incurs additional
-usage. It has no tools and does not inherit coding plugins. Missing credentials,
-timeouts, invalid output, or stale results leave the existing name usable and do
-not interrupt foreground work. `/usage` and the browser preview show persisted
-naming token counts separately; `/cost` remains retained foreground-history cost.
+Naming is off by default, so no model request is made without your opt-in, and
+sessions keep their fallback titles. Once on, it uses the current model unless
+`sessions.naming_model` names a smaller one. It sends conversation excerpts to
+that model's provider and incurs additional usage. It has no tools and does not
+inherit coding plugins. Missing credentials, timeouts, invalid output, or stale
+results leave the existing name usable and do not interrupt foreground work.
+`/usage` and the browser preview show persisted naming token counts separately;
+`/cost` remains retained foreground-history cost.
 
 #### Storage and recovery limits
 
@@ -3171,8 +3192,9 @@ with tool names prefixed by the server name. A server connects on the first
 prompt that needs it (or `/mcp start`) and stays connected; one that cannot
 connect is marked `error` and left out rather than failing the prompt. An OAuth
 server signs in only with `/mcp auth NAME`, never in the middle of a prompt.
-Switch on **On demand** (`"defer_loading": true`) to keep a server's tools out of
-prompts until the agent loads them by the server's description; see
+Servers are on demand by default: their tools stay out of prompts until the agent
+loads them by the server's description. Switch off **On demand**
+(`"defer_loading": false`) to put a server's tools in every prompt; see
 [Load a server's tools on demand](../PLUGINS.md#load-a-servers-tools-on-demand). A
 repository's Claude Code-style `.mcp.json` (or `.clai/mcp_servers.json`) loads
 once you review it and run `/mcp trust accept`. See

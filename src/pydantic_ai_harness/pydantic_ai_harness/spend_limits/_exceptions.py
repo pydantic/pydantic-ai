@@ -34,10 +34,6 @@ class UnpricedModelWarning(UserWarning):
     """
 
 
-class SpendCompositionWarning(UserWarning):
-    """Deprecated: no longer emitted, since `SpendLimits` counts every billed response whatever the capability order."""
-
-
 class UnpricedModelError(UserError):
     """Raised when `on_unpriced='raise'` and a complete price is unavailable for a response.
 

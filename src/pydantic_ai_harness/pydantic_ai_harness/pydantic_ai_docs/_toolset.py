@@ -18,8 +18,10 @@ _REMOTE_BASE = 'https://raw.githubusercontent.com/pydantic/pydantic-ai/{ref}/doc
 """Raw-markdown base for the remote fallback at a git ref; each topic maps to
 `{base}/{page}` -- byte-identical to a local checkout."""
 
-_RELEASE_VERSION_RE = re.compile(r'\d+\.\d+\.\d+((a|b|rc)\d+)?')
-"""A released `pydantic_ai` version, which has a `v{version}` tag. Dev and local builds have none."""
+_RELEASE_VERSION_RE = re.compile(r'\A\d+\.\d+\.\d+((a|b|rc)\d+)?')
+"""A released `pydantic_ai` version, which has a `v{version}` tag. Dev and local builds have none.
+
+Anchored, so a search would not retry it from every digit of a run."""
 
 _FETCH_TIMEOUT = 30.0
 """Per-request timeout (seconds) for the remote markdown fetch."""

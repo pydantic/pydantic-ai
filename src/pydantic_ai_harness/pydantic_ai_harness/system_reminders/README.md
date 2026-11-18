@@ -55,7 +55,7 @@ agent = Agent(
     'anthropic:claude-sonnet-4-6',
     capabilities=[
         SystemReminders(
-            reminders=[Reminder('Stay focused on the original request.', interval=5, tag=None)],
+            reminders=[Reminder('Stay focused on the original request.', interval=5)],
         )
     ],
 )
@@ -75,13 +75,13 @@ A `Reminder` fires on a cadence within a run:
 | `first_after` | Request number of the first fire, then every `interval` after. `None` = first multiple of `interval` (plain modulo). |
 | `trigger` | Predicate over `RunContext`. When set, fires only when it returns `True` *and* the cadence matches. |
 | `max_fires` | Cap the number of fires per run. `None` = no limit. |
-| `tag` | Also wrap the content in `<tag>\ncontent\n</tag>`. `None` sends the raw content. Left unset, it's `None` and warns that the default changed. |
+| `tag` | Also wrap the content in `<tag>\ncontent\n</tag>`. `None` sends the raw content. |
 | `scope` | `'request'` (the default) shows each firing for its own request only; `'conversation'` keeps it in front of the model for the rest of the conversation. See [Lasting reminders](#lasting-reminders). |
 | `skip_unchanged` | Skip a firing while a copy of the same text is still in the history the model sees. Requires `scope='conversation'`. See [Lasting reminders](#lasting-reminders). |
 
 A request-scoped reminder, the default, adds recency; it doesn't keep a rule in force. The model sees each firing only in the request it fires on, so with `interval>1` it sees the reminder on the requests where it fires and not on the ones in between, and a `trigger` or `max_fires` narrows that further. Text the model must follow at every step belongs in the agent's [instructions](https://pydantic.dev/docs/ai/core-concepts/agent/#instructions), which every request sends. Guidance it must still act on several steps after a firing can be a [lasting reminder](#lasting-reminders).
 
-A reminder is a system prompt, so the model is already shown it as one: as a native system message where the model supports it, and in a `<system>` tag otherwise. It needs no tag of its own, so pass `tag=None`. The default used to be `'system-reminder'`: a `Reminder` that leaves `tag` unset sends the raw content and warns, and `tag='system-reminder'` restores the old wrapping.
+A reminder is a system prompt, so the model is already shown it as one: as a native system message where the model supports it, and in a `<system>` tag otherwise. It needs no tag of its own, so `tag` defaults to `None`. The default used to be `'system-reminder'`; `tag='system-reminder'` restores the old wrapping.
 
 The `tag` wrapping applies only to static `Reminder` content. A `str` a dynamic callable returns (including `GoalReanchor`'s) is sent as written, and one that looks like a framework frame, such as a `<system` tag, raises `UserError` and fails the run; an `LLMReminder`'s `GeneratedReminder` is quoted as data, as described under [Dynamic reminders](#dynamic-reminders).
 
@@ -98,7 +98,6 @@ SystemReminders(
         Reminder(
             'Run the tests and report any failures before you finish.',
             interval=10,
-            tag=None,
             scope='conversation',
         )
     ],
@@ -170,7 +169,7 @@ from pydantic_ai_harness.system_reminders import GoalReanchor, LLMReminder
 SystemReminders(dynamic_reminders=[GoalReanchor(), LLMReminder(model='anthropic:claude-haiku-4-5', interval=5)])
 ```
 
-`LLMReminder` defaults to `interval=10`. Earlier releases generated on every model request, so an agent with an `LLMReminder` and no cadence of its own grew its history on every step. Leaving `interval` unset warns that the default changed: pass `interval=10` to keep the new cadence without the warning, or `interval=1` to generate on every request as before. A wrapper that gates `LLMReminder` itself should pass `interval=1`, so the wrapper alone decides.
+`LLMReminder` defaults to `interval=10`. Earlier releases generated on every model request, so an agent with an `LLMReminder` and no cadence of its own grew its history on every step. Pass `interval=1` to generate on every request as before. A wrapper that gates `LLMReminder` itself should pass `interval=1`, so the wrapper alone decides.
 
 The nested call runs under the parent's `usage_limits` with one request held back for the model request it precedes, so the reminder cannot push a run past its `request_limit`; once the budget is that tight the generation is skipped and `GoalReanchor` text is used instead. Every other generation failure is logged at warning level with its traceback under the `pydantic_ai_harness.system_reminders` logger namespace, once per run, so a misconfigured `model` (bad id, missing key) shows up in the logs once per run rather than on every model request, while the run carries on with the fallback text.
 
@@ -211,16 +210,13 @@ from pydantic_ai_harness.system_reminders import Reminder, ReminderFiredEvent
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    capabilities=[SystemReminders(reminders=[Reminder('...', interval=5, tag=None)])],
+    capabilities=[SystemReminders(reminders=[Reminder('...', interval=5)])],
 )
 
 @agent.on_event(ReminderFiredEvent)
 async def record(ctx, event):
     print(event.text)
 ```
-
-Migration: `on_fire` remains supported but is deprecated. Move its callback body to this
-subscription.
 
 Per-run state (the request counter and per-reminder fire counts) is isolated via `for_run`, so concurrent runs on the same agent never share fire state.
 
@@ -230,7 +226,7 @@ Reminders never go into the leading system prompt or instructions, and the histo
 
 `SystemReminders` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoint it places lands before the reminder.
 
-If you relied on `SystemReminders` for prompt caching, turn it on for your model. Earlier releases placed a cache breakpoint ahead of every reminder, with a `'5m'` TTL by default, so an agent got caching on Anthropic without configuring any. That breakpoint is gone, and leaving `cache_ttl` unset doesn't warn about it: an agent with no caching configured on its model now pays full price for its prefix on every request. `cache_ttl` is deprecated and has no effect; set to `'5m'` or `'1h'`, it warns that it's ignored, so remove it.
+If you relied on `SystemReminders` for prompt caching, turn it on for your model. Earlier releases placed a cache breakpoint ahead of every reminder, with a `'5m'` TTL by default, so an agent got caching on Anthropic without configuring any. That breakpoint is gone: an agent with no caching configured on its model now pays full price for its prefix on every request.
 
 ## Composition
 

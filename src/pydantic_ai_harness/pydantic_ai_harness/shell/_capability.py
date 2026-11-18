@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import KW_ONLY, dataclass, field
 from typing import Any
 
 import anyio
@@ -12,7 +11,6 @@ import anyio
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import require_workspace
 from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT
 from pydantic_ai_harness.shell._toolset import RUN_SCOPED_TOOL_NAMES, ShellToolset
@@ -64,11 +62,9 @@ class Shell(AbstractCapability[AgentDepsT]):
     whatever `FileSystem`'s `root_dir` says. Isolate untrusted work with a sandbox workspace.
     """
 
-    cwd: str | Path | None = None
-    """Deprecated and ignored: commands start in the workspace's working directory.
-
-    Set the working directory on the workspace instead, e.g. `LocalWorkspace('./repo')`.
-    """
+    # Keyword-only since the positional `cwd` was removed, so an old positional call fails instead of
+    # landing its arguments on the command allowlist and denylist.
+    _: KW_ONLY
 
     allowed_commands: Sequence[str] = field(default_factory=list[str])
     """If non-empty, only these command names may be executed (allowlist)."""
@@ -89,7 +85,7 @@ class Shell(AbstractCapability[AgentDepsT]):
     max_output_chars: int = 50_000
     """Maximum characters of output returned to the model. Must be positive."""
 
-    max_file_bytes: int | None = field(default=None, kw_only=True)
+    max_file_bytes: int | None = None
     """Optional per-file size limit for `run_command` and `start_command` commands, not total disk usage.
 
     Must be positive. Applied with the workspace shell's `ulimit -f`, rounded up to whole
@@ -97,7 +93,7 @@ class Shell(AbstractCapability[AgentDepsT]):
     `shell` tool are rejected.
     """
 
-    max_log_bytes: int | None = field(default=100_000_000, kw_only=True)
+    max_log_bytes: int | None = 100_000_000
     """Size past which a background or `shell` command's log is emptied, leaving a notice. Must be positive.
 
     Checked once a second while the command runs, which keeps running, and once more when it ends. Bounds the disk a
@@ -129,6 +125,16 @@ class Shell(AbstractCapability[AgentDepsT]):
     provider-credential denylist.
     """
 
+    secret_env: Mapping[str, str] | None = field(default=None, kw_only=True, repr=False)
+    """Secrets added to every command's environment, like `env`, and masked in what the tools return.
+
+    Exact occurrences of each value are replaced with `[REDACTED:<name>]` in tool results and retry or failure
+    messages before the model sees them. This guards against a secret printed by accident, not against a command
+    that transforms or splits it, and a short or common value is masked everywhere it appears.
+    `denied_env_patterns` does not filter these. Log files, which the model can read with other tools, and the
+    persistent `shell` tool's events hold the raw output.
+    """
+
     tools: Sequence[str] = RUN_SCOPED_TOOL_NAMES
     """Which tools to register, from `SHELL_TOOL_NAMES`.
 
@@ -146,8 +152,6 @@ class Shell(AbstractCapability[AgentDepsT]):
 
     def __post_init__(self) -> None:
         """Resolve the built-in denylist according to the selected policy."""
-        if self.cwd is not None:
-            warn_argument_ignored('Shell', 'cwd', SET_WORKING_DIR_ON_THE_WORKSPACE)
         if self.denied_commands is _DEFAULT_DENIED_COMMANDS:
             self.denied_commands = [] if self.allowed_commands else list(_DEFAULT_DENIED_COMMANDS)
 
@@ -183,6 +187,7 @@ class Shell(AbstractCapability[AgentDepsT]):
             allow_interactive=self.allow_interactive,
             env=self.env,
             denied_env_patterns=self.denied_env_patterns,
+            secret_env=self.secret_env,
             tools=self.tools,
             id=self.id or 'shell',
         )

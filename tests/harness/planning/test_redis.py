@@ -5,18 +5,11 @@ from __future__ import annotations
 import pytest
 
 from pydantic_ai_harness.planning import (
-    PlanEvent,
-    PlanEventEmitter,
-    PlanEventType,
     PlanItem,
     RedisClient,
     RedisPlanStore,
     TaskStatus,
 )
-
-pytestmark = [
-    pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
-]
 
 
 class FakeRedis:
@@ -121,17 +114,3 @@ class TestRedisStore:
         await s1.add_item(_item('only-s1'))
         assert [i.content for i in await s1.get_items()] == ['only-s1']
         assert await s2.get_items() == []
-
-    async def test_events(self) -> None:
-        events: list[PlanEvent] = []
-        emitter = PlanEventEmitter()
-        for kind in PlanEventType:
-            emitter.on(kind, events.append)
-        store = RedisPlanStore(FakeRedis(), event_emitter=emitter)
-        item = await store.add_item(_item('t'))
-        await store.update_item(item.id, status=TaskStatus.completed)
-        await store.remove_item(item.id)
-        kinds = [e.event_type for e in events]
-        assert PlanEventType.created in kinds
-        assert PlanEventType.completed in kinds
-        assert kinds[-1] is PlanEventType.deleted

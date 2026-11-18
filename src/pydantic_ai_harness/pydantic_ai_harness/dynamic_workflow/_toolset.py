@@ -41,6 +41,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness.deny_unanswered._capability import find_deny_unanswered
 
 try:
     from pydantic_monty import (
@@ -62,15 +63,14 @@ from pydantic_ai_harness._monty_exec import (
     MontyRunState,
     PrintCapture,
     in_temporal_workflow,
-    is_sandbox_panic,
 )
+from pydantic_ai_harness._monty_turns import is_sandbox_panic
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
     cancel_pending_output,
     resumable_output_reason,
     without_resumable_outputs,
 )
-from pydantic_ai_harness._warn import renamed_duration_limit
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.aws_lambda._bridge import StepBridge
@@ -102,9 +102,6 @@ class WorkflowResourceLimits(TypedDict, total=False):
     Sleeping is not execution time either, so when set, the script may also sleep for up to this
     long in total."""
 
-    max_duration_secs: float
-    """Deprecated: renamed to `max_duration_seconds`."""
-
     max_memory: int
     """Maximum sandbox memory, in bytes."""
 
@@ -116,11 +113,11 @@ def _default_resource_limits() -> ResourceLimits:
     }
 
 
-# The keys `WorkflowResourceLimits` accepts, without the deprecated one `__post_init__` renames.
+# The keys `WorkflowResourceLimits` accepts.
 # A `total=False` TypedDict does not validate keys at runtime, so a typo (e.g. `max_durations_seconds`)
 # would otherwise merge through and be silently dropped -- quietly disabling the only guard against
 # a pure-CPU `while True`. We reject unknowns.
-_RESOURCE_LIMIT_KEYS = frozenset(WorkflowResourceLimits.__annotations__) - {'max_duration_secs'}
+_RESOURCE_LIMIT_KEYS = frozenset(WorkflowResourceLimits.__annotations__)
 _MODEL_SAFE_EXCEPTION_MESSAGE_TYPES = (UsageLimitExceeded,)
 _MAX_COMPLETED_DISPATCHES = 20
 _MAX_TASK_PREVIEW_CHARS = 120
@@ -770,7 +767,6 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     _description: str = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self.resource_limits = renamed_duration_limit(self.resource_limits, 'DynamicWorkflowToolset')
         validate_workflow_settings(max_agent_calls=self.max_agent_calls, resource_limits=self.resource_limits)
         self._rebuild()
 
@@ -954,6 +950,8 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         if usage_limits is None and self.forward_usage:
             # Shared usage is checked against the parent's limits, so they bound the whole tree.
             usage_limits = ctx.usage_limits
+        # Interim: a general hook for capabilities to pass themselves on to child runs (#13135) replaces this.
+        deny = find_deny_unanswered(ctx)
         try:
             result = await self._by_name[agent_name].agent.run(
                 task,
@@ -961,7 +959,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 model=inherited_model,
                 usage=ctx.usage if self.forward_usage else None,
                 usage_limits=usage_limits,
-                capabilities=[serving_model],
+                capabilities=[serving_model, *([deny] if deny is not None else [])],
             )
             reason = resumable_output_reason(result.output)
             if reason is None:
