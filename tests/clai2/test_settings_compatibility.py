@@ -1035,20 +1035,37 @@ async def test_saved_aoe_titles_load_in_builds_with_and_without_the_feature(
     await loader.close('exit')
 
 
+@pytest.mark.parametrize(
+    ('row', 'defer_loading'),
+    [
+        (
+            '{"id": "mcp", "factory": "pydantic_clai2.mcp", "enabled": true, "settings": '
+            '{"servers": {"docs": {"type": "stdio", "command": "docs"}}}}',
+            None,
+        ),
+        (
+            '{"id": "mcp", "factory": "pydantic_clai2.mcp", "enabled": true, "settings": '
+            '{"servers": {"docs": {"type": "stdio", "command": "docs", "defer_loading": true}}}}',
+            True,
+        ),
+        (
+            '{"id": "mcp", "factory": "pydantic_clai2.mcp", "enabled": true, "settings": '
+            '{"servers": {"docs": {"type": "stdio", "command": "docs", "defer_loading": false}}}}',
+            False,
+        ),
+    ],
+    ids=['unset', 'on-demand', 'eager'],
+)
 async def test_saved_on_demand_mcp_servers_load_in_builds_with_and_without_the_feature(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, row: str, defer_loading: bool | None
 ) -> None:
-    """`mcp` plugin-settings servers using `defer_loading` are tagged; a build lacking the feature drops them."""
+    """`mcp` plugin-settings servers setting `defer_loading` are tagged; a build lacking the feature drops them.
+
+    A server saved without the key, as older builds saved an eager one, now loads on demand and stays untagged.
+    """
     store = SettingsStore(tmp_path / 'settings.db')
     with closing(sqlite3.connect(store.path)) as connection, connection:
-        connection.execute(
-            'INSERT INTO plugins VALUES (?, ?)',
-            (
-                'mcp',
-                '{"id": "mcp", "factory": "pydantic_clai2.mcp", "enabled": true, "settings": '
-                '{"servers": {"docs": {"type": "stdio", "command": "docs", "defer_loading": true}}}}',
-            ),
-        )
+        connection.execute('INSERT INTO plugins VALUES (?, ?)', ('mcp', row))
 
     def loader() -> PluginLoader[None]:
         return PluginLoader(
@@ -1060,9 +1077,15 @@ async def test_saved_on_demand_mcp_servers_load_in_builds_with_and_without_the_f
 
     this_build = loader()
     await this_build.load_all()
+    [entry] = [entry for entry in this_build.entries() if entry.name == 'mcp']
+    assert entry.loaded is not None
+    assert entry.loaded.plugin.settings.model_dump()['servers']['docs']['defer_loading'] is (defer_loading is not False)
     await this_build.disable('mcp')
     await this_build.enable('mcp')
     await this_build.close('exit')
+    if defer_loading is None:
+        assert store.plugin_requirements('mcp') is None, 'a server without the key loads in every build'
+        return
     assert store.plugin_requirements('mcp') == {'servers': ['mcp-defer-loading']}, 'saving tags the servers'
     saved = store.plugins()
 
