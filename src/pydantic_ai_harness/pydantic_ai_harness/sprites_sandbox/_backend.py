@@ -586,23 +586,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     async def _acquire(self, client: AsyncSpritesClient, ref: WorkspaceRef | None) -> AsyncSprite:
         """Attach to the Sprite `ref` names, or create one, within `_ACQUIRE_TIMEOUT`, and record it."""
         with anyio.move_on_after(_ACQUIRE_TIMEOUT):
-            if ref is not None:
-                try:
-                    sandbox = await client.get_sprite(ref.id)
-                except NotFoundError as error:
-                    if not self._uncertain_create:
-                        raise
-                    # The lost create may never have reached Sprites, so send it again under the same
-                    # name. Sprites refuses a name that exists with a 409, so this cannot make a second Sprite.
-                    try:
-                        sandbox = await self._create(client)
-                    except SpriteError as resent:
-                        if not _conflict(resent):
-                            raise
-                        # The first create committed, but lookups do not see the Sprite yet.
-                        raise NetworkError(f'Sprite {ref.id!r} may still be becoming visible') from error
-            else:
-                sandbox = await self._create(client)
+            sandbox = await (self._create(client) if ref is None else self._look_up(client, ref))
             # Recorded as soon as the SDK returns, so a cancelled caller still leaves it named.
             self._sandbox = sandbox
             self._ref = WorkspaceRef(provider='sprites', id=sandbox.name)
@@ -623,6 +607,22 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             f'Sprite {action} did not complete within {_ACQUIRE_TIMEOUT:g}s; '
             'the Sprites control plane may be unreachable.'
         )
+
+    async def _look_up(self, client: AsyncSpritesClient, ref: WorkspaceRef) -> AsyncSprite:
+        try:
+            return await client.get_sprite(ref.id)
+        except NotFoundError as error:
+            if not self._uncertain_create:
+                raise
+            # The lost create may never have reached Sprites, so send it again under the same
+            # name. Sprites refuses a name that exists with a 409, so this cannot make a second Sprite.
+            try:
+                return await self._create(client)
+            except SpriteError as resent:
+                if not _conflict(resent):
+                    raise
+                # The first create committed, but lookups do not see the Sprite yet.
+                raise NetworkError(f'Sprite {ref.id!r} may still be becoming visible') from error
 
     async def _create(self, client: AsyncSpritesClient) -> AsyncSprite:
         try:
