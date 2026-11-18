@@ -4380,13 +4380,14 @@ _RouteProvider = Literal[
     'ollama',
     'openrouter',
     'snowflake',
+    'stav',
     'together',
     'vercel',
 ]
 """The provider names the forced-tool-choice route tests use."""
 
 
-def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:
+def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:  # noqa: C901
     """The provider class behind a route name in the forced-tool-choice route tests below.
 
     Only the requested class is looked up, so a test needs only the extras of the routes it uses.
@@ -4416,6 +4417,8 @@ def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:
             return OpenRouterProvider
         case 'snowflake':
             return SnowflakeProvider
+        case 'stav':
+            return StavProvider
         case 'together':
             return TogetherProvider
         case 'vercel':  # pragma: no branch
@@ -4566,6 +4569,12 @@ _GPT_OSS: tuple[_RouteProvider, str] = ('cerebras', 'gpt-oss-120b')
             ('vercel', 'deepseek/deepseek-v4-pro'),
             id='deepseek-v4-vercel',
             marks=_diverges('#12104', 'Vercel allows forcing while DeepSeek V4 thinks'),
+        ),
+        pytest.param(
+            _DEEPSEEK_V4,
+            ('stav', 'deepseek-ai/deepseek-v4-flash-0731'),
+            id='deepseek-v4-stav',
+            marks=_diverges('#12104', 'Stav allows forcing while DeepSeek V4 thinks'),
         ),
         pytest.param(
             _DEEPSEEK_V4_1,

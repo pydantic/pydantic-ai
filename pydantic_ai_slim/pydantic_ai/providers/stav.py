@@ -37,7 +37,6 @@ def _runs_in_header_value(region: str | Sequence[str] | None) -> str | None:
     if region is None:
         return None
     parts = [region] if isinstance(region, str) else list(region)
-    parts = [part.strip() for part in parts]
     if not parts or not all(parts):
         raise UserError("`region` must be a region or a non-empty list of regions, like `'eu'` or `['no', 'se']`.")
     return ','.join(parts)
@@ -103,11 +102,9 @@ class StavProvider(_OpenAISDKProvider):
             base_url: The base URL of the Stav API. If not provided, the `STAV_BASE_URL` environment variable
                 will be used if available, falling back to `https://api.stav.ai/v1`.
             region: The jurisdiction Stav may run requests in: `'eu'`, `'eea'`, an ISO 3166-1 alpha-2 country
-                code such as `'no'`, or a list of these (`['no', 'se']`), which allows any of them. This is a
-                jurisdiction, not a cloud site like Bedrock's `region_name='eu-north-1'`. `None` (the default)
-                lets Stav route globally. The region is sent as the `X-Stav-Runs-In` header on every request,
-                and can only narrow the workspace's own region policy. Stav refuses a request it
-                cannot serve inside the region rather than sending it elsewhere.
+                code such as `'no'`, or a list of these (`['no', 'se']`) that allows any of them. Sent as the
+                `X-Stav-Runs-In` header on every request; it can only narrow the workspace's own region policy.
+                `None` (the default) lets Stav run requests in any region.
             openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key`, `base_url`, `region`
                 and `http_client` must be `None`.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
