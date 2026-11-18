@@ -56,7 +56,8 @@ class PermissionRule(Generic[AgentDepsT]):
     metadata) match a rule with a `command`. An `'allow'` rule matches a simple command that starts with these
     words and has no redirection other than to `/dev/null` or a file descriptor. An `'ask'` or `'deny'` rule
     matches one that contains them anywhere, inside quotes too, so `sudo git push` matches `'git push'`, and its
-    first word also matches a path ending in it, so `/bin/rm -rf x` matches `'rm -rf'`.
+    first word also matches a path ending in it, so `/bin/rm -rf x` matches `'rm -rf'`. A word that is a pattern, such as
+    `r[m]`, matches the words it could expand to.
     """
 
     args: Mapping[str, str] = field(default_factory=dict[str, str])
@@ -105,9 +106,12 @@ def _words(command: str) -> list[str]:
 def _chars(command: str) -> Iterator[tuple[str, str]]:
     """Each character of `command` other than quoting syntax, with how it is quoted: unquoted, in single or double quotes, or escaped."""
     quote = ''
-    escaped = False
+    escaped = comment = False
+    previous = ' '
     for char in command:
-        if escaped:
+        if comment:
+            comment = char != '\n'
+        elif escaped:
             escaped = False
             yield char, '\\'
         elif char == '\\' and quote != "'":
@@ -116,8 +120,11 @@ def _chars(command: str) -> Iterator[tuple[str, str]]:
             quote = ''
         elif not quote and char in '\'"':
             quote = char
+        elif not quote and char == '#' and (previous.isspace() or previous in _OPERATOR_CHARS):
+            comment = True  # the shell ignores the rest of the line, quotes included
         else:
             yield char, quote
+        previous = char
 
 
 def _quotes_an_operator(command: str) -> bool:
@@ -179,10 +186,18 @@ def _loose(words: Iterable[str]) -> list[str]:
     return [part for word in words for part in _LOOSE_SPLIT.split(word) if part]
 
 
+def _matches_word(word: str, expected: str) -> bool:
+    """Whether `word` is `expected`, or a pattern the shell could expand into it, such as `r[m]`."""
+    return word == expected or (_GLOB.search(word) is not None and fnmatchcase(expected, word))
+
+
 def _contains(words: Sequence[str], rule: Sequence[str]) -> bool:
-    head, rest = rule[0], list(rule[1:])
+    """Whether `rule`'s words run consecutively in `words`; its first word also matches a path ending in it."""
+    head, rest = rule[0], rule[1:]
     return any(
-        (word == head or word.endswith(f'/{head}')) and list(words[i + 1 : i + len(rule)]) == rest
+        _matches_word(posixpath.basename(word), head)
+        and len(following := words[i + 1 : i + len(rule)]) == len(rest)
+        and all(map(_matches_word, following, rest))
         for i, word in enumerate(words)
     )
 
