@@ -27,6 +27,7 @@ _SpecialTokenRoute = Literal[
     'otari',
     'ovhcloud',
     'sambanova',
+    'stav',
     'together',
     'vercel',
     'vllm',

@@ -609,6 +609,8 @@ ROUTE_CASES: list[tuple[str, str, str, bool]] = [
     ('otari', 'OtariProvider', 'ollama:command-r', True),
     ('otari', 'OtariProvider', 'vllm/CohereLabs/command-a', True),
     ('otari', 'OtariProvider', 'groq:openai/gpt-oss-120b', True),
+    ('stav', 'StavProvider', 'deepseek-ai/deepseek-v4-flash-0731', True),
+    ('stav', 'StavProvider', 'anthropic/claude-sonnet-4-5', False),
     ('azure', 'AzureProvider', 'deepseek-v4-pro', True),
     ('azure', 'AzureProvider', 'grok-4.7', False),
     ('azure', 'AzureProvider', 'gpt-6-luna', False),

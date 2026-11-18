@@ -132,6 +132,7 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.otari import OtariProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
+    from pydantic_ai.providers.stav import StavProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
     from pydantic_ai.providers.vllm import VLLMProvider
@@ -154,6 +155,7 @@ else:
         from pydantic_ai.providers.otari import OtariProvider
         from pydantic_ai.providers.ovhcloud import OVHcloudProvider
         from pydantic_ai.providers.sambanova import SambaNovaProvider
+        from pydantic_ai.providers.stav import StavProvider
         from pydantic_ai.providers.together import TogetherProvider
         from pydantic_ai.providers.vercel import VercelProvider
         from pydantic_ai.providers.vllm import VLLMProvider
@@ -161,7 +163,7 @@ else:
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None
         CrusoeProvider = FireworksProvider = GitHubProvider = HerokuProvider = None
         MetaProvider = MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
-        OpenRouterProvider = OtariProvider = OVHcloudProvider = SambaNovaProvider = None
+        OpenRouterProvider = OtariProvider = OVHcloudProvider = SambaNovaProvider = StavProvider = None
         TogetherProvider = VercelProvider = VLLMProvider = None
 
     try:
@@ -10030,6 +10032,7 @@ async def test_azure_provider_lifecycle_closes_client():
         pytest.param(lambda: OtariProvider(api_key='t'), marks=[requires_openai], id='otari'),
         pytest.param(lambda: OVHcloudProvider(api_key='t'), marks=[requires_openai], id='ovhcloud'),
         pytest.param(lambda: SambaNovaProvider(api_key='t'), marks=[requires_openai], id='sambanova'),
+        pytest.param(lambda: StavProvider(api_key='t'), marks=[requires_openai], id='stav'),
         pytest.param(lambda: TogetherProvider(api_key='t'), marks=[requires_openai], id='together'),
         pytest.param(lambda: VercelProvider(api_key='t'), marks=[requires_openai], id='vercel'),
         pytest.param(lambda: AlibabaProvider(api_key='t'), marks=[requires_openai], id='alibaba'),
