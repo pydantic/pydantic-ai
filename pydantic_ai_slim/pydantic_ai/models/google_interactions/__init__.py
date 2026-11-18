@@ -107,6 +107,7 @@ too, as a `str`.
 """
 
 _MODEL_NAME = TypeAdapter(gi.ModelParam)
+_ERROR_LIST = TypeAdapter(list[JsonValue])
 _CONTENT_PARAM = TypeAdapter(gi.ContentParam, config=ConfigDict(arbitrary_types_allowed=True))
 _RESPONSE_FORMAT = TypeAdapter(
     gi.CreateModelInteractionResponseFormatParam, config=ConfigDict(arbitrary_types_allowed=True)
@@ -343,29 +344,38 @@ class GoogleInteractionsModel(Model[Client]):
             raise _model_errors.connection_error(self.model_name, str(exc), exc, timeout=True) from exc
         except APIConnectionError as exc:
             if isinstance(exc.__cause__, httpx.HTTPStatusError | httpx2.HTTPStatusError):
-                raise _model_errors.transport_status_error(self.model_name, exc.__cause__.response) from exc
+                response = exc.__cause__.response
+                body, _, text = _model_errors.transport_error_body(response)
+                raise self._status_error(response.status_code, body, dict(response.headers), text) from exc
             raise _model_errors.connection_error(self.model_name, str(exc), exc, timeout=False) from exc
         except APIStatusError as exc:
-            raise self._map_status_error(exc) from exc
+            raise self._status_error(exc.response.status_code, exc.body, dict(exc.response.headers), str(exc)) from exc
         except APIError as exc:
             raise _model_errors.stream_error(self.model_name, str(exc), exc.body) from exc
 
-    def _map_status_error(self, exc: APIStatusError) -> ModelHTTPError:
-        body = exc.body
+    def _status_error(
+        self, status_code: int, body: object, headers: dict[str, str], fallback_message: str
+    ) -> ModelHTTPError:
+        # Google's API layer, which rejects keys and quotas before Interactions sees the request, sends its error
+        # wrapped in a list.
+        if isinstance(body, list):
+            items = _ERROR_LIST.validate_python(body)
+            body = items[0] if len(items) == 1 else items
         error = body.get('error', body) if _utils.is_str_dict(body) else body
         status = error.get('status') if _utils.is_str_dict(error) else None
         code = error.get('code') if _utils.is_str_dict(error) else None
         status = status if isinstance(status, str) else None
         code = str(code) if isinstance(code, str | int) else None
-        message = error.get('message') if _utils.is_str_dict(error) else str(exc)
-        category = _model_errors.google_status_category(status, message, body)
-        return ModelHTTPError.for_category(
-            category or _model_errors.http_status_category(exc.response.status_code, message),
-            status_code=exc.response.status_code,
-            model_name=self.model_name,
+        message = error.get('message') if _utils.is_str_dict(error) else None
+        # Interactions' own errors name a lowercase `code` such as `invalid_request` where Google's API layer sends an
+        # RPC `status`; neither spelling of one matches the other's categories.
+        return _model_errors.google_status_error(
+            self.model_name,
+            status_code=status_code,
+            status=status or code,
+            message=message if isinstance(message, str) else fallback_message,
             body=body,
-            headers=dict(exc.response.headers),
-            provider_error_code=status or code,
+            headers=headers,
         )
 
     def _http_options(self, settings: ModelSettings, steps: list[dict[str, JsonValue]]) -> _HttpOptions:

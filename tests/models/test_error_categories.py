@@ -2270,6 +2270,33 @@ CASES.extend(
 CASES.extend(
     [
         Case(
+            # Google's API layer answers an Interactions request it rejects, like this invalid key, with its error in a
+            # list, as recorded in `tests/test_retrying_transport_error_categories.py`.
+            id='google-interactions-api-key-invalid-in-list',
+            model=_google_interactions,
+            handler=_json(
+                400,
+                [
+                    {
+                        'error': {
+                            'code': 400,
+                            'message': 'API key not valid. Please pass a valid API key.',
+                            'status': 'INVALID_ARGUMENT',
+                            'details': [
+                                {
+                                    '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+                                    'reason': 'API_KEY_INVALID',
+                                    'domain': 'googleapis.com',
+                                }
+                            ],
+                        }
+                    }
+                ],
+            ),
+            categories=_AUTHENTICATION,
+            attrs={'status_code': 400, 'provider_error_code': 'INVALID_ARGUMENT'},
+        ),
+        Case(
             id='google-interactions-connection',
             model=_google_interactions,
             handler=_raise('connect'),

@@ -22,11 +22,13 @@ from .conftest import try_import
 
 with try_import() as imports_successful:
     from anthropic import APIConnectionError as AnthropicAPIConnectionError, AsyncAnthropic
+    from google.genai._gaos.lib.compat_errors import APIConnectionError as GoogleInteractionsAPIConnectionError
     from openai import AsyncOpenAI
     from tenacity import stop_after_attempt
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -68,6 +70,13 @@ def _openai(model_name: str) -> ModelFactory:
 def _google(model_name: str) -> ModelFactory:
     def factory(http_client: httpx2.AsyncClient, api_key: str) -> Model:
         return GoogleModel(model_name, provider=GoogleProvider(api_key=api_key, http_client=http_client))
+
+    return factory
+
+
+def _google_interactions(model_name: str) -> ModelFactory:
+    def factory(http_client: httpx2.AsyncClient, api_key: str) -> Model:
+        return GoogleInteractionsModel(model_name, provider=GoogleProvider(api_key=api_key, http_client=http_client))
 
     return factory
 
@@ -161,6 +170,38 @@ CASES = [
         ),
     ),
     Case(
+        # Interactions answers an invalid key from Google's API layer, in Gemini's `INVALID_ARGUMENT` shape but in a list.
+        id='google-interactions-api-key-invalid',
+        model=_google_interactions('gemini-3.8-flash'),
+        api_key='AIzaInvalidKey000000000000000000000000',
+        key_fixture='gemini_api_key',
+        expected=snapshot(
+            {
+                'category': 'ModelAuthenticationError',
+                'status_code': 400,
+                'provider_error_code': 'INVALID_ARGUMENT',
+                'provider_error_type': None,
+                'suggested_model_id': None,
+            }
+        ),
+    ),
+    Case(
+        # An unknown model is Interactions' own error, a lowercase `code` with no RPC `status`.
+        id='google-interactions-model-not-found',
+        model=_google_interactions('gemini-3.8-flsh'),
+        api_key=None,
+        key_fixture='gemini_api_key',
+        expected=snapshot(
+            {
+                'category': 'ModelNotFoundError',
+                'status_code': 404,
+                'provider_error_code': 'not_found',
+                'provider_error_type': None,
+                'suggested_model_id': None,
+            }
+        ),
+    ),
+    Case(
         id='mistral-invalid-model',
         model=_mistral('mistral-smal-latest'),
         api_key=None,
@@ -203,9 +244,9 @@ async def test_retrying_transport_gave_up_recorded_error_category(
             await Agent(case.model(http_client, api_key)).run('hello')
 
     exc = exc_info.value
-    # Raised from the transport's `HTTPStatusError`, which `anthropic` wraps, not from an SDK status error.
+    # Raised from the transport's `HTTPStatusError`, which `anthropic` and Interactions wrap, not from an SDK status error.
     cause = exc.__cause__
-    if isinstance(cause, AnthropicAPIConnectionError):
+    if isinstance(cause, AnthropicAPIConnectionError | GoogleInteractionsAPIConnectionError):
         cause = cause.__cause__
     assert isinstance(cause, httpx2.HTTPStatusError)
     assert {
