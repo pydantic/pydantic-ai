@@ -49,7 +49,7 @@ async def test_cancelled_attempt_retries_and_then_emits_end() -> None:
         preserve_first_user_message=False,
         receipts=True,
     )
-    agent = Agent(TestModel(custom_output_text='ok'), capabilities=[compaction, listener])
+    agent = Agent(TestModel(custom_output_text='ok'), deps_type=type(None), capabilities=[compaction, listener])
 
     first = await agent.run('first trigger', message_history=_history('old one', 'old two'))
     assert len(events) == 1
@@ -84,6 +84,7 @@ async def test_hooks_capability_can_cancel_compaction() -> None:
     history = _history('old one', 'old two')
     result = await Agent(
         TestModel(custom_output_text='ok'),
+        deps_type=type(None),
         capabilities=[SlidingWindowCompaction(max_messages=1, keep_messages=1), hooks],
     ).run('trigger', message_history=history)
 
@@ -133,7 +134,7 @@ async def test_tier_events_measure_with_the_configured_tokenizer() -> None:
         target_tokens=1,
         tokenizer=_ten_per_char,
     )
-    agent = Agent(TestModel(custom_output_text='ok'), capabilities=[tiered, _RecordAll(events)])
+    agent = Agent(TestModel(custom_output_text='ok'), deps_type=type(None), capabilities=[tiered, _RecordAll(events)])
 
     await agent.run('trigger', message_history=_history('old one', 'old two'))
 
@@ -160,7 +161,7 @@ async def test_fallback_events_measure_with_the_configured_tokenizer() -> None:
         max_tokens=1,
         tokenizer=_ten_per_char,
     )
-    agent = Agent(TestModel(custom_output_text='ok'), capabilities=[fallback, _RecordAll(events)])
+    agent = Agent(TestModel(custom_output_text='ok'), deps_type=type(None), capabilities=[fallback, _RecordAll(events)])
 
     await agent.run('trigger', message_history=_history('old one', 'old two'))
 
@@ -189,7 +190,7 @@ class _InPlaceStrategy:
 async def test_in_place_strategy_reports_its_end_event() -> None:
     events: list[CompactionStartEvent | CompactionEndEvent] = []
     tiered = TieredCompaction(tiers=[_InPlaceStrategy()], target_tokens=1)
-    agent = Agent(TestModel(custom_output_text='ok'), capabilities=[tiered, _RecordAll(events)])
+    agent = Agent(TestModel(custom_output_text='ok'), deps_type=type(None), capabilities=[tiered, _RecordAll(events)])
 
     result = await agent.run('trigger', message_history=_history('old one', 'old two'))
 
@@ -241,7 +242,7 @@ async def test_fallback_cancellation_does_not_advance_but_failure_does() -> None
                 cancelled = True
 
     tiered = TieredCompaction(tiers=[fallback], target_tokens=1)
-    agent = Agent(TestModel(custom_output_text='ok'), capabilities=[tiered, Listener()])
+    agent = Agent(TestModel(custom_output_text='ok'), deps_type=type(None), capabilities=[tiered, Listener()])
     first = await agent.run('trigger', message_history=_history('x' * 40, 'y' * 40))
     assert calls == []
 
@@ -305,7 +306,7 @@ async def test_a_cancelled_tier_is_skipped_and_escalation_continues() -> None:
                 event.cancel('not now')
 
     tiered = TieredCompaction[None](tiers=[_Named('cheap'), _Named('expensive')], target_tokens=1)
-    agent = Agent(TestModel(custom_output_text='ok'), capabilities=[tiered, _CancelCheap(events)])
+    agent = Agent(TestModel(custom_output_text='ok'), deps_type=type(None), capabilities=[tiered, _CancelCheap(events)])
 
     await agent.run('trigger', message_history=_history('old one ' * 20, 'old two ' * 20))
 
@@ -321,7 +322,7 @@ async def test_a_cancelled_tier_is_skipped_and_escalation_continues() -> None:
 async def test_an_attempt_that_changes_nothing_emits_no_end_event() -> None:
     events: list[CompactionStartEvent | CompactionEndEvent] = []
     tiered = TieredCompaction[None](tiers=[_Named('unchanged', drops=False)], target_tokens=1)
-    agent = Agent(TestModel(custom_output_text='ok'), capabilities=[tiered, _RecordAll(events)])
+    agent = Agent(TestModel(custom_output_text='ok'), deps_type=type(None), capabilities=[tiered, _RecordAll(events)])
 
     await agent.run('trigger', message_history=_history('old one ' * 20, 'old two ' * 20))
 
