@@ -2282,14 +2282,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     @staticmethod
     def _native_computer_name(model_request_parameters: ModelRequestParameters) -> str | None:
         """The name of the `computer` tool when the request sends a `ComputerTool` in its place."""
-        if not any(isinstance(tool, ComputerTool) for tool in model_request_parameters.native_tools):
+        native = next((tool for tool in model_request_parameters.native_tools if isinstance(tool, ComputerTool)), None)
+        if native is None:
             return None
         name = next(iter(_computer_tool_names(model_request_parameters)), None)
         computer = model_request_parameters.declared_tool_defs.get(name or '')
         if computer is not None and computer.defer_loading:
             # Live: the API rejects `defer_loading` on its computer tool as an unknown parameter (pinned by
             # `test_openai_rejects_defer_loading_on_its_computer_tool`), and given a computer tool in a
-            # `tool_search_output`, GPT searched again instead of calling it.
+            # `tool_search_output`, GPT searched again instead of calling it. An optional one is left out, as an
+            # optional native tool the request can't send is, so the deferred function tool goes instead.
+            if native.optional:
+                return None
             raise UserError(
                 f'OpenAI sends the {name!r} tool as its native computer tool, which it cannot defer: the API rejects '
                 '`defer_loading` on it as an unknown parameter. Defer the whole capability with '

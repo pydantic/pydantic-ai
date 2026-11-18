@@ -99,7 +99,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _function_call_args: dict[str, str] = field(default_factory=dict[str, str], init=False)
     _finalized_function_calls: set[str] = field(default_factory=set[str], init=False)
     _status: ResponseStatus | None = field(default=None, init=False)
-    """The status of the complete response that ended the stream, which decides whether its computer calls may run."""
+    """The response's latest status, from `response.created` and then the event that ended the stream, which decides
+    whether its computer calls may run."""
     _history: Hasher | None = None
     """The history this response was created from, digested with its parts as `ModelResponse.history_digest`."""
     # Custom HTTP clients can return streams outside the SDK's AsyncStream class.
@@ -346,6 +347,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def _map_created(self, chunk: responses.ResponseCreatedEvent) -> None:
         self._set_state(chunk.response.status)
+        # OpenAI says `in_progress` here, so a stream that ends before its final event doesn't count as completed.
+        self._status = chunk.response.status
         if chunk.response.id:  # pragma: no branch
             self.provider_response_id = chunk.response.id
         self._store_conversation_id(chunk.response)

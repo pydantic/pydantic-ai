@@ -490,7 +490,8 @@ Python up to 3.14.
 
 - The first operation creates the container; the image needs a POSIX `sh`, and its own entrypoint and
   command don't run. Creating the container (and pulling) is not bounded by a command's `timeout`. Without `image` the
-  capability only attaches and removes by ref, and leaves a run without a ref to other workspace capabilities.
+  capability only attaches and removes by ref, and leaves a run without a ref to other workspace capabilities,
+  unless `desktop=True`, which builds the desktop image (below).
   `working_dir=None` uses the image's `WORKDIR`; a missing `working_dir` is created on first use, in an attached container too.
 - The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`; attaching starts a stopped container,
   so it comes back. The container outlives the run: `await DockerContainer().destroy(ref)`.
