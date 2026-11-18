@@ -141,7 +141,7 @@ async def test_missing_model(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize('args', [['-p'], ['-p', ''], ['-p', 'x', '--resume'], ['-p', 'x', 'config']])
 def test_cli_invalid_prompt(monkeypatch: pytest.MonkeyPatch, args: list[str]) -> None:
-    monkeypatch.setattr('sys.argv', ['clai2', *args])
+    monkeypatch.setattr('sys.argv', ['pax', *args])
     with pytest.raises(SystemExit) as error:
         cli.run()
     assert error.value.code == 2
@@ -152,7 +152,7 @@ def test_cli_alias_and_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     store = SettingsStore(tmp_path / 'config.db')
     store.set('model', 'test')
     monkeypatch.setenv('CLAI_MODEL', 'env:model')
-    monkeypatch.setattr('sys.argv', ['clai2', '--database', str(store.path), '-m', 'explicit:model', '-p', 'hello'])
+    monkeypatch.setattr('sys.argv', ['pax', '--database', str(store.path), '-m', 'explicit:model', '-p', 'hello'])
 
     async def run_headless(
         *,

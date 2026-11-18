@@ -186,7 +186,7 @@ def test_substring_file_completion(*, tmp_path: Path, fragment: str, directory: 
 
 
 def _clai2(monkeypatch: pytest.MonkeyPatch, store: SettingsStore, *args: str) -> None:
-    monkeypatch.setattr('sys.argv', ['clai2', '--database', str(store.path), *args])
+    monkeypatch.setattr('sys.argv', ['pax', '--database', str(store.path), *args])
     cli.run()
 
 

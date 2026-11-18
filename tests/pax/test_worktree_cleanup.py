@@ -846,7 +846,7 @@ def run_cli(
         # The stand-in session commits and edits settings with Git and SQLite, which would block the loop.
         await anyio.to_thread.run_sync(session)
         if relaunch:
-            raise Relaunch(executable='/b/clai2', session_id='s')
+            raise Relaunch(executable='/b/pax', session_id='s')
 
     def respond(prompt: str) -> str:
         prompts.append(prompt)
@@ -861,7 +861,7 @@ def run_cli(
     monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=respond))
     # Beside the repository: a database inside the checkout would be an untracked change.
     database = repo.parent / 'config.db'
-    monkeypatch.setattr('sys.argv', ['clai2', '--database', str(database), '-m', 'test', *args])
+    monkeypatch.setattr('sys.argv', ['pax', '--database', str(database), '-m', 'test', *args])
     cli.run()
     return prompts
 

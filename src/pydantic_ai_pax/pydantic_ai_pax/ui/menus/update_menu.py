@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 
 from pydantic_ai_pax.cli.command_context import CommandContext
-from pydantic_ai_pax.cli.self_update import Updates
+from pydantic_ai_pax.cli.self_update import Updates, command_name
 from pydantic_ai_pax.plugins.menus import CloseMenu, Dialogs, FieldRow, SettingsMenu
 from pydantic_ai_pax.ui.menus.set_menu import SettingsSource
 
@@ -44,10 +44,10 @@ class AboutSource:
         checked = 'just now' if minutes < 1 else f'{minutes} min ago' if minutes < 60 else f'{minutes // 60} h ago'
         if found.update is None:
             return (
-                f'clai2 is already on the latest version {self._updates.current.label} '
+                f'{command_name()} is already on the latest version {self._updates.current.label} '
                 f'on the {found.channel} channel (checked {checked}).'
             )
-        return f'a new version {found.update.label} of clai2 is available on the {found.channel} channel (checked {checked}).'
+        return f'a new version {found.update.label} of {command_name()} is available on the {found.channel} channel (checked {checked}).'
 
     def rows(self) -> list[FieldRow]:
         """The version, whose note says whether a newer one is out and whose action updates, then the channel."""

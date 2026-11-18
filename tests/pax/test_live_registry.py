@@ -500,6 +500,6 @@ async def test_cancelled_start_removes_socket(private_runtime: Path, monkeypatch
 
 def test_sessions_command_rejects_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, 'platform', 'win32')
-    monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
+    monkeypatch.setattr(sys, 'argv', ['pax', 'sessions'])
     with pytest.raises(SystemExit, match='requires Unix sockets'):
         cli.run()

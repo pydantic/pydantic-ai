@@ -186,7 +186,7 @@ async def test_registry_tracks_open_sessions(
                 return clock[0]
 
         monkeypatch.setattr('pydantic_ai_pax.runtime.live_registry.datetime', Clock)
-        monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
+        monkeypatch.setattr(sys, 'argv', ['pax', 'sessions'])
         await anyio.to_thread.run_sync(cli.run)
         assert (
             capsys.readouterr().out
@@ -237,7 +237,7 @@ async def test_cli_session_id_prefixes_are_unique_across_processes(
     first = LiveRegistry(lambda: [session('deadbeef0' + '0' * 23)])
     second = LiveRegistry(lambda: [session('deadbeef1' + '0' * 23)])
     second.pid = os.getppid()  # A second live process identity, without spawning a subprocess.
-    monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
+    monkeypatch.setattr(sys, 'argv', ['pax', 'sessions'])
     async with first.serving(lambda callback: lambda: None), second.serving(lambda callback: lambda: None):
         await anyio.to_thread.run_sync(cli.run)
         output = capsys.readouterr().out
@@ -253,7 +253,7 @@ def test_cli_unsafe_registry_error_is_visible(monkeypatch: pytest.MonkeyPatch) -
     directory = state_dir() / 'live'
     directory.mkdir(parents=True, mode=0o755)
     directory.chmod(0o755)
-    monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
+    monkeypatch.setattr(sys, 'argv', ['pax', 'sessions'])
     with pytest.raises(SystemExit, match='Unsafe CLAI directory'):
         cli.run()
 
@@ -264,7 +264,7 @@ def test_cli_listing_errors_are_visible(monkeypatch: pytest.MonkeyPatch, message
         raise ControlProtocolError(message)
 
     monkeypatch.setattr('pydantic_ai_pax.runtime.live_registry.listing', failed_listing)
-    monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
+    monkeypatch.setattr(sys, 'argv', ['pax', 'sessions'])
     with pytest.raises(SystemExit, match='too large') as error:
         cli.run()
     assert '\u001b' not in str(error.value) and '\u0007' not in str(error.value)

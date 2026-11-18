@@ -425,8 +425,9 @@ Keep documented plugin-author paths (`pydantic_ai_pax.plugins` and
 `pydantic_ai_pax.commands`) intact; update example imports when moving UI helpers.
 The package was `pydantic-clai2` until it became `pydantic-ai-pax`. `pydantic_clai2/` aliases
 `pydantic_clai2.X` to `pydantic_ai_pax.X` and holds the deprecated `clai2` command, which the
-`pydantic-clai2` shim in `src/pydantic_clai2/` installs. `ProcessPlugins.upgrade` renames saved
-`pydantic_clai2` factories. On-disk names (`~/.config/pydantic-clai2`, the keyring service, the
+`pydantic-clai2` shim in `src/pydantic_clai2/` installs. `PluginSettings` renames a `pydantic_clai2`
+factory as it validates, and `SettingsStore.save_plugin` stores factories under `pydantic_clai2`,
+which older builds sharing the database still import. On-disk names (`~/.config/pydantic-clai2`, the keyring service, the
 `clai2-bleeding` release) keep the old name so existing installs keep their data.
 
 ## File map

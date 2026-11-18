@@ -510,6 +510,23 @@ def test_update_channel_main_keeps_its_former_name_on_disk(tmp_path: Path) -> No
         }
 
 
+def test_plugin_factories_keep_the_former_package_name_on_disk(tmp_path: Path) -> None:
+    """`pydantic_ai_pax` was `pydantic_clai2`: saved factories keep that name, which older builds still import."""
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    web = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'web')
+    store.save_plugin(web.model_copy(update={'enabled': True}))
+    store.save_plugin(PluginSettings(id='mine', factory='my_plugins.search'))
+    with closing(sqlite3.connect(path)) as connection:
+        stored = {row[0]: json.loads(row[1])['factory'] for row in connection.execute('SELECT * FROM plugins')}
+    assert stored == {'web': 'pydantic_clai2.builtin_plugins.web', 'mine': 'my_plugins.search'}
+    assert {plugin.id: plugin.factory for plugin in SettingsStore(path).plugins()} == {
+        'web': web.factory,
+        'mine': 'my_plugins.search',
+    }
+    assert web.factory == 'pydantic_ai_pax.builtin_plugins.web'
+
+
 def test_incompatible_schema_is_not_modified(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     store.set('model', 'test')

@@ -1475,7 +1475,7 @@ async def test_startup_flags_import_through_chat_and_headless(
 def test_cli_resume_flags(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flags: list[str], resume: str, source: str | None
 ) -> None:
-    monkeypatch.setattr('sys.argv', ['clai2', '--database', str(tmp_path / 'config.db'), *flags])
+    monkeypatch.setattr('sys.argv', ['pax', '--database', str(tmp_path / 'config.db'), *flags])
     seen: list[tuple[str | None, str | None]] = []
 
     async def fake_chat(*args: object, resume: str | None, resume_from: str | None, **kwargs: object) -> None:
@@ -1488,7 +1488,7 @@ def test_cli_resume_flags(
 
 def test_cli_prompt_with_imported_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     database = str(tmp_path / 'config.db')
-    monkeypatch.setattr('sys.argv', ['clai2', '--database', database, '-p', 'hi', '--resume-codex', CODEX_ID])
+    monkeypatch.setattr('sys.argv', ['pax', '--database', database, '-p', 'hi', '--resume-codex', CODEX_ID])
     seen: list[tuple[str | None, str | None]] = []
 
     async def run_headless(*, resume: str | None, resume_from: str | None, **kwargs: object) -> int:
@@ -1509,7 +1509,7 @@ def test_cli_prompt_with_imported_session(tmp_path: Path, monkeypatch: pytest.Mo
 def test_cli_rejects_conflicting_resume_flags(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flags: list[str]
 ) -> None:
-    monkeypatch.setattr('sys.argv', ['clai2', '--database', str(tmp_path / 'config.db'), *flags])
+    monkeypatch.setattr('sys.argv', ['pax', '--database', str(tmp_path / 'config.db'), *flags])
     with pytest.raises(SystemExit) as error:
         cli.run()
     assert error.value.code == 2

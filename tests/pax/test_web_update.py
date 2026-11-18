@@ -154,7 +154,7 @@ async def test_run_web_restarts_on_the_same_port_and_token(tmp_path: Path, monke
     found = re.search(r'http://127\.0\.0\.1:(\d+)/\?token=(\S+)', output.getvalue())
     assert found is not None
     [relaunch] = relaunched
-    assert relaunch.executable == '/tools/clai2'
+    assert relaunch.executable == '/tools/pax'
     assert relaunch.web == WebHandoff(port=int(found[1]), token=found[2])
 
 
