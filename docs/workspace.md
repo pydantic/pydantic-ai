@@ -105,8 +105,14 @@ provider stops it; see [Cleaning up](#cleaning-up).
 Docker socket for you, and in-memory documents you keep in your own database. To list a package here,
 open a pull request.
 
-<span id="writing-a-backend"></span><span id="resolving-symlinks"></span><span id="checking-a-backend"></span><span id="supplying-a-workspace-from-a-capability"></span><span id="workspace-authority"></span><span id="files-you-didnt-write"></span><span id="authority-by-path"></span><span id="path-authority"></span>For anything else, [write a backend](workspace-custom.md#writing-a-backend): one class that runs a
+<span id="writing-a-backend"></span><span id="resolving-symlinks"></span><span id="checking-a-backend"></span>For anything else, [write a backend](workspace-custom.md#writing-a-backend): one class that runs a
 command, plus a test suite that checks it behaves like the others.
+
+<span id="supplying-a-workspace-from-a-capability"></span><span id="workspace-authority"></span><span id="files-you-didnt-write"></span><span id="authority-by-path"></span><span id="path-authority"></span>To
+choose a workspace per user, [supply one from a capability](workspace-custom.md#supplying-a-workspace-from-a-capability).
+To [mark who wrote its files](workspace-custom.md#workspace-authority), including
+[by path](workspace-custom.md#path-authority), or to [wrap one](workspace-custom.md#wrapping-a-workspace), see
+Custom Workspaces.
 
 ## Your machine or a sandbox
 
