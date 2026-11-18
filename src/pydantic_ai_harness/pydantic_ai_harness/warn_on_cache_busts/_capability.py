@@ -26,7 +26,6 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_ignored
 
 _WARN_ON: frozenset[CollapseReason] = frozenset({'unexpected', 'unknown'})
 """The collapses the provider's retention window doesn't explain (see `CacheBustWarning.reason`)."""
@@ -187,28 +186,6 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     Silencing and dev/CI escalation both go through the stdlib `warnings` filters -- see `CacheBustWarning`.
     """
 
-    # The deprecated arguments keep their original positions, so positional calls keep their meaning.
-    collapse_ratio: float | None = None
-    """Deprecated: use `min_missed_ratio=1 - collapse_ratio`.
-
-    Warned when a request read back less than this fraction of the established prefix. It is
-    still honored, converted to the equivalent `min_missed_ratio`.
-    """
-
-    min_prefix_tokens: int | None = None
-    """Deprecated: use `min_missed_tokens`, which also implies an established prefix at least that large.
-
-    Only judges collapse once the established prefix reaches this many tokens. It is still honored.
-    """
-
-    cache_ttl_seconds: float | None = None
-    """Deprecated and ignored: the cache retention window now comes from the model.
-
-    It is the retention the request's settings ask for, else the provider's documented
-    `ModelProfile.default_cache_retention`, extended by any `CachePoint` TTLs. A collapse after
-    that window elapsed is classified as a cache expiry and doesn't warn.
-    """
-
     _: KW_ONLY
 
     min_missed_ratio: float = MIN_MISSED_RATIO
@@ -229,46 +206,14 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     _store: ConversationCacheMarkStore = field(
         init=False, default_factory=ConversationCacheMarkStore, compare=False, repr=False
     )
-    _min_prefix_tokens: int = field(init=False, default=0, compare=False, repr=False)
     # Private marks, in case a hook runs on this instance rather than on the copy `for_run` binds.
     _state: _RunState = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.collapse_ratio is not None:
-            if self.min_missed_ratio != MIN_MISSED_RATIO:
-                raise TypeError('Pass `min_missed_ratio` only: `collapse_ratio` is its deprecated inverse.')
-            if not 0.0 < self.collapse_ratio <= 1.0:
-                raise ValueError('collapse_ratio must be greater than 0.0 and at most 1.0')
-            warnings.warn(
-                '`WarnOnCacheBusts(collapse_ratio=...)` is deprecated: pass '
-                f'`min_missed_ratio={1 - self.collapse_ratio:g}` (`1 - collapse_ratio`) instead.',
-                category=HarnessDeprecationWarning,
-                stacklevel=3,
-            )
-            self.min_missed_ratio = 1 - self.collapse_ratio
-        if self.min_prefix_tokens is not None:
-            if self.min_prefix_tokens < 0:
-                raise ValueError('min_prefix_tokens must be non-negative')
-            warnings.warn(
-                '`WarnOnCacheBusts(min_prefix_tokens=...)` is deprecated: a warning now also needs the request to '
-                'miss at least `min_missed_tokens` of the established prefix, which implies a prefix at least that '
-                'large. Pass `min_missed_tokens` instead.',
-                category=HarnessDeprecationWarning,
-                stacklevel=3,
-            )
-            self._min_prefix_tokens = self.min_prefix_tokens
         if not 0.0 <= self.min_missed_ratio < 1.0:
             raise ValueError('min_missed_ratio must be at least 0.0 and less than 1.0')
         if self.min_missed_tokens < 0:
             raise ValueError('min_missed_tokens must be non-negative')
-        if self.cache_ttl_seconds is not None:
-            warn_argument_ignored(
-                'WarnOnCacheBusts',
-                'cache_ttl_seconds',
-                "the cache retention window now comes from the model's settings and profile "
-                '(`Model.resolve_cache_retention()`, else `ModelProfile.default_cache_retention`), '
-                'extended by any `CachePoint` TTLs. Remove the argument.',
-            )
         self._state = _RunState(self._detector(conversation_id=None, run_id=None))
 
     def _detector(self, *, conversation_id: str | None, run_id: str | None) -> CacheHealthDetector:
@@ -279,7 +224,6 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
             alert_on=_WARN_ON,
             min_missed_ratio=self.min_missed_ratio,
             min_missed_tokens=self.min_missed_tokens,
-            min_prefix_tokens=self._min_prefix_tokens,
         )
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
@@ -291,11 +235,8 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
         idle for longer than any provider keeps a cache, or when more than 4,096 conversations
         have been active more recently.
         """
-        # The deprecated arguments already warned, and were converted, when this instance was built;
-        # the copy mustn't warn again.
-        run = replace(self, collapse_ratio=None, min_prefix_tokens=None, cache_ttl_seconds=None)
+        run = replace(self)
         run._store = self._store
-        run._min_prefix_tokens = self._min_prefix_tokens
         run._state = _RunState(run._detector(conversation_id=ctx.conversation_id, run_id=ctx.run_id))
         return run
 

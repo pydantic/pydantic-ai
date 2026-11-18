@@ -139,6 +139,7 @@ RUNNABLE_HARNESS_PAGES = frozenset(
         'memory.md',
         'permissions.md',
         'report-remaining-budget.md',
+        'report-tool-errors.md',
         'tool-budgets.md',
         'wrap-up-at-limits.md',
     }

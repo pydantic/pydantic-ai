@@ -37,6 +37,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Interrupt an agent that keeps repeating the same tool call, result, or response, or repeats itself within a streaming response | `DetectLoops` |
 | Cap calls per tool or per run, or refuse exact repeats, and let the run continue | `ToolBudgets(per_tool=..., total=..., refuse_repeats=...)` |
 | Have the agent review and revise its answer before the run ends | `RefineOutput` |
+| Send an exception a tool raises to the model instead of ending the run | `ReportToolErrors(format_error=...)` |
 | End the run with a final answer instead of `UsageLimitExceeded` at a usage limit | `WrapUpAtLimits` |
 
 ## RepairToolArguments
@@ -88,12 +89,10 @@ validation/retry. `Coder` already includes it.
 A guard is a sync or async callable taking the value, optionally preceded by `RunContext` (taken
 when a second positional parameter is required, for `*args` with another parameter, or when the
 second has a default and the first is annotated `RunContext`; a first parameter with no annotation,
-`Any`, `object`, or an unresolvable type not naming `RunContext` still gets it, with a
-`HarnessDeprecationWarning`). It
+`Any`, `object`, or an unresolvable type not naming `RunContext` gets the value). It
 returns `bool` (`True` = allow) or a `GuardrailResult`: `allow()`, `block(message=None)`,
 `replace(value)`, `retry(message)`, `approve()`. Any other return value (a `'safe'` label, `None`, a
-`numpy.bool_`) is read for truthiness with a `HarnessDeprecationWarning` (a truthy label allows the
-value); return `bool(...)` instead.
+`numpy.bool_`) raises `UserError`; return `bool(...)` instead.
 
 | Verdict | `InputGuardrail` | `OutputGuardrail` | `StreamGuardrail` | `ToolGuardrail.guard` (args) | `ToolGuardrail.result_guard` |
 |---|---|---|---|---|---|
@@ -531,7 +530,7 @@ store=InMemorySpendStore(), price=None, on_unpriced='zero', expose_tools=False, 
   given as a callable); `await limits.exhausted(scope=...)` for an admission decision (raises if a
   scoped, run-windowed, or callable-ceiling budget cannot be resolved; `status` leaves them out of
   its list).
-- Per-response events: subscribe to `SpendRecordedEvent` with `@agent.on_event(...)` (`on_spend` is deprecated).
+- Per-response events: subscribe to `SpendRecordedEvent` with `@agent.on_event(...)`.
 - `expose_tools=True` adds a `get_spend` tool for the model.
 - `price=lambda response: Decimal(...) | None` prices models genai-prices does not know.
 
@@ -552,7 +551,7 @@ Gotchas:
   `BatchSpendStore`:
   `get_many(keys) -> Mapping[str, Spent]` (unknown keys read as zero) and `add_many(entries:
   Sequence[SpendEntry]) -> Mapping[str, Spent]` (new totals; skip an entry whose `token` was already
-  applied to its `key`, honour `ttl`), both async. `SpendStore` (`get`/`add`) is deprecated. Pass the
+  applied to its `key`, honour `ttl`), both async. Pass the
   same store object to two `SpendLimits` to share counters. `defer_loading=True` is refused.
 - `SpendLimits` counts every billed response, including one a nested hook rejects, whatever the
   capability order; cached and `SkipModelRequest` responses aren't charged.
@@ -668,8 +667,8 @@ By default, enqueues reminders at the tail of each model request as a request-sc
 (`scope='request'`): the model sees each one only in the model request it's part of, and the next
 request, even the next step of the same run, no longer shows it. It's kept in message history, and
 it sits after the cached prefix, so it doesn't invalidate it. Turn on caching on the model
-(e.g. `anthropic_cache`); its breakpoint lands before the reminder. `cache_ttl` is deprecated and
-has no effect. With `interval>1` the model sees a reminder only on the requests where it fires, so
+(e.g. `anthropic_cache`); its breakpoint lands before the reminder.
+With `interval>1` the model sees a reminder only on the requests where it fires, so
 text it must follow at every step belongs in the agent's instructions, not in a `Reminder`.
 
 ```python
@@ -683,8 +682,8 @@ agent = Agent(
     capabilities=[
         SystemReminders(
             reminders=[
-                Reminder('Stay focused on the original request.', interval=5, tag=None),
-                Reminder('Run the tests before finishing.', interval=10, max_fires=2, tag=None),
+                Reminder('Stay focused on the original request.', interval=5),
+                Reminder('Run the tests before finishing.', interval=10, max_fires=2),
             ],
             dynamic_reminders=[
                 GoalReanchor(),
@@ -698,9 +697,8 @@ agent = Agent(
 - `Reminder(content, interval=1, first_after=None, trigger=None, max_fires=None, tag=None, scope='request')`:
   requests are counted from 1 per run, so `interval=4` fires on requests 4, 8, 12; `first_after=N`
   moves the first fire to request N, then every `interval` after (`first_after=1, interval=4` fires
-  on 1, 5, 9). `trigger(ctx) -> bool` adds a condition. Pass `tag=None`: left unset it warns that the
-  default used to be `'system-reminder'`. A reminder needs no tag, since it's already sent as a
-  system prompt; `tag='name'` wraps the text in `<name>`. `scope='conversation'` records each firing
+  on 1, 5, 9). `trigger(ctx) -> bool` adds a condition. `tag` defaults to `None` (it used to be
+  `'system-reminder'`): a reminder needs no tag, since it's already sent as a system prompt; `tag='name'` wraps the text in `<name>`. `scope='conversation'` records each firing
   as a lasting `SystemPromptPart` re-sent on every later request (one more part per firing, so bound it
   with `interval`/`max_fires`); use it for guidance that must outlast its step, instructions for text
   that holds on every step, and the default `'request'` for per-step nudges or changing values.
@@ -722,8 +720,7 @@ agent = Agent(
   raises `UserError` when the `Reminder` is created. Framing tags in the transcript `LLMReminder`
   quotes to its model are escaped.
 - `LLMReminder(model=..., interval=10)` (model required) makes one extra model call every `interval`
-  requests (10th, 20th, ...; pass `interval` explicitly: left unset it warns that the default used to
-  be `1`). Each firing adds one `GeneratedReminderPart` to history for good, so a run of R requests
+  requests (10th, 20th, ...). Each firing adds one `GeneratedReminderPart` to history for good, so a run of R requests
   gains `R // interval` parts. Its agent is built on first use, so no provider key is needed at
   construction. On any error it sends `GoalReanchor` text instead, logging a warning with the
   traceback once per run under `pydantic_ai_harness.system_reminders`; only a budget too tight for
@@ -733,9 +730,8 @@ agent = Agent(
   `TrajectoryJudge` runs alongside the agent (outside durable execution), steers only when the
   run drifts, and raises an evaluation error on the run. Use `LLMReminder` for a regular goal
   refresher, the judge for course correction, and `GoalReanchor` for free re-anchoring.
-- Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
-  (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
-  gone without a warning, so turn on caching on the model (such as `anthropic_cache`).
+- Observe with `ReminderFiredEvent`. Turn on caching on the model (such as `anthropic_cache`):
+  `SystemReminders` places no breakpoint of its own.
 - Neither `SystemReminders` nor `Planning` adds a cache breakpoint; the model's caching settings
   place them.
 - Not spec-serializable.
@@ -906,6 +902,55 @@ print([part.metadata for part in parts if isinstance(part, ToolReturnPart) and p
   rounds the budget is per round, not per task.
 - Emits a `tool call refused` span (`tool_budgets.reason`, `tool_budgets.tool_name`).
 
+## ReportToolErrors
+
+Wraps the agent's toolset and turns an exception a function tool raises into `ToolFailed`, as if the
+tool raised it, so the model gets a failed tool result (`outcome='failed'`) and the run continues.
+
+```python
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from pydantic_ai_harness import ReportToolErrors
+
+
+def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('divide', {'a': 1, 'b': 0})])
+    return ModelResponse(parts=[TextPart("Can't divide by zero.")])
+
+
+agent = Agent(FunctionModel(model), capabilities=[ReportToolErrors()])
+
+
+@agent.tool_plain
+def divide(a: int, b: int) -> float:
+    return a / b
+
+
+result = agent.run_sync('What is 1 / 0?')
+parts = [part for message in result.all_messages() for part in message.parts]
+print([part.content for part in parts if isinstance(part, ToolReturnPart)])
+#> ['`divide` raised ZeroDivisionError']
+```
+
+- The default text leaves out the exception's message (it can carry paths, hosts, connection strings).
+- `format_error(ctx, info) -> str` replaces the text, for example to include `info.error`; `info` is a
+  `ToolErrorInfo` (`name`, `args`, `tool_call_id`, `error`) from `pydantic_ai_harness.report_tool_errors`;
+  `exceptions=(TimeoutError, ...)` reports only those types (default `(Exception,)`), the rest propagate.
+- No limit of its own and the tool stays available; `UsageLimits.request_limit` stops a model that keeps
+  failing (`tool_calls_limit` counts only successful calls; `ToolBudgets` caps one tool).
+- Under Temporal, a failed tool activity reaches the workflow as `ActivityError` after its retry policy gives
+  up; `ReportToolErrors` leaves it alone, so the run fails as without it.
+- `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution`, `RunCancelled` pass
+  through; `UsageLimitExceeded` and `UserError` still end the run, and so does a tool that exhausts its
+  `retries` (`Coder` reports those instead). Output tools and argument validation aren't affected.
+- A `ToolGuardrail` `result_guard` screens the reported text. `on_tool_execute_error` hooks aren't called
+  for a reported exception, in any order; narrow `exceptions` to leave a type to such a hook. Under `CodeMode`, a
+  snippet's nested tool call raises the `ToolFailed`, not the original exception. With several,
+  the last listed formats the error. Emits no spans.
+
 ## ReportRemainingBudget
 
 In `before_model_request`, enqueues a request-scoped `RemainingBudgetPart` (`InstructionCapabilityPart`) with what is left of the run's
@@ -1075,5 +1120,6 @@ print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).outp
 - https://pydantic.dev/docs/ai/harness/trajectory-judge/
 - https://pydantic.dev/docs/ai/harness/detect-loops/
 - https://pydantic.dev/docs/ai/harness/refine-output/
+- https://pydantic.dev/docs/ai/harness/report-tool-errors/
 - https://pydantic.dev/docs/ai/harness/wrap-up-at-limits/
 - https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/ (core tool approval and deferred tools)

@@ -3,13 +3,9 @@
 from pydantic_ai_harness.planning._capability import Planning, PlanReminderPart
 from pydantic_ai_harness.planning._events import (
     PLANNING_EVENTS,
-    EventCallback,
     PlanCompletedEvent,
     PlanCreatedEvent,
     PlanDeletedEvent,
-    PlanEvent,
-    PlanEventEmitter,
-    PlanEventType,
     PlanStatusChangedEvent,
     PlanUpdatedEvent,
 )
@@ -20,15 +16,11 @@ from pydantic_ai_harness.planning._toolset import PlanningToolset, render_plan
 from pydantic_ai_harness.planning._types import PlanItem, PlanStatusUpdate, TaskStatus
 
 __all__ = [
-    'EventCallback',
     'InMemoryPlanStore',
     'PLANNING_EVENTS',
     'PlanCompletedEvent',
     'PlanCreatedEvent',
     'PlanDeletedEvent',
-    'PlanEvent',
-    'PlanEventEmitter',
-    'PlanEventType',
     'PlanItem',
     'PlanReminderPart',
     'PlanStatusUpdate',

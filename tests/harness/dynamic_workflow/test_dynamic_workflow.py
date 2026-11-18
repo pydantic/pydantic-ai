@@ -38,7 +38,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE, DenyUnanswered
@@ -1409,27 +1408,6 @@ async def test_unlimited_runs_without_a_backstop() -> None:
     ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], resource_limits='unlimited')
     out = await _run_script(ts, '1 + 1')
     assert out == 2
-
-
-def test_max_duration_secs_is_a_deprecated_alias() -> None:
-    renamed = r"resource_limits=\{'max_duration_secs': \.\.\.\}\)` has been renamed"
-    with pytest.warns(HarnessDeprecationWarning, match=rf'`DynamicWorkflow\({renamed}'):
-        capability = DynamicWorkflow[object](agents=[_sub_agent()], resource_limits={'max_duration_secs': 5})
-    assert capability.resource_limits == {'max_duration_seconds': 5}
-    with pytest.warns(HarnessDeprecationWarning, match=rf'`DynamicWorkflowToolset\({renamed}'):
-        toolset = DynamicWorkflowToolset[object](agents=[_wf_agent()], resource_limits={'max_duration_secs': 5})
-    assert toolset.resource_limits == {'max_duration_seconds': 5}
-    with pytest.raises(TypeError, match='`max_duration_secs` is its deprecated name'):
-        DynamicWorkflowToolset[object](
-            agents=[_wf_agent()], resource_limits={'max_duration_seconds': 5, 'max_duration_secs': 5}
-        )
-
-
-async def test_stale_max_duration_secs_key_is_rejected_at_run_time() -> None:
-    toolset = DynamicWorkflowToolset[object](agents=[_wf_agent()])
-    toolset.resource_limits = {'max_duration_secs': 5}
-    with pytest.raises(UserError, match=r"key\(s\): \['max_duration_secs'\]"):
-        await _run_script(toolset, '1 + 1')
 
 
 @pytest.mark.parametrize('unknown_key', ['max_durations_secs', 'max_allocations'])

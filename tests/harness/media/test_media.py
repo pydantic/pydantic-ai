@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import TypeGuard
 
 import anyio
-import httpx
 import httpx2
 import pytest
 from httpx2 import AsyncClient, MockTransport, Request, Response
@@ -31,7 +30,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.media import (
     FileMediaStore,
     MediaContext,
@@ -1367,30 +1365,6 @@ class TestS3MediaStoreWithMockTransport:
 
         expected_path = _canonical_uri(store._object_path(uri, MediaContext()))  # pyright: ignore[reportPrivateUsage]
         assert '%28' in expected_path and '%40' in expected_path  # ( and @ encoded
-        assert captured[0].url.raw_path.decode('ascii') == expected_path
-
-    async def test_legacy_httpx_client_is_deprecated_but_keeps_signed_path(self) -> None:
-        """Mock transport only: no provider cassette can hold a legacy `httpx` client or its signed raw path."""
-        captured: list[httpx.Request] = []
-
-        async def handler(request: httpx.Request) -> httpx.Response:
-            captured.append(request)
-            return httpx.Response(200)
-
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            with pytest.warns(HarnessDeprecationWarning, match='use `httpx2.AsyncClient` instead'):
-                store = S3MediaStore(
-                    bucket='my-bucket',
-                    endpoint='https://acct.r2.cloudflarestorage.com',
-                    region='auto',
-                    access_key_id='k',
-                    secret_access_key='s',
-                    key_prefix='runs(2024)/tenant@acme/',
-                    client=client,
-                )
-            uri = await store.put(b'payload')
-
-        expected_path = _canonical_uri(store._object_path(uri, MediaContext()))  # pyright: ignore[reportPrivateUsage]
         assert captured[0].url.raw_path.decode('ascii') == expected_path
 
     async def test_put_propagates_metadata_as_signed_x_amz_meta_headers(self) -> None:

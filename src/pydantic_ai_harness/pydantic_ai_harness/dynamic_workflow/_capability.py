@@ -11,7 +11,6 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness._warn import renamed_duration_limit
 from pydantic_ai_harness.dynamic_workflow._toolset import (
     DynamicWorkflowToolset,
     WorkflowAgent,
@@ -125,7 +124,6 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
         return None
 
     def __post_init__(self) -> None:
-        self.resource_limits = renamed_duration_limit(self.resource_limits, 'DynamicWorkflow')
         validate_workflow_settings(max_agent_calls=self.max_agent_calls, resource_limits=self.resource_limits)
         catalog = [self._normalize_workflow_agent(entry) for entry in self.agents]
         index_workflow_agents(catalog)
