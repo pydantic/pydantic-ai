@@ -1,6 +1,8 @@
 """`AskUser` under `TemporalDurability`: the workflow waits for the answer, and the answerer isn't asked again on replay.
 
 These tests start Temporal's time-skipping test server via `WorkflowEnvironment.start_time_skipping()`.
+The worker and the `Replayer` use `UnsandboxedWorkflowRunner`, so unlike the sandboxed harness Temporal tests this
+module doesn't need `skip_temporal_sandbox_on_314`.
 """
 
 from __future__ import annotations
