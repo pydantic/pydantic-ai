@@ -67,7 +67,7 @@ from ..._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
-from ...computer_use import COMPUTER_KIND, ComputerReturnPart
+from ...computer_use import ComputerReturnPart
 from ...durable_exec._operation_backend import in_durable_unit
 from ...exceptions import ModelConnectionError, SuspendedResponseExpired, UnsupportedSettingWarning, UserError
 from ...messages import (
@@ -132,6 +132,7 @@ from .. import (
     OpenAIResponsesCompatibleProvider,
     StreamedResponse,
     ToolVisibility,
+    _computer_tool_names,  # pyright: ignore[reportPrivateUsage]
     _effort_window_baseline,  # pyright: ignore[reportPrivateUsage]
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
@@ -2267,7 +2268,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """The name of the `computer` tool when the request sends a `ComputerTool` in its place."""
         if not any(isinstance(tool, ComputerTool) for tool in model_request_parameters.native_tools):
             return None
-        name = model_request_parameters.tool_name_for_kind(COMPUTER_KIND)
+        name = next(iter(_computer_tool_names(model_request_parameters)), None)
         computer = model_request_parameters.declared_tool_defs.get(name or '')
         if computer is not None and computer.defer_loading:
             # Live: the API rejects `defer_loading` on its computer tool as an unknown parameter (pinned by
