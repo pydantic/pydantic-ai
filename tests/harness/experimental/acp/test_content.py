@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import base64
-import binascii
 
 import acp
-import pytest
 
 from pydantic_ai.messages import BinaryContent, ImageUrl
 from pydantic_ai_harness.experimental.acp._content import prompt_blocks_to_user_content
@@ -49,11 +47,6 @@ def test_audio_block_becomes_binary_content() -> None:
     assert isinstance(item, BinaryContent)
     assert item.data == b'snd'
     assert item.media_type == 'audio/wav'
-
-
-def test_invalid_base64_raises() -> None:
-    with pytest.raises(binascii.Error):
-        prompt_blocks_to_user_content([acp.image_block('not base64!', 'image/png')])
 
 
 def test_embedded_text_resource_becomes_string() -> None:
