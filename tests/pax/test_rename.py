@@ -74,6 +74,7 @@ def test_old_top_level_names_are_the_new_ones() -> None:
     ):
         from pydantic_clai2 import create_agent
     assert create_agent is pydantic_ai_pax.create_agent
+    assert pydantic_clai2.__all__ == pydantic_ai_pax.__all__
     with pytest.raises(AttributeError):
         pydantic_clai2.missing
 
