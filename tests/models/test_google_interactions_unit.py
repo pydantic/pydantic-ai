@@ -567,6 +567,54 @@ async def test_stream_mixed_content_and_signature_fragments():
     assert all('text' not in value and 'data' not in value for value in content)
 
 
+async def test_stream_continued_long_decode():
+    """A long decode continued in a second request keeps both requests' steps and sums their usage.
+
+    Not recorded: from 2.34, google-genai continues the decode on the same stream, numbering the second request's
+    steps from 0 again, and the locked SDK predates that.
+    """
+
+    def request(signature: str, text: str, interaction: dict[str, JsonValue]) -> list[dict[str, JsonValue]]:
+        return [
+            {'event_type': 'interaction.created', 'interaction': {'object': 'interaction', 'model': 'gemini-test'}},
+            {'event_type': 'step.start', 'index': 0, 'step': {'type': 'thought'}},
+            {'event_type': 'step.delta', 'index': 0, 'delta': {'type': 'thought_signature', 'signature': signature}},
+            {'event_type': 'step.stop', 'index': 0},
+            {'event_type': 'step.start', 'index': 1, 'step': {'type': 'model_output'}},
+            {'event_type': 'step.delta', 'index': 1, 'delta': {'type': 'text', 'text': text}},
+            {'event_type': 'step.stop', 'index': 1},
+            {'event_type': 'interaction.completed', 'interaction': interaction},
+        ]
+
+    values = [
+        *request(
+            'first',
+            '1\n2\n',
+            {
+                'status': 'requires_continuation',
+                'continuation_token': 'token',
+                'usage': {'total_input_tokens': 110, 'total_output_tokens': 100},
+            },
+        ),
+        *request(
+            'second', '3\n4\n', {'status': 'completed', 'usage': {'total_input_tokens': 215, 'total_output_tokens': 50}}
+        ),
+    ]
+    response = GoogleInteractionsStreamedResponse(
+        ModelRequestParameters(), iter_events(values), 'gemini-test', 'google', 'https://example.com'
+    )
+    async for _ in response:
+        pass
+
+    result = response.get()
+    assert [
+        (part.part_kind, (part.provider_details or {})['google_interactions_step_index']) for part in result.parts
+    ] == [('thinking', 0), ('text', 1), ('thinking', 2), ('text', 3)]
+    assert [part.signature for part in result.parts if isinstance(part, ThinkingPart)] == ['first', 'second']
+    assert ''.join(part.content for part in result.parts if isinstance(part, TextPart)) == '1\n2\n3\n4\n'
+    assert (result.finish_reason, result.usage.input_tokens, result.usage.output_tokens) == ('stop', 325, 150)
+
+
 @pytest.mark.parametrize(
     'values,match',
     [

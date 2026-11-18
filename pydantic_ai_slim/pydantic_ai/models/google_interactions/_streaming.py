@@ -50,6 +50,8 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
     _steps: dict[int, dict[str, JsonValue]] = field(default_factory=dict[int, dict[str, JsonValue]])
     _arguments: dict[int, list[str]] = field(init=False, default_factory=dict[int, list[str]])
     _completed: bool = False
+    _step_offset: int = 0
+    """How many steps earlier requests of this stream produced, when google-genai continues a long decode in it."""
     _server_calls: dict[str, str] = field(default_factory=dict[str, str])
     _content_buffers: dict[int, list[_ContentBuffer]] = field(
         init=False, default_factory=dict[int, list[_ContentBuffer]]
@@ -71,6 +73,14 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for event in self._stream:
+            # From 2.34, google-genai continues a long decode in further requests on the same stream: each starts with
+            # `interaction.created` after an `interaction.completed` whose status is `requires_continuation`, and
+            # numbers its steps from 0 again, so they follow the earlier requests' steps here.
+            if isinstance(event, gi.InteractionCreatedEvent) and self._completed:
+                self._completed = False
+                self._step_offset = max(self._steps, default=-1) + 1
+            elif isinstance(event, gi.StepStart | gi.StepDelta | gi.StepStop) and self._step_offset:
+                event = event.model_copy(update={'index': event.index + self._step_offset})
             for value in self._ready_events(event):
                 for result in self._map_event(value):
                     yield result
@@ -222,7 +232,8 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
         self.provider_details = response.provider_details
         self.provider_response_id = response.provider_response_id
         self.finish_reason = response.finish_reason
-        self._usage = response.usage
+        # Each continued request reports only its own usage, and bills its input again.
+        self._usage.incr(response.usage)
         self._timestamp = response.timestamp
         self._completed = True
         return events
