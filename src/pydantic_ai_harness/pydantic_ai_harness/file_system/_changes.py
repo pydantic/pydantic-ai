@@ -39,6 +39,23 @@ def split_lines(text: str) -> list[str]:
     return [f'{line}\n' for line in lines] + ([last] if last else [])
 
 
+def count_lines(raw: bytes) -> int:
+    """`len(split_lines(raw.decode('utf-8', errors='replace')))`, without decoding.
+
+    A line feed byte is never part of another UTF-8 character, so counting bytes counts the same lines.
+    """
+    return raw.count(b'\n') + (raw[-1:] not in (b'', b'\n'))
+
+
+def skip_lines(raw: bytes, count: int, start: int = 0) -> int:
+    """The byte index `count` lines past `start` in `raw`, or `len(raw)` when fewer lines remain."""
+    for _ in range(count):
+        start = raw.find(b'\n', start) + 1
+        if not start:
+            return len(raw)
+    return start
+
+
 def _quoted(name: str) -> str:
     """`name` as a diff header label, quoted as `git diff` quotes a name with a control character in it.
 

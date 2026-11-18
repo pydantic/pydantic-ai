@@ -38,7 +38,7 @@ from pydantic_ai_harness._events import event_ctx
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
 from pydantic_ai_harness._workspace import raise_tool_failure, supports_commands, workspace_path
 from pydantic_ai_harness.file_system._access import AccessPatterns
-from pydantic_ai_harness.file_system._changes import Change, split_lines
+from pydantic_ai_harness.file_system._changes import Change, count_lines, skip_lines, split_lines
 from pydantic_ai_harness.file_system._command_search import run_posix_search
 from pydantic_ai_harness.file_system._content import (
     MAX_MEDIA_BYTES,
@@ -960,12 +960,14 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             await self._emit_read(scope, ctx, resolved, content_hash)
             return self._read_binary(path, raw, media_type, content_hash)
 
-        text = raw.decode('utf-8', errors='replace')
-        lines = split_lines(text)
-        header = self._read_header(path, len(lines), content_hash)
+        total = count_lines(raw)
+        header = self._read_header(path, total, content_hash)
+        # Decode only the lines shown: a large file is paged through one window at a time.
+        start = skip_lines(raw, offset)
+        window = split_lines(raw[start : skip_lines(raw, limit, start)].decode('utf-8', errors='replace'))
         # Format before emitting: an out-of-range offset is a failed read, and
         # a failed read must not look like a successful one to subscribers.
-        body = format_lines(lines, offset, limit, self._body_budget(header))
+        body = format_lines(window, offset, total, self._body_budget(header))
         await self._emit_read(scope, ctx, resolved, content_hash)
         return header + body
 
@@ -2266,8 +2268,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             is_bin = is_binary(raw)
             parts.append(f'binary: {is_bin}')
             if not is_bin:
-                text = raw.decode('utf-8', errors='replace')
-                parts.append(f'lines: {len(split_lines(text))}')
+                parts.append(f'lines: {count_lines(raw)}')
                 parts.append(f'hash: {bytes_hash(raw)}')
 
         if (target := await self._symlink_target(scope, resolved)) is not None:
