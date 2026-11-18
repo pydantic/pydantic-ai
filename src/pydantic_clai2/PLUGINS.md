@@ -4321,22 +4321,26 @@ The built-in model catalog and `/set model` completions include
 `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
 For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
-(or your saved Codex model), then **Service Tier / Fast Mode**. Choose
-**Fast (priority)** to request fast processing, or **Standard (default)** to
-turn it off. [Codex fast mode](https://developers.openai.com/codex/speed)
-uses more ChatGPT credits and depends on model and account availability. It does
-not lower reasoning effort. Reset restores the existing model default; it does
-not enable fast mode. The stored values remain `service_tier=priority` and
-`service_tier=default`, so older CLAI versions can read them. A custom
-`service_tier` body parameter still takes precedence.
+(or your saved Codex model), then **Speed**. GPT-6.2 Astra, GPT-6.2 Sol,
+GPT-6.1 Sol, and GPT-6 Astra, the Codex models that offer
+[Ultrafast](https://developers.openai.com/codex/speed), default to
+**ultrafast**. Choose **fast** for priority processing, or **standard** to turn
+both off. Faster speeds use more ChatGPT credits and depend on your plan. They do
+not lower reasoning effort. Reset restores the model's default. Picking a tier in
+the **Service Tier** row replaces the speed, and a custom `service_tier` body
+parameter takes precedence over both. Older CLAI builds see a speed as its nearest
+service tier, `priority` for fast and ultrafast, and a different tier they save picks
+the speed here.
 
 While the active model starts with `openai-codex:`, `/fast` toggles between
-priority and standard processing. `/fast on` and `/fast off` select explicitly.
-It saves the active model's service tier for subsequent prompts and sessions,
-without changing reasoning effort or other preferences. It is absent from help
-and Tab completion on other models, and typing it there reports an unknown command.
-If a custom `service_tier` parameter is set, `/fast` asks you to remove it first
-with `/model settings` rather than saving an ineffective change.
+standard and the model's default speed: ultrafast where it is offered, fast
+elsewhere. `/fast on` selects fast, `/fast off` standard, and
+`/fast ultrafast` ultrafast. It saves the active model's speed for subsequent
+prompts and sessions, without changing reasoning effort or other preferences. It
+is absent from help and Tab completion on other models, and typing it there
+reports an unknown command. If a custom `service_tier` parameter is set, `/fast`
+asks you to remove it first with `/model settings` rather than saving an
+ineffective change.
 
 Model preferences are shared across checkouts. Reading saved preferences ignores
 unknown fields, so newer settings do not break an older reader with this

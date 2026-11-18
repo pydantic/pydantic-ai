@@ -594,6 +594,88 @@ def test_codex_speed_labels_preserve_existing_preferences(tmp_path: Path, tier: 
     assert source.current(row) == 'default'
 
 
+@pytest.mark.parametrize(
+    ('stored', 'speed', 'tier'),
+    [
+        pytest.param('{"service_tier":"default"}', 'standard', 'default', id='fast-off'),
+        pytest.param('{"service_tier":"priority"}', 'fast', 'priority', id='fast-on'),
+        pytest.param('{"service_tier":"flex"}', '(not set)', 'flex', id='other-tier'),
+        pytest.param('{"max_tokens":64}', 'ultrafast', 'ultrafast', id='unrelated'),
+    ],
+)
+def test_codex_speed_default_keeps_saved_tiers(tmp_path: Path, stored: str, speed: str, tier: str) -> None:
+    """A tier an older CLAI's `/fast` saved picks the speed instead of the ultrafast default; other rows gain it."""
+    path = tmp_path / 'config.db'
+    SettingsStore(path)
+    name = 'openai-codex:gpt-6-astra'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('INSERT INTO model_settings VALUES (?, ?)', (name, stored))
+    settings = model_settings_from_json(SettingsStore(path).model_settings(name), model=name).to_model_settings() or {}
+    assert (settings.get('openai_service_tier') or settings.get('service_tier')) == tier
+    source = ModelSettingsSource(SettingsStore(path), name)
+    row = FieldMenu(source).row_for('codex_speed')
+    assert row is not None and source.current(row) == speed
+    assert SettingsStore(path).model_settings(name) == json.loads(stored)
+
+
+@pytest.mark.parametrize(
+    ('stored', 'speed', 'tier'),
+    [
+        pytest.param(
+            '{"codex_speed":"ultrafast","service_tier":"default"}', 'standard', 'default', id='off-after-ultrafast'
+        ),
+        pytest.param('{"codex_speed":"fast","service_tier":"default"}', 'standard', 'default', id='off-after-fast'),
+        pytest.param(
+            '{"codex_speed":"standard","service_tier":"priority"}', 'fast', 'priority', id='on-after-standard'
+        ),
+        pytest.param('{"codex_speed":"ultrafast","service_tier":"priority"}', 'ultrafast', 'ultrafast', id='unchanged'),
+    ],
+)
+async def test_older_builds_fast_outranks_a_stale_speed(tmp_path: Path, stored: str, speed: str, tier: str) -> None:
+    """An older build's `/fast` rewrites only `service_tier`; that later choice wins over the `codex_speed` beside it."""
+    path = tmp_path / 'config.db'
+    SettingsStore(path)
+    name = 'openai-codex:gpt-6-astra'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('INSERT INTO model_settings VALUES (?, ?)', (name, stored))
+    store = SettingsStore(path)
+    settings = model_settings_from_json(store.model_settings(name), model=name).to_model_settings() or {}
+    assert settings.get('openai_service_tier') == tier
+    source = ModelSettingsSource(store, name)
+    row = FieldMenu(source).row_for('codex_speed')
+    assert row is not None and source.current(row) == speed
+    assert store.model_settings(name) == json.loads(stored)
+
+
+def test_codex_chain_keeps_its_saved_tier(tmp_path: Path) -> None:
+    """A chain's tier, as an older CLAI's `/fast` saved it, picks its Codex members' speed."""
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    members = ['openai-codex:gpt-6-astra', 'openai-codex@work:gpt-6-astra']
+    store.save_chain(name='pool', models=members)
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('INSERT INTO model_settings VALUES (?, ?)', ('chain:pool', '{"service_tier":"priority"}'))
+    context = CommandContext(
+        settings=Settings(model='chain:pool'), store=store, apply_setting=lambda key, settings: None
+    )
+    defaults = context.model_defaults('chain:pool')
+    assert [(defaults(member) or {}).get('openai_service_tier') for member in members] == ['priority', 'priority']
+
+
+def test_codex_speed_survives_edits_to_other_settings(tmp_path: Path) -> None:
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    name = 'openai-codex:gpt-6-astra'
+    original: dict[str, JsonValue] = {'codex_speed': 'fast', 'future_option': 42}
+    store.save_model_settings(name, original)
+    source = ModelSettingsSource(SettingsStore(path), name)
+    row = FieldMenu(source).row_for('openai_reasoning_effort')
+    assert row is not None and source.apply(row, 'high').startswith('Saved')
+    assert SettingsStore(path).model_settings(name) == {**original, 'openai_reasoning_effort': 'high'}
+    settings = model_settings_from_json(SettingsStore(path).model_settings(name), model=name).to_model_settings()
+    assert settings is not None and settings.get('openai_service_tier') == 'priority'
+
+
 def test_saved_coder_declarations_keep_delegation_off(tmp_path: Path) -> None:
     """A `coder` saved before `sub_agents` existed keeps its previous delegation opt-out."""
     store = SettingsStore(tmp_path / 'settings.db')
