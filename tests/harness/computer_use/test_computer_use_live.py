@@ -760,6 +760,7 @@ async def test_gpt_resumes_an_approved_stored_native_call_after_the_tool_opts_ou
     assert output
 
 
+@needs_openai
 @pytest.mark.vcr
 async def test_gpt_on_bedrock_mantle_drives_the_screen_through_the_native_computer_tool(
     allow_model_requests: None, request_capture: RequestCapture
