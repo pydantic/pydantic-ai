@@ -262,11 +262,13 @@ async def test_after_aclose_the_desktop_is_held_again_before_any_input(host: Fak
     assert host.desktop.calls == ['set_screen_size 1280x800', "click 1 1 left count=1 modifiers=''"]
 
 
-async def test_commands_run_on_the_desktop(host: FakeBoxd) -> None:
+async def test_a_shell_command_finds_the_desktop_running(host: FakeBoxd) -> None:
+    # The shell is told a program it starts opens on the screen, before anything has looked at the screen.
     backend = BoxdSandboxBackend(desktop=True, env={'A': '1'})
 
     await backend.run(['true'])
 
+    assert host.desktop.calls == ['set_screen_size 1280x800']
     assert [line for line in host.lines if line.startswith('exec ')][
         -1
     ] == 'exec env -- DISPLAY=:100 A=1 true </dev/null'
