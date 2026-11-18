@@ -8,7 +8,7 @@ import posixpath
 import re
 import shlex
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import KW_ONLY, dataclass, field, replace
 from fnmatch import fnmatchcase
 from typing import Any, Generic, Literal, NamedTuple, Required
 
@@ -59,8 +59,8 @@ class PermissionRule(Generic[AgentDepsT]):
     Only tools that declare a shell command argument (`code_arg_language='shell'` and a `code_arg_name` in their
     metadata) match a rule with a `command`. An `'allow'` rule matches a simple command that starts with these
     words and has no redirection other than to `/dev/null` or a file descriptor. An `'ask'` or `'deny'` rule
-    matches one that contains its first word followed by the others in order, other words allowed in between and inside
-    quotes too, with a short-option cluster such as `-rf` matching those options in any grouping. So `sudo git -C x push`
+    matches one that contains its first word followed by the others in order, other words allowed in between, or
+    quoted text that does (where a deny asks instead, as the text may be data), with a short-option cluster such as `-rf` matching those options in any grouping. So `sudo git -C x push`
     matches `'git push'`, and its
     first word also matches a path ending in it, so `/bin/rm -rf x` matches `'rm -rf'`. A word that is a pattern, such as
     `r[m]`, matches the words it could expand to.
@@ -236,22 +236,32 @@ class _CommandRule(NamedTuple):
     loose: list[str]
 
 
+def _as_data(rule: PermissionRule[Any] | None) -> PermissionRule[Any] | None:
+    """`rule` for a match inside quoted text, which may only be data such as a commit message: a deny asks instead."""
+    return replace(rule, verdict='ask') if rule is not None and rule.verdict == 'deny' else rule
+
+
 def _segment_rule(rules: Sequence[_CommandRule], segment: _Segment) -> PermissionRule[Any] | None:
-    """The strictest rule matching one simple command: allow rules by prefix, others anywhere in it."""
+    """The strictest rule matching one simple command: allow rules by prefix, others in its words or a quoted one."""
     # A number before a redirection may be its file descriptor or an argument, so either reading can match.
-    readings = (
-        _loose(segment.words),
-        _loose(word for index, word in enumerate(segment.words) if index not in segment.descriptors),
-    )
-    return _strictest(
-        parsed.rule
-        for parsed in rules
-        if (
-            not segment.redirected and segment.words[: len(parsed.words)] == parsed.words
-            if parsed.rule.verdict == 'allow'
-            else any(_contains(reading, parsed.loose) for reading in readings)
-        )
-    )
+    readings = (segment.words, [word for index, word in enumerate(segment.words) if index not in segment.descriptors])
+    quoted = [_loose([word]) for word in segment.words if _LOOSE_SPLIT.search(word)]
+    matched = (_match(parsed, segment, readings, quoted) for parsed in rules)
+    return _strictest(rule for rule in matched if rule is not None)
+
+
+def _match(
+    parsed: _CommandRule, segment: _Segment, readings: Iterable[list[str]], quoted: Iterable[list[str]]
+) -> PermissionRule[Any] | None:
+    """What `parsed` makes of one simple command: its rule, the rule as for data, or `None`."""
+    if parsed.rule.verdict == 'allow':
+        allowed = not segment.redirected and segment.words[: len(parsed.words)] == parsed.words
+        return parsed.rule if allowed else None
+    if any(_contains(reading, parsed.words) for reading in readings):
+        return parsed.rule
+    if any(_contains(parts, parsed.loose) for parts in quoted):
+        return _as_data(parsed.rule)
+    return None
 
 
 def _strictest(rules: Iterable[PermissionRule[Any]]) -> PermissionRule[Any] | None:
@@ -278,11 +288,17 @@ def _unsplittable_rule(
     if all(rule.verdict == 'allow' for rule in rules):
         return None
     fold = str if posix else str.lower
-    words = _loose([fold(_REDIRECTION.sub(' ', re.sub(r'[\'"\\]', '', command)))])
-    restrictive = _strictest(
-        rule for rule in rules if rule.verdict != 'allow' and _contains(words, _loose(_words(fold(rule.command or ''))))
-    )
-    return restrictive or (_UNSPLITTABLE_RULE if expands else None)
+    restrictive = [(rule, _loose(_words(fold(rule.command or '')))) for rule in rules if rule.verdict != 'allow']
+
+    def strictest_in(text: str) -> PermissionRule[Any] | None:
+        words = _loose([fold(_REDIRECTION.sub(' ', text))])
+        return _strictest(rule for rule, rule_words in restrictive if _contains(words, rule_words))
+
+    # Quoted text stands in as one placeholder per character, so a match there alone may only be data.
+    unquoted = ''.join(char if not how else '\0' for char, how in _chars(command))
+    everywhere = _as_data(strictest_in(re.sub(r'[\'"\\]', '', command)))
+    found = _strictest(rule for rule in (strictest_in(unquoted), everywhere) if rule is not None)
+    return found or (_UNSPLITTABLE_RULE if expands else None)
 
 
 def _command_rule(rules: Sequence[PermissionRule[Any]], command: str, *, posix: bool) -> PermissionRule[Any] | None:
