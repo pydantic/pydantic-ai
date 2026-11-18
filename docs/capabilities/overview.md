@@ -133,6 +133,7 @@ How the agent spends its context window: the difference between an agent that de
 | [Compaction](https://pydantic.dev/docs/ai/harness/compaction/) | Harness | Model-agnostic strategies: tool-result clearing, sliding-window trimming, LLM summarization, tiered; all window-relative, with live usage reporting |
 | [Tool Output Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/) | Harness | Truncate, spill to a queryable file, or summarize oversized tool returns at the source |
 | [Warn On Cache Busts](https://pydantic.dev/docs/ai/harness/warn-on-cache-busts/) | Harness | Detect prompt-cache prefix collapses between requests, from the provider's own numbers |
+| [Label Cross Model History](https://pydantic.dev/docs/ai/harness/label-cross-model-history/) | Harness | Tell the model when earlier assistant turns came from another model, after a model switch or handoff |
 
 ### Knowledge & memory {#knowledge-memory}
 
@@ -146,6 +147,7 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | [Skills](https://pydantic.dev/docs/ai/harness/skills/) | Harness | Load [Agent Skill](on-demand.md) (`SKILL.md`) instructions on demand |
 | [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
 | [Pydantic AI Docs](https://pydantic.dev/docs/ai/harness/pydantic-ai-docs/) | Harness | On-demand Pydantic AI documentation lookup |
+| [Current Time](https://pydantic.dev/docs/ai/harness/current-time/) | Harness | Today's date, or the current hour, in a time zone you pick, without breaking the prompt cache |
 
 ### Control & safety {#control-safety}
 

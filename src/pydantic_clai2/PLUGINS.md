@@ -3026,8 +3026,9 @@ prompt the keyboard does:
   recently created instead of the most recently active, as the web sidebar does. As in `/resume`,
   a fork gets its own copy of the session's Monty state, and a deleted session's state is deleted
   with it. Like opening `/resume`, `listing` queues the newest untitled sessions for background
-  naming, which calls the naming model. Renaming the current conversation fires
-  `on_conversation_changed` at once, even while a turn runs, unlike background naming.
+  naming, which calls the naming model when `sessions.naming` is on. Renaming the current
+  conversation fires `on_conversation_changed` at once, even while a turn runs, unlike background
+  naming.
   `follows_workspace` says whether `/resume ID` moves the session into the directory it was saved
   in (its `host.workspace`; the process's working directory never changes), as under
   `clai2 --web`, rather than refusing a session saved elsewhere.
@@ -4385,12 +4386,17 @@ For native Anthropic models, **Preserved Thinking** controls
 `thinking.block_binding.prefix_mismatch_behavior`: `error` rejects a mismatched
 prefix; `drop_block` continues without the mismatched reasoning block. It appears
 on adaptive-capable Claude models. Fable 5.1 also exposes **Thinking Display**:
-`updates` or `summarized`. Setting either control without a thinking mode selects
-adaptive thinking; neither can be combined with disabled thinking. Resetting the
-mode clears its budget, display, and binding overrides. **Interleaved Thinking**
-adds the beta header on classic Claude 4 models. CLAI adds the display beta when
-requesting updates; core adds the block-binding beta. These native controls do
-not add Anthropic protocol support to third-party Chat Completions endpoints.
+`updates` or `summarized`. Opus 5.5 and Sonnet 5.5 expose it with `summarized`,
+which shows the notes they write between tool calls. Setting either control
+without a thinking mode selects adaptive thinking; neither can be combined with
+disabled or `between_tools` thinking. **Extended Thinking** offers only the
+modes the model accepts: Fable, Mythos, and Opus 5.5 always think, so they offer
+`adaptive` alone, and Sonnet 5.5 offers `between_tools`, its off switch, in place
+of `disabled`. Resetting the mode clears its budget, display, and binding
+overrides. **Interleaved Thinking** adds the beta header on classic Claude 4
+models. CLAI adds the display beta when requesting updates; core adds the
+block-binding beta. These native controls do not add Anthropic protocol support
+to third-party Chat Completions endpoints.
 
 GLM-4.5 and newer expose **Thinking (GLM)** and **Clear Thinking (GLM)**;
 GLM-5.2 and newer also expose **Reasoning Effort (GLM)**. Clear Thinking set to
