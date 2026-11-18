@@ -240,12 +240,10 @@ from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox
 
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[OpenSandbox(image='debian:bookworm-slim', desktop=True), Shell(), ComputerUse()])
 
-
-async def main():
-    result = await agent.run(
-        'Install Firefox with `apt-get install -y firefox-esr`, open python.org in it and tell me the latest release.'
-    )
-    print(result.output)
+result = agent.run_sync(
+    'Install Firefox with `apt-get install -y firefox-esr`, open python.org in it and tell me the latest release.'
+)
+print(result.output)
 ```
 
 The screen needs Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid`. When the image's user is root or has passwordless `sudo`, [the first use installs](../computer_use/#what-the-display-needs) any that are missing with `apt-get`, from the Debian packages `xvfb`, `xdotool`, `x11-utils`, `scrot` and `util-linux`; otherwise build them into the image, or the first use of the screen raises `WorkspaceUnavailableError` naming what is missing. The screen starts empty, with no window manager or browser: install the programs the agent should use in the image or before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run), or let the agent install them with `Shell`. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from opensandbox.constants import DEFAULT_EGRESS_PORT, DEFAULT_EXECD_PORT
 
 from pydantic_ai import Agent
 from pydantic_ai.computer_use import ComputerReturnPart
@@ -13,7 +14,7 @@ from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBack
 
 from .._fake_x_display import FakeDisplay
 from ..display_fakes import FAKE_SCREENSHOT, look_click_then_finish, screen
-from .fake_opensandbox import EXECD_PORT, FakeOpenSandbox
+from .fake_opensandbox import FakeOpenSandbox
 
 
 @pytest.fixture
@@ -116,6 +117,6 @@ async def test_a_desktop_capability_runs_the_computer_tool_without_exposing_a_po
     assert clicked.screenshot is not None and clicked.screenshot.data == FAKE_SCREENSHOT
     assert len(display.starts) == 1
     assert any(command.endswith('mousemove 3 4 click --repeat 1 1') for command in display.xdotool)
-    # The SDK looks up execd's own endpoint to send commands; the desktop asks for no other port.
-    looked_up = {request.rsplit('/', 1)[1] for request in server.requests if '/endpoints/' in request}
-    assert looked_up == {str(EXECD_PORT)}
+    # The SDK looks up execd's and the egress sidecar's endpoints itself; the desktop asks for no other port.
+    looked_up = {int(request.rsplit('/', 1)[1]) for request in server.requests if '/endpoints/' in request}
+    assert looked_up <= {DEFAULT_EXECD_PORT, DEFAULT_EGRESS_PORT}
