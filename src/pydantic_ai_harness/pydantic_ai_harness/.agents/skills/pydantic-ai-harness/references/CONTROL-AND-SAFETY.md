@@ -26,8 +26,10 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Ask a second model whether each selected tool call should run | `ToolCallJudge(model, question=..., tools=...)` |
 | Let a second model approve low-risk calls that need approval, and ask a person about the rest | `ApprovalReviewer(model, question=..., tools=...)` |
 | Ask a person before file writes and commands, by permission mode (full, auto, read-only) | `Permissions(mode)` with `ask_permissions` in a `HandleDeferredToolCalls` handler |
+| Allow, ask about, or deny tool calls and shell commands by rule | `Permissions(rules=[PermissionRule(...)])` |
 | Cap USD or tokens per day/month/run, per tenant, across workers | `SpendLimits(budgets=[Budget(...)])` |
 | Cap tokens/cost for one run only | core `UsageLimits` (no harness capability needed) |
+| Tell the model how much of its usage limits and spend budgets is left, every request | `ReportRemainingBudget(spend_limits=...)` |
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
 | Counter instruction fade in long runs, cache-safe | `SystemReminders` |
 | Have a second model review the run and steer it when it drifts | `TrajectoryJudge` |
@@ -418,7 +420,13 @@ Gotchas:
 Holds the `FileSystem` writes and `Shell` commands a permission mode asks about by raising
 `ApprovalRequired`: `'full'` (default) asks about nothing, `'auto'` asks about commands matching
 `ask_commands` (`DEFAULT_ASK_COMMANDS`: `rm -rf`, `git push`, `sudo`, network clients, installs), and
-`'read-only'` asks about every write and command. Other tools are not checked.
+`'read-only'` asks about every write and command. Other tools are not checked unless a rule matches them.
+
+`rules=[PermissionRule(...)]` decide before the mode: each rule is `'allow'`, `'ask'`, or `'deny'` for calls
+matching its `tools` selector, `args` globs, and shell `command` words. `'deny'` beats `'ask'` beats `'allow'`,
+whatever the order. A compound command runs by rule only if an allow rule matches every simple command in it, while
+an ask or deny rule matching any one decides it. An allow skips `'read-only'`'s blanket ask but not `ask_commands`.
+A denied call returns a `ToolReturnPart` with `outcome='denied'`, even when it was approved.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -455,8 +463,13 @@ Gotchas:
   skips asking about the same tool and command or path for the rest of the conversation, via the caller-ownable
   `remembered` set; inside durable execution it is kept in the message history instead.
 - Delegates are only checked when `Permissions` reaches them: pass it in `SubAgents(shared_capabilities=[...])`.
-- `ask_commands` patterns are a convenience, not a sandbox: use a sandbox workspace when the agent must not
-  reach something.
+- `ask_commands` patterns and `rules` are a convenience, not a sandbox: use a sandbox workspace when the agent
+  must not reach something. An allow rule trusts everything after its words (`find` allows `find . -delete`).
+- Commands with `$`, backticks, quoted operators, brace expansion, globbed command names, subshells,
+  here-documents, or line breaks, and every command on a `'windows'` workspace, cannot be split: no `command` rule
+  allows them. Their quote-stripped text is still checked against ask and deny rules, and when the shell expands
+  part of them (`$`, backticks, braces, line continuations, globbed command names) they ask if an ask or deny
+  command rule applies.
 
 ## SpendLimits
 
@@ -941,6 +954,40 @@ print([part.content for part in parts if isinstance(part, ToolReturnPart)])
   for a reported exception, in any order; narrow `exceptions` to leave a type to such a hook. Under `CodeMode`, a
   snippet's nested tool call raises the `ToolFailed`, not the original exception. With several,
   the last listed formats the error. Emits no spans.
+
+## ReportRemainingBudget
+
+In `before_model_request`, enqueues a request-scoped `RemainingBudgetPart` (`InstructionCapabilityPart`) with what is left of the run's
+`UsageLimits` (read from `ctx.usage_limits` and `ctx.usage`) and, given `spend_limits=`, of each
+`SpendLimits` budget with a ceiling (read with `status(ctx)`). Disclosure only; enforcement stays with
+`UsageLimits` and `SpendLimits`.
+
+```python
+from decimal import Decimal
+
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import ReportRemainingBudget, SpendLimits
+from pydantic_ai_harness.spend_limits import Budget
+
+spend = SpendLimits(budgets=[Budget(usd=Decimal(10), window='day')])
+agent = Agent('test', capabilities=[spend, ReportRemainingBudget(spend_limits=spend)])
+```
+
+```text
+Budget remaining:
+- this run: 8 requests including this one, about 38k total tokens, $1.42
+- today: $12.50
+```
+
+- The run line lists requests (including the one being sent), tool calls, input/output/total tokens and
+  `cost_limit`, for each limit set; `per_request_input_tokens_limit` isn't reported. Spend lines are labelled
+  by window (`spend limit for this run`, `this conversation`, `today`, `this month`, `in total`) plus `name` unless
+  `'default'`; counter-only budgets are left out. Tokens of 1,000 or more and USD are rounded down (`about 38k`).
+- Pass the same `SpendLimits` instance the agent carries; its store is read on every request.
+- A run without `usage_limits=` still reports core's default `request_limit=50`; nothing is sent only with
+  `UsageLimits(request_limit=None)`, no other limit and no `spend_limits`. No spans: the status is part of
+  the recorded model request.
 
 ## RefineOutput
 

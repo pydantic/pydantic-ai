@@ -85,6 +85,7 @@ if TYPE_CHECKING:
     from .render import RenderWorkflows
     from .render_sandbox import RenderSandbox, RenderSandboxBackend
     from .repo_context import RepoContext
+    from .report_remaining_budget import ReportRemainingBudget
     from .report_stale_files import ReportStaleFiles
     from .report_tool_errors import ReportToolErrors
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
@@ -195,6 +196,7 @@ __all__ = [
     'RenderSandboxBackend',
     'RenderWorkflows',
     'ReportContextUsage',
+    'ReportRemainingBudget',
     'ReportStaleFiles',
     'ReportToolErrors',
     'RepoContext',
@@ -319,6 +321,7 @@ _LAZY_EXPORTS = {
     'RenderWorkflows': 'render',
     'RepoContext': 'repo_context',
     'ReportContextUsage': 'compaction',
+    'ReportRemainingBudget': 'report_remaining_budget',
     'ReportStaleFiles': 'report_stale_files',
     'ReportToolErrors': 'report_tool_errors',
     'Researcher': 'researcher',
