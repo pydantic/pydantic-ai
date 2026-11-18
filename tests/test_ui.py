@@ -3570,7 +3570,7 @@ async def test_adapter_keepalive_interval_reaches_the_response(anyio_backend: st
             released.set()
     assert KEEPALIVE in chunks
     disabled = DummyUIAdapter(Agent(TestModel()), DummyUIRunInput(), keepalive_interval=None)
-    assert [chunk async for chunk in disabled.streaming_response(events()).body_iterator] == ['first', 'second']
+    assert [chunk async for chunk in disabled.encode_stream(events())] == ['first', 'second']
 
 
 @pytest.mark.parametrize('anyio_backend', ['asyncio'])
