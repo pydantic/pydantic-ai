@@ -137,7 +137,7 @@ The user is running {sys.platform}."""
 
 
 _DEPRECATION = (
-    '`clai` is deprecated in favour of `pax` and will be removed in Pydantic AI v3. '
+    '`clai` (and its `pai` alias) is deprecated in favour of `pax` and will be removed in Pydantic AI v3. '
     'Install it with `uv tool install pydantic-ai-pax`; '
     'https://pydantic.dev/docs/ai/integrations/cli/#migrating-to-pax shows how `clai` commands map to `pax`.'
 )

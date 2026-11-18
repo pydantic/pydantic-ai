@@ -85,7 +85,7 @@ def test_cli_exit_points_at_pax(capfd: CaptureFixture[str], monkeypatch: pytest.
     out, err = capfd.readouterr()
     assert out.startswith('clai - Pydantic AI CLI')
     assert err == snapshot(
-        '`clai` is deprecated in favour of `pax` and will be removed in Pydantic AI v3. Install it with `uv tool install pydantic-ai-pax`; https://pydantic.dev/docs/ai/integrations/cli/#migrating-to-pax shows how `clai` commands map to `pax`.\n'
+        '`clai` (and its `pai` alias) is deprecated in favour of `pax` and will be removed in Pydantic AI v3. Install it with `uv tool install pydantic-ai-pax`; https://pydantic.dev/docs/ai/integrations/cli/#migrating-to-pax shows how `clai` commands map to `pax`.\n'
     )
 
 
