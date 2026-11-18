@@ -20,8 +20,6 @@ from ..messages import (
     CachePoint,
     CompactionPart,
     FilePart,
-    InstructionBaselinePart,
-    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -50,10 +48,8 @@ from ..settings import ModelSettings
 from ..usage import RequestUsage
 from . import (
     _conversation_summary_text,  # pyright: ignore[reportPrivateUsage]
-    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
-    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _with_default_user_agent,  # pyright: ignore[reportPrivateUsage]
 )
 from ._sdk_retries import with_max_retries
@@ -461,12 +457,8 @@ class _Conversation:
             self._request_part(_translate_legacy_retry_part(part), calls)
         elif isinstance(part, CompactionPart):
             self._user([_conversation_summary_text(part.content)])
-        elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):  # pragma: no cover
-            raise _unprojected_instruction_delta_error()
         elif isinstance(part, _UnpreparedPart):  # pragma: no cover
             raise _unprepared_part_error(part)
-        elif isinstance(part, SpeechPart):  # pragma: no cover
-            raise _unconverted_speech_part_error()
         else:
             assert_never(part)
 
@@ -531,7 +523,7 @@ class _Conversation:
                 )
             )
         elif isinstance(part, SpeechPart):  # pragma: no cover
-            raise _unconverted_speech_part_error()
+            raise _unprepared_part_error(part)
         else:
             assert_never(part)
 

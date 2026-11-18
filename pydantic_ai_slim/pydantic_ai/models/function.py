@@ -17,8 +17,6 @@ from ..messages import (
     BinaryContent,
     CompactionPart,
     FilePart,
-    InstructionBaselinePart,
-    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -490,17 +488,15 @@ def _estimate_request_part_tokens(part: ModelRequestPart, allow_tool_availabilit
         return _estimate_string_tokens(part.content)
     elif isinstance(part, ToolReturnPart):
         return _estimate_string_tokens(part.model_response_str())
-    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
-        raise _unprojected_instruction_delta_error()
     elif isinstance(part, ToolAvailabilityDeltaPart) and allow_tool_availability_deltas:
         return _estimate_string_tokens(' '.join(part.tools_added))
-    elif isinstance(part, _UnpreparedPart):
-        raise _unprepared_part_error(part)
     elif isinstance(part, SpeechPart):
         # A direct `FunctionModel.request()` doesn't run `Model.prepare_messages`, so
         # user speech can arrive unconverted; estimate from the transcript like the
         # response side below rather than undercounting the turn to zero.
         return _estimate_string_tokens(part.content)
+    elif isinstance(part, _UnpreparedPart):
+        raise _unprepared_part_error(part)
     else:
         assert_never(part)
 
