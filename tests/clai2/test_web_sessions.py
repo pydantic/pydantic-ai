@@ -263,6 +263,8 @@ def test_each_browser_gets_only_the_sessions_it_watches(make_fleet: MakeFleet) -
         fleet.portal.call(gates['b'].started.wait)
         # Both run at once, and input sent to one meanwhile waits behind its turn.
         assert fleet.post(f'/api/sessions/{b}/input', {'text': 'and then'}).status_code == 200
+        # Skip the `queued` that `b`'s `go` published, possibly before `a` read `running`.
+        messages(one, until=lambda m: m['type'] == 'live' and live_states(m).get(b) == 'running')
         states = live_states(
             messages(one, until=lambda m: m['type'] == 'live' and live_states(m).get(b) == 'queued')[-1]
         )

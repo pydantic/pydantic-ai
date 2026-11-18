@@ -7,6 +7,8 @@ there, like the real one runs it in the container. Removing a container kills th
 from __future__ import annotations
 
 import os
+import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -31,7 +33,8 @@ run)
         --name) name=$2; shift ;;
         --workdir) workdir=$2; shift ;;
         --label) label=$2; shift ;;
-        --entrypoint | --network | --memory | --pids-limit | --tmpfs) shift ;;
+        --network) network=$2; shift ;;
+        --entrypoint | --memory | --pids-limit | --tmpfs) shift ;;
         --fake-hang) [ -e "$bin/hung" ] || { touch "$bin/hung"; sleep 30; } ;;
         --fake-hang-late) hang_late=1 ;;
         esac
@@ -50,6 +53,7 @@ run)
     fi
     mkdir -p "$workdir" && printf '%s' "$workdir" > "$state/$name" || exit 1
     [ "$label" != ai.pydantic.workspace=true ] || touch "$state/$name.labeled"
+    printf '%s' "${network:-bridge}" > "$state/$name.network"
     if [ "$2" = unstartable-image ]; then
         echo 'docker: Error response from daemon: port is already allocated.' >&2
         exit 125
@@ -63,6 +67,7 @@ inspect)
     for name; do :; done
     [ -f "$state/$name" ] || { echo "Error: No such container: $name" >&2; exit 1; }
     [ "$name" != uninspectable ] || { echo 'permission denied while trying to connect to the daemon' >&2; exit 1; }
+    case $* in *NetworkMode*) cat "$state/$name.network" 2> /dev/null || echo bridge; exit ;; esac
     if [ -f "$state/$name.labeled" ]; then label=true; else label='<no value>'; fi
     if [ -f "$state/$name.running" ]; then running=true; else running=false; fi
     echo "$label $running"
@@ -93,10 +98,13 @@ exec)
         export FAKE_TMP="$tmp"
         for arg; do
             shift
-            case $arg in */run/pydantic-ai/* | */tmp/.X* | */tmp/.pydantic-ai-* | */proc/*)
+            case $arg in */run/pydantic-ai/* | */tmp/.X* | */tmp/.pydantic-ai-* | */tmp/pydantic-ai-*)
                 arg=$(printf '%s' "$arg" | sed -e "s#/run/pydantic-ai/#$tmp/#g" -e "s#/tmp/\\.X#$tmp/.X#g" \
-                    -e "s#/tmp/\\.pydantic-ai-#$tmp/.pydantic-ai-#g" -e "s#/proc/#$tmp/proc/#g") ;;
+                    -e "s#/tmp/\\.pydantic-ai-#$tmp/.pydantic-ai-#g" -e "s#/tmp/pydantic-ai-#$tmp/pydantic-ai-#g") ;;
             esac
+            # Only the display start reads the X lock's owner from the fake `/proc` that `leave_x_lock` writes; the
+            # stops walk the real one.
+            case $arg in *Xvfb*) arg=$(printf '%s' "$arg" | sed "s#/proc/#$tmp/proc/#g") ;; esac
             set -- "$@" "$arg"
         done
     fi
@@ -118,14 +126,10 @@ image)
     [ -f "$bin/images/$3" ] || { echo "Error: No such image: $3" >&2; exit 1; }
     ;;
 build)
-    # `build --tag TAG -- CONTEXT`: keeps the context's Dockerfile as the image.
+    # `build --tag TAG --file DOCKERFILE -- CONTEXT`: keeps the Dockerfile as the image.
     [ ! -e "$bin/fail-builds" ] || { echo 'E: Unable to locate package xvfb' >&2; exit 1; }
-    if [ -e "$bin/hold-builds" ]; then
-        echo "$4" > "$bin/build-context"
-        i=0; while [ -e "$bin/hold-builds" ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done
-    fi
     mkdir -p "$bin/images"
-    cp "$4/Dockerfile" "$bin/images/$2" || exit 1
+    cp "$4" "$bin/images/$2" || exit 1
     ;;
 rm)
     name=$4
@@ -151,47 +155,69 @@ printf '%s %s\\n' "$DISPLAY" "$*" >> "$bin/xdotool-calls"
 [ ! -e "$bin/no-display" ] || { echo "Can't open display: $DISPLAY" >&2; exit 1; }
 [ "$1" != getdisplaygeometry ] || echo '1280 800'
 [ "$1" != getmouselocation ] || printf 'X=640\\nY=400\\nSCREEN=0\\nWINDOW=1\\n'
-case " $* " in *' NoSuchKey '*) echo "(symbol) No such key name 'NoSuchKey'. Ignoring it." >&2 ;; esac
+[ "$1" != search ] || [ -e "$bin/panel-shows" ]
 """
 """Stands in for `xdotool` in a container: reports a 1280x800 display and the pointer at its middle unless
-`no-display` exists, skips the key `NoSuchKey` as xdotool skips a name it doesn't know, and logs each call."""
+`no-display` exists, finds a window once the panel shows, and logs each call."""
+
+_FAKE_TINT2 = """#!/bin/sh
+bin=$(dirname "$0")
+echo started >> "$bin/panel-starts"
+if [ -e "$bin/panel-fails" ]; then echo 'tint2: could not open the config' >&2; exit 1; fi
+touch "$bin/panel-shows"
+exec sleep 1
+"""
+"""Stands in for the panel: shows at once and stays running a while, or exits without showing if `panel-fails`
+exists."""
 
 _FAKE_XWININFO = """#!/bin/sh
-[ ! -e "$(dirname "$0")/no-display" ] || { echo "xwininfo: unable to open display" >&2; exit 1; }
-printf '  Width: 1280\\n  Height: 800\\n'
+bin=$(dirname "$0")
+[ ! -e "$bin/no-display" ] || { echo "xwininfo: unable to open display" >&2; exit 1; }
+size=$(cat "$bin/screen-size" 2>/dev/null || echo 1280x800)
+printf '  Width: %s\\n  Height: %s\\n' "${size%x*}" "${size#*x}"
 """
-"""Stands in for `xwininfo -root`, so a host's real one never answers for the container's display."""
+"""Stands in for `xwininfo -root`, so a host's real one never answers for the container's display: reports the size
+the fake X server was last started at, or 1280x800 for a display that was already up."""
 
 _FAKE_SCROT = """#!/bin/sh
 for last; do :; done
 cp "$(dirname "$0")/screen.png" "$last"
-[ "$1" != -t ] || cp "$(dirname "$0")/screen.png" "${last%.png}-thumb.png"
 """
-"""Stands in for `scrot`: writes the fake screenshot, whatever region or thumbnail it is asked for, to the path it is
-given, and with `-t` as the thumbnail beside it."""
+"""Stands in for `scrot`: writes the fake screenshot, whatever region it is asked for, to the path it is given."""
 
 _FAKE_XVFB = """#!/bin/sh
 bin=$(dirname "$0")
 echo "$*" >> "$bin/xvfb-starts"
 if [ -e "$bin/xvfb-fails" ]; then echo 'Fatal server error: no screens found' >&2; exit 1; fi
 if [ -e "$FAKE_TMP/.X1-lock" ]; then echo 'Fatal server error: Server is already active for display 1' >&2; exit 1; fi
+echo "${4%x*}" > "$bin/screen-size"  # `-screen 0 WIDTHxHEIGHTx24`, for `xwininfo`, written before the display is up
+# Its lock, and the fake `/proc` entry the display start reads its owner from.
+printf '%10d\\n' $$ > "$FAKE_TMP/.X1-lock" && mkdir -p "$FAKE_TMP/proc/$$" && echo Xvfb > "$FAKE_TMP/proc/$$/comm"
 rm -f "$bin/no-display"
 exec sleep 2
 """
-"""Stands in for an X server: brings the fake display up and stays running a while, or fails if `xvfb-fails` or a
-lock for its display exists.
+"""Stands in for an X server: takes the display's lock, brings the fake display up and stays running a while, or fails
+if `xvfb-fails` or a lock for its display exists.
 
 Also keeps a host's real Xvfb from starting.
 """
 
 _FAKE_FLUXBOX = """#!/bin/sh
 """
-"""Stands in for the window manager and the panel, so a host's real ones never start."""
+"""Stands in for the window manager and `xprop`, so a host's real ones never run."""
 
 _FAKE_SETSID = """#!/bin/sh
 exec "$@"
 """
 """Stands in for `setsid`, which macOS lacks."""
+
+_FAKE_FLOCK = f"""#!{sys.executable}
+import fcntl, sys
+fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX)
+"""
+"""Stands in for `flock FD`, which macOS lacks: locks the file the shell opened on that descriptor until the shell
+closes it."""
+
 
 _FAKE_ID = """#!/bin/sh
 [ "$1" = -u ] || exec /usr/bin/id "$@"
@@ -238,11 +264,12 @@ class FakeDocker:
     def containers(self) -> list[str]:
         return sorted(path.name for path in (self.bin_dir / 'containers').glob('*') if not path.suffix)
 
-    def add_container(self, name: str, working_dir: Path, *, labeled: bool = True) -> None:
-        """Add a stopped container; `labeled=False` makes it one `DockerContainer` didn't create."""
+    def add_container(self, name: str, working_dir: Path, *, labeled: bool = True, network: str = 'bridge') -> None:
+        """Add a stopped container on `network`; `labeled=False` makes it one `DockerContainer` didn't create."""
         state = self.bin_dir / 'containers'
         state.mkdir(exist_ok=True)
         (state / name).write_text(str(working_dir))
+        (state / f'{name}.network').write_text(network)
         if labeled:
             (state / f'{name}.labeled').touch()
 
@@ -264,22 +291,12 @@ class FakeDocker:
     def fail_builds(self) -> None:
         (self.bin_dir / 'fail-builds').touch()
 
-    def hold_builds(self) -> None:
-        """Hold each build until `release_builds`, after recording its context directory in `build_context`."""
-        (self.bin_dir / 'hold-builds').touch()
-
-    def release_builds(self) -> None:
-        (self.bin_dir / 'hold-builds').unlink(missing_ok=True)
-
-    @property
-    def build_context(self) -> Path | None:
-        """The context directory of the build held last, if one was."""
-        path = self.bin_dir / 'build-context'
-        return Path(path.read_text().strip()) if path.exists() else None
-
     def remove_display(self, *, can_start: bool = True) -> None:
-        """Take the display down; `Xvfb` brings it back unless `can_start` is false."""
+        """Take the display down, leaving a stale lock in each container; `Xvfb` brings it back unless `can_start` is
+        false."""
         (self.bin_dir / 'no-display').touch()
+        for proc in (self.bin_dir / 'containers').glob('*.tmp/proc'):
+            shutil.rmtree(proc)
         if not can_start:
             (self.bin_dir / 'xvfb-fails').touch()
 
@@ -293,6 +310,17 @@ class FakeDocker:
 
     def x_lock_exists(self, name: str) -> bool:
         return (self.bin_dir / 'containers' / f'{name}.tmp' / '.X1-lock').exists()
+
+    @property
+    def panel_starts(self) -> int:
+        path = self.bin_dir / 'panel-starts'
+        return len(path.read_text().splitlines()) if path.exists() else 0
+
+    def fail_panel(self) -> None:
+        (self.bin_dir / 'panel-fails').touch()
+
+    def close_panel(self) -> None:
+        (self.bin_dir / 'panel-shows').unlink()
 
     def uninstall(self, *programs: str) -> None:
         """Take `programs` off `PATH` until the fake `apt-get` installs them."""
@@ -338,8 +366,10 @@ def install_fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fake
     for name, script in [
         ('Xvfb', _FAKE_XVFB),
         ('fluxbox', _FAKE_FLUXBOX),
-        ('tint2', _FAKE_FLUXBOX),
+        ('tint2', _FAKE_TINT2),
+        ('xprop', _FAKE_FLUXBOX),
         ('setsid', _FAKE_SETSID),
+        ('flock', _FAKE_FLOCK),
         ('scrot', _FAKE_SCROT),
         ('xwininfo', _FAKE_XWININFO),
         ('id', _FAKE_ID),

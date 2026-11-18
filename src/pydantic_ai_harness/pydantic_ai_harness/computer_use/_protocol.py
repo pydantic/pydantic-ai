@@ -19,8 +19,8 @@ from pydantic_ai.computer_use import (
     Drag,
     HoldKeys,
     MouseDown,
+    MouseMove,
     MouseUp,
-    MoveMouse,
     Point,
     PressKeys,
     Region,
@@ -39,7 +39,7 @@ __all__ = (
 )
 
 DisplayAction: TypeAlias = Annotated[
-    Click | MoveMouse | Drag | MouseDown | MouseUp | Scroll | TypeText | PressKeys | HoldKeys,
+    Click | MouseMove | Drag | MouseDown | MouseUp | Scroll | TypeText | PressKeys | HoldKeys,
     Field(discriminator='type'),
 ]
 """A mouse or keyboard action a `Display` performs, in its own pixels. New types may be added, so a display refuses
@@ -49,7 +49,7 @@ one it doesn't know with [`UnsupportedActionError`][pydantic_ai_harness.computer
 class UnsupportedActionError(WorkspaceError):
     """A [`Display`][pydantic_ai_harness.computer_use.Display] can't perform this action, or this value of it, exactly.
 
-    `ComputerUse` tells the model, and the actions after it don't run.
+    Raise it only before the action has any effect. `ComputerUse` tells the model, and the actions after it don't run.
     """
 
 
@@ -77,7 +77,8 @@ class Display(Protocol):
         """Perform one action.
 
         Raise [`UnsupportedActionError`][pydantic_ai_harness.computer_use.UnsupportedActionError] for an action, or a
-        value, the display can't perform exactly, including action types added after it was written.
+        value, the display can't perform exactly, including action types added after it was written. Raise it only
+        before the action has any effect.
         """
         ...
 

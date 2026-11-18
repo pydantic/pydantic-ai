@@ -4,43 +4,82 @@ from __future__ import annotations
 
 import warnings
 
+import pytest
+
 from pydantic_ai import Agent
+from pydantic_ai.computer_use import ComputerReturnPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai_harness.computer_use import ComputerUse
-from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxNoToolsWarning
+from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend, ModalSandboxNoToolsWarning
 
-from .._fake_x_display import FakeDisplay, computer_returns, look_click_then_finish
-from ..display_fakes import FAKE_SCREENSHOT
+from .._fake_x_display import FakeDisplay
+from ..display_fakes import FAKE_SCREENSHOT, look_click_then_finish, screen
 from .fake_modal import FakeImage, FakeModal
 
 
-async def test_a_desktop_sandbox_has_the_display_programs_and_runs_computer_use(fake_modal: FakeModal) -> None:
+@pytest.fixture
+def display(fake_modal: FakeModal) -> FakeDisplay:
     display = FakeDisplay()
     fake_modal.responder = lambda argv, timeout: display(' '.join(argv), timeout)
-    sandbox = ModalSandbox(desktop=True)
-    agent = Agent(FunctionModel(look_click_then_finish), capabilities=[sandbox, ComputerUse(native=False)])
+    return display
+
+
+async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(
+    fake_modal: FakeModal, display: FakeDisplay
+) -> None:
+    agent = Agent(
+        FunctionModel(look_click_then_finish), capabilities=[ModalSandbox(desktop=True), ComputerUse(native=False)]
+    )
 
     with warnings.catch_warnings():
+        # The `computer` tool reaches the sandbox, so the agent has a tool for it.
         warnings.simplefilter('error', ModalSandboxNoToolsWarning)
         result = await agent.run('Click.')
 
-    clicked = computer_returns(result.all_messages())[-1]
-    assert clicked.result == {'performed': 1, 'screenshot_size': (1280, 800)}
+    looked, clicked = [
+        part for message in result.all_messages() for part in message.parts if isinstance(part, ComputerReturnPart)
+    ]
+    assert looked.result == {'performed': 1}
+    assert clicked.result == {'performed': 1}
     assert clicked.screenshot is not None and clicked.screenshot.data == FAKE_SCREENSHOT
-    assert any(command.endswith('mousemove 3 4 click --repeat 1 1') for command in display.xdotool)
     assert len(display.starts) == 1
-    image = fake_modal.create_kwargs[-1]['image']
-    assert isinstance(image, FakeImage)
-    assert image.apt_packages == ('git', 'ripgrep', 'xvfb', 'xdotool', 'scrot', 'x11-utils')
+    assert any(command.endswith('mousemove 3 4 click --repeat 1 1') for command in display.xdotool)
 
-    # A plain command gets `DISPLAY` too, so a program the agent starts from the shell opens on the desktop.
-    await result.workspace.run(['true'])
+
+async def test_the_default_image_has_the_display_programs(fake_modal: FakeModal, display: FakeDisplay) -> None:
+    await ModalSandboxBackend(desktop=True).get_sandbox()
+    await ModalSandboxBackend().get_sandbox()
+
+    with_desktop, without = [kwargs['image'] for kwargs in fake_modal.create_kwargs]
+    assert isinstance(with_desktop, FakeImage) and isinstance(without, FakeImage)
+    assert with_desktop.apt_packages == ('git', 'ripgrep', 'xvfb', 'xdotool', 'scrot', 'x11-utils')
+    assert without.apt_packages == ('git', 'ripgrep')
+
+
+async def test_a_shell_command_finds_the_desktop_running(fake_modal: FakeModal, display: FakeDisplay) -> None:
+    # The shell is told a program it starts opens on the screen, before anything has looked at the screen.
+    await ModalSandboxBackend(desktop=True, env={'FOO': 'bar'}).run('xterm &', shell=True)
+
+    assert len(display.starts) == 1
     command = fake_modal.sandboxes[0].exec_calls[-1]
-    assert command.argv[-1] == 'true' and command.env == {'DISPLAY': ':1'}
+    assert command.argv[-1] == 'xterm &'
+    assert command.env == {'DISPLAY': ':1', 'FOO': 'bar'}
 
-    # A backend attached by the run's ref reaches the same display.
-    ref = result.workspace.ref
-    assert ref is not None
-    attached = sandbox.backend(ref).display
-    assert attached is not None
-    assert await attached.screenshot() == FAKE_SCREENSHOT
+
+async def test_a_desktop_size_sets_the_display_it_starts(fake_modal: FakeModal, display: FakeDisplay) -> None:
+    await screen(ModalSandboxBackend(desktop=(1440, 900))).display_size()
+
+    (start,) = display.starts
+    assert start.endswith(' sh 1440x900')
+
+
+async def test_a_desktop_sandbox_reattaches_with_its_display(fake_modal: FakeModal, display: FakeDisplay) -> None:
+    owner = ModalSandboxBackend()
+    await owner.get_sandbox()
+    assert owner.ref is not None
+
+    await screen(ModalSandbox(desktop=(1440, 900)).backend(owner.ref)).display_size()
+
+    (start,) = display.starts
+    assert start.endswith(' sh 1440x900')
+    assert ModalSandbox().backend(owner.ref).display is None

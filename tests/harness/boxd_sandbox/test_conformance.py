@@ -1,12 +1,13 @@
 """Pydantic AI's workspace backend conformance suite, run against `BoxdSandboxBackend`.
 
-`TestFakeBoxdSandboxBackend` runs everywhere, over the fake boxd SDK, where commands act on a
+`TestFakeBoxdSandboxBackend` runs on POSIX hosts, over the fake boxd SDK, where commands act on a
 temporary host directory. `TestLiveBoxdSandboxBackend` runs the same rules against a real machine
 and is gated like `test_boxd_live.py`.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
@@ -25,6 +26,7 @@ async def _delete(backend: WorkspaceBackend) -> None:
     await BoxdSandbox().destroy(backend.ref)
 
 
+@pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 class TestFakeBoxdSandboxBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, fake_boxd: FakeBoxd, tmp_path: Path) -> BoxdSandboxBackend:

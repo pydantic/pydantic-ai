@@ -16,8 +16,7 @@ from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     ComputerResult,
     ComputerToolAction,
-    CursorPosition,
-    MoveMouse,
+    HoldKeys,
     Screenshot,
     Wait,
     Zoom,
@@ -27,13 +26,18 @@ from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.toolsets import FunctionToolset
 
 
-def png(width: int, height: int) -> bytes:
-    """A complete black RGB PNG of the given size."""
+def png(
+    width: int, height: int, *, background: bytes = b'\x00\x00\x00', red_box: tuple[int, int, int, int] | None = None
+) -> bytes:
+    """A complete RGB PNG of the given size in `background`, with an optional red `(left, top, right, bottom)` box."""
 
     def chunk(tag: bytes, data: bytes) -> bytes:
         return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
 
-    rows = b''.join(b'\x00' + bytes(width * 3) for _ in range(height))
+    left, top, right, bottom = red_box or (0, 0, 0, 0)
+    plain = b'\x00' + background * width
+    marked = b'\x00' + background * left + b'\xff\x00\x00' * (right - left) + background * (width - right)
+    rows = b''.join(marked if top <= y < bottom else plain for y in range(height))
     header = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)
     return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', header) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b'')
 
@@ -48,8 +52,8 @@ _LOOKING = (Wait, Screenshot)
 class FakeComputer(AbstractCapability[Any]):
     """A `computer` tool that records the actions it runs, refusing to act on a read-only workspace.
 
-    It refuses `hold_key`, so tests can see an action refused, and returns what zoom and cursor-position actions
-    read before its screenshot. With `native`, it also adds a `ComputerTool` declaring `display_size`, as
+    It refuses `hold_keys`, so tests can see an action refused, and returns what zoom and screenshot
+    actions before the last one read, before its screenshot. With `native`, it also adds a `ComputerTool` declaring `display_size`, as
     `ComputerUse` does.
     """
 
@@ -69,21 +73,15 @@ class FakeComputer(AbstractCapability[Any]):
     async def _computer(self, ctx: RunContext[Any], actions: list[ComputerToolAction]) -> ToolReturn:
         result = ComputerResult(performed=0)
         outputs: list[str | BinaryImage] = []
-        for action in actions:
-            if isinstance(action, Zoom):
-                region = action.region
-                zoomed = png(region.right - region.left, region.bottom - region.top)
-                outputs.append(BinaryImage(data=zoomed, media_type='image/png'))
-            elif isinstance(action, CursorPosition):
-                moves = [done for done in self.actions if isinstance(done, MoveMouse)]
-                x, y = (moves[-1].x, moves[-1].y) if moves else (640, 400)
-                outputs.append(f'The pointer is at ({x}, {y}).')
+        for index, action in enumerate(actions):
+            if isinstance(action, Zoom) or (isinstance(action, Screenshot) and index < len(actions) - 1):
+                outputs.append(BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png'))
             elif not isinstance(action, _LOOKING):
                 if ctx.workspace.read_only:
                     result['error'] = 'This workspace is read-only.'
                     break
-                if action.type == 'hold_key':
-                    result['error'] = "the fake display cannot perform 'hold_key'"
+                if isinstance(action, HoldKeys):
+                    result['error'] = "the fake display cannot perform 'hold_keys'"
                     break
                 self.actions.append(action)
             result['performed'] += 1

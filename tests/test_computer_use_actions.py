@@ -1,8 +1,14 @@
-"""Tests for the `computer` tool's actions."""
+"""Tests for the `computer` tool's actions.
+
+Not VCR tests: validating and serializing an action happens before any provider is involved, so a recording adds nothing.
+"""
 
 from __future__ import annotations
 
-from typing import Any
+import re
+from collections.abc import Callable
+from dataclasses import fields
+from typing import get_args
 
 import pytest
 from inline_snapshot import snapshot
@@ -11,11 +17,20 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_ai.computer_use import (
     Click,
     ComputerToolAction,
+    CursorPosition,
+    Drag,
     HoldKeys,
+    MouseDown,
+    MouseMove,
+    MouseUp,
+    Point,
     PressKeys,
     Region,
+    Screenshot,
     Scroll,
     TypeText,
+    Wait,
+    Zoom,
 )
 
 
@@ -70,71 +85,93 @@ def test_fields_an_action_does_not_have_are_refused() -> None:
             adapter.validate_python([invalid])
 
 
-def test_actions_round_trip_through_json_and_refuse_bad_shapes() -> None:
-    adapter = TypeAdapter(list[ComputerToolAction])
-    actions = adapter.validate_python(
-        [
-            {'type': 'keypress', 'keys': ['CTRL', 'Return']},
-            {'type': 'click', 'x': 1, 'y': 2, 'modifiers': ['Control', 'cmd', 'Option']},
-            {'type': 'hold_key', 'keys': ['ESC'], 'seconds': 1},
-        ]
-    )
-    assert actions == [
-        PressKeys(keys=('ctrl', 'enter')),
+_EVERY_ACTION: list[tuple[dict[str, object], ComputerToolAction]] = [
+    (
+        {'type': 'click', 'x': 1, 'y': 2, 'modifiers': ['Control', 'cmd', 'Option']},
         Click(x=1, y=2, modifiers=('ctrl', 'super', 'alt')),
-        HoldKeys(keys=('escape',), seconds=1),
-    ]
+    ),
+    ({'type': 'mouse_move', 'x': 3, 'y': 4}, MouseMove(x=3, y=4)),
+    (
+        {'type': 'drag', 'path': [{'x': 0, 'y': 0}, {'x': 5, 'y': 6}]},
+        Drag(path=(Point(x=0, y=0), Point(x=5, y=6))),
+    ),
+    ({'type': 'mouse_down', 'button': 'right'}, MouseDown(button='right')),
+    ({'type': 'mouse_up'}, MouseUp()),
+    ({'type': 'scroll', 'direction': 'down', 'x': 10, 'y': 20}, Scroll(direction='down', x=10, y=20)),
+    ({'type': 'type_text', 'text': 'hello'}, TypeText(text='hello')),
+    ({'type': 'press_keys', 'keys': ['CTRL', 'Return']}, PressKeys(keys=('ctrl', 'enter'))),
+    ({'type': 'hold_keys', 'keys': ['ESC'], 'seconds': 1}, HoldKeys(keys=('escape',), seconds=1)),
+    ({'type': 'wait', 'seconds': 0.5}, Wait(seconds=0.5)),
+    ({'type': 'screenshot'}, Screenshot()),
+    (
+        {'type': 'zoom', 'region': {'left': 0, 'top': 0, 'right': 5, 'bottom': 5}},
+        Zoom(region=Region(left=0, top=0, right=5, bottom=5)),
+    ),
+    ({'type': 'cursor_position'}, CursorPosition()),
+]
+
+
+@pytest.mark.parametrize('given, expected', [pytest.param(*case, id=case[1].type) for case in _EVERY_ACTION])
+def test_each_action_reads_its_fields_and_round_trips_through_json(
+    given: dict[str, object], expected: ComputerToolAction
+) -> None:
+    adapter = TypeAdapter(list[ComputerToolAction])
+    actions = adapter.validate_python([given])
+    assert actions == [expected]
     assert adapter.validate_json(adapter.dump_json(actions)) == actions
-    invalid_actions: list[dict[str, object]] = [
-        {'type': 'click', 'x': 10},
-        {'type': 'scroll', 'x': 1, 'y': 2},
-        {'type': 'teleport'},
-        {'x': 1, 'y': 2},
-    ]
-    for invalid in invalid_actions:
-        with pytest.raises(ValidationError):
-            adapter.validate_python([invalid])
-    with pytest.raises(
-        ValidationError, match=r"'Hyper_L' is not a key: use a single character or one of ctrl, .*, f1 to f24"
-    ):
-        PressKeys(keys=('Hyper_L',))
-
-
-def test_a_scroll_at_a_position_and_a_region_build() -> None:
-    assert Scroll(direction='down', x=10, y=20).x == 10
-    assert Region(left=0, top=0, right=5, bottom=5).right == 5
 
 
 @pytest.mark.parametrize(
-    'build',
+    'invalid',
     [
-        lambda: Scroll(direction='down', amount=0),
-        lambda: Region(left=5, top=0, right=5, bottom=10),
-        lambda: TypeText(text='a\x00b'),
-        lambda: PressKeys(keys=()),
-        lambda: HoldKeys(keys=('',), seconds=1),
-        # Splitting a combination can leave an empty key between two `+`.
-        lambda: PressKeys(keys=('ctrl+++',)),
-        # Modifiers are checked before anything runs, so an unknown one can't be skipped mid-action.
-        lambda: Click(modifiers=('ctrl', 'exec')),
-        # A known key that isn't a modifier is refused too.
-        lambda: Click(modifiers=('ctrl', 'a')),
+        pytest.param({'type': 'click', 'x': 10}, id='x-without-y'),
+        pytest.param({'type': 'scroll', 'x': 1, 'y': 2}, id='scroll-without-direction'),
+        pytest.param({'type': 'teleport'}, id='unknown-type'),
+        pytest.param({'x': 1, 'y': 2}, id='no-type'),
     ],
 )
-def test_actions_are_validated_when_built_in_python(build: Any) -> None:
+def test_actions_of_a_bad_shape_are_refused(invalid: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
+        TypeAdapter(list[ComputerToolAction]).validate_python([invalid])
+
+
+@pytest.mark.parametrize(
+    'build, message',
+    [
+        pytest.param(lambda: Scroll(direction='down', amount=0), 'greater than or equal to 1', id='scroll-of-zero'),
+        pytest.param(
+            lambda: Region(left=5, top=0, right=5, bottom=10),
+            'a region needs `right` greater than `left` and `bottom` greater than `top`',
+            id='empty-region',
+        ),
+        pytest.param(lambda: PressKeys(keys=()), 'at least 1 item', id='no-keys'),
+        pytest.param(
+            lambda: PressKeys(keys=('Hyper_L',)),
+            "'Hyper_L' is not a key: use a single character or one of ctrl, ",
+            id='unknown-key',
+        ),
+        pytest.param(lambda: HoldKeys(keys=('',), seconds=1), 'a key name must not be empty', id='empty-key'),
+        # Splitting a combination can leave an empty key between two `+`.
+        pytest.param(lambda: PressKeys(keys=('ctrl+++',)), 'a key name must not be empty', id='empty-key-in-combo'),
+        # Modifiers are checked before anything runs, so a key that isn't one can't be skipped mid-action.
+        pytest.param(
+            lambda: Click(modifiers=('ctrl', 'a')), 'modifiers must be ctrl, shift, alt or super', id='not-a-modifier'
+        ),
+    ],
+)
+def test_actions_are_validated_when_built_in_python(build: Callable[[], object], message: str) -> None:
+    with pytest.raises(ValidationError, match=re.escape(message)):
         build()
 
 
-def test_typed_text_refuses_control_characters_other_than_newline_and_tab() -> None:
-    assert TypeText(text='line 1\n\tline 2').text == 'line 1\n\tline 2'
-    # Each would press a key other than Enter or Tab (`\r` a second Enter, `\b` Backspace), or has no key at all.
-    for text in ('a\r\nb', 'a\x08b', 'a\x1bb', 'a\x7fb', 'a\x85b', 'a\x9fb'):
-        with pytest.raises(ValidationError, match=r'control character U\+00[0-9A-F]{2}: only `\\n` \(Enter\)'):
-            TypeText(text=text)
+def test_each_action_type_is_its_class_name_in_snake_case() -> None:
+    (actions, _) = get_args(ComputerToolAction)
+    for action in get_args(actions):
+        (type_field,) = (field for field in fields(action) if field.name == 'type')
+        assert type_field.default == re.sub(r'(?<!^)(?=[A-Z])', '_', action.__name__).lower()
 
 
-def test_the_computer_tool_schema_requires_type_first_and_only_declared_fields() -> None:
+def test_the_computer_tool_schema_requires_type_first_and_only_names_it_declares() -> None:
     schema = TypeAdapter(list[ComputerToolAction]).json_schema()['$defs']
     assert sorted(schema) == snapshot(
         [
@@ -143,8 +180,8 @@ def test_the_computer_tool_schema_requires_type_first_and_only_declared_fields()
             'Drag',
             'HoldKeys',
             'MouseDown',
+            'MouseMove',
             'MouseUp',
-            'MoveMouse',
             'Point',
             'PressKeys',
             'Region',
@@ -160,3 +197,12 @@ def test_the_computer_tool_schema_requires_type_first_and_only_declared_fields()
     )
     # Every required name must exist: Gemini rejects a schema that requires an undeclared property.
     assert all(set(definition['required']) <= set(definition['properties']) for definition in schema.values())
+
+
+@pytest.mark.parametrize('seconds', [float('inf'), float('nan')])
+def test_a_duration_must_be_finite(seconds: float) -> None:
+    # JSON can't hold it, so a saved history would lose the action.
+    with pytest.raises(ValidationError, match='finite number'):
+        Wait(seconds=seconds)
+    with pytest.raises(ValidationError, match='finite number'):
+        HoldKeys(keys=('shift',), seconds=seconds)

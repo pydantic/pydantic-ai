@@ -7,11 +7,11 @@ interactions:
       accept:
       - "*/*"
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "665"
+      - "749"
       content-type:
       - application/json
       host:
@@ -25,13 +25,14 @@ interactions:
           content: Use get_temperature to find the temperature in Paris, then report the result.
         - role: assistant
           tool_calls:
-          - id: get_temperature_2faxbq9b1fnm
+          - id: get_temperature_mqs1f1kswncm
             type: function
             function:
               name: get_temperature
               arguments: "{\"city\":\"Paris\"}"
+          tool_plan: I will use the get_temperature tool to find the temperature in Paris.
         - role: tool
-          tool_call_id: get_temperature_2faxbq9b1fnm
+          tool_call_id: get_temperature_mqs1f1kswncm
           content: 24 degrees Celsius
         tools:
         - type: function
@@ -53,7 +54,7 @@ interactions:
       access-control-expose-headers:
       - X-Debug-Trace-ID
       alt-svc:
-      - h3=":443"; ma=2592000
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
       - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
       content-type:
@@ -70,7 +71,7 @@ interactions:
       type: text
       content: |+
         event: message-start
-        data: {"id":"f0becd6d-5bff-42b1-9b4d-598f083891d0","type":"message-start","delta":{"message":{"role":"assistant","content":[],"tool_plan":"","tool_calls":[],"citations":[]}}}
+        data: {"id":"cbdf0fda-9519-4780-801d-16eed5b1a671","type":"message-start","delta":{"message":{"role":"assistant","content":[],"tool_plan":"","tool_calls":[],"citations":[]}}}
 
         event: content-start
         data: {"type":"content-start","index":0,"delta":{"message":{"content":{"type":"text","text":""}}}}
@@ -109,7 +110,7 @@ interactions:
         data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"text":"."}}}}
 
         event: citation-start
-        data: {"type":"citation-start","index":0,"delta":{"message":{"citations":{"start":28,"end":47,"text":"24 degrees Celsius.","sources":[{"type":"tool","id":"get_temperature_2faxbq9b1fnm:0","tool_output":{"content":"24 degrees Celsius"}}],"type":"TEXT_CONTENT"}}}}
+        data: {"type":"citation-start","index":0,"delta":{"message":{"citations":{"start":28,"end":47,"text":"24 degrees Celsius.","sources":[{"type":"tool","id":"get_temperature_mqs1f1kswncm:0","tool_output":{"content":"24 degrees Celsius"}}],"type":"TEXT_CONTENT"}}}}
 
         event: citation-end
         data: {"type":"citation-end","index":0}
@@ -118,11 +119,11 @@ interactions:
         data: {"type":"content-end","index":0}
 
         event: message-end
-        data: {"type":"message-end","delta":{"finish_reason":"COMPLETE","usage":{"billed_units":{"input_tokens":57,"output_tokens":11},"tokens":{"input_tokens":1538,"output_tokens":23},"cached_tokens":1024}}}
+        data: {"type":"message-end","delta":{"finish_reason":"COMPLETE","usage":{"billed_units":{"input_tokens":72,"output_tokens":11},"tokens":{"input_tokens":1555,"output_tokens":23},"cached_tokens":1488}}}
 
         data: [DONE]
 
-  recorded_at: 2026-10-24T18:40:33.372510+00:00
+  recorded_at: 2026-11-17T14:56:43.945862+00:00
 - request:
     method: POST
     uri: https://api.cohere.com/v2/chat
@@ -130,7 +131,7 @@ interactions:
       accept:
       - "*/*"
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -166,7 +167,7 @@ interactions:
       access-control-expose-headers:
       - X-Debug-Trace-ID
       alt-svc:
-      - h3=":443"; ma=2592000
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
       - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
       content-type:
@@ -183,7 +184,7 @@ interactions:
       type: text
       content: |+
         event: message-start
-        data: {"id":"1defc2f3-bc25-4cdb-9042-90340d7e547b","type":"message-start","delta":{"message":{"role":"assistant","content":[],"tool_plan":"","tool_calls":[],"citations":[]}}}
+        data: {"id":"9c122db1-c91a-4802-b8e3-f3ae2738db8f","type":"message-start","delta":{"message":{"role":"assistant","content":[],"tool_plan":"","tool_calls":[],"citations":[]}}}
 
         event: tool-plan-delta
         data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":"I"}}}
@@ -231,7 +232,7 @@ interactions:
         data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":"."}}}
 
         event: tool-call-start
-        data: {"type":"tool-call-start","index":0,"delta":{"message":{"tool_calls":{"id":"get_temperature_2faxbq9b1fnm","type":"function","function":{"name":"get_temperature","arguments":""}}}}}
+        data: {"type":"tool-call-start","index":0,"delta":{"message":{"tool_calls":{"id":"get_temperature_mqs1f1kswncm","type":"function","function":{"name":"get_temperature","arguments":""}}}}}
 
         event: tool-call-delta
         data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"{\""}}}}}
@@ -259,4 +260,4 @@ interactions:
 
         data: [DONE]
 
-  recorded_at: 2026-10-24T18:40:32.493319+00:00
+  recorded_at: 2026-11-17T14:56:43.357542+00:00

@@ -207,6 +207,13 @@ integration assign stable idempotency keys to chained calls.
 Either kind of retry can repeat an external action performed before its result was recorded; use application-level
 idempotency keys or deduplication for writes and API requests that must not happen twice.
 
+Render doesn't wait the delay a model error asks for in its `retry_after` (read from a provider's `Retry-After`
+header, for example). A task's `Retry` sets the wait between its attempts when the task is registered, with no way to
+change it for one failure, and a task run can't sleep durably, so a chained model request task run is retried after
+`wait_duration_ms` and `backoff_scaling` whatever the provider asked for. Size those for your provider's rate limits,
+or give model requests no retries and let a [fallback model](https://pydantic.dev/docs/ai/capabilities/model-fallback/)
+take over.
+
 Render retries are separate from Pydantic AI's `ModelRetry`, which asks the model to correct or reconsider a call,
 and from retries in the provider SDK. Account for all three when setting retry limits and timeouts; see the
 [Pydantic AI retry guide](https://pydantic.dev/docs/ai/core-concepts/retries/).
@@ -304,7 +311,7 @@ to trigger the deployed task.
 
 The capability registers definitions for these operations:
 
-- model requests, buffered stream requests, compaction, and suspended-response cleanup;
+- model requests, buffered stream requests, compaction, token counts, and suspended-response cleanup;
 - per named function toolset, shared by its tools, argument validation and tool calls;
 - per MCP and dynamic toolset, discovery, instructions, validation, and calls;
 - `event_stream_handler` delivery;
@@ -354,7 +361,7 @@ For large artifacts, return bounded JSON containing a key into object storage, a
 ## Memory
 
 `Memory` can read and write through Render task runs when its store is accessible to every worker. Use a shared
-external backend, such as `PostgresMemoryStore`, for hosted runs. `InMemoryStore` and files on an individual worker
+external backend, such as `PostgresMemoryStore`, for hosted runs. `InMemoryMemoryStore` and files on an individual worker
 do not persist across task instances.
 
 ## Task options and tool opt-out
@@ -396,8 +403,15 @@ Each named toolset shares its call and validation task definitions. For the exam
 
 At registration, the resolver receives `tool=None` and `tool_name=''` for the toolset default. It also receives each statically known function tool and its name. Return the same settings for the toolset and its tools; `None` uses `tool_options`. Different per-tool settings are rejected because Render fixes task options when registering each definition.
 
-Returning `False` for a function tool runs it inside the calling task run instead of starting a chained task run. The
-shared toolset definitions remain registered. `False` is rejected for MCP and dynamic tools.
+Returning `False` for a function tool runs it inside the calling task run instead of starting a chained task run, as
+`metadata={'render_workflows': False}` on the tool does. The shared toolset definitions remain registered. `False` is
+rejected for MCP and dynamic tools. The harness `FileSystem` write tools opt out this way, so their file-change
+requests reach listeners in the parent task.
+
+An async function tool with the engine-neutral [`durable=False`](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/#running-a-tool-outside-the-durable-unit) also
+runs inside the calling task run, whatever the resolver returns for it. Registration only sees `durable` set on
+the tool itself, so for a tool opted out by a `prepare` function or `PrepareTools` instead, have the resolver
+return `False` or the toolset's options.
 
 ## Execution limits
 

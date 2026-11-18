@@ -3,9 +3,11 @@ from __future__ import annotations as _annotations
 from contextvars import ContextVar
 from typing import Literal, TypeAlias
 
+from .._file_input import KNOWN_IMAGE_MEDIA_TYPES
 from ..native_tools import (
     AdvisorTool,
     CodeExecutionTool,
+    ComputerTool,
     MCPServerTool,
     MemoryTool,
     WebFetchTool,
@@ -17,7 +19,7 @@ from . import ModelProfile
 
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 """Native tool types Anthropic generally supports across the model line. Mirrors
-`AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated
+`AnthropicModel.supported_native_tools()` minus `ToolSearchTool` and `ComputerTool`, which are gated
 per-model in the profile below."""
 
 _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
@@ -187,11 +189,11 @@ class AnthropicModelProfile(ModelProfile, total=False):
     Anthropic currently documents task budgets as a Claude Opus 4.7 / 4.8 / 5 / 5.5 and Haiku 5.5 beta feature.
     """
 
-    anthropic_computer_tool_version: AnthropicComputerToolVersion | None
-    """The computer use tool a tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind is sent as.
+    anthropic_default_computer_tool_version: AnthropicComputerToolVersion
+    """The Anthropic computer use tool or toolset sent for a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool].
+    Default: `'computer_20250124'`.
 
-    Default: `None`, meaning a function tool. `AnthropicModel` narrows it by client: Bedrock and Foundry serve only
-    the earlier beta versions.
+    Whether `ComputerTool` is sent at all is up to `supported_native_tools`.
     """
 
     anthropic_supports_on_demand_compaction: bool
@@ -308,6 +310,31 @@ class AnthropicModelProfile(ModelProfile, total=False):
     When the provider's profile doesn't set it, `AnthropicModel` turns it on for the `AsyncAnthropic` client and leaves
     it off for every other client. Of those, Claude Platform on AWS (`AsyncAnthropicAWS`) and Microsoft Foundry also
     send those versions, but haven't been verified to accept `allowed_callers` with citations.
+    """
+
+    anthropic_supports_inference_geo: bool
+    """Whether the endpoint takes the `inference_geo` request parameter for
+    [data residency](https://platform.claude.com/docs/en/manage-claude/data-residency). Default: `False`.
+
+    When False, [`anthropic_inference_geo`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_inference_geo]
+    is ignored with a `UserWarning`. When the provider's profile doesn't set it, `AnthropicModel` turns it on for the
+    `AsyncAnthropic` client, which also serves Claude Platform on AWS and Claude on Google Cloud (Anthropic managed),
+    and leaves it off for the Bedrock, Vertex AI and Foundry clients, where the endpoint or deployment decides the
+    inference region. Set it in the provider's profile or with `profile=` for a client that forwards the parameter to
+    the Claude API. It doesn't depend on the model: models that don't support data residency reject the parameter
+    with a 400.
+    """
+
+    anthropic_supports_message_threads: bool
+    """Whether the endpoint serves Anthropic
+    [message threads](https://platform.claude.com/docs/en/build-with-claude/message-threads). Default: `False`.
+
+    When False,
+    [`anthropic_previous_message_id`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_previous_message_id]
+    is ignored with a `UserWarning`. When the provider's profile doesn't set it, `AnthropicModel` turns it on for the
+    `AsyncAnthropic` client, which also serves Claude Platform on AWS and Claude on Google Cloud (Anthropic managed),
+    and for the Foundry client, and leaves it off for the Bedrock and Vertex AI clients, where Anthropic doesn't offer
+    threads. Set it in the provider's profile or with `profile=` for a client that forwards threads to the Claude API.
     """
 
 
@@ -650,19 +677,14 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         supported_native_tools = supported_native_tools | {ToolSearchTool}
     if supports_advisor:
         supported_native_tools = supported_native_tools | {AdvisorTool}
-
-    # Each model's computer use tool, from Anthropic's compatibility table. Claude 5.5 and later take only the
-    # toolset on the Claude API.
-    # https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
-    computer_tool_version: AnthropicComputerToolVersion | None = None
-    if model_name.startswith(_COMPUTER_TOOLSET_MODELS):
-        computer_tool_version = 'computer_toolset_20260801'
-    elif model_name.startswith(('claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-5')):
-        computer_tool_version = 'computer_20251124'
-    elif model_name.startswith(('claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-opus-4', 'claude-sonnet-4')):
-        computer_tool_version = 'computer_20250124'
+    computer_tool_version = _computer_tool_version(model_name)
+    if computer_tool_version is not None:
+        supported_native_tools = supported_native_tools | {ComputerTool}
 
     profile = AnthropicModelProfile(
+        # The Anthropic API answers HEIC, AVIF, BMP and TIFF images with a 400, and so does Claude through
+        # OpenRouter (checked live with `claude-haiku-5-5` and `anthropic/claude-haiku-4.5`, 2026-11-04).
+        supported_image_media_types=KNOWN_IMAGE_MEDIA_TYPES,
         # Read by `OpenAIChatModel`, not by `AnthropicModel`: litellm, vercel, heroku, snowflake and
         # openrouter serve Claude through that adapter and map it onto this profile, so these tags are
         # how it splits thinking out of a Claude response. Both adapters only render them for the
@@ -685,7 +707,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         # on. Extended thinking rejects forcing outright, which `AnthropicModel` handles itself.
         forced_tool_choice_disables_thinking=True,
         anthropic_supports_adaptive_thinking=supports_adaptive,
-        anthropic_computer_tool_version=computer_tool_version,
         anthropic_supports_effort=supports_effort,
         anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
         anthropic_supports_xhigh_effort=supports_xhigh_effort,
@@ -707,13 +728,20 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     )
     if supports_tool_search:
         profile['tool_deferral_mode'] = 'standalone'
-    # The largest screenshot each model takes. The toolset refuses a larger one: at most 2576 px on the longer side and
-    # 4784 tiles of 28 px, so 3.6 MP leaves room for rounding. The earlier tools scale it down, and Claude answers in
-    # the smaller image's pixels. Opus 4.7 takes the larger size on `computer_20251124`.
-    if model_name.startswith((*_COMPUTER_TOOLSET_MODELS, 'claude-opus-4-7')):
+    if computer_tool_version is not None:
+        profile['anthropic_default_computer_tool_version'] = computer_tool_version
+    # The earlier tools scale a larger screenshot down, and Claude answers in the smaller image's pixels, so the
+    # profile caps it; both numbers matter, as 1568x882 is scaled down too. Opus 4.7 takes the larger size on
+    # `computer_20251124`. The toolset refuses more than 2576 pixels or 4784 image tokens of 28x28 pixels, but the
+    # function tool these models get on Vertex AI or Foundry takes a larger image and scales it: probed live, Haiku
+    # 5.5 and Opus 4.8 pointed about 5% short on 2560x1600, and exactly on 2576x1456 (4784 tokens) and 2549x1457.
+    if model_name.startswith('claude-opus-4-7'):
         profile['computer_use_screenshot_max_side'] = 2576
         profile['computer_use_screenshot_max_pixels'] = 3_600_000
-    elif computer_tool_version is not None:
+    elif computer_tool_version == 'computer_toolset_20260801':
+        profile['computer_use_screenshot_max_side'] = 2576
+        profile['computer_use_screenshot_max_pixels'] = 2576 * 1456
+    elif computer_tool_version in ('computer_20251124', 'computer_20250124'):
         profile['computer_use_screenshot_max_side'] = 1568
         profile['computer_use_screenshot_max_pixels'] = 1_150_000
     if model_name.startswith('claude-sonnet-4-6'):
@@ -722,6 +750,23 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         # native mid-conversation system role on any transport, where the announcement would be a system message.
         profile['default_framing_announcement'] = 'always'
     return profile
+
+
+def _computer_tool_version(model_name: str) -> AnthropicComputerToolVersion | None:
+    """The model's computer use tool, from Anthropic's compatibility table, or `None` for a function tool.
+
+    A model with one gets `ComputerTool`, sent on the Claude API and both Bedrock APIs, the clients it is recorded on;
+    `AnthropicModel.profile` removes it for Vertex AI, Foundry and Claude Platform on AWS. Claude 5.5 and later take
+    only the toolset. Retired or retiring models (Opus 4 and 4.1, Sonnet 4 and 4.5) get a function tool.
+    https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
+    """
+    if model_name.startswith(_COMPUTER_TOOLSET_MODELS):
+        return 'computer_toolset_20260801'
+    if model_name.startswith(('claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-5')):
+        return 'computer_20251124'
+    if model_name.startswith('claude-haiku-4-5'):
+        return 'computer_20250124'
+    return None
 
 
 def _code_execution_tool_versions(

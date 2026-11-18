@@ -19,20 +19,21 @@ from pydantic_core import to_json
 
 from ... import _utils, usage
 from ..._utils import now_utc as _now_utc, number_to_datetime
-from ...computer_use import COMPUTER_KIND, ComputerCallPart
 from ...exceptions import ModelConnectionError
 from ...messages import BinaryImage, FilePart, ModelResponse, ModelResponseStreamEvent, TextPart, ToolCallPart
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
+from .._history_digest import Hasher
+from .._tool_call_ids import stored_tool_call_id
 from ._citations import (
     jsonable_annotation,
     map_responses_citations,
     responses_citations_provider_details,
     responses_output_text_annotation_ta,
 )
-from ._computer import map_computer_call
+from ._computer import map_computer_call, stop_computer_calls_unless_completed
 from ._errors import map_api_errors, response_error, response_error_type
-from ._history_digest import Hasher, with_history_digest
+from ._history_digest import with_history_digest
 from ._model_names import OpenAIModelName
 from ._native_tools import (
     map_code_interpreter_tool_call,
@@ -48,7 +49,6 @@ from ._response_fields import (
     map_logprobs,
     map_usage,
     response_status_to_state,
-    response_tool_call_id,
 )
 from ._settings import OpenAIResponsesModelSettings, echoed_store
 from ._tool_search import (
@@ -98,6 +98,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _pending_tool_search_call_ids: deque[str] = field(default_factory=deque[str], init=False)
     _function_call_args: dict[str, str] = field(default_factory=dict[str, str], init=False)
     _finalized_function_calls: set[str] = field(default_factory=set[str], init=False)
+    _status: ResponseStatus | None = field(default=None, init=False)
+    """The response's latest status, from `response.created` and then the event that ended the stream, which decides
+    whether its computer calls may run."""
     _history: Hasher | None = None
     """The history this response was created from, digested with its parts as `ModelResponse.history_digest`."""
     # Custom HTTP clients can return streams outside the SDK's AsyncStream class.
@@ -105,6 +108,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def get(self) -> ModelResponse:
         response = super().get()
+        response.parts = stop_computer_calls_unless_completed(
+            response.parts, self.model_request_parameters, status=self._status, refused=self._has_refusal
+        )
         if self._is_websocket:
             response.provider_details = {**(response.provider_details or {}), 'transport': 'websocket'}
         return with_history_digest(response, self._history)
@@ -128,6 +134,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def _handle_terminal_response(self, response: responses.Response) -> None:
         """Take what the complete response that ends the stream reports as `_process_response` does."""
+        self._status = response.status
         # A stream resumed with `starting_after` has no `response.created`, so this is where it first sees these.
         self._model_name = response.model or self._model_name
         self.provider_response_id = self.provider_response_id or response.id
@@ -340,6 +347,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def _map_created(self, chunk: responses.ResponseCreatedEvent) -> None:
         self._set_state(chunk.response.status)
+        # OpenAI says `in_progress` here, so a stream that ends before its final event doesn't count as completed.
+        self._status = chunk.response.status
         if chunk.response.id:  # pragma: no branch
             self.provider_response_id = chunk.response.id
         self._store_conversation_id(chunk.response)
@@ -399,9 +408,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             vendor_part_id=item_id,
             tool_name=item.name,
             args=item.arguments,
-            tool_call_id=response_tool_call_id(
+            tool_call_id=stored_tool_call_id(
                 item.call_id,
-                self.provider_response_id if self._tool_call_ids_are_response_scoped else None,
+                # Without the response ID yet, the ID is kept as sent rather than scoped by the timestamp:
+                # a request continuing this response by `previous_response_id` no longer holds it, so
+                # only the response ID can restore the IDs its results carry.
+                response_scoped=self._tool_call_ids_are_response_scoped and self.provider_response_id is not None,
+                provider_response_id=self.provider_response_id,
+                timestamp=self.timestamp,
             ),
             id=item_id,
             provider_name=self.provider_name,
@@ -451,9 +465,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         match item:
             case responses.ResponseFunctionToolCall():
                 yield self._handle_function_call_part(item)
-            case responses.ResponseComputerToolCall():
-                yield from self._map_computer_call_added(item)
-            case responses.ResponseReasoningItem():
+            case responses.ResponseComputerToolCall() | responses.ResponseReasoningItem():
+                # A computer call's actions arrive whole in its done event, where it's mapped.
                 pass
             case responses.ResponseOutputMessage():
                 if item.phase is not None:
@@ -596,40 +609,17 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             case _:
                 pass
 
-    def _computer_call_id(self, item: responses.ResponseComputerToolCall) -> str:
-        return response_tool_call_id(
-            item.call_id, self.provider_response_id if self._tool_call_ids_are_response_scoped else None
-        )
-
-    def _map_computer_call_added(self, item: responses.ResponseComputerToolCall) -> Iterator[ModelResponseStreamEvent]:
-        """Start the `computer` call, when the request has a `computer` tool to run it.
-
-        Its actions arrive whole in its done event, but its place among the other calls is set now, as when the
-        response isn't streamed. Until then it has no actions, so nothing runs.
-        """
-        if computer_name := self.model_request_parameters.tool_name_for_kind(COMPUTER_KIND):
-            part = ComputerCallPart(
-                computer_name,
-                None,
-                tool_call_id=self._computer_call_id(item),
-                id=item.id,
-                provider_name=self.provider_name,
-            )
-            yield self._parts_manager.handle_part(vendor_part_id=item.id, part=part)
-
     def _map_computer_call_done(self, item: responses.ResponseComputerToolCall) -> Iterator[ModelResponseStreamEvent]:
-        if not (computer_name := self.model_request_parameters.tool_name_for_kind(COMPUTER_KIND)):
-            return
-        call = map_computer_call(item, computer_name, self._computer_call_id(item), self.provider_name)
-        if isinstance(self._parts_manager.get_part_by_vendor_id(item.id), ComputerCallPart):
-            # Started at its added event, so it's completed as a delta; a second start would read as another call.
-            event = self._parts_manager.handle_tool_call_delta(
-                vendor_part_id=item.id, args=call.args, provider_details=call.provider_details
-            )
-            # A delta to a complete part always makes an event.
-            assert event is not None
-            yield event
-        else:
+        # Its actions arrive whole in the done event, and OpenAI finishes each item before adding the next, so the
+        # call starts complete here and keeps its place among the other parts.
+        # The ID is stored as `_map_function_call_done` stores a function call's.
+        call_id = stored_tool_call_id(
+            item.call_id,
+            response_scoped=self._tool_call_ids_are_response_scoped and self.provider_response_id is not None,
+            provider_response_id=self.provider_response_id,
+            timestamp=self.timestamp,
+        )
+        if call := map_computer_call(item, self.model_request_parameters, call_id, self.provider_name):
             yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
 
     def _map_function_call_done(
