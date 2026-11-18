@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         WarnNearLimits,
     )
     from .conversation_search import ConversationSearch
+    from .current_time import CurrentTime
     from .day_ai import DayAI
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
     from .deny_unanswered import DenyUnanswered
@@ -132,6 +133,7 @@ __all__ = [
     'Coder',
     'CompactOnRequest',
     'ConversationSearch',
+    'CurrentTime',
     'DEFAULT_CROSS_MODEL_NOTICE',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS',
     'DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS',
@@ -259,6 +261,7 @@ _LAZY_EXPORTS = {
     'Coder': 'coder',
     'CompactOnRequest': 'compaction',
     'ConversationSearch': 'conversation_search',
+    'CurrentTime': 'current_time',
     'DayAI': 'day_ai',
     'DaytonaSandbox': 'daytona_sandbox',
     'DaytonaSandboxBackend': 'daytona_sandbox',

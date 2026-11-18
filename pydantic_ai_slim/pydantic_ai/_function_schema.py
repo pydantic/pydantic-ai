@@ -163,6 +163,7 @@ def function_schema(
     takes_ctx: bool | None = None,
     docstring_format: DocstringFormat = 'auto',
     require_parameter_descriptions: bool = False,
+    attribute_docstrings: bool = True,
 ) -> FunctionSchema:
     """Build a Pydantic validator and JSON schema from a tool function.
 
@@ -173,11 +174,12 @@ def function_schema(
         docstring_format: The docstring format to use.
         require_parameter_descriptions: Whether to require descriptions for all tool function parameters.
         schema_generator: The JSON schema generator class to use.
+        attribute_docstrings: Whether a field's attribute docstring becomes its description in the JSON schema.
 
     Returns:
         A `FunctionSchema` instance.
     """
-    config = ConfigDict(title=function.__name__, use_attribute_docstrings=True)
+    config = ConfigDict(title=function.__name__, use_attribute_docstrings=attribute_docstrings)
     config_wrapper = ConfigWrapper(config)
     gen_schema = _generate_schema.GenerateSchema(config_wrapper)
     errors: list[str] = []
