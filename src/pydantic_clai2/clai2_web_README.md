@@ -15,13 +15,15 @@ To use only the browser, start CLAI with `--web` (also `uvx pydantic-clai2 --web
 the address, opens it, and logs the session it started with to the terminal until Ctrl+C, which
 ends every session. There, each session you open is live in its own directory, with that
 directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
-there; CLAI's own working directory never changes. **New session** asks where the session runs: a
-project or worktree from the sidebar or any other worktree Git lists for its repository, by default
-the current one, a new worktree of a listed checkout's repository (**New worktree…** on its row, or
-**New worktree of …** for the row the arrow keys select: a branch name,
-generated if empty, and a base, `HEAD` if empty; it goes in `.worktrees/` as `--worktree` puts it),
-or any directory by its absolute path, which it completes as you type, listing each repository's
-worktrees. The header shows where the session works.
+there; CLAI's own working directory never changes. **New session** asks where the session runs.
+It lists one row per project from the sidebar, the current one first, and a project's row starts
+in the checkout you are in, else the project's main one. A project's chevron, or →, shows its
+worktrees, including any other worktree Git lists for its repository; ← hides them.
+**New worktree…** on a row, or **New worktree of …** for the row the arrow keys select, checks out
+a new worktree of that row's repository: a branch name, generated if empty, and a base, `HEAD` if
+empty; it goes in `.worktrees/` as `--worktree` puts it. You can also type any directory's
+absolute path, which it completes as you type, listing each repository with its worktrees shown.
+The header shows where the session works.
 `/workspace DIRECTORY` or `/resume ID` typed in a session moves that session instead, never while a
 turn, a background `/fork`, or a delegated task runs in it. `clai2 --web --resume ID` starts in that
 session's directory. A session left idle for an hour, with nothing running or queued and no browser
@@ -97,8 +99,8 @@ changed, with the number of files it changed so far on the button. Pick a scope:
 outside Git too, and show each file once, as one diff from before the first change to what is on
 disk now. A file the session wrote whole counts as created, unless the last commit has it with
 content the session did not write, which it is then compared with. In Git, they also list files
-changed otherwise since the scope began, such as by a shell command, without a diff, as
-**Uncommitted** has it. These scopes read the
+changed otherwise since the scope began, such as by a shell command, without a diff; a file a
+command deleted shows only in **Uncommitted**. These scopes read the
 conversation, so after `/compact` they start from the compacted summary; while a turn runs,
 **Last turn** is the running one. **Uncommitted** is
 `git diff HEAD` in the session's directory, with untracked files that are not ignored listed as
@@ -125,14 +127,14 @@ was. Settings every session shares, such as `/set display.*`, still change them 
 **Models** (`#settings/models`, or `/model` typed in the composer) picks the model for
 the next prompt, exactly as `/model NAME` does: the session switches, the terminal's status row and
 the composer show it, and it is saved as the default. Each saved model and fallback chain has a row
-that opens its settings beneath it, the rows `/model settings NAME` edits, so effort and Codex fast
-mode changed here are what `/effort` and `/fast` read; the current model's opens first. **Add a
+that opens its settings beneath it, the rows `/model settings NAME` edits, so effort and Codex speed
+changed here are what `/effort` and `/fast` read; the current model's opens first. **Add a
 model** asks for a provider and one of its catalog models, then the account when the provider has
 several, as `/model add` does; GitHub Copilot, OpenRouter, and vLLM, which sign in or ask for an
 address first, are added from the terminal. **Remove a model** deletes one after asking, keeping the
 current model and the saved default. Creating, editing, and renaming fallback chains stays in the
 terminal's `/model chains`. `/effort` typed in the composer opens a dialog with the active model's
-settings, effort among them, and `/fast` still toggles fast mode.
+settings, effort among them, and `/fast` still sets the Codex speed.
 
 <!-- From #10457 -->
 **Keys & accounts** (`#settings/keys`, or `/keys`, `/login`, or `/accounts` in the composer) lists

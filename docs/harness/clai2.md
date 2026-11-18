@@ -189,6 +189,10 @@ authorization code with PKCE, state validation, and a callback at
 `http://localhost:1455/auth/callback`. It times out after five minutes. The browser
 must be able to reach that callback on the machine running CLAI.
 
+Login adds every model your account's Codex catalog lists to `/model`, skipping
+models the catalog hides. If listing the models fails, the login stays saved, CLAI
+reports why, and it adds the built-in Codex models instead.
+
 Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-clai2/`
 (`credentials-ACCOUNT.enc`), not stored in SQLite or `~/.codex/auth.json`. The key
 that decrypts them is the only entry CLAI keeps in the configured Python `keyring`
@@ -357,9 +361,9 @@ start with a provider (`{{ openai:medium }}`), so no real model is called `add` 
 `/model add` opens a searchable provider list, then a model picker for that provider.
 Esc from the model list returns to providers. Providers are unique prefixes from
 the merged catalog, including `openai-codex`. Its suggestions include
-`gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-luna`,
-`gpt-5.6-terra`, and `gpt-5.6-sol`; availability depends on your account.
-Unknown prices and context limits are not inferred.
+`gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`,
+`gpt-6-luna`, `gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.6-sol`; availability
+depends on your account. Unknown prices and context limits are not inferred.
 
 The model catalog combines genai-prices' catalog
 filtered to providers Pydantic AI can run, plus core's own model list, plus

@@ -31,7 +31,7 @@ from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, Mode
 from pydantic_ai.models import Model, infer_model_profile
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_ai_harness.subagents import DelegationTask, TaskQuestionAskedEvent
+from pydantic_ai_harness.sub_agents import DelegationTask, TaskQuestionAskedEvent
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
 from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff
@@ -76,7 +76,7 @@ from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.git_actions import git_commands
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
 from pydantic_clai2.runtime.live_runtimes import Served
-from pydantic_clai2.runtime.permissions import permissions_command, session_permissions
+from pydantic_clai2.runtime.permissions import permissions_command, session_permissions, unattended_only
 from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.project_instructions import ProjectInstructions
 from pydantic_clai2.runtime.question_status import QuestionStatus
@@ -168,20 +168,35 @@ def _fast_command(
     context: CommandContext,
     store: SettingsStore,
 ) -> str:
-    """`/fast [on|off]`: set the session model's `service_tier` to `priority` or `default`; no argument toggles it."""
-    if args not in ([], ['on'], ['off']):
-        raise ValueError('Usage: /fast [on|off]')
+    """`/fast [on|off|ultrafast]`: set the session model's Codex speed.
+
+    No argument toggles standard and the model's default speed, ultrafast where it is offered, else fast.
+    """
+    from pydantic_clai2.models.model_settings import (
+        CodexSpeed,
+        model_defaults,
+        model_settings_from_json,
+        with_codex_speed,
+    )
+
+    if args not in ([], ['on'], ['off'], ['ultrafast']):
+        raise ValueError('Usage: /fast [on|off|ultrafast]')
     model = session.model or _model_label(agent)
-    current = context.model_settings(model) or {}
     saved = store.model_settings(model)
     custom = saved.get('custom_params')
     if isinstance(custom, dict) and any(key.partition('.')[0] == 'service_tier' for key in custom):
-        raise ValueError('Custom service_tier overrides fast mode. Remove it with /model settings first.')
-    enabled = args == ['on'] or (not args and current.get('service_tier') != 'priority')
-    tier = 'priority' if enabled else 'default'
-    store.save_model_settings(model, {**saved, 'service_tier': tier})
-    return f'Fast mode {"on" if enabled else "off"} for {model} (service_tier={tier}). Applies on the next prompt.' + (
-        ' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else ''
+        raise ValueError('Custom service_tier overrides the Codex speed. Remove it with /model settings first.')
+    speeds: dict[str, CodexSpeed] = {'on': 'fast', 'off': 'standard', 'ultrafast': 'ultrafast'}
+    if args:
+        speed = speeds[args[0]]
+    else:
+        settings_as = context.settings_model(model)
+        form = model_settings_from_json(saved, model=settings_as)
+        on = 'ultrafast' if model_defaults(model=settings_as).get('codex_speed') == 'ultrafast' else 'fast'
+        speed = on if form.codex_speed in (None, 'standard') else 'standard'
+    store.save_model_settings(model, with_codex_speed(saved, speed))
+    return f'Codex speed {speed} for {model}. Applies on the next prompt.' + (
+        ' Uses more ChatGPT credits; availability depends on your model and account.' if speed != 'standard' else ''
     )
 
 
@@ -291,9 +306,9 @@ def create_shell(
     commands.register(
         Command(
             name='fast',
-            description='Toggle Codex priority processing: /fast [on|off] (uses more ChatGPT credits)',
+            description='Set the Codex speed: /fast [on|off|ultrafast] (faster uses more ChatGPT credits)',
             handler=partial(_fast_command, session=session, agent=agent, context=context, store=store),
-            complete=lambda args: ('on', 'off') if len(args) <= 1 else (),
+            complete=lambda args: ('on', 'off', 'ultrafast') if len(args) <= 1 else (),
             available=lambda: (
                 provider_of(context.settings_model(session.model or _model_label(agent))) == 'openai-codex'
             ),
@@ -912,14 +927,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         mount stays within every `FileSystem`, `ToolGuardrail`, `ToolCallJudge`, `Hooks` and `Permissions`
         the run has.
         """
-        granted = (*self.plugins, *self.loader.capabilities(), *self.permissions)
-        bound = (
-            *self.plugins,
-            *self.loader.run_capabilities(),
-            *self.permissions,
-            self._question_status,
-            NON_STRICT_SCHEMAS,
-        )
+        supplied = (*self.plugins, *self.loader.run_capabilities())
+        permissions = unattended_only(self.permissions, supplied)
+        granted = (*self.plugins, *self.loader.capabilities(), *permissions)
+        bound = (*supplied, *permissions, self._question_status, NON_STRICT_SCHEMAS)
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)

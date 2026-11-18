@@ -100,7 +100,10 @@ class LivePrompt:
         self.panel = panel
         self.queue_changed = queue_changed
         self.ctrl_enter_steers = ctrl_enter_steers()
-        """Whether Ctrl+Enter steers, as Alt+Enter does; otherwise it is Enter."""
+        """Whether Ctrl+Enter (and Ctrl+J, which older terminals send for it) steers, as Alt+Enter does.
+
+        Otherwise Ctrl+Enter is Enter and Ctrl+J inserts a newline.
+        """
         self.notice = ''
         self._chord_prefix = ''
         self._last_escape: float | None = None
@@ -223,6 +226,9 @@ class LivePrompt:
         """Route editing, completion and interrupts without rendering a widget tree."""
         if key == 'ctrl-enter':
             key = 'alt-enter' if self.ctrl_enter_steers else 'enter'
+        elif key == 'ctrl-j' and self.ctrl_enter_steers:
+            # Windows Terminal sends Ctrl+Enter as LF unless it reports modified keys.
+            key = 'alt-enter'
         if key in TRANSCRIPT_KEYS:
             # Leave the draft alone, and the notice unless a drag copied text.
             if self.output.transcript_key(key, data):

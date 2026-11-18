@@ -55,6 +55,8 @@ from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBa
 from .conftest import live_token
 from .fake_sprites import FakeExecSocket, SpriteTransport
 
+pytestmark = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
+
 
 def context(conversation: str = 'chat') -> RunContext[None]:
     return RunContext(deps=None, model=TestModel(), usage=RunUsage(), conversation_id=conversation, run_id='run')
@@ -543,22 +545,93 @@ class TestSpritesSandbox:
         assert transport.created == [sprite.name]
         assert await backend.get_sandbox() is sprite
 
-    async def test_lost_create_reply_before_lookup_visible_preserves_cleanup_ref(
+    async def test_lost_create_reply_keeps_the_cleanup_ref_and_the_next_attempt_finds_the_sprite(
         self, transport: SpriteTransport
     ) -> None:
         backend = SpritesSandboxBackend()
         transport.create_error_after_commit = NetworkError('lost reply')
-        transport.get_error_once = NotFoundError('not visible yet')
+        transport.get_error_once = NetworkError('lookup lost too')
         with pytest.raises(NetworkError, match='lost reply'):
             await backend.get_sandbox()
         [name] = transport.created
         assert backend.ref == WorkspaceRef(provider='sprites', id=name)
-        # A 404 while the created Sprite becomes visible is a transport failure, not a missing Sprite.
-        transport.get_error_once = NotFoundError('still not visible')
-        with pytest.raises(NetworkError, match='may still be becoming visible'):
-            await backend.get_sandbox()
+        # Sending the create again is refused with a 409, and the lookup that follows finds the Sprite.
         assert (await backend.get_sandbox()).name == name
         assert transport.created == [name]
+
+    async def test_refused_create_whose_name_is_not_found_is_unavailable(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error_after_commit = NetworkError('lost reply')
+        transport.get_error = NotFoundError('gone')
+        with pytest.raises(NetworkError, match='lost reply'):
+            await backend.get_sandbox()
+        # As with boxd: a 409 for a name nothing can be found under is a refusal, not a transient failure.
+        with pytest.raises(WorkspaceUnavailableError, match='status 409'):
+            await backend.get_sandbox()
+
+    async def test_create_lost_before_it_reached_sprites_is_sent_again(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error = NetworkError('lost request')
+        with pytest.raises(NetworkError, match='lost request'):
+            await backend.get_sandbox()
+        assert backend.ref is not None
+        transport.create_error = None
+        assert (await backend.get_sandbox()).name == backend.ref.id
+        assert transport.created == [backend.ref.id]
+
+    async def test_lost_create_whose_lookup_also_fails_reports_the_create_error(
+        self, transport: SpriteTransport
+    ) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error = NetworkError('lost request')
+        transport.get_error = NetworkError('lookup lost too')
+        with pytest.raises(NetworkError, match='lost request'):
+            await backend.get_sandbox()
+        assert backend.ref is not None
+
+    async def test_stalled_create_sent_again_reports_a_creation_timeout(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error = NetworkError('lost request')
+        with pytest.raises(NetworkError):
+            await backend.get_sandbox()
+        transport.create_error = None
+        monkeypatch.setattr('pydantic_ai_harness.sprites_sandbox._backend._ACQUIRE_TIMEOUT', 0.05)
+        transport.release_create = asyncio.Event()
+        with pytest.raises(TimeoutError, match='Sprite creation did not complete'):
+            await backend.get_sandbox()
+
+    async def test_cancelled_create_sent_again_still_records_the_sprite(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error = NetworkError('lost request')
+        with pytest.raises(NetworkError):
+            await backend.get_sandbox()
+        transport.create_error = None
+        transport.release_create = asyncio.Event()
+        task = asyncio.create_task(backend.get_sandbox())
+        await transport.create_started.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        transport.release_create.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert backend.ref is not None
+        assert transport.created == [backend.ref.id]
+        assert (await backend.get_sandbox()).name == backend.ref.id
+
+    async def test_create_sent_again_and_refused_otherwise_is_reported(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error = NetworkError('lost request')
+        with pytest.raises(NetworkError):
+            await backend.get_sandbox()
+        transport.create_error = refused = SpriteError('Failed create sprite (status 400): unknown runtime')
+        with pytest.raises(WorkspaceUnavailableError) as caught:
+            await backend.get_sandbox()
+        assert type(caught.value) is WorkspaceUnavailableError
+        assert caught.value.__cause__ is refused
+        assert str(caught.value) == f'Could not start Sprites sandbox: {refused}'
 
     async def test_auth_error_reports_safe_reason_without_token(self, transport: SpriteTransport) -> None:
         secret = 'secret-sprite-token-123'
@@ -1265,10 +1338,12 @@ async def test_trio_is_refused_before_any_sprites_call(transport: SpriteTranspor
 def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
     definitions = AgentSpec.model_json_schema_with_capabilities([SpritesSandbox])['$defs']
     assert sorted(definitions['spec_params_SpritesSandbox']['properties']) == [
+        'authority',
         'defer_loading',
         'description',
         'env',
         'id',
+        'path_authority',
         'runtime',
         'working_dir',
     ]

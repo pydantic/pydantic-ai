@@ -24,8 +24,6 @@ from typing import Any
 
 import pytest
 
-from tests.conftest import detach_dbos_logging, without_admin_server
-
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
@@ -47,6 +45,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
+from tests.harness.code_mode.stored_sessions import stored_session_pool
 
 pytestmark = pytest.mark.xdist_group(name='harness-dbos')
 
@@ -63,13 +62,12 @@ def dbos_instance(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, A
         'system_database_url': f'sqlite:///{dbos_sqlite_file}',
         'enable_otlp': False,
     }
-    dbos = DBOS(config=without_admin_server(dbos_config))
+    dbos = DBOS(config=dbos_config)
     DBOS.launch()
     try:
         yield dbos
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +124,22 @@ code_mode_agent = Agent(
     toolsets=[FunctionToolset(tools=[add], id='math')],
     capabilities=[CodeMode(), DBOSDurability()],
 )
+
+
+remote_code_mode_agent = Agent(
+    FunctionModel(_code_mode_model),
+    name='remote_code_mode_dbos_agent',
+    toolsets=[FunctionToolset(tools=[add], id='math')],
+    capabilities=[
+        CodeMode(id='code', monty_sandbox=stored_session_pool),
+        DBOSDurability(),
+    ],
+)
+
+
+@DBOS.workflow()
+def run_remote_code_mode_agent(prompt: str) -> str:
+    return str(remote_code_mode_agent.run_sync(prompt).output)
 
 
 @DBOS.workflow()
@@ -194,6 +208,12 @@ def run_gather_agent(prompt: str) -> str:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+def test_remote_code_mode_with_an_id_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
+    """Turn activities are Temporal's: under DBOS a `CodeMode` with an `id` and a remote sandbox runs as before."""
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert run_remote_code_mode_agent('Calculate 3 + 4') == 'done: 7'
 
 
 def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:

@@ -53,6 +53,7 @@ Compaction keeps the live history inside the context window, so an exact detail 
 - The tool reads the store when called, so it sees everything persisted so far, including earlier steps of the current run.
 - History a run inherits through `message_history` is indexed under the run that first persisted it, so threaded runs do not return the same message once per run (with the instruction-change exception under [Limitations](#limitations)).
 - Instruction changes recorded in history (`on_change='append'`) are searchable as system text; the initial instructions are not indexed.
+- What a capability added to the conversation, such as a sub-agent's report or a background tool's result, is searchable, labeled with the part's `kind` rather than as user text. A part scoped to a single request (`scope='request'`) is not indexed.
 - Long messages are clipped to 500 characters for display (200 for system text and tool-call arguments). When the matched term lies past the cutoff, the excerpt shows the text around it instead of the start. The index always holds the full text.
 
 ## How recovery works
@@ -82,22 +83,14 @@ Scoping applies to the `RunRecord`s a `HistorySource` returns, so a custom sourc
 
 ### Migrating from the `scope='all'` default
 
-`scope` used to default to `'all'` and now defaults to `'conversation'`. Leaving it unset emits one `HarnessDeprecationWarning` per instance; the warning will be removed in the next breaking release. Pass `scope='all'` to keep store-wide search or `scope='conversation'` to accept the new default. To silence every harness deprecation at once:
-
-```python
-import warnings
-
-from pydantic_ai_harness import HarnessDeprecationWarning
-
-warnings.filterwarnings('ignore', category=HarnessDeprecationWarning)
-```
+`scope` used to default to `'all'` and now defaults to `'conversation'`. Pass `scope='all'` to keep store-wide search.
 
 ## Key options
 
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `source` | (required) | Where the corpus comes from. Use `SnapshotHistorySource(store)` over the store `StepPersistence` writes to. |
-| `scope` | `'conversation'` (unset warns) | Restricts search to the calling run's `conversation_id`. Use `'all'` only for a store isolated to one principal. |
+| `scope` | `'conversation'` | Restricts search to the calling run's `conversation_id`. Use `'all'` only for a store isolated to one principal. |
 | `max_matches` | `10` | Maximum matching excerpts the search tool returns. |
 | `context_lines` | `5` | Messages shown around each match (within the match's run). |
 | `bm25_k1` | `1.5` | BM25 term-frequency saturation. Lucene's `BM25Similarity` uses `1.2`. |

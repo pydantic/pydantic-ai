@@ -5,9 +5,9 @@ truncating, spilling to a queryable file, or summarizing -- so an oversized payl
 not persist in history and get re-sent on every later model request. Combine the three
 modes through an ordered list of size `bands`.
 
-Spilled payloads are written to the run's workspace by default (`WorkspaceStore`) and read
-back on demand through the registered `read_tool_result` tool, or through `FileSystem`'s
-`read_file`, which supersedes it for spills in the run's workspace; the `OverflowStore`
+Spilled payloads are written to the run's workspace by default (`WorkspaceOverflowStore`) and read
+back on demand through the registered `read_tool_result` and `grep_tool_result` tools. For spills in
+the run's workspace, `FileSystem`'s tools replace them. The `OverflowStore`
 protocol is the seam for any other backend.
 """
 
@@ -20,21 +20,29 @@ from pydantic_ai_harness.tool_output_limits._bands import (
     SummarizeFunc,
     Truncate,
 )
-from pydantic_ai_harness.tool_output_limits._capability import READ_TOOL_NAME, READ_TOOL_RESULT_KIND, ToolOutputLimits
+from pydantic_ai_harness.tool_output_limits._capability import (
+    GREP_TOOL_NAME,
+    GREP_TOOL_RESULT_KIND,
+    READ_TOOL_NAME,
+    READ_TOOL_RESULT_KIND,
+    ToolOutputLimits,
+)
 from pydantic_ai_harness.tool_output_limits._payload import (
     Serializer,
     TruncationStrategy,
     indented_json,
     json_lines,
 )
-from pydantic_ai_harness.tool_output_limits._store import LocalFileStore, OverflowStore, WorkspaceStore
+from pydantic_ai_harness.tool_output_limits._store import LocalFileOverflowStore, OverflowStore, WorkspaceOverflowStore
 
 __all__ = [
+    'GREP_TOOL_NAME',
+    'GREP_TOOL_RESULT_KIND',
     'READ_TOOL_NAME',
     'READ_TOOL_RESULT_KIND',
     'Action',
     'Band',
-    'LocalFileStore',
+    'LocalFileOverflowStore',
     'OverflowStore',
     'Serializer',
     'ToolOutputLimits',
@@ -44,7 +52,7 @@ __all__ = [
     'SummarizeFunc',
     'Truncate',
     'TruncationStrategy',
-    'WorkspaceStore',
+    'WorkspaceOverflowStore',
     'indented_json',
     'json_lines',
 ]

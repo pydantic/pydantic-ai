@@ -39,7 +39,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.subagents import (
+from pydantic_ai_harness.sub_agents import (
     DelegationFinishedEvent,
     DelegationStartedEvent,
     DelegationTask,
@@ -172,7 +172,7 @@ async def test_partial_stream_and_lifecycle_routing() -> None:
     await ui.observe(DelegationTaskEvent(task=record, event=PartEndEvent(index=0, part=TextPart('first second'))))
     assert ui.snapshots()[0].messages == []
     assert task_row(start) is None
-    event = DelegationStartedEvent(agent_name='self', task='hello', truncated=False, inherits_tools=True, model=None)
+    event = DelegationStartedEvent(agent_name='self', task='hello', truncated=False, model=None)
     event.task_id = record.id
     await ui.observe(DelegationTaskEvent(task=record, event=event))
     assert 'general-purpose' not in output.getvalue()
@@ -215,9 +215,7 @@ async def test_task_start_row_waits_for_model_unless_hidden(show_model: bool) ->
         show_task_models=lambda: show_model,
     )
     record = task()
-    event = DelegationStartedEvent(
-        agent_name='worker', task='inspect', truncated=False, inherits_tools=False, model=None
-    )
+    event = DelegationStartedEvent(agent_name='worker', task='inspect', truncated=False, model=None)
     event.task_id = record.id
     await ui.observe(DelegationTaskEvent(task=record, event=event))
     assert ('worker [aaaaaaaa] inspect' in output.getvalue()) is not show_model
@@ -239,9 +237,7 @@ async def test_task_ending_or_asking_before_its_model_gets_its_start_row_without
     output = io.StringIO()
     ui = Tasks(console=Console(file=output), conversation_id=lambda: 'root', directory=None)
     record = task()
-    event = DelegationStartedEvent(
-        agent_name='worker', task='inspect', truncated=False, inherits_tools=False, model=None
-    )
+    event = DelegationStartedEvent(agent_name='worker', task='inspect', truncated=False, model=None)
     event.task_id = record.id
     await ui.observe(DelegationTaskEvent(task=record, event=event))
     released: AgentStreamEvent = (
@@ -273,9 +269,7 @@ async def test_resumed_task_ending_before_its_model_does_not_show_the_earlier_mo
     record = task()
 
     def start() -> DelegationTaskEvent:
-        event = DelegationStartedEvent(
-            agent_name='worker', task='inspect', truncated=False, inherits_tools=False, model=None
-        )
+        event = DelegationStartedEvent(agent_name='worker', task='inspect', truncated=False, model=None)
         event.task_id = record.id
         return DelegationTaskEvent(task=record, event=event)
 
@@ -674,7 +668,7 @@ async def test_background_completion_continues_parent_without_user_input(
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
 
-    from pydantic_ai_harness.subagents import DelegationTaskEvent
+    from pydantic_ai_harness.sub_agents import DelegationTaskEvent
     from pydantic_clai2.config.project_settings import ProjectSettings
     from pydantic_clai2.config.settings_store import SettingsStore
     from pydantic_clai2.runtime.session_runtime import create_shell
@@ -703,9 +697,7 @@ async def test_background_completion_continues_parent_without_user_input(
             child_started.set()
             await release.wait()
             yield 'Admiral Fluff commands the cheese fleet.'
-        elif any(
-            is_task_report(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
-        ):
+        elif any(task_texts(message) for message in messages if isinstance(message, ModelRequest)):
             captured.append(messages)
             yield 'Pirate hamster reporting for duty.'
             continued.set()
@@ -830,9 +822,7 @@ async def test_cancelling_a_turn_leaves_its_background_child_running(
             child_started.set()
             await release.wait()
             yield 'Child finished.'
-        elif any(
-            is_task_report(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
-        ):
+        elif any(task_texts(message) for message in messages if isinstance(message, ModelRequest)):
             yield 'Report read.'
             continued.set()
         elif len(messages) == 1:
@@ -904,15 +894,14 @@ async def test_consumed_background_report_does_not_start_another_turn(
 
 
 def task_texts(request: ModelMessage) -> list[str]:
-    """The task reports and questions a request carries."""
+    """The task reports and questions a request carries, as the model sees them framed."""
     assert isinstance(request, ModelRequest)
-    return [
-        item.content
+    texts = [
+        ''.join(item.content for item in part.content if isinstance(item, TextContent))
         for part in request.parts
-        if is_task_report(part)
-        for item in part.content
-        if isinstance(item, TextContent)
+        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
     ]
+    return [text for text in texts if text.startswith(('<task_output ', '<task_question '))]
 
 
 @pytest.mark.parametrize('timing', ['idle', 'active'])

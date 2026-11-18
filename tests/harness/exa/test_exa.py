@@ -44,7 +44,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.exa import ExaSearch, ExaSearchToolset
 
 
@@ -542,28 +541,6 @@ class TestExaSearch:
     def test_max_results_out_of_bounds_rejected(self, max_results: int) -> None:
         with pytest.raises(ValueError, match=f'max_results must be between 1 and 100, got {max_results}'):
             ExaSearch[None](max_results=max_results)
-
-    def test_num_results_is_a_deprecated_alias(self) -> None:
-        with pytest.warns(HarnessDeprecationWarning, match=r'`ExaSearch\(num_results=\.\.\.\)` has been renamed'):
-            capability = ExaSearch[None](num_results=3)
-        assert (capability.max_results, capability.num_results) == (3, None)
-        with pytest.warns(HarnessDeprecationWarning, match=r'`ExaSearch\(num_results=\.\.\.\)` has been renamed'):
-            assert ExaSearch[None].from_spec(num_results=3).max_results == 3
-        with pytest.raises(TypeError, match='`num_results` is its deprecated name'):
-            ExaSearch[None](max_results=4, num_results=3)
-
-    async def test_toolset_num_results_is_a_deprecated_alias(self) -> None:
-        client = _FakeExaClient(search_response=_response())
-        with pytest.warns(HarnessDeprecationWarning, match=r'`ExaSearchToolset\(num_results=\.\.\.\)`'):
-            toolset = ExaSearchToolset[None](
-                client=client, num_results=2, max_text_chars=10_000, include_deep_search=False
-            )
-        await toolset.web_search('q')
-        assert client.search_calls[0]['num_results'] == 2
-        with pytest.raises(TypeError, match='`num_results` is its deprecated name'):
-            ExaSearchToolset[None](
-                client=client, max_results=4, num_results=2, max_text_chars=10_000, include_deep_search=False
-            )
 
     @pytest.mark.parametrize('max_text_chars', [0, 10_001])
     def test_max_text_chars_out_of_bounds_rejected(self, max_text_chars: int) -> None:

@@ -69,6 +69,9 @@ they agree in the same PR.
   launch directory only after every `for_run`, and harness `Skills` (which reads its
   libraries in `for_run`) fails the turn. Wrap a function that never returns a
   workspace in `runtime/session.py`'s `WorkspacelessCapability`.
+  The one exception is a built-in that moves some conversations elsewhere, as
+  `sandbox` does: subclass `ConversationWorkspace` and answer `supplies` from the
+  run's own history, the same history `get_workspace` resolves from.
 - **CLAI moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a
   plugin method.

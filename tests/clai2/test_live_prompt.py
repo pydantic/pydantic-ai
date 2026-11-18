@@ -910,6 +910,29 @@ async def test_ctrl_enter_enters_outside_windows() -> None:
     assert steered == ['steered']
 
 
+@pytest.mark.parametrize('shift_enter', ['\x1b[13;2u', '\x1b[27;2;13~'])
+@pytest.mark.parametrize('windows', [True, False])
+async def test_windows_ctrl_enter_steers_and_shift_enter_inserts_a_newline(shift_enter: str, windows: bool) -> None:
+    """Windows Terminal sends Ctrl+Enter as LF unless it reports modified keys (#13907)."""
+    steered: list[str] = []
+
+    def steer(text: str) -> bool:
+        steered.append(text)
+        return True
+
+    async with editor() as (live, pipe, _):
+        live.steer = steer
+        live.ctrl_enter_steers = windows
+        pipe.send_text(f'steer\x1b[13;5uLF\none{shift_enter}two\r')
+        if windows:
+            assert await live.read() == 'one\ntwo'
+        else:
+            # Ctrl+Enter is Enter and Ctrl+J a newline, as before.
+            assert await live.read() == 'steer'
+            assert await live.read() == 'LF\none\ntwo'
+    assert steered == (['steer', 'LF'] if windows else [])
+
+
 class FrameClock:
     """A settable clock that records the times at which the editor built a frame."""
 
