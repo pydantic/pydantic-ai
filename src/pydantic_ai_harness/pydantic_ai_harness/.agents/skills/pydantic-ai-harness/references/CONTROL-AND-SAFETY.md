@@ -461,6 +461,8 @@ Gotchas:
 - `approval_ask` takes a resume token, which durable runs on engines other than AWS Lambda (`AWSLambdaDurability`)
   refuse; there, pass the two-parameter handler `lambda ctx, requests: ask_permissions(requests, approve)`. On
   Lambda, `approval_ask` answers in place in a recorded step: keep the approver quick and set `timeout=...`.
+- A plain two-parameter handler runs before a token handler such as `approval_ask`, whatever the list order: a
+  second handler for other approvals must skip the calls `permission_requests(requests)` returns.
 - `mode` may be a function of the run context, read on every call. `PermissionDecision(remember=True)`
   skips asking about the same tool and command or path for the rest of the conversation, via the caller-ownable
   `remembered` set; inside durable execution it is kept in the message history instead.

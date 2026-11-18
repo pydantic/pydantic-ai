@@ -436,7 +436,7 @@ def approval_ask(
 
     async def ask(ctx: RunContext[AgentDepsT], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
         # Empty results, not `None`, which would make the run wait for a token no one will resolve.
-        return await ask_permissions(requests, approver) or DeferredToolResults()
+        return await ask_permissions(requests, approver) or requests.build_results()
 
     return ask
 

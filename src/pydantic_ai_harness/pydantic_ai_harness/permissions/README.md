@@ -100,18 +100,21 @@ When several rules match, `'deny'` beats `'ask'`, which beats `'allow'`, whateve
 - **`'ask'`** holds the call like the mode does. A file write or command goes to `ask_permissions` with the rule's `reason`. A call to any other tool is held with a plain `ApprovalRequired`, like `requires_approval=True`, with the rule's `reason` in its metadata. `ask_permissions` does not ask about it and leaves it for the next handler, so add one, as shown below.
 - **`'deny'`** refuses the call without running it, even when it was approved, for example by another capability's approval. The model gets a tool result with `outcome='denied'` saying a permission rule refused it, with the rule's `reason`. A call that needs approval for another reason, such as `requires_approval=True`, is put to the person before the rule refuses it.
 
-A second handler answers the asks `ask_permissions` leaves, after it in the capabilities list:
+A second handler answers the asks `ask_permissions` leaves. A two-parameter handler like this one runs before a handler that takes a resume token, such as `approval_ask`, whatever their order in the capabilities list, so it skips the calls `permission_requests` returns and leaves them to `approval_ask`:
 
 ```python
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.capabilities import HandleDeferredToolCalls
+from pydantic_ai_harness.permissions import permission_requests
 
 
 async def approve_other_calls(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
+    held = {request.call.tool_call_id for request in permission_requests(requests)}
     return DeferredToolResults(
         approvals={
             call.tool_call_id: input(f'Run {call.tool_name}({call.args_as_dict()})? [y/N] ') == 'y'
             for call in requests.approvals
+            if call.tool_call_id not in held
         }
     )
 
