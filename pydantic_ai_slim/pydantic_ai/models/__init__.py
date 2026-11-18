@@ -15,7 +15,6 @@ import time
 import uuid
 import warnings
 from abc import ABC, abstractmethod
-from collections import Counter
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
@@ -119,6 +118,7 @@ from .._special_tokens import (
 )
 from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
+from ..computer_use import COMPUTER_KIND
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -158,7 +158,6 @@ from ..messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
-    ToolKindLike,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -176,11 +175,10 @@ from ..messages import (
     _retry_feedback_text,  # pyright: ignore[reportPrivateUsage]
     _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
     _tagged_append_parts,  # pyright: ignore[reportPrivateUsage]
-    _tool_kind_id,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
-from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
+from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, ComputerTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
 from ..output import OutputMode, OutputObjectDefinition, StructuredOutputMode
 from ..profiles import (
@@ -545,23 +543,6 @@ class ModelRequestParameters:
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
-
-    def tool_name_for_kind(self, kind: ToolKindLike) -> str | None:
-        """The name of the function tool with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that the model can call, or `None` if there is none.
-
-        A model adapter uses it to find the tool that runs a native tool's calls, through
-        [`executed_by`][pydantic_ai.native_tools.AbstractNativeTool.executed_by]. Unlike
-        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind], it leaves out deferred
-        tools history hasn't revealed yet, as the check that decides whether a native tool is sent does.
-
-        Args:
-            kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
-        """
-        kind_id = _tool_kind_id(kind)
-        return next(
-            (t.name for t in self.function_tools if t.tool_kind == kind_id and _callable_now(t, self)),
-            None,
-        )
 
     @cached_property
     def declared_tool_defs(self) -> dict[str, ToolDefinition]:
@@ -4158,39 +4139,42 @@ def _callable_now(tool: ToolDefinition, params: ModelRequestParameters) -> bool:
     return not tool.defer_loading or tool.name in params.revealed_tool_names
 
 
-def _executor_kinds(params: ModelRequestParameters, sent_ids: set[str]) -> Counter[str | None]:
-    """How many tools of each kind could run a native tool's calls: ones not deferred, or revealed by history.
+def _computer_tool_names(params: ModelRequestParameters, sent_ids: Collection[str] = ()) -> list[str]:
+    """The function tools of the `computer` kind that the model can call: not deferred, or revealed by history.
 
-    A tool dropped because a native tool in `sent_ids` is sent in its place can't run any calls.
+    A model adapter sends a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] in place of the first of them, and
+    turns the provider's calls into calls of it. A tool dropped because a native tool in `sent_ids` is sent in its place
+    can't run any calls.
     """
-    return Counter(
-        t.tool_kind for t in params.function_tools if _callable_now(t, params) and t.unless_native not in sent_ids
-    )
+    return [
+        t.name
+        for t in params.function_tools
+        if t.tool_kind == COMPUTER_KIND.id and _callable_now(t, params) and t.unless_native not in sent_ids
+    ]
 
 
-def _natives_with_executors(
+def _natives_with_computer_tool(
     params: ModelRequestParameters, natives: list[AbstractNativeTool]
 ) -> list[AbstractNativeTool]:
-    """The native tools whose calls the request has exactly one tool of each needed kind to run.
+    """The native tools, keeping a `ComputerTool` only when the request has exactly one `computer` tool to run its calls.
 
-    An optional native tool without them is dropped; a required one raises `UserError`, as does one with more than one
-    tool of a kind.
+    An optional `ComputerTool` without one is dropped; a required one raises `UserError`, as does one with more than one.
     """
-    executor_kinds = _executor_kinds(params, {t.unique_id for t in natives})
+    computer_tools = _computer_tool_names(params, {t.unique_id for t in natives})
     kept: list[AbstractNativeTool] = []
     for native_tool in natives:
-        if missing := sorted(kind.id for kind in native_tool.executed_by if kind.id not in executor_kinds):
+        if isinstance(native_tool, ComputerTool) and not computer_tools:
             # Its calls would have no tool to run them.
             if native_tool.optional:
                 continue
             raise UserError(
-                f'`{type(native_tool).__name__}` needs a tool of each of the kinds {missing} to run its calls, '
+                f"`ComputerTool` needs a tool of each of the kinds ['{COMPUTER_KIND.id}'] to run its calls, "
                 'and the request has none the model can call.'
             )
-        if shared := sorted(kind.id for kind in native_tool.executed_by if executor_kinds[kind.id] > 1):
+        if isinstance(native_tool, ComputerTool) and len(computer_tools) > 1:
             # Which of them ran a call would depend on the order of the tools.
             raise UserError(
-                f'`{type(native_tool).__name__}` needs one tool of each of the kinds {shared} to run its calls, '
+                f"`ComputerTool` needs one tool of each of the kinds ['{COMPUTER_KIND.id}'] to run its calls, "
                 'and the request has more than one the model can call.'
             )
         kept.append(native_tool)
@@ -4316,8 +4300,8 @@ def resolve_request_tools(
     supported_natives = [
         t for t in supported_natives if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
     ]
-    # After the drop above, so a tool kept only while that tool search is absent counts as an executor.
-    supported_natives = _natives_with_executors(params, supported_natives)
+    # After the drop above, so a tool kept only while that tool search is absent can run a `ComputerTool`'s calls.
+    supported_natives = _natives_with_computer_tool(params, supported_natives)
 
     # Computed after the drop above so it names the native tools this request really sends:
     # rule 1 must not drop a local fallback for a native tool that just left.
