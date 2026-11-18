@@ -16,6 +16,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Stop tool calls failing on trailing commas, single quotes, truncated JSON | `RepairToolArguments()` |
 | Refuse or redact a prompt before it reaches the model | `InputGuardrail(guard=...)` |
 | Block, redact, or retry the final output | `OutputGuardrail(guard=...)` |
+| Screen each streamed text, thinking or tool-call part before the caller sees it | `StreamGuardrail(guard=...)` |
 | Block/rewrite tool arguments, redact tool results, or hide tools | `ToolGuardrail(guard=..., result_guard=..., hidden=[...])` |
 | Mask API keys, tokens, PII in text | `guardrails.detectors.redact_secrets` / `redact_personal_data` in a guard |
 | Get human approval for some tool calls, decided per call | `ToolGuardrail` returning `GuardrailResult.approve()` |
@@ -76,9 +77,9 @@ validation/retry. `Coder` already includes it.
 
 ## Guardrails
 
-`InputGuardrail`, `OutputGuardrail`, `ToolGuardrail`, `GuardrailResult`, `InputBlocked`,
+`InputGuardrail`, `OutputGuardrail`, `StreamGuardrail`, `ToolGuardrail`, `GuardrailResult`, `InputBlocked`,
 `OutputBlocked`, `GuardrailError` are top-level (`from pydantic_ai_harness import ...`);
-`ToolBlocked`, `ToolCallInfo`, `ToolResultInfo`, `detectors` live in `pydantic_ai_harness.guardrails`.
+`ToolBlocked`, `ToolCallInfo`, `ToolResultInfo`, `StreamGuardrailPart`, `detectors` live in `pydantic_ai_harness.guardrails`.
 
 A guard is a sync or async callable taking the value, optionally preceded by `RunContext` (taken
 when a second positional parameter is required, for `*args` with another parameter, or when the
@@ -90,12 +91,12 @@ returns `bool` (`True` = allow) or a `GuardrailResult`: `allow()`, `block(messag
 `numpy.bool_`) is read for truthiness with a `HarnessDeprecationWarning` (a truthy label allows the
 value); return `bool(...)` instead.
 
-| Verdict | `InputGuardrail` | `OutputGuardrail` | `ToolGuardrail.guard` (args) | `ToolGuardrail.result_guard` |
-|---|---|---|---|---|
-| block | skip the model call; message becomes the response | raise `OutputBlocked` | skip tool; message is the tool result | message replaces the result |
-| replace | rewrite the prompt (text prompts, sequential only) | substitute output | run with new args mapping | substitute result |
-| retry | `UserError` | `ModelRetry` to the model (counts output retries) | `ModelRetry` | `ModelRetry` (tool already ran) |
-| approve | `UserError` | `UserError` | defer via `ApprovalRequired` | not valid |
+| Verdict | `InputGuardrail` | `OutputGuardrail` | `StreamGuardrail` | `ToolGuardrail.guard` (args) | `ToolGuardrail.result_guard` |
+|---|---|---|---|---|---|
+| block | skip the model call; message becomes the response | raise `OutputBlocked` | raise `OutputBlocked`, part never released | skip tool; message is the tool result | message replaces the result |
+| replace | rewrite the prompt (text prompts, sequential only) | substitute output | stream a same-type text or thinking part instead (events only); `UserError` for a tool call | run with new args mapping | substitute result |
+| retry | `UserError` | `ModelRetry` to the model (counts output retries) | `UserError` | `ModelRetry` | `ModelRetry` (tool already ran) |
+| approve | `UserError` | `UserError` | `UserError` | defer via `ApprovalRequired` | not valid |
 
 ```python
 from pydantic_ai import Agent
@@ -175,6 +176,15 @@ Key parameters:
   `lambda out: redact_secrets(pydantic_core.to_json(out).decode()).action == 'allow'` blocks on a
   match (and also works on the JSON data a Temporal worker passes); to redact,
   return `GuardrailResult.replace(Model.model_validate_json(verdict.replacement))`.
+- `StreamGuardrail(guard)`: holds each streamed `TextPart`, `ThinkingPart` or `ToolCallPart` until it
+  is complete and passes the whole part to the guard before its events reach `run_stream_events()`,
+  a run's `event_stream_handler` argument or a UI adapter; `ProcessEventStream` and `on_event`
+  see raw events. Adds the part's generation time to its first chunk; a tool call is held until
+  the model response ends.
+  `run_stream()`'s `stream_text()`/`stream_output()` are not screened (a `block` still raises), and
+  the run's history and output are not changed; pair with `OutputGuardrail`/`ToolGuardrail` for
+  those. Makes `run()` stream every request; raises `UserError` under durable execution and in a
+  realtime session.
 - `ToolGuardrail(guard=None, result_guard=None, tools=None, hidden=())`: `tools` restricts both
   guards to those names; `hidden` drops tools from the model's tool list (no tokens; a call
   to one is rejected as an unknown tool). A `tools` name no step offered warns (`UserWarning`) after each successful
@@ -274,7 +284,9 @@ Gotchas: `defense` plus `block_high_risk` or `semantic_detection` raises `UserEr
 `semantic_detection=True` without ONNX Runtime. Importing the module without the extra raises
 `ImportError`. Not scanned: provider-native tools, externally supplied deferred results,
 `ModelRetry` messages, `ToolReturn.metadata`, mapping keys, media. A withheld result carries
-diagnostics in `ToolReturn.metadata['prompt_injection']` (not sent to the model). With a custom ML
+diagnostics in `ToolReturn.metadata['prompt_injection']` (not sent to the model). Every flagged verdict
+emits a zero-duration `prompt_injection flagged` span (`prompt_injection.action`, `.risk_level`,
+`.detections`; sanitized field names only with content tracing). With a custom ML
 `defense`, call `defense.warmup_tier2()` at startup (on the worker, under durable execution).
 Under Temporal, DBOS, and Prefect, semantic warmup and classification with `semantic_detection=True`
 or a supplied `defense` are durable operations. Give every defender on a durable-capable agent a
@@ -309,7 +321,7 @@ Each decision emits an `artifact_scan flagged` span (source and excerpts only wi
 
 Gotchas: regex only, so paraphrases slip through and quoted attacks false-positive. `html_comment`
 flags linter directives in skills; narrow `threats` there. Memory files read via `FileSystem` and
-bundled skill files are not scanned. Subclass and override `scan` to plug in another detector.
+bundled skill files read other than through `Skills(read_files=True)` are not scanned. Subclass and override `scan` to plug in another detector.
 
 ## ToolCallJudge
 
@@ -492,12 +504,18 @@ limits = SpendLimits(
 windows: `'run' | 'conversation' | 'day' | 'month' | 'total'` (UTC). `'conversation'` keys on
 `ctx.conversation_id` (`run(conversation_id=...)`, else inherited from `message_history`, else new), so
 separate `agent.run` calls that pass the history share one bucket, kept 30 days by default. A budget
-with no ceiling is a counter only. `scope` returns a partition key string (tenant, user, model). `SpendLimits(budgets=(),
+with no ceiling is a counter only. `scope` returns a partition key string (tenant, user, model). `usd` and
+`tokens` also take a callable of the run context, so each partition gets its own ceiling
+(`usd=lambda ctx: ctx.deps.allowance_usd`; `None` means no ceiling); `status()` without `ctx` omits such a
+budget, and a spec cannot express one. `SpendLimits(budgets=(),
 store=InMemorySpendStore(), price=None, on_unpriced='zero', expose_tools=False, ...)`.
 
 - Readings: `await limits.status(ctx_or_none, scope='acme')` returns `BudgetStatus` list (`spent`,
-  `remaining_usd`, `warning`, `exhausted`); `await limits.exhausted(scope=...)` for an admission
-  decision (raises if scoped budgets cannot be resolved; `status` leaves them out of its list).
+  `usd_limit`/`token_limit` holding the resolved ceilings, `remaining_usd`, `warning`, `exhausted`;
+  read those rather than `status.budget.usd`, which holds the callable itself when the ceiling is
+  given as a callable); `await limits.exhausted(scope=...)` for an admission decision (raises if a
+  scoped, run-windowed, or callable-ceiling budget cannot be resolved; `status` leaves them out of
+  its list).
 - Per-response events: subscribe to `SpendRecordedEvent` with `@agent.on_event(...)` (`on_spend` is deprecated).
 - `expose_tools=True` adds a `get_spend` tool for the model.
 - `price=lambda response: Decimal(...) | None` prices models genai-prices does not know.
@@ -528,7 +546,7 @@ Gotchas:
 - For a `FallbackModel` rejection, `price` receives a `ModelResponse` rebuilt from the attempt's model,
   provider and usage, with no `parts` and no `provider_url`, so a `price` that reads the output or keys
   on the endpoint will misprice it. A `ModelFallback` capability rejection reaches `price` as the real response.
-- Spec-loadable except callables (`store`, `price`, `scope`, `clock`).
+- Spec-loadable except callables (`store`, `price`, `scope`, `clock`, callable `usd`/`tokens`).
 
 ## AskUser
 
@@ -609,6 +627,26 @@ print(agent.run_sync('Set up storage').output)
   collide on the tool name. It has a spec name, but a spec cannot supply the `answerer` callable,
   so pass it with `capabilities=` on `Agent.from_spec`/`Agent.from_file`.
 
+## Deny Unanswered
+
+`DenyUnanswered` ends the wait in an unattended run: a held approval is denied with
+`message` (`ToolDenied`) and a deferred `AskUser` question is answered with
+`question_message` (nobody is available to answer, not "the user declined"),
+so the run finishes instead of pausing on `DeferredToolRequests`. Any other deferred call
+stays deferred for its own handler.
+
+Pairs with `AskUser` for unattended runs, where deferred calls exist for a caller who
+answers them in a second run and nobody ever does. `message` and `question_message` change
+the two texts.
+
+`SubAgents` delegations and `DynamicWorkflow` child runs carry the parent run's
+`DenyUnanswered` into the child, so a delegate's question or approval request is denied
+inside the child too and the delegation finishes. This per-capability forwarding is interim:
+a general hook for passing capabilities on to child runs is being designed in #13135. A
+delegation a durable engine runs as a tool activity (a named sub-agent under
+`TemporalDurability`) and a remote sub-agent run by a `SubAgentWorker` get no forwarded
+instance: give that child, or the worker's agent, its own `DenyUnanswered`.
+
 ## SystemReminders
 
 By default, enqueues reminders at the tail of each model request as a request-scoped `SystemPromptPart`
@@ -657,17 +695,21 @@ agent = Agent(
   copy still suppresses the firing.
 - `dynamic_reminders`: callables `(ctx) -> str | GeneratedReminder | None`, sync or async, evaluated
   on **every** request. A `str` is sent as written (no tag); a `GeneratedReminder` is quoted as data. Reminders are system prompts, so return only text you wrote and
-  quote user input or tool output as data.
+  quote user input or tool output as data: a `str` that looks like a framework frame raises `UserError` and fails the run.
 - `GoalReanchor()` points the model back at the run's first user prompt without repeating it (at the
   compaction summary once native compaction took the prompt); free. `LLMReminder` returns a
-  `GeneratedReminder`, not a `str`, so it stays data: a fixed note in system voice and the generated
-  text on the user channel (`<generated_reminder model="...">`), kept in history together as one record.
-  A plain `str` a dynamic reminder returns is operator text in system voice. Framing tags in quoted
-  text are escaped.
+  `GeneratedReminder`, not a `str`, so it stays data: a `GeneratedReminderPart` (from
+  `pydantic_ai_harness.system_reminders`), the generated text on the user channel
+  (`<generated_reminder model="...">`) behind a fixed note in the application's voice naming the
+  reminder model as its author, kept in history as one record. Text in it that looks like a framework
+  frame gets a further note naming its author. A plain `str` a dynamic reminder returns is operator
+  text in system voice; static `Reminder` content that looks like a framework frame, such as `<system>`,
+  raises `UserError` when the `Reminder` is created. Framing tags in the transcript `LLMReminder`
+  quotes to its model are escaped.
 - `LLMReminder(model=..., interval=10)` (model required) makes one extra model call every `interval`
   requests (10th, 20th, ...; pass `interval` explicitly: left unset it warns that the default used to
-  be `1`). Each firing adds a note and the generated text to history for good, so a run of R requests
-  gains `2 * (R // interval)` parts. Its agent is built on first use, so no provider key is needed at
+  be `1`). Each firing adds one `GeneratedReminderPart` to history for good, so a run of R requests
+  gains `R // interval` parts. Its agent is built on first use, so no provider key is needed at
   construction. On any error it sends `GoalReanchor` text instead, logging a warning with the
   traceback once per run under `pydantic_ai_harness.system_reminders`; only a budget too tight for
   the extra request is silent. A wrapper that gates it itself should pass `interval=1`.
@@ -763,9 +805,9 @@ except LoopDetectedError as error:
     #> repeated_result
 ```
 
-- `action='nudge'` (default) enqueues a `SystemPromptPart` (conversation scope, so it keeps
-  applying) into the current request; find it by `metadata['origin'] == 'pydantic-ai-harness.detect_loops.nudge.v1'`, never by
-  text. `'error'` raises `LoopDetectedError` (an `AgentRunError`, `.loop` is the `DetectedLoop`). A
+- `action='nudge'` (default) enqueues a `LoopNudgePart` (an `InstructionCapabilityPart` from
+  `pydantic_ai_harness.detect_loops`, conversation scope, so it keeps applying) into the current request; find it
+  by `isinstance(part, LoopNudgePart)`, never by text. Its `pattern` and `tool_names` fields never reach the model. `'error'` raises `LoopDetectedError` (an `AgentRunError`, `.loop` is the `DetectedLoop`). A
   sync or async `(ctx, loop)` callable decides itself; type `ctx` as `RunContext[object]` on an agent
   without `deps_type`.
 - Calls, results, and text are recorded as they arrive (the capability runs outermost), so
@@ -874,8 +916,9 @@ print(agent.run_sync('Explain the change').output)
 
 - Each round costs at least one more model request and counts toward `UsageLimits`. Output validators
   and output functions run on every answer, so keep them free of side effects.
-- The instruction is a `SystemPromptPart` (conversation scope, so it stays in the history); find it by
-  `metadata['origin'] == 'pydantic-ai-harness.refine_output.v1'`, never by text. Each run starts with no
+- The instruction is a `ReviewRoundPart` (an `InstructionCapabilityPart` from `pydantic_ai_harness.refine_output`;
+  conversation scope, so it stays in the history); find it by `isinstance(part, ReviewRoundPart)`, never by text. Its
+  `round` field never reaches the model. Each run starts with no
   rounds used. The count is per-run state, so compaction that drops the instruction does not restart it.
 - Not reviewed: a run that returns `DeferredToolRequests` or `PendingModelResponse`, an output no model
   request produced (an `InputGuardrail` refusal; detected as a response with no `model_name`), and `run_stream()`, which ends at the first output it

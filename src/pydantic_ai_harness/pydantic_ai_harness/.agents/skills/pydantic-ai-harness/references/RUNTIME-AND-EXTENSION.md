@@ -1,7 +1,7 @@
 # Runtime and Extension
 
-How a harness agent is persisted, made durable, configured, extended, and served. This covers saving and
-resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurability`), Absurd durable
+How a harness agent is routed, persisted, made durable, configured, extended, and served. This covers model-based
+selection (`ModelRouter`), saving and resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurability`), Absurd durable
 tasks (`AbsurdDurability`), pgtask durable tasks (`PGTaskDurability`), Render Workflows, harness capabilities under core durable execution, Logfire-managed
 instructions (`ManagedPrompt`), agent-written capabilities (`CapabilityCreation`), loading harness
 capabilities from YAML/JSON specs, serving an agent to editors over ACP, and running one as a GitHub
@@ -11,6 +11,7 @@ Agentic Workflow.
 
 | I want to ... | Use |
 |---|---|
+| Let another model choose the main agent's model from a named menu | `ModelRouter` |
 | Resume, continue, or fork a run from saved history; audit tool side effects after a crash | `StepPersistence` |
 | Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
@@ -23,6 +24,52 @@ Agentic Workflow.
 | Define the agent in YAML/JSON with harness capabilities | `Agent.from_file(..., custom_capability_types=[...])` |
 | Use the agent inside Zed or another ACP editor | `pydantic_ai_harness.experimental.acp` |
 | Run the agent headless on GitHub issues/PRs/schedules | the gh-aw `pydantic-ai` engine |
+
+A model error's `retry_after` (a provider's `Retry-After`) is waited durably before the engine's next attempt at
+the model request: on AWS Lambda as the step retry's timed suspension, on Azure Durable Task as a durable timer
+within the model `RetryPolicy`, on Absurd and pgtask as a recorded failed attempt and a `sleep_for` that suspends
+the task, at most as many times per model request as the task has attempts left. Render Workflows can't, so its
+task `Retry` applies. Set `model_settings={'max_retries': 0}` so the provider SDK doesn't also retry inside the
+durable unit.
+
+## ModelRouter
+
+`ModelRouter` asks a Pydantic AI model to choose from named `ModelChoice` entries, then uses the
+selected model for the main agent request. The default `'once'` mode pays for one routing request per
+run; `mode='per_step'` routes again before each logical model request.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import ModelChoice, ModelRouter
+
+agent = Agent(
+    capabilities=[
+        ModelRouter(
+            choices={
+                'fast': ModelChoice('openai:gpt-5.6-luna', 'Routine lookups and extraction.'),
+                'capable': ModelChoice('openai:gpt-5.6-sol', 'Complex or high-stakes work.'),
+            },
+            router_model='openai:gpt-5.6-luna',
+            default='capable',
+        )
+    ]
+)
+```
+
+The router receives the parent run's message history, including files, and its request counts toward
+the same usage limits. Keep it in the same trust boundary as the selectable models: model selection
+runs before input guardrails and request wrappers. Router failures and picks below
+`probability_threshold` use `default`; configuration errors and request-time `UserError`s propagate.
+Under core durable execution the routing call is durable, and every selectable model must also be
+registered in the durability capability's `models=` mapping. `ModelRouter` is Python-only and cannot
+be loaded from an agent spec.
+
+### ModelChoice
+
+Each `ModelChoice(model, description)` pairs a model name or configured `Model` instance with the
+criteria the router should use for that option. Choice keys and descriptions must be non-empty, and
+the configured `default` must name one of the keys.
 
 ## AzureDurableTaskDurability
 
@@ -41,7 +88,8 @@ Orchestrator-side code must be deterministic and I/O-free. Tool effects must be 
 Set native retry policies with `model_options`, `tool_options`, `event_options` and `capability_options`.
 `resolve_tool_options` returns a native policy, `None` to keep `tool_options`, or `False`
 to run a function tool inline. Function tools can also opt out with
-`metadata={'azure_durable_task': False}`. Inline tools must be deterministic and I/O-free.
+`metadata={'azure_durable_task': False}`, or async ones with the engine-neutral
+`durable=False`. Inline tools must be deterministic and I/O-free.
 See [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/).
 
 ## StepPersistence
@@ -50,6 +98,14 @@ Records an append-only event log, full-history snapshots at settled tool-cycle b
 of tool calls (`started`/`completed`/`failed`). It stores message history only: it does not restore
 capability state, graph-node state, or in-flight streams, and it does not replay anything by itself.
 You continue a run by passing a snapshot's messages to `Agent.run(message_history=...)`.
+
+It is not the recommended session store: to store conversations, use core's `ConversationStore`
+(`pydantic_ai.conversation_store`), which also keeps usage and deferred tool requests. To move sessions
+already stored with `StepPersistence`, save each `SqliteConversationStore` head, or else each session
+ID's newest `complete` snapshot, as a `Conversation`, skipping conversations the store already has.
+Settle a session whose newest run ends on unanswered tool calls (a pending approval or deferred result)
+first: its last `complete` snapshot leaves that turn out (see "Moving sessions to a `ConversationStore`"
+on the Step Persistence page).
 
 ```python
 import asyncio
@@ -141,8 +197,9 @@ Gotchas:
 - Shapes a test sees: when a streamed model request fails, the saved history (default read included)
   ends with an empty or partial-text `ModelResponse`. With `Planning`, each plan tool's `ToolReturnPart`
   ends with the plan in a `<plan_reminder>` tag and carries
-  `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1', 'plan': ...}`; a user-channel plan
-  record with that origin appears only when the latest plan isn't visible (after compaction, say).
+  `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1', 'plan': ...}`; a `PlanReminderPart`
+  (from `pydantic_ai_harness.planning`) records the plan only when the latest plan isn't visible (after
+  compaction, say).
   Assert on the parts you need, not exact message shapes.
 - `run_id` is per `Agent.run`. Reusing one instance with the same explicit `run_id` raises `ValueError`.
   Group turns with `conversation_id=` on `Agent.run`.
@@ -277,7 +334,8 @@ Parameters: `AWSLambdaDurability(*, models=None, event_stream_handler=None, name
 `models` maps ids to extra models for `agent.run(model='<id>')`. `step_config` sets the base
 `retry_strategy`/`step_semantics`/`serdes` for all steps. Per-tool `metadata={'aws_lambda': {...}}`
 overrides it key by key, and `metadata={'aws_lambda': False}` opts a function tool out (MCP tools cannot
-opt out).
+opt out). The engine-neutral `durable=False` opts an async function tool out on every
+engine; an engine's own key on the same tool wins.
 
 Approvals: add core `HandleDeferredToolCalls(ask, timeout=timedelta(...))` (`pydantic_ai.capabilities`), whose `ask` takes a resume token,
 next to `AWSLambdaDurability()` instead of ending the run with `DeferredToolRequests` output and starting

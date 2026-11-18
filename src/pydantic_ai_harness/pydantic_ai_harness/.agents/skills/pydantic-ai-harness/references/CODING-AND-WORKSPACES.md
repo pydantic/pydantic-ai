@@ -627,17 +627,43 @@ for resolution, labels, and backend requirements.
 `nested_traversal=True` (the default) surfaces the instruction files between the working directory and
 whatever `FileSystem` reads, lists, writes or edits in, shallowest first, each directory once while its note is in the
 conversation (`nested_inject='contents'` by default, or `'pointer'`), in the message tail so the cached
-prefix stays stable. With it on, the instructions also gain one static sentence: each instruction file
-applies to its subtree, the deeper file wins, and the user's direct instructions win over all of them.
+prefix stays stable. Notes are workspace-sourced `DataCapabilityPart`s, `ContextFilePathPart`
+(`<context_file_path>`) or `ContextFilePart` (`<context_file path="...">`), from
+`pydantic_ai_harness.repo_context`; find them by type, and their `directory` field. With it on, the
+instructions also gain one static sentence: each instruction file applies to its subtree, the deeper file
+wins, and the user's direct instructions win over all of them.
 `nested_max_chars` (32,000 by default) caps the `'contents'` inlined per conversation, counting the
 inlined notes still in history, so a compaction frees room: a file that would go past it becomes a pointer;
 `None` removes the cap. It doesn't apply with
 `nested_inject='pointer'`.
+`nested_exclude` (`('node_modules', '.venv', 'venv', 'site-packages')` by default) lists `fnmatch` patterns for
+directory names below the working directory whose instruction files nested traversal never surfaces, nor
+anything beneath them.
 
 To pin files a user accepted (instruction files, `SKILL.md`, sub-agent definitions), record
 `file_digest(workspace, path)` at acceptance and pass the digests to
 `await pin_accepted_files(workspace, accepted, changed='none')` (both from `pydantic_ai_harness.repo_context`)
 before each run: a changed file is capped at `changed` in `authority_of` until its new digest is recorded.
+
+## ReportStaleFiles
+
+Tells the model when a file a `FileSystem` tool read or wrote has since changed or been deleted in the
+workspace, by someone else (a user, another agent, a build step). It records each file's content hash from
+`FileReadEvent` / `FileWrittenEvent` and, before each model request, reads the recorded files through
+`ctx.workspace`; a mismatch is named in a request-scoped `StaleFilesPart` (`.report_stale_files`, with the
+workspace's authority), on every request until the model reads the file again (a deleted file once). The model's
+own writes and edits refresh the record. Records are per conversation and workspace, in memory on the instance, so
+a continued run hears about changes made between runs.
+
+```python
+from pydantic_ai_harness import FileSystem, ReportStaleFiles
+
+capabilities = [FileSystem(), ReportStaleFiles(max_tracked_files=100, max_reported_files=20, max_checked_bytes=8 << 20)]
+```
+
+Before every request, each recorded file costs a sequential `realpath`, `stat` and read, most recent first, up to
+`max_checked_bytes`; lower `max_tracked_files` on a slow remote workspace. A file whose real path changed since it
+was read is skipped. Not supported under durable execution: the run fails at its start.
 
 ## Macroscope
 
@@ -678,6 +704,7 @@ and write host files (`file://`, `s3 cp`), but gets its own empty AWS config and
 - https://pydantic.dev/docs/ai/harness/boxlite-sandbox/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/harness/repo-context/
+- https://pydantic.dev/docs/ai/harness/report-stale-files/
 - https://pydantic.dev/docs/ai/harness/macroscope/
 - https://pydantic.dev/docs/ai/harness/localstack/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/

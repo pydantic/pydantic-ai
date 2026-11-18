@@ -464,12 +464,11 @@ class TestAdvisor:
         class Budget:
             used: int = 0
 
-        advisor_calls = 0
+        budget = Budget(used=1)
         tool_returns: list[object] = []
 
         def advisor_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-            nonlocal advisor_calls
-            advisor_calls += 1
+            budget.used += 1
             return ModelResponse(parts=[TextPart('advice')])
 
         def executor(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -487,17 +486,16 @@ class TestAdvisor:
                 Advisor(_ProviderFunctionModel('anthropic', advisor_model), max_uses=lambda ctx: 3 - ctx.deps.used)
             ],
         )
-        budget = Budget(used=2)
 
-        await agent.run('Ask three times.', deps=budget)
-        budget.used += advisor_calls
+        with agent.parallel_tool_call_execution_mode('sequential'):
+            await agent.run('Ask three times.', deps=budget)
         await agent.run('Ask again.', deps=budget)
 
-        assert advisor_calls == 1
+        assert budget.used == 3
         assert tool_returns == snapshot(
             [
                 'advice',
-                'Advisor consultation limit reached for this model request. Continue without further advice.',
+                'advice',
                 'Advisor consultation limit reached for this model request. Continue without further advice.',
                 'Advisor consultation limit reached for this model request. Continue without further advice.',
                 'Advisor consultation limit reached for this model request. Continue without further advice.',

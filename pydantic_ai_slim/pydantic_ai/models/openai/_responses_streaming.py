@@ -23,6 +23,7 @@ from ...exceptions import ModelConnectionError
 from ...messages import BinaryImage, FilePart, ModelResponse, ModelResponseStreamEvent, TextPart, ToolCallPart
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
+from .._history_digest import Hasher
 from .._tool_call_ids import stored_tool_call_id
 from ._citations import (
     jsonable_annotation,
@@ -31,7 +32,7 @@ from ._citations import (
     responses_output_text_annotation_ta,
 )
 from ._errors import map_api_errors, response_error, response_error_type
-from ._history_digest import Hasher, with_history_digest
+from ._history_digest import with_history_digest
 from ._model_names import OpenAIModelName
 from ._native_tools import (
     map_code_interpreter_tool_call,

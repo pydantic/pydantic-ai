@@ -12,7 +12,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelResponse,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
 )
@@ -28,7 +27,7 @@ from temporalio.worker import Replayer, Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
-from pydantic_ai_harness.detect_loops import DetectLoops, LoopJudge
+from pydantic_ai_harness.detect_loops import DetectLoops, LoopJudge, LoopNudgePart
 from tests.harness._temporal import ignore_source_reads_left_open, skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
@@ -147,14 +146,13 @@ async def test_detection_runs_inside_a_workflow_and_survives_replay() -> None:
     messages = ModelMessagesTypeAdapter.validate_json(dumped)
     assert isinstance(messages[-1], ModelResponse)
     assert messages[-1].text == 'missing.txt does not exist.'
-    nudges = [part.metadata for message in messages for part in message.parts if isinstance(part, SystemPromptPart)]
-    assert nudges == [
-        {
-            'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
-            'pattern': 'repeated_result',
-            'tool_names': ['_read_file'],
-        }
+    nudges = [
+        (part.pattern, part.tool_names)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, LoopNudgePart)
     ]
+    assert nudges == [('repeated_result', ('_read_file',))]
     # Replaying the recorded history re-runs detection in workflow code; a different decision would be
     # a nondeterminism error.
     replayer = Replayer(
@@ -167,13 +165,10 @@ async def test_detection_runs_inside_a_workflow_and_survives_replay() -> None:
     # judge's model call would not be journaled, so it's never made there.
     in_response = ModelMessagesTypeAdapter.validate_json(in_response_dumped)
     assert [
-        part.metadata for message in in_response for part in message.parts if isinstance(part, SystemPromptPart)
-    ] == [
-        {
-            'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
-            'pattern': 'repeated_stream_text',
-            'tool_names': [],
-        }
-    ]
+        (part.pattern, part.tool_names, part.scope)
+        for message in in_response
+        for part in message.parts
+        if isinstance(part, LoopNudgePart)
+    ] == [('repeated_stream_text', (), 'request')]
     replay = await replayer.replay_workflow(in_response_history, raise_on_replay_failure=False)
     assert replay.replay_failure is None
