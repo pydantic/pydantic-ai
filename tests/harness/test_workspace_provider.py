@@ -19,8 +19,6 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WrapperWorkspace,
 )
-from pydantic_ai_harness import HarnessDeprecationWarning
-from pydantic_ai_harness._warn import warn_argument_renamed
 from pydantic_ai_harness._workspace import innermost_backend
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
@@ -277,13 +275,3 @@ def test_check_integer_rejects(value: object, optional: bool, message: str) -> N
     with pytest.raises(UserError) as error:
         check_integer('timeout', value, optional=optional)  # pyright: ignore[reportArgumentType]
     assert str(error.value) == message
-
-
-def test_warn_argument_renamed_points_at_the_new_name() -> None:
-    with pytest.warns(HarnessDeprecationWarning) as record:
-        warn_argument_renamed('Sandbox', 'workdir', 'working_dir', stacklevel=2)
-    assert str(record[0].message) == (
-        '`Sandbox(workdir=...)` has been renamed to `Sandbox(working_dir=...)`. '
-        'Update the call; this deprecated alias will be removed in a future release.'
-    )
-    assert record[0].filename == __file__

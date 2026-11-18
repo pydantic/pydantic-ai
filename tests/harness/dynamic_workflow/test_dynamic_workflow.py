@@ -38,9 +38,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import CodeMode
+from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE, DenyUnanswered
 from pydantic_ai_harness.dynamic_workflow import (
     AgentRevealPart,
     DynamicWorkflow,
@@ -50,7 +50,7 @@ from pydantic_ai_harness.dynamic_workflow import (
     WorkflowResourceLimits,
 )
 
-from .._deferred_tools import deferring_agent, pending_agent
+from .._deferred_tools import asking_agent, deferring_agent, pending_agent
 from ._concurrent_sub_agents import DeferredStarts
 
 
@@ -1410,27 +1410,6 @@ async def test_unlimited_runs_without_a_backstop() -> None:
     assert out == 2
 
 
-def test_max_duration_secs_is_a_deprecated_alias() -> None:
-    renamed = r"resource_limits=\{'max_duration_secs': \.\.\.\}\)` has been renamed"
-    with pytest.warns(HarnessDeprecationWarning, match=rf'`DynamicWorkflow\({renamed}'):
-        capability = DynamicWorkflow[object](agents=[_sub_agent()], resource_limits={'max_duration_secs': 5})
-    assert capability.resource_limits == {'max_duration_seconds': 5}
-    with pytest.warns(HarnessDeprecationWarning, match=rf'`DynamicWorkflowToolset\({renamed}'):
-        toolset = DynamicWorkflowToolset[object](agents=[_wf_agent()], resource_limits={'max_duration_secs': 5})
-    assert toolset.resource_limits == {'max_duration_seconds': 5}
-    with pytest.raises(TypeError, match='`max_duration_secs` is its deprecated name'):
-        DynamicWorkflowToolset[object](
-            agents=[_wf_agent()], resource_limits={'max_duration_seconds': 5, 'max_duration_secs': 5}
-        )
-
-
-async def test_stale_max_duration_secs_key_is_rejected_at_run_time() -> None:
-    toolset = DynamicWorkflowToolset[object](agents=[_wf_agent()])
-    toolset.resource_limits = {'max_duration_secs': 5}
-    with pytest.raises(UserError, match=r"key\(s\): \['max_duration_secs'\]"):
-        await _run_script(toolset, '1 + 1')
-
-
 @pytest.mark.parametrize('unknown_key', ['max_durations_secs', 'max_allocations'])
 def test_unknown_resource_limit_key_raises_at_construction(unknown_key: str) -> None:
     # Unknown keys must not be silently dropped, which would disable the intended cap.
@@ -2070,3 +2049,23 @@ async def test_run_workflow_orchestrates_alongside_code_mode_end_to_end() -> Non
         if isinstance(p, ToolReturnPart) and p.tool_name == 'run_workflow'
     ]
     assert returns[-1].content == 'LGTM'
+
+
+async def test_parent_deny_unanswered_answers_a_workflow_childs_question() -> None:
+    """The parent run's `DenyUnanswered` is passed on, so a workflow child's unanswered question is answered in-run."""
+    observed: list[str] = []
+
+    def parent_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[TextPart('workflow done')])
+        return ModelResponse(
+            parts=[ToolCallPart('run_workflow', {'code': 'r = await child(task="ask")'}, tool_call_id='w1')]
+        )
+
+    parent = Agent(
+        FunctionModel(parent_model),
+        capabilities=[DenyUnanswered(), DynamicWorkflow(agents=[asking_agent(observed)])],
+    )
+    result = await parent.run('run it')
+    assert result.output == 'workflow done'
+    assert observed == [DEFAULT_QUESTION_MESSAGE]
