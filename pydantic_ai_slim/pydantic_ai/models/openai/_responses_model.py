@@ -1539,6 +1539,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         previous_response_id, conversation_id, new_messages = self._resolve_server_side_state(model_settings, messages)
         # The `computer_call`s the server holds before `new_messages`, whose outputs go as `computer_call_output`s.
         calls = computer_calls_by_id(restored[: len(restored) - len(new_messages)])
+        if previous_response_id and calls and self._native_computer_name(wire_request_parameters) is None:
+            # The API refuses a `computer_call_output` in a request without its computer tool, so the whole history
+            # goes instead, its `computer_call`s as function calls.
+            previous_response_id, new_messages, calls = None, messages, {}
         messages = new_messages
         if not sends_effort_changes:
             messages = _without_model_settings_deltas(messages)
