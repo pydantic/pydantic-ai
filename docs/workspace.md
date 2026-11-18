@@ -361,7 +361,9 @@ agent = Agent(
 
 [`lowest_authority_under(workspace, directory)`][pydantic_ai.workspaces.lowest_authority_under] gives the lowest
 level of any path at or under a directory, for a capability that reads a whole directory at one level, such as a
-delegate rooted there: no file it reads gets more than the workspace gives it.
+delegate rooted there. It's the directory's own level, lowered by every `path_authority` entry at or under it. Links
+under the directory that no entry names aren't followed, so name a linked tree in `path_authority`, or don't rely on
+this for one.
 
 `path_authority` is not access control. It sets the authority of the text capabilities put in the prompt
 from those files, not what the agent can read, write or run: the agent's tools reach every path as before.

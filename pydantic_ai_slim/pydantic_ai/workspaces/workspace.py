@@ -504,6 +504,31 @@ class Workspace(WorkspaceBackend):
             layer_authority(location, layer, sep=paths.sep) for location in locations for layer in layers
         )
 
+    async def _lowest_authority_under(self, directory: str) -> Authority:
+        """See [`lowest_authority_under`][pydantic_ai.workspaces.lowest_authority_under]."""
+        paths = self.paths
+        root = await self.working_dir()
+        written = await self.resolve(directory)
+        target = await self.realpath(written)
+        layers = self._authority_layers()
+        lowers = any(
+            level != 'operator' or lowest_authority(entries.values()) != 'operator' for level, entries in layers
+        )
+        if not lowers and all(is_within(location, root, sep=paths.sep) for location in (written, target)):
+            # No wrapper lowers any path, and the directory is in the working directory where it's written and where it
+            # leads, so it's at `'operator'`.
+            return 'operator'
+        locations = {written.casefold(), target.casefold()}
+        levels: list[Authority] = [await self.authority_of(directory)]
+        for level, path_authority in layers:
+            resolved = await self._resolve_path_authority(path_authority, level, root)
+            levels.extend(
+                entry_level
+                for entry, entry_level in resolved.items()
+                if any(is_within(entry.casefold(), location, sep=paths.sep) for location in locations)
+            )
+        return lowest_authority(levels)
+
     def durable_policy(self) -> tuple[object, ...]:
         """Configuration a durable unit must rebuild with this wrapper.
 
@@ -745,21 +770,4 @@ async def lowest_authority_under(workspace: Workspace, directory: str) -> Author
     `'none'`, as `authority_of` puts it. Symlinks under `directory` that no entry names aren't followed: the answer
     comes from the workspace's levels, not from listing the files.
     """
-    paths = workspace.paths
-    root = await workspace.working_dir()
-    written = await workspace.resolve(directory)
-    layers = workspace._authority_layers()  # pyright: ignore[reportPrivateUsage]
-    lowers = any(level != 'operator' or 'operator' != lowest_authority(entries.values()) for level, entries in layers)
-    if not lowers and is_within(written, root, sep=paths.sep):
-        # No wrapper lowers any path, so everything in the working directory is at `'operator'`: no need to follow links.
-        return 'operator'
-    locations = {written.casefold(), (await workspace.realpath(written)).casefold()}
-    levels: list[Authority] = [await workspace.authority_of(directory)]
-    for level, path_authority in layers:
-        resolved = await workspace._resolve_path_authority(path_authority, level, root)  # pyright: ignore[reportPrivateUsage]
-        levels.extend(
-            entry_level
-            for entry, entry_level in resolved.items()
-            if any(is_within(entry.casefold(), location, sep=paths.sep) for location in locations)
-        )
-    return lowest_authority(levels)
+    return await workspace._lowest_authority_under(directory)  # pyright: ignore[reportPrivateUsage]
