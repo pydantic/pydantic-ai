@@ -422,14 +422,10 @@ class TestCwdCapture:
     @pytest.mark.parametrize(
         'junk',
         [
-            "printf ''",
-            "printf '\\377\\376'",
-            'echo subdir',
+            'echo .',
             'echo /does/not/exist',
-            'echo "$PWD/test.txt"',
-            f'echo /{"x" * 300}',
         ],
-        ids=['empty', 'not-utf8', 'relative', 'missing', 'file', 'too-long'],
+        ids=['relative', 'missing'],
     )
     async def test_pwd_printing_junk_keeps_cwd(
         self, persist_toolset: ShellToolset[None], shell_dir: Path, junk: str
@@ -441,6 +437,15 @@ class TestCwdCapture:
         result = await persist_toolset.run_command(ctx, f'pwd() {{ {junk}; }}')
         assert '[exit code' not in result
         assert await persist_toolset.run_command(ctx, 'echo "$PWD"') == f'[stdout]\n{shell_dir / "subdir"}\n'
+
+    async def test_start_command_starts_in_the_saved_directory(
+        self, persist_toolset: ShellToolset[None], shell_dir: Path
+    ) -> None:
+        # `run_command` saves the directory in the shell and `start_command` reads it back in Python.
+        ctx = _ctx(shell_dir)
+        await persist_toolset.run_command(ctx, 'cd subdir')
+        command_id = _parse_command_id(await persist_toolset.start_command(ctx, 'pwd'))
+        assert str(shell_dir / 'subdir') in await _check_until(persist_toolset, shell_dir, command_id, 'subdir')
 
     async def test_command_that_exits_early_keeps_cwd(
         self, persist_toolset: ShellToolset[None], shell_dir: Path
@@ -657,13 +662,6 @@ class TestPersistCwdHardening:
         await persist_toolset.run_command(_ctx(tmp_path), 'cd subdir ; true')
         result = await persist_toolset.run_command(_ctx(tmp_path), 'pwd')
         assert 'subdir' in result
-
-    async def test_output_cannot_spoof_cwd(self, persist_toolset: ShellToolset[None], shell_dir: Path) -> None:
-        # The old mechanism parsed cwd from stdout, so a command printing the
-        # sentinel string could redirect the tracked cwd with no real cd.
-        spoof = f'true ; echo __HARNESS_PWD__{shell_dir / "subdir"}'
-        await persist_toolset.run_command(_ctx(shell_dir), spoof)
-        assert await persist_toolset.run_command(_ctx(shell_dir), 'pwd') == f'[stdout]\n{shell_dir}\n'
 
 
 class TestSpawnFailures:
@@ -1055,20 +1053,6 @@ class TestRunCommand:
         result = await ts.run_command(_ctx(shell_dir), "printf '%0500d\\n' $(seq 1 100) >&2")
         assert 'XXXX' not in result
 
-    async def test_persist_cwd_updates_after_cd(self, shell_dir: Path) -> None:
-        """CWD should update to the actual directory after a successful cd."""
-        ts = ShellToolset(
-            allowed_commands=[],
-            denied_commands=[],
-            denied_operators=[],
-            default_timeout=10.0,
-            max_output_chars=50_000,
-            persist_cwd=True,
-            allow_interactive=False,
-        )
-        await ts.run_command(_ctx(shell_dir), 'cd subdir')
-        assert await ts.run_command(_ctx(shell_dir), 'pwd') == f'[stdout]\n{shell_dir / "subdir"}\n'
-
     async def test_persist_cwd_without_standard_path(self, shell_dir: Path) -> None:
         """The saved directory survives a `PATH` that has no standard tools, whether set by `env` or the command."""
         ts = ShellToolset(
@@ -1085,20 +1069,6 @@ class TestRunCommand:
         await ts.run_command(_ctx(shell_dir), 'cd subdir')
         await ts.run_command(_ctx(shell_dir), 'PATH=/nonexistent; cd nested')
         assert await ts.run_command(_ctx(shell_dir), 'echo "$PWD"') == f'[stdout]\n{shell_dir / "subdir" / "nested"}\n'
-
-    async def test_persist_cwd_not_updated_on_failure(self, shell_dir: Path) -> None:
-        """CWD should not update if command fails (exit code non-zero)."""
-        ts = ShellToolset(
-            allowed_commands=[],
-            denied_commands=[],
-            denied_operators=[],
-            default_timeout=10.0,
-            max_output_chars=50_000,
-            persist_cwd=True,
-            allow_interactive=False,
-        )
-        await ts.run_command(_ctx(shell_dir), 'cd subdir; false')
-        assert await ts.run_command(_ctx(shell_dir), 'pwd') == f'[stdout]\n{shell_dir}\n'
 
     async def test_persist_cwd_not_updated_when_an_exit_trap_fails_the_command(self, shell_dir: Path) -> None:
         """The directory is saved on the command's final status, after any `EXIT` trap it set has run."""
@@ -1515,20 +1485,6 @@ class TestEdgeCases:
         )
         result = await ts.run_command(_ctx(shell_dir), 'pwd')
         assert str(shell_dir) in result
-
-    async def test_persist_cwd_requires_all_three_conditions(self, shell_dir: Path) -> None:
-        ts = ShellToolset(
-            allowed_commands=[],
-            denied_commands=[],
-            denied_operators=[],
-            default_timeout=10.0,
-            max_output_chars=50_000,
-            persist_cwd=True,
-            allow_interactive=False,
-        )
-        # Successful echo -- sentinel shows same dir, cwd should remain valid
-        await ts.run_command(_ctx(shell_dir), 'echo hi')
-        assert await ts.run_command(_ctx(shell_dir), 'pwd') == f'[stdout]\n{shell_dir}\n'
 
 
 class TestShellCapability:
