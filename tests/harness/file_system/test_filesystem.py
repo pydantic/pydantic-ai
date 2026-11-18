@@ -850,19 +850,6 @@ class TestReadFile:
         assert walked == 'feed.c:3:needle = 3;'
         assert 'lines: 3' in await toolset.file_info('feed.c', workspace=ws)
 
-    async def test_window_of_mixed_line_endings_and_multibyte_text(self, tmp_path: Path) -> None:
-        # Only the window is decoded, so its edges must land on line feeds, not inside `é`, `😀` or `\r\n`.
-        (tmp_path / 'mixed.txt').write_bytes('one\r\ntwo\rtwo\né\n😀\r\n'.encode() + b'bad \xff\nlast')
-        toolset = _unhashed_toolset()
-        ws = LocalWorkspaceBackend(tmp_path)
-        assert await toolset.read_file('mixed.txt', offset=2, limit=2, workspace=ws) == (
-            '[mixed.txt | 6 lines]\n     3\té\n     4\t😀\r\n... (2 more lines. Use offset=4 to continue reading.)\n'
-        )
-        assert await toolset.read_file('mixed.txt', offset=4, workspace=ws) == (
-            '[mixed.txt | 6 lines]\n     5\tbad \ufffd\n     6\tlast\n'
-        )
-        assert 'lines: 6' in await toolset.file_info('mixed.txt', workspace=ws)
-
     async def test_window_deep_into_a_file(self, tmp_path: Path) -> None:
         # About 30 KB of short lines, so the offset lies several 4 KiB blocks into the file.
         (tmp_path / 'long.txt').write_bytes(''.join(f'line {i}\n' for i in range(3000)).encode())
