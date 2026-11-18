@@ -155,8 +155,8 @@ jobs:
           # `DockerContainer` is not a sandbox, so its tests live under `docker_container`.
           tests="tests/harness/${PROVIDER}_sandbox"
           [ "$PROVIDER" != docker ] || tests=tests/harness/docker_container
-          # INFO puts the harness's lifecycle lines, such as which sandbox it created, in a failure's report, with timestamps.
-          uv run --no-sync pytest -p no:cacheprovider --log-level=INFO --log-format='%(asctime)s %(levelname)s %(name)s %(message)s' -m "${PROVIDER}_live" "$tests" -q
+          # Timestamps the captured log lines, which `tests/harness/conftest.py` sets to include the harness's INFO lines.
+          uv run --no-sync pytest -p no:cacheprovider --log-format='%(asctime)s %(levelname)s %(name)s %(message)s' -m "${PROVIDER}_live" "$tests" -q
         env:
           PROVIDER: ${{ matrix.provider }}
           # Scoped to this step so checkout and setup never see the secrets. The Kubernetes leg needs
@@ -172,7 +172,7 @@ jobs:
 
       # The runners ship Podman too, which `DockerContainer` supports through `executable='podman'`.
       - if: matrix.provider == 'docker'
-        run: uv run --no-sync pytest -p no:cacheprovider --log-level=INFO --log-format='%(asctime)s %(levelname)s %(name)s %(message)s' -m docker_live tests/harness/docker_container -q
+        run: uv run --no-sync pytest -p no:cacheprovider --log-format='%(asctime)s %(levelname)s %(name)s %(message)s' -m docker_live tests/harness/docker_container -q
         env:
           PYDANTIC_AI_HARNESS_DOCKER_LIVE: "1"
           DOCKER_REQUIRE_LIVE: "1"
