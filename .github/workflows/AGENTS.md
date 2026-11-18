@@ -277,10 +277,12 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive starting values, to be
   tuned down from recorded runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN`
   set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
-  on every outcome, a failed, rejected or cancelled review included. The span names the provider and
-  plan of the review's last OpenCode run, such as `the backup Coding Plan`, and how many runs the
+  on every outcome, a failed, rejected or cancelled review included. The span names the provider,
+  model and plan of the review's last OpenCode run, such as `the backup Coding Plan`, and how many runs the
   review took. When the review's run completes or reaches its time budget, the span adds its steps,
-  tokens and duration. A validated answer adds the outcome and the number of findings. A review that
+  tokens, its input, output and cache-read tokens, and its duration. A validated answer adds the
+  outcome, the number of findings, and how many findings the review dropped as outside its files or
+  changed lines. A review that
   raised has the outcome `FAILED`, the exception's class name and an error status. When the last
   run's process failed, the span adds the type, status and provider code of its stream's last
   `error` event, and whether the stream holds a `step_finish`. As each OpenCode run of the review
@@ -416,8 +418,10 @@ accounts call the same endpoint, so only `opencode_fallback.plan` tells their ru
 attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` when the review's chain restarted a run.
 
 As each run ends, `run_with_fallback` also exports an `OpenCode run` span for it, under the service
-`opencode-fallback`, so a later run's failure cannot drop it. Each span carries its run's resource attributes above and
-`opencode_fallback.provider`. It also counts the `step_finish` events in the run's stream and the tokens they report,
+`opencode-fallback`, so a later run's failure cannot drop it. Each span carries its run's resource attributes above,
+`opencode_fallback.provider`, and the run's model as `opencode_fallback.model`. The model tells apart links on one
+provider that run different models, such as two OpenCode Go links of a configured chain. Each span also counts the
+`step_finish` events in the run's stream and the tokens they report,
 every kind summed as in `pr_review_checks.tokens`, as `opencode_fallback.steps` and `opencode_fallback.tokens`, a failed
 or handed-over run's included. A run that did not serve has an error status. When the run's process failed, the span
 adds the error type, status, provider code, Go usage window and retry-after the job log names, as
