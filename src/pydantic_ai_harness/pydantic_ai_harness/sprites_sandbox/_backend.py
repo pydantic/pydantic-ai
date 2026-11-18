@@ -420,24 +420,14 @@ def _create_refused(error: Exception) -> bool:
 
     A transport failure, a timeout, or a 409 conflict leaves the create possibly committed.
     """
-    return isinstance(error, SpriteError) and not (isinstance(error, NetworkError) or _conflict(error))
-
-
-def _conflict(error: Exception) -> bool:
-    """Whether Sprites refused a create because a Sprite of that name exists, which sprites-py reports only in the text."""
-    return '(status 409)' in str(error)
+    return isinstance(error, SpriteError) and not (isinstance(error, NetworkError) or '(status 409)' in str(error))
 
 
 async def _recover_create(client: AsyncSpritesClient, name: str, error: Exception) -> AsyncSprite:
     """Look up a Sprite whose failed create may have committed, re-raising the create's `error` if it is not visible."""
     try:
         return await client.get_sprite(name)
-    except NotFoundError:
-        if _conflict(error):
-            # The Sprite exists, but lookups do not see it yet.
-            raise NetworkError(f'Sprite {name!r} may still be becoming visible') from error
-        raise error from None
-    except (NetworkError, TimeoutError):
+    except (NotFoundError, NetworkError, TimeoutError):
         raise error from None
 
 
@@ -473,7 +463,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._sandbox = sandbox
         self._ref = ref if sandbox is None else WorkspaceRef(provider='sprites', id=sandbox.name)
         # The name of the Sprite this backend creates, until a create or lookup confirms it exists. Every attempt
-        # until then sends the create again: Sprites refuses a name that exists, so this cannot make a second one.
+        # until then sends the create again: Sprites refuses a name that exists with a 409, so this cannot make a
+        # second one, and a refused create is looked up like a lost one, as boxd does.
         self._pending_name = f'pydantic-ai-{uuid.uuid4().hex}' if sandbox is None and ref is None else None
         self._runtime = runtime
         self._working_dir = absolute_path('working_dir', working_dir)

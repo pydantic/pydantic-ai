@@ -545,23 +545,29 @@ class TestSpritesSandbox:
         assert transport.created == [sprite.name]
         assert await backend.get_sandbox() is sprite
 
-    async def test_lost_create_reply_before_lookup_visible_preserves_cleanup_ref(
+    async def test_lost_create_reply_keeps_the_cleanup_ref_and_the_next_attempt_finds_the_sprite(
         self, transport: SpriteTransport
     ) -> None:
         backend = SpritesSandboxBackend()
         transport.create_error_after_commit = NetworkError('lost reply')
-        transport.get_error_once = NotFoundError('not visible yet')
+        transport.get_error_once = NetworkError('lookup lost too')
         with pytest.raises(NetworkError, match='lost reply'):
             await backend.get_sandbox()
         [name] = transport.created
         assert backend.ref == WorkspaceRef(provider='sprites', id=name)
-        # Sending the create again is refused with a 409, and a lookup that still 404s is a transport failure.
-        transport.get_error = NotFoundError('still not visible')
-        with pytest.raises(NetworkError, match='may still be becoming visible'):
-            await backend.get_sandbox()
-        transport.get_error = None
+        # Sending the create again is refused with a 409, and the lookup that follows finds the Sprite.
         assert (await backend.get_sandbox()).name == name
         assert transport.created == [name]
+
+    async def test_refused_create_whose_name_is_not_found_is_unavailable(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error_after_commit = NetworkError('lost reply')
+        transport.get_error = NotFoundError('gone')
+        with pytest.raises(NetworkError, match='lost reply'):
+            await backend.get_sandbox()
+        # As with boxd: a 409 for a name nothing can be found under is a refusal, not a transient failure.
+        with pytest.raises(WorkspaceUnavailableError, match='status 409'):
+            await backend.get_sandbox()
 
     async def test_create_lost_before_it_reached_sprites_is_sent_again(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()
