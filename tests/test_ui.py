@@ -3489,7 +3489,6 @@ def test_messages_builder_copies_parts_it_did_not_make():
 
 
 KEEPALIVE = ': keepalive\n\n'
-READINESS_WAIT_TIMEOUT = 5
 
 # The keepalive tests below aren't VCR tests: a cassette can't exercise idle timing, the pump's cancellation, or
 # validation that raises before any request is made.
@@ -3524,7 +3523,7 @@ async def test_encode_stream_sends_keepalive_while_source_is_quiet(anyio_backend
 
     expected = ['first', KEEPALIVE, 'second'] if stop_after == 'second' else ['first']
     assert list(dict.fromkeys(chunks)) == expected
-    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+    with anyio.fail_after(5):
         await source_closed.wait()
 
 
@@ -3534,7 +3533,7 @@ async def test_encode_stream_keepalive_surfaces_source_error(anyio_backend: str)
 
     async def events() -> AsyncIterator[str]:
         yield 'first'
-        await anyio.sleep(0.2)
+        await anyio.sleep(0.05)
         raise ValueError('boom')
 
     chunks: list[str] = []
@@ -3546,13 +3545,20 @@ async def test_encode_stream_keepalive_surfaces_source_error(anyio_backend: str)
 
 @pytest.mark.parametrize('anyio_backend', ['asyncio'])
 async def test_adapter_keepalive_interval_reaches_the_response(anyio_backend: str):
+    released = anyio.Event()
+
     async def events() -> AsyncIterator[str]:
         yield 'first'
-        await anyio.sleep(0.03)
+        await released.wait()
         yield 'second'
 
     enabled = DummyUIAdapter(Agent(TestModel()), DummyUIRunInput(), keepalive_interval=0.01)
-    assert KEEPALIVE in [chunk async for chunk in enabled.streaming_response(events()).body_iterator]
+    chunks: list[object] = []
+    async for chunk in enabled.streaming_response(events()).body_iterator:
+        chunks.append(chunk)
+        if chunk == KEEPALIVE:
+            released.set()
+    assert KEEPALIVE in chunks
     disabled = DummyUIAdapter(Agent(TestModel()), DummyUIRunInput(), keepalive_interval=None)
     assert [chunk async for chunk in disabled.streaming_response(events()).body_iterator] == ['first', 'second']
 
