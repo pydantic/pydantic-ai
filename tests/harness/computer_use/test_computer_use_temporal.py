@@ -51,7 +51,8 @@ _agent = Agent(
     name='computer_use_temporal',
     capabilities=[
         _provider.capability(),
-        ComputerUse(),
+        # The fake screen never changes, so settling would only wait out its interval.
+        ComputerUse(settle_seconds=0),
         # The setting the docs give for a run whose calls must not repeat.
         TemporalDurability(
             activity_config=ActivityConfig(
@@ -73,7 +74,7 @@ _pressing_agent = Agent(
     name='computer_use_temporal_press',
     capabilities=[
         _provider.capability(),
-        ComputerUse(),
+        ComputerUse(settle_seconds=0),
         TemporalDurability(activity_config=ActivityConfig(start_to_close_timeout=timedelta(minutes=5))),
     ],
 )
