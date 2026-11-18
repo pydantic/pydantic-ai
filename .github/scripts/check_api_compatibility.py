@@ -70,7 +70,8 @@ class GrowingCollection(BaseModel):
     """A public `dict` or `set` constant that registers entries, such as CLAI's settings, which can gain entries without a waiver.
 
     The constant can also be a comprehension over a tuple or list of names, such as the capability types registry,
-    which then gains entries when a name is added to that sequence.
+    or `tuple()` of a generator expression over one, such as CLAI's Codex model menu. It then gains entries when a
+    name is added to that sequence.
 
     Removing an entry or changing an entry's value still needs a waiver.
     """
@@ -249,7 +250,8 @@ def literal_member_changes(message: str) -> tuple[set[str], set[str]] | None:
 def collection_entry_changes(message: str) -> tuple[list[str], list[str]] | None:
     """Return the entries a value change adds and removes, if both sides are `dict` or `set` literals of one kind.
 
-    Both sides can also be the same comprehension over a tuple or list literal, whose items are then the entries.
+    Both sides can also be the same comprehension over a tuple or list literal, or `tuple()` of the same generator
+    expression over one, whose items are then the entries.
 
     An entry whose value changed counts as removed, with its new value added.
     """
@@ -270,17 +272,31 @@ def collection_entry_changes(message: str) -> tuple[list[str], list[str]] | None
 def _collection_entries(value: str) -> tuple[str, set[str]] | None:
     """The kind of a `dict`, `set`, or `frozenset` literal, and its entries as source text.
 
-    For a comprehension over one tuple or list literal, the entries are the sequence's items, and the kind is the
-    rest of the comprehension, which has to be unchanged for a change to add or remove entries.
+    For a comprehension over one tuple or list literal, or `tuple()` of such a generator expression, the entries are
+    the sequence's items, and the kind is the rest of the expression, which has to be unchanged for a change to add or
+    remove entries.
     """
     node = ast.parse(value, mode='eval').body
     if (
-        isinstance(node, ast.DictComp | ast.SetComp)
-        and len(node.generators) == 1
-        and isinstance(sequence := node.generators[0].iter, ast.Tuple | ast.List)
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == 'tuple'
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.GeneratorExp)
+    ):
+        comprehension = node.args[0]
+    elif isinstance(node, ast.DictComp | ast.SetComp):
+        comprehension = node
+    else:
+        comprehension = None
+    if (
+        comprehension is not None
+        and len(comprehension.generators) == 1
+        and isinstance(sequence := comprehension.generators[0].iter, ast.Tuple | ast.List)
     ):
         entries = {ast.unparse(item) for item in sequence.elts}
-        node.generators[0].iter = ast.Tuple(elts=[], ctx=ast.Load())
+        comprehension.generators[0].iter = ast.Tuple(elts=[], ctx=ast.Load())
         return ast.dump(node), entries
     if (
         isinstance(node, ast.Call)

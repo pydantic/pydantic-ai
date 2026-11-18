@@ -45,6 +45,7 @@ def test_audio_block_becomes_binary_content() -> None:
     block = acp.audio_block(base64.b64encode(b'snd').decode(), 'audio/wav')
     [item] = prompt_blocks_to_user_content([block])
     assert isinstance(item, BinaryContent)
+    assert item.data == b'snd'
     assert item.media_type == 'audio/wav'
 
 

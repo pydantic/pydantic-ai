@@ -133,28 +133,37 @@ _CHAT_LATEST_REASONING = _ReasoningSupport(
 _GPT_5_PRO_EFFORTS: frozenset[OpenAIReasoningEffort] = frozenset(('medium', 'high', 'xhigh'))
 """The efforts GPT-5.2+ -pro models accept (live-verified for gpt-5.2-pro, gpt-5.4-pro and gpt-5.5-pro, 2026-10)."""
 
-_GPT_6_MODEL_PREFIXES = ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra')
+_GPT_6_MODEL_PREFIXES = (
+    'gpt-6-astra',
+    'gpt-6-sol',
+    'gpt-6-luna',
+    'gpt-6.1-sol',
+    'gpt-6.1-terra',
+    'gpt-6.2-sol',
+    'gpt-6.2-astra',
+)
+
+_GPT_6_ALWAYS_ON_REASONING = _ReasoningSupport(
+    enabled_by_default=True,
+    can_be_disabled=False,
+    supports_mode=True,
+    supports_context=True,
+    efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
+)
+"""The GPT-6 models that always reason, at efforts `low` through `max`: they reject `effort='none'` and `'minimal'`."""
 
 _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # GPT-6 Astra reasons by default and does not accept `effort='none'` (its guide migrates
     # `none`/`minimal` users to `low`); it carries over GPT-5.6's `reasoning.mode` and
     # `reasoning.context='all_turns'` per https://developers.openai.com/api/docs/models/gpt-6-astra.
-    'gpt-6-astra': _ReasoningSupport(
-        enabled_by_default=True,
-        can_be_disabled=False,
-        supports_mode=True,
-        supports_context=True,
-        efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
-    ),
+    'gpt-6-astra': _GPT_6_ALWAYS_ON_REASONING,
     # GPT-6.1 Sol follows GPT-6 Astra rather than GPT-6 Sol: it rejects `effort='none'`.
     # https://developers.openai.com/api/docs/models/gpt-6.1-sol
-    'gpt-6.1-sol': _ReasoningSupport(
-        enabled_by_default=True,
-        can_be_disabled=False,
-        supports_mode=True,
-        supports_context=True,
-        efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
-    ),
+    'gpt-6.1-sol': _GPT_6_ALWAYS_ON_REASONING,
+    # GPT-6.2 Sol and Astra follow GPT-6 Astra too (live-verified 2026-11).
+    # https://developers.openai.com/api/docs/guides/latest-model
+    'gpt-6.2-sol': _GPT_6_ALWAYS_ON_REASONING,
+    'gpt-6.2-astra': _GPT_6_ALWAYS_ON_REASONING,
     # GPT-6.1 Terra, GPT-6 Sol and Luna retain GPT-5.6's default medium reasoning and accept `effort='none'`.
     # https://developers.openai.com/api/docs/guides/latest-model
     'gpt-6.1-terra': _ReasoningSupport(
@@ -279,13 +288,15 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """Whether the model includes thinking content in requests. Default: `'auto'`.
 
     This can be:
-    * `'auto'` (default): Automatically detects how to send thinking content. If thinking was received in a custom field
-    (tracked via `ThinkingPart.id` and `ThinkingPart.provider_name`), it's sent back in that same field. Otherwise,
-    it's sent using tags. Only the `reasoning` and `reasoning_content` fields are checked by
-    default when receiving responses. If your provider uses a different field name, you must explicitly set
-    `openai_chat_thinking_field` to that field name. When the request sends exactly one of these fields back, it's
-    also sent empty on tool-calling assistant turns after the last user message that don't already carry it, such as
-    a step served by another model or provider, since DeepSeek-style APIs reject those turns without it.
+    * `'auto'` (default): Automatically detects how to send thinking content. Thinking received from this provider
+    (tracked via `ThinkingPart.provider_name`) is sent back in a field only when its `ThinkingPart.id` is the
+    configured `openai_chat_thinking_field`, or, with none configured, `reasoning` or `reasoning_content`, the fields
+    checked by default when receiving responses. Any other thinking is sent using tags, including thinking received in
+    a field this profile doesn't name, such as history from another model on the same provider. If your provider uses
+    a different field name, you must explicitly set `openai_chat_thinking_field` to that field name. When the request
+    sends exactly one of these fields back, it's also sent empty on tool-calling assistant turns after the last user
+    message that don't already carry it, such as a step served by another model or provider, since DeepSeek-style APIs
+    reject those turns without it.
     * `'tags'`: The thinking content is included in the main `content` field, enclosed within thinking tags as
     specified in `thinking_tags` profile option.
     * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
@@ -415,6 +426,19 @@ class OpenAIModelProfile(ModelProfile, total=False):
     When enabled, unified `thinking='max'` is sent as `reasoning_effort='max'`; otherwise it falls back to `'xhigh'`.
     OpenAI's own Chat Completions API rejects `'max'` on every model, so only providers that accept it set this
     (DeepSeek V4, and Kimi K3, K2.6 and K2.7). Explicit `openai_reasoning_effort='max'` settings are still passed through unchanged."""
+
+    openai_chat_function_tools_require_reasoning_off: bool
+    """Whether the Chat Completions API rejects function tools while reasoning is on. Default: `False`.
+
+    When enabled, `OpenAIChatModel` raises a `ModelRequestRejectedError` for a request that sends tools, output tools
+    included, with reasoning on, before anything is sent: the API rejects the combination with a 400 pointing at
+    `/v1/responses` or `reasoning_effort='none'`. `OpenAIProvider` enables it for the GPT-6 families (verified live on
+    gpt-6-luna, gpt-6-sol, gpt-6.1-terra, gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra). `openai_model_profile` leaves it off,
+    because the restriction is unverified on the OpenAI-compatible endpoints that share that profile.
+    `OpenAIProvider(base_url=...)` keeps the flag, as a proxy to OpenAI should; for another server that serves
+    these model names, pass `profile=OpenAIModelProfile(openai_chat_function_tools_require_reasoning_off=False)`.
+    On models that pin `openai_reasoning_efforts` (e.g. gpt-6-astra), `thinking=False` maps to the lowest
+    accepted effort rather than `'none'`, so it is not a way out there."""
 
     openai_chat_thinking_false_body: dict[str, Any]
     """Request body fields that unified `thinking=False` sends on the Chat Completions API, in place of

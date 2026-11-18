@@ -272,6 +272,8 @@ Everything else is set by your cluster, not by this capability: the pod's isolat
 | `sandbox_timeout` | Seconds after which a newly claimed sandbox is deleted. Default: `86_400` (24 hours); `None` keeps it until `destroy(ref)`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, sandboxd's root directory. Created on a new claim; on an attached claim it must already exist. |
 | `env` | Environment variables every command gets, on top of the container's own. Default: `None`. |
+| `authority` | The [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
 ## Durable execution
 
