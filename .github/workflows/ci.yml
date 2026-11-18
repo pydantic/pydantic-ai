@@ -1901,9 +1901,9 @@ jobs:
       # `tests/test_conftest.py` tests BlockBuster itself, which skips in lanes that turn it off; this
       # is the only BlockBuster-on lane that uploads coverage.
       # `--no-extra sentence-transformers`: no MCP test module imports it, and its torch and CUDA
-      # wheels are about 2.6 GB of a 3.2 GB install whose slow download has run this job past
-      # `timeout-minutes` (#13931), as in `test-durable-exec`. The combine step drops it too, so it
-      # doesn't sync it back in.
+      # wheels are about 2.6 GB of the 3.2 GB this step downloads on a uv cache miss. A slow download
+      # of them has run this job past `timeout-minutes` (#13931), as in `test-durable-exec`. The
+      # combine step drops it too, so it doesn't sync it back in.
       - name: run tests
         shell: bash
         run: |
@@ -1935,8 +1935,8 @@ jobs:
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
           SKIP: ${{ matrix.fastmcp.skip }}
 
-      # See the matching step in the `test` job. Plain `uv run`: combining is
-      # environment-independent, so the FastMCP 3 `--with` overlay isn't needed.
+      # See the matching step in the `test` job. No `--with`: combining is
+      # environment-independent, so the FastMCP 3 overlay isn't needed.
       - name: combine coverage files
         run: uv run --all-extras --no-extra sentence-transformers --all-packages coverage combine
         env:
