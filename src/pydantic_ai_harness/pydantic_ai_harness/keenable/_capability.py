@@ -12,13 +12,13 @@ from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT, Tool
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest, retry_as_result
+from pydantic_ai_harness._output import validated_budget
 from pydantic_ai_harness.keenable._toolset import (
     KEENABLE_MAX_RESULTS,
     HttpKeenableClient,
     KeenableClient,
     KeenableSearchOperations,
     KeenableSearchToolset,
-    validated_budget,
 )
 
 if TYPE_CHECKING:

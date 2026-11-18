@@ -1,0 +1,240 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.firecrawl.dev/v2/scrape
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "53"
+      content-type:
+      - application/json
+      host:
+      - api.firecrawl.dev
+    body:
+      type: json
+      content:
+        url: https://example.com/
+        formats:
+        - markdown
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      content-length:
+      - "3136"
+      content-type:
+      - application/json; charset=utf-8
+      etag:
+      - W/"70f-mEKx7iUX6qfdbsGH6ESOTbaSh3E"
+    body:
+      type: json
+      content:
+        success: true
+        data:
+          markdown: |-
+            This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.
+
+            هذا النطاق مُخصص للاستخدام في أمثلة التوثيق دون الحاجة إلى إذن. هذه ليست خدمة، يُرجى تجنب الاعتماد عليها لأغراض الاختبار والمراقبة.
+
+            该域名仅用于文档示例,无需获得许可。这并非一项服务,请勿将其用于测试和监控目的。
+
+            L'usage de ce domaine est réservé à des exemples de documentation, sans autorisation préalable. Il ne s'agit pas d'un service ; son utilisation à des fins de test ou de surveillance est à éviter.
+
+            Данный домен предназначен для использования в примерах документации без необходимости получения предварительного разрешения. Это не сервис; не рекомендуется его использование для тестирования и мониторинга.
+
+            Este dominio está destinado al uso en ejemplos de documentación sin necesidad de permiso. Esto no es un servicio; evitar utilizarlo para realizar pruebas o monitoreos.
+
+             [Learn more](https://iana.org/help/example-domains)
+          metadata:
+            title: Example Domain
+            language: en
+            viewport: width=device-width,initial-scale=1
+            favicon: data:,
+            scrapeId: 01a1eaac-10d6-72c8-82f1-edf076977a8d
+            sourceURL: https://example.com/
+            url: https://example.com/
+            statusCode: 200
+            contentType: text/html; charset=utf-8
+            proxyUsed: basic
+            cacheState: hit
+            cachedAt: 2026-11-17T18:01:22.448Z
+            creditsUsed: 1
+            concurrencyLimited: false
+  recorded_at: 2026-11-17T18:01:47.443142+00:00
+- request:
+    method: POST
+    uri: https://api.firecrawl.dev/v2/search
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "67"
+      content-type:
+      - application/json
+      host:
+      - api.firecrawl.dev
+    body:
+      type: json
+      content:
+        query: Pydantic AI agent framework
+        limit: 2
+        highlights: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      content-length:
+      - "6631"
+      content-type:
+      - application/json; charset=utf-8
+      etag:
+      - W/"19cc-ijJPpgPOU3qbfYmBx3QIIp6D+yM"
+    body:
+      type: json
+      content:
+        success: true
+        data:
+          web:
+          - url: https://pydantic.dev/docs/ai/overview/
+            title: Pydantic AI | Pydantic Docs
+            description: |-
+              # Pydantic AI
+              Agents, realtime voice, image generation, embeddings.
+
+              **Pydantic AI** is the Python AI SDK: a typed, [extensible](https://pydantic.dev/docs/ai/guides/extensibility/) agent loop with [every model](https://pydantic.dev/docs/ai/models/overview/) a string swap away, and [another one to fall back to](https://pydantic.dev/docs/ai/capabilities/model-fallback/) when a provider fails. The same agent [runs everywhere you need it](https://pydantic.dev/docs/ai/overview/interfaces/): behind a [web frontend](https://pydantic.dev/docs/ai/integrations/ui/overview/), in the [terminal](https://pydantic.dev/docs/ai/integrations/cli/), on a [voice call](https://pydantic.dev/docs/ai/realtime/overview/), on a [durable background queue](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), in [GitHub Actions](https://pydantic.dev/docs/ai/harness/gh-aw/), or as a plain object you call [`run()`](https://pydantic.dev/docs/ai/core-concepts/agent/#running-agents) on. [Image generation](https://pydantic.dev/docs/ai/guides/image-generation/) and [embeddings](https://pydantic.dev/docs/ai/guides/embeddings/) come in the same box.
+
+              **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [guardrails](https://pydantic.dev/docs/ai/harness/guardrails/), and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) to [planning](https://pydantic.dev/docs/ai/harness/planning/), [context management](https://pydantic.dev/docs/ai/harness/compaction/), and [persistence](https://pydantic.dev/docs/ai/core-concepts/persistence/), up to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
+
+              ## What are you building?
+              ```python
+              from pydantic_ai import Agentfrom pydantic_ai.capabilities import WebSearchfrom pydantic_ai_harness import Advisor, Coderagent = Agent(    'anthropic:claude-fable-5-2',    capabilities=[        Coder(),  # files, shell, repo context, sub-agents, context management        WebSearch(),  # look up docs and error messages on the web        Advisor('openai:gpt-6.1-sol'),  # a second opinion from another model when stuck    ],)agent.to_cli_sync()Gateway
+
+
+
+              ```
+
+              ## Why Pydantic AI
+              - **[Every interface](https://pydantic.dev/docs/ai/overview/interfaces/).** One agent definition runs as a [CLI](https://pydantic.dev/docs/ai/integrations/cli/), a [built-in web chat](https://pydantic.dev/docs/ai/guides/web/), or [realtime speech](https://pydantic.dev/docs/ai/realtime/overview/); [UI event streams](https://pydantic.dev/docs/ai/integrations/ui/overview/) (AG-UI, Vercel AI) connect it to your own frontend or anything else; [ACP](https://pydantic.dev/docs/ai/harness/acp/) serves it as an editor agent; and [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs it headless on issues, pull requests or a schedule.
+
+              ## Next steps
+              **Ship it.** [Going to Production](https://pydantic.dev/docs/ai/production/) answers what teams ask before shipping an agent, from crash recovery and human approval to cost limits, tracing and deployment.
+
+              That same agent, or one you write yourself, runs on issues, pull requests or a schedule as a [GitHub Agentic Workflow](https://pydantic.dev/docs/ai/harness/gh-aw/): headless, in a sandbox, writing back through safe outputs.
+
+              The [Agents guide](https://pydantic.dev/docs/ai/core-concepts/agent/) is the core walkthrough; the [API Reference](https://pydantic.dev/docs/ai/api/pydantic-ai/agent/) covers the full interface; the [Harness](https://pydantic.dev/docs/ai/harness/) has the batteries.
+
+              ## Part of the Pydantic Stack
+              Everything you need to ship production-grade AI agents:
+            position: 1
+          - url: https://pydantic.dev/
+            title: Pydantic | The end-to-end AI engineering stack
+            description: |-
+              # Ship reliable agents with Pydantic Logfire
+              ## Built for teams with security reviews
+              ```\
+              from pydantic import MISSING, BaseModel\\
+              \\
+              class Configuration(BaseModel):\\
+                  timeout: int | None | MISSING = MISSING\\
+              \\
+              conf = Configuration()\\
+              conf.model_dump()\\
+              #> {}\\
+              ```\\
+              \\
+              **Pydantic v2.14** \\
+              Python 3.15 support with lazy imports and TypeForm, a stable MISSING sentinel, frozendict support and faster schema generation.\\
+              Oct 2026 · Open source](https://pydantic.dev/articles/pydantic-v2-14-release) [From the Jev announcement\\
+              \\
+              ```\\
+              from typesafe_sdk import Noul, TypeSafeClient\\
+              \\
+              with TypeSafeClient(\\
+                  api_key='<your gateway key>',\\
+                  base_url='https://gateway-us.pydantic.dev/proxy/typesafe',\\
+                  model='jev-latest',\\
+              ) as client:\\
+              ```\\
+              \\
+              **Jev in Pydantic AI Gateway** \\
+              Call TypeSafe's Jev through AI Gateway with your own key, metered cost and input guardrails, on one key for every model.\\
+              Sep 2026 · AI Gateway](https://pydantic.dev/articles/jev-pydantic-ai-gateway)
+
+              [View all articles](https://pydantic.dev/articles)
+
+              All-time downloads18B+Pydantic Validation on PyPI
+
+              Monthly downloads840M+Pydantic Validation, last 30 days
+
+              GitHub stars80K+Across Pydantic open-source projects
+
+              Pydantic AI5M+Downloads in the last 30 days
+
+              ### Pydantic Validation
+
+              Data validation from Python type hints. The one you already use.
+
+              `uv add pydantic`
+
+              ### Pydantic AI
+
+              Type-safe agent framework, with Pydantic Evals built in.
+
+              `uv add pydantic-ai`
+
+              ### Pydantic Monty
+
+              A sandboxed Python interpreter in Rust, for agent-written code.
+
+              `uv add pydantic-monty`
+
+              ### HTTPX2
+
+              Next-generation HTTP client. Sync and async, HTTP/1.1 and HTTP/2.
+
+              `uv add httpx2`
+
+              ### Pydantic Evals
+
+              Evaluate agents with programmatic checks, LLM judges and human review.
+
+              `uv add pydantic-evals`
+
+              ### All projects
+
+              Logfire SDKs, FastUI, Pydantic Settings, and the rest.
+
+              [Read docs](https://pydantic.dev/docs/) [GitHub](https://github.com/pydantic)
+
+              About us
+
+              ## We believe powerful tools don't have to be hard to use.
+
+              Our mission is simple: to accelerate engineers.
+
+              [About Pydantic](https://pydantic.dev/about) [Open roles](https://pydantic.dev/about#join-the-team)
+
+              ## Get started with Logfire for free
+
+              Sign up today and see your first trace in under 2 minutes
+
+              01 Install
+
+              Copy
+              ```
+            position: 2
+        creditsUsed: 2
+        id: 01a1eaac-0f7c-750d-a32c-0ea368e316a5
+  recorded_at: 2026-11-17T18:01:47.318247+00:00

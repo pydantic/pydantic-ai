@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
     from .file_system import READ_ONLY_TOOL_NAMES, FileSystem
+    from .firecrawl import FirecrawlSearch
     from .grain import Grain
     from .guardrails import (
         GuardrailError,
@@ -140,6 +141,7 @@ __all__ = [
     'ExaSearch',
     'FallbackCompaction',
     'FileSystem',
+    'FirecrawlSearch',
     'Grain',
     'GuardrailError',
     'GuardrailResult',
@@ -254,6 +256,7 @@ _LAZY_EXPORTS = {
     'ExaSearch': 'exa',
     'FallbackCompaction': 'compaction',
     'FileSystem': 'file_system',
+    'FirecrawlSearch': 'firecrawl',
     'Grain': 'grain',
     'GuardrailError': 'guardrails',
     'GuardrailResult': 'guardrails',
