@@ -655,12 +655,14 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         stop its foreground process group, without terminating the shared sandbox.
         """
         check_timeout(timeout)
-        if self._display is not None:
-            # Started first, so a program the command opens shows on the screen.
-            await self._display.start()
         # Modal executes argv and never a shell string, so shell interpretation is requested
         # explicitly through `/bin/sh -c`, the one shell every sandbox image carries.
-        return await self._run_argv(command_argv(command, shell), env=env or {}, timeout=timeout, shell=shell)
+        argv = command_argv(command, shell)
+        if self._display is not None:
+            # Started after the command is checked, so a bad one doesn't create a sandbox, and before it runs, so a
+            # program the command opens shows on the screen.
+            await self._display.start()
+        return await self._run_argv(argv, env=env or {}, timeout=timeout, shell=shell)
 
     async def _run_argv(
         self, argv: list[str], *, env: Mapping[str, str], timeout: float | None, shell: bool = False
