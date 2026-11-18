@@ -68,3 +68,11 @@ def test_old_top_level_names_are_the_new_ones() -> None:
     assert create_agent is pydantic_ai_pax.create_agent
     with pytest.raises(AttributeError):
         pydantic_clai2.missing
+
+
+def test_the_old_entry_point_stays_its_own_module() -> None:
+    """`pydantic_ai_pax.__main__`, once imported, is an attribute of that package but not an export to forward."""
+    assert importlib.import_module('pydantic_ai_pax.__main__') is not clai2_main
+    assert importlib.import_module('pydantic_clai2.__main__') is clai2_main
+    with pytest.raises(AttributeError):
+        pydantic_clai2.__getattr__('__main__')

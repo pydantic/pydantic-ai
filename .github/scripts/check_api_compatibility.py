@@ -375,6 +375,13 @@ def _field_without_description(value: str) -> str | None:
 
 
 def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
+    # A package new since `against` has no released API to stay compatible with. One missing here too still fails.
+    module = Path(search_path, package)
+    released = subprocess.run(
+        ['git', 'cat-file', '-e', f'{against}:{module.as_posix()}'], check=False, capture_output=True
+    )
+    if module.is_dir() and released.returncode != 0:
+        return []
     result = subprocess.run(
         [
             'uvx',
