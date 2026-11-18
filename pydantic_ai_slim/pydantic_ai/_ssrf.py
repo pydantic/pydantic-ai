@@ -730,17 +730,17 @@ async def safe_download(
 
             request_headers: dict[str, str] = {k: v for k, v in effective_headers.items() if k.lower() != 'host'}
             default_port = 443 if resolved.is_https else 80
+            host = resolved.hostname
+            # Bracket an IPv6 literal so the Host header is RFC 3986 §3.2.2 compliant
+            # regardless of whether the port is the scheme default.
+            try:
+                if isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address):
+                    host = f'[{host}]'
+            except ValueError:
+                pass
             if resolved.port == default_port:
-                request_headers['Host'] = resolved.hostname
+                request_headers['Host'] = host
             else:
-                host = resolved.hostname
-                # Bracket an IPv6 literal before appending the port so the `:port` stays
-                # unambiguous (RFC 3986 §3.2.2), matching the connect URL from build_url_with_ip.
-                try:
-                    if isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address):
-                        host = f'[{host}]'
-                except ValueError:
-                    pass
                 request_headers['Host'] = f'{host}:{resolved.port}'
             if max_bytes is not None and not any(k.lower() == 'accept-encoding' for k in request_headers):
                 request_headers['Accept-Encoding'] = _BOUNDED_ACCEPT_ENCODING
