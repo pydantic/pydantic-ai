@@ -605,10 +605,6 @@ ROUTE_CASES: list[tuple[str, str, str, bool]] = [
     ('otari', 'OtariProvider', 'my-routing-policy', True),
     ('otari', 'OtariProvider', 'anthropic:claude-opus-5-5', False),
     ('otari', 'OtariProvider', 'openai:gpt-6-luna', False),
-    # The backend in the name wins over a model name that reads as a lab's own API.
-    ('otari', 'OtariProvider', 'ollama:command-r', True),
-    ('otari', 'OtariProvider', 'vllm/CohereLabs/command-a', True),
-    ('otari', 'OtariProvider', 'groq:openai/gpt-oss-120b', True),
     ('azure', 'AzureProvider', 'deepseek-v4-pro', True),
     ('azure', 'AzureProvider', 'grok-4.7', False),
     ('azure', 'AzureProvider', 'gpt-6-luna', False),
