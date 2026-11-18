@@ -104,7 +104,7 @@ class SessionCatalog(Protocol):
 
     @property
     def follows_workspace(self) -> bool:
-        """Whether `/resume ID` moves the session into the directory it was saved in, as under `clai2 --web`.
+        """Whether `/resume ID` moves the session into the directory it was saved in, as under `pax --web`.
 
         Otherwise it refuses a session saved in another directory than the one CLAI runs in.
         """
@@ -1018,7 +1018,7 @@ class PluginHost(Generic[DepsT]):
         """The directory this session works in: where its runs' tools work and its project files are read.
 
         Use it instead of the process's working directory, which CLAI does not change after startup,
-        and pass it as `cwd=` to a subprocess. Under `clai2 --web` each session has its own. A host
+        and pass it as `cwd=` to a subprocess. Under `pax --web` each session has its own. A host
         built outside the shell, such as in a test, has the current directory.
         """
         return self._workspace()

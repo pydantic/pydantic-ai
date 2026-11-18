@@ -68,7 +68,7 @@ class Gate(Plugin):
 
 
 class _Output(io.StringIO):
-    """Console output that tells when `clai2 --web` is ready for its user."""
+    """Console output that tells when `pax --web` is ready for its user."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -847,7 +847,7 @@ async def test_settings_other_than_the_model_and_run_reach_every_live_session(
 async def test_run_web_opens_more_sessions_in_their_own_folders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`clai2 --web` builds the sessions `host.live` opens: in the launch folder, or another with its project file."""
+    """`pax --web` builds the sessions `host.live` opens: in the launch folder, or another with its project file."""
     opened: list[str] = []
     monkeypatch.setattr('pydantic_ai_pax.builtin_plugins.web.open_browser', opened.append)
     launch, other = tmp_path / 'launch', tmp_path / 'other'

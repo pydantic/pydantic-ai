@@ -172,7 +172,7 @@ or to a program inside the project that a list command runs, such as
 needs approval again (a string command is approved as written), and so does
 any change to a project plugin's file. The user's own table is the settings of
 the built-in hooks plugin (pydantic_ai_pax.builtin_plugins.hooks). Outside a session,
-clai2 plugins only lists declarations, since the agent can run clai2 too.
+pax plugins only lists declarations, since the agent can run clai2 too.
 /plugins opens the management menu. Removing a drop-in disables it persistently;
 delete its source file yourself to remove it from disk.
 
@@ -690,8 +690,8 @@ Provider implementation, not a terminal plugin. See
 https://pydantic.dev/docs/ai/models/overview/ and inspect installed core abstract
 classes for required methods. Supply that Model instance to Agent as above.
 To chat with an Agent instance you already have, skip the launcher and run
-clai2 --agent MODULE:ATTR (or -a), for example
-clai2 --agent pydantic_ai.main:my_cool_agent. CLAI appends the launch directory to
+pax --agent MODULE:ATTR (or -a), for example
+pax --agent pydantic_ai.main:my_cool_agent. CLAI appends the launch directory to
 sys.path, after installed packages, so a module next to where you start CLAI
 resolves without installing it. It does so only when nothing installed has the
 module's top-level name. A module there whose top-level name is also installed
@@ -701,7 +701,7 @@ name an Agent instance, not a class or factory; the agent runs with deps=None.
 For that session only, CLAI loads no plugins at all: no built-ins (so no stock
 Coder or ask_user), no saved or drop-in user plugins, and no project plugins, and
 /plugins reports that plugins are off. Nothing saved changes, so the next plain
-clai2 loads plugins as before. The agent keeps its own model unless -m or
+pax loads plugins as before. The agent keeps its own model unless -m or
 CLAI_MODEL selects another; a saved or project model does not replace it. Code
 mode starts off, whatever is saved, until /set run.code_mode true. -p runs
 the same agent headlessly, --resume and --worktree work as usual, and --agent
@@ -802,11 +802,11 @@ than monkeypatching a private global registry.
 
 ## Headless invocation
 
-`clai2 --web` (or `/web` in a session, once `/plugins enable web` is on) drives CLAI
+`pax --web` (or `/web` in a session, once `/plugins enable web` is on) drives CLAI
 from a local browser UI instead; the built-in `web` plugin is a worked example of
 `host.send_input`, `host.complete`, `host.sessions`, `host.plugins`, and `on_command_end`.
 
-`clai2 -p "PROMPT" -m PROVIDER:NAME` runs one saved turn and prints only the final
+`pax -p "PROMPT" -m PROVIDER:NAME` runs one saved turn and prints only the final
 answer. Prompt text is required as an argument; stdin is not read. Use
 `--resume SESSION-ID` to continue saved history without opening the browser.
 The `ask_user` plugin is skipped without changing saved preferences. Full-screen

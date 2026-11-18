@@ -1,6 +1,6 @@
 # CLAI 2 guide for AI code assistants
 
-Read this before touching `pydantic-clai2/`. The repository-level `AGENTS.md`
+Read this before touching `src/pydantic_ai_pax/`. The repository-level `AGENTS.md`
 still applies (no em-dashes, no `Any`, pyright strict, keyword-only arguments,
 100% branch coverage). This file adds what is specific to the terminal shell.
 
@@ -175,7 +175,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   (`Sessions.show_live`), mid-turn too, and never forks it; the one shown before stays
   live, and the session CLAI started with is closed for idleness like any other while
   hidden. Prompts queued for a session stay its own when the terminal shows another.
-  `clai2 --web` keeps its terminal on the session it started with. With one live
+  `pax --web` keeps its terminal on the session it started with. With one live
   session nothing changes, and the toolbar adds `N live` only for more.
 - **Load runs `on_session_start` for that plugin; unload runs `on_session_end`.** A
   plugin cannot tell whether it was loaded at startup or later, and must not
@@ -203,7 +203,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   catalog line until the model calls `load_capability`. A new integration does the same.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
   `config/builtins.py` lists the library's built-ins (re-exported by `app.py`,
-  kept apart so `clai2 plugins` can toggle one without importing the shell); `STOCK_PLUGINS` opts the CLI-owned
+  kept apart so `pax plugins` can toggle one without importing the shell); `STOCK_PLUGINS` opts the CLI-owned
   agent into delegation without changing supplied-agent defaults. CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
   `compaction`, `persistence`, `observability`, `hooks`). The loader treats them like drop-ins with the lowest
   precedence: a store declaration with the same id replaces one, `disable`
@@ -246,9 +246,9 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   waits again. A new `Settings` field waits too unless added there on purpose.
   A `run.permissions` no wider than the user's own applies at once, since it
   cannot widen anything. `update_channel` is user-only, rejected in a project file.
-  Approval is a `/command` only, never a `clai2` subcommand, because the agent
-  can run `clai2` from its shell. For the same reason `clai2 config` refuses a
-  change `widens` (`refuse_widening`), and `clai2 plugins` only lists. Unapproved `instructions` go to the model as
+  Approval is a `/command` only, never a `pax` subcommand, because the agent
+  can run `pax` from its shell. For the same reason `pax config` refuses a
+  change `widens` (`refuse_widening`), and `pax plugins` only lists. Unapproved `instructions` go to the model as
   `ProjectInstructions` user-channel data, never as `Session.instructions`.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin
@@ -423,6 +423,11 @@ packages; new package initializers should not eagerly import the app or heavy UI
 Do not add broad backwards-compatibility shim modules for internal file moves.
 Keep documented plugin-author paths (`pydantic_ai_pax.plugins` and
 `pydantic_ai_pax.commands`) intact; update example imports when moving UI helpers.
+The package was `pydantic-clai2` until it became `pydantic-ai-pax`. `pydantic_clai2/` aliases
+`pydantic_clai2.X` to `pydantic_ai_pax.X` and holds the deprecated `clai2` command, which the
+`pydantic-clai2` shim in `src/pydantic_clai2/` installs. `ProcessPlugins.upgrade` renames saved
+`pydantic_clai2` factories. On-disk names (`~/.config/pydantic-clai2`, the keyring service, the
+`clai2-bleeding` release) keep the old name so existing installs keep their data.
 
 ## File map
 
@@ -445,7 +450,7 @@ existing path. For updates, `/update now` is the working interactive path.
 
 - When adding or modifying a CLAI2 CLI UX feature, test every affected UX feature
   with your changes in a fresh tmux window before opening a PR. Run CLAI2 with
-  `uv run clai2`. Verify the actual terminal behavior against the intention of
+  `uv run pax`. Verify the actual terminal behavior against the intention of
   the user's request, not just the implementation or automated tests.
 - `pytest-anyio`; real model calls are blocked globally.
 - Drive the shell with `TestModel` and a `Console(file=StringIO())`.
@@ -498,8 +503,8 @@ Pyright configuration with Harness.
 uv sync --locked --all-packages --group lint
 uv run --no-sync ruff format --check .
 uv run --no-sync ruff check .
-PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run --no-sync pyright pydantic-clai2/src pydantic-clai2/tests
-uv run --no-sync pytest -p no:cacheprovider -c pydantic-clai2/pyproject.toml pydantic-clai2/tests
+PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run --no-sync pyright src/pydantic_ai_pax tests/pax
+uv run --no-sync pytest -p no:cacheprovider tests/pax
 ```
 
 ## Docs parity

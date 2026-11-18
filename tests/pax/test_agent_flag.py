@@ -1,4 +1,4 @@
-"""`clai2 --agent MODULE:ATTR`: resolution, CLI wiring, and the session-only plugin switch-off."""
+"""`pax --agent MODULE:ATTR`: resolution, CLI wiring, and the session-only plugin switch-off."""
 
 import importlib
 import io

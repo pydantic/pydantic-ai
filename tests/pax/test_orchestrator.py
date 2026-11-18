@@ -1,6 +1,6 @@
 """The web UI's orchestrator and its tools, running a session in each workspace: a live session of the same CLAI.
 
-The parent CLAI serves its live sessions as `clai2 --web` does, so a workspace's session is built in its
+The parent CLAI serves its live sessions as `pax --web` does, so a workspace's session is built in its
 checkout, runs the workspace model below, and is followed in-process as a page watching it would.
 """
 
@@ -164,7 +164,7 @@ class Parent:
 async def parent(
     tmp_path: Path, *, workspaces: bool = True, model: FunctionModel | None = None
 ) -> AsyncGenerator[Parent]:
-    """`clai2 --web` with `web`, and `workspaces` unless told otherwise, whose other sessions run the workspace model.
+    """`pax --web` with `web`, and `workspaces` unless told otherwise, whose other sessions run the workspace model.
 
     `model` is the launch session's agent's own, which the orchestrator uses too while no default model is saved.
     """
@@ -216,7 +216,7 @@ async def parent(
             process=shell.process,
             signals=False,
         )
-        # As `clai2 --web` does: `/workspace DIRECTORY` and `/resume` move it.
+        # As `pax --web` does: `/workspace DIRECTORY` and `/resume` move it.
         SessionWorkspace(
             session=runtime.session,
             context=runtime.context,
@@ -233,7 +233,7 @@ async def parent(
     serving = anyio.Event()
 
     async def serve() -> None:
-        # As `clai2 --web` does: the other sessions close as serving ends, then the launch session's plugins.
+        # As `pax --web` does: the other sessions close as serving ends, then the launch session's plugins.
         async with shell.process.live.serving():
             serving.set()
             reason = await shell.run()

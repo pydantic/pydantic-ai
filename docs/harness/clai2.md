@@ -3,6 +3,10 @@
 A separately installable terminal client for Pydantic AI, using `Coder(unrestricted_filesystem=True)` by default.
 Python 3.11+ is required by Termflow. Tracking issue: https://github.com/pydantic/pydantic-ai-harness/issues/875.
 
+!!! note
+    CLAI is now the `pydantic-ai-pax` package, and its command is `pax`. The former `pydantic-clai2` package and
+    `clai2` command still work, printing a deprecation note.
+
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do
 not protect secret files or repository metadata. OS permissions still apply.
 CLAI attaches the launch directory as the agent's workspace, so relative paths
@@ -81,7 +85,7 @@ Model responses and tool results are not saved to this file.
 
 ## Start chatting
 
-Launch `clai2`. The default model is `openai-codex:gpt-6-astra`.
+Launch `pax`. The default model is `openai-codex:gpt-6-astra`.
 Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
 Type `/set model ` and press Tab to pick another provider-qualified model name.
 The choice is saved in SQLite and used for the next prompt without restarting.
@@ -165,7 +169,7 @@ and uncommitted files. Automatic removal and
 for configuration and shell-function examples.
 
 Headless runs, piped input, and startup errors keep the checkout without asking.
-Enter a retained directory and run `clai2 --continue` or `clai2 --resume` to
+Enter a retained directory and run `pax --continue` or `pax --resume` to
 continue a saved session. `--worktree` cannot be combined with `--resume`,
 `--continue`, `config`, or `plugins`.
 
@@ -456,12 +460,12 @@ asyncio.run(main())
 ```
 
 The agent has the `coder`, `repo_context`, and `compaction` built-ins,
-configured as in `clai2`, except that `coder`'s `task_control` is off: pass
+configured as in `pax`, except that `coder`'s `task_control` is off: pass
 `plugin_settings={'coder': {'task_control': True}}` to give the model the task
 tools and background delegation. The file and shell tools work in `workspace`,
 unless a capability you pass supplies a workspace, and `AGENTS.md` or
-`CLAUDE.md` is read from it. Model names resolve as in `clai2`, with CLAI's
-per-model defaults. Nothing else you saved for `clai2` applies: no saved,
+`CLAUDE.md` is read from it. Model names resolve as in `pax`, with CLAI's
+per-model defaults. Nothing else you saved for `pax` applies: no saved,
 drop-in, or project plugins, no `.clai/settings.json`, no `/model settings`, and
 no `chain:` fallback chains. `plugin_settings` changes a built-in's settings,
 merged over the stock ones, such as `{'coder': {'agent_folders': []}}`.

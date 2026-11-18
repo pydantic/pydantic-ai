@@ -17,6 +17,7 @@ on:
       - main
     paths:
       - src/pydantic_ai_pax/**
+      - src/pydantic_clai2/**
       - src/pydantic_ai_harness/**
       - pydantic_ai_slim/**
       - pydantic_graph/**
@@ -82,6 +83,7 @@ jobs:
           smoke_dir=$(mktemp -d)
           uv venv "$smoke_dir"
           uv pip install --python "$smoke_dir/bin/python" dist/bleeding/*.tar.gz
+          "$smoke_dir/bin/pax" --help
           "$smoke_dir/bin/clai2" --help
           "$smoke_dir/bin/python" -I src/pydantic_ai_pax/scripts/check_web_assets.py \
             src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static

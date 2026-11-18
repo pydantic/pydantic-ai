@@ -191,5 +191,5 @@ def vault(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
 
 @pytest.fixture
 def run_cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> CliRunner:
-    """Run `clai2` in this process; see `CliRunner`."""
+    """Run `pax` in this process; see `CliRunner`."""
     return CliRunner(monkeypatch=monkeypatch, capsys=capsys)

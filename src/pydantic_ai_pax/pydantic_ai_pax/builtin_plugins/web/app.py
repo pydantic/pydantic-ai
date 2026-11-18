@@ -222,7 +222,7 @@ class NewWorktree(BaseModel):
 
     repo: str = Field(max_length=4096)
     branch: str = Field(default='', max_length=255)
-    """Empty for a generated name, as `clai2 --worktree` without NAME."""
+    """Empty for a generated name, as `pax --worktree` without NAME."""
     base: str = Field(default='', max_length=255)
     """Empty for the checkout's `HEAD`."""
 

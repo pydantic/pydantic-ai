@@ -91,7 +91,7 @@ async def open_stock_agent(
     `plugin_settings` maps a built-in's id to settings merged over its stock ones, such as
     `{'coder': {'sub_agents': False}}`. Unlike in the CLI, `coder`'s `task_control` is off: pass
     `{'coder': {'task_control': True}}` to give the model the task tools and background delegation.
-    Nothing saved for the `clai2` CLI applies: no saved or drop-in
+    Nothing saved for the `pax` CLI applies: no saved or drop-in
     plugins, no project `.clai/settings.json`, no saved model settings or `chain:` fallback chains.
     Raises `UserError` when `plugin_settings` names another plugin, and `PluginSettingsError` when a
     built-in rejects its merged settings.

@@ -24,7 +24,7 @@ class ClaiProcess(Generic[DepsT]):
     """The services a CLAI process holds once for every session it runs.
 
     Each `SessionRuntime` is built over the process it belongs to and joins its `live` sessions. The
-    terminal runs one; `clai2 --web` opens more.
+    terminal runs one; `pax --web` opens more.
     """
 
     store: SettingsStore

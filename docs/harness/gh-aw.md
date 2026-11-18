@@ -614,7 +614,7 @@ event structure, status, or usage.
 
 ### What a working run looks like
 
-The agent step starts `clai2 -a <target> -m <provider:model> -p <prompt>` with the
+The agent step starts `pax -a <target> -m <provider:model> -p <prompt>` with the
 generated `Coder` agent or the `PAI_AGENT` target resolved by the engine. The recorder
 captures assistant messages, reasoning, tool calls and results (including native tools),
 and usage. Repository Python imported through

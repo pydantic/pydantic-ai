@@ -1,4 +1,4 @@
-"""Run the `clai2` command line in this process, with piped input and captured output."""
+"""Run the `pax` command line in this process, with piped input and captured output."""
 
 import io
 import sys
@@ -22,7 +22,7 @@ class CliResult:
 
 @dataclass
 class CliRunner:
-    """`clai2 ARGS < input` as a subprocess would see it, without paying for a new interpreter.
+    """`pax ARGS < input` as a subprocess would see it, without paying for a new interpreter.
 
     Reserve real subprocesses for behavior that depends on the process boundary, such as startup imports.
     """

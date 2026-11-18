@@ -177,17 +177,17 @@ async def test_session_titles_metadata(recorded: RecordingClient, tmp_path: Path
         {
             'agent_session_id': first,
             'agent_session_path': str(store.database),
-            'resume_argv': ['clai2', '--session-id', first, *database],
+            'resume_argv': ['pax', '--session-id', first, *database],
         },
         {
             'agent_session_id': first,
             'agent_session_path': str(store.database),
-            'resume_argv': ['clai2', '--resume', first, *database],
+            'resume_argv': ['pax', '--resume', first, *database],
         },
         {
             'agent_session_id': session.conversation_id,
             'agent_session_path': str(store.database),
-            'resume_argv': ['clai2', '--session-id', session.conversation_id, *database],
+            'resume_argv': ['pax', '--session-id', session.conversation_id, *database],
         },
     ]
     await loaded.dispatch(SessionEnd(reason='exit'))
@@ -234,7 +234,7 @@ async def test_resume_argv_database(
     if with_database is None:
         assert 'resume_argv' not in reference
     else:
-        expected = ['clai2', '--session-id', session.conversation_id]
+        expected = ['pax', '--session-id', session.conversation_id]
         if with_database:
             assert filename is not None
             expected.extend(['--database', str(folder / filename)])
@@ -300,7 +300,7 @@ async def test_loader_default_and_disable(tmp_path: Path, recorded: RecordingCli
         assert ('pane.report_agent', {'state': 'idle', 'message': 'ready'}) in recorded.reports
         reference = next(params for method, params in recorded.reports if method == 'pane.report_agent_session')
         assert reference['resume_argv'] == [
-            'clai2',
+            'pax',
             '--session-id',
             shell.session.conversation_id,
             '--database',

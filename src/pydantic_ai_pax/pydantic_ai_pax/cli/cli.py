@@ -36,7 +36,7 @@ def _list_live_sessions() -> None:
     from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
     if sys.platform == 'win32':
-        raise SystemExit('`clai2 sessions` requires Unix sockets.')
+        raise SystemExit('`pax sessions` requires Unix sockets.')
     try:
         sessions = [session for record in asyncio.run(listing()) for session in record.sessions]
     except (ControlProtocolError, OSError) as exc:
@@ -266,7 +266,7 @@ def _resolve_paths(args: argparse.Namespace) -> None:
 
 
 def _run_command(args: argparse.Namespace, store: 'SettingsStore') -> str:
-    """Run `clai2 config` or `clai2 plugins` with its arguments, returning what to print."""
+    """Run `pax config` or `pax plugins` with its arguments, returning what to print."""
     from pydantic_ai_pax.commands import config_command, plugins_command, refuse_widening
 
     if args.command == 'plugins':
@@ -305,17 +305,17 @@ def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
     """Normalize the update command before validating modes and session options."""
     args = parser.parse_args()
     while args.command == 'update':
-        # `clai2 update` is `clai2 --update`; options after it parse as they would before it.
+        # `pax update` is `pax --update`; options after it parse as they would before it.
         parser.parse_args(args.arguments, namespace=args)
         args.update = True
     return args
 
 
 async def _update(channel: 'UpdateChannel') -> int:
-    """`clai2 --update`: install the newest CLAI on `channel` as `/update now` does, print how it went, and exit.
+    """`pax --update`: install the newest CLAI on `channel` as `/update now` does, print how it went, and exit.
 
-    No shell runs, so nothing restarts: the next `clai2` is the new build. Exits 1 when uv failed or is missing,
-    or other `clai2` processes run from the install.
+    No shell runs, so nothing restarts: the next `pax` is the new build. Exits 1 when uv failed or is missing,
+    or other `pax` processes run from the install.
     On Windows, installing requires this process to exit first; refuse rather than report success before uv runs.
     """
     import httpx
@@ -328,7 +328,7 @@ async def _update(channel: 'UpdateChannel') -> int:
     updates = Updates(channel=lambda: channel, locate=no_relaunch)
     if updates.windows:
         print(
-            '`clai2 --update` cannot install on Windows. Use `/update now` in an interactive clai2 session.',
+            '`pax --update` cannot install on Windows. Use `/update now` in an interactive session.',
             file=sys.stderr,
         )
         return 1

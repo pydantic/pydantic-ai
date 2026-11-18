@@ -312,7 +312,7 @@ def _typed(key: str, raw: str) -> JsonValue:
 
 
 def refuse_widening(store: SettingsStore, args: list[str]) -> None:
-    """Refuse a `clai2 config` change that could widen what the agent may do: only `/config` in a session makes it."""
+    """Refuse a `pax config` change that could widen what the agent may do: only `/config` in a session makes it."""
     match args:
         case ['set', key, raw] if key in SETTING_FIELDS:
             value = _typed(key, raw)
@@ -327,9 +327,9 @@ def refuse_widening(store: SettingsStore, args: list[str]) -> None:
 
 
 def _session_only(command: str, args: list[str]) -> ValueError:
-    """The agent can run `clai2` from its shell, so a change that lets it do more is a `/command` the user types."""
+    """The agent can run `pax` from its shell, so a change that lets it do more is a `/command` the user types."""
     return ValueError(
-        f'`clai2 {command} {args[0]}` cannot let the agent do more, since the agent can run clai2 from its shell. '
+        f'`pax {command} {args[0]}` cannot let the agent do more, since the agent can run clai2 from its shell. '
         f'Run `/{shlex.join([command, *args])}` in a CLAI session instead.'
     )
 
@@ -389,7 +389,7 @@ def added_plugin(args: list[str]) -> PluginSettings:
 
 
 def plugins_command(store: SettingsStore, args: list[str]) -> str:
-    """`clai2 plugins`: list plugin declarations without importing plugins; only `/plugins` changes them."""
+    """`pax plugins`: list plugin declarations without importing plugins; only `/plugins` changes them."""
     match args:
         case [] | ['list']:
             return (

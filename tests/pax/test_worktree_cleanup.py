@@ -839,7 +839,7 @@ def run_cli(
     relaunch: bool = False,
     answer: str = 'keep',
 ) -> list[str]:
-    """Run `clai2` with a stand-in shell; `relaunch` ends it as `/update` does. Returns the prompts asked on exit."""
+    """Run `pax` with a stand-in shell; `relaunch` ends it as `/update` does. Returns the prompts asked on exit."""
     prompts: list[str] = []
 
     async def chat(*_: object, **__: object) -> None:

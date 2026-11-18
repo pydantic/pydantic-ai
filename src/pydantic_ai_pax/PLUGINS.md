@@ -16,7 +16,7 @@ from `pydantic_ai_pax.commands`.
 
 ## Startup
 
-`clai2 --help` parses arguments without loading the agent or plugins. Interactive
+`pax --help` parses arguments without loading the agent or plugins. Interactive
 startup defers model menus and provider integrations until you open those menus,
 log in, or run a prompt. Once the prompt is ready, a background thread imports
 them, so the first prompt usually finds them loaded; if it arrives sooner, it waits
@@ -280,7 +280,7 @@ details.
 ### GitHub Copilot subscriptions
 
 ```bash
-uv run clai2
+uv run pax
 ```
 
 Run `/login github-copilot`. Login adds every model your account's catalog lists
@@ -332,7 +332,7 @@ Use `/plugins disable herdr` to release the pane and persistently stop reporting
 previous disabled default begin reporting; an existing saved opt-out stays disabled.
 No herdr-side integration install is needed. The plugin requires `HERDR_ENV=1`,
 `HERDR_SOCKET_PATH`, and `HERDR_PANE_ID`; optional `HERDR_TAB_ID` enables tab titles.
-Outside herdr, on Windows, or in a session without a terminal (such as `clai2 --web`),
+Outside herdr, on Windows, or in a session without a terminal (such as `pax --web`),
 it contributes nothing and starts no worker.
 
 It reports `working` while agent runs are in flight, `blocked` while `AskUser`
@@ -347,17 +347,17 @@ plugin remains enabled by default and is not automatically disabled inside herdr
 To avoid duplicate desktop alerts, use `/plugins disable notifications` if you
 prefer herdr's alerts.
 
-Reports use the source `clai2`. Persisted sessions report their stable
+Reports use the source `pax`. Persisted sessions report their stable
 conversation ID and SQLite database path, not a per-run ID, along with the
 command herdr (0.9.2 or later) runs to restore the pane after a herdr server
 restart:
 
-- `clai2 --resume SESSION-ID` once the conversation is saved
-- `clai2 --session-id SESSION-ID` before its first prompt, so the pane reopens
+- `pax --resume SESSION-ID` once the conversation is saved
+- `pax --session-id SESSION-ID` before its first prompt, so the pane reopens
   the same empty conversation rather than the previous one
 
 Either adds `--database` with the exact settings database path when it is not
-the default `config.db`. The command runs `clai2` from your `PATH` and does not
+the default `config.db`. The command runs `pax` from your `PATH` and does not
 repeat `--model` or `--agent`. A host without a settings database path, or a
 path containing an apostrophe or a control character (which herdr refuses),
 sends no command. Turn restoration off in herdr with
@@ -396,10 +396,10 @@ track CLAI2 like its built-in agents. Register CLAI2 as an AoE custom agent:
 ```toml
 # ~/.config/agent-of-empires/config.toml
 [session.custom_agents]
-clai2 = "clai2"
+pax = "clai2"
 ```
 
-and start sessions with `aoe add --tool clai2 -l`, or pick `clai2` in AoE's new-session
+and start sessions with `aoe add --tool clai2 -l`, or pick `pax` in AoE's new-session
 dialog. If AoE alerts you on status changes (its sounds, or `[status_hooks]` such as
 `on_waiting = "notify-send ..."`), `/plugins disable notifications` avoids a second
 desktop alert from CLAI2 for the same turn.
@@ -630,7 +630,7 @@ send. In the interactive shell these records go to `telemetry.log` next to
 `config.db` (owner-only, rotated at 1 MB, one previous file kept) instead of over the editor,
 and CLAI names that file on exit when the session wrote to it. A logger your own
 application already handles, when embedding `chat()`, is left alone. Headless
-`clai2 -p` still writes them to stderr, separate from the answer on stdout.
+`pax -p` still writes them to stderr, separate from the answer on stdout.
 
 Previously named `logfire`, this plugin keeps existing enabled/disabled choices,
 settings, and saved token references. No reconfiguration is needed. Old commands
@@ -667,7 +667,7 @@ reads Logfire managed variables through the plugin's instance then reads them
 from that key's project; write tokens cannot read variables. The key is used only
 when something reads a variable. If it is missing, the plugin warns and the SDK
 reads `LOGFIRE_API_KEY` as if no key were chosen. The **Variables API key** row
-sets it. The stock agent is named `clai2`, the name its run spans carry.
+sets it. The stock agent is named `pax`, the name its run spans carry.
 Content flags do not suppress all metadata: tool names and definitions may still
 be recorded. Logfire's usual scrubbing is enabled. Set `httpx` to `true` to
 instrument `httpx` and `httpx2` requests process-wide while this plugin is loaded.
@@ -722,7 +722,7 @@ again. `git-email` uses `git config user.email` (Git is queried only then), and
 `/plugins configure observability`.
 
 `ui_events` (default `true`; set `false` to opt out) also records CLAI's UI interactions on the same
-instance, as spans and logs in the `clai2` instrumentation scope, which session
+instance, as spans and logs in the `pax` instrumentation scope, which session
 roots and plugin load failures share: menus opened and how they closed, slash
 commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
 submissions, steering, interrupts, completions, and session start, clear, and
@@ -1114,8 +1114,8 @@ Three ways to install one:
 
 No restart needed when you do it from inside CLAI. A plugin you add or enable is
 active for the next prompt; one you disable or remove is gone for the next
-prompt. From the shell, `clai2 plugins` only lists declarations: the agent can
-run `clai2` too, and turning off a plugin such as `hooks` can let it do more, so only
+prompt. From the shell, `pax plugins` only lists declarations: the agent can
+run `pax` too, and turning off a plugin such as `hooks` can let it do more, so only
 `/plugins` adds, enables, disables, or removes one. Plugins in the folder and the ones you added by name are managed the
 same way. Explicit module declarations take precedence over a same-named drop-in
 file. Reloading a disabled plugin is rejected; enable it first. Drop-in entry
@@ -1132,7 +1132,7 @@ Plugins are trusted code running as you. Only install what you trust.
 ## Worktree startup
 
 ```bash
-clai2 --worktree my-task
+pax --worktree my-task
 ```
 
 `--worktree` (or `-w`) creates or reopens `<repository-root>/.worktrees/NAME` and changes to
@@ -1147,7 +1147,7 @@ to keep. The offer includes existing linked worktrees you launch CLAI inside. Th
 also stops the automatic removal. By default, removal uses Git
 without `--force` and keeps the branch; dirty or locked checkouts stay on disk.
 Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
-and `/reload` keep the checkout in use, except under `clai2 --web`, where opening a session saved
+and `/reload` keep the checkout in use, except under `pax --web`, where opening a session saved
 elsewhere, or `/workspace`, moves the session to its own directory. Plugins do not own worktree cleanup.
 See [Git worktrees](docs/reference.md#git-worktrees) for naming and cleanup, including configuration for a user-defined removal command.
 
@@ -1447,7 +1447,7 @@ is restored on exit, and the question and your picks are printed to the transcri
 Drag over the question, its header, or an option to select text; releasing copies it
 to the clipboard without choosing an answer. Transcript text remains selectable too.
 `/plugins disable ask_user` takes the tool away, and a session without a terminal, such as
-`clai2 --web` or piped output, never gets it. While the [`web` plugin](#web-this-session-in-your-browser)
+`pax --web` or piped output, never gets it. While the [`web` plugin](#web-this-session-in-your-browser)
 is loaded, it asks the questions instead, in the browser and this picker at once.
 
 The same picker asks about the calls [`/permissions`](docs/reference.md#permissions) holds: the plugin also binds
@@ -1508,7 +1508,7 @@ show a "waiting for you" state) returns a `Hooks` capability with
 
 The built-in `web` plugin (`pydantic_ai_pax.builtin_plugins.web`) starts disabled. Enable it with
 `/plugins enable web`, then run `/web`: it starts a local server and opens the browser on a web
-UI for your sessions. `clai2 --web` starts CLAI with only the browser to drive it, loading
+UI for your sessions. `pax --web` starts CLAI with only the browser to drive it, loading
 `web` for that launch without saving anything. `/web stop` ends the server and `/web status`
 shows its address and how many browsers are connected. `web` is
 [process-scoped](#one-instance-for-the-whole-process-scope--process): one server for the whole
@@ -1532,7 +1532,7 @@ page lists them by project, or all together, in the order they were created
 `POST /api/sessions/archive` for a branch's or project's sessions at once). A session imported from
 Claude Code or Codex carries that agent's name (`source`), shown beside its title.
 
-Under `clai2 --web`, clicking a session opens it live (`POST /api/sessions/ID/open`, which calls
+Under `pax --web`, clicking a session opens it live (`POST /api/sessions/ID/open`, which calls
 `host.live.open`), even while other sessions run turns: it is resumed in a session of its own, in
 the directory it was saved in, with that directory's `.clai/settings.json` and its own instance of
 each session plugin, so the coding tools, `repo_context`, skills, and MCP project files refer to
@@ -1542,7 +1542,7 @@ their repositories (`GET /api/sessions?include_worktrees=true`), and the directo
 completes to (`GET /api/directories?path=…`, the first 12, each repository with its worktrees). Its
 **New worktree…** (on a row, or below the list for the row the arrow keys select) first checks out a new
 branch of that folder's repository
-(`POST /api/worktrees`, which places it as `clai2 --worktree` does and answers its folder). The page
+(`POST /api/worktrees`, which places it as `pax --worktree` does and answers its folder). The page
 watches the session it
 shows (`LiveSession.watch`), so that one is never closed for being idle; any other live session
 closes after an idle hour, and clicking it again resumes it. The sidebar marks each live session
@@ -1559,7 +1559,7 @@ was saved in, and `/workspace DIRECTORY` (an existing absolute path) starts a ne
 there (`host.sessions.follows_workspace`); its session-scoped plugins load again, each getting
 `on_session_end` and then `on_session_start`, as on `/plugins reload`, and process-scoped ones
 stay loaded. Nothing moves while a turn, a background
-`/fork`, or a delegated task runs. `clai2 --web --resume ID` starts in that session's directory.
+`/fork`, or a delegated task runs. `pax --web --resume ID` starts in that session's directory.
 The [wire protocol](clai2_web_README.md#wire-protocol) names each message's session and lists the
 routes for one session.
 
@@ -1577,7 +1577,7 @@ the others a dialog, except where a section lists the command, as Keys & account
 `/login`, and `/accounts`, and MCP servers lists `/mcp`. Its edits go through the menu's own
 source, as in the terminal, which prints what each one saved. Any other bare command that opens a
 terminal menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
-`/model NAME` instead. When CLAI has no terminal, as for `clai2 --web` started from a script or
+`/model NAME` instead. When CLAI has no terminal, as for `pax --web` started from a script or
 service, a command that opens a terminal menu or prompt, such as `/model add`, fails with an error
 notice instead of closing as cancelled; `/login openai-codex` and a plugin's `read_line` ask in the
 page instead.
@@ -1676,7 +1676,7 @@ status, origin, and description, and a switch that turns it on or off as `/plugi
   switch for each boolean, a list for each choice, fields for text and numbers, one line per item
   for a list of strings, and JSON for anything else. Each change is validated by the model and
   saved at once, then the plugin is loaded again with it. A menu of its own (`configure`) opens
-  in the terminal from the panel's **Open its menu**; `clai2 --web` has no terminal to open it in.
+  in the terminal from the panel's **Open its menu**; `pax --web` has no terminal to open it in.
 
 Plugins' [side panels](#show-a-page-beside-the-conversation-get_side_panels) each get a button
 at the top right; Cmd/Ctrl+Shift+L toggles the first one, such as `observability`'s Logfire live
@@ -1711,7 +1711,7 @@ printed link does, and the WebSocket as a query parameter, from the server's own
 cookie holds it, since browsers send a host's cookies to all of its ports. `/web` opens the
 browser through a page only you can read, so the token never appears on a command line. Model
 output is rendered as sanitized Markdown. Anyone with the link can drive the session, so keep it
-private. `/web stop` is refused under `clai2 --web`, where the browser is the only way in.
+private. `/web stop` is refused under `pax --web`, where the browser is the only way in.
 
 The UI is a React app in `web-ui/` in the CLAI source tree. Its built files ship inside the
 package, so running it needs no Node. Follow the [web UI development guide](web-ui/README.md)
@@ -1726,7 +1726,7 @@ result. A failed install, or nothing to install, says so and changes nothing. Af
 CLAI restarts as the new build serving the web UI again on the same port with the same token, and
 resumes the session; the page says it is restarting, reconnects by itself, and names the new
 version, and About names the versions it updated from and to. That holds for
-`clai2 --web`, with its `--port` and `--token-file`, and for `/web` started from a terminal, which
+`pax --web`, with its `--port` and `--token-file`, and for `/web` started from a terminal, which
 restarts as a terminal session with the web UI running, though the browser does not open again.
 The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment variable, which only
 you can read and CLAI removes before anything else runs, never on its command line, which `ps`
@@ -1741,7 +1741,7 @@ asked shows uv's output and the result too.
 Installing from another folder shown in the terminal is refused, as CLAI
 restarts in the folder it started in.
 
-`clai2 --web --port PORT` replaces the saved port for one launch; `0` picks a free one. `--token-file
+`pax --web --port PORT` replaces the saved port for one launch; `0` picks a free one. `--token-file
 PATH` replaces the launch's random token with the one in PATH, which must belong to you, be readable
 by you alone (mode 0600), and hold one URL-safe token of at least 32 characters. That is for a
 program that starts CLAI and talks to it: CLAI then listens on
@@ -1807,7 +1807,7 @@ machine. The default settings have one kind of that name:
 |---|---|---|
 | `repo` | empty | the repository when `create` names none: a local path, or a URL |
 | `ref` | empty | the branch, tag, or commit to start from when `create` names none; empty is the repository's `HEAD` |
-| `root` | empty | the folder checkouts go in, an absolute path; empty is `.worktrees/` in the repository, as for `clai2 --worktree` |
+| `root` | empty | the folder checkouts go in, an absolute path; empty is `.worktrees/` in the repository, as for `pax --worktree` |
 | `branch_prefix` | `clai-` | each workspace's branch is this prefix and its ID |
 | `teardown` | `remove` | `destroy` removes the checkout, uncommitted changes included, or `keep`s it |
 
@@ -1844,7 +1844,7 @@ there, so **New session** in that group starts one in the checkout. A search lis
 
 ### Orchestrator: an agent that runs workspaces
 
-The web UI (`/web`, or `clai2 --web`) has an **Orchestrator** button in the sidebar, right below
+The web UI (`/web`, or `pax --web`) has an **Orchestrator** button in the sidebar, right below
 **New session**. It opens the orchestrator chat in the main pane; clicking a session goes back. The
 orchestrator is an agent of its own, separate from the session's: its own conversation, its own
 instructions (manage workspaces, give their agents tasks, watch, steer, report back, ask before
@@ -2536,10 +2536,10 @@ failed. A plugin that is installed but fails to import one of its dependencies
 is still reported, and `/plugins enable`, `add`, and `reload` always report
 failures.
 
-With arguments `/plugins` is a plain command. The standalone `clai2 plugins list`
+With arguments `/plugins` is a plain command. The standalone `pax plugins list`
 reads saved declarations without loading plugin code. Adding, enabling, disabling,
 removing, configuring, and reloading plugins are
-available only inside a CLAI session, since the agent can run `clai2` from its shell:
+available only inside a CLAI session, since the agent can run `pax` from its shell:
 
 | Command | Does |
 |---|---|
@@ -2704,8 +2704,8 @@ Ten `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
-| `on_session_start` | CLAI has started, before the first prompt, or the plugin loaded mid-session; for a session-scoped plugin, also when a live session opens (`host.live.open` or `new`, as the web UI does) or moves to another folder under `clai2 --web` ([Several live sessions](#several-live-sessions)) | `agent`, `settings`, `conversation_chosen` | no |
-| `on_session_end` | CLAI is quitting, or the plugin is unloading; for a session-scoped plugin, also when its session closes (idle for an hour, or `host.live.close`, with `reason='exit'`) or moves to another folder under `clai2 --web` ([Several live sessions](#several-live-sessions)) | `reason`: `exit`, `eof`, or `error` | no |
+| `on_session_start` | CLAI has started, before the first prompt, or the plugin loaded mid-session; for a session-scoped plugin, also when a live session opens (`host.live.open` or `new`, as the web UI does) or moves to another folder under `pax --web` ([Several live sessions](#several-live-sessions)) | `agent`, `settings`, `conversation_chosen` | no |
+| `on_session_end` | CLAI is quitting, or the plugin is unloading; for a session-scoped plugin, also when its session closes (idle for an hour, or `host.live.close`, with `reason='exit'`) or moves to another folder under `pax --web` ([Several live sessions](#several-live-sessions)) | `reason`: `exit`, `eof`, or `error` | no |
 | `on_turn_start` | you pressed Enter on a prompt, or a plugin sent one with `send_input` | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |
 | `on_conversation_changed` | the shell switched conversations, or the current one got a new title | `conversation_id`, `title` | no |
@@ -2775,7 +2775,7 @@ install runs after CLAI exits.
 with events `TaskEvent` and `UpdateProgress`. A plugin that still defines an old handler name keeps
 receiving the event, with a `PydanticAIDeprecationWarning` when its class is defined, and the old
 event names still import with the same warning. CLAI hides warnings, so you see it in your tests,
-or when you run `clai2` with `PYTHONWARNINGS=default`. Rename them; the old names will be removed.
+or when you run `pax` with `PYTHONWARNINGS=default`. Rename them; the old names will be removed.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
@@ -3030,7 +3030,7 @@ prompt the keyboard does:
   `on_conversation_changed` at once, even while a turn runs, unlike background naming.
   `follows_workspace` says whether `/resume ID` moves the session into the directory it was saved
   in (its `host.workspace`; the process's working directory never changes), as under
-  `clai2 --web`, rather than refusing a session saved elsewhere.
+  `pax --web`, rather than refusing a session saved elsewhere.
 - `self.host.plugins` is what `/plugins` manages, or `None` on a host built outside the loader:
   `listing()` returns a `PluginInfo` per plugin (name, description, origin, source, status, error,
   what it provides, whether it has its own settings menu, and, while it is on, its settings model and
@@ -3238,7 +3238,7 @@ class Chooser(Plugin):
 ```
 
 When no terminal shows the session and stdin is not a terminal either, as for
-`clai2 --web` started from a script, a slash command's `run_worker` raises
+`pax --web` started from a script, a slash command's `run_worker` raises
 `ValueError` saying the command needs a terminal, which the page shows as the
 command's error. Call `require_terminal()` from
 `pydantic_ai_pax.ui.menus.menu_worker` before a prompt of your own that reads the
@@ -3596,7 +3596,7 @@ session; it does not follow `host.live.current()`.
 `host.workspace` is the directory the session works in: where its runs' file and
 shell tools work, and where its `AGENTS.md`, skills, `.clai/settings.json`, and MCP
 project files are read. Never read `Path.cwd()` or call `os.chdir`: CLAI does not
-change the process's working directory after startup, and under `clai2 --web` each
+change the process's working directory after startup, and under `pax --web` each
 session has its own directory. Resolve a relative path against `host.workspace`,
 and start a subprocess with `cwd=host.workspace`. A host built outside the shell,
 such as in a test, has the current directory, unless it was built with
@@ -3956,7 +3956,7 @@ panel shows a bar and reset time for each.
 
 ## Several live sessions
 
-The terminal runs one session at a time. The web UI (`clai2 --web`, or `/web` from a
+The terminal runs one session at a time. The web UI (`pax --web`, or `/web` from a
 terminal) keeps several sessions live in one CLAI process, each with its own
 conversation, folder, plugins, queued input, and running turn. A plugin that follows
 these rules works the same in both.
@@ -3965,11 +3965,11 @@ these rules works the same in both.
    plugin for each live session, so under the web UI several exist at once. Each is
    loaded and unloaded on its own: `on_session_start` when its session opens or the
    plugin is turned on, `on_session_end` when its session closes or the plugin is
-   turned off. Under `clai2 --web`, moving a session to another folder (`/resume ID`,
+   turned off. Under `pax --web`, moving a session to another folder (`/resume ID`,
    `/workspace`) ends and starts its instances again. A session closes after it has sat idle for an hour: no turn, no queued
    input, no fork or delegated task, and no browser or terminal showing it (a page counts as showing
    the last five sessions it showed). Only the
-   session `clai2 --web` started with never closes this way. Opening a closed session
+   session `pax --web` started with never closes this way. Opening a closed session
    again resumes it in a new session, with new instances.
 2. **Use `host.workspace`, never the process's directory.** Each session works in its
    own folder. CLAI never changes the process's working directory after startup, so
@@ -4067,7 +4067,7 @@ What changes for a process-scoped plugin:
 | `current()` | the session being handled now, or `None` outside a moment, command, or run |
 | `await open(conversation_id)` | the live session holding that saved conversation; when none does, resumes it in a new live session in the folder it was saved in. Concurrent calls for one conversation get the same session. A conversation another process runs continues in a fork of it, reusing one saved before, so the session's `conversation.conversation_id` differs from the one passed. Raises `LookupError` for an unknown conversation, `ValueError` when its folder is gone, and `RuntimeError` where CLAI opens no other sessions |
 | `await new(workspace=None)` | a new live session with a new conversation, in `workspace`, by default the folder CLAI started in. Raises `ValueError` unless `workspace` is an existing absolute folder, and `RuntimeError` where CLAI opens no other sessions |
-| `await close(live_id)` | close a live session, cancelling its turn; its plugins end with `'exit'`. Raises `LookupError` when none is live, and `ValueError` for a session its own driver runs: the one the terminal shows, or the one `clai2 --web` or `clai2 -p` started with. A host built outside CLAI's shell raises `RuntimeError` |
+| `await close(live_id)` | close a live session, cancelling its turn; its plugins end with `'exit'`. Raises `LookupError` when none is live, and `ValueError` for a session its own driver runs: the one the terminal shows, or the one `pax --web` or `pax -p` started with. A host built outside CLAI's shell raises `RuntimeError` |
 | `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued (including an edit of its queue), waiting-for-user, or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |
 
 Never await `open` or `new` from `on_session_start`: the new session waits for the
@@ -4126,7 +4126,7 @@ all waits have ended.
 
 With one session, as in a terminal where the web UI opened no other, `host.live`
 lists just that one. `open` and `new` raise `RuntimeError` only where CLAI opens no
-other sessions, such as a headless `clai2 -p` run.
+other sessions, such as a headless `pax -p` run.
 
 ## Testing a plugin
 
@@ -4482,7 +4482,7 @@ accepted request when a turn fails or is cancelled.
 
 ## Headless CLI runs
 
-`clai2 -p "PROMPT" [-m PROVIDER:NAME]` runs one saved turn without an editor.
+`pax -p "PROMPT" [-m PROVIDER:NAME]` runs one saved turn without an editor.
 Session and turn hooks still run; stream renderers do not. Host console output
 is suppressed, and stdout contains only the final answer. Plugin load failures
 abort the run. The `ask_user` plugin is skipped even if saved settings enable or

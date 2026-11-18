@@ -93,7 +93,7 @@ def add_worktree(*, repo: Path, path: Path, branch: str, base: str) -> Worktree:
     """Check out a new `branch` from `base` at `path`, a linked worktree of `repo`; `ValueError` when Git refuses.
 
     The branch tracks nothing, so a push names its own upstream. A checkout in `repo`'s own
-    `.worktrees/`, where `clai2 --worktree` puts them, is added to Git's excludes as that does.
+    `.worktrees/`, where `pax --worktree` puts them, is added to Git's excludes as that does.
     """
     try:
         _git('-C', str(repo), 'worktree', 'add', '--no-track', '-b', branch, '--', str(path), base)
@@ -109,7 +109,7 @@ def add_worktree(*, repo: Path, path: Path, branch: str, base: str) -> Worktree:
 
 
 def new_worktree(*, repo: Path, branch: str, base: str) -> Worktree:
-    """Check out a new `branch` from `base` in `.worktrees/` of the checkout `repo` is in, where `clai2 --worktree` puts them.
+    """Check out a new `branch` from `base` in `.worktrees/` of the checkout `repo` is in, where `pax --worktree` puts them.
 
     The folder is the branch with anything but letters, digits, `.`, `-`, and `_` turned into `-`. Without
     a branch, the name is generated and the branch is `clai-NAME`, as with `--worktree` without NAME; without

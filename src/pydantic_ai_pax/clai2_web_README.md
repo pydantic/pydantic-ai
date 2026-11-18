@@ -25,7 +25,7 @@ empty; it goes in `.worktrees/` as `--worktree` puts it. You can also type any d
 absolute path, which it completes as you type, listing each repository with its worktrees shown.
 The header shows where the session works.
 `/workspace DIRECTORY` or `/resume ID` typed in a session moves that session instead, never while a
-turn, a background `/fork`, or a delegated task runs in it. `clai2 --web --resume ID` starts in that
+turn, a background `/fork`, or a delegated task runs in it. `pax --web --resume ID` starts in that
 session's directory. A session left idle for an hour, with nothing running or queued and no browser
 watching it (a page watches the last five sessions it showed), closes, except the one CLAI started
 with; it stays saved, and clicking it resumes it. The launch directory's `.env` stays loaded.
@@ -309,7 +309,7 @@ does. `Explore` and `Plan` workers are one-shot and take no follow-ups. **← Se
 row, goes back.
 
 <!-- From #10372 -->
-`clai2 --web --port PORT` listens on PORT for that launch (`0` picks a free one). `--token-file PATH`
+`pax --web --port PORT` listens on PORT for that launch (`0` picks a free one). `--token-file PATH`
 takes the launch's token from a file only you can read, instead of making one, for a program that
 starts CLAI and keeps the token itself: CLAI then listens on 127.0.0.1 only, the printed address
 leaves the token out, and no browser opens.
@@ -358,7 +358,7 @@ own agent gets none of this. See [the plugin guide](PLUGINS.md#orchestrator-an-a
 
 ## Several live sessions
 
-The web UI (`clai2 --web`, or `/web` from a terminal) keeps every session you open live in the one
+The web UI (`pax --web`, or `/web` from a terminal) keeps every session you open live in the one
 CLAI process: each runs its own turns in
 its own folder, with its own plugins and input queue, while the others run theirs. Over its one
 WebSocket the page watches the last five sessions it showed, keeping each one's transcript current,

@@ -626,7 +626,7 @@ def _show_in_terminal(
     """Show `shell` in a new `Terminal`, keeping the output `transcript` retains, as across a reload.
 
     With `shows_others`, `/resume` of a conversation another live session holds shows that session there;
-    `clai2 --web` keeps its terminal on the session it started with.
+    `pax --web` keeps its terminal on the session it started with.
     """
     Terminal[DepsT, OutputT](
         console=shell.console,
@@ -1439,7 +1439,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     def _without_terminal(self, text: str) -> AbstractContextManager[None]:
         """Fail the terminal menus and prompts command `text` opens while CLAI has no terminal for them.
 
-        That is when no terminal shows this session and stdin is not one either, as under `clai2 --web`
+        That is when no terminal shows this session and stdin is not one either, as under `pax --web`
         started from a script: a menu would read EOF and close as cancelled. What can ask through a
         remote UI's dialogs asks there instead.
         """

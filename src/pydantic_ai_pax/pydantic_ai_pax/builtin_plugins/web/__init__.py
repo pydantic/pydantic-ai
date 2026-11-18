@@ -1,6 +1,6 @@
 """Open this session in your browser: a local web UI with streaming chat, tool cards, and a sessions sidebar.
 
-The built-in `web` plugin, off by default. `/web` starts the server and opens the browser; `clai2 --web`
+The built-in `web` plugin, off by default. `/web` starts the server and opens the browser; `pax --web`
 starts CLAI with only the browser to drive it. The terminal and the browser drive the same session.
 """
 
@@ -90,9 +90,9 @@ class WebPlugin(Plugin[WebSettings]):
         self.token = secrets.token_urlsafe(32)
         """Checked on every request; new each launch, so an old link stops working, but kept across `/update`."""
         self.port: int | None = None
-        """This launch's port, replacing the saved one, as `clai2 --web --port` sets it."""
+        """This launch's port, replacing the saved one, as `pax --web --port` sets it."""
         self.listen: str | None = None
-        """This launch's address, replacing the saved one: loopback for a launcher's `clai2 --web --token-file`."""
+        """This launch's address, replacing the saved one: loopback for a launcher's `pax --web --token-file`."""
         terminal = (
             TerminalAnswerer(full_screen=host.full_screen, console=host.console) if host.console.is_terminal else None
         )
