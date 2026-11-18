@@ -331,7 +331,8 @@ agent = Agent(
 ```
 
 `LocalWorkspace` only attaches to a reference to its own directory, so message history can't point the
-agent at another directory on your machine.
+agent at another directory on your machine. The directory is compared as written, without resolving
+symlinks, so if you change `~/proj` to the path it links to, old conversations no longer match.
 
 When no capability supplies the workspace:
 
@@ -445,7 +446,8 @@ A tool that builds paths or shell commands itself can read
 - A local command whose combined output passes 10 MiB raises `WorkspaceOutputLimitError`, with the first
   64 KiB of each stream. Redirect large output to a file.
 - Commands get stdin at EOF, so use non-interactive flags such as `-y`.
-- `LocalWorkspace` background processes outlive the run; stop them before your program exits.
+- `LocalWorkspace` background processes outlive the run. Redirect their output to a file so the command
+  doesn't wait for them, and stop them before your program exits.
 - Run spans record the workspace id, a `LocalWorkspace`'s directory path included, even with
   `include_content=False`.
 - Realtime sessions don't select a workspace yet.

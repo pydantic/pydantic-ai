@@ -202,6 +202,7 @@ agent = Agent('{{ anthropic:large }}', deps_type=User, capabilities=[UsersE2B(),
 - E2B's client falls back to `E2B_API_KEY` when its key is empty, so check for a key first, as above, or a user without one runs on that account.
 - Destroy a user's sandbox with that user's key: `await E2BSandbox(client=E2B(api_key=user.e2b_api_key)).destroy(ref)`. With another account's client the sandbox isn't found, `destroy` returns without an error, and the sandbox keeps billing.
 - Under [Temporal](../durable_execution/temporal.md), `deps` are stored in the workflow's history. Put a user ID there, and look the key up in `get_workspace` on the worker.
+
 ## Keep a token out of the sandbox
 
 Pass `network` to have E2B add a token to the sandbox's requests itself, so the token is never inside the sandbox. `network` takes E2B's own network options and passes them on unchanged. Here `gh` and `git push` work as the token's owner, while `echo $GH_TOKEN` in the sandbox prints `placeholder`:
