@@ -702,8 +702,8 @@ async def test_an_unfinished_call_runs_nothing(allow_model_requests: None) -> No
 @pytest.mark.parametrize('tool', ['native', 'function', 'searched-function'])
 @pytest.mark.parametrize(
     'ending, streamed',
-    [('incomplete', False), ('incomplete', True), ('refused', True)],
-    ids=['incomplete-response', 'incomplete-stream', 'refused-stream'],
+    [('incomplete', False), ('incomplete', True), ('refused', True), ('cut-off', True)],
+    ids=['incomplete-response', 'incomplete-stream', 'refused-stream', 'stream-without-final-event'],
 )
 async def test_a_finished_call_in_a_response_that_did_not_complete_runs_nothing(
     allow_model_requests: None, tool: str, ending: str, streamed: bool
@@ -711,7 +711,8 @@ async def test_a_finished_call_in_a_response_that_did_not_complete_runs_nothing(
     """OpenAI says to stop when a response is incomplete, failed or refused, even when the computer call finished.
 
     The call's arguments don't parse, so, as `test_an_unfinished_call_runs_nothing` shows, none of it runs. A refused
-    response that isn't streamed has no parts at all, as for every other call. A deferred `computer` tool is stopped
+    response that isn't streamed has no parts at all, as for every other call. A stream that ends before its final
+    event still has the `in_progress` status its `response.created` event gave it. A deferred `computer` tool is stopped
     too: tool search can reveal it inside the response, and the run then finds it before running the response's calls.
     """
     native = tool == 'native'
@@ -742,14 +743,18 @@ async def test_a_finished_call_in_a_response_that_did_not_complete_runs_nothing(
         else {'output': [item, refusal]}
     )
     stream: list[resp.ResponseStreamEvent] = [
-        resp.ResponseCreatedEvent(response=response_message([]), type='response.created', sequence_number=0),
+        resp.ResponseCreatedEvent(
+            response=response_message([]).model_copy(update={'status': 'in_progress'}),
+            type='response.created',
+            sequence_number=0,
+        ),
         resp.ResponseOutputItemDoneEvent(
             item=item, output_index=0, type='response.output_item.done', sequence_number=1
         ),
     ]
     if ending == 'incomplete':
         stream.append(resp.ResponseIncompleteEvent(response=final, type='response.incomplete', sequence_number=2))
-    else:
+    elif ending == 'refused':
         stream += [
             resp.ResponseRefusalDoneEvent(
                 item_id='msg_1',
