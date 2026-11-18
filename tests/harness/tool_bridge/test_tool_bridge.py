@@ -267,19 +267,44 @@ class TestToolBridge:
                 raise ApprovalRequired
             return f'deleted {path} for {ctx.tool_call_metadata}'
 
+        approvals: list[str] = []
+
+        def approve(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
+            approvals.extend(call.tool_name for call in requests.approvals)
+            return requests.build_results(
+                approve_all=True, metadata={call.tool_call_id: {'by': 'alice'} for call in requests.approvals}
+            )
+
+        call = _call('tool_call', name='delete_file', args_json='{"path": "a.txt"}')
+        agent = Agent(
+            _scripted([call]), tools=[delete_file], capabilities=[HandleDeferredToolCalls(approve), ToolBridge()]
+        )
+
+        result = await agent.run('delete a.txt')
+
+        assert approvals == ['delete_file']
+        assert call_ids == [call.tool_call_id, call.tool_call_id]
+        assert _returns(result.all_messages()) == ["deleted a.txt for {'by': 'alice'}"]
+
+    async def test_unresolved_deferral_fails_the_call(self):
+        def delete_file(ctx: RunContext[object], path: str) -> str:
+            """Delete a file."""
+            raise ApprovalRequired
+
         model = _scripted([_call('tool_call', name='delete_file', args_json='{"path": "a.txt"}')])
         agent = Agent(model, tools=[delete_file], capabilities=[ToolBridge()], output_type=[str, DeferredToolRequests])
 
-        first = await agent.run('delete a.txt')
-        assert isinstance(first.output, DeferredToolRequests)
-        assert [call.tool_name for call in first.output.approvals] == ['tool_call']
+        result = await agent.run('delete a.txt')
 
-        [request] = first.output.approvals
-        results = first.output.build_results(approve_all=True, metadata={request.tool_call_id: {'by': 'alice'}})
-        second = await agent.run(message_history=first.all_messages(), deferred_tool_results=results)
-
-        assert _returns(second.new_messages()) == ["deleted a.txt for {'by': 'alice'}"]
-        assert call_ids == [request.tool_call_id, request.tool_call_id]
+        assert result.output == 'done'
+        [failed] = _return_parts(result.all_messages())
+        assert (failed.tool_name, failed.outcome, failed.content) == snapshot(
+            (
+                'tool_call',
+                'failed',
+                "Tool 'delete_file' needs approval or runs outside the agent, so it can only be called directly, not through `tool_call`.",
+            )
+        )
 
     async def test_denied_by_a_handler(self):
         def delete_file(ctx: RunContext[object], path: str) -> str:

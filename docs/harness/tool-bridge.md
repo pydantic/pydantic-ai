@@ -41,7 +41,7 @@ A tool added, removed or changed mid-run changes what `tool_search` finds, not t
 
 These tools are never bridged, so they reach the model as usual:
 
-- Tools that need approval or run outside the agent (`requires_approval=True`, external tools), so approval requests name the real tool. A bridged tool that raises `ApprovalRequired` itself is deferred as its `tool_call` call, and runs once that call is approved; a denial is recorded as the `tool_call` call's denied outcome.
+- Tools that need approval or run outside the agent (`requires_approval=True`, external tools), so approval requests name the real tool. A bridged tool that raises `ApprovalRequired` or `CallDeferred` itself can be resolved by a [`HandleDeferredToolCalls`](../capabilities/handle-deferred-tool-calls.md) handler, which sees the tool's own name; a denial is recorded as the `tool_call` call's denied outcome. Without a handler that resolves it, the `tool_call` call fails, so an approval of `tool_call` never covers whichever tool the model named. Keep such a tool native with `tools` if it needs approval from outside the run.
 - Framework control tools, such as tool search and `load_capability`.
 - Code-execution tools, such as Code Mode's `run_code` and Shell's `run_command`, which take a program as a string argument, so it isn't sent JSON-escaped inside `args_json`.
 - Local fallbacks for a provider-native tool (`unless_native`), so the model can drop them when the provider runs the tool natively.

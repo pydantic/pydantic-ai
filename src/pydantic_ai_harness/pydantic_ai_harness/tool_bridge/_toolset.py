@@ -11,7 +11,15 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import ToolDefinition
 from pydantic_ai.capabilities import ToolSearchFunc, keywords_search
-from pydantic_ai.exceptions import ModelRetry, ToolFailed, ToolFailedError, ToolRetryError, UserError
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    ToolFailed,
+    ToolFailedError,
+    ToolRetryError,
+    UserError,
+)
 from pydantic_ai.messages import ToolCallPart, ToolKind, ToolReturnPart
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolSelector, matches_tool_selector
@@ -203,6 +211,10 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         The nested manager shares the step's record of failed and successful tools with the run's, so the
         tool's retries are counted under its own name, and its `ctx.retry` and `max_retries` see only its
         own failures. A retry or failure it reports is passed on as `tool_call`'s.
+
+        A deferral the tool raises (`ApprovalRequired`, `CallDeferred`) is only resolved by a
+        `HandleDeferredToolCalls` handler, which sees the tool's own name. Otherwise the call fails rather
+        than deferring `tool_call`, whose approval would then cover whichever tool the model named.
         """
         parent = ctx.tool_manager
         if parent is None:
@@ -228,7 +240,12 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         ctx.usage.tool_calls += reserved
         reserved *= 2
         try:
-            return await manager.handle_call(call, approved=ctx.tool_call_approved, metadata=ctx.tool_call_metadata)
+            return await manager.handle_call(call)
+        except (ApprovalRequired, CallDeferred) as exc:
+            raise ToolFailed(
+                f'Tool {name!r} needs approval or runs outside the agent, so it can only be called directly, '
+                'not through `tool_call`.'
+            ) from exc
         except ToolRetryError as exc:
             retry = exc.tool_retry
             assert isinstance(retry, ToolReturnPart), 'a retry of a tool call answers it'
