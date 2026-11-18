@@ -30,7 +30,7 @@ from pydantic_core import PydanticOmit, SchemaError, to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import TypedDict
 
-from pydantic_ai._utils import get_function_type_hints
+from pydantic_ai._utils import get_function_type_hints, is_classvar_annotation
 
 if TYPE_CHECKING:
     from pydantic import ModelWrapValidatorHandler
@@ -333,7 +333,7 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
     type has no JSON form, since no spec entry can then load `target`.
     """
     parameters = inspect.signature(target).parameters
-    hints = get_function_type_hints(target, include_keys=_spec_annotation_names(target))
+    hints = _spec_annotation_hints(target)
     hints.pop('return', None)
 
     # Filter out non-serializable types (TypeVars, Callables) from unions
@@ -363,15 +363,16 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
     return type_hints, required_type_hints
 
 
-def _spec_annotation_names(target: Callable[..., object]) -> set[str] | None:
-    """The names of `target`'s annotations that can be spec parameters, or `None` for all of them.
+def _spec_annotation_hints(target: Callable[..., object]) -> dict[str, Any]:
+    """The resolved type hints of `target`'s annotations that can be spec parameters.
 
     A class target's annotations also name attributes its `__init__` doesn't take, like a `ClassVar` or an
-    `init=False` dataclass field. A target accepting `**kwargs` can take any of them.
+    `init=False` dataclass field. A target accepting `**kwargs` can take any of them except a `ClassVar`.
     """
     if _accepts_var_keyword(target):
-        return None
-    return set(inspect.signature(target).parameters)
+        hints = get_function_type_hints(target)
+        return {name: hint for name, hint in hints.items() if not is_classvar_annotation(hint)}
+    return get_function_type_hints(target, include_keys=set(inspect.signature(target).parameters))
 
 
 def _without_not_required(type_hint: object) -> object:

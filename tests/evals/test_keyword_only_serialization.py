@@ -164,8 +164,9 @@ with try_import() as imports_successful:
 
     @dataclass
     class InitFalseTakenByKwargs(Evaluator[str, str, str]):
-        """A hand-written `__init__` takes `bonus` through `**kwargs`, so a file keeps it."""
+        """A hand-written `__init__` takes `bonus` through `**kwargs`, so a file keeps it, but not the `ClassVar`."""
 
+        unit: ClassVar[str] = 'characters'
         bonus: int = field(default=0, init=False)
         minimum: int
 
