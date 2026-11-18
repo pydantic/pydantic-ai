@@ -12,7 +12,7 @@
 
 **Pydantic AI Harness** is the official [capability](https://ai.pydantic.dev/capabilities/overview/) and harness library for [Pydantic AI](https://ai.pydantic.dev/). Every Pydantic AI agent already has a light harness: the typed agent loop, [any model](https://ai.pydantic.dev/models/), your own tools, structured output. For simple agents that's enough. But set an agent loose on complex, long-running work (fix a codebase, research a question, run for hours unattended) and what it needs around the model grows: a [workspace](pydantic_ai_harness/file_system/) to act in, a [plan](pydantic_ai_harness/planning/) it keeps current, [memory](pydantic_ai_harness/memory/) that carries across sessions, [sub-agents](pydantic_ai_harness/sub_agents/) to hand work to, [context management](pydantic_ai_harness/compaction/) for long runs, and [durable execution](https://ai.pydantic.dev/capabilities/durable_execution/overview/) that survives a restart. **Pydantic AI Harness** ships that harness.
 
-Everything here is one primitive: a [capability](https://ai.pydantic.dev/capabilities/), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [90+ of them](#capabilities), and complete agents like [Coder](pydantic_ai_harness/coder/) and [Researcher](pydantic_ai_harness/researcher/) are themselves combinations of capabilities. Use a single capability, compose your own set, or start from the whole coding agent and swap parts out.
+Everything here is one primitive: a [capability](https://ai.pydantic.dev/capabilities/), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [100+ of them](#capabilities), and complete agents like [Coder](pydantic_ai_harness/coder/) and [Researcher](pydantic_ai_harness/researcher/) are themselves combinations of capabilities. Use a single capability, compose your own set, or start from the whole coding agent and swap parts out.
 
 ## Pydantic AI, the Harness, and CLAI
 
@@ -146,13 +146,14 @@ Look up a capability by the problem it solves. The Capabilities section below li
 | One tool result is flooding the context window | [`ToolOutputLimits`](pydantic_ai_harness/tool_output_limits/) | By default, a result of 10,000 characters or more spills to a file in the run's workspace, and the model gets a preview plus a handle to read the rest. If the write fails, the result is truncated to 4,000 characters. Without a workspace, pass `store=LocalFileOverflowStore()`. |
 | The agent's files and commands must start in a specific directory | Core [`LocalWorkspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/), or a sandbox | Set the directory on the workspace: `LocalWorkspace('./repo')`, or `working_dir=` on a sandbox. Every capability that works in the workspace starts there; `Shell(cwd=)` and `FileSystem(cwd=)` warn and are ignored. In your own tool, `ctx.workspace.run(..., cwd='subdir')` starts one command elsewhere. |
 | A run, a day, or a tenant needs a spend ceiling | Core [`UsageLimits`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits), or [`SpendLimits`](pydantic_ai_harness/spend_limits/) | For one run, pass `usage_limits=UsageLimits(cost_limit=Decimal('5'))`: the run raises `UsageLimitExceeded` after the response that crosses the limit. For a day or month, per tenant, or across worker processes, `SpendLimits(budgets=[Budget(usd=Decimal('100'), window='day')])` refuses the next request once a window is spent. |
+| The model hits a usage or spend limit before it answers | [`ReportRemainingBudget`](pydantic_ai_harness/report_remaining_budget/) | `ReportRemainingBudget(spend_limits=spend)` tells the model on every request how many requests, tool calls, tokens and dollars the run's `UsageLimits` and the `SpendLimits` budgets have left, so it can answer while it still can. |
 | The model should get only a few calls to an expensive tool per run | [`ToolBudgets`](pydantic_ai_harness/tool_budgets/) | `ToolBudgets(per_tool={'web_search': 3}, refuse_repeats={'web_search'})` answers the fourth call, or an exact repeat, with a tool result saying the budget is used, and the run continues. `UsageLimits.tool_calls_limit` stays the hard ceiling. |
 | The model repeats the same tool call without making progress | [`DetectLoops`](pydantic_ai_harness/detect_loops/) | The default `action='nudge'` adds a system prompt asking the model to change approach; `action='error'` stops the run with `LoopDetectedError`. |
 | The model sends malformed JSON in a tool call | [`RepairToolArguments`](pydantic_ai_harness/repair_tool_arguments/) | Runs `json-repair` on the arguments before validation, fixing trailing commas, single-quoted keys and truncated JSON; valid arguments pass through unchanged. Import it from `pydantic_ai_harness.repair_tool_arguments` and install the `repair-tool-arguments` extra. `Coder` includes `RepairToolArguments`, so its `coder` extra installs `json-repair` too. |
 
 ## Capabilities
 
-Every capability is a self-contained unit you drop into `capabilities=[...]`, and they all compose, with each other and with your own. Some come with [`pydantic-ai`](https://github.com/pydantic/pydantic-ai) itself, the rest with this package; the **Package** column says which. 90+ in all, grouped by what they give your agent:
+Every capability is a self-contained unit you drop into `capabilities=[...]`, and they all compose, with each other and with your own. Some come with [`pydantic-ai`](https://github.com/pydantic/pydantic-ai) itself, the rest with this package; the **Package** column says which. 100+ in all, grouped by what they give your agent:
 
 ### Harnesses
 
@@ -261,6 +262,7 @@ How the agent spends its context window over a long run, and how often it pays f
 | [Compaction](pydantic_ai_harness/compaction/) | Harness | Model-agnostic strategies: tool-result clearing, sliding-window trimming, LLM summarization, tiered; all window-relative, with live usage reporting |
 | [Tool Output Limits](pydantic_ai_harness/tool_output_limits/) | Harness | Truncate, spill to a queryable file, or summarize oversized tool returns at the source |
 | [Warn On Cache Busts](pydantic_ai_harness/warn_on_cache_busts/) | Harness | Detect prompt-cache prefix collapses between requests, from the provider's own numbers |
+| [Label Cross Model History](pydantic_ai_harness/label_cross_model_history/) | Harness | Tell the model when earlier assistant turns came from another model, after a model switch or handoff |
 
 ### Knowledge & memory
 
@@ -275,6 +277,7 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | [Repo Context](pydantic_ai_harness/repo_context/) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
 | [Report Stale Files](pydantic_ai_harness/report_stale_files/) | Harness | Tell the model when a file it read or wrote has since changed or been deleted in the workspace |
 | [Pydantic AI Docs](pydantic_ai_harness/pydantic_ai_docs/) | Harness | On-demand Pydantic AI documentation lookup |
+| [Current Time](pydantic_ai_harness/current_time/) | Harness | Today's date, or the current hour, in a time zone you pick, without breaking the prompt cache |
 
 ### Control & safety
 
@@ -292,13 +295,15 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Tool approval](https://ai.pydantic.dev/deferred-tools#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |
 | [Tool Call Judge](pydantic_ai_harness/tool_call_judge/) | Harness | A second model answers one risk question per tool call and blocks the call before the tool function runs |
 | [Approval Reviewer](pydantic_ai_harness/approval_reviewer/) | Harness | A second model answers one risk question per call waiting for approval, approves the low-risk ones, and leaves the rest to a person |
-| [Permissions](pydantic_ai_harness/permissions/) | Harness | Ask a person before file writes and commands, by permission mode: full access, auto (asks before risky commands), or read-only |
+| [Permissions](pydantic_ai_harness/permissions/) | Harness | Ask a person before file writes and commands, by permission mode: full access, auto (asks before risky commands), or read-only; allow, ask about, or deny tool calls and shell commands by rule |
 | [Handle Deferred Tool Calls](https://ai.pydantic.dev/capabilities/handle-deferred-tool-calls/) | Core | Resolve approvals, answers and external results on deferred tool calls inside the run, in place or by waiting for them, durably on AWS Lambda |
 | [System Reminders](pydantic_ai_harness/system_reminders/) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
 | [Detect Loops](pydantic_ai_harness/detect_loops/) | Harness | Notice repeated tool calls, results, alternations, or responses, or a response repeating itself as it streams, and nudge the model, stop the run, or call your handler |
 | [Tool Budgets](pydantic_ai_harness/tool_budgets/) | Harness | Cap calls per tool and per run, and refuse exact repeats, with a tool result the model can act on instead of an exception |
+| [Report Remaining Budget](pydantic_ai_harness/report_remaining_budget/) | Harness | Tell the model on every request how many requests, tool calls, tokens and dollars its usage limits and spend budgets have left |
 | [Trajectory Judge](pydantic_ai_harness/trajectory_judge/) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
 | [Refine Output](pydantic_ai_harness/refine_output/) | Harness | Send the agent back to review and revise its output before the run ends |
+| [Wrap Up At Limits](pydantic_ai_harness/wrap_up_at_limits/) | Harness | End the run with a final answer, not `UsageLimitExceeded`, when a usage limit would stop it |
 
 ### Self-extension
 
