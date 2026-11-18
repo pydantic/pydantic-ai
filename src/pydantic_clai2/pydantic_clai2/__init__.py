@@ -6,7 +6,7 @@ import warnings
 from collections.abc import Sequence
 from importlib.abc import Loader, MetaPathFinder
 from importlib.machinery import ModuleSpec
-from importlib.util import spec_from_loader
+from importlib.util import find_spec, spec_from_loader
 from types import ModuleType
 from typing import TYPE_CHECKING
 
@@ -32,16 +32,21 @@ def __getattr__(name: str) -> object:
     return getattr(importlib.import_module('pydantic_ai_pax'), name)
 
 
+def _target(name: str) -> str:
+    return f'pydantic_ai_pax.{name.removeprefix(_ALIAS)}'
+
+
 class _Alias(MetaPathFinder, Loader):
     def find_spec(
         self, fullname: str, path: Sequence[str] | None, target: ModuleType | None = None
     ) -> ModuleSpec | None:
-        if not fullname.startswith(_ALIAS) or fullname == _ENTRY_POINT:
+        # Only a name `pydantic_ai_pax` has, so probing for a missing submodule still finds nothing.
+        if not fullname.startswith(_ALIAS) or fullname == _ENTRY_POINT or find_spec(_target(fullname)) is None:
             return None
         return spec_from_loader(fullname, self)
 
     def exec_module(self, module: ModuleType) -> None:
-        target = f'pydantic_ai_pax.{module.__name__.removeprefix(_ALIAS)}'
+        target = _target(module.__name__)
         _deprecated(module.__name__, target)
         # The import system returns whatever `sys.modules` holds once this returns, so both names share one module.
         sys.modules[module.__name__] = importlib.import_module(target)

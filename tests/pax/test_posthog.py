@@ -739,7 +739,7 @@ async def test_configure_needs_a_loaded_plugin_with_a_menu(tmp_path: Path) -> No
     shell = Shell(tmp_path)
     with pytest.raises(ValueError, match='not loaded; enable it before configuring'):
         await shell.loader.command(['configure', 'posthog'])
-    shell.store.save_plugin(BUILTIN.model_copy(update={'id': 'plain', 'factory': 'pydantic_ai_pax.repo_context'}))
+    shell.store.save_plugin(BUILTIN.model_copy(update={'id': 'plain', 'factory': 'pydantic_clai2.repo_context'}))
     assert await shell.loader.command(['enable', 'plain']) == 'Enabled plain.'
     with pytest.raises(ValueError, match='no settings menu'):
         await shell.loader.configure('plain')

@@ -1,6 +1,7 @@
 """`pydantic-clai2` is now `pydantic-ai-pax`: the new commands, and the old package and command names that still work."""
 
 import importlib
+import importlib.util
 import sys
 import tomllib
 from pathlib import Path
@@ -65,6 +66,14 @@ def test_old_import_paths_are_the_new_modules(monkeypatch: pytest.MonkeyPatch, o
     monkeypatch.delitem(sys.modules, old, raising=False)
     with pytest.warns(DeprecationWarning, match=rf'^`{old}` is deprecated, import `{new.__name__}` instead\.$'):
         assert importlib.import_module(old) is new
+
+
+@requires_shim
+def test_a_missing_old_module_is_missing() -> None:
+    """Probing for an optional submodule must not find one `pydantic_ai_pax` lacks, nor warn about it."""
+    assert importlib.util.find_spec('pydantic_clai2.missing') is None
+    with pytest.raises(ModuleNotFoundError, match=r"^No module named 'pydantic_clai2\.missing'$"):
+        importlib.import_module('pydantic_clai2.missing')
 
 
 @requires_shim
