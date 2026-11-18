@@ -190,7 +190,7 @@ async def test_coder_read_file_returns_a_large_image_as_a_file(tmp_path: Path) -
         ]
 
 
-CONTROL_TOOLS = {'list_tasks', 'message_task', 'answer_task', 'cancel_task'}
+CONTROL_TOOLS = {'list_tasks', 'check_task', 'message_task', 'answer_task', 'cancel_task'}
 CODER_TOOLS = {*FILE_TOOL_NAMES, 'shell', 'delegate_task', *CONTROL_TOOLS}
 
 

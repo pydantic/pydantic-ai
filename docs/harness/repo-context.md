@@ -61,7 +61,7 @@ print(result.output)
 
 ### 1. Instruction autoload (on by default)
 
-Loads the working directory's instruction file at run start. Each directory contributes one file: the first of `filenames` that exists there, `AGENTS.md` and then `CLAUDE.md` by default, as Codex picks one per directory. Pass `filenames=('CLAUDE.md', 'AGENTS.md')` to prefer `CLAUDE.md`. Where the workspace can resolve symlinks, a same-directory symlink is labeled with its target's name, so `CLAUDE.md -> AGENTS.md` reaches the model as `AGENTS.md`.
+Loads the working directory's instruction file at run start. Each directory contributes one file: the first of `filenames` that exists there, `AGENTS.md` and then `CLAUDE.md` by default, as Codex picks one per directory. Pass `filenames=('CLAUDE.md', 'AGENTS.md')` to prefer `CLAUDE.md`. Where the workspace can resolve symlinks, a same-directory symlink is labeled with its target's name, so `CLAUDE.md -> AGENTS.md` reaches the model as `AGENTS.md`. A `filenames` entry with a directory part, such as `.github/copilot-instructions.md`, loads only when that directory resolves inside the scanned one.
 
 A same-directory link loads only when it points to another instruction file,
 one named in `filenames` or `AGENTS.md`/`CLAUDE.md`: `CLAUDE.md -> AGENTS.md`
@@ -155,13 +155,25 @@ message history before the next model request. A directory counts as surfaced wh
 is still in the conversation: a later run of the same conversation doesn't
 repeat it, and once compaction summarizes the note away, the next traversal
 surfaces it again. The working directory's files are not surfaced again when
-the walk-up already loaded them. Every part of a note carries
-`{'origin': 'pydantic-ai-harness.repo_context.nested_note.v1', 'directory': ...}`
-in its `metadata`, which is how `RepoContext` and compaction recognize it.
+the walk-up already loaded them. A note is a `ContextFilePathPart` (pointer) or
+a `ContextFilePart` (contents), [capability parts](../capabilities/custom.md#capability-parts) whose `directory`
+field names the surfaced directory, which is how `RepoContext` recognizes it.
 Same-directory instruction symlinks are named after their targets, and load
 only when the target is itself an instruction file, as in the walk-up. Where the
 backend resolves symlinks, external instruction symlinks are skipped, even when
 `autoload_symlink_roots` authorizes their targets for autoload.
+
+`nested_exclude` skips directories whose instruction files are written for
+someone else: by default `node_modules`, `.venv`, `venv` and `site-packages`,
+where package managers install dependencies. Without it, reading a file in an
+installed package would surface that package's `AGENTS.md`, and as the deeper
+file it would take precedence over the project's. Each entry is an `fnmatch`
+pattern matched against every directory name below the working directory, both
+as written and after resolving symlinks, so a link such as
+`libs/dep -> node_modules/dep` is skipped too. Everything beneath a match is
+skipped, while the directories above it are still surfaced. `vendor/` and
+`third_party/` aren't in the default because projects often commit and own
+them; add them if yours doesn't.
 
 With nested traversal on, the instructions also tell the model how instruction
 files relate: each applies to its own directory and everything below it, the
@@ -195,9 +207,11 @@ Authorize a directory containing only trusted instruction files, such as
 instruction symlinks can select any readable file beneath an authorized root,
 not just the file you originally linked.
 
-Nested files are different: the model chooses which directories to read, and those can include vendored code or a checkout someone else wrote. Their contents and paths reach the model as a user message, not as instructions. The `'pointer'` note's own wording is the framework's, so it is a `SystemPromptPart` (a system message where the model supports one mid-conversation, and `<system>`-tagged user text otherwise), followed by the file's path as a user-message `<context-file path="..." />` tag.
+Nested files are different: the model chooses which directories to read, and those can include vendored code or a checkout someone else wrote. Their contents and paths are data read from the workspace, so they reach the model as a user message, not as instructions. A `'pointer'` note is a `ContextFilePathPart` that sends the file's path in a `<context_file_path>` tag, with a note in the application's voice asking the model to read the file if it's relevant (a system message where the model supports one mid-conversation, and `<system>`-tagged user text otherwise). Both kinds of note carry a `WorkspaceSource`: for a workspace the operator doesn't control, it has no authority, and the note also says the file was written by its author, not by the user or the application.
 
-Each file is wrapped in `<context-file path="...">` tags. The `<` of every opening or closing `<context-file>` tag inside a file, and of every framing tag Pydantic AI writes (`<system>`, `<pyai:context>`, `<pyai:tool_result>` and the rest), is escaped as `&lt;`, and the path is HTML-escaped, so a file stays inside its own block.
+Walk-up files are wrapped in `<context-file path="...">` tags in the instructions. The `<` of every opening or closing `<context-file>` tag inside a file, and of every framing tag Pydantic AI writes (`<system>`, `<pyai:context>`, `<pyai:tool_result>` and the rest), is escaped as `&lt;`, and the path is HTML-escaped, so a file stays inside its own block.
+
+A `'contents'` note is a `ContextFilePart` that sends the file in a `<context_file path="...">` tag, with the path HTML-escaped. The file goes out as written: an opening or closing `<context_file>` tag in it, or text that looks like one of Pydantic AI's frames, such as a `<system>` tag, gets a note saying the file's author wrote it, so a file stays inside its own block. Find either kind of note in history by its type.
 
 ### Pinning accepted files
 
@@ -242,6 +256,7 @@ RepoContext(
     inventory_tool_name='inventory_agent_context',
     nested_traversal=True,          # Strategy 3
     nested_inject='contents',       # 'contents' | 'pointer'
+    nested_exclude=('node_modules', '.venv', 'venv', 'site-packages'),  # fnmatch patterns Strategy 3 skips
     nested_max_chars=32_000,        # int | None -- cap on inlined nested contents per conversation
     traversal_tool_names=frozenset({'list_directory', 'read_file'}),  # deprecated fallback
     traversal_path_arg='path',                                       # deprecated fallback
@@ -258,6 +273,8 @@ RepoContext(
 ## Upgrading
 
 `RepoContext()` now loads one instruction file per directory, `AGENTS.md` first and `CLAUDE.md` as the fallback, and surfaces nested instruction files by default, inlining up to 32,000 characters of their contents per conversation before surfacing the rest as pointers (`nested_max_chars=None` removes the cap). To get close to the old behavior, pass `RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False)`. It only approximates it: no setting loads both files from one directory any more, so a directory holding both loads only `CLAUDE.md`. Durable runs started before the upgrade record fewer workspace calls than a new run makes, so let them finish or version the deployment first.
+
+Nested traversal no longer surfaces instruction files under `node_modules`, `.venv`, `venv` or `site-packages` below the working directory, nor anything beneath them; pass `nested_exclude=()` to surface them again. It also skips the workspace calls it used to make for those directories, so a durable run that read a file under one of them before the upgrade records more workspace calls than its replay makes: let such runs finish or version the deployment first.
 
 ## Further reading
 

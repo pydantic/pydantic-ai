@@ -13,7 +13,7 @@ import pydantic_core
 from pydantic import ValidationError
 
 from . import _usage_attribution, messages as _messages
-from ._deferred import filter_deferred_results
+from ._deferred import filter_deferred_results, jsonable_validated_args
 from ._output import (
     OutputSchema,
     OutputToolset,
@@ -1524,15 +1524,16 @@ class ToolManager(Generic[AgentDepsT]):
         call: ToolCallPart,
         exc: CallDeferred | ApprovalRequired,
         *,
-        executed: ValidatedToolCall[AgentDepsT] | None = None,
+        executed: ValidatedToolCall[AgentDepsT],
         wrap_validation_errors: bool = True,
         on_deferred_requests: InlineDeferredRequestsHandler | None = None,
         on_inline_deferred: InlineDeferredResultHandler | None = None,
     ) -> ToolDenied | ToolReturn[Any] | Any:
         """Resolve a single deferred tool call inline using the capability handler.
 
-        `executed` is the validated call whose execution raised `exc`, if any: the answer to a question
-        the tool raised itself passes the tool's `after_tool_execute` hooks, as the graph path's does.
+        `executed` is the validated call whose execution raised `exc`: the request carries its validated
+        arguments, and the answer to a question the tool raised itself passes the tool's `after_tool_execute`
+        hooks, as the graph path's does.
 
         Dispatches the handler's result for `call` on the same set of
         [`DeferredToolResult`][pydantic_ai.tools.DeferredToolResult] variants as the
@@ -1573,6 +1574,7 @@ class ToolManager(Generic[AgentDepsT]):
             approvals=[call] if isinstance(exc, ApprovalRequired) else [],
             calls=[call] if isinstance(exc, CallDeferred) else [],
             metadata={call.tool_call_id: exc.metadata} if exc.metadata else {},
+            validated_args={call.tool_call_id: jsonable_validated_args(executed.validated_args)},
             _kinds={call.tool_call_id: 'question'} if isinstance(exc, CallDeferred) and exc.kind == 'question' else {},
         )
         if on_deferred_requests is not None:
@@ -1635,7 +1637,7 @@ class ToolManager(Generic[AgentDepsT]):
 
     async def _answer_question(
         self,
-        executed: ValidatedToolCall[AgentDepsT] | None,
+        executed: ValidatedToolCall[AgentDepsT],
         exc: CallDeferred | ApprovalRequired,
         answer: Any,
         *,
@@ -1645,11 +1647,6 @@ class ToolManager(Generic[AgentDepsT]):
 
         Other results, and a question an `args_validator` raised before the tool ran, are returned as given.
         """
-        if (
-            executed is None
-            or executed.deferral is not None
-            or not isinstance(exc, CallDeferred)
-            or exc.kind != 'question'
-        ):
+        if executed.deferral is not None or not isinstance(exc, CallDeferred) or exc.kind != 'question':
             return answer
         return await self.after_tool_execute(executed, answer, wrap_validation_errors=wrap_validation_errors)

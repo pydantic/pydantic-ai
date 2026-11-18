@@ -34,6 +34,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import BackgroundTools
+from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 from tests.harness._temporal import ignore_source_reads_left_open
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
@@ -48,17 +49,13 @@ def _model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> Mod
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
+                # The model sees the result framed in its `<tool_result>` tag naming the call.
                 if (
                     isinstance(part, UserPromptPart)
                     and not isinstance(part.content, str)
                     and any(
                         isinstance(item, TextContent)
-                        and item.metadata
-                        == {
-                            'origin': 'pydantic-ai-harness.background_tools.result.v1',
-                            'tool_call_id': 'research-call',
-                            '__pydantic_ai__': {'framework_frame': True, 'framework_frame_author': 'tool'},
-                        }
+                        and item.content == '<tool_result tool_name="research" tool_call_id="research-call">'
                         for item in part.content
                     )
                 ):
@@ -137,12 +134,7 @@ class BackgroundToolsPauseWorkflow:
         assert isinstance(result.output, DeferredToolRequests)
         recorded = result.all_messages()[-1]
         assert isinstance(recorded, ModelRequest)
-        return [
-            item.content if isinstance(item, TextContent) else str(item)
-            for part in recorded.parts
-            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-            for item in part.content
-        ]
+        return [str(part.content) for part in recorded.parts if isinstance(part, BackgroundToolResultPart)]
 
 
 @workflow.defn
