@@ -61,6 +61,22 @@ def _takes_two_positional_arguments(cls: type) -> bool | None:
     return positional >= 2
 
 
+def _takes_its_bases_constructor(cls: type) -> bool:
+    """Whether `cls` takes the same constructor parameters as its nearest dataclass base, and that base is public.
+
+    Such a subclass adds no constructor parameter, so the base's own result in this walk already gates or
+    grandfathers the signature. Typed tool parts, such as a `ToolCallPart[...]` subclass declared with `kind=`, are
+    the case: they may not add fields, and a subclass can't make its parent's fields keyword-only.
+    """
+    base = next((base for base in cls.__mro__[1:] if dataclasses.is_dataclass(base)), None)
+    if base is None or any(part.startswith('_') for part in f'{base.__module__}.{base.__qualname__}'.split('.')):
+        return False
+    # Only names and kinds: a typed part's kind changes the `tool_kind` default, which a positional caller can't trip on.
+    return [(p.name, p.kind) for p in _constructor_parameters(cls)] == [
+        (p.name, p.kind) for p in _constructor_parameters(base)
+    ]
+
+
 # Module-scoped: walking imports every `pydantic_ai` module, provider SDKs included, which is shared setup rather than
 # the test's own cost (see "Test cost" in `tests/AGENTS.md`).
 @pytest.fixture(scope='module')
@@ -115,7 +131,7 @@ def public_dataclasses() -> dict[str, list[str]]:
                 takes_positional_pair = _takes_two_positional_arguments(obj)
                 if takes_positional_pair is None:
                     unreadable.append(name)
-                elif takes_positional_pair:
+                elif takes_positional_pair and not _takes_its_bases_constructor(obj):
                     offenders.add(name)
 
         return {'offenders': sorted(offenders), 'skipped': sorted(skipped), 'unreadable': sorted(unreadable)}
