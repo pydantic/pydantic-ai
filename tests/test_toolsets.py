@@ -142,7 +142,10 @@ async def test_function_toolset_tool_for_tool_def_preserves_rename_and_retry_bud
 
 
 async def test_function_toolset_prepare_tool_def_override_gets_tool_context():
-    """A tool without `prepare` lists its own definition; a `prepare_tool_def` override still gets the tool's context."""
+    """A tool without `prepare` lists its own definition; a `prepare_tool_def` override still gets the tool's context.
+
+    Not a VCR test: the context handed to the override never reaches a provider request.
+    """
     seen: list[tuple[str | None, int]] = []
 
     class ContextTool(Tool[None]):
