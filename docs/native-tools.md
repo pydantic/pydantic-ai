@@ -780,7 +780,7 @@ The local tool is found by its kind, not its name. The native tool is sent when 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | On GPT-5.4 (not nano), GPT-5.5, GPT-5.6 and GPT-6 through OpenAI and Bedrock Mantle. OpenAI's tool can't zoom, triple-click, hold a key, press or release a mouse button, or read the pointer position. |
-| Anthropic | ✅ | On models whose profile sets [`anthropic_computer_tool_version`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_computer_tool_version], as the computer use tool or toolset that version names. See [Anthropic computer use](models/anthropic.md#computer-use). |
+| Anthropic | ✅ | On Claude Haiku 4.5, Sonnet 4.6, Opus 4.5 and later through the Claude API and Amazon Bedrock, as the computer use tool or toolset that [`anthropic_default_computer_tool_version`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_default_computer_tool_version] names. See [Anthropic computer use](models/anthropic.md#computer-use). |
 
 ## Memory Tool
 
