@@ -329,6 +329,11 @@ class GoogleInteractionsModel(Model[Client]):
                 self.base_url,
                 _close_response=response.close,
                 _web_search_billed_per_prompt=self.profile.get('google_web_search_billed_per_prompt', False),
+                _mcp_server_names=frozenset(
+                    name
+                    for tool in request.get('tools', [])
+                    if tool['type'] == 'mcp_server' and (name := tool.get('name'))
+                ),
             )
             stream.canonical_system = self._canonical_system_stamp
             try:

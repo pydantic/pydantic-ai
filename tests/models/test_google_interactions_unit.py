@@ -96,14 +96,17 @@ class MockGoogle:
         }
     )
     requests: list[dict[str, JsonValue]] = field(default_factory=list[dict[str, JsonValue]])
-    user_agents: list[list[str]] = field(default_factory=list[list[str]])
+    headers: list[httpx2.Headers] = field(default_factory=list[httpx2.Headers])
     status: int = 200
+    sse: list[dict[str, JsonValue]] | None = None
+    """Events to answer with as a stream, in place of `body`."""
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(_JSON.validate_json(request.read()))
-        self.user_agents.append(
-            [value.decode() for name, value in request.headers.raw if name.lower() == b'user-agent']
-        )
+        self.headers.append(request.headers)
+        if self.sse is not None:
+            content = b''.join(f'data: {json.dumps(event)}\n\n'.encode() for event in self.sse)
+            return httpx2.Response(self.status, content=content, headers={'content-type': 'text/event-stream'})
         return httpx2.Response(self.status, json=self.body)
 
 
@@ -148,7 +151,7 @@ async def test_one_user_agent(
         mock_model, [ModelRequest.user_text_prompt('hello')], model_settings={'extra_headers': extra_headers}
     )
 
-    [[user_agent]] = mock_google.user_agents
+    [user_agent] = mock_google.headers[-1].get_list('user-agent')
     assert (
         user_agent.replace(get_user_agent(), 'pydantic-ai').replace(
             mock_model.client.aio.interactions.sdk_configuration.user_agent, 'google-genai'
@@ -1261,6 +1264,7 @@ async def test_namespaced_mcp_text_streams_before_completion(parallel_calls: boo
         'gemini-test',
         'google',
         'https://example.com',
+        _mcp_server_names=frozenset({'docs'}),
     )
     text: list[str] = []
     async for event in response:
@@ -1339,6 +1343,7 @@ async def test_streamed_namespaced_mcp_calls(
         'gemini-test',
         'google',
         'https://example.com',
+        _mcp_server_names=frozenset({'docs'}),
     )
     events = [event async for event in response]
     parts = response.get().parts
@@ -1375,6 +1380,49 @@ async def test_streamed_namespaced_mcp_calls(
     ] == [
         part.tool_name for part in parts if isinstance(part, (ToolCallPart, NativeToolCallPart, NativeToolReturnPart))
     ]
+
+
+async def test_streamed_mcp_call_from_settings(
+    mock_model: GoogleInteractionsModel, mock_google: MockGoogle, allow_model_requests: None
+):
+    """A server named only in `google_interactions_native_tools` has its executed calls streamed as native, as unary.
+
+    Not recorded: synthetic events pin the paired call and result the classification reads.
+    """
+    mock_google.sse = [
+        {
+            'event_type': 'step.start',
+            'index': 0,
+            'step': {'type': 'function_call', 'id': 'mcp-call', 'name': 'docs:lookup', 'arguments': {}},
+        },
+        {'event_type': 'step.stop', 'index': 0},
+        {
+            'event_type': 'step.start',
+            'index': 1,
+            'step': {
+                'type': 'function_result',
+                'call_id': 'mcp-call',
+                'name': 'docs:lookup',
+                'result': [{'type': 'text', 'text': 'found'}],
+            },
+        },
+        {'event_type': 'step.stop', 'index': 1},
+        {'event_type': 'interaction.completed', 'interaction': {'status': 'completed'}},
+    ]
+    settings: GoogleInteractionsModelSettings = {
+        'google_interactions_native_tools': [{'type': 'mcp_server', 'name': 'docs', 'url': 'https://example.com/mcp'}]
+    }
+    async with model_request_stream(
+        mock_model, [ModelRequest.user_text_prompt('hello')], model_settings=settings
+    ) as stream:
+        async for _ in stream:
+            pass
+
+    assert [
+        (part.part_kind, part.tool_name)
+        for part in stream.get().parts
+        if isinstance(part, NativeToolCallPart | NativeToolReturnPart)
+    ] == [('builtin-tool-call', 'mcp_server:docs'), ('builtin-tool-return', 'mcp_server:docs')]
 
 
 @pytest.mark.parametrize('cloud', [False, True])
@@ -1683,7 +1731,12 @@ async def test_mcp_images_redact_and_replay(
         ]
         params = ModelRequestParameters(native_tools=[MCPServerTool(id='docs', url='https://example.com/mcp')])
         stream = GoogleInteractionsStreamedResponse(
-            params, iter_events(values), 'gemini-test', 'google', 'https://example.com'
+            params,
+            iter_events(values),
+            'gemini-test',
+            'google',
+            'https://example.com',
+            _mcp_server_names=frozenset({'docs'}),
         )
         async for _ in stream:
             pass
@@ -1774,7 +1827,12 @@ async def test_mcp_call_tool_result_media_redact_and_replay(
         ]
         params = ModelRequestParameters(native_tools=[MCPServerTool(id='docs', url='https://example.com/mcp')])
         stream = GoogleInteractionsStreamedResponse(
-            params, iter_events(values), 'gemini-test', 'google', 'https://example.com'
+            params,
+            iter_events(values),
+            'gemini-test',
+            'google',
+            'https://example.com',
+            _mcp_server_names=frozenset({'docs'}),
         )
         async for _ in stream:
             pass

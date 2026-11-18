@@ -15,7 +15,6 @@ from pydantic import JsonValue, TypeAdapter
 from ... import _model_errors, _utils
 from ...exceptions import UnexpectedModelBehavior
 from ...messages import ModelResponseStreamEvent, TextPart
-from ...native_tools import MCPServerTool
 from .. import StreamedResponse
 from ._response import JSON_OBJECT, build_response, map_step, mark_step, mcp_server_names
 
@@ -42,6 +41,8 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
     _provider_url: str
     _close_response: Callable[[], Awaitable[None]] | None = None
     _web_search_billed_per_prompt: bool = False
+    _mcp_server_names: frozenset[str] = frozenset()
+    """The remote MCP servers the request names, from `MCPServerTool` or `google_interactions_native_tools`."""
     _stream: _utils.PeekableAsyncStream[gi.InteractionSSEEvent, AsyncIterator[gi.InteractionSSEEvent]] = field(
         init=False
     )
@@ -102,10 +103,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
             isinstance(event, gi.StepStart)
             and isinstance(event.step, gi.FunctionCallStep)
             and event.step.name not in self.model_request_parameters.declared_tool_defs
-            and any(
-                isinstance(tool, MCPServerTool) and event.step.name.startswith(f'{tool.id}:')
-                for tool in self.model_request_parameters.native_tools
-            )
+            and event.step.name.partition(':')[0] in self._mcp_server_names
         )
 
     def _map_event(self, event: gi.InteractionSSEEvent) -> Iterable[ModelResponseStreamEvent]:
