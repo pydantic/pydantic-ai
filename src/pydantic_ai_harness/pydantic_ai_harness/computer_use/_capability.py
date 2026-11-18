@@ -849,10 +849,12 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Release the mouse buttons the run still holds however it ends, including a caller leaving it early."""
         run = _RunButtons(ctx.run_id)
-        _RUN_BUTTONS.set(run)
+        token = _RUN_BUTTONS.set(run)
         try:
             return await handler()
         finally:
+            # Give the context back as the caller had it, so nothing after this run sees its record.
+            _RUN_BUTTONS.reset(token)
             await self._release_held(ctx, run.might_be_held())
 
     async def _release_held(self, ctx: RunContext[AgentDepsT], held: list[MouseButton]) -> None:
