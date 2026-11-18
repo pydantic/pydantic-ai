@@ -13,7 +13,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Literal
 
-from pydantic_ai._framework_frame import framework_frame_text
 from pydantic_ai.framing import register_tag, wrap
 from pydantic_ai.messages import (
     ModelMessage,
@@ -47,9 +46,7 @@ def pin(content: str, *, source: PinSource = 'user') -> UserPromptPart:
         return UserPromptPart(content=[TextContent(content, metadata=_PIN_METADATA)])
     text = wrap(_PINNED_TAG, content, source=source)
     metadata = {'origin': _PIN_METADATA, 'source': source}
-    return UserPromptPart(
-        content=[framework_frame_text(text, metadata=metadata, author='tool' if source == 'tool' else None)]
-    )
+    return UserPromptPart(content=[TextContent(text, metadata=metadata)])
 
 
 def is_pinned(part: object) -> bool:

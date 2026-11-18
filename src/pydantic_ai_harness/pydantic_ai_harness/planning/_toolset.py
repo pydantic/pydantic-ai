@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Iterable, Iterator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Iterator
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
-from functools import cached_property
 from typing import TYPE_CHECKING, Any, Generic
 
 import anyio
@@ -143,11 +143,11 @@ def render_plan(items: list[PlanItem]) -> str:
 
 
 PLAN_ORIGIN = 'pydantic-ai-harness.planning.plan_reminder.v1'
-"""The `origin` in the `metadata` of a plan the planning tools returned or `Planning` recorded.
+"""The `origin` in the `metadata` of a plan the planning tools returned.
 
-A plan tool's `ToolReturnPart` carries `{'origin': PLAN_ORIGIN, 'plan': <framed plan>}`, and a plan `Planning`
-records on the user channel is a `TextContent` with `{'origin': PLAN_ORIGIN}`. `Planning` finds the latest plan in
-the conversation by this metadata, never by text.
+A plan tool's `ToolReturnPart` carries `{'origin': PLAN_ORIGIN, 'plan': <framed plan>}`. A plan `Planning` records is a
+`PlanReminderPart`; an earlier version recorded a `TextContent` with `{'origin': PLAN_ORIGIN}` instead. `Planning`
+finds the latest plan in the conversation by this metadata and that type, never by text.
 """
 
 _PLAN_REMINDER_TAG = register_tag('plan_reminder')
@@ -155,12 +155,17 @@ _PLAN_REMINDER_TAG = register_tag('plan_reminder')
 
 
 def framed_plan(items: list[PlanItem]) -> str:
-    """The plan rendered in its `<plan_reminder>` frame.
+    """The plan rendered in its `<plan_reminder>` frame, as a plan tool returns it."""
+    return frame_plan_text(render_plan(items))
+
+
+def frame_plan_text(plan: str) -> str:
+    """A rendered plan in its `<plan_reminder>` frame, as a plan tool returns it.
 
     The steps are written by the model, so the `<` of every opening or closing `plan_reminder` tag and of every other
     framing tag is escaped as `&lt;`.
     """
-    return wrap(_PLAN_REMINDER_TAG, f'\n{render_plan(items)}\n')
+    return wrap(_PLAN_REMINDER_TAG, f'\n{plan}\n')
 
 
 class _PlanReply(str):
@@ -491,6 +496,8 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         self._capability = capability
         self._operations = operations
         self._subtasks = capability.enable_subtasks
+        # A store is keyed by `id()`, as it need not be hashable; `call_tool` holds it while its entry exists.
+        self._locks: dict[tuple[str, object], anyio.Lock] = {}
         descriptions = capability.descriptions or {}
         offered = available_tool_names(subtasks=self._subtasks)
         reject_unknown_tool_names(capability.tools, offered, field='tools')
@@ -530,15 +537,18 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
     ) -> Any:
         """Run the tool, marking the plan a plan-changing tool returns so `Planning` can find it in the history.
 
-        Plan tools write back changes built from an earlier read, so calls on this toolset take turns: two
-        running at once could each overwrite the other's change. With durable operations, the run's store is
-        resolved once for the call, so each durable operation it makes uses that store.
+        Plan tools write back changes built from an earlier read, so calls from the same run, and calls on the
+        same store, take turns: two running at once could each overwrite the other's change. A run's calls take
+        turns even when a durable worker resolves a new store object for each. With durable operations, the run's
+        store is resolved once for the call, so each durable operation it makes uses that store.
         """
-        async with self._call_lock:
+        store = await resolve_run_store(ctx, self._capability, self)
+        # Always the run's turn first, so two calls can't each hold the lock the other waits for.
+        async with self._turn(('run', ctx.run_id)), self._turn(('store', id(store))):
             if self._operations is None:
                 result = await super().call_tool(name, tool_args, ctx, tool)
             else:
-                token = _TOOL_CALL_STORE.set(await resolve_run_store(ctx, self._capability, self))
+                token = _TOOL_CALL_STORE.set(store)
                 try:
                     result = await super().call_tool(name, tool_args, ctx, tool)
                 finally:
@@ -547,9 +557,15 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             return ToolReturn(str(result), metadata={'origin': PLAN_ORIGIN, 'plan': result.plan})
         return result
 
-    @cached_property
-    def _call_lock(self) -> anyio.Lock:
-        return anyio.Lock(fast_acquire=True)
+    @asynccontextmanager
+    async def _turn(self, key: tuple[str, object]) -> AsyncGenerator[None]:
+        lock = self._locks.setdefault(key, anyio.Lock(fast_acquire=True))
+        try:
+            async with lock:
+                yield
+        finally:
+            if not lock.locked() and self._locks.get(key) is lock:
+                del self._locks[key]
 
     def _plan_reply(self, message: str, items: list[PlanItem], suffix: str = '', *, bare_plan: bool = False) -> str:
         """A plan-changing tool's reply: ending with the framed plan when `Planning` shows the model its plan.

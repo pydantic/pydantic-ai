@@ -8,11 +8,13 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace import innermost_backend
+from pydantic_ai_harness._workspace import innermost_backend, with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_integer,
+    check_path_authority,
     check_provider,
     check_working_dir,
     reject_defer_loading,
@@ -78,6 +80,15 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
     """Environment variables every command gets, also on an attached sandbox; a command's `env` is
     layered on top. Nothing is read from the host."""
 
+    authority: Authority = 'operator'
+    """The [authority][pydantic_ai.messages.Authority] of the sandbox's files: `'none'` for files nobody on the
+    application's side wrote, such as a cloned third-party repository, and `'user'` for the user's own files.
+    Anything below `'operator'` wraps the workspace in an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]."""
+
+    path_authority: Mapping[str, Authority] | None = None
+    """Levels for some directories and files, overriding `authority` for the paths under them; the longest matching
+    path wins. Paths are sandbox paths: relative ones resolve against the working directory, and `~` isn't expanded.
+    See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
     secrets: Mapping[str, str] | None = None
     """Daytona's `secrets` for a new sandbox, passed to `AsyncDaytona.create` unchanged: environment
     variable name to Secret name. The variable holds a placeholder, and Daytona swaps in the real value
@@ -88,6 +99,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
         reject_defer_loading('DaytonaSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
+        check_path_authority(self.path_authority)
         check_integer('auto_stop_interval', self.auto_stop_interval, minimum=0, optional=True)
         if (error := secrets_error(self.secrets, self.env)) is not None:
             raise UserError(f'{error}.')
@@ -104,6 +116,8 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
         allow_internet_access: bool = True,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        authority: Authority = 'operator',
+        path_authority: Mapping[str, Authority] | None = None,
         secrets: Mapping[str, str] | None = None,
     ) -> DaytonaSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
@@ -121,6 +135,8 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
             allow_internet_access=allow_internet_access,
             working_dir=working_dir,
             env=env,
+            authority=authority,
+            path_authority=path_authority,
             secrets=secrets,
         )
 
@@ -137,6 +153,10 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
         await destroy_sandbox(self.client, ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        """The backend for this run, in an `AuthorityWorkspace` when `authority` or `path_authority` asks for one."""
+        return with_authority(self._run_backend(ctx, ref=ref), self.authority, self.path_authority)
+
+    def _run_backend(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it attaches or creates on first use."""
         if ref is not None and ref.provider != 'daytona':
             return None

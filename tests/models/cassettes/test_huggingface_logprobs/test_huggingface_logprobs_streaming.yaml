@@ -1,0 +1,67 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://router.huggingface.co/novita/v3/openai/chat/completions
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "194"
+      content-type:
+      - application/json
+      host:
+      - router.huggingface.co
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: What is the capital of France? Answer in one word.
+        model: meta-llama/llama-3.1-8b-instruct
+        logprobs: true
+        tools: []
+        top_logprobs: 2
+        stream: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        X-Repo-Commit,X-HF-Warning,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash,RateLimit,RateLimit-Policy
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      cross-origin-opener-policy:
+      - same-origin
+      inference-id:
+      - 0-01a1e7d5-fc04-7a7b-a95a-b4bfc87f96e0
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=31536000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: text
+      content: |+
+        data: {"id":"726c171d4f1520fc042435f72b546085","object":"chat.completion.chunk","created":1794890923,"model":"meta-llama/llama-3.1-8b-instruct","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}],"system_fingerprint":"","sla_metrics":{"ttft_ms":291,"ts_us":1794890923303841}}
+
+        data: {"id":"726c171d4f1520fc042435f72b546085","object":"chat.completion.chunk","created":1794890923,"model":"meta-llama/llama-3.1-8b-instruct","choices":[{"index":0,"delta":{"content":"Paris"},"logprobs":{"content":[{"token":"Paris","bytes":[80,97,114,105,115],"top_logprobs":[{"token":"Paris","bytes":[80,97,114,105,115],"logprob":0},{"token":"Par","bytes":[80,97,114],"logprob":-17.142858505249023}]}]},"finish_reason":null}],"system_fingerprint":"","sla_metrics":{"ttft_ms":291,"ts_us":1794890923303910}}
+
+        data: {"id":"726c171d4f1520fc042435f72b546085","object":"chat.completion.chunk","created":1794890923,"model":"meta-llama/llama-3.1-8b-instruct","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"system_fingerprint":"","sla_metrics":{"ttft_ms":291,"ts_us":1794890923311257}}
+
+        data: [DONE]
+
+  recorded_at: 2026-11-17T04:48:43.398408+00:00

@@ -417,7 +417,7 @@ def rotated_search(
 
 def _is_provider_health_incident(item: Mapping[str, object]) -> bool:
     """Recognize controller issues by both operational labels and their typed marker."""
-    if not {'agentic-workflows', 'pydanty:meta'}.issubset(item_labels(item)):
+    if not {'area:agentic-workflows', 'pydanty:meta'}.issubset(item_labels(item)):
         return False
     body = item.get('body')
     if not isinstance(body, str):

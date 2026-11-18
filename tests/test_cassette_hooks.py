@@ -141,6 +141,19 @@ def test_safety_identifier_is_scrubbed(content_type: str | None):
     assert b'scrubbed' in response.body
 
 
+def test_account_id_is_scrubbed_from_responses_only():
+    """OpenRouter error responses echo the recording account's id; a request's `user_id` is the caller's own."""
+    json_headers = {'content-type': 'application/json'}
+    response = before_record_response(
+        _response(body=b'{"error":{"code":400},"user_id":"user_synthetic"}', **json_headers)
+    )
+    assert response.body is not None
+    assert json.loads(response.body) == {'error': {'code': 400}, 'user_id': 'scrubbed'}
+    request = before_record_request(_request(body=b'{"user_id":"pydantic-ai-test-user"}', **json_headers))
+    assert request.body is not None
+    assert json.loads(request.body) == {'user_id': 'pydantic-ai-test-user'}
+
+
 @pytest.mark.parametrize('encoding', ['gzip', 'br'])
 def test_compressed_bodies_are_inflated_before_scrubbing(encoding: str):
     raw = b'{"access_token": "secret", "ok": true}'
