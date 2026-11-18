@@ -372,17 +372,26 @@ async def test_forks_fire_turn_hooks() -> None:
     assert isinstance(ends['broken hook'].error, RuntimeError)
 
 
-async def test_live_rows_follow_each_fork(tmp_path: Path) -> None:
+async def test_live_rows_follow_each_fork() -> None:
     model, output = Model(), io.StringIO()
-    forks = shell_for(tmp_path, model, output).forks
+    second_ended = asyncio.Event()
+
+    async def fire(event: HostEvent) -> None:
+        if isinstance(event, ForkEnd) and event.fork.id == 2:
+            second_ended.set()
+
+    async def spawn(_: str | None, history: Sequence[ModelMessage]) -> Session[None, str]:
+        return Session(Agent(FunctionModel(stream_function=model.respond)), deps=None)
+
+    forks = Forks(console=Console(file=output, width=200), history=lambda: [], spawn=spawn, fire=fire)
     assert forks.rows('*') == ()
     async with forks.busy():
         await forks.fork_command(['block'])
         await forks.fork_command(['hello'])
         await model.started.wait()
+        # Fork #2 may finish before or after fork #1 reaches the model; `ForkEnd` follows its `done`.
+        await second_ended.wait()
         running, finished = forks.records
-        while finished.status == 'running':
-            await asyncio.sleep(0)
         first, second = (Text.from_ansi(row).plain for row in forks.rows('*'))
         assert first.startswith(' FORK #1  agent default  * 00:0')
         assert first.endswith('starting')

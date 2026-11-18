@@ -61,6 +61,9 @@ from pydantic_ai_harness import (
     BenchmarkInstructions,
     Coder,
     CompactOnRequest,
+    LabelCrossModelHistory,
+    ModelChoice,
+    ModelRouter,
     Planning,
     PruneToolResults,
     RelevanceCompaction,
@@ -73,6 +76,7 @@ from pydantic_ai_harness import (
     SubAgents,
     SummarizingCompaction,
     SystemReminders,
+    ToolBridge,
     ToolOutputLimits,
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
@@ -168,6 +172,10 @@ def _check_skills(merged: Any) -> None:
     assert [source.directories for source in merged._sources] == [('first',), ('second',)]
 
 
+def _check_model_router(merged: ModelRouter[object]) -> None:
+    assert (list(merged.choices), merged.default) == (['fast', 'capable'], 'capable')
+
+
 def _check_planning(merged: Any) -> None:
     assert merged.inject is False
 
@@ -205,6 +213,10 @@ def _check_tool_output_limits(merged: Any) -> None:
     assert merged.strip_ansi is True
 
 
+def _check_tool_bridge(merged: ToolBridge[None]) -> None:
+    assert merged.max_results == 5
+
+
 def _check_advisor(merged: Any) -> None:
     assert merged.max_tokens == 4096
 
@@ -215,6 +227,10 @@ def _check_background_tools(merged: Any) -> None:
 
 def _check_benchmark_instructions(merged: BenchmarkInstructions[None]) -> None:
     assert merged.id == 'benchmark_instructions'
+
+
+def _check_label_cross_model_history(merged: LabelCrossModelHistory[None]) -> None:
+    assert (merged.id, merged.notice) == ('label_cross_model_history', 'second')
 
 
 def _check_sub_agents(merged: Any) -> None:
@@ -236,6 +252,21 @@ COMBINE_POLICY: dict[str, Policy] = {
     'Memory': Narrows(
         'one notebook per id, and its store and namespace are a tenant boundary; two that differ need their own ids',
         lambda cls: (cls(namespace='first'), cls(namespace='second')),
+    ),
+    'ModelRouter': Combines(
+        'only the last model contribution selects, so two routers become one whose menu has both sets of choices',
+        lambda: (
+            ModelRouter[object](
+                choices={'fast': ModelChoice('test', 'Use for lookups.')},
+                router_model='test',
+                default='fast',
+                mode='per_step',
+            ),
+            ModelRouter[object](
+                choices={'capable': ModelChoice('test', 'Use for hard work.')}, router_model='test', default='capable'
+            ),
+        ),
+        _check_model_router,
     ),
     'Planning': Combines(
         'one plan per agent; `PlanningToolset` registers fixed tool names',
@@ -294,6 +325,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda: (ToolOutputLimits[Any](), ToolOutputLimits[Any](strip_ansi=True)),
         _check_tool_output_limits,
     ),
+    'ToolBridge': Combines(
+        'one set of dispatcher tools per agent; `tools` is how one instance picks what it bridges',
+        lambda: (ToolBridge[None](max_results=3), ToolBridge[None](max_results=5)),
+        _check_tool_bridge,
+    ),
     'SubAgents': Combines(
         'one delegate tool per agent, so two rosters become one',
         lambda: (
@@ -324,6 +360,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one fixed text; two would state it twice',
         lambda: (BenchmarkInstructions[None](), BenchmarkInstructions[None]()),
         _check_benchmark_instructions,
+    ),
+    'LabelCrossModelHistory': Combines(
+        'one `notice` instruction block per agent; two would state it twice',
+        lambda: (LabelCrossModelHistory[None](notice='first'), LabelCrossModelHistory[None](notice='second')),
+        _check_label_cross_model_history,
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),
@@ -386,6 +427,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'RepoContext': Anonymous('one per workspace root'),
     'ReportContextUsage': Anonymous('a passive observer; several callbacks compose'),
+    'ReportStaleFiles': Anonymous('only an event listener and a hook; two would send two notices'),
     'SlidingWindowCompaction': Anonymous('composes as a tier under `TieredCompaction`'),
     'GoogleWorkspace': Anonymous('one per set of products, and `services` is what names it'),
     'StackOne': Anonymous('one per linked account, and `account_id` is what names it'),
@@ -396,6 +438,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'DetectLoops': Anonymous('only hooks; several detectors with their own thresholds and actions compose'),
     'ToolBudgets': Anonymous('only a hook; each counts the calls it lets run, so stacked budgets all apply'),
     'RefineOutput': Anonymous('only a hook; each counts its own rounds and adds its instructions to a round'),
+    'WrapUpAtLimits': Anonymous('only hooks; several on one agent each add their prompt to the final request'),
     'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
