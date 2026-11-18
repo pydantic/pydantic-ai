@@ -153,8 +153,8 @@ class ConversationConflict(UserError):
     It's an expected outcome when more than one writer changes the same conversation. Load it again
     and decide what to do: after a save, run the turn again only if repeating its tool calls is safe;
     after an [`update`][pydantic_ai.conversation_store.ConversationStore.update] whose
-    `expected_title` no longer matched, don't retry. It subclasses [`UserError`][pydantic_ai.exceptions.UserError], so a broad
-    `except UserError` catches it too.
+    `expected_title` no longer matched, don't retry. It subclasses
+    [`UserError`][pydantic_ai.exceptions.UserError], so a broad `except UserError` catches it too.
     """
 
     conversation_id: str
