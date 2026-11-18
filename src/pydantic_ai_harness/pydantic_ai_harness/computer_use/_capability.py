@@ -615,6 +615,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     )
     """What the model reads about the capability before loading it, when it's deferred with `defer_loading=True`."""
 
+    def __post_init__(self) -> None:
+        if self.settle_seconds < 0:
+            raise UserError(f'`ComputerUse.settle_seconds` must be 0 or more, got {self.settle_seconds!r}.')
+
     @cached_property
     def _toolset(self) -> FunctionToolset[AgentDepsT]:
         """The `computer` tool, built once per instance so every run of an agent gets the same toolset."""

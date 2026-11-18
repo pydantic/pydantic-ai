@@ -4167,15 +4167,11 @@ def _natives_with_computer_tool(
             # Its calls would have no tool to run them.
             if native_tool.optional:
                 continue
-            raise UserError(
-                f"`ComputerTool` needs a tool of each of the kinds ['{COMPUTER_KIND.id}'] to run its calls, "
-                'and the request has none the model can call.'
-            )
+            raise UserError('`ComputerTool` needs a `computer` tool the model can call, and this request has none.')
         if isinstance(native_tool, ComputerTool) and len(computer_tools) > 1:
             # Which of them ran a call would depend on the order of the tools.
             raise UserError(
-                f"`ComputerTool` needs one tool of each of the kinds ['{COMPUTER_KIND.id}'] to run its calls, "
-                'and the request has more than one the model can call.'
+                '`ComputerTool` needs a `computer` tool the model can call, and this request has more than one.'
             )
         kept.append(native_tool)
     return kept
