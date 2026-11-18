@@ -217,9 +217,11 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         self._session_tracing.start(await _user_email(self.settings, workspace=self.host.workspace))
         agent_instrumentation.claim(self.instrumentation.settings)
         if self.settings.httpx:
-            if not self._active_httpx:
-                self._instrument_httpx()
+            # Joined before instrumenting, so a session starting meanwhile doesn't instrument too.
+            first = not self._active_httpx
             self._active_httpx.append(self)
+            if first:
+                await to_thread.run_sync(self._instrument_httpx)
         # Subscribed even without `ui_events`, so handled errors are recorded and the root is bound as soon as
         # startup selects the conversation.
         self._unsubscribe = telemetry.subscribe(
@@ -271,7 +273,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 instrumentor.uninstrument()
             self._httpx_instrumentors.clear()
             if self._active_httpx:
-                self._active_httpx[-1]._instrument_httpx()
+                with CancelScope(shield=True):
+                    await to_thread.run_sync(self._active_httpx[-1]._instrument_httpx)
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None

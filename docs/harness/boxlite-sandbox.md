@@ -11,7 +11,29 @@ Run your agent's commands and file edits in a [BoxLite](https://github.com/boxli
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. BoxLiteSandbox's get_workspace hook gives the run a BoxLite micro-VM on your own machine as ctx.workspace. The BoxLite runtime runs inside your process, and each command and file operation runs in the VM, which has its own kernel and filesystem; output comes back to the tool. The first use boots the box, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. A new box has no network; with allow_internet_access=True and allowed_hosts it can reach only the listed hosts.](../img/harness/boxlite-sandbox.svg)
+```mermaid
+flowchart TB
+    accTitle: BoxLite Sandbox: your agent's commands run in a local micro-VM
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools. As ctx.workspace, BoxLiteSandbox's runtime in your process runs commands and file operations in a BoxLite micro-VM (own kernel, filesystem, kept until destroy(ref)), and a later run reattaches by the WorkspaceRef. By default the VM cannot connect to any host. With allow_internet_access=True and allowed_hosts it reaches only the listed hosts.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        ref["WorkspaceRef<br/>in the message history"]
+        sandbox["BoxLiteSandbox()<br/>runtime in your process"]:::capability
+        vm["BoxLite micro-VM<br/>own kernel, filesystem<br/>kept until destroy(ref)"]:::external
+    end
+    allowed["hosts in allowed_hosts"]:::external
+    other["any other host,<br/>every host by default"]:::blocked
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| sandbox
+    ref -.->|"a later run reattaches"| sandbox
+    sandbox <-->|"commands and<br/>file operations"| vm
+    vm -->|"allow_internet_access=True"| allowed
+    vm -.-x|"cannot connect"| other
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Install
 
@@ -62,7 +84,7 @@ For a narrower agent, use [`Shell`](shell.md) and [`FileSystem`](filesystem.md) 
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
 from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 
 agent = Agent('{{ anthropic:large }}', capabilities=[BoxLiteSandbox(image='python:3.12-slim'), Shell(), FileSystem()])
@@ -246,6 +268,8 @@ Whoever passes a ref runs commands in the box it names. BoxLite can open any box
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created if missing. Default: `/workspace`; `None` uses the box's own (`/` on Alpine). |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the box, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
 | `box_options` | Other `boxlite.BoxOptions` arguments for a new box, such as `volumes`, `ports`, `secrets` or `disk_size_gb`. Default: `None`. Kept out of the capability's `repr`. |
+| `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
 ## Platforms
 

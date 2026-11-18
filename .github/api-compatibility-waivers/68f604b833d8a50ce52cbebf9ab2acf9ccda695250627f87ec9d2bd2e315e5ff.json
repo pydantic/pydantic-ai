@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "`clai2`'s `INCLUDED` matrix names `SubAgents` by its new factory, `pydantic_ai_harness.sub_agents:SubAgents` (#11321); `MOVED_FACTORIES` rewrites stored rows that still use the old `subagents` path.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13401"
+}

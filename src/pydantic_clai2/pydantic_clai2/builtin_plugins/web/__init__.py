@@ -10,9 +10,10 @@ import os
 import secrets
 import tempfile
 from collections.abc import Sequence
+from functools import partial
 from pathlib import Path
 
-from anyio import to_thread
+from anyio import CancelScope, to_thread
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from rich.console import RenderableType
 
@@ -126,8 +127,12 @@ class WebPlugin(Plugin[WebSettings]):
             started = self.url is None
             url = await self.start()
             if self.settings.open_browser:
+                page = await to_thread.run_sync(_launch_page, url)
+                previous, self._launch_page = self._launch_page, page
+                if previous is not None:
+                    await to_thread.run_sync(partial(previous.unlink, missing_ok=True))
                 # A `$BROWSER` command with `%s` runs in the foreground until the browser quits.
-                await to_thread.run_sync(open_browser, self._launcher(url).as_uri(), abandon_on_cancel=True)
+                await to_thread.run_sync(open_browser, page.as_uri(), abandon_on_cancel=True)
             return f'Web UI {"running" if started else "already running"} at {url}' + (
                 '' if self.settings.host in LOOPBACK else '\nOther machines can reach it: keep the link private.'
             )
@@ -143,19 +148,6 @@ class WebPlugin(Plugin[WebSettings]):
                 return 'The web UI is not running. Start it with /web.'
             return f'Web UI at {self.url} with {self.service.hub.clients} browser(s) connected.'
         raise ValueError(USAGE)
-
-    def _launcher(self, url: str) -> Path:
-        """A page only you can read that forwards to `url`, so the token never appears in a browser command line."""
-        if self._launch_page is None:
-            descriptor, name = tempfile.mkstemp(prefix='clai2-web-', suffix='.html')
-            os.close(descriptor)
-            self._launch_page = Path(name)
-        self._launch_page.write_text(
-            f'<!doctype html><meta http-equiv="refresh" content="0;url={html.escape(url)}">'
-            f'<a href="{html.escape(url)}">Open CLAI</a>',
-            encoding='utf-8',
-        )
-        return self._launch_page
 
     async def start(self) -> str:
         """Start serving, once; return the address with this launch's token."""
@@ -181,8 +173,9 @@ class WebPlugin(Plugin[WebSettings]):
         # An action waiting on a dialog nobody can now answer backs out, which also lets its menu close.
         self.service.dialogs.cancel_all()
         if self._launch_page is not None:
-            self._launch_page.unlink(missing_ok=True)
-            self._launch_page = None
+            launch_page, self._launch_page = self._launch_page, None
+            with CancelScope(shield=True):
+                await to_thread.run_sync(partial(launch_page.unlink, missing_ok=True))
         if server is not None:
             await server.stop()
         # Its chat is in the page alone: a turn no page can watch, or answer, stops.
@@ -214,3 +207,17 @@ class WebPlugin(Plugin[WebSettings]):
 
     async def on_install_progress(self, event: InstallProgress) -> None:
         self.service.install_progress(event)
+
+
+def _launch_page(url: str) -> Path:
+    """A new page only you can read that forwards to `url`, so the token never appears in a browser command line.
+
+    It is written through the descriptor `mkstemp` opened, never reopened by path, so it stays private.
+    """
+    descriptor, name = tempfile.mkstemp(prefix='clai2-web-', suffix='.html')
+    with os.fdopen(descriptor, 'w', encoding='utf-8') as file:
+        file.write(
+            f'<!doctype html><meta http-equiv="refresh" content="0;url={html.escape(url)}">'
+            f'<a href="{html.escape(url)}">Open CLAI</a>'
+        )
+    return Path(name)

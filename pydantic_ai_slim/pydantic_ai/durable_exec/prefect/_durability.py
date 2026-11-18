@@ -4,12 +4,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
+from uuid import uuid4
 
 from prefect import task
 from prefect.context import FlowRunContext
+from prefect.utilities.hashing import hash_objects
 
 from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.capabilities.abstract import _RunIdInputsFactory  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversation_id_from_run_id
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import (
@@ -25,6 +28,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import ToolsetTool
 
+from ._cache_policies import _cacheable_value  # pyright: ignore[reportPrivateUsage]
 from ._model import _stamp_response_provenance  # pyright: ignore[reportPrivateUsage]
 from ._operation_backend import PrefectOperationBackend, PrefectOperationConfig
 from ._toolset import with_non_retryable_errors
@@ -32,7 +36,7 @@ from ._types import TaskConfig, default_task_config
 
 
 def _next_flow_sequence(context: FlowRunContext, key: str) -> int:
-    """Return the next zero-based count of `key` in this flow attempt; a retry rebuilds it in the same order."""
+    """Return the next zero-based count of `key` in this flow attempt; retries rebuild the counters."""
     sequence = context.task_run_dynamic_keys.get(key, 0)
     assert isinstance(sequence, int)
     context.task_run_dynamic_keys[key] = sequence + 1
@@ -121,11 +125,41 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         return FlowRunContext.get() is not None
 
     def get_default_run_id(self) -> str | None:
+        """Return an ID using the legacy flow-counter policy, or `None` outside a flow.
+
+        This synchronous hook is retained for existing overrides. An override delegating to
+        `super()` keeps the counter policy and its arrival-order dependence.
+        Standard agent runs use cached random IDs instead; read the actual ID from
+        [`RunContext.run_id`][pydantic_ai.tools.RunContext.run_id] or the run result's `run_id`.
+        """
         context = FlowRunContext.get()
         if context is None:
             return None
         assert context.flow_run is not None
         return f'{context.flow_run.id}:{_next_flow_sequence(context, "pydantic_ai:default_run_id")}'
+
+    async def _get_default_run_id_for_inputs(self, get_inputs: _RunIdInputsFactory) -> str | None:
+        # An existing subclass's public override remains authoritative, including a None result.
+        if type(self).get_default_run_id is not PrefectDurability.get_default_run_id:
+            return self.get_default_run_id()
+        context = FlowRunContext.get()
+        if context is None:
+            return None
+        assert context.flow_run is not None
+        digest = hash_objects(_cacheable_value({'agent': self.name, **get_inputs()}), raise_on_failure=True)
+        assert digest is not None
+        # Keep the input digest internal: a public digest could verify guesses of sensitive inputs.
+        # Reserve the ordinal before awaiting so identical concurrent calls have distinct cache keys.
+        key = f'pydantic_ai:default_run_id:{digest}'
+        sequence = _next_flow_sequence(context, key)
+
+        @task
+        async def default_run_id(sequence_key: str, sequence: int) -> str:
+            return str(uuid4())
+
+        return await default_run_id.with_options(name=f'{self.name}__default_run_id', **default_task_config)(
+            key, sequence
+        )
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None

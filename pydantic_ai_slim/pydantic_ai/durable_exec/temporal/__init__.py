@@ -120,7 +120,13 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
     # again inside Temporal's restricted sandbox would fail on import-time filesystem calls.
     # Harness CodeMode imports `opentelemetry.context` via `_monty_exec` on first use; passing
     # harness through alone leaves that dependency sandbox-local and triggers a late-import error.
-    harness_modules = ('pydantic_ai_harness', 'opentelemetry') if find_spec('pydantic_ai_harness') is not None else ()
+    # `PromptInjectionDefender` verdicts cross the activity boundary as `stackone_defender` dataclasses,
+    # which only decode in workflow code when their module is the host's.
+    harness_modules = (
+        ('pydantic_ai_harness', 'opentelemetry', 'stackone_defender')
+        if find_spec('pydantic_ai_harness') is not None
+        else ()
+    )
     return replace(
         runner,
         restrictions=runner.restrictions.with_passthrough_modules(
@@ -273,10 +279,17 @@ class AgentPlugin(SimplePlugin):
     [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]
     capability (whose chain is walked to find the bound capability), or the
     deprecated [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent]
-    wrapper, and registers the agent's activities on the worker.
+    wrapper, and registers the agent's activities on the worker, along with the child
+    workflows of any tools configured to run as one.
+
+    Args:
+        agent: The agent whose activities and child workflows to register.
+        register_workflows: Whether to register the agent's child workflows. Pass `False` on a
+            worker that only runs activities to register only the agent's activities; the worker
+            that runs your workflows must then register the child workflows.
     """
 
-    def __init__(self, agent: AbstractAgent[Any, Any]):
+    def __init__(self, agent: AbstractAgent[Any, Any], *, register_workflows: bool = True):
         workflows: list[type] = []
         if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
             activities = agent.temporal_activities
@@ -287,7 +300,7 @@ class AgentPlugin(SimplePlugin):
                     f'Agent {agent.name!r} has no `TemporalDurability` capability; '
                     'add one to `capabilities=[...]` before constructing the plugin.'
                 )
-            activities, workflows = worker_registrations(durability)
+            activities, workflows = worker_registrations(durability, include_workflows=register_workflows)
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='AgentPlugin',
             activities=activities,

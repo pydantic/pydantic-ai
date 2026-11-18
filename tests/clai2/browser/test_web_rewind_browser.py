@@ -3,7 +3,6 @@
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 
-import anyio
 import pytest
 from anyio.from_thread import start_blocking_portal
 from anyio.to_thread import run_sync
@@ -13,8 +12,8 @@ from pydantic_ai import Agent, models
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from tests.clai2.browser.conftest import Serve
-from tests.clai2.test_live_runtimes import until
 from tests.clai2.test_web import TOKEN
+from tests.clai2.test_web_rewind import HELD, HeldTurnEnd
 from tests.clai2.test_web_sessions import Fleet
 
 
@@ -39,15 +38,9 @@ class RewindUI:
     session: str
     fleet: Fleet
 
-    async def wait_until_idle(self) -> None:
-        """Wait for the session to finish its turn's end, until when it refuses a rewind though the page reads `ready` (#12603)."""
-        fleet, runtime = self.fleet, self.fleet.runtimes['echo']
-
-        async def idle_or_hung() -> None:
-            with anyio.fail_after(300):
-                await until(fleet.launch.process.live, lambda: runtime.idle)
-
-        await run_sync(lambda: fleet.portal.call(idle_or_hung))
+    async def end_turn(self) -> None:
+        """Let the turn's held `TurnEnd` hook finish, until when the session refuses a rewind."""
+        await run_sync(self.fleet.portal.call, HeldTurnEnd.end)
 
 
 @pytest.fixture(scope='module')
@@ -58,7 +51,8 @@ def rewind_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterato
         patch.setenv('XDG_CONFIG_HOME', str(root / 'config'))
         patch.setenv('XDG_STATE_HOME', str(root / 'state'))
         patch.setattr(models, 'ALLOW_MODEL_REQUESTS', False)
-        fleet = Fleet(root=root, portal=portal, agents={'echo': Agent(echo_model())})
+        HeldTurnEnd.arm()
+        fleet = Fleet(root=root, portal=portal, agents={'echo': Agent(echo_model())}, builtin=(HELD,))
         try:
             session = fleet.new('echo')
             saved: list[ModelMessage] = []
@@ -67,6 +61,7 @@ def rewind_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterato
             with serve(fleet) as url:
                 yield RewindUI(url=url, session=session, fleet=fleet)
         finally:
+            portal.call(HeldTurnEnd.release.set)
             fleet.exit()
 
 
@@ -84,14 +79,16 @@ async def test_edit_and_retry_go_on_from_an_earlier_prompt(page: Page, rewind_ui
         await composer.press('Enter')
         await expect(answers.filter(has_text=f'Echo {prompt} #')).to_have_count(1)
         await expect(activity).to_have_text('ready')
+        await rewind_ui.end_turn()
 
     first = page.locator('.user-row').first
     await first.hover()
-    await first.get_by_role('button', name='Edit prompt').click()
+    edit = first.get_by_role('button', name='Edit prompt')
+    await expect(edit).to_be_enabled()
+    await edit.click()
     editor = first.get_by_role('textbox', name='Edit prompt')
     await expect(editor).to_have_value('A')
     await editor.fill("A'")
-    await rewind_ui.wait_until_idle()
     async with page.expect_response(f'**/api/sessions/{rewind_ui.session}/rewind/*') as rewound:
         await editor.press('Enter')
     assert (await rewound.value).status == 204
@@ -99,11 +96,15 @@ async def test_edit_and_retry_go_on_from_an_earlier_prompt(page: Page, rewind_ui
     await expect(prompts).to_have_text(["A'"])
     await expect(activity).to_have_text('ready')
 
+    # The page reads ready while the turn's `TurnEnd` hooks run: Edit and Retry wait for them (#12603).
     first = page.locator('.user-row').first
     await first.hover()
-    await rewind_ui.wait_until_idle()
+    retry = first.get_by_role('button', name='Retry prompt')
+    await expect(retry).to_be_disabled()
+    await expect(first.get_by_role('button', name='Edit prompt')).to_be_disabled()
+    await rewind_ui.end_turn()
     async with page.expect_response(f'**/api/sessions/{rewind_ui.session}/rewind/*') as retried:
-        await first.get_by_role('button', name='Retry prompt').click()
+        await retry.click()
     assert (await retried.value).status == 204
     await expect(answers).to_have_text(["Echo A' #4"])
     await expect(prompts).to_have_text(["A'"])

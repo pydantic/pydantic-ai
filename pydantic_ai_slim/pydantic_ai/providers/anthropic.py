@@ -52,9 +52,10 @@ _TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (
 )
 """Models that accept `tool_addition` / `tool_removal` blocks on a `{'role': 'system'}` entry.
 
-The list Anthropic publishes for the `mid-conversation-tool-changes-2026-07-01` beta, and it happens
-to match `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES` — the two remain separate settings because they're
-separate features, one GA and one beta, that could diverge again. Models predating the beta reject
+The list Anthropic publishes for the `mid-conversation-tool-changes-2026-07-01` beta. It matches the published list
+for `{'role': 'system'}` entries, but not `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`, which leaves out `claude-haiku-5-5`
+for its sealed `<system>` rendering: the two are separate features, one GA and one beta. Haiku 5.5 keeps these
+blocks, which were measured alongside that rendering. Models predating the beta reject
 the blocks with `requires a model that supports ...`, and `claude-sonnet-5` rejects them outright
 (`tool_addition/tool_removal is not supported on this model`) rather than accepting and ignoring them
 the way it does a plain system entry. Verified live per model, including `claude-haiku-5-5`, except
@@ -62,9 +63,30 @@ the way it does a plain system entry. Verified live per model, including `claude
 """
 
 
+_REQUEST_SCOPED_SYSTEM_PROMPT_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+)
+"""Models that take a request-scoped `{'role': 'system'}` entry with `clear_at`.
+
+The list Anthropic publishes for the `mid-conversation-system-clear-at-2026-08-21` beta. It's separate from
+`_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`, which leaves out `claude-sonnet-5-5` and `claude-haiku-5-5` for their sealed
+`<system>` rendering of lasting system messages. Both bind thinking blocks, and a block that's gone from the next
+request invalidates every thinking block after it, while a cleared entry left in place doesn't. So these two get the
+entry, with the sealed block inside it. `claude-sonnet-5` accepts and clears these entries too (verified live), but it's
+left out because it ignores the role: see `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`.
+"""
+
+
 _MID_CONVERSATION_EFFORT_MODEL_PREFIXES = (
     'claude-fable-5-1',
+    'claude-fable-5-2',
     'claude-mythos-5-1',
+    'claude-mythos-5-2',
     'claude-opus-5',
     'claude-sonnet-5-5',
     'claude-haiku-5-5',
@@ -72,7 +94,7 @@ _MID_CONVERSATION_EFFORT_MODEL_PREFIXES = (
 """Models that accept an effort-only `{'role': 'system'}` entry with a per-message `output_config`.
 
 The list Anthropic publishes for the `mid-conversation-output-config-2026-07-01` beta on the Claude API and
-Google Cloud: Claude Fable 5.1, Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5. `claude-fable-5`
+Google Cloud: Claude Fable 5.1 and 5.2, Mythos 5.1 and 5.2, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5. `claude-fable-5`
 (5.0) rejects it with `requires a model that supports per-turn effort`. Amazon Bedrock serves fewer, which
 `AnthropicModel.profile` narrows per client. https://platform.claude.com/docs/en/build-with-claude/effort
 """
@@ -144,11 +166,9 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             # rendering, as it did before this was supported anywhere.
             AnthropicModelProfile(
                 supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
-                # Request-scoped (`clear_at`) entries are published for the same models and transports as
-                # the role itself, under the `mid-conversation-system-clear-at-2026-08-21` beta.
-                # `claude-sonnet-5` accepts and clears them too (verified live), but it's left out for
-                # the same reason it's left out above.
-                supports_request_scoped_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
+                supports_request_scoped_system_prompts=model_name.startswith(
+                    _REQUEST_SCOPED_SYSTEM_PROMPT_MODEL_PREFIXES
+                ),
             ),
             # Prompt caching is likewise a fact about the Messages API rather than the model family.
             # `AnthropicModel` narrows `supports_auto_cache` per client and model (the legacy Bedrock SDK client only
@@ -315,10 +335,11 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
 def _const_to_typed_enum(schema: JsonSchema) -> None:
     """Rewrite a scalar `const` as a typed one-value `enum`, which Anthropic's `transform_schema()` keeps.
 
-    `transform_schema()` moves a `const` into the description, which would leave the value unconstrained, while
-    it keeps an `enum`. Pydantic emits a typed `const` for a single-value `Literal`, such as a discriminator field.
-    A described `Enum`, `Choices()` and `BoolCriteria` render their options as `anyOf` of untyped `const`s, which
-    get the type of their value, as `transform_schema()` rejects a node without a `type`.
+    Before SDK 2.7.0, `transform_schema()` moves a `const` into the description, leaving the value unconstrained,
+    while it keeps an `enum`. Pydantic emits a typed `const` for a single-value `Literal`, such as a discriminator
+    field. A described `Enum`, `Choices()` and `BoolCriteria` render their options as `anyOf` of untyped `const`s,
+    which get the type of their value, as older SDKs reject a node without a `type`. SDK 2.7.0 and later keep
+    the `enum` and drop its redundant `type`; retain this conversion for supported older SDKs.
     """
     const = schema.get('const')
     # `bool` before `int`, which it subclasses.

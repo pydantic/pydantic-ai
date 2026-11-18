@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.compaction import ClearToolResults, DeduplicateFileReads
-from pydantic_ai_harness.filesystem import READ_FILE_KIND, FileSystem, ReadFileCallPart, ReadFileReturnPart
+from pydantic_ai_harness.file_system import READ_FILE_KIND, FileSystem, ReadFileCallPart, ReadFileReturnPart
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 READ = '[notes.txt | 1 lines]\n     1\thello\n'

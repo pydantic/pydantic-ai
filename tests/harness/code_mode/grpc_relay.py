@@ -1,8 +1,9 @@
-"""An in-process gRPC server that bridges each remote Monty session to a fresh `monty subprocess` child.
+"""A loopback gRPC server for Monty transport tests, with refusal and subprocess bridge modes.
 
 `pydantic_monty.AsyncMontyRemote` opens one `/monty.v1.MontySession/Session` stream per worker. The
 stdio worker reads and writes the same protobuf messages with a four-byte little-endian length prefix,
-so the relay only adds and removes that prefix. It never parses a message.
+so the relay only adds and removes that prefix. It never parses a message. Tests can use
+`serve_monty_relay(refusal_causes=...)` to exercise native refusal decoding without starting workers.
 """
 
 from __future__ import annotations
@@ -18,8 +19,11 @@ from typing import Any
 from grpclib.const import Cardinality, Handler, Status
 from grpclib.encoding.base import CodecBase
 from grpclib.exceptions import GRPCError
+from grpclib.protocol import H2Protocol
 from grpclib.server import Server, Stream
 from pydantic_monty._binary import find_monty_binary  # the lookup `AsyncMonty()` uses for local workers
+
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 SESSION_METHOD = '/monty.v1.MontySession/Session'
 _LENGTH_PREFIX = struct.Struct('<I')
@@ -45,6 +49,8 @@ class MontyRelay:
 
     refuse: bool = False
     """Refuse every stream with `UNAUTHENTICATED`, as a server does for a bad key."""
+    refusal_causes: tuple[str, *tuple[str, ...]] | None = None
+    """Refuse streams with one or more causes in order, repeating the last cause after exhaustion."""
     url: str = ''
     metadata: list[Mapping[str, str]] = field(default_factory=list[Mapping[str, str]])
     _streams: list[Stream[bytes, bytes]] = field(default_factory=list[Stream[bytes, bytes]])
@@ -59,6 +65,19 @@ class MontyRelay:
     async def _session(self, stream: Stream[bytes, bytes]) -> None:
         assert stream.metadata is not None
         self.metadata.append({key: value for key, value in stream.metadata.items() if isinstance(value, str)})
+        if self.refusal_causes is not None:
+            cause = self.refusal_causes[min(len(self.metadata), len(self.refusal_causes)) - 1]
+            status = {
+                'caller_cap': Status.RESOURCE_EXHAUSTED,
+                'capacity': Status.RESOURCE_EXHAUSTED,
+                'worker_unavailable': Status.UNAVAILABLE,
+                'unauthenticated': Status.UNAUTHENTICATED,
+                'permission_denied': Status.PERMISSION_DENIED,
+            }.get(cause, Status.RESOURCE_EXHAUSTED)
+            await stream.send_trailing_metadata(
+                status=status, status_message='refused', metadata={'monty-cause': cause}
+            )
+            return
         if self.refuse:
             raise GRPCError(Status.UNAUTHENTICATED, 'unauthorized')
         return await self._bridge(stream)  # pragma: no cover -- only the skipped #8824 tests bridge a session
@@ -93,18 +112,57 @@ class MontyRelay:
             await child.wait()
 
 
+class _RelayServer(Server):
+    """A grpclib server that closes the connections it accepted when it stops.
+
+    grpclib's `close()` only cancels request handlers, and on Python 3.11 `wait_closed()` returns without waiting for
+    open connections. A connection the client closes after the test's last loop turn would otherwise outlive the loop,
+    and its transport warn as unclosed when it's collected.
+    """
+
+    def __init__(self, handlers: list[MontyRelay], *, codec: CodecBase) -> None:
+        super().__init__(handlers, codec=codec)
+        self.connections: list[tuple[asyncio.BaseTransport, asyncio.Event]] = []
+
+    def _protocol_factory(self) -> H2Protocol:
+        protocol = super()._protocol_factory()
+        connection_made, connection_lost = protocol.connection_made, protocol.connection_lost
+        lost = asyncio.Event()
+
+        def made(transport: asyncio.BaseTransport) -> None:
+            self.connections.append((transport, lost))
+            connection_made(transport)
+
+        def gone(exc: BaseException | None) -> None:
+            connection_lost(exc)
+            lost.set()
+
+        protocol.connection_made, protocol.connection_lost = made, gone
+        return protocol
+
+    async def stop(self) -> None:
+        self.close()
+        for transport, _ in self.connections:
+            transport.close()
+        async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+            for _, lost in self.connections:
+                await lost.wait()
+            await self.wait_closed()
+
+
 @asynccontextmanager
-async def serve_monty_relay(port: int = 0, *, refuse: bool = False) -> AsyncGenerator[MontyRelay]:
-    """Serve a `MontyRelay` on a loopback port (ephemeral by default), with its `url` set."""
-    relay = MontyRelay(refuse=refuse)
+async def serve_monty_relay(
+    port: int = 0, *, refuse: bool = False, refusal_causes: tuple[str, *tuple[str, ...]] | None = None
+) -> AsyncGenerator[MontyRelay]:
+    """Serve a relay with its URL set; one or more explicit causes override `refuse`."""
+    relay = MontyRelay(refuse=refuse, refusal_causes=refusal_causes)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(('127.0.0.1', port))
     relay.url = f'http://127.0.0.1:{sock.getsockname()[1]}'
-    server = Server([relay], codec=_RawCodec())
+    server = _RelayServer([relay], codec=_RawCodec())
     await server.start(sock=sock)
     try:
         yield relay
     finally:
-        server.close()
-        await server.wait_closed()
+        await server.stop()

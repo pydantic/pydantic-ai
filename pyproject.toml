@@ -121,6 +121,11 @@ members = [
 # `exclude-newer` relative durations need >= 0.9.17, `exclude-newer-package` `false` needs >= 0.9.25
 required-version = ">=0.9.25"
 default-groups = ["dev", "lint"]
+# The lock leaves out these environments. Lock-only: the published `requires-python` stays `>=3.11`.
+# - Python < 3.11.5: no patched `soupsieve` (>= 4.0.0, see the floor below) supports it.
+# - emscripten: wheel-only dependencies such as `psycopg-binary` ship no emscripten wheels, so a
+#   lock that forks on `sys_platform == 'emscripten'` has no solution.
+environments = ["python_full_version >= '3.11.5' and sys_platform != 'emscripten'"]
 exclude-newer = "7 days"
 conflicts = [
     # The `mcp-tasks` extra lives in the FastMCP 4 / MCP SDK v2 universe, while the dev group
@@ -185,7 +190,7 @@ constraint-dependencies = [
     "datasets>=5.0.1",
     "sentence-transformers>=5.6.0",
     "oauthlib>=4.0.0",
-    "soupsieve>=2.9.0",
+    "soupsieve>=4.0.0",
     "certifi>=2026.10.19",
 ]
 # `gradio` (an examples dependency) caps `pillow<13`, even in its latest release, so without
@@ -224,36 +229,11 @@ genai-prices = false
 pydantic-ai-harness = false
 logfire = false
 logfire-api = false
-# certifi 2026.10.19 is the `certifi` floor above: it keeps out the compromised eMudhra
-# `emSign ECC Root CA - G3` and restores the unaffected emSign roots 2026.10.18 dropped.
-# TODO(dsfaccini): Remove after 2026-10-27 02:25 UTC, then run `uv lock` and
+logfire-sdk = false
+# k8s-agent-sandbox 1.0.11 is the `kubernetes` extra's floor: the release the backend is verified against.
+# TODO(adtyavrdhn): Remove after 2026-11-19 19:37 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
-certifi = "2026-10-20T02:25:00Z"
-# pillow 13.0.0 is the `pillow` floor above: it is the first release with the fixes.
-# TODO(dsfaccini): Remove after 2026-10-23 22:19 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-pillow = "2026-10-16T22:19:00Z"
-# boxlite 0.10.7 is the `boxlite` floor: 0.10.6 has no wheels for Python 3.13 or 3.14.
-# TODO(adtyavrdhn): Remove after 2026-10-25 01:35 UTC.
-boxlite = "2026-10-18T01:35:01Z"
-# prefect 3.9.0 is the `prefect` floor: it is the first release that imports on a current FastAPI.
-# TODO(DouweM): Remove after 2026-10-28 03:46 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-prefect = "2026-10-21T03:46:00Z"
-# boxd 0.2.20 is the `boxd` floor: it is the first release with `machines.fs`.
-# TODO(adtyavrdhn): Remove after 2026-11-03 23:56 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-boxd = "2026-10-27T23:56:00Z"
-# render 1.6.0 provides the stable Sandbox API used by RenderSandbox.
-# TODO(adtyavrdhn): Remove after 2026-11-06 01:06 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-render = "2026-10-30T01:06:03Z"
-# durabletask and durabletask-azuremanaged 1.13.0 are the floors for the `azure-durable-task` extra
-# of pydantic-ai-harness: they are the first releases that close a dispatch's orchestrator generator.
-# TODO(adtyavrdhn): Remove after 2026-11-09 22:34 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-durabletask = "2026-11-02T22:34:00Z"
-durabletask-azuremanaged = "2026-11-02T22:34:00Z"
+k8s-agent-sandbox = "2026-11-12T19:37:00Z"
 
 [dependency-groups]
 dev = [
@@ -263,7 +243,7 @@ dev = [
     "asgi-lifespan>=2.1.0",
     "httpx>=0.27",
     "devtools>=0.12.2",
-    "coverage[toml]>=7.10.7",
+    "coverage[toml]>=7.17.0",
     "dirty-equals>=0.9.0",
     "duckduckgo-search>=7.0.0",
     "pydocket>=0.20.2",
@@ -339,6 +319,12 @@ lint = [
 clai2-browser = [
     "playwright>=1.45",
 ]
+# The real span exporter behind the gh-aw engine's `PAI_OTEL_EXPORT_PATH`, which
+# `tests/harness/gh_aw/test_logfire_isolation.py` runs. It brings `opentelemetry-sdk`, so it stays out
+# of `dev`: the `pydantic-evals` CI cell covers `pydantic_evals.otel`'s fallback for installs without the SDK.
+gh-aw-tracing = [
+    "opentelemetry-exporter-otlp-json-file>=0.64b0",
+]
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
 exclude = ["/pydantic_ai_slim/pydantic_ai/.agents"]
@@ -394,6 +380,7 @@ include = [
     ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
+    ".github/scripts/test_pr_guard.py",
     ".github/scripts/test_ci_content_classifier.py",
     ".github/scripts/test_ci_matrix.py",
     ".github/scripts/test_gh_aw_engine_pin_bump.py",
@@ -404,6 +391,7 @@ include = [
     ".github/scripts/douwebot_opencode_result.py",
     ".github/scripts/test_douwebot_opencode_run.py",
     ".github/scripts/test_douwebot_opencode_result.py",
+    ".github/scripts/category_classify_opencode.py",
 ]
 
 [tool.ruff.lint]
@@ -491,6 +479,7 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
+".github/scripts/test_pr_guard.py" = ["D"]
 ".github/scripts/test_ci_content_classifier.py" = ["D"]
 ".github/scripts/test_ci_matrix.py" = ["D"]
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]
@@ -596,6 +585,7 @@ markers = [
     "smol_live: boots real smolvm VMs; needs a host that can run them",
     "boxlite_live: boots real BoxLite VMs; needs a host that can run them",
     "docker_live: starts real containers; needs a Docker daemon",
+    "kubernetes_live: claims real pods on the kind cluster from `cluster/up.sh`; needs Docker, kind and kubectl",
     "temporal: starts or connects to a local Temporal dev server",
     "subprocess(reason, conditional=False): launches a Python interpreter, which the cost guard otherwise fails; reason required. `conditional=True` skips the stale-marker check for a test that only launches one on some platforms or installs",
     "slow(reason): exempt from the per-test time budget (`PYTEST_TEST_BUDGET_SECONDS`); reason required",
@@ -634,13 +624,6 @@ filterwarnings = [
     "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
     # This is because of google.
     "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
-    # TODO(v3): Require `dbos>=3.4.0` and drop `SnapshotStepReservation`, the fallback for
-    # `DBOS.reserve_step` in `pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_operation_backend.py`.
-    # DBOS logs through the `LoggingHandler` that OpenTelemetry SDK 1.40 deprecated, reached whenever
-    # `enable_otlp` is set as `tests/durable_exec/test_dbos.py` does.
-    # TODO(v3): Require `dbos>=2.31.0` and drop this filter.
-    # https://github.com/dbos-inc/dbos-transact-py/pull/822
-    "ignore:`LoggingHandler` in `opentelemetry-sdk` is deprecated:DeprecationWarning:opentelemetry.sdk._logs",
     # TODO(Marcelo): Drop this once voyageai stops using Pydantic V1 functionality.
     # Fixed upstream in 0.4.0: https://github.com/voyage-ai/voyageai-python/pull/60 — drop when we bump past 0.3.7.
     "ignore: Core Pydantic V1 functionality:UserWarning",
@@ -661,7 +644,8 @@ filterwarnings = [
     # which crashes tool execution when filterwarnings=["error"]. The proper upstream fix is for
     # logfire to use logging.warning() instead of warnings.warn() for this diagnostic — it's
     # informational, not a deprecation, and should never be able to crash execution.
-    "ignore:Found propagated trace context:RuntimeWarning",
+    # logfire < 5.5 says 'Found propagated trace context', 5.5+ says 'Found propagated context'.
+    "ignore:Found propagated (trace )?context:RuntimeWarning",
     # `starlette.testclient` still references the `anyio.abc.BlockingPortal` alias that anyio 4.15.0
     # deprecated, so the warning fires at import time and fails collection of every test module that
     # imports it. There is nothing to bump to: starlette's `master` still uses the alias.
@@ -696,6 +680,7 @@ omit = [
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
+    "tests/mcp_server.py",  # MCP test server; mostly run over stdio, where coverage doesn't follow, and each test calls only some of its tools
     "tests/kw_only_walker.py",  # pauses coverage while importing modules with excluded dependency guards
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
     "tests/harness/**/*_live.py",  # live sandbox tiers; run only with provider credentials
@@ -715,6 +700,8 @@ source = [
     ".",
     "/home/runner/work/pydantic-ai/pydantic-ai",
     "/System/Volumes/Data/home/runner/work/pydantic-ai/pydantic-ai",
+    # The `test-windows-workspace` job.
+    "D:\\a\\pydantic-ai\\pydantic-ai",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#report

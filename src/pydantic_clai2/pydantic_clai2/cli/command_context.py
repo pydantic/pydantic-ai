@@ -42,9 +42,10 @@ class CommandContext:
     plugin_models: Callable[[], Sequence[str]] = lambda: ()
     """Models loaded plugins offer with `PluginHost.model_provider`, as `PREFIX:NAME`."""
     settings_model: Callable[[str], str] = lambda model: model
-    """The model whose `/model settings` controls and defaults a model takes.
+    """The model whose `/model settings` controls and defaults a model shows.
 
-    Differs for a plugin's `settings_from`, and for a chain, which takes its first model's.
+    Differs for a plugin's `settings_from`, and for a chain, which shows its first model's; when a chain runs,
+    its overrides apply to every model, and each model gets its own family's defaults.
     """
     edits: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     """Held by each save, so the terminal's `/set` menu, typed commands, and the web UI, each on its own thread, never lose one."""

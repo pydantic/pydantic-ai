@@ -50,14 +50,14 @@ export type Rewind = (runId: string, text: string | null) => Promise<boolean>
 
 const REWIND_NOTE = 'Later messages are removed; files are not restored.'
 
-/** A sent prompt; with `rewind`, Edit and Retry send it again from here once no turn runs. */
-function UserEntry({ entry, rewind, running }: { entry: Item; rewind?: Rewind; running: boolean }) {
+/** A sent prompt; with `rewind`, Edit and Retry send it again from here once its session is not `busy`. */
+function UserEntry({ entry, rewind, busy }: { entry: Item; rewind?: Rewind; busy: boolean }) {
   const runId = rewind ? entry.run_id : null
   // Kept by the prompt it edits: a snapshot that puts another prompt in this row drops it.
   const [editing, setEditing] = useState<{ runId: string; text: string } | null>(null)
   const draft = editing && editing.runId === runId ? editing.text : null
   const [sending, setSending] = useState(false)
-  const blocked = running || sending
+  const blocked = busy || sending
   /** Send `text` in the prompt's place; `null` sends it again as it was saved. */
   const send = async (text: string | null) => {
     if (!runId || blocked) return
@@ -145,16 +145,16 @@ const EntryView = memo(function EntryView({
   entry,
   live,
   rewind,
-  running,
+  busy,
 }: {
   entry: Entry
   live: boolean
   rewind?: Rewind
-  running: boolean
+  busy: boolean
 }) {
   switch (entry.kind) {
     case 'user':
-      return <UserEntry entry={entry} rewind={rewind} running={running} />
+      return <UserEntry entry={entry} rewind={rewind} busy={busy} />
     case 'assistant':
       return <Markdown className={`assistant ${live ? 'streaming' : ''}`} text={entry.text} live={live} />
     case 'thinking':
@@ -277,11 +277,14 @@ export function Transcript({
   running,
   empty,
   rewind,
+  busy = false,
 }: {
   entries: Entry[]
   running: boolean
   empty: React.ReactNode
   rewind?: Rewind
+  /** The session still handles input though no turn runs, as while a turn's `TurnEnd` hooks run. */
+  busy?: boolean
 }) {
   const [open, setOpen] = useState<ReadonlyMap<string, boolean>>(() => new Map())
   const cards = useMemo(
@@ -312,7 +315,7 @@ export function Transcript({
                   entry={row.entry}
                   live={running && row.entry === last}
                   rewind={rewind}
-                  running={running}
+                  busy={running || busy}
                 />
               ),
             )}
