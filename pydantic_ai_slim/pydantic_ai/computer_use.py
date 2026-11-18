@@ -48,9 +48,7 @@ from .messages import BinaryImage, ToolCallPart, ToolKind, ToolReturnPart
 __all__ = (
     'COMPUTER_KIND',
     'Click',
-    'ComputerArgs',
     'ComputerCallPart',
-    'ComputerContent',
     'ComputerResult',
     'ComputerReturnPart',
     'ComputerToolAction',
@@ -456,14 +454,14 @@ ComputerToolAction: TypeAlias = Annotated[
 """What the `computer` tool accepts: mouse and keyboard actions, plus waiting and looking."""
 
 
-class ComputerArgs(TypedDict):
+class _ComputerArgs(TypedDict):
     """The `computer` tool's arguments."""
 
     actions: list[ComputerToolAction]
     """The actions to perform, in order."""
 
 
-ComputerContent: TypeAlias = list[str | BinaryImage]
+_ComputerContent: TypeAlias = list[str | BinaryImage]
 """What the model sees from a `computer` call; see the module docstring for its order."""
 
 
@@ -502,13 +500,13 @@ def _label(part: ToolCallPart, key: str, *, minimum: int = 1) -> int | None:
 
 
 COMPUTER_KIND = ToolKind(
-    'computer_use', 'computer', args=ComputerArgs, content=ComputerContent, metadata=ComputerResult
+    'computer_use', 'computer', args=_ComputerArgs, content=_ComputerContent, metadata=ComputerResult
 )
 """The kind of the `computer` tool, whose calls a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends to a
 provider's native computer tool."""
 
 
-class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
+class ComputerCallPart(ToolCallPart[_ComputerArgs], kind=COMPUTER_KIND):
     """A call of the `computer` tool."""
 
     @property
@@ -546,7 +544,7 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         return _label(self, _SCREENSHOT_MAX_PIXELS)
 
 
-class ComputerReturnPart(ToolReturnPart[ComputerContent, ComputerResult], kind=COMPUTER_KIND):
+class ComputerReturnPart(ToolReturnPart[_ComputerContent, ComputerResult], kind=COMPUTER_KIND):
     """A successful result of the `computer` tool."""
 
     @property
