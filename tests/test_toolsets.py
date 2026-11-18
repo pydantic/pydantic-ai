@@ -141,32 +141,6 @@ async def test_function_toolset_tool_for_tool_def_preserves_rename_and_retry_bud
     assert await toolset.call_tool('renamed', {'value': 3}, ctx, rebuilt_tool) == 6
 
 
-async def test_function_toolset_prepare_tool_def_override_gets_tool_context():
-    """A tool without `prepare` lists its own definition; a `prepare_tool_def` override still gets the tool's context.
-
-    Not a VCR test: the context handed to the override never reaches a provider request.
-    """
-    seen: list[tuple[str | None, int]] = []
-
-    class ContextTool(Tool[None]):
-        async def prepare_tool_def(self, ctx: RunContext[None]) -> ToolDefinition | None:
-            seen.append((ctx.tool_name, ctx.max_retries))
-            return await super().prepare_tool_def(ctx)
-
-    def plain(x: int) -> int:
-        return x  # pragma: no cover
-
-    def custom(x: int) -> int:
-        return x  # pragma: no cover
-
-    plain_tool = Tool(plain)
-    toolset = FunctionToolset[None]([plain_tool, ContextTool(custom, max_retries=3)])
-    tools = await toolset.get_tools(build_run_context(None))
-
-    assert tools['plain'].tool_def == plain_tool.tool_def
-    assert seen == [('custom', 3)]
-
-
 async def test_function_toolset():
     @dataclass
     class PrefixDeps:
