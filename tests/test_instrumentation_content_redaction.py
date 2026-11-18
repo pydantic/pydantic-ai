@@ -924,7 +924,7 @@ async def test_no_content_reaches_telemetry_from_the_run_composition(include_con
     toolset = SENTINEL_toolset_class()
 
     @toolset.tool_plain
-    def ping() -> str:
+    def ping() -> str:  # pragma: no cover  # registered so the toolset is listed; the model never calls it
         return 'pong'
 
     agent = Agent(
