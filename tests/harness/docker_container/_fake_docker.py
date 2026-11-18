@@ -324,9 +324,10 @@ def install_fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fake
         ('tint2', _FAKE_TINT2),
         ('xprop', _FAKE_FLUXBOX),
         ('setsid', _FAKE_SETSID),
-        ('flock', _FAKE_FLOCK),
         ('scrot', _FAKE_SCROT),
         ('xwininfo', _FAKE_XWININFO),
+        # Only where the host has no `flock`, as on macOS, since the stand-in starts a Python interpreter.
+        *([('flock', _FAKE_FLOCK)] if shutil.which('flock') is None else []),
     ]:
         (bin_dir / name).write_text(script)
         (bin_dir / name).chmod(0o755)
