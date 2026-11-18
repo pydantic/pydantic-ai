@@ -712,7 +712,9 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     ) -> CommandResult:
         _check_command_timeout(timeout)
         if self._display is not None:
-            # Started first, so a program the command opens shows on the screen.
+            # Checked first, so a bad command doesn't create a Sprite.
+            command_argv(command, shell)
+            # Started before the command, so a program it opens shows on the screen.
             await self._display.start()
         async with self._operation():
             return await self._run(command, shell=shell, env=env, timeout=timeout)
