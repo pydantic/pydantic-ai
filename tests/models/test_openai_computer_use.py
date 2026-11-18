@@ -658,20 +658,22 @@ async def test_an_unfinished_call_runs_nothing(allow_model_requests: None) -> No
     assert _is_a_valid_png(output['output']['image_url'])
 
 
-@pytest.mark.parametrize('native', [True, False], ids=['native', 'function'])
+@pytest.mark.parametrize('tool', ['native', 'function', 'searched-function'])
 @pytest.mark.parametrize(
     'ending, streamed',
     [('incomplete', False), ('incomplete', True), ('refused', True)],
     ids=['incomplete-response', 'incomplete-stream', 'refused-stream'],
 )
 async def test_a_finished_call_in_a_response_that_did_not_complete_runs_nothing(
-    allow_model_requests: None, native: bool, ending: str, streamed: bool
+    allow_model_requests: None, tool: str, ending: str, streamed: bool
 ) -> None:
     """OpenAI says to stop when a response is incomplete, failed or refused, even when the computer call finished.
 
     The call's arguments don't parse, so, as `test_an_unfinished_call_runs_nothing` shows, none of it runs. A refused
-    response that isn't streamed has no parts at all, as for every other call.
+    response that isn't streamed has no parts at all, as for every other call. A deferred `computer` tool is stopped
+    too: tool search can reveal it inside the response, and the run then finds it before running the response's calls.
     """
+    native = tool == 'native'
     item: resp.ResponseOutputItem = (
         _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}).output[0]
         if native
@@ -720,7 +722,12 @@ async def test_a_finished_call_in_a_response_that_did_not_complete_runs_nothing(
         ]
     client = MockOpenAIResponses.create_mock_stream(stream) if streamed else MockOpenAIResponses.create_mock(final)
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    computer = ToolDefinition(
+        name='computer',
+        parameters_json_schema={'type': 'object'},
+        tool_kind=COMPUTER_KIND.id,
+        defer_loading=tool == 'searched-function',
+    )
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Go.')]
     params = ModelRequestParameters(
         function_tools=[computer], native_tools=[COMPUTER_TOOL] if native else [], allow_text_output=True

@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from ..._framing import TOOL_RESULT_TAG, frame
 from ..._utils import is_str_dict
-from ...computer_use import ComputerCallPart, ComputerResult, ComputerReturnPart
+from ...computer_use import COMPUTER_KIND, ComputerCallPart, ComputerResult, ComputerReturnPart
 from ...messages import (
     BinaryImage,
     ModelMessage,
@@ -262,11 +262,11 @@ def stop_computer_calls_unless_completed(
     knows that only after it announced its calls, so this is decided on the final parts, for both paths and both the
     native and the function `computer` call: the call keeps its place, with arguments that don't parse, as a cut-off
     call's. Other function calls are left as they came. A response without a status, as some compatible APIs send,
-    counts as completed.
+    counts as completed. A deferred `computer` tool counts too: tool search may reveal it in this same response.
     """
     if status in (None, 'completed') and not refused:
         return list(parts)
-    tool_names = _computer_tool_names(model_request_parameters)
+    tool_names = {tool.name for tool in model_request_parameters.function_tools if tool.tool_kind == COMPUTER_KIND.id}
     return [
         replace(part, args=_UNFINISHED_ARGS)
         if isinstance(part, ToolCallPart) and part.tool_name in tool_names
