@@ -548,7 +548,7 @@ Compile with [gh-aw v1.2.1](https://github.com/github/gh-aw/releases/tag/v1.2.1)
 It is the first release that lets the review failure reporter read trusted pre-agent eligibility outputs
 after detection errors ([gh-aw#74939](https://github.com/github/gh-aw/pull/74939)).
 `shared/engine-zai.md` sets `max-ai-credits: -1`; AWF accepts that value only from v0.29.1.
-`shared/engine-zai.md` imports the public Pydantic AI engine and explicitly pins runtime 0.64.0. Keep each workflow's
+`shared/engine-zai.md` imports the public Pydantic AI engine and explicitly pins runtime 0.70.0. Keep each workflow's
 root engine block model-only; the shared import owns identity and credentials.
 `stage-gh-aw-agent.sh` configures the existing request limits in an isolated CLAI
 settings store. It also outputs the staged shim's source digest, which `shared/engine-zai.md`
