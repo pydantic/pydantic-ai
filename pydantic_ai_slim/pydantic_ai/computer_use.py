@@ -1,8 +1,8 @@
 """The `computer` tool: its kind, its actions, and the shapes of its arguments and result.
 
-A capability that gives an agent a screen, such as Pydantic AI Harness's `ComputerUse`, defines a tool of
-[`COMPUTER_KIND`][pydantic_ai.computer_use.COMPUTER_KIND] and drives the screen. A model adapter whose provider has a
-native computer tool sends that tool as the native one and translates its calls and results.
+A capability that gives an agent a screen defines a tool of [`COMPUTER_KIND`][pydantic_ai.computer_use.COMPUTER_KIND]
+and drives the screen. A model adapter whose provider has a native computer tool sends that tool as the native one
+and translates its calls and results.
 
 Coordinates are pixels of the latest screenshot, from the top left, unless the call's
 [`coordinate_grid`][pydantic_ai.computer_use.ComputerCallPart.coordinate_grid] puts them on a grid. A click or scroll

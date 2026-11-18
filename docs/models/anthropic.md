@@ -972,9 +972,10 @@ The response's usage, and so its cost, stays the sum of the passes either way.
 
 ## Computer use
 
-Computer use comes from the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability, which adds a
-[`ComputerTool`](../native-tools.md#computer-tool). On the Claude API and Amazon Bedrock (`AsyncAnthropicBedrock` and
-`AsyncAnthropicBedrockMantle`), each Claude model gets the computer use tool it was trained on:
+Computer use comes from the Pydantic AI Harness [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]
+capability, which adds a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool]. On the Claude API and Amazon Bedrock
+(`AsyncAnthropicBedrock` and `AsyncAnthropicBedrockMantle`), each Claude model gets the computer use tool it was trained
+on:
 
 | Models | Tool |
 |---|---|
@@ -982,9 +983,9 @@ Computer use comes from the Pydantic AI Harness [`ComputerUse`](../harness/compu
 | Claude Opus 4.7, 4.6 and 4.5, Sonnet 4.6 | `computer_20251124` |
 | Claude Haiku 4.5 | `computer_20250124` |
 
-Other models, Google Vertex AI, Microsoft Foundry and Claude Platform on AWS, and any model with `ComputerUse(native=False)`, get a function
-tool. Each model's largest screenshot is
-listed under [Screen size](../harness/computer-use.md#screen-size).
+Other models get a function tool, as does every model on Google Vertex AI, Microsoft Foundry and Claude Platform on AWS,
+and any model when `ComputerUse(native=False)` is set. Each model's largest screenshot is listed under
+[Screen size](../harness/computer-use.md#screen-size).
 
 To send the native tool for a model or client you've checked yourself, set two keys in the model's `profile`: add
 `ComputerTool` to [`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools], which replaces

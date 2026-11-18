@@ -18,7 +18,6 @@ collect_ignore = (
         'test_backend.py',
         'test_conformance.py',
         'test_e2b_desktop.py',
-        'test_e2b_desktop_scripts.py',
         'test_e2b_live.py',
         'test_e2b_sandbox.py',
     ]
