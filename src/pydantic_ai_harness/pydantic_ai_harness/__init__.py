@@ -82,6 +82,7 @@ if TYPE_CHECKING:
     from .render import RenderWorkflows
     from .render_sandbox import RenderSandbox, RenderSandboxBackend
     from .repo_context import RepoContext
+    from .report_remaining_budget import ReportRemainingBudget
     from .report_stale_files import ReportStaleFiles
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
@@ -191,6 +192,7 @@ __all__ = [
     'RenderSandboxBackend',
     'RenderWorkflows',
     'ReportContextUsage',
+    'ReportRemainingBudget',
     'ReportStaleFiles',
     'RepoContext',
     'Researcher',
@@ -314,6 +316,7 @@ _LAZY_EXPORTS = {
     'RenderWorkflows': 'render',
     'RepoContext': 'repo_context',
     'ReportContextUsage': 'compaction',
+    'ReportRemainingBudget': 'report_remaining_budget',
     'ReportStaleFiles': 'report_stale_files',
     'Researcher': 'researcher',
     'Shell': 'shell',

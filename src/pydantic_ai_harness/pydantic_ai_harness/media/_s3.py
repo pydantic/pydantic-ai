@@ -210,6 +210,9 @@ class S3MediaStore:
         key_strategy: KeyStrategy = default_key_strategy,
         public_url: PublicUrlResolver | None = None,
     ) -> None:
+        # The parameter's type already excludes it; a legacy `httpx` client would only fail later, at the first request.
+        if client is not None and not isinstance(client, httpx2.AsyncClient):
+            raise TypeError('`S3MediaStore(client=...)` takes an `httpx2.AsyncClient`; the `httpx` client is removed.')
         self._bucket = bucket
         self._endpoint = endpoint.rstrip('/')
         self._region = region

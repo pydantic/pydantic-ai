@@ -115,7 +115,7 @@ SpendLimits[Account](
 )
 ```
 
-The callable is typed against the agent's `deps` like `scope` (the `Ceiling` type alias names the accepted forms), and is called alongside it whenever the budget is read, more than once per request, so keep it to reading what the application loaded before the run. Return `None` for no ceiling on that partition. Unlike a plain ceiling, a resolved zero or less is accepted: it means nothing is allowed, so the partition reads as exhausted and its requests are refused with `SpendLimitExceeded`. The refusal and `warn_at` use the resolved ceiling. `BudgetStatus.usd_limit` and `token_limit` report it, as `SpendRecordedEvent` does, and `BudgetStatus.budget` stays the budget as configured. If the callable raises, the response is still accrued, but neither `SpendRecordedEvent` nor `on_spend` reports it, and the run fails with that error. The counter key does not include the ceiling, so what a partition has spent carries over when its allowance changes.
+The callable is typed against the agent's `deps` like `scope` (the `Ceiling` type alias names the accepted forms), and is called alongside it whenever the budget is read, more than once per request, so keep it to reading what the application loaded before the run. Return `None` for no ceiling on that partition. Unlike a plain ceiling, a resolved zero or less is accepted: it means nothing is allowed, so the partition reads as exhausted and its requests are refused with `SpendLimitExceeded`. The refusal and `warn_at` use the resolved ceiling. `BudgetStatus.usd_limit` and `token_limit` report it, as `SpendRecordedEvent` does, and `BudgetStatus.budget` stays the budget as configured. If the callable raises, the response is still accrued, but `SpendRecordedEvent` does not report it, and the run fails with that error. The counter key does not include the ceiling, so what a partition has spent carries over when its allowance changes.
 
 A budget with no ceiling is a counter. It accumulates and reports and never refuses anything, which is how per-tenant accounting with no cap is expressed:
 
@@ -164,7 +164,7 @@ async def report(limits: SpendLimits[None]) -> None:
 
 Without a run context, budgets on a `run` or `conversation` window are omitted, so is a budget whose ceiling is a callable, and so is a budget declaring a `scope` unless `scope=` names the partition to read. Pass `ctx` inside a run and every budget resolves.
 
-Set `expose_tools=True` to give the agent a `get_spend` tool. It is off by default: a tool costs schema tokens on every request, and most applications want the number on a screen rather than in the model's context.
+Set `expose_tools=True` to give the agent a `get_spend` tool. It is off by default: a tool costs schema tokens on every request, and most applications want the number on a screen rather than in the model's context. To put the remaining budget in front of the model on every request instead, use [Report Remaining Budget](../report_remaining_budget/).
 
 ## Reacting to a threshold
 

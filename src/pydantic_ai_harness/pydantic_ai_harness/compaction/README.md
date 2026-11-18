@@ -608,6 +608,9 @@ for iterations once the remaining request count drops to `critical_remaining_ite
 It watches `max_iterations`, `max_context_tokens` (or `max_context_fraction`), and `max_total_tokens`,
 warning on whichever are configured; narrow that with `warn_on`.
 
+To tell the model on every request how much of the run's `UsageLimits` and spend budgets is left,
+from the first request rather than past a threshold, use [Report Remaining Budget](../report_remaining_budget/).
+
 ## Cost: why summarization is the last resort
 
 Summarization turns input tokens into output tokens, which are billed at a premium and generated

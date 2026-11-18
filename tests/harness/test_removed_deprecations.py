@@ -145,3 +145,34 @@ def test_a_removed_keyword_argument_is_rejected(module: str, name: str, kwargs: 
     removed = list(kwargs)[-1]
     with pytest.raises(TypeError, match=f"unexpected keyword argument '{removed}'"):
         capability(**kwargs)
+
+
+def test_removed_members_are_gone() -> None:
+    from pydantic_ai_harness.advisor import Advisor
+    from pydantic_ai_harness.spend_limits import InMemorySpendStore
+    from pydantic_ai_harness.system_reminders import GeneratedReminder
+
+    reminder = GeneratedReminder('refocus', 'some-model')
+    assert not hasattr(reminder, 'note')
+    assert not hasattr(reminder, 'data')
+    assert 'generated_reminder' not in str(reminder)
+    assert not hasattr(Advisor('test'), 'mode')
+    store = InMemorySpendStore()
+    assert not hasattr(store, 'get')
+    assert not hasattr(store, 'add')
+
+
+def test_s3_media_store_rejects_a_legacy_httpx_client() -> None:
+    import httpx
+
+    from pydantic_ai_harness.media import S3MediaStore
+
+    with pytest.raises(TypeError, match=r'takes an `httpx2\.AsyncClient`'):
+        S3MediaStore(
+            bucket='b',
+            endpoint='https://s3.example.com',
+            region='us-east-1',
+            access_key_id='k',
+            secret_access_key='s',
+            client=httpx.AsyncClient(),  # pyright: ignore[reportArgumentType]
+        )
