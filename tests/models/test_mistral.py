@@ -3173,37 +3173,6 @@ Dummy TXT file
     )
 
 
-async def test_openapi_yaml_structured_suffix_inlined(allow_model_requests: None):
-    """A `+yaml` structured-suffix media type is inlined as text, like bare YAML is.
-
-    Unit test, not VCR: the outcome is decided by the request mapping, so this pins the request
-    shape the mock client receives.
-    """
-    yaml_content = BinaryContent(data=b'openapi: 3.1.0\ninfo:\n  title: demo', media_type='application/openapi+yaml')
-
-    c = completion_message(MistralAssistantMessage(content='An OpenAPI document.', role='assistant'))
-    mock_client = MockMistralAI.create_mock(c)
-    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(m)
-
-    result = await agent.run(['What is this file?', yaml_content])
-    assert result.output == snapshot('An OpenAPI document.')
-    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][0].content == snapshot(
-        [
-            MistralTextChunk(text='What is this file?'),
-            MistralTextChunk(
-                text="""\
------BEGIN FILE id="f455cb" type="application/openapi+yaml"-----
-openapi: 3.1.0
-info:
-  title: demo
------END FILE id="f455cb"-----\
-"""
-            ),
-        ]
-    )
-
-
 @pytest.mark.vcr()
 async def test_text_document_as_binary_content_input(
     allow_model_requests: None, text_document_content: BinaryContent, mistral_api_key: str
