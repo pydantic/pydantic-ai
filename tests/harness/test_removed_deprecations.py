@@ -8,12 +8,16 @@ from collections.abc import Callable
 import pytest
 
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.advisor import Advisor
 from pydantic_ai_harness.compaction import ReportContextUsage
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.macroscope import Macroscope
+from pydantic_ai_harness.media import S3MediaStore
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import Shell
+from pydantic_ai_harness.spend_limits import InMemorySpendStore
 from pydantic_ai_harness.sub_agents import SubAgents
+from pydantic_ai_harness.system_reminders import GeneratedReminder
 
 
 @pytest.mark.parametrize(
@@ -148,10 +152,6 @@ def test_a_removed_keyword_argument_is_rejected(module: str, name: str, kwargs: 
 
 
 def test_removed_members_are_gone() -> None:
-    from pydantic_ai_harness.advisor import Advisor
-    from pydantic_ai_harness.spend_limits import InMemorySpendStore
-    from pydantic_ai_harness.system_reminders import GeneratedReminder
-
     reminder = GeneratedReminder('refocus', 'some-model')
     assert not hasattr(reminder, 'note')
     assert not hasattr(reminder, 'data')
@@ -163,10 +163,7 @@ def test_removed_members_are_gone() -> None:
 
 
 def test_s3_media_store_rejects_a_legacy_httpx_client() -> None:
-    import httpx
-
-    from pydantic_ai_harness.media import S3MediaStore
-
+    httpx = pytest.importorskip('httpx')
     with pytest.raises(TypeError, match=r'takes an `httpx2\.AsyncClient`'):
         S3MediaStore(
             bucket='b',
@@ -174,5 +171,5 @@ def test_s3_media_store_rejects_a_legacy_httpx_client() -> None:
             region='us-east-1',
             access_key_id='k',
             secret_access_key='s',
-            client=httpx.AsyncClient(),  # pyright: ignore[reportArgumentType]
+            client=httpx.AsyncClient(),
         )
