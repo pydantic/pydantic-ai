@@ -22,6 +22,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import (
     Agent,
+    BinaryImage,
     CachePoint,
     ModelMessage,
     ModelRequest,
@@ -30,6 +31,7 @@ from pydantic_ai import (
     SystemPromptPart,
     TextContent,
     TextPart,
+    Tool,
     ToolReturn,
     UploadedFile,
     UserContent,
@@ -37,6 +39,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import NativeTool, ProcessHistory
 from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.computer_use import COMPUTER_KIND, ComputerCallPart
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessagesTypeAdapter, sanitize_messages
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -270,6 +273,28 @@ async def test_continue_within_a_tool_call_loop(allow_model_requests: None, stre
     assert 'tools' not in cont
     [message] = cont['messages']
     assert [block['type'] for block in message['content']] == ['tool_result']
+
+
+async def test_continue_after_a_computer_call_is_labelled(allow_model_requests: None):
+    """The agent labels a `computer` call with its model's screenshot limits after the response is digested.
+
+    The labels are never sent, so the request answering the call still continues the thread.
+    """
+    api = _Api(replies=[{'type': 'tool_use', 'id': 'toolu_1', 'name': 'computer', 'input': {'actions': []}}])
+    screen = BinaryImage(data=b'png', media_type='image/png')
+    computer = Tool(lambda actions: ['Done.', screen], name='computer', tool_kind=COMPUTER_KIND)
+    async with _model(api) as model:
+        model = AnthropicModel(
+            model.model_name,
+            provider=AnthropicProvider(anthropic_client=model.client),
+            profile={**model.profile, 'computer_use_screenshot_max_side': 1568},
+        )
+        result = await Agent(model, tools=[computer], model_settings=_SETTINGS).run('Click.')
+
+    call = result.all_messages()[1].parts[0]
+    assert isinstance(call, ComputerCallPart) and call.screenshot_max_side == 1568
+    _, cont = api.bodies
+    assert cont['thread'] == {'type': 'continue', 'previous_message_id': 'msg_1'}
 
 
 @pytest.mark.parametrize(
