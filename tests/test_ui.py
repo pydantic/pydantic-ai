@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import warnings
-from collections.abc import AsyncIterator, Awaitable, MutableMapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, MutableMapping, Sequence
+from contextlib import aclosing
 from dataclasses import dataclass, field, replace
 from functools import cached_property
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import anyio
 import pytest
@@ -71,7 +72,7 @@ from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, conversation_view, message, message_part, try_import
+from .conftest import IsDatetime, conversation_view, message, message_part, no_leaked_tasks, try_import
 from .workspace_fakes import ConnectOnlyWorkspaceCapability
 
 with try_import() as otel_sdk_imports_successful:
@@ -3486,3 +3487,73 @@ def test_messages_builder_copies_parts_it_did_not_make():
     assert own_parts == [TextPart('a')]
     assert message.parts == [TextPart('a'), TextPart('b'), TextPart('c')]
     assert builder.last_modified(checkpoint, of_type=ModelResponse) is message
+
+
+KEEPALIVE = ': keepalive\n\n'
+
+
+@pytest.mark.parametrize('stop_after', ['first', 'second'])
+async def test_encode_stream_sends_keepalive_while_source_is_quiet(stop_after: str):
+    """A quiet source gets keepalive comments without its pending pull being cancelled, and closing cleans it up."""
+    released = anyio.Event()
+    source_closed = False
+
+    async def events() -> AsyncIterator[str]:
+        nonlocal source_closed
+        try:
+            yield 'first'
+            await released.wait()
+            yield 'second'
+            await anyio.sleep_forever()
+        finally:
+            source_closed = True
+
+    chunks: list[str] = []
+    with no_leaked_tasks():
+        encoded = cast(AsyncGenerator[str], DummyUIEventStream().encode_stream(events(), keepalive_interval=0.01))
+        async with aclosing(encoded):
+            async for chunk in encoded:
+                chunks.append(chunk)
+                if chunk == KEEPALIVE:
+                    released.set()
+                elif chunk == stop_after:
+                    break
+
+    expected = ['first', KEEPALIVE, 'second'] if stop_after == 'second' else ['first']
+    assert list(dict.fromkeys(chunks)) == expected
+    assert source_closed
+
+
+@pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
+async def test_encode_stream_keepalive_surfaces_source_error(anyio_backend: str):
+    """On Trio, which the keepalive pump doesn't support, the stream is still encoded, without keepalives."""
+
+    async def events() -> AsyncIterator[str]:
+        yield 'first'
+        raise ValueError('boom')
+
+    with pytest.raises(ValueError, match='boom'):
+        async for _ in DummyUIEventStream().encode_stream(events(), keepalive_interval=0.01):
+            pass
+
+
+async def test_streaming_response_forwards_keepalive_interval():
+    async def events() -> AsyncIterator[str]:
+        yield 'first'
+        await anyio.sleep(0.03)
+        yield 'second'
+
+    adapter = DummyUIAdapter(Agent(TestModel()), DummyUIRunInput())
+    enabled = adapter.streaming_response(events(), keepalive_interval=0.01)
+    assert KEEPALIVE in [chunk async for chunk in enabled.body_iterator]
+    disabled = adapter.streaming_response(events(), keepalive_interval=None)
+    assert [chunk async for chunk in disabled.body_iterator] == ['first', 'second']
+
+
+@pytest.mark.parametrize('interval', [0, -1])
+def test_encode_stream_rejects_non_positive_keepalive_interval(interval: float):
+    async def events() -> AsyncIterator[str]:
+        yield 'never pulled'  # pragma: no cover
+
+    with pytest.raises(UserError, match='`keepalive_interval` must be positive or `None`'):
+        DummyUIEventStream().encode_stream(events(), keepalive_interval=interval)
