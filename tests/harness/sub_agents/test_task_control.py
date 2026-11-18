@@ -2742,7 +2742,6 @@ class TestTaskControlEdges:
         toolset = SubAgentToolset[Any](
             agents={'researcher': researcher()},
             forward_usage=True,
-            inherit_tools=False,
             shared_capabilities=[],
             event_stream_handler=None,
             tool_name='delegate_task',
@@ -2823,7 +2822,6 @@ class TestTaskControlEdges:
         common: dict[str, Any] = dict(
             agents={},
             forward_usage=True,
-            inherit_tools=False,
             shared_capabilities=[],
             event_stream_handler=None,
             tool_name='delegate_task',

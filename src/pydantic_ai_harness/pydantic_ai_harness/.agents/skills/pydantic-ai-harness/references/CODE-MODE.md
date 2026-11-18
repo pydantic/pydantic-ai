@@ -197,7 +197,7 @@ CodeMode(os_access=OSAccess(environ={'API_BASE': 'https://api.example.com'}))
 ```
 
 - `mount` takes a `MountDir` or a list of them; `host_path` must already exist (`MountDir` raises `TypeError` otherwise). The default `mode='overlay'` is copy-on-write: writes are visible only within the current `run_code` call and never reach the host. Use `mode='read-write'` when writes must persist (including across `run_code` calls), `mode='read-only'` to forbid them.
-- `os_access` takes an `AbstractOS` (e.g. `OSAccess`, isolated in-memory filesystem and env, host clock) or a keyword-argument callback `def handler(*, name, args, kwargs, **_)` (may be `async`). Return any value (including `None`) to answer the call; return `pydantic_monty.NOT_HANDLED` to refuse it (raises in the sandbox and burns a retry). The positional `(name, args, kwargs)` form is deprecated.
+- `os_access` takes an `AbstractOS` (e.g. `OSAccess`, isolated in-memory filesystem and env, host clock) or a keyword-argument callback `def handler(*, name, args, kwargs, **_)` (may be `async`). Return any value (including `None`) to answer the call; return `pydantic_monty.NOT_HANDLED` to refuse it (raises in the sandbox and burns a retry).
 - Mounts are directories on the machine running the agent, not the run's workspace. With a remote sandbox such as `ModalSandbox`, `FileSystem` and `Shell` act in the sandbox while mounted `pathlib` code still touches the host -- for files the model shares with its commands, sandbox the workspace tools (`FileSystem`) instead of mounting.
 
 ## Other Options
@@ -226,7 +226,7 @@ CodeMode(
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - `os_policy`: Monty's `OSPolicy`, merged key by key over the defaults (clock, sleeps, and random seeding routed to `os_access`). `{'datetime': 'system', 'timezone': 'Europe/Paris'}` gives the sandbox the worker's clock in that zone with no handler; `{'timezone': ...}` alone keeps the clock on `os_access` but makes `astimezone()` and `%Z` report the zone. Keep the defaults under Temporal: a `'system'` clock or `random_start` is re-read on replay. Fixed values stay fixed.
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
-- `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_seconds` also applies, except inside Temporal. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.5.0`. `monty_sandbox_url` is the deprecated form.
+- `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_seconds` also applies, except in Temporal workflow code. The factory runs once per run, or once per turn when turns run as activities. Only execution moves; tools, `os_access`, and prints stay host-side, and so do mounts unless turns run as activities, where the activity worker reads them. Run the worker on `pydantic-monty>=1.5.0`.
 - Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's instructions or tool arguments.
 
 ## Durable Execution
@@ -234,8 +234,26 @@ CodeMode(
 `CodeMode` works next to `TemporalDurability()` (install `pydantic-ai-harness[codemode,temporal]`), but
 `run_code` executes in workflow code and is re-run on replay. Keep snippets deterministic: put external
 reads, writes, and clock access in wrapped tools (which become activities), not in `mount`/`os_access`.
-Inside a Temporal workflow `max_duration_seconds` is disabled (memory and suspension caps still apply) and a
+Inside a Temporal workflow `max_duration_seconds` is disabled for code run in workflow code (memory and suspension caps still apply) and a
 workflow task that does not yield within 2 seconds fails, so move heavy computation into a tool.
+
+With a remote `monty_sandbox`, each turn (the code between two waits on the
+host: nested calls, sleeps, deferred calls) runs as its own activity instead, so sandbox computation
+does not count against the 2 seconds and replay reads turn results from history. This needs a server
+that stores sessions (Logfire Agent Sandboxes does); on one that stores none, the run falls back to
+workflow code, and a storing server that cannot store a session's state raises a non-retried
+`UserError`. Runs stay workflow-side with `id=None`, under the deprecated
+`TemporalAgent`, with `os_access` set, with an `'overlay'` mount (the default mode; use `'read-only'`
+or `'read-write'`) or a `write_bytes_limit`, or when the workflow started before this change. Each
+turn takes and returns at most 1 MiB: longer output is cut, and longer tool results fail the snippet
+with a `ValueError` that gives the size and resets the session.
+Turns use `TemporalDurability`'s `activity_config`; a turn that still fails after its retries fails
+the workflow with `ActivityError`. In a turn activity `max_duration_seconds` applies again, so keep
+`start_to_close_timeout` above it: Temporal's timeout does not stop a running turn. A retried turn
+repeats its `'read-write'` mount writes. Recorded pool errors keep their type name, so
+`non_retryable_error_types` still match. A `CodeMode` a `DynamicCapability` returns keeps its turns
+in workflow code. Tool results and call arguments keep their types across turns, and the model sees the
+same result; nested-call arguments of a type Monty does not hand the host, or over 512 KiB, raise `TypeError`.
 
 Setup errors reach workflow code with their original types. `PydanticAIPlugin` treats `UserError`
 as a workflow failure. Uncaught `RuntimeError`, `MontyRefusedError`, and other unclassified factory

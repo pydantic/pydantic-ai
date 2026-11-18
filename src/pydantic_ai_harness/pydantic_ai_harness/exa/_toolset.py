@@ -20,7 +20,6 @@ from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import ToolOperation, raise_retry
-from pydantic_ai_harness._warn import warn_argument_renamed
 from pydantic_ai_harness._web_search import defer_to_native_web_search
 
 try:
@@ -304,16 +303,10 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         defer_to_native: bool = False,
         id: str | None = None,
         operations: ExaSearchOperations | None = None,
-        num_results: int | None = None,
     ) -> None:
         super().__init__(id=id)
         self._client = client if client is not None else default_client()
         self._operations = operations
-        if num_results is not None:
-            if max_results != EXA_DEFAULT_MAX_RESULTS:
-                raise TypeError('Pass `max_results` only: `num_results` is its deprecated name.')
-            warn_argument_renamed('ExaSearchToolset', 'num_results', 'max_results')
-            max_results = num_results
         self._max_results = max_results
         self._max_text_chars = max_text_chars
         self._include_domains = list(include_domains) if include_domains else None

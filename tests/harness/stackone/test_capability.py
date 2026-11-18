@@ -18,7 +18,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.stackone import StackOne, StackOneToolset
 
 if TYPE_CHECKING:
@@ -118,13 +117,6 @@ class TestStackOne:
         capability = StackOne[None].from_spec(account_id='45320')
         assert http_transport(capability.get_toolset()).headers['Authorization'] == basic('env-key')
 
-    def test_agent_spec_api_key_is_deprecated(self, monkeypatch: pytest.MonkeyPatch):
-        # With no `STACKONE_API_KEY` to fall back on, construction only succeeds if the spec's key arrives.
-        monkeypatch.delenv('STACKONE_API_KEY', raising=False)
-        spec = {'capabilities': [{'StackOne': {'account_id': '45320', 'api_key': 'key'}}]}
-        with pytest.warns(HarnessDeprecationWarning, match='set the `STACKONE_API_KEY` environment variable'):
-            Agent.from_spec(spec, custom_capability_types=[StackOne], model=TestModel())
-
     def test_agent_spec_schema_excludes_auth(self):
         schema = AgentSpec.model_json_schema_with_capabilities([StackOne])
         assert '"auth"' not in json.dumps(schema)
@@ -183,18 +175,6 @@ def basic(api_key: str) -> str:
 
 
 class TestStackOneAuth:
-    def test_api_key_is_a_deprecated_alias_of_auth(self):
-        with pytest.warns(
-            HarnessDeprecationWarning, match=r'`StackOne\(api_key=\.\.\.\)` has been renamed to `StackOne\(auth='
-        ):
-            capability = StackOne[None](account_id='45320', api_key='key')
-        assert (capability.auth, capability.api_key) == ('key', None)
-        assert http_transport(capability.get_toolset()).headers['Authorization'] == basic('key')
-
-    def test_auth_and_api_key_together_raise(self):
-        with pytest.raises(UserError, match='Pass `auth` only'):
-            StackOne(account_id='45320', auth='key', api_key='other')
-
     def test_missing_key_error_names_auth(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv('STACKONE_API_KEY', raising=False)
         with pytest.raises(UserError, match='pass `auth` to `StackOne`'):

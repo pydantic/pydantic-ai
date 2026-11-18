@@ -96,6 +96,8 @@ def _openai_options(*, provider: str, name: str, family_defaults: bool) -> dict[
     options: dict[str, tuple[str, ...]] = {key: () for key in ('max_tokens', 'temperature', 'seed', 'custom_params')}
     options['top_p'] = ()
     options['service_tier'] = ()
+    if provider == 'openai-codex':
+        options['codex_speed'] = ()
     if provider != 'openai-chat':
         options.pop('seed')
     profile = openai_model_profile(name)
