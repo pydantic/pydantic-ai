@@ -22,21 +22,51 @@ def _settings(**values: object) -> dict[str, object]:
 @pytest.mark.parametrize(
     'model,display,preserved,interleaved',
     [
-        ('anthropic:claude-fable-5-1', True, True, False),
-        ('anthropic:claude-fable-5.1', True, True, False),
-        ('anthropic:claude-opus-4-6', False, True, False),
-        ('anthropic:claude-sonnet-4-5', False, False, True),
-        ('anthropic:claude-opus-4-1', False, False, True),
-        ('anthropic:claude-opus-3', False, False, False),
+        ('anthropic:claude-fable-5-1', ('updates', 'summarized'), True, False),
+        ('anthropic:claude-fable-5.1', ('updates', 'summarized'), True, False),
+        ('anthropic:claude-opus-5-5', ('summarized',), True, False),
+        ('anthropic:claude-sonnet-5-5', ('summarized',), True, False),
+        ('anthropic:claude-opus-4-6', None, True, False),
+        ('anthropic:claude-sonnet-4-5', None, False, True),
+        ('anthropic:claude-opus-4-1', None, False, True),
+        ('anthropic:claude-opus-3', None, False, False),
     ],
 )
-def test_claude_control_gating(*, model: str, display: bool, preserved: bool, interleaved: bool) -> None:
+def test_claude_control_gating(
+    *, model: str, display: tuple[str, ...] | None, preserved: bool, interleaved: bool
+) -> None:
     options = model_options(model=model)
-    assert ('anthropic_thinking_display' in options) is display
+    assert options.get('anthropic_thinking_display') == display
     assert ('anthropic_preserved_thinking' in options) is preserved
     assert ('anthropic_interleaved_thinking' in options) is interleaved
-    if display:
-        assert options['anthropic_thinking_display'] == ('updates', 'summarized')
+
+
+@pytest.mark.parametrize(
+    'model,modes',
+    [
+        # Their profiles mark thinking as always on: `disabled` and `between_tools` are both a 400.
+        ('anthropic:claude-opus-5-5', ('adaptive',)),
+        ('anthropic:claude-fable-5-1', ('adaptive',)),
+        ('anthropic:claude-mythos-5', ('adaptive',)),
+        # Sonnet 5.5 rejects `disabled` and turns thinking off with `between_tools`.
+        ('anthropic:claude-sonnet-5-5', ('adaptive', 'between_tools')),
+        ('anthropic:claude-opus-5', ('adaptive', 'disabled')),
+        ('anthropic:claude-sonnet-4-5', ('enabled', 'disabled')),
+    ],
+)
+def test_claude_thinking_modes_follow_the_profile(*, model: str, modes: tuple[str, ...]) -> None:
+    assert model_options(model=model)['anthropic_thinking_mode'] == modes
+
+
+def test_between_tools_sends_its_own_shape() -> None:
+    assert _settings(anthropic_thinking_mode='between_tools', anthropic_effort='high') == {
+        'anthropic_thinking': {'type': 'between_tools'},
+        'anthropic_effort': 'high',
+    }
+    validate_model_options(
+        model='anthropic:claude-sonnet-5-5',
+        form=_form(anthropic_thinking_mode='between_tools', anthropic_effort='high'),
+    )
 
 
 @pytest.mark.parametrize(
@@ -128,15 +158,29 @@ def test_disabled_thinking_ignores_display_and_binding() -> None:
 @pytest.mark.parametrize(
     'model,values,message',
     [
+        ('anthropic:claude-fable-5-1', {'anthropic_thinking_mode': 'disabled'}, 'choose adaptive'),
+        ('anthropic:claude-opus-5-5', {'anthropic_thinking_mode': 'disabled'}, 'choose adaptive'),
+        ('anthropic:claude-sonnet-5-5', {'anthropic_thinking_mode': 'disabled'}, 'choose adaptive, between_tools'),
+        ('anthropic:claude-opus-5', {'anthropic_thinking_mode': 'between_tools'}, 'choose adaptive, disabled'),
         (
-            'anthropic:claude-fable-5-1',
-            {'anthropic_thinking_mode': 'disabled', 'anthropic_thinking_display': 'updates'},
+            'anthropic:claude-sonnet-5-5',
+            {'anthropic_thinking_mode': 'between_tools', 'anthropic_thinking_display': 'summarized'},
             'display or binding',
         ),
         (
-            'anthropic:claude-fable-5-1',
+            'anthropic:claude-sonnet-5-5',
+            {'anthropic_thinking_mode': 'between_tools', 'anthropic_preserved_thinking': 'error'},
+            'display or binding',
+        ),
+        (
+            'anthropic:claude-opus-5',
             {'anthropic_thinking_mode': 'disabled', 'anthropic_preserved_thinking': 'error'},
             'display or binding',
+        ),
+        (
+            'anthropic:claude-sonnet-5-5',
+            {'anthropic_thinking_mode': 'between_tools', 'anthropic_effort': 'max'},
+            'requires thinking',
         ),
         ('openrouter:z-ai/glm-5.2', {'glm_thinking': 'disabled', 'glm_reasoning_effort': 'max'}, 'reasoning effort'),
     ],
