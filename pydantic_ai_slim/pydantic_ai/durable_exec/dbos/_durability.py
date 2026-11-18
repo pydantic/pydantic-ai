@@ -4,7 +4,7 @@ import asyncio
 from collections import deque
 from collections.abc import Callable, Coroutine, Generator, Mapping
 from contextlib import contextmanager, nullcontext
-from contextvars import Context, ContextVar
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
@@ -58,8 +58,13 @@ if TYPE_CHECKING:
 
 T = TypeVar('T')
 
-_child_workflow_executions: WeakKeyDictionary[DBOSContext, dict[str, int]] = WeakKeyDictionary()
+_child_workflow_executions: WeakKeyDictionary[DBOSContext, dict[tuple[str | None, int, str | None], int]] = (
+    WeakKeyDictionary()
+)
 """Executions of each tool call's child workflow, per workflow execution, to give each its own child ID."""
+
+_recorded_children: WeakKeyDictionary[DBOSContext, dict[int, str | None]] = WeakKeyDictionary()
+"""The child workflow ID recorded at each step position, per workflow execution, listed when it first runs a child."""
 
 _default_run_ids_by_step: WeakKeyDictionary[DBOSContext, dict[int, int]] = WeakKeyDictionary()
 """Agent runs that drew a default `run_id` at each step position, per workflow execution.
@@ -563,13 +568,12 @@ async def _call_child_workflow(
     parent_id = DBOS.workflow_id
     context = get_local_dbos_context()
     assert parent_id is not None and context is not None
-    child_id = f'{parent_id}-{ctx.run_id}-{ctx.run_step}-{ctx.tool_call_id}'
     # A capability can execute a tool call more than once, and each execution gets a child of its own.
     executions = _child_workflow_executions.setdefault(context, {})
-    execution = executions.get(child_id, 0)
-    executions[child_id] = execution + 1
-    if execution:
-        child_id = f'{child_id}-{execution}'
+    call_key = (ctx.run_id, ctx.run_step, ctx.tool_call_id)
+    execution = executions.get(call_key, 0)
+    executions[call_key] = execution + 1
+    child_id = f'{parent_id}-{ctx.run_id}-{ctx.run_step}-{execution}-{ctx.tool_call_id}'
 
     @contextmanager
     def child_options() -> Generator[None]:
@@ -577,14 +581,26 @@ async def _call_child_workflow(
             yield
 
     async def handed_another_child() -> bool:
-        steps = await DBOS.list_workflow_steps_async(parent_id, load_output=False, shard_key=context.shard_key)
-        recorded = next((step['child_workflow_id'] for step in steps if step['function_id'] == step_id), None)
-        # A child started before child IDs were derived has a positional ID, and keeps its positional result.
-        return recorded is not None and recorded != child_id and not recorded.endswith(f'{parent_id}-{step_id}')
+        recorded_children = _recorded_children.get(context)
+        if recorded_children is None:
+            # Listed once per workflow execution: a position recorded before the execution started is in the list,
+            # and one recorded since was recorded by its own call, so it holds that call's own child.
+            steps = await DBOS.list_workflow_steps_async(parent_id, load_output=False, shard_key=context.shard_key)
+            recorded_children = _recorded_children[context] = {s['function_id']: s['child_workflow_id'] for s in steps}
+        recorded = recorded_children.get(step_id)
+        # A child started before child IDs were derived has DBOS's positional ID, and keeps its positional result.
+        positional_id = f'{parent_id}-{step_id}'
+        return (
+            recorded is not None
+            and recorded != child_id
+            and recorded != positional_id
+            and not recorded.endswith(f':{positional_id}')  # DBOS's positional ID for a child under another shard key
+        )
 
     async def own_child_result() -> CallToolResult:
         # Starting an existing ID returns a handle to it rather than running it again. A call that never started
-        # its child before (it was handed another's) starts it now, as a workflow of its own rather than a child.
+        # its child before (it was handed another's) starts it now, as a workflow of its own rather than a child:
+        # DBOS links a child to its parent only through a step position, which recovery has already given away.
         with child_options():
             handle = await DBOS.start_workflow_async(workflow, *args)
         return await handle.get_result()
@@ -604,8 +620,15 @@ async def _call_child_workflow(
 
 
 async def _outside_workflow(awaitable: Coroutine[Any, Any, T]) -> T:
-    """Await DBOS calls in an empty context, where DBOS records them as no step of the current workflow."""
-    return await asyncio.create_task(awaitable, context=Context())
+    """Await DBOS calls outside the current workflow, so DBOS records them as none of its steps.
+
+    Other DBOS context, like a `SetShardKey` block, still applies.
+    """
+    from dbos._context import _dbos_context_var  # pyright: ignore[reportPrivateUsage]
+
+    context = copy_context()
+    context.run(_dbos_context_var.set, None)
+    return await asyncio.create_task(awaitable, context=context)
 
 
 async def _reject_unregistered_child_workflow(

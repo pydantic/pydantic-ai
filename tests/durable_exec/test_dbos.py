@@ -6677,7 +6677,7 @@ async def test_dbos_child_workflow_tool_survives_recovery(dbos: DBOS, positional
         else nullcontext(),
     ):
         await child_workflow_lead_workflow()
-    child_suffix = '-4' if positional_child_id else f'-{workflow_id}:1-2-research'
+    child_suffix = '-4' if positional_child_id else f'-{workflow_id}:1-2-0-research'
 
     # Recovery resumes every pending workflow, the child as well as its parent.
     workflows = await DBOS.list_workflows_async(workflow_id_prefix=workflow_id)
@@ -6744,7 +6744,7 @@ async def test_dbos_child_workflow_via_set_tool_metadata(dbos: DBOS) -> None:
 
     workflow_id = f'child-wf-metadata-{uuid.uuid4()}'
     with SetWorkflowID(workflow_id):
-        child_id = f'{workflow_id}-{workflow_id}:1-1-pyd_ai_tool_call_id__delegate'
+        child_id = f'{workflow_id}-{workflow_id}:1-1-0-pyd_ai_tool_call_id__delegate'
         assert await run_agent() == f'{{"delegate":"deps in {child_id}"}}'
     assert (await agent.run('Go.', deps='deps')).output == '{"delegate":"deps in None"}'
 
@@ -6782,8 +6782,10 @@ async def test_dbos_child_workflow_tool_executed_again_by_capability(dbos: DBOS)
     workflow_id = f'child-wf-retried-{uuid.uuid4()}'
     with SetWorkflowID(workflow_id):
         assert await run_agent() == '{"flaky":"ok"}'
-    child_id = f'{workflow_id}-{workflow_id}:1-1-pyd_ai_tool_call_id__flaky'
-    assert attempts == [child_id, f'{child_id}-1']
+    assert attempts == [
+        f'{workflow_id}-{workflow_id}:1-1-0-pyd_ai_tool_call_id__flaky',
+        f'{workflow_id}-{workflow_id}:1-1-1-pyd_ai_tool_call_id__flaky',
+    ]
 
 
 @pytest.mark.parametrize(
@@ -6876,6 +6878,15 @@ async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
     assert sorted(await handle.get_result()) == [f'call-a={moon}', 'call-b=sun']
     # Recovery reuses the children that finished before the crash.
     assert sorted(researched) == ['moon', 'sun']
+    # A call whose child hadn't started before the crash, and whose step position recovery gave to another call's
+    # child, starts its child as a workflow of its own, outside the parent's workflow tree.
+    children = await DBOS.list_workflows_async(workflow_id_prefix=f'{workflow_id}-')
+    assert {
+        w.workflow_id.removeprefix(f'{workflow_id}-{workflow_id}:1-1-0-'): w.parent_workflow_id for w in children
+    } == {
+        'call-a': workflow_id,
+        'call-b': None if crash == 'before_second_child' else workflow_id,
+    }
 
 
 @pytest.mark.parametrize(
