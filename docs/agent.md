@@ -1235,6 +1235,8 @@ async def main():
 
 If the model's last output fails validation, no request is left for the retry and the run still raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded].
 
+Pydantic AI Harness ships this as [Wrap Up At Limits](harness/wrap-up-at-limits.md), which also wraps up at the tool-call and token limits.
+
 ##### Limiting per-request input size
 
 The token limits above are cumulative across the whole run. To instead cap the size of any single request's input (the context window actually sent to the model), use `per_request_input_tokens_limit`. This is useful when prompt caching makes cumulative input a poor proxy for cost: re-sent cached prefixes are cheap, while a single oversized context is what degrades model performance and drives cache-miss cost.

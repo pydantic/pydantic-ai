@@ -140,6 +140,7 @@ RUNNABLE_HARNESS_PAGES = frozenset(
         'memory.md',
         'permissions.md',
         'tool-budgets.md',
+        'wrap-up-at-limits.md',
     }
 )
 """`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
