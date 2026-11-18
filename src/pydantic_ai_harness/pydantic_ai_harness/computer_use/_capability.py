@@ -28,8 +28,8 @@ from pydantic_ai.computer_use import (
     Drag,
     MouseButton,
     MouseDown,
+    MouseMove,
     MouseUp,
-    MoveMouse,
     Point,
     Region,
     Screenshot,
@@ -270,7 +270,7 @@ def _check_fits(what: str, size: tuple[int, int], limit: _ScreenshotLimit, purpo
 def _points(action: ComputerToolAction) -> Sequence[Point]:
     """The positions an action names."""
     match action:
-        case Click(x=x, y=y) | Scroll(x=x, y=y) | MoveMouse(x=x, y=y) if x is not None and y is not None:
+        case Click(x=x, y=y) | Scroll(x=x, y=y) | MouseMove(x=x, y=y) if x is not None and y is not None:
             return (Point(x=x, y=y),)
         case Drag(path=path):
             return path
@@ -315,7 +315,7 @@ class _CoordinateMapping:
             return _scale(value, height, space_height)
 
         match action:
-            case Click(x=px, y=py) | Scroll(x=px, y=py) | MoveMouse(x=px, y=py) if px is not None and py is not None:
+            case Click(x=px, y=py) | Scroll(x=px, y=py) | MouseMove(x=px, y=py) if px is not None and py is not None:
                 return replace(action, x=x(px), y=y(py))
             case Drag(path=path):
                 return replace(action, path=tuple(Point(x=x(p.x), y=y(p.y)) for p in path))

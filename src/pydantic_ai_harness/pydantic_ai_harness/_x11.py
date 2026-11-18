@@ -12,8 +12,8 @@ from pydantic_ai.computer_use import (
     Drag,
     HoldKeys,
     MouseDown,
+    MouseMove,
     MouseUp,
-    MoveMouse,
     Point,
     PressKeys,
     Region,
@@ -330,7 +330,7 @@ class X11Computer:
                     release=('mouseup', _BUTTONS[button]),
                     pauses=count * _CLICK_SECONDS,
                 )
-            case MoveMouse(x=x, y=y, modifiers=modifiers):
+            case MouseMove(x=x, y=y, modifiers=modifiers):
                 await self._xdotool(_move(x, y), hold=modifiers)
             case Drag(path=path, modifiers=modifiers):
                 start = path[0]

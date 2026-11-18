@@ -19,8 +19,8 @@ from pydantic_ai.computer_use import (
     Drag,
     HoldKeys,
     MouseDown,
+    MouseMove,
     MouseUp,
-    MoveMouse,
     Point,
     PressKeys,
     Region,
@@ -39,7 +39,7 @@ __all__ = (
 )
 
 DisplayAction: TypeAlias = Annotated[
-    Click | MoveMouse | Drag | MouseDown | MouseUp | Scroll | TypeText | PressKeys | HoldKeys,
+    Click | MouseMove | Drag | MouseDown | MouseUp | Scroll | TypeText | PressKeys | HoldKeys,
     Field(discriminator='type'),
 ]
 """A mouse or keyboard action a `Display` performs, in its own pixels. New types may be added, so a display refuses

@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 import zlib
 
-from pydantic_ai.computer_use import MoveMouse, Point, Region
+from pydantic_ai.computer_use import MouseMove, Point, Region
 
 from .display_fakes import FullDisplay
 
@@ -19,7 +19,7 @@ async def check_display_contract(display: FullDisplay) -> None:
     width, height = await display.display_size()
     assert png_size(await display.screenshot()) == (width, height)
     assert png_size(await display.zoom(Region(left=10, top=20, right=110, bottom=70))) == (100, 50)
-    await display.act(MoveMouse(x=width // 3, y=height // 3))
+    await display.act(MouseMove(x=width // 3, y=height // 3))
     assert await display.cursor_position() == Point(x=width // 3, y=height // 3)
 
 
