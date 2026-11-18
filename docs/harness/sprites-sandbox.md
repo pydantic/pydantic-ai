@@ -175,7 +175,7 @@ async def delete_sprite(ref: WorkspaceRef) -> None:
 
 `destroy(ref)` deletes by Sprite id without attaching or waking it, and a Sprite that no longer exists returns quietly. Only destroy Sprites you own. Use `backend(ref)` to construct a lazy backend for an existing Sprite; `get_sandbox()` attaches to it and returns its native `sprites.AsyncSprite` (on a backend with no Sprite yet, it creates one). A backend you build yourself outside a run opens its own client, which you close with `aclose()`; after that, call `get_sandbox()` again for a working handle. See [Sprite lifecycle](https://docs.sprites.dev/concepts/lifecycle/).
 
-A failed run returns no result, so there is no ref to store. To terminate its sandbox, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails. If creation's reply was lost, the ref may identify a Sprite that is not yet visible to the API; a lookup failure does not prove it was never created:
+A failed run returns no result, so there is no ref to store. To terminate its sandbox, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails. If creation's reply was lost, the ref names the Sprite the backend tried to create, which may or may not exist, so destroy it by that name anyway:
 
 ```python
 from typing import Any
@@ -214,6 +214,8 @@ Unlike Modal and E2B sandboxes, a Sprite has no lifetime timeout: it persists un
 | `runtime` | Runtime for a new Sprite. Default: `None`, Sprites' default. An unknown runtime fails on first use. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the Sprite's own (`/home/sprite`, where commands run as non-root `sprite`); set a project directory, or use relative paths for portable code. Created on a new Sprite; on an attached or caller-supplied Sprite it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the Sprite. |
+| `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
 Sprites runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
 

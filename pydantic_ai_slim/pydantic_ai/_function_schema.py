@@ -98,7 +98,9 @@ class FunctionSchema:
                 core_schema.typed_dict_schema({name: td_field}), self.definitions
             )
             for alias in GenerateJsonSchema().generate(field_schema).get('properties', {}):
-                # A property named after a parameter's Python name keeps naming that parameter.
+                # A property named after a parameter's Python name names only that parameter, even when it is another
+                # one's alias and `validator` gives both the value. Pydantic accepts the clash; remapping or rejecting
+                # it would change runs that succeed: https://github.com/pydantic/pydantic-ai/issues/13438
                 if alias not in self.parameter_fields:
                     parameter_names[alias] = name
         return parameter_names
@@ -161,6 +163,7 @@ def function_schema(
     takes_ctx: bool | None = None,
     docstring_format: DocstringFormat = 'auto',
     require_parameter_descriptions: bool = False,
+    attribute_docstrings: bool = True,
 ) -> FunctionSchema:
     """Build a Pydantic validator and JSON schema from a tool function.
 
@@ -171,11 +174,12 @@ def function_schema(
         docstring_format: The docstring format to use.
         require_parameter_descriptions: Whether to require descriptions for all tool function parameters.
         schema_generator: The JSON schema generator class to use.
+        attribute_docstrings: Whether a field's attribute docstring becomes its description in the JSON schema.
 
     Returns:
         A `FunctionSchema` instance.
     """
-    config = ConfigDict(title=function.__name__, use_attribute_docstrings=True)
+    config = ConfigDict(title=function.__name__, use_attribute_docstrings=attribute_docstrings)
     config_wrapper = ConfigWrapper(config)
     gen_schema = _generate_schema.GenerateSchema(config_wrapper)
     errors: list[str] = []
@@ -190,7 +194,9 @@ def function_schema(
 
     type_hints = get_type_hints(original_func, include_extras=True)
 
-    description, field_descriptions = doc_descriptions(original_func, docstring_format=docstring_format)
+    description, field_descriptions = doc_descriptions(
+        original_func, docstring_format=docstring_format, has_return_annotation='return' in type_hints
+    )
     schema_context = _FunctionSchemaContext(
         gen_schema=gen_schema,
         type_hints=type_hints,

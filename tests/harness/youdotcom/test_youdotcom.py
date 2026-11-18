@@ -34,7 +34,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.youdotcom import (
     ExtractionModeName,
     FinanceEffortName,
@@ -652,28 +651,6 @@ class TestYouSearchCapability:
     def test_max_results_out_of_bounds_rejected(self, max_results: int) -> None:
         with pytest.raises(ValueError, match='max_results must be between 1 and 20'):
             YouSearch[None](max_results=max_results)
-
-    def test_num_results_is_a_deprecated_alias(self) -> None:
-        with pytest.warns(HarnessDeprecationWarning, match=r'`YouSearch\(num_results=\.\.\.\)` has been renamed'):
-            capability = YouSearch[None](num_results=3)
-        assert (capability.max_results, capability.num_results) == (3, None)
-        with pytest.warns(HarnessDeprecationWarning, match=r'`YouSearch\(num_results=\.\.\.\)` has been renamed'):
-            assert YouSearch[None].from_spec(num_results=3).max_results == 3
-        with pytest.raises(TypeError, match='`num_results` is its deprecated name'):
-            YouSearch[None](max_results=4, num_results=3)
-
-    async def test_toolset_num_results_is_a_deprecated_alias(self) -> None:
-        client = _FakeYouClient(search_response=_search())
-        with pytest.warns(HarnessDeprecationWarning, match=r'`YouSearchToolset\(num_results=\.\.\.\)`'):
-            toolset = YouSearchToolset[None](
-                client=client, num_results=2, extraction_mode='highlights', max_text_chars=10_000
-            )
-        await toolset.web_search('q')
-        assert client.search_calls[0]['count'] == 2
-        with pytest.raises(TypeError, match='`num_results` is its deprecated name'):
-            YouSearchToolset[None](
-                client=client, max_results=4, num_results=2, extraction_mode='highlights', max_text_chars=10_000
-            )
 
     def test_max_text_chars_floor(self) -> None:
         with pytest.raises(ValueError, match='max_text_chars must be at least 1'):

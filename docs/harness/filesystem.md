@@ -217,8 +217,8 @@ so it is left out of every run step that has `read_file`. The instructions name 
 they stay the same either way; the spill marker and `Memory`'s per-call notices name `read_file` as it
 is called in the run:
 
-- `ToolOutputLimits`' `read_tool_result`, with the default `WorkspaceOverflowStore()`. Reads of its spill
-  files through `read_file` are not reduced again.
+- `ToolOutputLimits`' `read_tool_result` and `grep_tool_result`, with the default
+  `WorkspaceOverflowStore()`. Reads of its spill files through `read_file` are not reduced again.
 - `Memory`'s `read_memory`, with a `FileMemoryStore` that has no `workspace=` of its own and a relative
   `directory` inside the working directory.
 - `RepoContext`'s inventory tool, when its asset roots are inside the working directory.
@@ -288,9 +288,8 @@ exceeds 65536, bounding line-matching work before calling the differ.
 A final line without a newline is marked the way `git diff` marks it, so a
 change to the final newline alone is visible. A `FilesSearchedEvent` counts
 the matches the model received; `truncated` says the search stopped at
-`max_search_results` or `max_find_results`. `search` is the deprecated name of
-`search_kind`: it still reads, with a warning, and a payload saved under it
-still loads.
+`max_search_results` or `max_find_results`. A payload saved under the earlier
+`search` key still loads into `search_kind`.
 
 `path` is the normalized location relative to `root_dir`, never an absolute
 path, so it is safe to echo to the model or a UI. `root_dir` is the emitting
@@ -385,6 +384,11 @@ applies the same rule to absolute symlink targets.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
   rather than overwriting newer content.
+- **Ordered changes.** `write_file`, `edit_file` and `create_directory` are
+  [sequential tools](../tools-advanced.md#parallel-tool-calls-concurrency): when a
+  model sends several tool calls in one response, each change runs after the calls
+  before it, so a write into a directory created earlier in the response finds it.
+  The read tools still run in parallel.
 - **Text encodings.** Text is read as UTF-8, and a byte that isn't valid UTF-8
   is shown as U+FFFD. `edit_file` writes such bytes back unchanged when an edit
   matches only the text around them; `write_file` replaces the whole file with
@@ -436,7 +440,6 @@ A directory pattern also applies to descendants: `denied_patterns=['private']` d
 readable; add a path to `denied_patterns` to make it unreadable. Harness capabilities keep their own files,
 such as spilled tool output and background job status, under `.pydantic-ai-harness/`. Pass an empty list to
 make every path writable.
-`protected_patterns` is its deprecated name and still works, with a warning.
 
 ```python
 from pydantic_ai import Agent
@@ -534,7 +537,9 @@ or a workspace capability in Python).
 
 ## Durable execution
 
-`FileSystem` works under Temporal, DBOS, and Prefect; the [workspace guide](../workspace.md#durable-execution) shows what works on each engine. On Temporal only file-change requests and write events reach listeners live; see [live events on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
+`FileSystem` works under Temporal, DBOS, Prefect, [Azure Durable Task](azure-durable-task.md), and [Render Workflows](render-workflows.md); the [workspace guide](../workspace.md#durable-execution) shows what works on each engine. On Temporal only file-change requests and write events reach listeners live; see [live events on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
+
+On Azure Durable Task and Render, `write_file`, `edit_file` and `create_directory` run in the orchestrator or parent task, so file-change requests and write events reach listeners live. On Azure, events from the other tools are dropped, and listeners run in orchestrator code: they re-run on every replay, so keep them deterministic and idempotent, and they can't do I/O, so interactive approval of file changes through a UI or external service isn't supported on Azure yet. On Render, listeners run in the parent task, and events from the other tools are carried back to the run.
 
 ## Further reading
 

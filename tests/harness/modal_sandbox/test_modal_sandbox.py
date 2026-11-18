@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 import warnings
 from dataclasses import dataclass
@@ -17,12 +18,21 @@ from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, PrefixTools
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    Authority,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
@@ -30,7 +40,6 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend, ModalSandboxNoToolsWarning
@@ -38,6 +47,8 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend,
 from .._tool_calls import call_tools
 from .conftest import skip_or_fail_live_tier
 from .fake_modal import FakeModal
+
+posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 async def test_client_reaches_create_attach_and_destroy(fake_modal: FakeModal) -> None:
@@ -89,6 +100,28 @@ async def test_backend_acquires_fresh_workspace_and_records_ref(fake_modal: Fake
     assert backend.ref == WorkspaceRef(provider='modal', id=native.object_id)
 
 
+@pytest.mark.parametrize(
+    'authority,path_authority',
+    [('none', {'docs': 'user'}), ('operator', {'docs': 'user'})],
+    ids=['both', 'path-only'],
+)
+def test_authority_wraps_the_runs_workspace(
+    fake_modal: FakeModal, authority: Authority, path_authority: dict[str, Authority]
+) -> None:
+    # Modal's own `__init__` takes both fields, and `get_workspace` builds no sandbox, so this needs no run.
+    # A `path_authority` alone, with the default `'operator'`, still wraps.
+    sandbox = ModalSandbox[object](image='python:3.13-slim', authority=authority, path_authority=path_authority)
+    ctx = RunContext(deps=object(), model=TestModel(), usage=RunUsage())
+    workspace = sandbox.get_workspace(ctx, ref=None)
+    assert isinstance(workspace, AuthorityWorkspace)
+    assert workspace.durable_policy() == (authority, path_authority)
+
+
+def test_a_home_relative_path_authority_fails_at_construction() -> None:
+    with pytest.raises(UserError, match='`~` is not expanded'):
+        ModalSandbox[object](path_authority={'~/.config/app': 'operator'})
+
+
 def test_root_package_exports_the_capability_and_backend() -> None:
     import pydantic_ai_harness
 
@@ -113,6 +146,7 @@ async def test_backend_attaches_explicit_ref_without_create(fake_modal: FakeModa
     assert not fake_modal.create_kwargs
 
 
+@posix_only
 async def test_attaching_with_a_missing_working_dir_says_what_to_do(fake_modal: FakeModal, tmp_path: Path) -> None:
     fake_modal.host_root = tmp_path
     missing = str(tmp_path / 'srv' / 'app')
@@ -125,6 +159,7 @@ async def test_attaching_with_a_missing_working_dir_says_what_to_do(fake_modal: 
     )
 
 
+@posix_only
 async def test_a_command_exiting_128_in_an_existing_working_dir_is_its_result(
     fake_modal: FakeModal, tmp_path: Path
 ) -> None:
@@ -267,78 +302,9 @@ def test_defer_loading_is_refused() -> None:
         ModalSandbox(id='modal', defer_loading=True)
 
 
-@pytest.mark.parametrize(
-    ('removed_arguments', 'guidance'),
-    [
-        ({'sandbox_id': 'sb-1'}, "workspace=WorkspaceRef(provider='modal', id=sandbox_id)"),
-        ({'session': object()}, 'ModalSandboxBackend(sandbox=<modal.Sandbox>)'),
-        ({'default_command_timeout': 5.0}, 'Shell(default_timeout=...)'),
-        ({'max_command_timeout': 60}, 'there is no direct equivalent, as nothing caps a timeout the model asks for'),
-        ({'max_output_bytes': 1}, 'Shell(max_output_chars=...)'),
-        ({'max_output_lines': 1}, 'ToolOutputLimits'),
-        ({'max_read_bytes': 1}, 'FileSystem(max_read_lines=..., max_read_chars=...)'),
-        ({'instructions': ''}, "belongs in the agent's `instructions`"),
-    ],
-)
-def test_previous_constructor_arguments_warn_with_guidance(removed_arguments: dict[str, Any], guidance: str) -> None:
-    # The previous `ModalSandbox` bundled its own tools; each of its arguments still constructs, and
-    # the warning points at where that setting lives now.
-    with pytest.warns(HarnessDeprecationWarning) as record:
-        ModalSandbox(**removed_arguments)
-    message = str(record[0].message)
-    (name,) = removed_arguments
-    assert message.startswith(f'`ModalSandbox({name}=...)` is deprecated')
-    assert 'add `Shell()` and/or `FileSystem()`' in message
-    assert f'- `{name}`: ' in message
-    assert guidance in message
-    # Only a sandbox `ModalSandbox` creates used to be terminated at run end; `sandbox_id` names the user's own.
-    assert ('no longer terminated when the run ends' in message) == (name != 'sandbox_id')
-    assert message.endswith('#upgrading-from-the-previous-modalsandbox')
-
-
-def test_previous_arguments_passed_as_none_do_not_warn() -> None:
-    # A config that spells out an argument as `None` sets nothing that needs moving.
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')
-        capability = ModalSandbox(sandbox_id=None, instructions=None)  # pyright: ignore[reportArgumentType]
-    assert capability == ModalSandbox()
-
-
-def test_several_previous_arguments_are_reported_together() -> None:
-    with pytest.warns(
-        HarnessDeprecationWarning, match=r'ModalSandbox\(sandbox_id=..., instructions=...\)` is deprecated\. '
-    ) as record:
-        ModalSandbox(sandbox_id='sb-1', instructions='')  # pyright: ignore[reportArgumentType]
-    assert str(record[0].message).count('\n- `') == 2
-
-
-def test_previous_sandbox_id_still_attaches_when_the_run_has_no_ref() -> None:
-    with pytest.warns(HarnessDeprecationWarning, match=r'`ModalSandbox\(sandbox_id=...\)` is deprecated\. '):
-        capability = ModalSandbox(sandbox_id='sb-1')  # pyright: ignore[reportArgumentType]
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
-    backend = capability.get_workspace(ctx, ref=None)
-    assert isinstance(backend, ModalSandboxBackend)
-    assert backend.ref == WorkspaceRef(provider='modal', id='sb-1')
-    # A ref the run already has, from its history or its `workspace=`, wins.
-    backend = capability.get_workspace(ctx, ref=WorkspaceRef(provider='modal', id='sb-2'))
-    assert isinstance(backend, ModalSandboxBackend)
-    assert backend.ref == WorkspaceRef(provider='modal', id='sb-2')
-
-
-def test_previous_sandbox_id_survives_merging_with_a_same_id_capability() -> None:
-    # Two capabilities under one `id` merge field by field; the one only `sandbox_id=` states must survive.
-    with pytest.warns(HarnessDeprecationWarning):
-        attached = ModalSandbox(id='sandbox', sandbox_id='sb-1')  # pyright: ignore[reportArgumentType]
-    merged = ModalSandbox.combine([attached, ModalSandbox(id='sandbox')])
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
-    backend = merged.get_workspace(ctx, ref=None)
-    assert isinstance(backend, ModalSandboxBackend)
-    assert backend.ref == WorkspaceRef(provider='modal', id='sb-1')
-
-
 def test_an_unknown_argument_is_still_a_type_error() -> None:
     with pytest.raises(TypeError, match="unexpected keyword argument 'imag'"):
-        ModalSandbox(imag='python:3.13-slim')  # pyright: ignore[reportArgumentType]
+        ModalSandbox(imag='python:3.13-slim')  # pyright: ignore[reportCallIssue]
 
 
 async def test_capability_declines_foreign_ref(fake_modal: FakeModal) -> None:
@@ -361,16 +327,6 @@ async def test_agent_without_workspace_tool_does_not_create(fake_modal: FakeModa
     assert result.output
     assert not fake_modal.sandboxes
     assert 'await ModalSandbox().destroy(result.workspace.ref)' in str(record[0].message)
-
-
-async def test_no_tools_warning_does_not_advise_destroying_a_sandbox_id_sandbox(fake_modal: FakeModal) -> None:
-    # The sandbox `sandbox_id=` names is the user's own; the previous `ModalSandbox` never terminated it either.
-    with pytest.warns(HarnessDeprecationWarning):
-        capability = ModalSandbox(sandbox_id='sb-1')  # pyright: ignore[reportArgumentType]
-    agent = Agent(TestModel(), capabilities=[capability])
-    with pytest.warns(ModalSandboxNoToolsWarning, match='registers no tools') as record:
-        await agent.run('go')
-    assert 'destroy' not in str(record[0].message)
 
 
 async def test_agent_runs_without_history_create_fresh_workspaces(fake_modal: FakeModal) -> None:
@@ -550,20 +506,6 @@ async def test_creation_settings_reach_the_sandbox(fake_modal: FakeModal) -> Non
     )
 
 
-def test_workdir_is_a_deprecated_alias_of_working_dir() -> None:
-    with pytest.warns(
-        HarnessDeprecationWarning,
-        match=r'`ModalSandbox\(workdir=...\)` has been renamed to `ModalSandbox\(working_dir=...\)`',
-    ):
-        capability = ModalSandbox(workdir='/work')
-    assert capability.working_dir == '/work'
-
-
-def test_workdir_and_working_dir_together_are_refused() -> None:
-    with pytest.raises(UserError, match='Pass `working_dir` only'):
-        ModalSandbox(workdir='/a', working_dir='/b')
-
-
 async def test_each_agent_without_workspace_tools_warns_once(fake_modal: FakeModal) -> None:
     # `ModalSandbox(image=...)` alone was the documented usage when the capability had its own
     # tools; it still builds, so the warning is what tells the user the model lost the sandbox.
@@ -622,6 +564,7 @@ async def test_agent_with_custom_workspace_tool_does_not_warn(fake_modal: FakeMo
         await agent.run('go')
 
 
+@posix_only
 async def test_coder_tools_run_in_the_sandbox(fake_modal: FakeModal, tmp_path: Path) -> None:
     # The fake's host mode runs the sandbox's commands and file operations under `tmp_path`.
     fake_modal.host_root = tmp_path.resolve()
@@ -651,31 +594,19 @@ def test_live_tier_with_empty_credentials_skips_unless_required(
         skip_or_fail_live_tier()
 
 
-def test_empty_sandbox_id_is_rejected() -> None:
-    with pytest.warns(HarnessDeprecationWarning), pytest.raises(UserError, match='empty string'):
-        ModalSandbox(sandbox_id='')  # pyright: ignore[reportArgumentType]
-
-
-def test_a_non_string_sandbox_id_is_rejected() -> None:
-    # The deprecated argument is typed `Never`, so nothing static stops `sandbox_id=123` from becoming a ref.
-    with (
-        pytest.warns(HarnessDeprecationWarning),
-        pytest.raises(UserError, match='must be a string naming a Modal sandbox, got 123'),
-    ):
-        ModalSandbox(sandbox_id=123)  # pyright: ignore[reportArgumentType]
-
-
 def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
     """A `modal.Image` annotation must not erase the whole schema entry."""
     definitions = AgentSpec.model_json_schema_with_capabilities([ModalSandbox])['$defs']
     assert sorted(definitions['spec_params_ModalSandbox']['properties']) == [
         'app_name',
+        'authority',
         'create_app_if_missing',
         'description',
         'env',
         'id',
         'idle_timeout',
         'image',
+        'path_authority',
         'sandbox_timeout',
         'warn_if_no_tools',
         'working_dir',
@@ -696,9 +627,3 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         'warn_if_no_tools': False,
     }
     assert ModalSandbox[None].from_spec(**spec_fields) == ModalSandbox(**spec_fields)
-
-
-def test_from_spec_keeps_the_deprecated_arguments_working() -> None:
-    with pytest.warns(HarnessDeprecationWarning):
-        capability = ModalSandbox[None].from_spec(workdir='/work')
-    assert capability.working_dir == '/work'

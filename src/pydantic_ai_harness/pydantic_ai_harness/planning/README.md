@@ -33,13 +33,13 @@ Long agentic runs drift: the model loses track of what it set out to do and what
 
 So in a tool loop, the latest plan is always in the conversation already, and `Planning` adds nothing to it: each request starts with everything the previous one sent, the cached prefix holds turn over turn, and on models with [preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking) the model's earlier reasoning stays valid.
 
-The plan tools' results carry `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1', 'plan': ...}`, which the model doesn't see. Before each model request, `Planning` reads the plan from its store and looks for the latest plan the model can see, by that metadata, never by text. Only when there's none, or it differs from the store's, does `Planning` record the current plan itself, on the user channel in the same `<plan_reminder>` tag:
+The plan tools' results carry `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1', 'plan': ...}`, which the model doesn't see. Before each model request, `Planning` reads the plan from its store and looks for the latest plan the model can see, by that metadata or by the type of a plan it recorded, never by text. Only when there's none, or it differs from the store's, does `Planning` record the current plan itself, as a `PlanReminderPart` on the user channel in the same `<plan_reminder>` tag:
 
 - after compaction took the plan tools' results, so the model works from a window without them, or cleared them (`ClearToolResults`): a cleared result keeps its metadata, so a plan tool's result only counts while its content still shows the plan;
 - in a run that starts without them in its history, such as an executor reading a plan another agent wrote to a shared store;
 - after something outside the plan tools changed the store.
 
-That record is kept in the history and marked with the same `origin`, so compaction tells it from something the user said. A plan emptied outside the plan tools after the model was shown one is recorded as `No plan yet.`, once, so the old plan doesn't read as current. A custom `guidance` replaces the tool guidance but keeps the note; `inject=False` means the model isn't shown the plan: it drops the note and the record, and the plan tools don't return the plan (`write_plan` replies with the bare checklist, the others with just their message).
+That record is a `PlanReminderPart` (from `pydantic_ai_harness.planning`), kept in the history and found by that type. It goes out with a note in the application's voice that the agent wrote it, not the user or the application, and compaction tells it from something the user said. A plan emptied outside the plan tools after the model was shown one is recorded as `No plan yet.`, once, so the old plan doesn't read as current. A custom `guidance` replaces the tool guidance but keeps the note; `inject=False` means the model isn't shown the plan: it drops the note and the record, and the plan tools don't return the plan (`write_plan` replies with the bare checklist, the others with just their message).
 
 ```python
 from pydantic_ai import Agent
@@ -96,7 +96,7 @@ agent_store = SqlitePlanStore('plan.db', session='user-123')
 planning = Planning(store=agent_store)
 ```
 
-Built-in stores are `InMemoryPlanStore`, `SqlitePlanStore`, `PostgresPlanStore` (over a caller-owned asyncpg pool), and `RedisPlanStore` (over a caller-owned `redis.asyncio` client), so the harness needs no database driver. Any `PlanStore` implementation works, and `store_resolver` selects one per run. `SqlitePlanStore` keeps its database on the machine running the agent, not in the workspace. It requires a file-backed database; use `InMemoryPlanStore` for ephemeral plans rather than `':memory:'`.
+Built-in stores are `InMemoryPlanStore`, `SqlitePlanStore`, `PostgresPlanStore` (over a caller-owned asyncpg pool), and `RedisPlanStore` (over a caller-owned `redis.asyncio` client), so the harness needs no database driver. Any `PlanStore` implementation works, and `store_resolver` selects one per run. `PostgresPlanStore` creates its table on first use unless it exists, so only that first call needs `CREATE` on the schema. `SqlitePlanStore` keeps its database on the machine running the agent, not in the workspace. It requires a file-backed database; use `InMemoryPlanStore` for ephemeral plans rather than `':memory:'`.
 
 `Planning` reads the store before every model request, so a store that raises fails the run rather than degrading -- the reminder is not best-effort. A plan the model can no longer see is not a state to continue running in silently. Retry and fallback policy belongs to the store, not to `Planning`; wrap a `PlanStore` to add one:
 
@@ -154,11 +154,10 @@ async def announce(ctx, event):
 The family contains
 `PlanCreatedEvent`, `PlanUpdatedEvent`, `PlanStatusChangedEvent`, `PlanCompletedEvent`, and
 `PlanDeletedEvent`; each carries the affected `item` and, for updates, `previous_item`.
-`previous_state` is the deprecated name of `previous_item`. It still reads, with a warning, and a payload saved under it still loads.
+A payload saved under the earlier `previous_state` key still loads into `previous_item`.
 
 Run events come from planning tool paths, including `write_plan`. Direct application mutations on a
-`PlanStore` have no run context and do not produce run events. `PlanEventEmitter`, `EventCallback`,
-and store `event_emitter` parameters remain supported but are deprecated.
+`PlanStore` have no run context and do not produce run events.
 
 ## Why whole-plan replacement
 
@@ -168,9 +167,9 @@ Addressing steps by mutable integer index (insert/remove/reorder) is error-prone
 
 The system prompt and instructions carry only the static guidance and the note on the plan's tag. The plan reaches the model in the plan tools' results, or in a part `Planning` records when the latest plan isn't visible; both are appended to the history, so the cached prefix stays valid. With `inject=True`, a tool that changes the plan returns a `ToolReturn` with `metadata` when called through the agent, and a plain string when you call the `PlanningToolset` method directly; the read tools and refusals return plain strings.
 
-`Planning` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoints it places cover the plan tools' results with the rest of the history. `cache_ttl` is deprecated and has no effect; setting it warns. The tag was `<plan-reminder>` in earlier releases; update any prompt or parser that names the old spelling.
+`Planning` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoints it places cover the plan tools' results with the rest of the history. The tag was `<plan-reminder>` in earlier releases; update any prompt or parser that names the old spelling.
 
-With a [UI adapter](https://pydantic.dev/docs/ai/ui/overview/#trust-model-for-client-submitted-messages), history that goes through the client may lose the metadata that marks a plan tool's result or a plan record (AG-UI drops it). Then when the client sends that history back, `Planning` records the plan on the next request, and compaction may keep an old record as a user turn. Keep history on the server when that matters.
+With a [UI adapter](https://pydantic.dev/docs/ai/ui/overview/#trust-model-for-client-submitted-messages), history that goes through the client may lose the metadata that marks a plan tool's result (AG-UI drops it), and leaves out the plan records `Planning` made, which are capability parts. Then when the client sends that history back, `Planning` records the plan on the next request. Keep history on the server when that matters.
 
 With a durable-execution capability attached, every plan store call is a journaled capability
 operation: the plan read before each model request, which decides whether the plan is recorded, and each

@@ -5,7 +5,7 @@ from typing import Literal, cast
 import httpx2
 
 from pydantic_ai import _model_errors, _utils
-from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.models._decode_errors import map_decode_errors
 from pydantic_ai.providers import Provider, infer_provider
@@ -142,14 +142,14 @@ class OpenAIEmbeddingModel(EmbeddingModel):
                 )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError.for_category(
-                    _model_errors.openai_compatible_category(status_code, e.code, e.type, e.message),
+                raise _model_errors.openai_compatible_status_error(
+                    self.model_name,
                     status_code=status_code,
-                    model_name=self.model_name,
                     body=e.body,
+                    code=e.code,
+                    error_type=e.type,
+                    message=e.message,
                     headers=dict(e.response.headers),
-                    provider_error_code=e.code,
-                    provider_error_type=e.type,
                 ) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
@@ -157,7 +157,18 @@ class OpenAIEmbeddingModel(EmbeddingModel):
             raise _model_errors.connection_error(self.model_name, e.message, e, timeout=timeout) from e
         except httpx2.HTTPStatusError as e:
             # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
-            raise _model_errors.transport_status_error(self.model_name, e.response) from e
+            body, error, text = _model_errors.transport_error_body(e.response)
+            code, error_type = _model_errors.openai_error_fields(error)
+            raise _model_errors.openai_compatible_status_error(
+                self.model_name,
+                status_code=e.response.status_code,
+                body=body,
+                code=code,
+                error_type=error_type,
+                # `openai`'s own message holds the whole body.
+                message=text,
+                headers=dict(e.response.headers),
+            ) from e
 
         embeddings = [item.embedding for item in response.data]
 

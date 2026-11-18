@@ -308,6 +308,36 @@ class TypeVarGenericParam(AbstractCapability[AgentDepsT]):
     limit: int = 1
 
 
+@dataclass
+class KeywordOnlyVarKeyword(AbstractCapability[None]):
+    minimum: int = 0
+
+    @classmethod
+    def from_spec(cls, *, minimum: int, **kwargs: object) -> Self:
+        return cls(minimum=minimum)
+
+
+@dataclass
+class KeywordOnlyAmongSeveralVarKeyword(AbstractCapability[None]):
+    minimum: int = 0
+
+    @classmethod
+    def from_spec(cls, *, minimum: int, label: str | None = None, **unsupported: object) -> Self:
+        return cls(minimum=minimum)
+
+
+@dataclass
+class OpenMetadata(AbstractCapability[None]):
+    tools: list[str] | Literal['all'] | dict[str, JsonValue] = 'all'
+    metadata: dict[str, JsonValue] = field(default_factory=dict[str, JsonValue])
+
+    @classmethod
+    def from_spec(
+        cls, *, tools: list[str] | Literal['all'] | dict[str, JsonValue] = 'all', **metadata: JsonValue
+    ) -> Self:
+        return cls(tools=tools, metadata=metadata)
+
+
 class TestBuildSchemaTypes:
     """Schema generation and spec loading make no model request, so these tests record no cassette."""
 
@@ -353,6 +383,60 @@ class TestBuildSchemaTypes:
         assert list(validator.iter_errors(scalar_spec))
         with pytest.raises(ValueError, match='positional argument'):
             Agent.from_spec(scalar_spec, custom_capability_types=[KeywordCapability])
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    @pytest.mark.parametrize(
+        ('capability', 'arguments', 'minimum'),
+        [
+            pytest.param(KeywordOnlyVarKeyword, {'minimum': 4}, 4, id='keyword-form'),
+            pytest.param(KeywordOnlyVarKeyword, 4, None, id='short-form'),
+            pytest.param(KeywordOnlyAmongSeveralVarKeyword, {'minimum': 4}, 4, id='among-several-keyword-form'),
+            pytest.param(KeywordOnlyAmongSeveralVarKeyword, 4, None, id='among-several-short-form'),
+        ],
+    )
+    def test_keyword_only_var_keyword_capability_schema(
+        self,
+        capability: type[KeywordOnlyVarKeyword] | type[KeywordOnlyAmongSeveralVarKeyword],
+        arguments: JsonValue,
+        minimum: int | None,
+    ):
+        """A keyword-only parameter of a target taking `**kwargs` takes its value in the keyword form only.
+
+        The loader passes a short form's value positionally, which such a parameter rejects.
+        """
+        name = capability.__name__
+        spec: dict[str, JsonValue] = {'model': 'test', 'capabilities': [{name: arguments}]}
+        schema = AgentSpec.model_json_schema_with_capabilities([capability])
+        assert (list(validator_for(schema)(schema).iter_errors(spec)) == []) is (minimum is not None)
+        if minimum is None:
+            with pytest.raises(ValueError, match='positional argument'):
+                Agent.from_spec(spec, custom_capability_types=[capability])
+        else:
+            capabilities = Agent.from_spec(spec, custom_capability_types=[capability]).root_capability.capabilities
+            assert [c.minimum for c in capabilities if isinstance(c, capability)] == [minimum]
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    @pytest.mark.parametrize(
+        ('arguments', 'tools', 'metadata'),
+        [
+            pytest.param({'code_mode': True}, 'all', {'code_mode': True}, id='metadata-only'),
+            pytest.param({'tools': ['a'], 'code_mode': True}, ['a'], {'code_mode': True}, id='tools-and-metadata'),
+        ],
+    )
+    def test_open_metadata_capability_schema(
+        self, arguments: JsonValue, tools: list[str] | Literal['all'], metadata: dict[str, JsonValue]
+    ):
+        """A target taking `**kwargs` keeps its short form for a keyword-only parameter whose type accepts an object.
+
+        The loader reads that short form's object as keyword arguments, which the target takes.
+        """
+        spec: dict[str, JsonValue] = {'model': 'test', 'capabilities': [{'OpenMetadata': arguments}]}
+        schema = AgentSpec.model_json_schema_with_capabilities([OpenMetadata])
+        assert [key for key in schema['$defs'] if key.endswith('_OpenMetadata')] == ['short_spec_OpenMetadata']
+        assert list(validator_for(schema)(schema).iter_errors(spec)) == []
+        capabilities = Agent.from_spec(spec, custom_capability_types=[OpenMetadata]).root_capability.capabilities
+        [capability] = [c for c in capabilities if isinstance(c, OpenMetadata)]
+        assert (capability.tools, capability.metadata) == (tools, metadata)
 
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     @pytest.mark.parametrize(

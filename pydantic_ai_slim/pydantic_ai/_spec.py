@@ -391,12 +391,15 @@ def _accepts_var_keyword(target: Callable[..., object]) -> bool:
 def _keyword_only_spec_params(target: Callable[..., object], type_hints: Mapping[str, Any]) -> set[str]:
     """The names of `target`'s keyword-only spec parameters.
 
-    A target accepting `**kwargs` keeps its existing mapping schema, so none of its parameters count.
+    The loader reads a string-keyed object in the short form as keyword arguments, which a target accepting `**kwargs`
+    takes. So such a target keeps its short form for a keyword-only parameter whose type accepts an object, and that
+    parameter doesn't count.
     """
-    if _accepts_var_keyword(target):
-        return set()
     params = inspect.signature(target).parameters.values()
-    return {p.name for p in params if p.kind == p.KEYWORD_ONLY and p.name in type_hints}
+    keyword_only_params = {p.name for p in params if p.kind == p.KEYWORD_ONLY and p.name in type_hints}
+    if _accepts_var_keyword(target):
+        return {name for name in keyword_only_params if not _type_accepts_object(name, type_hints[name])}
+    return keyword_only_params
 
 
 def _object_rejecting_type(target: Callable[..., object], name: str, type_hint: object) -> object | None:
@@ -407,21 +410,25 @@ def _object_rejecting_type(target: Callable[..., object], name: str, type_hint: 
     keeps its schema. So does a parameter whose type has no JSON schema, since the schema's union drops that short form,
     or no core schema, so the full schema raises that error with its field path.
     """
-    if _accepts_var_keyword(target):
+    if _accepts_var_keyword(target) or not _type_accepts_object(name, type_hint):
         return None
+    reject_objects = GetPydanticSchema(
+        get_pydantic_json_schema=lambda core_schema, handler: {
+            'allOf': [
+                handler(core_schema),
+                {'not': {'type': 'object', 'propertyNames': {'type': 'string'}}},
+            ]
+        }
+    )
+    return Annotated[type_hint, reject_objects]
+
+
+def _type_accepts_object(name: str, type_hint: object) -> bool:
+    """Whether the JSON schema of `type_hint` can accept a JSON object. A type with no JSON or core schema can't."""
     with suppress(PydanticOmit, PydanticInvalidForJsonSchema, SchemaError):
         json_schema = TypeAdapter(_make_typed_dict('short_spec', name, {name: type_hint})).json_schema()
-        if _json_schema_accepts_object(json_schema['properties'][name], json_schema.get('$defs', {})):
-            reject_objects = GetPydanticSchema(
-                get_pydantic_json_schema=lambda core_schema, handler: {
-                    'allOf': [
-                        handler(core_schema),
-                        {'not': {'type': 'object', 'propertyNames': {'type': 'string'}}},
-                    ]
-                }
-            )
-            return Annotated[type_hint, reject_objects]
-    return None
+        return _json_schema_accepts_object(json_schema['properties'][name], json_schema.get('$defs', {}))
+    return False
 
 
 def _json_schema_accepts_object(

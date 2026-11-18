@@ -226,9 +226,9 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 
 ## Renamed from `DockerSandbox`
 
-This capability was `DockerSandbox`, with `DockerSandboxBackend`, in `pydantic_ai_harness.docker_sandbox`. That name implied a security sandbox, which a container sharing your kernel isn't; see [Security model](#security-model). The old names still import from `pydantic_ai_harness.docker_sandbox`, with a `HarnessDeprecationWarning`, until a future release removes them. After that, the `DockerSandbox` name is kept for a possible capability built on [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/), Docker's microVM product, which would be a different capability with a VM boundary. The two names follow Docker's own split: a container shares your kernel, and a Sandbox is a microVM with its own. Migrate to `DockerContainer` now, so your agent keeps running in a plain container.
+This capability was `DockerSandbox`, with `DockerSandboxBackend`, in `pydantic_ai_harness.docker_sandbox`. That name implied a security sandbox, which a container sharing your kernel isn't; see [Security model](#security-model). The old names are removed. The `DockerSandbox` name is kept for a possible capability built on [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/), Docker's microVM product, which would be a different capability with a VM boundary. The two names follow Docker's own split: a container shares your kernel, and a Sandbox is a microVM with its own.
 
-Specs saved before the rename use the `DockerSandbox` block name. To keep loading them, pass the deprecated `DockerSandbox` class in `custom_capability_types`, alongside or instead of `DockerContainer`: its class name is the block name. To migrate a spec, rename its `DockerSandbox` block to `DockerContainer`; the options are unchanged.
+Specs saved before the rename use the `DockerSandbox` block name. Rename the block to `DockerContainer` to load them; the options are unchanged.
 
 ## Configuration
 
@@ -240,6 +240,8 @@ Specs saved before the rename use the `DockerSandbox` block name. To keep loadin
 | `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |
 | `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`; a `--pids-limit` here replaces the default of 2048. Default: `()`. |
 | `executable` | The container CLI to run, such as `'podman'`, looked up on `PATH` when the capability is created. Default: `'docker'`. |
+| `authority` | The [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority) of the container's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are container paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
 ## Platforms
 
