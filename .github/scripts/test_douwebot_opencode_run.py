@@ -521,6 +521,7 @@ def test_logfire_token_exports_a_span_per_run(
             'opencode_fallback.plan': 'OpenCode Go',
             'opencode_fallback.attempt': '1',
             'opencode_fallback.provider': 'opencode-go',
+            'opencode_fallback.model': 'opencode-go/deepseek-v4.1-flash',
             'opencode_fallback.steps': '0',
             'opencode_fallback.tokens': '0',
             'opencode_fallback.error_type': 'provider.go-limit',
@@ -534,6 +535,7 @@ def test_logfire_token_exports_a_span_per_run(
             'opencode_fallback.plan': 'the primary Coding Plan',
             'opencode_fallback.attempt': '2',
             'opencode_fallback.provider': 'zai-coding-plan',
+            'opencode_fallback.model': 'zai-coding-plan/glm-5.3-flash',
             'opencode_fallback.steps': '0',
             'opencode_fallback.tokens': '0',
             'opencode_fallback.error_type': 'provider.rate-limit',
@@ -546,6 +548,7 @@ def test_logfire_token_exports_a_span_per_run(
             'opencode_fallback.plan': 'the backup Coding Plan',
             'opencode_fallback.attempt': '3',
             'opencode_fallback.provider': 'zai-coding-plan',
+            'opencode_fallback.model': 'zai-coding-plan/glm-5.3-flash',
             'opencode_fallback.steps': '1',
             'opencode_fallback.tokens': '0',
             **failure,
@@ -833,9 +836,15 @@ def review_on(review_env: Path, configured_chain: str, matrix_index: int = 0) ->
 
 
 def test_configured_chain_runs_each_link_in_order_and_zen_without_a_key(
-    review_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    review_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    exported: list[dict[str, object]],
 ) -> None:
-    """Each configured link runs its entry's model, declared in its config, and Zen's free tier runs with no key."""
+    """Each configured link runs its entry's model, declared in its config, and Zen's free tier runs with no key.
+
+    Each run's span names its model, so the two Go links tell apart.
+    """
     refusal = subprocess.CalledProcessError(1, 'opencode')
     plan_refused = [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.quota', 'status': 429}}]
     invoked = fake_opencode(
@@ -852,6 +861,9 @@ def test_configured_chain_runs_each_link_in_order_and_zen_without_a_key(
     assert_runs_on(invoked[2], replace(ZAI_BACKUP, declares_model=True))
     assert_runs_on(invoked[3], GO_HY4)
     assert_runs_on(invoked[4], ZEN_HY4)
+    assert [span_attributes(span)['opencode_fallback.model'] for span in exported] == [
+        link.model for link in (GO_DEEPSEEK, ZAI, ZAI_BACKUP, GO_HY4, ZEN_HY4)
+    ]
     limit = 'failed with error type provider.go-limit, status 429, 5 hour limit, retry after 120000 ms.'
     go_hy4 = 'opencode-go/hy4-flash-free on OpenCode Go'
     zen = 'opencode/hy4-flash-free on the OpenCode Zen free tier'

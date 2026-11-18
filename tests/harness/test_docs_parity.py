@@ -207,6 +207,7 @@ _CAPABILITY_PAGE_META = {
     'system-reminders.md': ('system_reminders', 'System Reminders'),
     'detect-loops.md': ('detect_loops', 'Detect Loops'),
     'tool-budgets.md': ('tool_budgets', 'Tool Budgets'),
+    'report-remaining-budget.md': ('report_remaining_budget', 'Report Remaining Budget'),
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
     'refine-output.md': ('refine_output', 'Refine Output'),
     'wrap-up-at-limits.md': ('wrap_up_at_limits', 'Wrap Up At Limits'),

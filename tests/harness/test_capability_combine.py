@@ -440,6 +440,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'RepoContext': Anonymous('one per workspace root'),
     'ReportContextUsage': Anonymous('a passive observer; several callbacks compose'),
+    'ReportRemainingBudget': Anonymous('only a hook; each reports the run limits and its own `SpendLimits`'),
     'ReportStaleFiles': Anonymous('only an event listener and a hook; two would send two notices'),
     'SlidingWindowCompaction': Anonymous('composes as a tier under `TieredCompaction`'),
     'GoogleWorkspace': Anonymous('one per set of products, and `services` is what names it'),
