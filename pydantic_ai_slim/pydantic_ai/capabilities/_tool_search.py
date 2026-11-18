@@ -152,7 +152,9 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # they share a `_search_fn` that the toolset routes through `_run_search_fn`.
         # The named strategies `'bm25'` / `'regex'` only take effect server-side
         # (Anthropic) — no local implementation today — and `None` falls through to
-        # the toolset's default keyword-overlap algorithm.
+        # the toolset's default keyword-overlap algorithm. The default and an explicit `'keywords'`
+        # run the same algorithm, but only the explicit choice takes the callable dispatch path, which
+        # engages the client-executed native wire on supporting providers (cache benefit).
         if self.strategy == 'keywords':
             self._search_fn = keywords_search
         elif callable(self.strategy):
