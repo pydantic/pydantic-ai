@@ -50,11 +50,11 @@ if shutil.which('node') is None:  # pragma: no cover
     pytest.skip('the gh-aw harness script is JavaScript and needs node', allow_module_level=True)
 
 DEFINITION = Path(__file__).parents[3] / 'src' / 'pydantic_ai_harness' / 'gh-aw' / 'pydantic.md'
-CLAI2_SOURCE = Path(__file__).parents[3] / 'src' / 'pydantic_clai2'
+CLAI2_SOURCE = Path(__file__).parents[3] / 'src' / 'pydantic_ai_pax'
 
 requires_clai2 = pytest.mark.skipif(
-    importlib.util.find_spec('pydantic_clai2') is None,
-    reason='running the launcher requires pydantic-clai2',
+    importlib.util.find_spec('pydantic_ai_pax') is None,
+    reason='running the launcher requires pydantic-ai-pax',
 )
 
 # The first `node` start on a runner is slow; `started_node` pays it outside every test's budget.
@@ -299,11 +299,11 @@ def test_install_pins_clai2_and_installs_spec_extra_for_yaml_agents() -> None:
         for line in step.run.splitlines()
         if line.strip().startswith('python3 -P -m pip install ')
         for argument in shlex.split(line)
-        if argument.startswith(('pydantic-ai-harness[coder]==', 'pydantic-clai2=='))
+        if argument.startswith(('pydantic-ai-harness[coder]==', 'pydantic-ai-pax=='))
     ]
     assert harness_requirements == [
         'pydantic-ai-harness[coder]==${GH_AW_ENGINE_VERSION}',
-        'pydantic-clai2==${GH_AW_ENGINE_VERSION}',
+        'pydantic-ai-pax==${GH_AW_ENGINE_VERSION}',
     ]
     assert requirement == 'pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0'
 
@@ -1719,7 +1719,7 @@ def code_mode_off_args(tmp_path: Path) -> tuple[str, str]:
 
     CLAI folds tools into `run_code` by default, and `TestModel` cannot write code that runs.
     """
-    from pydantic_clai2.config.settings_store import SettingsStore
+    from pydantic_ai_pax.config.settings_store import SettingsStore
 
     database = tmp_path / 'clai2.db'
     SettingsStore(database).set('run.code_mode', False)

@@ -17,9 +17,9 @@ The same agent can run inside applications with different authority. Evaluate a 
 | Sandboxed or remote workspace | The selected backend, provider, credentials, mounts, network settings, and lifetime define the execution boundary. |
 | Durable agent | The application and execution engine own access to persisted workflow state, queues, credentials, and replay infrastructure. |
 
-See [UI adapters](docs/ui/overview.md), [realtime deployment](docs/realtime/deployment.md), [workspaces](docs/workspace.md), [CLAI 2](src/pydantic_clai2/README.md), and [durable execution](docs/durable_execution/overview.md).
+See [UI adapters](docs/ui/overview.md), [realtime deployment](docs/realtime/deployment.md), [workspaces](docs/workspace.md), [CLAI 2](src/pydantic_ai_pax/README.md), and [durable execution](docs/durable_execution/overview.md).
 
-Unlaunched packages: `pydantic-clai2` (CLAI 2). Maintainers handle a report against an unlaunched package as a bug, not a vulnerability. The CLAI 2 rows below still describe its intended boundary.
+Unlaunched packages: `pydantic-ai-pax` (CLAI 2). Maintainers handle a report against an unlaunched package as a bug, not a vulnerability. The CLAI 2 rows below still describe its intended boundary.
 
 Examples and documentation snippets show how to use an API; they are not hardened deployments. A flaw in one is a documentation bug for a public issue or pull request, unless the library code it calls breaks a documented boundary.
 
@@ -159,7 +159,7 @@ A setting that suppresses one content field does not establish that the same con
 
 Configuration also carries secrets. Request settings such as extra headers and bodies, native-tool credentials, and identifiers derived from a URL can hold credentials, because a URL can carry one in its user info, path or query. Keep them out of traces, frontend events, and durable activity names. A credential must reach only the service it was issued for. A provider's `base_url` is part of that service: the provider sends its credentials there, OAuth subscription tokens included, and the Codex and ChatGPT providers inject theirs only over HTTPS and only to the `base_url` origin (host and port).
 
-Canonical guidance: [Logfire](docs/logfire.md), [instrumentation](docs/capabilities/instrumentation.md), [CLAI 2 telemetry](src/pydantic_clai2/docs/reference.md#telemetry-and-references), [CLAI 2 storage and authentication](src/pydantic_clai2/README.md), and [tool output limits](docs/harness/tool-output-limits.md).
+Canonical guidance: [Logfire](docs/logfire.md), [instrumentation](docs/capabilities/instrumentation.md), [CLAI 2 telemetry](src/pydantic_ai_pax/docs/reference.md#telemetry-and-references), [CLAI 2 storage and authentication](src/pydantic_ai_pax/README.md), and [tool output limits](docs/harness/tool-output-limits.md).
 
 ### Availability and resource lifetime
 
@@ -208,7 +208,7 @@ credentials may appear in them. Sandbox diagnostics and nested tool results stil
 applications must keep secrets out of those outputs.
 Memory-limit failures discard the session because Monty does not guarantee heap integrity after a limit fires.
 
-Canonical guidance: [filesystem security model](docs/harness/filesystem.md#security-model), [shell command controls](docs/harness/shell.md), [Code Mode](docs/harness/code-mode.md), [Bubblewrap](docs/harness/bubblewrap-sandbox.md), [SmolSandbox](docs/harness/smol-sandbox.md#security-model), [BoxLiteSandbox](docs/harness/boxlite-sandbox.md#security-model), [SSH](docs/harness/ssh-workspace.md), [E2B](docs/harness/e2b-sandbox.md), [Modal](docs/harness/modal-sandbox.md), [Sprites](docs/harness/sprites-sandbox.md), [Daytona](docs/harness/daytona-sandbox.md), [boxd](docs/harness/boxd-sandbox.md#security-model), [OpenSandbox](docs/harness/opensandbox-sandbox.md#security-model), [Kubernetes](docs/harness/kubernetes-sandbox.md#security-model), [plugins](src/pydantic_clai2/PLUGINS.md), [CLAI 2 updates](src/pydantic_clai2/README.md#updating), [CLAI 2 live sessions](src/pydantic_clai2/docs/reference.md#sessions), [capability creation](docs/harness/capability-creation.md#trust-boundary), [subagents](docs/harness/subagents.md), [peers](docs/harness/peers.md), and [step persistence](docs/harness/step-persistence.md).
+Canonical guidance: [filesystem security model](docs/harness/filesystem.md#security-model), [shell command controls](docs/harness/shell.md), [Code Mode](docs/harness/code-mode.md), [Bubblewrap](docs/harness/bubblewrap-sandbox.md), [SmolSandbox](docs/harness/smol-sandbox.md#security-model), [BoxLiteSandbox](docs/harness/boxlite-sandbox.md#security-model), [SSH](docs/harness/ssh-workspace.md), [E2B](docs/harness/e2b-sandbox.md), [Modal](docs/harness/modal-sandbox.md), [Sprites](docs/harness/sprites-sandbox.md), [Daytona](docs/harness/daytona-sandbox.md), [boxd](docs/harness/boxd-sandbox.md#security-model), [OpenSandbox](docs/harness/opensandbox-sandbox.md#security-model), [Kubernetes](docs/harness/kubernetes-sandbox.md#security-model), [plugins](src/pydantic_ai_pax/PLUGINS.md), [CLAI 2 updates](src/pydantic_ai_pax/README.md#updating), [CLAI 2 live sessions](src/pydantic_ai_pax/docs/reference.md#sessions), [capability creation](docs/harness/capability-creation.md#trust-boundary), [subagents](docs/harness/subagents.md), [peers](docs/harness/peers.md), and [step persistence](docs/harness/step-persistence.md).
 
 Stock CLAI 2 is a broad local-execution profile: its default Coder has unrestricted file access and uses a local workspace unless configured otherwise. On Windows, that workspace is a `WindowsWorkspace`, and commands run in PowerShell. Launching from a directory does not contain its commands or file access. Stock defaults that matter for review:
 
@@ -220,9 +220,9 @@ Stock CLAI 2 is a broad local-execution profile: its default Coder has unrestric
 - Environment filtering covers selected credential names and does not isolate other secrets or files readable by the OS user.
 - A model's saved `base_url` receives its provider's credentials: saved keys, keyed profiles, and Codex sign-ins. Whoever can write the model settings can redirect them; `delegate_models` settings cannot set it. A model's saved `api_key` names a `/keys` entry, never the key itself; together with `base_url`, whoever can write the model settings can send any saved key, including one saved for an unrelated service, to that endpoint.
 - `open_stock_agent` gives code and ACP hosts the same Coder and workspace defaults.
-- When no OS keyring backend exists, saved credentials fall back to `0600` plaintext files under `$XDG_CONFIG_HOME/pydantic-clai2/`, and `pydantic_clai2.config.credential_store` logs a single warning per process when reading or writing one.
+- When no OS keyring backend exists, saved credentials fall back to `0600` plaintext files under `$XDG_CONFIG_HOME/pydantic-clai2/`, and `pydantic_ai_pax.config.credential_store` logs a single warning per process when reading or writing one.
 
-See the CLAI 2 docs on [environment variables](src/pydantic_clai2/docs/reference.md#environment-variables), [Code Mode](src/pydantic_clai2/README.md#code-mode-and-speculative-execution), [agent folders](src/pydantic_clai2/docs/reference.md#agent-folders), and [the stock agent in your own code](src/pydantic_clai2/docs/reference.md#the-stock-agent-in-your-own-code).
+See the CLAI 2 docs on [environment variables](src/pydantic_ai_pax/docs/reference.md#environment-variables), [Code Mode](src/pydantic_ai_pax/README.md#code-mode-and-speculative-execution), [agent folders](src/pydantic_ai_pax/docs/reference.md#agent-folders), and [the stock agent in your own code](src/pydantic_ai_pax/docs/reference.md#the-stock-agent-in-your-own-code).
 
 ACP integrations can delegate filesystem access and approvals to a client. Evaluate that client's authorization alongside the server's enabled tools; the client-backed filesystem toolset does not add a sandbox. See the [ACP client toolsets](src/pydantic_ai_harness/pydantic_ai_harness/experimental/acp/_client_toolsets.py).
 

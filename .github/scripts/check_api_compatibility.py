@@ -18,13 +18,13 @@ PACKAGES = {
     'pydantic_evals': 'pydantic_evals',
     'clai': 'clai',
     'pydantic_ai_harness': 'src/pydantic_ai_harness',
-    'pydantic_clai2': 'src/pydantic_clai2',
+    'pydantic_ai_pax': 'src/pydantic_ai_pax',
 }
 # The `clai2` web UI and the `workspaces` plugin behind it are application code, not an SDK for others to build on,
 # so their changes need no compatibility waiver. Each excludes every module in the package.
 EXCLUDED_PACKAGES = (
-    'pydantic_clai2.builtin_plugins.web',
-    'pydantic_clai2.builtin_plugins.workspaces',
+    'pydantic_ai_pax.builtin_plugins.web',
+    'pydantic_ai_pax.builtin_plugins.workspaces',
 )
 # Run from its own tool environment: `griffe` 1.x, which `prefect` accepts, installs over `griffelib`'s `griffe`
 # module, and `griffecli` crashes against it. A bump of either package can reword or add findings, which changes

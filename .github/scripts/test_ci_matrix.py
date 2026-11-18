@@ -37,7 +37,7 @@ LANE_VARS = (
 )
 REDUCED_JOBS = ('test', 'test-all-extras', 'test-durable-exec', 'test-lowest-versions', 'test-examples')
 # The `classify` outputs of each route a change can take through the test jobs: the full one, and the narrower
-# ones for a change confined to `pydantic-ai-harness` (and `pydantic-clai2`) or to `pydantic-clai2`.
+# ones for a change confined to `pydantic-ai-harness` (and `pydantic-ai-pax`) or to `pydantic-ai-pax`.
 ROUTES = {
     'full': {'clai2_only': 'false', 'harness_only': 'false'},
     'harness_only': {'clai2_only': 'false', 'harness_only': 'true'},
