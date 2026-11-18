@@ -94,11 +94,6 @@ async def _decline(request: AskUserRequest) -> AskUserResponse:
     return AskUserResponse(cancelled=True)  # pragma: no cover
 
 
-async def _goal_met(ctx: object, output: object) -> None:
-    """Only here to construct `Goal`; the combine tests never end a run."""
-    return None  # pragma: no cover
-
-
 _TMP_A = Path(tempfile.mkdtemp(prefix='combine-a-'))
 _TMP_B = Path(tempfile.mkdtemp(prefix='combine-b-'))
 """Two distinct roots, so a `Collides` pair differs in the way its `Anonymous` reason once claimed
@@ -481,7 +476,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'Goal': Narrows(
         'one goal per id; several goals each need their own id, and every completion check must accept',
-        lambda cls: (cls(goal='Finish', verify=_goal_met), cls(goal='Also finish', verify=_goal_met)),
+        lambda cls: (cls(goal='Finish'), cls(goal='Also finish')),
     ),
     'AskUser': Narrows(
         'one `ask_user_question` tool per id, and two answerers is a conflict, not one configuration stated twice',
