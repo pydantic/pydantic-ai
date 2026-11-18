@@ -730,18 +730,19 @@ async def safe_download(
 
             request_headers: dict[str, str] = {k: v for k, v in effective_headers.items() if k.lower() != 'host'}
             default_port = 443 if resolved.is_https else 80
-            if resolved.port == default_port:
-                request_headers['Host'] = resolved.hostname
-            else:
-                host = resolved.hostname
-                # Bracket an IPv6 literal before appending the port so the `:port` stays
-                # unambiguous (RFC 3986 §3.2.2), matching the connect URL from build_url_with_ip.
-                try:
-                    if isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address):
-                        host = f'[{host}]'
-                except ValueError:
-                    pass
-                request_headers['Host'] = f'{host}:{resolved.port}'
+            host = resolved.hostname
+            # urlparse strips the brackets from an IPv6 literal, so put them back in
+            # the Host header as well (RFC 3986 section 3.2.2). Without them a server
+            # that splits host:port at the last colon can mistake part of the address
+            # for a port, and the header disagrees with the connect URL built above.
+            try:
+                if isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address):
+                    host = f'[{host}]'
+            except ValueError:
+                pass
+            if resolved.port != default_port:
+                host = f'{host}:{resolved.port}'
+            request_headers['Host'] = host
             if max_bytes is not None and not any(k.lower() == 'accept-encoding' for k in request_headers):
                 request_headers['Accept-Encoding'] = _BOUNDED_ACCEPT_ENCODING
 
