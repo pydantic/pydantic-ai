@@ -55,7 +55,7 @@ DEFAULT_VERIFICATION_COMMANDS: tuple[str, ...] = (
 """Regular expressions for the commands that count as verification, matched at the start of a command's steps."""
 
 DEFAULT_EDIT_COMMANDS: tuple[str, ...] = (
-    r'(?:^|[;&|(]\s*)(?:(?:uv|poetry|pipenv|hatch|pdm)\s+run\s+)?(?:ruff\s+format|black|isort|cargo\s+fmt|gofmt\s+-w)\b'
+    r'(?:^|(?<=[;&|(\n]))(?<![ \t])[ \t]*+(?:(?:uv|poetry|pipenv|hatch|pdm)\s+run\s+)?(?:ruff\s+format|black|isort|cargo\s+fmt|gofmt\s+-w)\b'
     r'(?![^;&|\n]*\s--(?:check|diff))',
     r'--(?:fix|write)\b',
     r'(?<![\w-])(?:sed|perl)(?:\s+-\w+)*\s+-\w*i',
@@ -71,7 +71,7 @@ _ASSIGNMENTS = re.compile(r'^(?:env\s+)?(?:\w+=\S*\s+)*')
 _MASKING = re.compile(r'[|&]')
 _STATEMENT_SEPARATOR = re.compile(r'[;\n]')
 _PROBE = re.compile(r'(?<!\S)(?:--version|--help|-h|--collect-only|--co)(?!\S)')
-_SHORT_CIRCUIT = re.compile(r'(?<![\w-])(?:exit|exec|return)\b')
+_SHORT_CIRCUIT = re.compile(r'(?<![\w/.-])(?:exit|exec|return)\b')
 _FD_DUPLICATION = re.compile(r'(?<!\d)\d*[<>]&(?:\d+|-)')
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
 _FAILED = (
@@ -297,12 +297,12 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
         The exit status is the last `;`- or newline-separated statement's, so the check must be in it,
         joined only by `&&` to the rest of that statement.
         """
-        if _SHORT_CIRCUIT.search(command) or '$(' in command or '`' in command:
+        if '$(' in command or '`' in command:
             return False
-        # Separators and pipes inside quotes are literal text, not shell syntax.
+        # Separators, pipes, and words inside quotes are literal text, not shell syntax.
         text = _FD_DUPLICATION.sub('', _QUOTED.sub("''", command.replace('\\\n', ' ')))
         statements = [statement for statement in _STATEMENT_SEPARATOR.split(text) if statement.strip()]
-        if not statements:
+        if not statements or _SHORT_CIRCUIT.search(text):
             return False
         steps = [_ASSIGNMENTS.sub('', step.strip(), count=1) for step in statements[-1].split('&&')]
         if any(_MASKING.search(step) for step in steps):
