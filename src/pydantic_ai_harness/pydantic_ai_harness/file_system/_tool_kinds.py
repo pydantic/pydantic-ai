@@ -30,7 +30,7 @@ class ReadFileArgs(TypedDict):
     path: str
     """File path relative to the working directory."""
     offset: NotRequired[int]
-    """Zero-based line offset to start reading from."""
+    """Line number to start reading from (1-indexed)."""
     limit: NotRequired[int | None]
     """Maximum number of lines to return."""
 

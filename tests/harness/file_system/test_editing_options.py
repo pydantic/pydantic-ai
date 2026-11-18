@@ -131,26 +131,29 @@ class TestMaxReadChars:
         output = await call(tmp_path, 'read_file', {'path': 'wide.txt'}, max_read_chars=400)
         body = output.splitlines()[1:]
         assert body[:-1] == [f'{i + 1:>6}\tline {i} ' + 'x' * 40 for i in range(2)]
-        assert body[-1] == '... (8 more lines. Use offset=2 to continue reading.)'
-        assert 'line 2' in await call(tmp_path, 'read_file', {'path': 'wide.txt', 'offset': 2}, max_read_chars=400)
+        assert body[-1] == '... (8 more lines. Use offset=3 to continue reading.)'
+        assert '     3\tline 2' in await call(
+            tmp_path, 'read_file', {'path': 'wide.txt', 'offset': 3}, max_read_chars=400
+        )
 
     async def test_limit_still_applies_within_the_budget(self, tmp_path: Path) -> None:
         (tmp_path / 'short.txt').write_text('a\nb\nc\n')
         output = await call(tmp_path, 'read_file', {'path': 'short.txt', 'limit': 2}, max_read_chars=400)
-        assert output.endswith('... (1 more lines. Use offset=2 to continue reading.)\n')
+        assert output.endswith('... (1 more lines. Use offset=3 to continue reading.)\n')
 
     async def test_oversized_line_is_named_and_skippable(self, tmp_path: Path) -> None:
         (tmp_path / 'minified.js').write_text('short\n' + 'y' * 500 + '\nafter\n')
-        output = await call(tmp_path, 'read_file', {'path': 'minified.js', 'offset': 1}, max_read_chars=400)
+        output = await call(tmp_path, 'read_file', {'path': 'minified.js', 'offset': 2}, max_read_chars=400)
         assert output.splitlines()[1:] == [
             '... (Line 2 is 501 characters and does not fit the read window. '
-            'Use offset=2 to skip it, or a shell byte range to inspect it.)'
+            'Use offset=3 to skip it, or a shell byte range to inspect it.)'
         ]
-        assert 'after' in await call(tmp_path, 'read_file', {'path': 'minified.js', 'offset': 2}, max_read_chars=400)
+        skipped = await call(tmp_path, 'read_file', {'path': 'minified.js', 'offset': 3}, max_read_chars=400)
+        assert skipped.splitlines()[1:] == ['     3\tafter']
 
     async def test_bounds_the_whole_result(self, tmp_path: Path) -> None:
         (tmp_path / 'wide.txt').write_text(''.join(f'line {i} ' + 'x' * 40 + '\n' for i in range(100)))
-        for offset in (0, 1, 2, 3):
+        for offset in (1, 2, 3, 4):
             output = await call(tmp_path, 'read_file', {'path': 'wide.txt', 'offset': offset}, max_read_chars=400)
             assert len(output) <= 400 and output.endswith('to continue reading.)\n')
 

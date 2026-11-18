@@ -76,12 +76,12 @@ async def test_shell_sgr_colors_across_chunks_and_lines() -> None:
             {'path': '/tmp', 'glob': '*.cpp', 'limit': 10},
             "● list_files '/tmp' recursive=true limit=10 glob='*.cpp'",
         ),
-        ('read_file', {'path': '/tmp/example.cpp'}, "● read_file '/tmp/example.cpp' offset=0 limit=2000 lines"),
+        ('read_file', {'path': '/tmp/example.cpp'}, "● read_file '/tmp/example.cpp' offset=1 limit=2000 lines"),
         ('read_file', {'path': 'main.py', 'offset': 20, 'limit': 15}, "● read_file 'main.py' offset=20 limit=15 lines"),
         (
             'read_file',
             {'path': 'main.py', 'limit': 5000},
-            "● read_file 'main.py' offset=0 limit=2000 lines (requested 5000)",
+            "● read_file 'main.py' offset=1 limit=2000 lines (requested 5000)",
         ),
     ],
 )

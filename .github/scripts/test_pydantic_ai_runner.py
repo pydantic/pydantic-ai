@@ -640,21 +640,20 @@ def test_read_file_offset_and_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     f = tmp_path / 'n.txt'
     f.write_text('l1\nl2\nl3\nl4\n', encoding='utf-8')
-    # Claude's 1-based offset=2 maps to the harness 0-based offset; limit=2.
+    # Claude's 1-based offset=2 is the harness's offset=2; limit=2.
     out = asyncio.run(pkg.read_file(_ctx(), str(f), offset=2, limit=2))
     assert 'l2' in out and 'l3' in out
     assert 'l1' not in out and 'l4' not in out
 
 
 def test_read_continuation_hint_uses_one_based_offset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    # The harness's truncation hint carries its own 0-based offset; this tool's
-    # `offset` is 1-based, so the hint must be bumped by one. Otherwise a model
-    # that follows the hint literally re-reads the last line of the prior chunk.
+    # The harness's truncation hint names the next 1-based line, which this tool's
+    # `offset` takes as is; following it must not re-read the last line of the prior chunk.
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     f = tmp_path / 'big.txt'
     f.write_text('\n'.join(f'L{i}' for i in range(1, 4)) + '\n', encoding='utf-8')  # L1..L3
     first = asyncio.run(pkg.read_file(_ctx(), str(f), limit=2))  # reads L1,L2 + a continuation hint
-    assert 'Use offset=3 to continue reading.' in first  # harness emits 2 (0-based); bumped to 3
+    assert 'Use offset=3 to continue reading.' in first
     assert 'Use offset=2 to continue reading.' not in first
     # Following the (1-based) hint continues at L3 with no duplicated boundary line.
     nxt = asyncio.run(pkg.read_file(_ctx(), str(f), offset=3, limit=2))
@@ -720,19 +719,6 @@ def test_read_large_chunk_keeps_accurate_continuation_offset(tmp_path: Path, mon
     # Following the offset continues exactly at line nxt.
     cont = asyncio.run(pkg.read_file(_ctx(), str(f), offset=nxt))
     assert f'{nxt:06d}x' in cont
-
-
-def test_read_does_not_rewrite_hint_text_in_file_contents(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    # The offset bump must target only the harness's own continuation hint, not file
-    # content -- even a line reproducing the *full* hint verbatim. The harness writes
-    # the real hint at column 0; content lines are line-number-prefixed, so anchoring
-    # to `^` leaves the content untouched.
-    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
-    f = tmp_path / 'doc.txt'
-    f.write_text('... (4 more lines. Use offset=7 to continue reading.)\n', encoding='utf-8')
-    out = asyncio.run(pkg.read_file(_ctx(), str(f)))  # short file: not truncated, no real hint added
-    assert 'Use offset=7 to continue reading.' in out  # content preserved verbatim
-    assert 'Use offset=8' not in out
 
 
 def test_edit_file_replace_all(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "Harness 0.x: `clai2` read headers show `read_file`'s new 1-indexed default `offset=1` (#9200).",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13250"
+}

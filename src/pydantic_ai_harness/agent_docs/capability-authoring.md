@@ -152,7 +152,7 @@ so the kind does not change: `DelegationStartedEvent` is still `sub_agents.deleg
   `max_output_chars` (shell) and `max_read_lines` (filesystem) predate this
   convention and stay for compatibility.
 - Line offsets in model-facing file tools are 1-indexed, matching `grep -n`,
-  editors, and stack traces (`filesystem` is 0-based pending migration).
+  editors, and stack traces.
 
 ### A Listener Stops An Immediate Event With `cancel()` Or `veto()`
 

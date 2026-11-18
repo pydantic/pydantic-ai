@@ -25,8 +25,10 @@ NOTICE_CHARS = 200
 def format_lines(lines: Sequence[str], offset: int, limit: int, max_chars: int | None = None) -> str:
     """Format pre-split lines with line numbers and continuation hint.
 
-    With `max_chars`, the numbered lines end on the last complete one that
-    fits, so the continuation offset always names the first line not shown.
+    `offset` is the 1-indexed number of the first line to show, the same number
+    the output labels it with. With `max_chars`, the numbered lines end on the
+    last complete one that fits, so the continuation offset always names the
+    first line not shown.
     The notice appended after them is not counted; callers reserve `NOTICE_CHARS`.
     """
     total = len(lines)
@@ -34,18 +36,18 @@ def format_lines(lines: Sequence[str], offset: int, limit: int, max_chars: int |
     if total == 0:
         return '(empty file)\n'
 
-    if offset >= total:
+    if offset > total:
         raise ValueError(f'Offset {offset} exceeds file length ({total} lines).')
 
     numbered: list[str] = []
     budget = max_chars
-    for number, line in enumerate(lines[offset : offset + limit], start=offset + 1):
+    for number, line in enumerate(lines[offset - 1 : offset - 1 + limit], start=offset):
         rendered = f'{number:>6}\t{line}'
         if budget is not None and len(rendered) > budget:
             if not numbered:
                 return (
                     f'... (Line {number} is {len(line):,} characters and does not fit the read window. '
-                    f'Use offset={number} to skip it, or a shell byte range to inspect it.)\n'
+                    f'Use offset={number + 1} to skip it, or a shell byte range to inspect it.)\n'
                 )
             break
         numbered.append(rendered)
@@ -55,7 +57,7 @@ def format_lines(lines: Sequence[str], offset: int, limit: int, max_chars: int |
     if not result.endswith('\n'):
         result += '\n'
 
-    remaining = total - (offset + len(numbered))
+    remaining = total - (offset - 1 + len(numbered))
     if remaining > 0:
         next_offset = offset + len(numbered)
         result += f'... ({remaining} more lines. Use offset={next_offset} to continue reading.)\n'
