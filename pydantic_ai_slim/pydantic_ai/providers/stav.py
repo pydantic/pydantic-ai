@@ -29,6 +29,9 @@ __all__ = ('StavProvider',)
 
 _RUNS_IN_HEADER = 'X-Stav-Runs-In'
 
+_STAV_VENDOR_PROFILES = {'mistral-ai': mistral_model_profile}
+"""Stav's own spelling of Mistral's creator; the shared vendor map knows the other creators Stav routes to."""
+
 
 def _runs_in_header_value(region: str | Sequence[str] | None) -> str | None:
     if region is None:
@@ -61,8 +64,7 @@ class StavProvider(_OpenAISDKProvider):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        # Stav spells Mistral's creator `mistral-ai`; the shared map knows the other creators Stav routes to.
-        profile = vendor_family_model_profile(model_name, overrides={'mistral-ai': mistral_model_profile})
+        profile = vendor_family_model_profile(model_name, overrides=_STAV_VENDOR_PROFILES)
 
         # As StavProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly.
@@ -111,6 +113,7 @@ class StavProvider(_OpenAISDKProvider):
                 and `http_client` must be `None`.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
         if openai_client is not None:
             if region is not None:
                 raise UserError(

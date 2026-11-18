@@ -25,7 +25,6 @@ def test_stav_provider(env: TestEnv):
     assert provider.base_url == 'https://api.stav.ai/v1'
     assert isinstance(provider.client, openai.AsyncOpenAI)
     assert provider.client.api_key == 'api-key'
-    assert 'X-Stav-Runs-In' not in provider.client.default_headers
 
 
 def test_stav_provider_api_key_from_env(env: TestEnv):
@@ -46,20 +45,27 @@ def test_stav_provider_need_api_key(env: TestEnv) -> None:
         StavProvider()
 
 
-def test_stav_provider_base_url():
-    provider = StavProvider(api_key='api-key', base_url='https://staging.stav.ai/v1')
-    assert provider.base_url == 'https://staging.stav.ai/v1'
-    assert str(provider.client.base_url) == 'https://staging.stav.ai/v1/'
-
-
 def test_stav_provider_base_url_from_env(env: TestEnv):
     env.set('STAV_BASE_URL', 'https://staging.stav.ai/v1')
     provider = StavProvider(api_key='api-key')
     assert provider.base_url == 'https://staging.stav.ai/v1'
 
 
-@pytest.mark.parametrize(('region', 'expected'), [('eu', 'eu'), ('eea', 'eea'), (None, None)])
-async def test_stav_region_sent_on_the_wire(allow_model_requests: None, region: str | None, expected: str | None):
+@pytest.mark.parametrize(
+    ('region', 'expected'),
+    [
+        ('eu', 'eu'),
+        ('eea', 'eea'),
+        ('no', 'no'),
+        (['no', 'se'], 'no,se'),
+        (('eu',), 'eu'),
+        (['no', ' se '], 'no,se'),
+        (None, None),
+    ],
+)
+async def test_stav_region_sent_on_the_wire(
+    allow_model_requests: None, region: str | list[str] | tuple[str, ...] | None, expected: str | None
+):
     """The region reaches every request as `X-Stav-Runs-In`, and no header goes out without one.
 
     Not a VCR test: the claim is about a request header, which a mock transport observes directly.
@@ -138,15 +144,6 @@ async def test_stav_responses_region_sent_on_the_wire(allow_model_requests: None
 
     assert result.output == 'Paris'
     assert seen == [('/v1/responses', 'eea')]
-
-
-@pytest.mark.parametrize(
-    ('region', 'expected'),
-    [('eu', 'eu'), ('no', 'no'), (['no', 'se'], 'no,se'), (('eu',), 'eu'), (['no', ' se '], 'no,se')],
-)
-def test_stav_provider_region(region: str | list[str] | tuple[str, ...], expected: str):
-    provider = StavProvider(api_key='api-key', region=region)
-    assert provider.client.default_headers['X-Stav-Runs-In'] == expected
 
 
 @pytest.mark.parametrize('region', [[], '', ['no', '']])

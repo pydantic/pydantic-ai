@@ -92,6 +92,7 @@ with try_import() as imports_successful:
         NebiusProvider,
         OpenRouterProvider,
         OVHcloudProvider,
+        StavProvider,
         TogetherProvider,
         VercelProvider,
     ]
@@ -158,6 +159,7 @@ def test_provider_base_url_replaces_the_default(
         | NebiusProvider
         | OpenRouterProvider
         | OVHcloudProvider
+        | StavProvider
         | TogetherProvider
         | VercelProvider
     ],
