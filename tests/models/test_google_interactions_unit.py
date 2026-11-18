@@ -649,7 +649,7 @@ async def test_restricted_tools_and_native_parameters(
                 id='docs',
                 url='https://example.com/mcp',
                 headers={'X-Test': 'yes'},
-                authorization_token='Bearer test',
+                authorization_token='test',
                 allowed_tools=['lookup'],
             ),
         ],
@@ -1578,7 +1578,7 @@ async def test_provider_environment_and_foreign_file_history(
         ModelRequest.user_text_prompt('describe this'),
     ]
     params = ModelRequestParameters(
-        native_tools=[MCPServerTool(id='docs', url='https://example.com/mcp', authorization_token='Bearer test')]
+        native_tools=[MCPServerTool(id='docs', url='https://example.com/mcp', authorization_token='test')]
     )
     settings: GoogleInteractionsModelSettings = {'extra_body': {'environment': 'environments/test'}}
     await model_request(mock_model, history, model_settings=settings, model_request_parameters=params)

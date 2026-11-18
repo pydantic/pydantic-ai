@@ -562,7 +562,8 @@ class GoogleInteractionsModel(Model[Client]):
         if tool.headers:
             mcp['headers'] = tool.headers
         if tool.authorization_token:
-            mcp['headers'] = {**mcp.get('headers', {}), 'Authorization': tool.authorization_token}
+            # The token is bare, as OpenAI, Anthropic and xAI take it; Interactions forwards `headers` as given.
+            mcp['headers'] = {**mcp.get('headers', {}), 'Authorization': f'Bearer {tool.authorization_token}'}
         if tool.allowed_tools is not None:
             mcp['allowed_tools'] = [{'tools': tool.allowed_tools}]
         return mcp
