@@ -219,9 +219,9 @@ annotate its tools. Note the underscore in the default `id`, `'day_ai'`.
 
 - `StackOne(account_id, *, auth=None, base_url='https://api.stackone.com', actions=(), tool_mode=None,
   include_instructions=True, metadata=None, client=None)`. `auth` resolves as in the table above, except
-  that a string `'oauth'` is sent as the key; a function returning `'oauth'` raises `UserError`. `api_key=`
-  is its deprecated alias; passing both raises `UserError`. There is no `read_only` or `tool_prefix`. A URL
-  `client` still receives the `auth` key; a prebuilt client keeps its own auth.
+  that a string `'oauth'` is sent as the key; a function returning `'oauth'` raises `UserError`. There is
+  no `read_only` or `tool_prefix`. A URL `client` still receives the `auth` key; a prebuilt client keeps its
+  own auth.
 - `tool_mode='search_execute'` (the default when `actions` is empty) exposes two meta-tools: a search tool
   that returns runtime `action_id`s and an execute tool that takes them. `'individual'` registers one
   tool per action. Passing `actions` (case-insensitive `fnmatch` globs over `{connector}_{action}_{entity}`
@@ -251,8 +251,8 @@ print(hr.id)
 ## Agent specs
 
 All twelve classes can be loaded from YAML or JSON. Pass the class in `custom_capability_types`, and
-keep secrets out of the file by leaving `auth` unset so the env var is used. `StackOne` specs take no `auth`,
-and their `api_key` option is deprecated. Install each
+keep secrets out of the file by leaving `auth` unset so the env var is used. `StackOne` specs take no `auth`
+or `api_key`. Install each
 integration's extra, plus `pydantic-ai-slim[spec]` for YAML files:
 
 ```yaml
