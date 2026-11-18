@@ -6390,6 +6390,7 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
             ]
         )
@@ -11930,6 +11931,7 @@ async def test_hitl_tool_approval(serialize_history: bool):
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
         ]
     )
@@ -12000,6 +12002,7 @@ async def test_hitl_tool_approval(serialize_history: bool):
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
             ModelRequest(
                 parts=[
