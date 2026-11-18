@@ -263,14 +263,23 @@ class TestComputerUse:
         [
             # Gray while drawing, then white: the screenshots stop once two in a row are white.
             pytest.param(None, [b'\x80', b'\xff', b'\xff'], True, id='until-two-in-a-row-match'),
-            # Every frame differs, so the wait ends after `settle_seconds` with the latest one taken.
-            pytest.param(0.01, [bytes([shade]) for shade in range(256)], False, id='at-most-settle-seconds'),
+            # Every frame differs, so the wait ends after `settle_seconds`: screenshots at 0, 0.05 and 0.1 seconds.
+            pytest.param(0.1, [bytes([shade]) for shade in range(256)], False, id='at-most-settle-seconds'),
         ],
     )
     async def test_the_screenshot_waits_for_the_screen_to_stop_changing(
-        self, settle: float | None, frames: list[bytes], settles: bool
+        self, monkeypatch: pytest.MonkeyPatch, settle: float | None, frames: list[bytes], settles: bool
     ) -> None:
         taken: list[bytes] = []
+        # A clock that moves only when the code sleeps, so a slow machine can't change how many screenshots are taken.
+        now = 0.0
+
+        async def sleep(seconds: float) -> None:
+            nonlocal now
+            now += seconds
+
+        monkeypatch.setattr(anyio, 'sleep', sleep)
+        monkeypatch.setattr(anyio, 'current_time', lambda: now)
 
         class Drawing(ScreenBackend):
             async def screenshot(self) -> bytes:
@@ -288,10 +297,7 @@ class TestComputerUse:
             (await Agent(model, capabilities=[Provider().capability(), computer_use]).run('Go.')).all_messages()
         )
 
-        if settles:
-            assert taken == frames
-        else:
-            assert 2 <= len(taken) < len(frames)
+        assert taken == (frames if settles else frames[:3])
         assert tool_return.content_items()[-1] == BinaryImage(
             data=png(*FAKE_DISPLAY_SIZE, background=taken[-1] * 3), media_type='image/png'
         )
