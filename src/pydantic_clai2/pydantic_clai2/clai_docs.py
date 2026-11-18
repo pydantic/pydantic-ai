@@ -45,6 +45,7 @@ _HARNESS_DOCS = (
     'compaction',
     'day_ai',
     'daytona_sandbox',
+    'deny_unanswered',
     'e2b_sandbox',
     'file_system',
     'github',

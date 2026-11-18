@@ -134,6 +134,7 @@ RUNNABLE_HARNESS_PAGES = frozenset(
         'artifact-scanning.md',
         'aws-lambda.md',
         'azure-durable-task.md',
+        'deny-unanswered.md',
         'detect-loops.md',
         'memory.md',
         'permissions.md',
@@ -260,7 +261,7 @@ def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
     else:
         mocker.patch('pydantic_ai.mcp.MCPToolset', return_value=MockMCPServer())
     try:
-        mocker.patch('mcp.server.fastmcp.FastMCP')
+        mocker.patch('fastmcp.FastMCP')
     except (ImportError, AttributeError):
         pass
 
@@ -633,6 +634,7 @@ def test_docs_examples(
     env.set('VERCEL_AI_GATEWAY_API_KEY', 'testing')
     env.set('CEREBRAS_API_KEY', 'testing')
     env.set('NEBIUS_API_KEY', 'testing')
+    env.set('STAV_API_KEY', 'testing')
     env.set('CRUSOE_API_KEY', 'testing')
     env.set('HEROKU_INFERENCE_KEY', 'testing')
     env.set('FIREWORKS_API_KEY', 'testing')
@@ -650,6 +652,7 @@ def test_docs_examples(
     env.set('MOONSHOTAI_API_KEY', 'testing')
     env.set('META_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')
+    env.set('OTARI_API_KEY', 'testing')
     env.set('OVHCLOUD_API_KEY', 'testing')
     env.set('ALIBABA_API_KEY', 'testing')
     env.set('SAMBANOVA_API_KEY', 'testing')

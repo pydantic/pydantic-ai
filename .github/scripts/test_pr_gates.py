@@ -328,6 +328,7 @@ def test_observer_cannot_choose_the_status_target():
         ('wrong-sha', 'error'),
         ('wrong-repository', 'error'),
         ('ambiguous', 'error'),
+        ('crowded-branch', 'error'),
         ('closed-association', 'error'),
         ('wrong-source', 'error'),
         ('wrong-path', 'error'),
@@ -367,7 +368,10 @@ if (data.scenario === 'foreign-pr') {
   associations[0] = {number: 7, state: 'open', head: {sha: data.otherHead, repo: {id: 777}}};
 }
 if (data.scenario === 'wrong-sha') associations[0].head.sha = data.otherHead;
-if (data.scenario === 'wrong-repository') associations[0].head.repo.id = 777;
+if (data.scenario === 'wrong-repository') {
+  associations[0].head.repo.id = 777;
+  serverRun.event = 'pull_request';
+}
 if (data.scenario === 'closed-association') associations[0].state = 'closed';
 if (data.scenario === 'ambiguous') associations.push({...structuredClone(source), number: 9});
 if (data.scenario === 'moved-while-queued') live.head.sha = data.otherHead;
@@ -384,6 +388,10 @@ if (['producer', 'producer-review-event'].includes(data.scenario)) {
   serverRun.event = 'pull_request_target';
 }
 if (data.scenario === 'producer-review-event') serverRun.event = 'pull_request_review';
+// GitHub reports the base repository as a review run's head repository, even for a fork PR.
+if (['pull_request_review', 'pull_request_review_comment'].includes(serverRun.event)) {
+  serverRun.head_repository = {id: 1, owner: {login: 'pydantic'}};
+}
 const context = {
   eventName: 'workflow_run', serverUrl: 'https://github.com', runId: 1,
   repo: {owner: 'pydantic', repo: 'pydantic-ai'},
@@ -406,6 +414,15 @@ const github = {
     calls.push(['associations', args]);
     if (data.scenario === 'api-error') throw new Error('GitHub unavailable');
     return associations;
+  },
+  graphql: async (query, variables) => {
+    calls.push(['branch', variables]);
+    if (data.scenario === 'api-error') throw new Error('GitHub unavailable');
+    const nodes = associations.map(pull => ({
+      number: pull.number, state: pull.state.toUpperCase(), headRefOid: pull.head.sha,
+      headRepository: {databaseId: pull.head.repo.id}
+    }));
+    return {repository: {pullRequests: {pageInfo: {hasNextPage: data.scenario === 'crowded-branch'}, nodes}}};
   }
 };
 async function resolve() {
@@ -458,8 +475,8 @@ console.log(JSON.stringify(results));
             if outcome == 'active':
                 expected['active'] = 'true'
             assert output['outputs'] == expected
-            assert output['calls'][:2] == [
-                ['run', {'owner': 'pydantic', 'repo': 'pydantic-ai', 'run_id': 900}],
+            # A review run cannot name a fork's owner, so it looks the branch up across repositories.
+            lookup = (
                 [
                     'associations',
                     {
@@ -469,8 +486,11 @@ console.log(JSON.stringify(results));
                         'head': 'attacker:attacker-branch',
                         'per_page': 100,
                     },
-                ],
-            ]
+                ]
+                if scenario in {'pull-request', 'producer'}
+                else ['branch', {'owner': 'pydantic', 'name': 'pydantic-ai', 'branch': 'attacker-branch'}]
+            )
+            assert output['calls'][:2] == [['run', {'owner': 'pydantic', 'repo': 'pydantic-ai', 'run_id': 900}], lookup]
             assert output['calls'][-1] == ['live', {'owner': 'pydantic', 'repo': 'pydantic-ai', 'pull_number': 8}]
         if outcome == 'active':
             assert [(write['sha'], write['context'], write['state']) for write in output['writes']] == [
