@@ -107,8 +107,8 @@ engine:
       capture_fd = int(os.environ.pop('GH_AW_SESSION_CAPTURE_FD'))
       os.set_inheritable(capture_fd, False)
       output = os.fdopen(capture_fd, 'wb', buffering=0, closefd=False)
-      writable = select.poll()
-      writable.register(capture_fd, select.POLLOUT)
+      capture_poller = select.poll()
+      capture_poller.register(capture_fd, select.POLLOUT)
 
 
       def write_line(line: str) -> None:
@@ -116,7 +116,7 @@ engine:
           while remaining:
               written = output.write(remaining)
               if written is None:
-                  writable.poll()
+                  capture_poller.poll()
               else:
                   remaining = remaining[written:]
 

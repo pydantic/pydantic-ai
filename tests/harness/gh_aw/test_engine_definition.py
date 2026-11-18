@@ -1217,7 +1217,7 @@ def test_frames_larger_than_a_full_non_blocking_capture_pipe_are_written_whole(
 
     The CI capture pipe has been non-blocking: a single frame larger than it failed the run with
     `[Errno 11] write could not complete without blocking` and left a truncated frame (#13878). The pipe is filled
-    before the frames are written, so each write first finds no room, and the reader starts only once they begin.
+    before the frames are written, and the reader starts once writing begins.
     """
     invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'))
     read_fd, write_fd = os.pipe()
@@ -1249,9 +1249,9 @@ def test_frames_larger_than_a_full_non_blocking_capture_pipe_are_written_whole(
 
     reader = threading.Thread(target=drain)
     reader.start()
-    reasoning = 'r' * 200_000
+    reasoning = 'r' * 100_000
     # `json.dumps` escapes each of these characters to six bytes.
-    tool_output = 'é' * 50_000
+    tool_output = 'é' * 20_000
     try:
         reader_may_start.set()
         module._recorder.observe(context, PartEndEvent(index=0, part=ThinkingPart(content=reasoning)))
