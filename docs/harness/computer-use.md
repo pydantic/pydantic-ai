@@ -57,10 +57,8 @@ the same three cases. Pass `description=` to change when the model loads it.
 
 The model must accept images.
 
-- Claude Haiku 4.5, Opus 4.5, Sonnet 4.6 and later get Anthropic's own computer use tool through `AnthropicModel` on
-  the Claude API and Amazon Bedrock, and the function tool on Google Vertex AI, Microsoft Foundry and other APIs such
-  as Bedrock Converse; see
-  [Anthropic](../models/anthropic.md#computer-use).
+- Claude models get Anthropic's own computer use tool through `AnthropicModel` on the clients and models listed under
+  [Anthropic](../models/anthropic.md#computer-use), and the function tool elsewhere.
 - GPT-5.4 (not nano), GPT-5.5, GPT-5.6 and GPT-6 get OpenAI's own computer tool through `OpenAIResponsesModel` on OpenAI and Bedrock Mantle; see
   [OpenAI](../models/openai.md#native-tools).
 - Every other model gets `computer` as a regular function tool.
