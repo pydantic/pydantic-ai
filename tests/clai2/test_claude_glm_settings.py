@@ -26,6 +26,7 @@ def _settings(**values: object) -> dict[str, object]:
         ('anthropic:claude-fable-5.1', ('updates', 'summarized'), True, False),
         ('anthropic:claude-opus-5-5', ('summarized',), True, False),
         ('anthropic:claude-sonnet-5-5', ('summarized',), True, False),
+        ('anthropic:claude-opus-5', None, True, False),
         ('anthropic:claude-opus-4-6', None, True, False),
         ('anthropic:claude-sonnet-4-5', None, False, True),
         ('anthropic:claude-opus-4-1', None, False, True),
@@ -60,6 +61,9 @@ def test_claude_thinking_modes_follow_the_profile(*, model: str, modes: tuple[st
 
 
 def test_sonnet_5_5_accepts_between_tools() -> None:
+    # `between_tools` has no `display` key, so a saved display is dropped rather than sent.
+    settings = _settings(anthropic_thinking_mode='between_tools', anthropic_thinking_display='summarized')
+    assert settings['anthropic_thinking'] == {'type': 'between_tools'}
     validate_model_options(
         model='anthropic:claude-sonnet-5-5',
         form=_form(anthropic_thinking_mode='between_tools', anthropic_effort='high'),
