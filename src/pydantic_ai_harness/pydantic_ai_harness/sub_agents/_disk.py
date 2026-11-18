@@ -213,10 +213,11 @@ def _warn_unreadable(path: str, exc: Exception) -> None:
     warnings.warn(f'Skipping unreadable disk sub-agent file {path!r}: {exc}', stacklevel=3)
 
 
-async def _load_folder(workspace: Workspace, folder: str) -> list[DiskDefinition]:
+async def _load_folder(workspace: Workspace, folder: str, lowered: list[str]) -> list[DiskDefinition]:
     """Every `.md` or `.toml` definition directly in `folder`, sorted by name; a missing folder has none.
 
-    Sorted order keeps the roster, and so the prompt listing, the same for every run over the same files.
+    Sorted order keeps the roster, and so the prompt listing, the same for every run over the same files. A file below
+    `'operator'` authority isn't read: its path is added to `lowered` instead.
     """
     folder_entry = await stat_or_none(workspace, folder)
     if folder_entry is None or not folder_entry.is_dir:
@@ -225,6 +226,10 @@ async def _load_folder(workspace: Workspace, folder: str) -> list[DiskDefinition
     entries = sorted(await workspace.list_dir(folder), key=lambda entry: entry.name)
     for entry in entries:
         if entry.is_dir or not entry.name.endswith(('.md', '.toml')):
+            continue
+        if await workspace.authority_of(entry.path) != 'operator':
+            # Its body would become a delegate's instructions, and its description would be listed in the parent's.
+            lowered.append(entry.path)
             continue
         try:
             text = await workspace.read_text(entry.path)
@@ -244,18 +249,24 @@ async def _load_folder(workspace: Workspace, folder: str) -> list[DiskDefinition
     return result
 
 
-async def load_definitions(workspace: Workspace, agent_folders: str | Sequence[str]) -> list[DiskDefinition]:
-    """Load definitions through `workspace`, in precedence order.
+async def load_definitions(
+    workspace: Workspace, agent_folders: str | Sequence[str]
+) -> tuple[list[DiskDefinition], list[str]]:
+    """Load definitions through `workspace`, in precedence order, and list the files left out for their authority.
 
     - a `str`: `.agents/<str>/`, `.claude/<str>/`, then `.codex/<str>/` under the working directory.
       All are scanned; on a name collision the earlier folder wins.
     - a sequence of workspace paths: those folders in order, each read once (by real path).
+
+    A definition file below `'operator'` [authority][pydantic_ai.workspaces.Workspace.authority_of] is left out
+    before names are compared, so it can't shadow an operator's definition of the same name.
     """
     if isinstance(agent_folders, str):
         folders = [posixpath.join(root, agent_folders) for root in ('.agents', '.claude', '.codex')]
     else:
         folders = agent_folders
     result: list[DiskDefinition] = []
+    lowered: list[str] = []
     seen: set[str] = set()
     for folder in folders:
         resolved = await workspace.resolve(folder)
@@ -263,5 +274,5 @@ async def load_definitions(workspace: Workspace, agent_folders: str | Sequence[s
         if real_path in seen:
             continue
         seen.add(real_path)
-        result.extend(await _load_folder(workspace, resolved))
-    return result
+        result.extend(await _load_folder(workspace, resolved, lowered))
+    return result, lowered
