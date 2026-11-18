@@ -19,7 +19,7 @@ from pydantic_clai2.models import github_copilot, openrouter, vllm
 from pydantic_clai2.models.key_profiles import key_variables
 from pydantic_clai2.models.model_catalog import CatalogModel, catalog, github_copilot_models
 from pydantic_clai2.models.model_options import model_options, validate_model_options
-from pydantic_clai2.models.model_settings import ModelSettingsForm, model_defaults
+from pydantic_clai2.models.model_settings import ModelSettingsForm, model_defaults, with_codex_speed
 from pydantic_clai2.models.profiles import ALL, DEFAULT, base_model, parse_model, provider_of
 from pydantic_clai2.plugins.menus import Dialogs, Option, SettingsMenu
 from pydantic_clai2.ui.menus.custom_params import edit_custom_params
@@ -130,7 +130,10 @@ class ModelSettingsSource:
             for key, value in self._store.model_settings(self.model).items()
             if key not in ModelSettingsForm.model_fields
         }
-        self._store.save_model_settings(self.model, {**saved, **form.model_dump(exclude_none=True)})
+        values = {**saved, **form.model_dump(exclude_none=True)}
+        if row.key == 'codex_speed':
+            values = with_codex_speed(values, form.codex_speed)
+        self._store.save_model_settings(self.model, values)
         return f'Saved {row.key} for {self.model}. Applies when this model is selected.'
 
     def reset(self, row: FieldRow) -> str:
@@ -141,6 +144,8 @@ class ModelSettingsSource:
             saved.pop('anthropic_thinking_budget', None)
             saved.pop('anthropic_thinking_display', None)
             saved.pop('anthropic_preserved_thinking', None)
+        if row.key == 'codex_speed':
+            saved = with_codex_speed(saved, None)
         self._store.save_model_settings(self.model, saved)
         return f'Reset {row.key} for {self.model}.'
 

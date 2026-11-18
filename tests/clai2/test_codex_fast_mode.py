@@ -52,11 +52,14 @@ def test_codex_speed_row(tmp_path: Path, name: str, default: str | None) -> None
     row = FieldMenu(source).row_for('codex_speed')
     assert row is not None
     assert row.label == 'Speed'
+    tier = FieldMenu(source).row_for('service_tier')
+    assert tier is not None and tier.label == 'Service Tier' and not tier.choice_labels
     assert row.choices == ('standard', 'fast', 'ultrafast')
     assert 'more ChatGPT credits' in row.description
     assert source.current(row) == row.default == shown(default)
     assert (context.model_settings(model) or {}).get('openai_service_tier') == default
     assert source.apply(row, 'fast').startswith('Saved')
+    assert context.store.model_settings(model) == {'codex_speed': 'fast', 'service_tier': 'priority'}
     assert (context.model_settings(model) or {}).get('openai_service_tier') == 'priority'
     source.reset(row)
     assert context.store.model_settings(model) == {}
@@ -80,7 +83,7 @@ async def test_model_settings_flow_saves_speed_without_selecting_model(tmp_path:
     model = 'openai-codex:gpt-6-astra'
     script = Script(lists=[pick('codex_speed'), MenuResult(cancelled=True)], choices=[pick('fast')], texts=[])
     assert 'Saved codex_speed' in await model_settings_command(context, [model], runners=script.runners)
-    assert context.store.model_settings(model) == {'codex_speed': 'fast'}
+    assert context.store.model_settings(model) == {'codex_speed': 'fast', 'service_tier': 'priority'}
     assert context.settings.model == original and not applied
 
 
@@ -236,3 +239,17 @@ async def test_fast_toggle_turns_a_saved_priority_tier_off(tmp_path: Path) -> No
     result = await _shell(store, model).commands.execute_async('/fast')
     assert 'Codex speed standard' in result
     assert store.model_settings(model) == {'service_tier': 'default', 'codex_speed': 'standard'}
+
+
+@pytest.mark.parametrize('command', ['/fast ultrafast', '/fast on', '/fast off'])
+async def test_resetting_speed_restores_the_default(tmp_path: Path, command: str) -> None:
+    """Resetting the Speed row also drops the tier `/fast` saved beside it for older builds."""
+    context, _ = make_context(tmp_path)
+    model = 'openai-codex:gpt-6-astra'
+    await _shell(context.store, model).commands.execute_async(command)
+    source = ModelSettingsSource(context.store, model)
+    row = FieldMenu(source).row_for('codex_speed')
+    assert row is not None
+    source.reset(row)
+    assert context.store.model_settings(model) == {}
+    assert (context.model_settings(model) or {}).get('openai_service_tier') == 'ultrafast'

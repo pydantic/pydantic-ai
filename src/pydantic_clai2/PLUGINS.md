@@ -4323,8 +4323,9 @@ GPT-6.1 Sol, and GPT-6 Astra, the Codex models that offer
 both off. Faster speeds use more ChatGPT credits and depend on your plan. They do
 not lower reasoning effort. Reset restores the model's default. A saved
 `service_tier` of `priority` or `default`, which older CLAI builds read and write,
-stands for fast or standard. `/fast` saves that tier beside the speed, `priority`
-for ultrafast, so an older build keeps the nearest speed. The speed overrides the **Service Tier** row, and a custom `service_tier`
+stands for fast or standard. Choosing a speed saves that tier beside it, `priority`
+for ultrafast, so an older build keeps the nearest speed; resetting **Speed** drops
+both. The speed overrides the **Service Tier** row, and a custom `service_tier`
 body parameter still takes precedence over both.
 
 While the active model starts with `openai-codex:`, `/fast` toggles between

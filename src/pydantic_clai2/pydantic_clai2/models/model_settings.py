@@ -304,6 +304,19 @@ class ModelSettingsForm(BaseModel):
         return body
 
 
+def with_codex_speed(saved: Mapping[str, JsonValue], speed: CodexSpeed | None) -> dict[str, JsonValue]:
+    """`saved` with `speed` and the `service_tier` older CLAI builds read for it, its nearest for ultrafast.
+
+    `None` drops both, so the model's default speed applies again.
+    """
+    row = {key: value for key, value in saved.items() if key != 'codex_speed'}
+    if speed is not None:
+        return {**row, 'codex_speed': speed, 'service_tier': 'default' if speed == 'standard' else 'priority'}
+    if isinstance(tier := row.get('service_tier'), str) and tier in _TIER_SPEEDS:
+        del row['service_tier']
+    return row
+
+
 def model_defaults(*, model: str, saved: Mapping[str, JsonValue] | None = None) -> dict[str, JsonValue]:
     """CLAI's prompt caching default for every model, reasoning defaults for GPT families, and Codex speeds.
 
