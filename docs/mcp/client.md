@@ -778,7 +778,7 @@ agent.set_mcp_sampling_model()
 
 `MCPToolset` doesn't accept `sampling_model=` or `elicitation_handler=` together with a client you built, so set the sampling model with `set_mcp_sampling_model()` as above, and pass an elicitation handler to the `Client` itself.
 
-On the 2026-07-28 protocol, a server's `list_changed` notifications reach a client only on a subscription stream it opens, which `MCPToolset` doesn't do, so the toolset's cached tools, resources and prompts aren't refreshed when the server changes them mid-session.
+`MCPToolset` refreshes its cached tools, resources and prompts when the server sends a `list_changed` notification. On the 2026-07-28 protocol, a FastMCP server sends one while it handles a request with `ctx.send_notification(ToolListChangedNotification())` (or the resource or prompt equivalent); `ctx.session.send_tool_list_changed()` sends nothing there. A change the server makes outside a request reaches a client only on a `subscriptions/listen` stream, which `MCPToolset` doesn't open.
 
 ## Elicitation
 

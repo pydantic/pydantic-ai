@@ -42,9 +42,9 @@ from .conftest import IsDatetime, IsStr, RequestCapture, try_import
 with try_import() as imports_successful:
     from anthropic.types.beta import BetaTextBlock, BetaToolUseBlock, BetaUsage
     from fastmcp.server import Context, FastMCP
+    from mcp import types as mcp_types
     from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText
 
-    from pydantic_ai import _mcp_compat
     from pydantic_ai.mcp import MCPToolset
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.openai import OpenAIResponsesModel
@@ -56,8 +56,6 @@ with try_import() as imports_successful:
     from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic, openai or fastmcp not installed')
-
-MCP_SDK_V2 = imports_successful() and _mcp_compat.MCP_SDK_V2
 
 
 def _deltas(messages: list[ModelMessage]) -> list[list[str]]:
@@ -140,7 +138,8 @@ def _mcp_list_changed_agent(model: Any) -> Agent[Any, str]:
     async def unlock(ctx: Context) -> str:
         """Add a tool and tell the client its list changed."""
         server.add_tool(later)
-        await ctx.session.send_tool_list_changed()
+        # Through the FastMCP context: on FastMCP 4, `ctx.session.send_tool_list_changed()` sends nothing.
+        await ctx.send_notification(mcp_types.ToolListChangedNotification())
         return 'unlocked'
 
     return Agent(model, toolsets=[MCPToolset(server)])
@@ -173,15 +172,7 @@ def _tool_prepare_agent(model: Any) -> Agent[Any, str]:
 CAUSES: list[Any] = [
     pytest.param(_add_function_agent, id='add_function-from-tool'),
     pytest.param(_dynamic_toolset_agent, id='dynamic-toolset'),
-    pytest.param(
-        _mcp_list_changed_agent,
-        id='mcp-list-changed',
-        marks=pytest.mark.skipif(
-            MCP_SDK_V2,
-            reason='On a FastMCP 4 modern session, `list_changed` reaches the client only on a '
-            '`subscriptions/listen` stream, which `MCPToolset` does not open',
-        ),
-    ),
+    pytest.param(_mcp_list_changed_agent, id='mcp-list-changed'),
     pytest.param(_prepare_tools_agent, id='prepare-tools'),
     pytest.param(_tool_prepare_agent, id='per-tool-prepare'),
 ]
