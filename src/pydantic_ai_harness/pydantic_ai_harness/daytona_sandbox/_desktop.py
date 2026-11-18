@@ -47,8 +47,8 @@ from pydantic_ai.computer_use import (
     Drag,
     HoldKeys,
     MouseDown,
+    MouseMove,
     MouseUp,
-    MoveMouse,
     Point,
     PressKeys,
     Region,
@@ -271,7 +271,7 @@ class DaytonaDesktop:
                 await _send_input(
                     partial(mouse.click, x, y, button, clicks=count, modifiers=held, request_timeout=REQUEST_TIMEOUT)
                 )
-            case MoveMouse(x=x, y=y, modifiers=modifiers):
+            case MouseMove(x=x, y=y, modifiers=modifiers):
                 async with self._holding(_keys(modifiers)):
                     await _send_input(partial(mouse.move, x, y, request_timeout=REQUEST_TIMEOUT))
             case Drag(path=path, modifiers=modifiers):

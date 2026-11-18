@@ -34,8 +34,8 @@ from pydantic_ai.computer_use import (
     ComputerCallPart,
     Drag,
     MouseDown,
+    MouseMove,
     MouseUp,
-    MoveMouse,
     Point,
     PressKeys,
     Scroll,
@@ -429,10 +429,10 @@ async def test_claude_sonnet_4_6_drags_with_a_button_held_across_calls(
 
     # Claude presses and releases at a point, in calls of their own: the button stays pressed between them.
     assert provider.actions == [
-        MoveMouse(x=100, y=200),
+        MouseMove(x=100, y=200),
         MouseDown(),
-        MoveMouse(x=300, y=400),
-        MoveMouse(x=300, y=400),
+        MouseMove(x=300, y=400),
+        MouseMove(x=300, y=400),
         MouseUp(),
     ]
     bodies = request_capture.bodies('/v1/messages')
@@ -457,7 +457,7 @@ async def test_claude_sonnet_4_6_drags_with_a_button_held_across_calls(
                 (
                     False,
                     [
-                        "Action 2 of 3 (hold_key) failed: the fake display cannot perform 'hold_key'. The 1 action after"
+                        "Action 2 of 3 (hold_keys) failed: the fake display cannot perform 'hold_keys'. The 1 action after"
                         ' it did not run. Screenshot attached (1280x800).',
                         'image',
                     ],
@@ -476,7 +476,7 @@ async def test_claude_sonnet_4_6_drags_with_a_button_held_across_calls(
                     False,
                     [
                         'Failed.',
-                        "Action 1 of 2 (hold_key) failed: the fake display cannot perform 'hold_key'. The 1 action after"
+                        "Action 1 of 2 (hold_keys) failed: the fake display cannot perform 'hold_keys'. The 1 action after"
                         ' it did not run. Screenshot attached (1280x800).',
                         'image',
                     ],
@@ -1061,7 +1061,7 @@ ACTION_STEPS: list[tuple[str, DisplayAction]] = [
     ('Middle-click at x=100 y=200.', Click(x=100, y=200, button='middle')),
     ('Press the mouse back button at x=100 y=200.', Click(x=100, y=200, button='back')),
     ('Hold shift and click at x=100 y=200.', Click(x=100, y=200, modifiers=('shift',))),
-    ('Move the pointer to x=100 y=200 without clicking.', MoveMouse(x=100, y=200)),
+    ('Move the pointer to x=100 y=200 without clicking.', MouseMove(x=100, y=200)),
     ('Scroll down by 300 pixels at x=100 y=200.', Scroll(x=100, y=200, direction='down', amount=3)),
     (
         'Drag in a straight line from x=100 y=200 to x=300 y=200.',

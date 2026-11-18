@@ -8,8 +8,8 @@ Coordinates are pixels of the latest screenshot, from the top left, unless the c
 [`coordinate_grid`][pydantic_ai.computer_use.ComputerCallPart.coordinate_grid] puts them on a grid. A click or scroll
 without coordinates happens at the pointer.
 
-Actions follow the providers' computer tools: each is picked by `type` and named as OpenAI's are (`click`,
-`keypress`). A key is a single character or one of a fixed set of names. Common spellings, such as the X keysym
+Actions follow the providers' computer tools. Each is picked by `type`, its class name in snake case (`click`,
+`press_keys`). A key is a single character or one of a fixed set of names. Common spellings, such as the X keysym
 `KP_Enter` or the browser name `NumpadAdd`, are normalized, and `ctrl+s` is split into its keys. A character presses
 whatever the keyboard layout needs to type it; an upper-case letter is its lower-case key.
 
@@ -57,8 +57,8 @@ __all__ = (
     'HoldKeys',
     'MouseButton',
     'MouseDown',
+    'MouseMove',
     'MouseUp',
-    'MoveMouse',
     'Point',
     'PressKeys',
     'Region',
@@ -311,10 +311,10 @@ class Click:
 
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
-class MoveMouse:
+class MouseMove:
     """Move the pointer, for example to reveal a hover menu."""
 
-    type: Literal['move'] = 'move'
+    type: Literal['mouse_move'] = 'mouse_move'
     x: _Coordinate
     """From the left edge of the screenshot."""
     y: _Coordinate
@@ -375,9 +375,9 @@ class Scroll:
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
 class TypeText:
-    """Type text at the keyboard focus. Use `keypress` for shortcuts and special keys."""
+    """Type text at the keyboard focus. Use `press_keys` for shortcuts and special keys."""
 
-    type: Literal['type'] = 'type'
+    type: Literal['type_text'] = 'type_text'
     text: Annotated[str, Field(min_length=1)]
 
 
@@ -385,7 +385,7 @@ class TypeText:
 class PressKeys:
     """Press keys together as one combination, then release them."""
 
-    type: Literal['keypress'] = 'keypress'
+    type: Literal['press_keys'] = 'press_keys'
     keys: _Keys
     """One key per entry, pressed together: `["enter"]`, `["ctrl", "a"]`, `["super", "shift", "t"]`."""
     repeat: Annotated[int, Field(ge=1)] = 1
@@ -396,7 +396,7 @@ class PressKeys:
 class HoldKeys:
     """Hold keys down for a while, then release them."""
 
-    type: Literal['hold_key'] = 'hold_key'
+    type: Literal['hold_keys'] = 'hold_keys'
     keys: _Keys
     """One key per entry, held together."""
     seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)]
@@ -437,7 +437,7 @@ class CursorPosition:
 
 ComputerToolAction: TypeAlias = Annotated[
     Click
-    | MoveMouse
+    | MouseMove
     | Drag
     | MouseDown
     | MouseUp

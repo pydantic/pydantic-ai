@@ -321,11 +321,12 @@ _MEMBERS: dict[str, type[_Strict]] = {
 
 _COMPUTER_MEMBER_TYPES: dict[str, str] = {
     **dict.fromkeys(_COMPUTER_CLICKS, 'click'),
-    'mouse_move': 'move',
     'left_click_drag': 'drag',
     'left_mouse_down': 'mouse_down',
     'left_mouse_up': 'mouse_up',
-    'key': 'keypress',
+    'type': 'type_text',
+    'key': 'press_keys',
+    'hold_key': 'hold_keys',
 }
 """The `computer` tool action type of each member whose name differs from it."""
 
@@ -368,7 +369,7 @@ def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]
                 }
             ]
         case _Move():
-            return [{'type': 'move', **_point(member.coordinate)}]
+            return [{'type': 'mouse_move', **_point(member.coordinate)}]
         case _Drag():
             path = [_point(member.start_coordinate), _point(member.coordinate)]
             return [{'type': 'drag', 'path': path, 'modifiers': _modifiers(member.text)}]
@@ -383,18 +384,18 @@ def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]
                 }
             ]
         case _Type():
-            return [{'type': 'type', 'text': member.text}]
+            return [{'type': 'type_text', 'text': member.text}]
         case _Key():
             # xdotool syntax, which Claude writes: chords separated by spaces are pressed one after another.
             chords = member.text.split() or ['']
-            return [{'type': 'keypress', 'keys': [chord], 'repeat': member.repeat} for chord in chords]
+            return [{'type': 'press_keys', 'keys': [chord], 'repeat': member.repeat} for chord in chords]
         case _HoldKey():
-            return [{'type': 'hold_key', 'keys': [member.text], 'seconds': member.duration}]
+            return [{'type': 'hold_keys', 'keys': [member.text], 'seconds': member.duration}]
         case _Wait():
             return [{'type': 'wait', 'seconds': member.duration}]
         case _Press():
             # Claude's earlier tools press or release at a point: the pointer moves there first.
-            move = [{'type': 'move', **_point(member.coordinate)}] if member.coordinate else []
+            move = [{'type': 'mouse_move', **_point(member.coordinate)}] if member.coordinate else []
             return [*move, {'type': kind}]
         case _Zoom():
             left, top, right, bottom = member.region

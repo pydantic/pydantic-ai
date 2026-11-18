@@ -119,10 +119,10 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
     assert call.args_as_dict() == {
         'actions': [
             {'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'count': 1, 'modifiers': ['shift']},
-            {'type': 'keypress', 'keys': ['ctrl+a']},
-            {'type': 'keypress', 'keys': ['BackSpace']},
-            {'type': 'hold_key', 'keys': ['ctrl'], 'seconds': 1},
-            {'type': 'type', 'text': 'never typed'},
+            {'type': 'press_keys', 'keys': ['ctrl+a']},
+            {'type': 'press_keys', 'keys': ['BackSpace']},
+            {'type': 'hold_keys', 'keys': ['ctrl'], 'seconds': 1},
+            {'type': 'type_text', 'text': 'never typed'},
         ]
     }
     assert computer.actions == [
@@ -150,7 +150,7 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
     ]
     assert [r['content'][0]['text'] for r in results] == [
         'OK',
-        "Ran 3 of 5 actions. The next one failed: the fake display cannot perform 'hold_key'",
+        "Ran 3 of 5 actions. The next one failed: the fake display cannot perform 'hold_keys'",
         'Failed.',
         NOT_EXECUTED,
     ]
@@ -460,7 +460,7 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         (
             'mouse_move',
             {'coordinate': [3, 4]},
-            {'type': 'move', 'x': 3, 'y': 4},
+            {'type': 'mouse_move', 'x': 3, 'y': 4},
         ),
         (
             'left_click_drag',
@@ -472,32 +472,32 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ('left_click', {'coordinate': [5]}, {'type': 'click', 'unsupported_fields': ['coordinate']}),
         ('left_click', {'coordinate': ['1', '2']}, {'type': 'click', 'unsupported_fields': ['coordinate']}),
         ('triple_click', {'text': 7}, {'type': 'click', 'unsupported_fields': ['text']}),
-        ('key', {'text': 5}, {'type': 'keypress', 'unsupported_fields': ['text']}),
-        ('type', {}, {'type': 'type', 'unsupported_fields': ['text']}),
-        ('mouse_move', {}, {'type': 'move', 'unsupported_fields': ['coordinate']}),
+        ('key', {'text': 5}, {'type': 'press_keys', 'unsupported_fields': ['text']}),
+        ('type', {}, {'type': 'type_text', 'unsupported_fields': ['text']}),
+        ('mouse_move', {}, {'type': 'mouse_move', 'unsupported_fields': ['coordinate']}),
         ('wait', {}, {'type': 'wait', 'unsupported_fields': ['duration']}),
         ('left_mouse_down', {}, {'type': 'mouse_down'}),
         ('left_mouse_up', {}, {'type': 'mouse_up'}),
         # Claude's earlier tools press or release at a point, so the pointer moves there first.
-        ('left_mouse_down', {'coordinate': [5, 6]}, [{'type': 'move', 'x': 5, 'y': 6}, {'type': 'mouse_down'}]),
-        ('left_mouse_up', {'coordinate': [7, 8]}, [{'type': 'move', 'x': 7, 'y': 8}, {'type': 'mouse_up'}]),
+        ('left_mouse_down', {'coordinate': [5, 6]}, [{'type': 'mouse_move', 'x': 5, 'y': 6}, {'type': 'mouse_down'}]),
+        ('left_mouse_up', {'coordinate': [7, 8]}, [{'type': 'mouse_move', 'x': 7, 'y': 8}, {'type': 'mouse_up'}]),
         (
             'scroll',
             {'scroll_direction': 'down', 'scroll_amount': 80, 'coordinate': [1, 2]},
             {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 80, 'modifiers': []},
         ),
-        ('type', {'text': 'hi'}, {'type': 'type', 'text': 'hi'}),
-        ('key', {'text': 'ctrl+s', 'repeat': 2}, {'type': 'keypress', 'keys': ['ctrl+s'], 'repeat': 2}),
+        ('type', {'text': 'hi'}, {'type': 'type_text', 'text': 'hi'}),
+        ('key', {'text': 'ctrl+s', 'repeat': 2}, {'type': 'press_keys', 'keys': ['ctrl+s'], 'repeat': 2}),
         # xdotool syntax: chords separated by spaces are pressed one after another.
         (
             'key',
             {'text': 'ctrl+a BackSpace'},
             [
-                {'type': 'keypress', 'keys': ['ctrl+a'], 'repeat': None},
-                {'type': 'keypress', 'keys': ['BackSpace'], 'repeat': None},
+                {'type': 'press_keys', 'keys': ['ctrl+a'], 'repeat': None},
+                {'type': 'press_keys', 'keys': ['BackSpace'], 'repeat': None},
             ],
         ),
-        ('hold_key', {'text': 'shift', 'duration': 30}, {'type': 'hold_key', 'keys': ['shift'], 'seconds': 30}),
+        ('hold_key', {'text': 'shift', 'duration': 30}, {'type': 'hold_keys', 'keys': ['shift'], 'seconds': 30}),
         ('scroll', {'scroll_direction': 'up'}, {'type': 'scroll', 'unsupported_fields': ['scroll_amount']}),
         ('wait', {'duration': 2}, {'type': 'wait', 'seconds': 2}),
         ('screenshot', {}, {'type': 'screenshot'}),
@@ -509,7 +509,7 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ('zoom', {}, {'type': 'zoom', 'unsupported_fields': ['region']}),
         ('cursor_position', {}, {'type': 'cursor_position'}),
         ('teleport', {'coordinate': [1, 2]}, {'type': 'teleport', 'unsupported_fields': ['coordinate']}),
-        ('type', {'text': 'hi', 'delay': 5}, {'type': 'type', 'unsupported_fields': ['delay']}),
+        ('type', {'text': 'hi', 'delay': 5}, {'type': 'type_text', 'unsupported_fields': ['delay']}),
     ],
 )
 def test_toolset_members_map_onto_the_computer_tool(
@@ -621,8 +621,8 @@ async def test_member_calls_in_one_response_are_one_call_streamed_or_not(allow_m
                 {
                     'actions': [
                         {'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'count': 1, 'modifiers': []},
-                        {'type': 'type', 'text': 'hi'},
-                        {'type': 'keypress', 'keys': ['Return']},
+                        {'type': 'type_text', 'text': 'hi'},
+                        {'type': 'press_keys', 'keys': ['Return']},
                     ]
                 },
             ),
@@ -651,7 +651,7 @@ async def test_a_stream_that_breaks_off_keeps_every_member_call_it_got(allow_mod
                 pass
     assert [
         (part.tool_call_id, part.args_as_dict()) for part in stream.get().parts if isinstance(part, ToolCallPart)
-    ] == [('toolu_1', {'actions': [{'type': 'move', 'x': 5, 'y': 6}, {'type': 'type', 'text': 'hi'}]})]
+    ] == [('toolu_1', {'actions': [{'type': 'mouse_move', 'x': 5, 'y': 6}, {'type': 'type_text', 'text': 'hi'}]})]
 
 
 async def test_each_computer_20251124_call_is_its_own_call_streamed_or_not(allow_model_requests: None) -> None:
@@ -824,7 +824,7 @@ _MEMBERS: list[dict[str, Any]] = [
     {'id': 'toolu_3', 'name': 'key', 'input': {'text': 'Return'}},
 ]
 _PNG = BinaryImage(data=b'png', media_type='image/png')
-_FAILED = 'Action 2 of 2 (type) failed: no keyboard. Screenshot attached (1280x800).'
+_FAILED = 'Action 2 of 2 (type_text) failed: no keyboard. Screenshot attached (1280x800).'
 _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
 
 
@@ -968,9 +968,9 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
         pytest.param(
             [{'id': 'toolu_1', 'name': 'key', 'input': {'text': 'a b'}}, _MEMBERS[1]],
             [1, 1],
-            ['Action 2 of 2 (type) failed: no keyboard.', _PNG],
+            ['Action 2 of 2 (type_text) failed: no keyboard.', _PNG],
             {'performed': 1, 'error': 'no keyboard'},
-            [(False, ['Action 2 of 2 (type) failed: no keyboard.', 'image']), (True, ['Failed.'])],
+            [(False, ['Action 2 of 2 (type_text) failed: no keyboard.', 'image']), (True, ['Failed.'])],
             id='recorded-counts',
         ),
         # Nothing ran: the first call carries the result and states its failure in text, as an error can't hold it.
@@ -1180,7 +1180,7 @@ async def test_a_batch_split_by_another_tool_call_is_refused(allow_model_request
 
     calls = [part for part in response.parts if isinstance(part, ToolCallPart)]
     assert [call.tool_name for call in calls] == ['computer', 'focus']
-    assert calls[0].args_as_dict()['actions'][1] == {'type': 'type', 'after_tool_calls': ['focus']}
+    assert calls[0].args_as_dict()['actions'][1] == {'type': 'type_text', 'after_tool_calls': ['focus']}
     assert isinstance(calls[0], ComputerCallPart) and calls[0].actions is None
 
 
@@ -1231,7 +1231,7 @@ async def test_a_split_batch_a_hook_let_run_gets_its_real_retry_text(allow_model
     async def run_anyway(
         ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
     ) -> RawToolArgs:
-        return {'actions': [{'type': 'click', 'x': 5, 'y': 6}, {'type': 'type', 'text': 'hi'}]}
+        return {'actions': [{'type': 'click', 'x': 5, 'y': 6}, {'type': 'type_text', 'text': 'hi'}]}
 
     @hooks.on.after_tool_execute(tools=['computer'])
     async def retry(
