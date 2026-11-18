@@ -2,6 +2,8 @@
 
 import asyncio
 import io
+from functools import partial
+from pathlib import Path
 
 import httpx2
 import keyring
@@ -20,21 +22,26 @@ from pydantic_ai.providers.openai_codex import (
     OpenAICodexOAuthFlow,
     OpenAICodexProvider,
 )
+from pydantic_clai2 import auth as auth_module
 from pydantic_clai2.auth import CodexAuth, CodexCredentials, code_from_paste, login_command
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.api_keys import forget_connection
-from pydantic_clai2.config.credential_store import has_credentials, load_codex_credentials
+from pydantic_clai2.config.credential_store import has_credentials, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.models.model_catalog import CODEX_MODELS
 from pydantic_clai2.plugins import PluginLogin
 from pydantic_clai2.plugins.menus import Dialogs
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from tests.clai2.dialog_script import Back, ScriptedDialogs
 from tests.clai2.surface_terminal import SurfaceTerminal
 
 CREDENTIALS = OpenAICodexCredentials(
     access_token='fake-access', refresh_token='fake-refresh', account_id='fake-account'
 )
+CREDENTIALS_JSON = '{"access_token":"fake-access","refresh_token":"fake-refresh","account_id":"fake-account"}'
 
 
 def fake_browser(url: str) -> bool:
@@ -342,3 +349,87 @@ async def test_auth_failures(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_default_model() -> None:
     assert Settings().model == 'openai-codex:gpt-6-astra'
+
+
+def serve_codex_models(monkeypatch: pytest.MonkeyPatch, status: int = 200) -> list[httpx2.Request]:
+    """Answer the Codex catalog `GET {base_url}/models` through the real discovery, recording each request."""
+    requests: list[httpx2.Request] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        served = [
+            {'slug': 'gpt-6.2-sol', 'display_name': 'GPT-6.2-Sol', 'visibility': 'list'},
+            {'slug': 'codex-auto-review', 'display_name': 'Codex Auto Review', 'visibility': 'hide'},
+            {'slug': 'gpt-6.1-terra', 'display_name': 'GPT-6.1 Terra', 'visibility': 'list'},
+        ]
+        return httpx2.Response(status, json={'models': served})
+
+    discover = partial(auth_module.discover_codex_models, transport=httpx2.MockTransport(respond))
+    monkeypatch.setattr(auth_module, 'discover_codex_models', discover)
+    return requests
+
+
+def codex_signs_in(monkeypatch: pytest.MonkeyPatch) -> CodexAuth:
+    async def exchange(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
+        return CREDENTIALS
+
+    monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
+    return CodexAuth(Console(file=io.StringIO()), read_line=never_pasted)
+
+
+@pytest.mark.parametrize(('target', 'prefix'), [('codex', 'openai-codex'), ('openai-codex@work', 'openai-codex@work')])
+async def test_codex_login_adds_the_account_models(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, target: str, prefix: str
+) -> None:
+    requests = serve_codex_models(monkeypatch)
+    store = SettingsStore(tmp_path / 'config.db')
+    message = await login_command([target], codex=codex_signs_in(monkeypatch), store=store)
+    assert message.endswith(' Added 2 Codex models.')
+    assert store.models() == [f'{prefix}:gpt-6.1-terra', f'{prefix}:gpt-6.2-sol']
+    assert [
+        (
+            request.url.host,
+            request.url.path,
+            'client_version' in request.url.params,
+            request.headers['authorization'],
+            request.headers['chatgpt-account-id'],
+        )
+        for request in requests
+    ] == [('chatgpt.com', '/backend-api/codex/models', True, 'Bearer fake-access', 'fake-account')]
+
+
+async def test_codex_login_falls_back_to_the_static_models(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    serve_codex_models(monkeypatch, status=500)
+    store = SettingsStore(tmp_path / 'config.db')
+    message = await login_command(['codex@work'], codex=codex_signs_in(monkeypatch), store=store)
+    assert 'Codex model discovery failed' in message
+    assert f'Added the {len(CODEX_MODELS)} built-in Codex models.' in message
+    assert store.models() == sorted(name.replace('openai-codex:', 'openai-codex@work:') for name in CODEX_MODELS)
+
+
+async def test_codex_discovery_rejects_an_unexpected_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={'data': []})
+
+    await CodexCredentials().save_login(CREDENTIALS)
+    with pytest.raises(UserError, match='Codex returned an invalid model list'):
+        await auth_module.discover_codex_models(transport=httpx2.MockTransport(respond))
+
+    def hidden(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={'models': [{'slug': 'codex-auto-review', 'visibility': 'hide'}]})
+
+    with pytest.raises(UserError, match='Codex returned no models for this account'):
+        await auth_module.discover_codex_models(transport=httpx2.MockTransport(hidden))
+
+
+async def test_cancelled_codex_login_adds_no_models(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    requests = serve_codex_models(monkeypatch)
+    save_codex_credentials(account='openai-codex', value=CREDENTIALS_JSON)
+    store = SettingsStore(tmp_path / 'config.db')
+    message = await login_command(
+        ['codex'], codex=CodexAuth(Console(file=io.StringIO())), store=store, dialogs=ScriptedDialogs([Back()])
+    )
+    assert message == 'ChatGPT/Codex sign-in cancelled.'
+    assert requests == []
+    assert store.models() == []

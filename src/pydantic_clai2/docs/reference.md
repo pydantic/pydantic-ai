@@ -894,6 +894,10 @@ The built-in model catalog and `/set model` completions include
 `/login openai-codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
 authorization code with PKCE, state validation, and a callback at
 `http://localhost:1455/auth/callback`. It times out after five minutes.
+Login adds every model your account's Codex catalog lists to `/model`
+(`openai-codex@PROFILE:ID` for a profile), skipping models the catalog hides. If
+listing the models fails, the login stays saved, CLAI reports why, and it adds the
+built-in Codex models instead.
 
 If the browser cannot reach that callback on the machine running CLAI (for
 example over SSH), the redirect fails in the browser. Copy the URL from the
