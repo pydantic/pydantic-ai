@@ -25,7 +25,7 @@ else:
         _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
-__all__ = ['StavProvider']
+__all__ = ('StavProvider',)
 
 _RUNS_IN_HEADER = 'X-Stav-Runs-In'
 
