@@ -37,8 +37,7 @@ from pydantic_ai.computer_use import (
     Wait,
     Zoom,
 )
-from pydantic_ai.durable_exec import BaseDurabilityCapability
-from pydantic_ai.exceptions import ToolFailed, UserError
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelMessage,
@@ -51,7 +50,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import AbstractModel
 from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool
+from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness._png import png_size
@@ -89,14 +88,41 @@ and took more steps."""
 
 def _shell_instructions(ctx: RunContext[Any]) -> str | None:
     """`_SHELL_INSTRUCTIONS`, when the run has a tool that runs shell commands."""
-    # Such a tool declares the language of its command argument, as `Shell`'s do; `Permissions` reads it too.
-    if any((tool.metadata or {}).get('code_arg_language') == 'shell' for tool in ctx.tools.values()):
-        return _SHELL_INSTRUCTIONS
+    # Such a tool declares its command argument and that argument's language, as `Shell`'s do and `Permissions` reads.
+    for tool in ctx.tools.values():
+        metadata = tool.metadata or {}
+        if metadata.get('code_arg_language') == 'shell' and isinstance(metadata.get('code_arg_name'), str):
+            return _SHELL_INSTRUCTIONS
     return None
 
 
-_OBSERVING_ACTIONS = frozenset({'wait', 'screenshot', 'zoom', 'cursor_position'})
-"""Action types that change nothing on the screen, so a read-only workspace allows them."""
+_LookingAction = Wait | Screenshot | Zoom | CursorPosition
+"""The actions that change nothing on the screen, so a read-only workspace allows them."""
+
+_ACTIONS_DESCRIPTION = 'The actions to run, in order.'
+
+
+async def _look(
+    actions: Annotated[
+        list[Annotated[_LookingAction, Field(discriminator='type')]],
+        Field(min_length=1, description=_ACTIONS_DESCRIPTION),
+    ],
+) -> None:
+    """The `computer` tool's signature on a read-only workspace, whose schema offers only the actions that look."""
+
+
+_LOOKING_PARAMETERS = Tool(_look).tool_def.parameters_json_schema
+
+
+async def _offer_what_the_workspace_allows(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition:
+    """On a read-only workspace, offer only the actions that look, as `FileSystem` offers only its reading tools.
+
+    A provider's native computer tool fixes its own actions, so a call that acts is still refused when it runs.
+    """
+    if not ctx.workspace.read_only:
+        return tool_def
+    return replace(tool_def, parameters_json_schema=_LOOKING_PARAMETERS)
+
 
 _DISPLAY_LOCKS: weakref.WeakValueDictionary[object, anyio.Lock] = weakref.WeakValueDictionary()
 """Locks per event loop, display object and environment ref. Agents sharing a screen, such as parallel sub-agents, take
@@ -108,15 +134,6 @@ _RELEASE_TIMEOUT = 5
 
 _SETTLE_INTERVAL = 0.05
 """Seconds between the screenshots that check whether the screen stopped changing."""
-
-# The tool reads the run's messages and model in workflow code; the display work is one durable unit.
-_DURABLE_OPT_OUTS = {
-    'temporal': False,
-    'prefect': False,
-    'render_workflows': False,
-    'aws_lambda': False,
-    'azure_durable_task': False,
-}
 
 
 @dataclass
@@ -139,7 +156,11 @@ class _RunButtons:
 
 
 _RUN_BUTTONS: ContextVar[_RunButtons | None] = ContextVar('_RUN_BUTTONS', default=None)
-"""The buttons of the run whose `wrap_run` releases them at its end."""
+"""The buttons of the run whose `wrap_run` releases them at its end.
+
+Not on a `for_run` copy: a durable engine runs the tool from the toolset the agent was built with, so the tool is bound
+to that instance, not the run's copy.
+"""
 
 
 def _run_buttons(ctx: RunContext[Any]) -> _RunButtons | None:
@@ -207,10 +228,11 @@ class _NotRun:
     """A call the display refused or couldn't finish, crossing a durable unit as data so its error keeps its kind."""
 
     message: str
-    kind: Literal['tool', 'unavailable', 'config'] = 'tool'
-    """`tool` tells the model; `unavailable` ends the run with `WorkspaceUnavailableError`, `config` with `UserError`."""
+    kind: Literal['tool', 'retry', 'unavailable', 'config'] = 'tool'
+    """`tool` tells the model the call failed and `retry` asks it to fix the call; `unavailable` ends the run with
+    `WorkspaceUnavailableError`, `config` with `UserError`."""
     held: list[MouseButton] = field(default_factory=list[MouseButton])
-    """The buttons a `tool` failure couldn't release, so they may still be held."""
+    """The buttons a failure the model is told about couldn't release, so they may still be held."""
 
     @classmethod
     def of(cls, error: ToolFailed | WorkspaceUnavailableError | UserError) -> _NotRun:
@@ -224,6 +246,8 @@ class _NotRun:
     def error(self) -> Exception:
         if self.kind == 'tool':
             return ToolFailed(self.message)
+        if self.kind == 'retry':
+            return ModelRetry(self.message)
         if self.kind == 'unavailable':
             return WorkspaceUnavailableError(self.message)
         return UserError(self.message)
@@ -231,7 +255,7 @@ class _NotRun:
 
 def _not_run_error(outcome: _NotRun, run: _RunButtons, stray: list[MouseButton]) -> Exception:
     """The error for a call that didn't run, keeping the buttons a failed call couldn't release for the run's end."""
-    if outcome.kind == 'tool':
+    if outcome.kind in ('tool', 'retry'):
         run.stray = [*stray, *outcome.held]
     return outcome.error()
 
@@ -517,23 +541,6 @@ async def _display_size(display: Display) -> tuple[int, int]:
         raise ToolFailed(f'Reading the display size failed, so no action ran: {e}') from e
 
 
-def _refuse_checkpointed_calls(ctx: RunContext[Any]) -> None:
-    """Refuse a durable engine that checkpoints the whole `computer` call, such as Absurd.
-
-    On replay the call doesn't run, so the run loses track of the buttons it left pressed and never releases them.
-    """
-    durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None
-    if durability is None or not durability.in_durable_context:
-        return
-    spec = durability.engine_spec
-    if 'function' in spec.wrapped_toolset_kinds and spec.tool_config_key not in _DURABLE_OPT_OUTS:
-        raise UserError(
-            f"`ComputerUse` can't run under {spec.engine_name} durable execution, which checkpoints the whole "
-            '`computer` call: on replay the call is skipped, so a mouse button it pressed is never released. '
-            'Use `TemporalDurability` or `PrefectDurability`.'
-        )
-
-
 def _screen_keys(ctx: RunContext[Any], display: Display) -> list[object]:
     """The keys of a screen's locks: its display object's, then its environment's."""
     # One environment's backends share its ref, but two environments may reach one display object, so neither key
@@ -606,7 +613,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     key, press or release a mouse button, or read the pointer position; with `False`, GPT can.
     """
 
-    id: str | None = 'computer'
+    id: str | None = 'computer_use'
     """Stable capability ID: an agent controls one display."""
 
     description: str | None = (
@@ -628,10 +635,12 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             description='Run actions on the screen in order, then return a screenshot of the result.',
             sequential=True,
             max_retries=3,
+            prepare=_offer_what_the_workspace_allows,
             tool_kind=COMPUTER_KIND,
             # It returns a screenshot, which has no schema to describe.
             include_return_schema=False,
-            metadata=_DURABLE_OPT_OUTS,
+            # It reads the run's messages and model in workflow code; the display work is one durable unit.
+            durable=False,
         )
         return FunctionToolset([tool], id=self.id)
 
@@ -640,13 +649,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         actions: Annotated[
             list[ComputerToolAction],
-            Field(
-                min_length=1,
-                description='The actions to run, in order.',
-            ),
+            Field(min_length=1, description=_ACTIONS_DESCRIPTION),
         ],
     ) -> ToolReturn:
-        acts = any(action.type not in _OBSERVING_ACTIONS for action in actions)
+        acts = not all(isinstance(action, _LookingAction) for action in actions)
         if acts and ctx.workspace.read_only:
             raise ToolFailed(_READ_ONLY)
         run = _run_buttons(ctx)
@@ -733,14 +739,15 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 mapping = _CoordinateMapping(space=space, display=size)
                 # The backend would move a position outside the screen to its edge and act there.
                 if refused := _off_screen(actions, *mapping.space, 'grid' if plan.grid else 'screen'):
-                    raise ToolFailed(refused)
+                    raise ModelRetry(refused)
                 pixels = actions if mapping.space == size else [mapping.to_display(a) for a in actions]
                 _leave_presses_for_run_end(ctx, actions)
                 return await self._act_and_look(display, pixels, mapping, plan, held)
-            except ToolFailed as e:
+            except (ToolFailed, ModelRetry) as e:
                 # A call that fails releases every button that may be held, so only a call that succeeds says which are.
                 released, stuck = await _release_for_failure(display, held)
-                return _NotRun(f'{e.message.rstrip(".")}. {released}' if released else e.message, held=stuck)
+                message = f'{e.message.rstrip(".")}. {released}' if released else e.message
+                return _NotRun(message, 'retry' if isinstance(e, ModelRetry) else 'tool', held=stuck)
             except BaseException:
                 # Cancelled, such as by the tool's timeout, or the environment was lost: released before the next call.
                 await _release(display, held)
@@ -832,7 +839,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Release the mouse buttons the run still holds however it ends, including a caller leaving it early."""
-        _refuse_checkpointed_calls(ctx)
         run = _RunButtons(ctx.run_id)
         _RUN_BUTTONS.set(run)
         try:

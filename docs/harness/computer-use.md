@@ -37,7 +37,8 @@ async def main():
 1. Any capability whose workspace has a display, such as `DockerSandbox(desktop=True)`. See
    [Giving a workspace a screen](#giving-a-workspace-a-screen) to write your own.
 
-On a [read-only](../workspace.md#read-only-access) workspace the agent can take screenshots but not act.
+On a [read-only](../workspace.md#read-only-access) workspace the `computer` tool offers only the actions that look,
+and a native tool call that acts is refused.
 
 A `screenshot` action before a call's last action returns the screen at that point, besides the screenshot the
 call ends with.
@@ -112,7 +113,8 @@ larger screen stops the run with an error naming the largest size that fits. A 1
 ## When something goes wrong
 
 - Actions run in order. If one fails, the rest don't run, and the result says which failed and why.
-- A position outside the screen fails the whole call before anything runs.
+- A position outside the screen fails the whole call before anything runs, and the model is asked to try again. That
+  counts against the tool's retries.
 - If the environment is gone, the run ends with [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
 - Agents on one screen and one event loop, such as parallel sub-agents, take turns a whole call at a time, so their clicks never interleave. Agents on separate event loops or in separate processes don't wait for each other.
 - A button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, so a drag can span calls, and each result says which buttons are still pressed. A call that fails or is cancelled releases them, and so does the end of the run however it ends, so a drag must finish within one run, which matters when calls wait for approval. A `ComputerUse` loaded mid-run with `defer_loading=True` releases them at the end of each call instead. A failed call says which buttons it released, or that a button may still be held if its release failed too.
@@ -130,8 +132,8 @@ Each call that finishes and returns a screenshot also emits
 |---|---|
 | `ActionsPerformedEvent` | `result`, the call's `ComputerResult`, and `tool_call_id` |
 
-They are emitted once per such call, also under durable execution, and add no telemetry spans, since core already traces
-the tool call. The history keeps the same facts: each result is a `ComputerReturnPart` whose `result` is the call's
+Each such call emits one, and adds no telemetry spans, since core already traces the tool call. On Temporal, listeners
+run in workflow code, so they [run again on replay](../durable_execution/temporal.md#choosing-what-to-publish). The history keeps the same facts: each result is a `ComputerReturnPart` whose `result` is the call's
 `ComputerResult`.
 
 ## Limitations
@@ -147,9 +149,7 @@ the tool call. The history keeps the same facts: each result is a `ComputerRetur
   for capability steps. On Temporal those are `TemporalDurability`'s `activity_config`, which defaults to a 60-second
   timeout and unlimited retries: raise `start_to_close_timeout` above your longest call, and set
   `retry_policy=RetryPolicy(maximum_attempts=1)` so a call isn't repeated. When the engine gives up, the model is told some actions may have run. Use `TemporalDurability`
-  or `PrefectDurability`; the deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't run it. A run under
-  `AbsurdDurability` or `PGTaskDurability` fails with a `UserError` before its first call: they checkpoint the whole
-  tool call, so on replay a button the call pressed would never be released.
+  or `PrefectDurability`; the deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't run it.
 - On Temporal, screenshots pass the 2 MB payload limit after a few steps. Configure
   [external storage](../durable_execution/temporal.md#large-payloads).
 - If the display restarts, the model isn't told; its next screenshot shows the new screen.
