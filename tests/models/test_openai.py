@@ -2177,7 +2177,10 @@ async def test_parameterized_structured_suffix_media_type_inlined(allow_model_re
 
 
 def test_has_yaml_structured_suffix():
-    """`+yaml` types match with or without parameters (RFC 2045); bare YAML and other suffixes don't."""
+    """`+yaml` types match with or without parameters (RFC 2045); bare YAML and other suffixes don't.
+
+    Unit test, not VCR: the media-type check makes no request.
+    """
     assert _has_yaml_structured_suffix('application/openapi+yaml') is True
     assert _has_yaml_structured_suffix('application/openapi+yaml; charset=utf-8') is True
     assert _has_yaml_structured_suffix('application/yaml') is False
