@@ -1,5 +1,5 @@
 ---
-description: "Use OpenAI-compatible inference platforms and gateways such as Fireworks AI, Together AI, Vercel AI Gateway, LiteLLM, Otari and vLLM with Pydantic AI, or connect to any custom endpoint."
+description: "Use OpenAI-compatible inference platforms and gateways such as Fireworks AI, Together AI, Vercel AI Gateway, LiteLLM and vLLM with Pydantic AI, or connect to any custom endpoint."
 ---
 
 # Other compatible APIs
@@ -211,26 +211,29 @@ agent = Agent('otari:anthropic:claude-sonnet-5-5')
 ...
 ```
 
-Requests go to otari.ai's US region by default. Pass `region='eu'` for an account in the EU region, or point `base_url` (or the `OTARI_BASE_URL` environment variable) at a self-hosted gateway, its URL plus `/api/v1`:
+Requests go to otari.ai's US region by default. Pass `region='eu'` for an account in the EU region, or point `base_url` (or the `OTARI_BASE_URL` environment variable) at your self-hosted gateway's `/api/v1` URL:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.otari import OtariProvider
 
-eu_model = OpenAIChatModel(
-    'anthropic:claude-sonnet-5-5',
-    provider=OtariProvider(api_key='your-otari-api-key', region='eu'),
+eu_agent = Agent(
+    OpenAIChatModel(
+        'anthropic:claude-sonnet-5-5',
+        provider=OtariProvider(api_key='your-otari-api-key', region='eu'),
+    )
 )
-self_hosted_model = OpenAIChatModel(
-    'openai:gpt-5.2',
-    provider=OtariProvider(api_key='your-otari-api-key', base_url='http://localhost:8000/api/v1'),
+self_hosted_agent = Agent(
+    OpenAIChatModel(
+        'openai:gpt-5.2',
+        provider=OtariProvider(api_key='your-otari-api-key', base_url='http://localhost:8000/api/v1'),
+    )
 )
-agent = Agent(eu_model)
 ...
 ```
 
-The provider part of the model name selects the [model profile](#model-profile), so `anthropic:claude-sonnet-5-5` is treated as a Claude model whichever API Otari reaches it through.
+The provider part of the model name selects the [model profile](#model-profile), so `anthropic:claude-sonnet-5-5` gets Claude's. After a host of many vendors' models, the vendor that follows decides: `groq:openai/gpt-oss-120b` gets gpt-oss's.
 
 ## OVHcloud AI Endpoints
 

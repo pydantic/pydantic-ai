@@ -8,9 +8,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._family import ModelProfileFunc, vendor_family_model_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
-from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.google import google_model_profile
-from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 
@@ -38,15 +36,14 @@ _REGION_BASE_URLS: dict[OtariRegion, str] = {
 }
 
 _OTARI_VENDOR_PROFILES: dict[str, ModelProfileFunc] = {
-    'azure': openai_model_profile,
     'azureopenai': openai_model_profile,
-    'bedrock': amazon_model_profile,
     'gemini': google_model_profile,
-    'groq': groq_model_profile,
     'moonshot': moonshotai_model_profile,
-    'vertexai': google_model_profile,
 }
-"""Otari's own provider ids that the shared vendor map doesn't spell the same way."""
+"""Otari provider ids that serve one vendor's models but aren't spelled as the shared vendor map spells it.
+
+Hosts of many vendors' models, like `azure`, `bedrock`, `groq` or `vertexai`, have no entry: the model after them decides.
+"""
 
 
 _OPEN_WEIGHT_BACKENDS: frozenset[str] = frozenset(
@@ -71,7 +68,7 @@ _OPEN_WEIGHT_BACKENDS: frozenset[str] = frozenset(
 
 
 def _vendor_model_name(model_name: str) -> str:
-    """Otari names a model `provider:model` or `provider/model`; return it as `provider/model`."""
+    """Return an Otari `provider:model` name, or a `vendor/model` catalogue id, as `vendor/model`."""
     vendor, separator, rest = model_name.partition(':')
     if separator and '/' not in vendor:
         return f'{vendor}/{rest}'
@@ -101,6 +98,9 @@ class OtariProvider(_OpenAISDKProvider):
     def model_profile(model_name: str) -> ModelProfile | None:
         vendor_model_name = _vendor_model_name(model_name)
         profile = vendor_family_model_profile(vendor_model_name, overrides=_OTARI_VENDOR_PROFILES)
+        if profile is None:
+            # A host of many vendors' models names the vendor after it, as in `together:qwen/qwen3.8-27b`.
+            profile = vendor_family_model_profile(vendor_model_name.partition('/')[2])
 
         # The backend in the name decides first: `ollama:command-r` is open weights, though `command` names Cohere's API.
         vendor = vendor_model_name.partition('/')[0].lower() if '/' in vendor_model_name else ''
@@ -122,8 +122,16 @@ class OtariProvider(_OpenAISDKProvider):
         self,
         *,
         api_key: str | None = None,
-        base_url: str | None = None,
         region: OtariRegion | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
 

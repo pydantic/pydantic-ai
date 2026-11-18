@@ -4128,10 +4128,44 @@ def test_otari_gemini():
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_claude_on_vertex():
+    """A host of many vendors' models, like `vertexai`, doesn't pick the family: Claude on Vertex isn't Gemini."""
+    profile = OtariProvider.model_profile('vertexai:claude-sonnet-5-5')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': False}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_gpt_oss_on_groq():
+    """The vendor after a host names the family."""
+    profile = OtariProvider.model_profile('groq:openai/gpt-oss-120b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': _GptOssJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'default_framing_announcement': 'always',
+            'supports_forced_tool_choice': False,
+            'ignore_streamed_leading_whitespace': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_otari_open_weight_model():
     profile = OtariProvider.model_profile('together:qwen/qwen3.8-27b')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
     )
 
 

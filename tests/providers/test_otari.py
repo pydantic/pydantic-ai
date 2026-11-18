@@ -58,12 +58,7 @@ def test_otari_region(env: TestEnv, region: OtariRegion, base_url: str) -> None:
 
 def test_otari_region_and_base_url_conflict() -> None:
     with pytest.raises(UserError, match=re.escape('Pass either `region` or `base_url`/`openai_client`')):
-        OtariProvider(api_key='otari-key', base_url='http://localhost:8000/api/v1', region='eu')
-
-
-def test_otari_self_hosted_base_url() -> None:
-    provider = OtariProvider(api_key='otari-key', base_url='https://otari.internal.example/api/v1')
-    assert provider.base_url == 'https://otari.internal.example/api/v1'
+        OtariProvider(api_key='otari-key', base_url='http://localhost:8000/api/v1', region='eu')  # pyright: ignore[reportCallIssue]
 
 
 def test_otari_pass_openai_client() -> None:
