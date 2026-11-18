@@ -1,0 +1,5 @@
+{
+  "against": "v2.70.0",
+  "reason": "Harness 1.0 removes the 0.x deprecation shims (#12997): `pydantic_ai_harness.macroscope._capability`, Macroscope.cwd: Public object was removed. Each removed path emitted a `HarnessDeprecationWarning` naming its replacement during 0.x.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13687"
+}

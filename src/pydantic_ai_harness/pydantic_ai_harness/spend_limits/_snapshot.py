@@ -9,7 +9,6 @@ from decimal import ROUND_HALF_UP, Decimal, localcontext
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from pydantic_ai.usage import RequestUsage
     from pydantic_ai_harness.spend_limits._budget import Budget
 
 MONEY_PRECISION = 40
@@ -120,23 +119,3 @@ class BudgetStatus:
 
     exhausted: bool
     """Whether a further request would be refused."""
-
-
-@dataclass(frozen=True, kw_only=True)
-class SpendSnapshot:
-    """What one model response cost, and where every budget stands after it."""
-
-    model: str | None
-    """The model that produced the response, or `None` if it reported none."""
-
-    usage: RequestUsage
-    """The response's usage verbatim, including cache reads, writes, and audio."""
-
-    usd: Decimal
-    """What this response cost. Zero when it could not be priced."""
-
-    priced: bool
-    """Whether `usd` is a real price or a stand-in zero."""
-
-    budgets: tuple[BudgetStatus, ...]
-    """One entry per configured budget, in the order they were declared."""

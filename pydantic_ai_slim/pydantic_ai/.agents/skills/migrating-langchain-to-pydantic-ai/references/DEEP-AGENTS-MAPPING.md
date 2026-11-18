@@ -58,7 +58,7 @@ Import each capability from its owning public module, for example `Skills` from 
 | interpreter and programmatic tool calling | `CodeMode`, `DynamicWorkflow`, or an application interpreter | Deep Agents' QuickJS REPL persists state per thread by default, dispatches `task(...)`, and calls `tools.*` only from an allowlist. Harness uses Monty and different tool schemas. Match state lifetime, structured results, resource limits, and authority; interpreter bridges can bypass ordinary tool-approval paths unless guarded explicitly. |
 | multimodal input, file reads, or tool results | Pydantic AI user content and `ToolReturn`; `pydantic_ai_harness.media` stores and walkers for persistence offload | Keep model-facing content in Pydantic AI types. With `StepPersistence`, configure `media_store` on its `FileStepStore`, `SqliteStepStore`, or `MongoStepStore`; for another serializer, use `externalize_media` and `restore_media` directly. Preserve order, MIME support, provider filtering, references, serialization, and restoration. |
 | `skills=[...]` and `SKILL.md` catalogs | `Skills` | Pass the parent skill-library directory whose immediate children are `<name>/SKILL.md` packages. Harness scans it at construction and keeps that snapshot. Normalize flat catalogs into this shape; do not replace it with eager prompt concatenation. Harness loads instructions only: preserve bundled files, scripts, writable catalogs, and behavioral frontmatter with a focused service only when those contracts matter. |
-| `AGENTS.md` and repository instructions | `RepoContext` | Configure `workspace_dir`, `home_dir`, `filenames`, `autoload_instructions`, `expose_inventory_tool`, `inventory_tool_name`, `asset_roots`, `nested_traversal`, and `nested_inject` from observed discovery and injection behavior. Compose it with `FileSystem` when file traversal should inject nested context. It does not replace skill activation or writable memory. Never promote untrusted repository text to system priority accidentally. |
+| `AGENTS.md` and repository instructions | `RepoContext` | Attach the repository as the run's workspace, for example `LocalWorkspace(root)`, and configure `home_dir`, `filenames`, `autoload_instructions`, `expose_inventory_tool`, `inventory_tool_name`, `asset_roots`, `nested_traversal`, and `nested_inject` from observed discovery and injection behavior. Compose it with `FileSystem` when file traversal should inject nested context. It does not replace skill activation or writable memory. Never promote untrusted repository text to system priority accidentally. |
 | `memory=[...]` and writable long-term memory | `Memory` | Check namespace, store, injection role and bound, search, concurrency, retention, and deletion. Deep Agents `memory=[...]` injects backend-relative files: use explicit instructions for static content, `RepoContext` for repository-owned context, and `Memory` or an application store for model-written notes. If callers use file tools at paths such as `/memory/...`, preserve those names with an adapter or intentionally change callers and prompts. |
 | retrieval or RAG | existing retrieval services exposed as typed tools | Retrieval is application data access, not Deep Agents memory or a filesystem backend. Preserve ingestion, chunking, filters, tenancy, ranking, metadata, citations, result bounds, latency, and failure shapes. |
 | `SummarizationMiddleware` | Harness compaction capabilities, often `TieredCompaction`; provider-native compaction from core where the provider supports it | Harness rewrites Pydantic AI message history. Match thresholds, summary prompt and role, tool-pair validity, receipts, usage, and recovery. |
@@ -110,7 +110,7 @@ If the target lacks a protocol feature, retain the existing adapter or propose a
 
 ## A tested Harness composition
 
-Use this smoke test when a local coding-agent composition is plausible; `Coder(workspace)` is shorter when its documented defaults match the source. Run it in the exact target environment: it proves that imports and public constructor signatures resolve against the locked versions, not that behavior matches the source application.
+Use this smoke test when a local coding-agent composition is plausible; `Coder()` beside `LocalWorkspace(root)` is shorter when its documented defaults match the source. Run it in the exact target environment: it proves that imports and public constructor signatures resolve against the locked versions, not that behavior matches the source application.
 
 ```python {noqa="I001"}
 # ruff: noqa: I001
@@ -120,6 +120,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -153,7 +154,8 @@ with TemporaryDirectory() as workspace:
         capabilities=[
             Planning(),
             FileSystem(root, read_only=True),
-            RepoContext(workspace_dir=root),
+            LocalWorkspace(root),
+            RepoContext(),
             Skills(root / 'skills'),
             SubAgents(agents=[SubAgent(worker, max_calls=1)], agent_folders=None),
             SlidingWindowCompaction(max_messages=20, keep_messages=10),

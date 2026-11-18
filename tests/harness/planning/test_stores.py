@@ -1,4 +1,4 @@
-"""Tests for planning storage backends (in-memory and SQLite) and events."""
+"""Tests for planning storage backends (in-memory and SQLite)."""
 
 from __future__ import annotations
 
@@ -11,9 +11,6 @@ import pytest
 
 from pydantic_ai_harness.planning import (
     InMemoryPlanStore,
-    PlanEvent,
-    PlanEventEmitter,
-    PlanEventType,
     PlanItem,
     PlanStore,
     SqlitePlanStore,
@@ -21,20 +18,15 @@ from pydantic_ai_harness.planning import (
 )
 from pydantic_ai_harness.planning._store import validate_table_name
 
-pytestmark = [
-    pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
-]
-
-
-StoreFactory = Callable[[PlanEventEmitter | None], PlanStore]
+StoreFactory = Callable[[], PlanStore]
 
 
 @pytest.fixture(params=['memory', 'sqlite'])
 def store_factory(request: pytest.FixtureRequest, tmp_path: Path) -> StoreFactory:
     if request.param == 'memory':
-        return lambda emitter: InMemoryPlanStore(event_emitter=emitter)
+        return InMemoryPlanStore
     database = str(tmp_path / 'plan.db')
-    return lambda emitter: SqlitePlanStore(database, event_emitter=emitter)
+    return lambda: SqlitePlanStore(database)
 
 
 def _item(content: str, **kwargs: object) -> PlanItem:
@@ -43,21 +35,21 @@ def _item(content: str, **kwargs: object) -> PlanItem:
 
 class TestCrudAcrossBackends:
     async def test_empty(self, store_factory: StoreFactory) -> None:
-        store = store_factory(None)
+        store = store_factory()
         assert await store.get_items() == []
         assert await store.get_item('missing') is None
         assert await store.remove_item('missing') is False
         assert await store.update_item('missing', status=TaskStatus.completed) is None
 
     async def test_set_and_get_preserves_order(self, store_factory: StoreFactory) -> None:
-        store = store_factory(None)
+        store = store_factory()
         a, b, c = _item('A'), _item('B'), _item('C')
         await store.set_items([a, b, c])
         assert [i.content for i in await store.get_items()] == ['A', 'B', 'C']
         assert (await store.get_item(b.id)) is not None
 
     async def test_add_appends(self, store_factory: StoreFactory) -> None:
-        store = store_factory(None)
+        store = store_factory()
         first = await store.add_item(_item('first'))
         await store.add_item(_item('second'))
         items = await store.get_items()
@@ -65,7 +57,7 @@ class TestCrudAcrossBackends:
         assert items[0].id == first.id
 
     async def test_update_all_fields(self, store_factory: StoreFactory) -> None:
-        store = store_factory(None)
+        store = store_factory()
         item = await store.add_item(_item('old', active_form='Doing old'))
         updated = await store.update_item(
             item.id,
@@ -83,21 +75,21 @@ class TestCrudAcrossBackends:
         assert fetched is not None and fetched.content == 'new' and fetched.depends_on == ['d1', 'd2']
 
     async def test_remove(self, store_factory: StoreFactory) -> None:
-        store = store_factory(None)
+        store = store_factory()
         item = await store.add_item(_item('gone'))
         assert await store.remove_item(item.id) is True
         assert await store.get_item(item.id) is None
         assert await store.remove_item(item.id) is False
 
     async def test_remove_non_first_item(self, store_factory: StoreFactory) -> None:
-        store = store_factory(None)
+        store = store_factory()
         await store.add_item(_item('first'))
         second = await store.add_item(_item('second'))
         assert await store.remove_item(second.id) is True
         assert [i.content for i in await store.get_items()] == ['first']
 
     async def test_public_plan_items_do_not_alias_store_state(self, store_factory: StoreFactory) -> None:
-        store = store_factory(None)
+        store = store_factory()
         supplied = _item('original', depends_on=['first'])
         await store.set_items([supplied])
         supplied.content = 'caller mutation'
@@ -127,69 +119,6 @@ class TestCrudAcrossBackends:
             ('original', ['first']),
             ('updated', ['second']),
         ]
-
-
-class TestEvents:
-    async def test_created_updated_status_completed_deleted(self, store_factory: StoreFactory) -> None:
-        events: list[PlanEvent] = []
-        emitter = PlanEventEmitter()
-        for kind in PlanEventType:
-            emitter.on(kind, events.append)
-        store = store_factory(emitter)
-
-        item = await store.add_item(_item('task'))
-        # content-only update -> UPDATED, no STATUS_CHANGED/COMPLETED
-        await store.update_item(item.id, content='task!')
-        # status -> in_progress: UPDATED + STATUS_CHANGED (not COMPLETED)
-        await store.update_item(item.id, status=TaskStatus.in_progress)
-        # status -> completed: UPDATED + STATUS_CHANGED + COMPLETED
-        await store.update_item(item.id, status=TaskStatus.completed)
-        await store.remove_item(item.id)
-
-        kinds = [e.event_type for e in events]
-        assert kinds == [
-            PlanEventType.created,
-            PlanEventType.updated,
-            PlanEventType.updated,
-            PlanEventType.status_changed,
-            PlanEventType.updated,
-            PlanEventType.status_changed,
-            PlanEventType.completed,
-            PlanEventType.deleted,
-        ]
-        # previous_state captured on updates
-        update_events = [e for e in events if e.event_type is PlanEventType.updated]
-        assert update_events[0].previous_state is not None
-        assert update_events[0].previous_state.content == 'task'
-
-    async def test_no_events_without_emitter(self, store_factory: StoreFactory) -> None:
-        store = store_factory(None)
-        item = await store.add_item(_item('x'))
-        # update path with previous=None (no emitter) still works
-        assert (await store.update_item(item.id, status=TaskStatus.completed)) is not None
-
-    async def test_event_mutation_cannot_change_store_or_return_values(self, store_factory: StoreFactory) -> None:
-        emitter = PlanEventEmitter()
-
-        def mutate(event: PlanEvent) -> None:
-            event.item.content = 'listener mutation'
-            event.item.depends_on.append('listener')
-            if event.previous_state is not None:
-                event.previous_state.depends_on.append('previous listener')
-
-        emitter.on(PlanEventType.created, mutate)
-        emitter.on(PlanEventType.updated, mutate)
-        store = store_factory(emitter)
-
-        added = await store.add_item(_item('original', depends_on=['first']))
-        assert (added.content, added.depends_on) == ('original', ['first'])
-        updated = await store.update_item(added.id, content='updated', depends_on=['second'])
-        assert updated is not None
-        assert (updated.content, updated.depends_on) == ('updated', ['second'])
-
-        stored = await store.get_item(added.id)
-        assert stored is not None
-        assert (stored.content, stored.depends_on) == ('updated', ['second'])
 
 
 class TestSqliteSpecifics:
