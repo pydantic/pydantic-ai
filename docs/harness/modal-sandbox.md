@@ -175,7 +175,11 @@ agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder(), ho
 
 A sandbox you don't terminate ends when its `sandbox_timeout` runs out, or after `idle_timeout` seconds without activity if you set one; see [Modal's timeouts](https://modal.com/docs/guide/sandbox#timeouts). A sandbox whose image ignores Modal's stop signal, such as a bare `python` image, can keep running for about 30 seconds after `destroy` returns.
 
-Each new sandbox's id is logged as `Created Modal sandbox <id>` at INFO on the `pydantic_ai_harness.modal_sandbox._backend` logger. If a run is cancelled while Modal is still creating the sandbox, no ref is stored and the id is also logged at WARNING; terminate it with `ModalSandbox().destroy(WorkspaceRef(provider='modal', id=...))`.
+### Find a lost sandbox
+
+If your program stops before it stores the ref, for example after a crash or Ctrl-C, the sandbox runs until its timeout. To find it, search your logs for `Created Modal sandbox <id>`, logged at INFO by the `pydantic_ai_harness` logger. A run cancelled while Modal was still creating the sandbox also logs the id at WARNING.
+
+Then terminate it: `await ModalSandbox().destroy(WorkspaceRef(provider='modal', id='<id>'))`.
 
 ## Use different credentials for each user
 

@@ -129,7 +129,14 @@ async def remove_sandbox(ref: WorkspaceRef) -> None:
 
 To have the server clean up for you, set `sandbox_timeout`: a sandbox unused for that many seconds is deleted, files included. Every operation renews it, but a single command must finish within it, so set it above your longest command.
 
-Every sandbox the capability creates carries a `pydantic-ai-create` metadata entry, and its id is logged as `Created OpenSandbox sandbox <id>` at INFO on the `pydantic_ai_harness.opensandbox_sandbox._backend` logger, so one left without a stored ref can be found by listing the server's sandboxes.
+### Find a lost sandbox
+
+If your program stops before it stores the ref, for example after a crash or Ctrl-C, the sandbox is left on the server. To find it:
+
+- List the server's sandboxes. Sandboxes Pydantic AI creates have a `pydantic-ai-create` metadata entry.
+- Or search your logs for `Created OpenSandbox sandbox <id>`, logged at INFO by the `pydantic_ai_harness` logger.
+
+Then destroy it: `await OpenSandbox().destroy(WorkspaceRef(provider='opensandbox', id='<id>'))`.
 
 ## Run on Kubernetes
 

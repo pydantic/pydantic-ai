@@ -160,7 +160,15 @@ async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[SpritesSandbox(), Coder(), hooks])
 ```
 
-You pay for compute while a Sprite is active and for storage until you delete it; see [Sprite lifecycle](https://docs.sprites.dev/concepts/lifecycle/). Since a Sprite never expires, one whose ref was never stored, after a crash, Ctrl-C or a killed worker, stays until you delete it. Each new Sprite's id is logged as `Created Sprite <id>` at INFO on the `pydantic_ai_harness.sprites_sandbox._backend` logger; delete it with `await SpritesSandbox().destroy(WorkspaceRef(provider='sprites', id=...))`. If creation's reply was lost, the Sprite may not be visible to the API yet, so a failed lookup doesn't prove it was never created.
+You pay for compute while a Sprite is active and for storage until you delete it; see [Sprite lifecycle](https://docs.sprites.dev/concepts/lifecycle/).
+
+### Find a lost Sprite
+
+A Sprite never expires. If your program stops before it stores the ref, for example after a crash or Ctrl-C, the Sprite stays until you delete it. To find it, search your logs for `Created Sprite <id>`, logged at INFO by the `pydantic_ai_harness` logger.
+
+Then delete it: `await SpritesSandbox().destroy(WorkspaceRef(provider='sprites', id='<id>'))`.
+
+If the run stopped before Sprites replied, the new Sprite may not show up in the API straight away, so check again before you decide it was never created.
 
 ## Configuration
 

@@ -211,7 +211,11 @@ async def delete_failed_run(ctx: RunContext[None], *, error: BaseException) -> A
 agent = Agent('{{ anthropic:large }}', capabilities=[sandbox, Coder(), hooks])
 ```
 
-Each claim's ref is logged as `Claimed Kubernetes sandbox <namespace>/<claim name>` at INFO on the `pydantic_ai_harness.kubernetes_sandbox._backend` logger, so a sandbox that outlives its run can still be found.
+### Find a lost sandbox
+
+If your program stops before it stores the ref, for example after a crash or Ctrl-C, the claim and its pod are left behind. To find it, search your logs for `Claimed Kubernetes sandbox <namespace>/<claim name>`, logged at INFO by the `pydantic_ai_harness` logger.
+
+Then delete it: `await KubernetesSandbox(warm_pool='python-pool').destroy(WorkspaceRef(provider='kubernetes', id='<namespace>/<claim name>'))`.
 
 ## Connect to the sandbox
 

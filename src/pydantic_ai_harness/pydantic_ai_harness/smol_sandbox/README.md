@@ -147,7 +147,13 @@ async def delete_vm(ref: WorkspaceRef) -> None:
     await SmolSandbox().destroy(ref)
 ```
 
-A failed run returns no result, so delete its VM in an `on_run_error` hook, as shown for [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/#clean-up). Each new VM's id is logged as `Creating smol VM <id>` at INFO on the `pydantic_ai_harness.smol_sandbox._backend` logger before it boots, so one left without a stored ref can still be found.
+A failed run returns no result, so delete its VM in an `on_run_error` hook, as shown for [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/#clean-up).
+
+### Find a lost VM
+
+If your program stops before it stores the ref, for example after a crash or Ctrl-C, the VM is left behind. To find it, search your logs for `Creating smol VM <id>`, logged at INFO by the `pydantic_ai_harness` logger.
+
+Then delete it: `await SmolSandbox().destroy(WorkspaceRef(provider='smol', id='<id>'))`.
 
 ## Use a VM you already have
 

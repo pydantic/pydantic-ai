@@ -159,7 +159,14 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[DaytonaSandbox(), Coder
 
 A sandbox you don't delete is stopped after 15 idle minutes (`auto_stop_interval=`; `0` keeps it running), keeps its disk, and is archived after 7 days. A sandbox from a VM snapshot is paused after 60 idle minutes instead, and is never archived. Either way a later run starts it again.
 
-A run that ends before its ref is stored, such as a crash, Ctrl-C or a killed worker, leaves the sandbox behind. Every sandbox the backend creates is labelled `created-by=pydantic-ai`, and its id is logged as `Created Daytona sandbox <id>` at INFO on the `pydantic_ai_harness.daytona_sandbox._backend` logger; delete it with `await DaytonaSandbox().destroy(WorkspaceRef(provider='daytona', id=...))`.
+### Find a lost sandbox
+
+If your program stops before it stores the ref, for example after a crash or Ctrl-C, the sandbox is left behind. To find it:
+
+- List your sandboxes in Daytona. Sandboxes Pydantic AI creates have the label `created-by=pydantic-ai`.
+- Or search your logs for `Created Daytona sandbox <id>`, logged at INFO by the `pydantic_ai_harness` logger.
+
+Then delete it: `await DaytonaSandbox().destroy(WorkspaceRef(provider='daytona', id='<id>'))`.
 ## Keep a token out of the sandbox
 
 Pass `secrets` to give a new sandbox Daytona [Secrets](https://www.daytona.io/docs/en/secrets), as a map from environment variable name to Secret name. The variable holds a placeholder, and Daytona swaps in the real value as requests leave for the Secret's `hosts`. Create the Secret once, then use it:

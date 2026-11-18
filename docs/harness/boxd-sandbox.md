@@ -157,9 +157,18 @@ async def delete_failed_run_machine(ctx: RunContext[None], *, error: BaseExcepti
 agent = Agent('{{ anthropic:large }}', capabilities=[BoxdSandbox(), Coder(), hooks])
 ```
 
-A machine you don't delete is suspended, and later hibernated, after your organization's idle time; set `auto_suspend_timeout=` in seconds for new machines, or `0` to turn it off. `BoxdSandbox` sets no delete timer, so boxd deletes the machine only if your organization's defaults give new machines one; `boxd machine get` shows a machine's timers.
+A machine you don't delete is suspended when it sits idle, then hibernated. boxd uses your organization's idle time; set `auto_suspend_timeout=` in seconds to change it, or `0` to never suspend.
 
-A run that ends before its ref is stored, such as a crash, Ctrl-C or a killed worker, leaves the machine behind. Machines the backend creates are named `pydantic-ai-<hex>` and logged as `Created boxd machine <id> (<name>)`, or `Forked boxd machine ...` for a copy, at INFO on the `pydantic_ai_harness.boxd_sandbox._backend` logger. Find leftovers with `boxd list` and delete one with `await BoxdSandbox().destroy(WorkspaceRef(provider='boxd', id=...))`.
+boxd deletes a machine only if your organization gives new machines a delete timer. `boxd machine get` shows a machine's timers.
+
+### Find a lost machine
+
+If your program stops before it stores the ref, for example after a crash or Ctrl-C, the machine is left running. To find it:
+
+- Run `boxd list`. Machines Pydantic AI creates are named `pydantic-ai-<hex>`.
+- Or search your logs for `Created boxd machine <id>`, or `Forked boxd machine` for a copy, logged at INFO by the `pydantic_ai_harness` logger.
+
+Then delete it: `await BoxdSandbox().destroy(WorkspaceRef(provider='boxd', id='<id>'))`.
 ## Keep a token out of the machine
 
 Pass `secrets` to give a new machine boxd secrets by name. If a secret is tied to domains, the machine gets only a placeholder starting with `bxds_`, and boxd swaps in the real value as requests leave for those domains. Create the secret first, since boxd won't create a machine that names a missing one:

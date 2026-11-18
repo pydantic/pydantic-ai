@@ -164,7 +164,16 @@ async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -
 agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder(), hooks])
 ```
 
-A sandbox you don't kill pauses when its `sandbox_timeout` runs out; see [E2B's sandbox lifecycle](https://docs.e2b.dev/sandbox). Each new sandbox's id is logged as `Created E2B sandbox <id>` at INFO on the `pydantic_ai_harness.e2b_sandbox._backend` logger, so one created by a run that was cancelled before storing it can still be found; if E2B's answer never arrived, find it in the E2B dashboard.
+A sandbox you don't kill pauses when its `sandbox_timeout` runs out; see [E2B's sandbox lifecycle](https://docs.e2b.dev/sandbox).
+
+### Find a lost sandbox
+
+If your program stops before it stores the ref, for example after a crash or Ctrl-C, the sandbox is left behind. To find it:
+
+- Search your logs for `Created E2B sandbox <id>`, logged at INFO by the `pydantic_ai_harness` logger.
+- If the run stopped before E2B replied, there's no log line; look in the E2B dashboard.
+
+Then kill it: `await E2BSandbox().destroy(WorkspaceRef(provider='e2b', id='<id>'))`.
 
 ## Use different credentials for each user
 

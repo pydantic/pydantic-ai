@@ -144,7 +144,16 @@ async def delete_box(ref: WorkspaceRef) -> None:
     await BoxLiteSandbox().destroy(ref)
 ```
 
-A failed run returns no result, so delete its box in an `on_run_error` hook, as shown for [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/#clean-up). Each new box's id is logged as `Creating BoxLite box <id>` at INFO on the `pydantic_ai_harness.boxlite_sandbox._backend` logger before it is created, and `await boxlite.Boxlite.default().list_info()` lists boxes, so one left without a stored ref can still be found.
+A failed run returns no result, so delete its box in an `on_run_error` hook, as shown for [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/#clean-up).
+
+### Find a lost box
+
+If your program stops before it stores the ref, for example after a crash or Ctrl-C, the box is left behind. To find it:
+
+- List boxes with `await boxlite.Boxlite.default().list_info()`.
+- Or search your logs for `Creating BoxLite box <id>`, logged at INFO by the `pydantic_ai_harness` logger.
+
+Then delete it: `await BoxLiteSandbox().destroy(WorkspaceRef(provider='boxlite', id='<id>'))`.
 
 ## Network access
 
