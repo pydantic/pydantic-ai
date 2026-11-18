@@ -40,13 +40,14 @@ DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS = (
 """What `RequireVerification` tells the agent each time it sends the run back, unless `instructions` is set."""
 
 DEFAULT_VERIFICATION_COMMANDS: tuple[str, ...] = (
-    r'(?:(?:uv|poetry|pipenv|hatch|pdm)\s+run(?:\s+-\S+)*\s+)?(?:(?:\S*/)?python3?\s+-m\s+)?(?:\S*/)?'
+    r'(?<!\S)(?:(?:uv|poetry|pipenv|hatch|pdm)\s+run(?:\s+-\S+)*\s+)?(?:(?<!\S)(?:\S*/)?python3?\s+-m\s+)?'
+    r'(?<!\S)(?:\S*/)?'
     r'(?:pytest|py\.test|unittest|tox|nox|mypy|pyright|basedpyright|ty\s+check|ruff\s+check'
     r'|(?:ruff\s+format|black|isort)(?=[^;&|\n]*\s--(?:check|diff)))\b',
     r'(?:npm|pnpm|yarn|bun)'
     r'(?:\s+(?>workspace\s+\S+|-\S+(?:\s+(?!(?:run|test|lint|typecheck|check|build|workspace)\b)[^-\s]\S*)?))*'
     r'\s+(?:run\s+)?(?:test|lint|typecheck|check|build)\b',
-    r'(?:npx\s+)?(?:\S*/)?(?:tsc|eslint|vitest|jest)\b',
+    r'(?<!\S)(?:npx\s+)?(?<!\S)(?:\S*/)?(?:tsc|eslint|vitest|jest)\b',
     r'(?:cargo(?:\s+\+\S+)?|go|dotnet)\s+(?:test|build|check|clippy|vet)\b',
     r'(?:make|just)\s+(?:\S+\s+)*?(?:test|lint|typecheck|check|build)\w*\b',
     r'(?:mvn|gradle|\./mvnw|\./gradlew)\s+(?:\S+\s+)*?(?:test|verify|check|build)\b',
