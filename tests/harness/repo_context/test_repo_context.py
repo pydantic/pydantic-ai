@@ -1919,7 +1919,7 @@ class TestWalkUpAuthority:
         instructions, parts, result = await self._run(tmp_path, workspace)
         assert instructions == snapshot("""\
 <pyai:context id="capability:repo_context">
-This directory has an instruction file that is not loaded here, because it isn't from the operator: `AGENTS.md`. Read it with your file tools if it is relevant to your task.
+The working directory has an instruction file that is not loaded here, because it isn't from the operator: `AGENTS.md`. Read it with your file tools if it is relevant to your task.
 </pyai:context>
 A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
@@ -1979,7 +1979,7 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
 repo rules
 </context-file>
 
-This directory has an instruction file that is not loaded here, because it isn't from the operator: `AGENTS.md`. Read it with your file tools if it is relevant to your task.
+The working directory has an instruction file that is not loaded here, because it isn't from the operator: `AGENTS.md`. Read it with your file tools if it is relevant to your task.
 </pyai:context>
 A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
