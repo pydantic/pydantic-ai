@@ -662,6 +662,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         """Run a command, killing it on timeout, cancellation, or a failed result read."""
         argv = command_argv(command, shell)
         check_timeout(timeout)
+        if self._display is not None:
+            # Started first, so a program the command opens shows on the screen.
+            await self._display.start()
         return await self._run_argv(argv, env=env or {}, timeout=timeout)
 
     async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
