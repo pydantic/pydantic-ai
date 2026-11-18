@@ -447,6 +447,13 @@ CASES = [
         attrs={'status_code': 503, 'provider_error_code': None, 'provider_error_type': 'server_error'},
     ),
     Case(
+        id='openai-provider-timeout',
+        model=_openai,
+        handler=_json(408, {'error': {'message': 'Request timed out', 'type': 'timeout'}}),
+        categories={ModelHTTPError, ModelConnectionError, ModelTimeoutError},
+        attrs={'status_code': 408, 'provider_error_type': 'timeout', 'phase': None},
+    ),
+    Case(
         id='openai-context-window',
         model=_openai,
         handler=_json(
@@ -2716,8 +2723,8 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
         ),
         pytest.param(
             lambda: _bedrock_error('modelTimeoutException', 'The model took too long.', None),
-            {ModelHTTPError},
-            {'status_code': 408, 'in_stream': True, 'provider_error_code': 'modelTimeoutException'},
+            {ModelHTTPError, ModelConnectionError, ModelTimeoutError},
+            {'status_code': 408, 'in_stream': True, 'provider_error_code': 'modelTimeoutException', 'phase': None},
             id='stream-model-timeout',
         ),
         pytest.param(
