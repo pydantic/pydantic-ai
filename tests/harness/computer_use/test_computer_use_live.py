@@ -31,7 +31,7 @@ from pydantic_ai.computer_use import (
     Click,
     ComputerCallPart,
     Drag,
-    MoveMouse,
+    MouseMove,
     Point,
     PressKeys,
     Scroll,
@@ -544,7 +544,7 @@ ACTION_STEPS: list[tuple[str, DisplayAction]] = [
     ('Middle-click at x=100 y=200.', Click(x=100, y=200, button='middle')),
     ('Press the mouse back button at x=100 y=200.', Click(x=100, y=200, button='back')),
     ('Hold shift and click at x=100 y=200.', Click(x=100, y=200, modifiers=('shift',))),
-    ('Move the pointer to x=100 y=200 without clicking.', MoveMouse(x=100, y=200)),
+    ('Move the pointer to x=100 y=200 without clicking.', MouseMove(x=100, y=200)),
     ('Scroll down by 300 pixels at x=100 y=200.', Scroll(x=100, y=200, direction='down', amount=3)),
     (
         'Drag in a straight line from x=100 y=200 to x=300 y=200.',
