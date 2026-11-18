@@ -53,6 +53,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
+from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._png import png_size
 from pydantic_ai_harness.computer_use._events import ActionsPerformedEvent
 from pydantic_ai_harness.computer_use._protocol import (
@@ -280,7 +281,8 @@ def _leave_presses_for_run_end(ctx: RunContext[Any], actions: list[ComputerToolA
 
 def _model_limit(model: AbstractModel, call: ComputerCallPart | None = None) -> _ScreenshotLimit:
     """The largest screenshot every model that may answer takes, and the one that made `call`, as recorded on it."""
-    models = candidate_models(model)
+    # A realtime model's profile has no screenshot limits.
+    models = candidate_models(model) if is_request_response_model(model) else []
     sides = [smallest_limit(models, 'computer_use_screenshot_max_side'), call and call.screenshot_max_side]
     pixels = [smallest_limit(models, 'computer_use_screenshot_max_pixels'), call and call.screenshot_max_pixels]
     return _ScreenshotLimit(
@@ -506,12 +508,14 @@ def _the_call(ctx: RunContext[Any]) -> tuple[int, ComputerCallPart] | None:
     """The index of the response that made this call, and the call as the model made it."""
     for index in range(len(ctx.messages) - 1, -1, -1):
         message = ctx.messages[index]
-        if not isinstance(message, ModelResponse):  # pragma: no cover - the call's response is the latest
+        # A realtime session can place other calls' returns and new input after the response that made this call.
+        if not isinstance(message, ModelResponse):  # pragma: no cover
             continue
         for part in message.parts:  # pragma: no branch
             if (call := _as_computer_call(part, ctx.tool_call_id)) is not None:
                 return index, call
-    return None  # pragma: no cover - a tool runs only for a call in the run's messages
+    # A tool runs only for a call in the run's messages, unless a custom runner calls the toolset directly.
+    return None  # pragma: no cover
 
 
 def _as_computer_call(part: ModelResponsePart, tool_call_id: str | None) -> ComputerCallPart | None:

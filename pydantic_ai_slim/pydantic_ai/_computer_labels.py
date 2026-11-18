@@ -15,7 +15,7 @@ from .computer_use import (
     _SCREENSHOT_MAX_SIDE,  # pyright: ignore[reportPrivateUsage]
     COMPUTER_KIND,
 )
-from .models import AbstractModel, Model, ModelRequestParameters
+from .models import Model, ModelRequestParameters
 from .models.fallback import FallbackModel
 from .models.wrapper import WrapperModel
 
@@ -29,12 +29,10 @@ def _grid_hint(grid: int) -> str:
     )
 
 
-def candidate_models(model: AbstractModel) -> list[Model]:
+def candidate_models(model: Model) -> list[Model]:
     """The models that may answer a request to `model`: itself, a `FallbackModel`'s models, or those a wrapper wraps."""
     if isinstance(model, FallbackModel):
         return [answering for inner in model.models for answering in candidate_models(inner)]
-    if not isinstance(model, Model):  # pragma: no cover - a model outside `Model`, such as a realtime one
-        return []
     try:
         model.profile
     except NotImplementedError:
