@@ -2266,10 +2266,10 @@ async def test_enqueue_at_deferred_tool_pause_keeps_the_pause(case: str, priorit
         return ModelResponse(parts=calls)
 
     @dataclass
-    class LateContentCap(AbstractCapability[Any]):
+    class LateContentCap(AbstractCapability[object]):
         async def after_model_request(
             self,
-            ctx: RunContext[Any],
+            ctx: RunContext[object],
             *,
             request_context: ModelRequestContext,
             response: ModelResponse,
@@ -2394,10 +2394,10 @@ async def test_enqueue_at_pending_model_response_pause_keeps_the_pause(priority:
         return ModelResponse(parts=[TextPart(content='working')], state='suspended', provider_response_id='job-1')
 
     @dataclass
-    class LateContentCap(AbstractCapability[Any]):
+    class LateContentCap(AbstractCapability[object]):
         async def after_model_request(
             self,
-            ctx: RunContext[Any],
+            ctx: RunContext[object],
             *,
             request_context: ModelRequestContext,
             response: ModelResponse,

@@ -1304,18 +1304,18 @@ The user wants you to delete X.\
         third_done = asyncio.Event()
 
         @dataclass
-        class _HoldFirst(AbstractCapability[Any]):
+        class _HoldFirst(AbstractCapability[object]):
             """An earlier capability that waits on I/O, so `first` reaches `BackgroundTools` after `second`."""
 
             async def wrap_tool_execute(
                 self,
-                ctx: RunContext[Any],
+                ctx: RunContext[object],
                 *,
                 call: ToolCallPart,
                 tool_def: ToolDefinition,
-                args: dict[str, Any],
+                args: ValidatedToolArgs,
                 handler: WrapToolExecuteHandler,
-            ) -> Any:
+            ) -> object:
                 if call.tool_name == 'first':
                     await second_done.wait()
                 return await handler(args)
@@ -1916,6 +1916,34 @@ The user wants you to delete X.\
         assert result.output == 'done'
         assert not handler_started
         assert ctx.usage.tool_calls == 0
+
+    async def test_call_the_model_did_not_make_still_runs_in_the_background(self) -> None:
+        """A call a capability builds and runs itself isn't in the response, and still runs in the background."""
+        ctx = RunContext(
+            deps=None,
+            model=TestModel(),
+            usage=RunUsage(),
+            pending_messages=[],
+            messages=[ModelResponse(parts=[ToolCallPart(tool_name='delegate', args='{}', tool_call_id='made')])],
+        )
+        capability = await BackgroundTools().for_run(ctx)
+
+        async def tool_handler(args: dict[str, Any]) -> str:
+            return 'resumed'
+
+        async def run_handler() -> AgentRunResult[str]:
+            reply = await capability.wrap_tool_execute(
+                ctx,
+                call=ToolCallPart(tool_name='delegate', args='{}', tool_call_id='made-resume'),
+                tool_def=ToolDefinition(name='delegate', metadata={'background': True}),
+                args={},
+                handler=tool_handler,
+            )
+            return AgentRunResult(reply)
+
+        result = await capability.wrap_run(ctx, handler=run_handler)
+
+        assert result.output.startswith("Tool 'delegate' is running in background (task made-resume).")
 
     async def test_fatal_error_during_run_teardown_is_propagated(self) -> None:
         class FatalBackgroundError(BaseException):
