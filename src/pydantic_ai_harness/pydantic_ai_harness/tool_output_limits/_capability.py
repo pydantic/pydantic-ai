@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import base64
+import codecs
 import logging
 import posixpath
+import sys
 import warnings
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections import deque
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from contextlib import aclosing
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any
 
@@ -52,7 +56,7 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     to_text,
     truncate_text,
 )
-from pydantic_ai_harness.tool_output_limits._store import SPILL_DIR, OverflowStore, WorkspaceOverflowStore
+from pydantic_ai_harness.tool_output_limits._store import SPILL_DIR, OverflowStore, WorkspaceOverflowStore, iter_payload
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +184,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     """Measure band thresholds in estimated tokens instead of characters."""
 
     tokenizer: Callable[[str], int] | None = None
-    """Optional `(str) -> int` tokenizer for `over_tokens`. Defaults to a ~4-char heuristic."""
+    """Optional `(str) -> int` tokenizer for `over_tokens`. Defaults to the compaction text estimate."""
 
     store: OverflowStore | WorkspaceOverflowStore | None = None
     """Backend for spilled payloads.
@@ -212,6 +216,15 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     _bands: list[Band] = field(init=False, repr=False)
     _per_tool: dict[str, list[Band]] = field(init=False, repr=False)
     _toolset: AgentToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
+    _spilled_calls: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False, compare=False)
+    """Spill name -> the run step that first wrote it, on the per-run instance `for_run` returns.
+
+    A `tool_call_id` is only unique within one response, so a later response can reuse one. The step
+    of a name's first spill is what tells the two apart: the call that wrote it first keeps the
+    documented `run_id/tool_call_id.retry` handle, and a later call that would land on the same name
+    is parked one level down. Kept on the instance rather than read off the history, which a
+    capability such as a compaction may rewrite mid-run.
+    """
 
     def __post_init__(self) -> None:
         self._store = self.store if self.store is not None else WorkspaceOverflowStore()
@@ -261,6 +274,14 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 'to keep spills on this machine.'
             )
 
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> ToolOutputLimits[AgentDepsT]:
+        """Return a copy with no spill names recorded, so runs don't share them.
+
+        A shallow copy rather than `replace`, which would rebuild the toolset that `get_toolset`
+        builds once for durable execution.
+        """
+        return replace_no_init(self, _spilled_calls={})
+
     @property
     def _spills_to_run_workspace(self) -> bool:
         """Whether spills are files in the run's workspace, which the run's file tools can read.
@@ -307,7 +328,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 from_end: Count `offset`/`limit` from the end of the result.
                 pattern: Optional literal substring; only lines containing it are returned.
             """
-            return await _read_slice(self._store_for(ctx).read, handle, offset, limit, from_end, pattern)
+            return await _read_slice(self._store_for(ctx), handle, offset, limit, from_end, pattern)
 
         tool = Tool(
             read_tool_result,
@@ -539,6 +560,20 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return None, None
         return await self._apply(ctx, call, then, unit)
 
+    def _handle_key(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '') -> str:
+        """Build a per-run, per-call, per-retry key so concurrent and retried calls never clash.
+
+        `suffix` keeps a return's `return_value` and `content` spills on distinct handles. A later
+        step reusing a name already spilled this run (see `_spilled_calls`) gets
+        `run_id/<step>/tool_call_id.retry` instead of the plain `run_id/tool_call_id.retry`.
+        """
+        run_id = ctx.run_id or 'run'
+        name = f'{call.tool_call_id or "call"}.{ctx.retry}{suffix}'
+        first_step = self._spilled_calls.setdefault(name, ctx.run_step)
+        if first_step == ctx.run_step:
+            return f'{run_id}/{name}'
+        return f'{run_id}/{ctx.run_step}/{name}'
+
     async def _spill(
         self,
         ctx: RunContext[AgentDepsT],
@@ -546,7 +581,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         action: Spill,
         unit: _Unit,
     ) -> tuple[str | None, str | None]:
-        key = _handle_key(ctx, call, unit.suffix)
+        key = self._handle_key(ctx, call, unit.suffix)
         # Text crosses the durable boundary as is; only binary needs base64 to travel as JSON.
         if unit.binary:
             payload = base64.b64encode(unit.data).decode('ascii')
@@ -739,16 +774,6 @@ def _log_fallback(operation: str, tool_name: str, fallback: str, exc: Exception)
     )
 
 
-def _handle_key(ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '') -> str:
-    """Build a per-run, per-call, per-retry key so concurrent and retried calls never clash.
-
-    `suffix` keeps a return's `return_value` and `content` spills on distinct handles.
-    """
-    run_id = ctx.run_id or 'run'
-    call_id = call.tool_call_id or 'call'
-    return f'{run_id}/{call_id}.{ctx.retry}{suffix}'
-
-
 def _with_handles(
     existing: object,
     value_handle: str | None,
@@ -836,7 +861,7 @@ _MAX_READ_CHARS = 50_000
 
 
 async def _read_slice(
-    read: Callable[[str], Awaitable[bytes]],
+    store: OverflowStore,
     handle: str,
     offset: int,
     limit: int,
@@ -847,7 +872,8 @@ async def _read_slice(
 
     `pattern` is a literal substring (not a regex), so a model-supplied value cannot hang
     the host with catastrophic backtracking. `limit` is clamped and the joined output is
-    capped, so one call can never return an unbounded amount of text.
+    capped, so one call can never return an unbounded amount of text. Every matching line is
+    counted, but only the lines the window needs are kept.
     """
     if offset < 0:
         raise ModelRetry('`offset` must be >= 0.')
@@ -856,7 +882,7 @@ async def _read_slice(
     limit = min(limit, _MAX_READ_LINES)
 
     try:
-        data = await read(handle)
+        total, window = await _matching_window(store, handle, pattern, offset, limit, from_end=from_end)
     except WorkspaceError as error:
         raise_tool_failure(error)
     except (OSError, UserError):
@@ -872,17 +898,6 @@ async def _read_slice(
             'available, re-run the original tool.]'
         )
 
-    lines = data.decode('utf-8', errors='replace').splitlines()
-    if pattern is not None:
-        lines = [line for line in lines if pattern in line]
-
-    total = len(lines)
-    if from_end:
-        end = max(0, total - offset)
-        window = lines[max(0, end - limit) : end]
-    else:
-        window = lines[offset : offset + limit]
-
     body = '\n'.join(window)
     capped = ''
     if len(body) > _MAX_READ_CHARS:
@@ -890,3 +905,50 @@ async def _read_slice(
         capped = ', output capped'
     header = f'[handle {handle!r}: {total:,} matching line(s); showing {len(window)}{capped}]'
     return f'{header}\n{body}' if body else header
+
+
+async def _matching_window(
+    store: OverflowStore, handle: str, pattern: str | None, offset: int, limit: int, *, from_end: bool
+) -> tuple[int, list[str]]:
+    """Count the lines containing `pattern` and return the count with the window `offset` and `limit` select.
+
+    A forward read keeps only the window. A read from the end keeps the last `offset + limit` lines, since where
+    its window starts is known only once the payload ends.
+    """
+    total = 0
+    kept: deque[str] = deque(maxlen=min(offset + limit, sys.maxsize) if from_end else limit)
+    async with aclosing(_payload_lines(store, handle)) as batches:
+        async for batch in batches:
+            matching = batch if pattern is None else [line for line in batch if pattern in line]
+            kept.extend(matching if from_end else matching[max(0, offset - total) : max(0, offset + limit - total)])
+            total += len(matching)
+    window = list(kept)
+    return total, window[: max(0, len(window) - offset)] if from_end else window
+
+
+async def _payload_lines(store: OverflowStore, handle: str) -> AsyncGenerator[list[str]]:
+    """Yield a stored payload's lines as `str.splitlines` splits its UTF-8 text, one decoded chunk's lines at a time."""
+    decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+    pieces: list[str] = []
+    cr = ''
+    async with aclosing(iter_payload(store, handle)) as chunks:
+        async for chunk in chunks:
+            text = cr + decoder.decode(chunk)
+            # A trailing CR waits for the next chunk, which may start with the LF of a CRLF.
+            cr = '\r' if text.endswith('\r') else ''
+            yield _complete_lines(text.removesuffix(cr), pieces)
+    lines = _complete_lines(cr + decoder.decode(b'', final=True), pieces)
+    yield [*lines, ''.join(pieces)] if pieces else lines
+
+
+def _complete_lines(text: str, pieces: list[str]) -> list[str]:
+    """Return the lines `text` completes, keeping its unterminated end in `pieces`."""
+    lines = text.splitlines()
+    # The last line is unterminated when `text` ends with it: `splitlines` yields an empty line only before a break.
+    end = lines.pop() if lines and lines[-1] and text.endswith(lines[-1]) else None
+    if pieces and lines:
+        lines[0] = ''.join(pieces) + lines[0]
+        pieces.clear()
+    if end is not None:
+        pieces.append(end)
+    return lines

@@ -317,6 +317,7 @@ def main() -> None:
             attempts=attempts,
             trace_id=trace_id,
             parent_id=span_id,
+            configured_chain=env.get('PR_REVIEW_MODEL_CHAIN', ''),
         )
         values = {
             'pr_review_checks.steps': usage.steps,
