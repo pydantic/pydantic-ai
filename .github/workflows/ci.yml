@@ -805,7 +805,9 @@ jobs:
       # collects it on 3.11: `tests/clai2` has pre-3.14 lines and branches that `all-extras` covers otherwise.
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.clai2_only == 'true' && matrix.python-version == '3.11' }}
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
-      CLAI2_EXTRA: ${{ matrix.clai2_only == 'true' && 'typesafe' || '' }}
+      # A `pydantic-clai2`-only change skips `all-extras`, so its cells install every `pydantic-clai2`
+      # extra themselves: `tests/clai2` gates tests and their fakes on `typesafe` and each `/sandbox` SDK.
+      CLAI2_ALL_EXTRAS: ${{ matrix.clai2_only == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -864,8 +866,8 @@ jobs:
         shell: bash
         run: |
           extra=()
-          if [[ -n "$CLAI2_EXTRA" ]]; then
-            extra=(--extra "$CLAI2_EXTRA")
+          if [[ "$CLAI2_ALL_EXTRAS" == "true" ]]; then
+            extra=(--all-extras)
           fi
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
@@ -887,8 +889,8 @@ jobs:
         shell: bash
         run: |
           extra=()
-          if [[ -n "$CLAI2_EXTRA" ]]; then
-            extra=(--extra "$CLAI2_EXTRA")
+          if [[ "$CLAI2_ALL_EXTRAS" == "true" ]]; then
+            extra=(--all-extras)
           fi
           uv run ${{ matrix.install.command }} "${extra[@]}" coverage combine
         env:
