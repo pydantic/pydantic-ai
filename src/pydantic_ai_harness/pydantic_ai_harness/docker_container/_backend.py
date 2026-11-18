@@ -30,7 +30,7 @@ import re
 import secrets
 import shutil
 from collections.abc import Mapping, Sequence
-from pathlib import Path
+from importlib.resources import as_file, files
 from typing import Literal
 
 import anyio
@@ -240,9 +240,9 @@ async def remove_container(name: str, *, executable: str = 'docker') -> None:
         raise WorkspaceError(f'could not remove container {name}: {result.stderr.strip()}')
 
 
-_DESKTOP_DOCKERFILE_PATH = Path(__file__).parent / 'desktop.Dockerfile'
+_DESKTOP_DOCKERFILE_FILE = files('pydantic_ai_harness.docker_container').joinpath('desktop.Dockerfile')
 
-DESKTOP_DOCKERFILE = _DESKTOP_DOCKERFILE_PATH.read_text()
+DESKTOP_DOCKERFILE = _DESKTOP_DOCKERFILE_FILE.read_text()
 """The image `DockerContainer(desktop=True)` builds on first use: an X server, a window manager, a panel that launches
 Firefox and a terminal, and fonts for most scripts and emoji. Firefox starts without first-run pages, and new
 windows fill the screen."""
@@ -294,18 +294,9 @@ async def _build_desktop_image(runner: LocalWorkspaceBackend, executable: str) -
     if (await runner.run([executable, 'image', 'inspect', '--', _DESKTOP_IMAGE])).exit_code == 0:
         return
     # The Dockerfile copies nothing in, so any directory does as the build context.
-    result = await runner.run(
-        [
-            executable,
-            'build',
-            '--tag',
-            _DESKTOP_IMAGE,
-            '--file',
-            str(_DESKTOP_DOCKERFILE_PATH),
-            '--',
-            str(_DESKTOP_DOCKERFILE_PATH.parent),
-        ]
-    )
+    with as_file(_DESKTOP_DOCKERFILE_FILE) as dockerfile:
+        build = [executable, 'build', '--tag', _DESKTOP_IMAGE, '--file', str(dockerfile), '--', str(dockerfile.parent)]
+        result = await runner.run(build)
     if result.exit_code != 0:
         raise WorkspaceUnavailableError(f'could not build the desktop image: {result.stderr.strip()[-2000:]}')
 
