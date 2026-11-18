@@ -3563,6 +3563,22 @@ async def test_adapter_keepalive_interval_reaches_the_response(anyio_backend: st
     assert [chunk async for chunk in disabled.streaming_response(events()).body_iterator] == ['first', 'second']
 
 
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_encode_stream_sends_no_keepalive_for_non_sse_content(anyio_backend: str):
+    class ProtobufEventStream(DummyUIEventStream[None, str]):
+        @property
+        def content_type(self) -> str:
+            return 'application/vnd.ag-ui.event+proto'
+
+    async def events() -> AsyncIterator[str]:
+        yield 'first'
+        await anyio.sleep(0.05)
+        yield 'second'
+
+    stream = ProtobufEventStream(keepalive_interval=0.01)
+    assert [chunk async for chunk in stream.encode_stream(events())] == ['first', 'second']
+
+
 @pytest.mark.parametrize('interval', [0, -1])
 def test_encode_stream_rejects_non_positive_keepalive_interval(interval: float):
     async def events() -> AsyncIterator[str]:

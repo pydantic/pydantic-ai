@@ -262,8 +262,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 yield self.encode_event(event)
             return
         # One task pulls `stream` for its whole life, so the idle timeout never cancels a pull halfway, and the
-        # source's cancel scopes are always resumed by the same task (for a source not started before this). A cancelled `Queue.get()` leaves its item
-        # queued, so a timeout racing a new event doesn't lose it.
+        # source's cancel scopes are always entered and exited by the same task. This assumes the source wasn't
+        # started before it was passed here. A cancelled `Queue.get()` leaves its item queued, so a timeout racing a
+        # new event doesn't lose it.
         queue: asyncio.Queue[EventT | None] = asyncio.Queue()
 
         async def pump() -> None:
