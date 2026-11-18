@@ -46,7 +46,8 @@ jobs:
         env:
           STATIC: src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static
         run: |
-          changed=$(git diff --name-only HEAD^1 HEAD)
+          # Exact renames leave out a moved bundle whose files are unchanged.
+          changed=$(git diff --name-only --find-renames=100% --diff-filter=ACDMT HEAD^1 HEAD)
           if ! grep -q "^$STATIC/" <<< "$changed"; then
             exit 0
           fi
