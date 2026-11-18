@@ -315,7 +315,7 @@ opens live, even while others run: each works in its own folder, with its own qu
 prompts and running turn, and a dot shows which ones are running or waiting for you.
 Esc stops only the session you are looking at. A session left idle for an hour
 closes; it stays saved, so click it to pick it up again. See
-[Several sessions in the web UI](docs/reference.md#several-sessions-in-the-web-ui).
+[Several sessions in the web UI](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#several-sessions-in-the-web-ui).
 
 ### Usage, cost, and `/compact`
 
