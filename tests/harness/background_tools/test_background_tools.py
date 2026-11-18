@@ -32,6 +32,7 @@ from pydantic_ai.capabilities import (
     NodeResult,
     SetToolMetadata,
     ValidatedToolArgs,
+    WrapToolExecuteHandler,
 )
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -1295,11 +1296,29 @@ The user wants you to delete X.\
         """Results recorded at a pause come out in the order their calls were dispatched, not the order they finished.
 
         A durable engine replaying the run must rebuild the same request, and finishing order depends on timing.
-        `first` is dispatched first and finishes last, `second` is already queued before the step ends, and `third`
-        finishes during the wait at the pause.
+        `first` is made first but reaches `BackgroundTools` after `second`, held by an earlier capability's `wrap_tool_execute`, and
+        finishes last. `second` is already queued before the step ends, and `third` finishes during the wait at the
+        pause.
         """
         second_done = asyncio.Event()
         third_done = asyncio.Event()
+
+        @dataclass
+        class _HoldFirst(AbstractCapability[Any]):
+            """An earlier capability that waits on I/O, so `first` reaches `BackgroundTools` after `second`."""
+
+            async def wrap_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                handler: WrapToolExecuteHandler,
+            ) -> Any:
+                if call.tool_name == 'first':
+                    await second_done.wait()
+                return await handler(args)
 
         async def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(
@@ -1312,7 +1331,9 @@ The user wants you to delete X.\
             )
 
         agent = Agent(
-            FunctionModel(model_fn), output_type=[str, DeferredToolRequests], capabilities=[BackgroundTools()]
+            FunctionModel(model_fn),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[_HoldFirst(), BackgroundTools()],
         )
 
         @agent.tool_plain(metadata={'background': True})

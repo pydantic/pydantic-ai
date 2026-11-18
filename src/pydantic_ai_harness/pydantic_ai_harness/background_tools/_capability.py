@@ -34,7 +34,7 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.messages import ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
 from pydantic_ai.output import PendingModelResponse
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -78,6 +78,12 @@ def _instructions(ctx: RunContext[Any]) -> str | None:
     return None if ctx.realtime else _INSTRUCTIONS
 
 
+def _position_in_response(ctx: RunContext[Any], call: ToolCallPart) -> int:
+    """The call's position among the tool calls of the response being executed, the last one in the history."""
+    response = next(message for message in reversed(ctx.messages) if isinstance(message, ModelResponse))
+    return [made.tool_call_id for made in response.tool_calls].index(call.tool_call_id)
+
+
 def _dispatched_by_tool(ctx: RunContext[Any]) -> bool:
     """Whether another tool, such as code mode's `run_code`, dispatched this call and awaits its value."""
     # A nested `ToolManager` carries the context of the call that dispatched it.
@@ -109,8 +115,12 @@ class _Completion:
     tool_name: str
     max_retries: int
     result: BackgroundToolResultPart
-    dispatched: int
-    """When the call was dispatched, counting from the run's first background call."""
+    dispatched: tuple[int, int]
+    """Where the model made the call: the run step, and the call's position in that step's response.
+
+    Both are part of the recorded history, so a replay sorts the results the same way, however the calls' hooks
+    were scheduled.
+    """
     retry: Exception | None = None
     """The failure that counts toward the tool's `max_retries`, when the call is to be retried."""
     succeeded: bool = False
@@ -256,8 +266,6 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     """Tools whose started message core counted as a success since the last node boundary."""
     _unsettled: list[_Completion] = field(default_factory=list[_Completion], init=False, repr=False, compare=False)
     """Delivered calls whose outcome has not been charged to the tool's retry count yet."""
-    _dispatched: int = field(default=0, init=False, repr=False)
-    """Background calls dispatched so far in the run."""
     _queued: dict[str, _Completion] = field(
         default_factory=dict[str, _Completion], init=False, repr=False, compare=False
     )
@@ -368,8 +376,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
 
         task_id = call.tool_call_id
         tool_name = call.tool_name
-        dispatched = self._dispatched
-        self._dispatched += 1
+        dispatched = (ctx.run_step, _position_in_response(ctx, call))
 
         def failure(error: _SignalledError, *, retry: Exception | None = None) -> _Completion:
             result = _format_background_failure(tool_name, task_id, error)
@@ -546,7 +553,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         with self._send, self._outcomes:
             async with anyio.create_task_group() as self._task_group:
                 result = await handler()
-                # Tasks still live after `run_stream()` are dropped.
+                # Tasks still live after `run_stream()`, a `PendingModelResponse` end or an early stop are dropped.
                 self._task_group.cancel_scope.cancel()
             # An error from a task that finished after the last node boundary still ends the run.
             errors = [outcome for outcome in self._arrived() if isinstance(outcome, BaseException)]
