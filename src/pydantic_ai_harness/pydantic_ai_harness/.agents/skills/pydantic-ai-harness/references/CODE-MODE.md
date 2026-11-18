@@ -225,7 +225,7 @@ CodeMode(
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - `os_policy`: Monty's `OSPolicy`, merged key by key over the defaults (clock, sleeps, and random seeding routed to `os_access`). `{'datetime': 'system', 'timezone': 'Europe/Paris'}` gives the sandbox the worker's clock in that zone with no handler; `{'timezone': ...}` alone keeps the clock on `os_access` but makes `astimezone()` and `%Z` report the zone. Keep the defaults under Temporal: a `'system'` clock or `random_start` is re-read on replay. Fixed values stay fixed.
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
-- `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_seconds` also applies, except in Temporal workflow code. The factory runs once per run, or once per turn when turns run as activities. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.5.0`. `monty_sandbox_url` is the deprecated form.
+- `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_seconds` also applies, except in Temporal workflow code. The factory runs once per run, or once per turn when turns run as activities. Only execution moves; tools, `os_access`, and prints stay host-side, and so do mounts unless turns run as activities, where the activity worker reads them. Run the worker on `pydantic-monty>=1.5.0`. `monty_sandbox_url` is the deprecated form.
 - Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's instructions or tool arguments.
 
 ## Durable Execution
@@ -236,15 +236,18 @@ reads, writes, and clock access in wrapped tools (which become activities), not 
 Inside a Temporal workflow `max_duration_seconds` is disabled for code run in workflow code (memory and suspension caps still apply) and a
 workflow task that does not yield within 2 seconds fails, so move heavy computation into a tool.
 
-With a remote `monty_sandbox` whose server stores sessions and `CodeMode(id=...)`, each turn (the code
-between two waits on the host: nested calls, sleeps, deferred calls) runs as its own activity instead, so sandbox computation does not count
-against the 2 seconds and replay reads turn results from history. Runs stay workflow-side without an
-`id`, against a server that stores nothing, with `os_access` set, with an `'overlay'` mount (the
-default mode; use `'read-only'` or `'read-write'`), or when the workflow started before this change.
+With a remote `monty_sandbox` and `CodeMode(id=...)`, each turn (the code between two waits on the
+host: nested calls, sleeps, deferred calls) runs as its own activity instead, so sandbox computation
+does not count against the 2 seconds and replay reads turn results from history. The server must store
+sessions (Logfire Agent Sandboxes does); one that stores none or cannot store a session's state raises
+a non-retried `UserError`. Runs stay workflow-side without an `id`, with `os_access` set, with an
+`'overlay'` mount (the default mode; use `'read-only'` or `'read-write'`), or when the workflow
+started before this change.
 Turns use `TemporalDurability`'s `activity_config`; a turn that still fails after its retries fails
 the workflow with `ActivityError`. In a turn activity `max_duration_seconds` applies again, so keep
 `start_to_close_timeout` above it. A retried turn repeats its `'read-write'` mount writes. Tool results
-and call arguments keep their types across turns, and the model sees the same result; nested-call arguments with no JSON form raise `TypeError`.
+and call arguments keep their types across turns, and the model sees the same result; nested-call
+arguments with no JSON form raise `TypeError`.
 
 Setup errors reach workflow code with their original types. `PydanticAIPlugin` treats `UserError`
 as a workflow failure. Uncaught `RuntimeError`, `MontyRefusedError`, and other unclassified factory

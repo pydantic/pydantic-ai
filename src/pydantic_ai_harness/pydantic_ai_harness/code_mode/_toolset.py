@@ -63,7 +63,6 @@ from pydantic_ai_harness._code_tools import (
 from pydantic_ai_harness._monty_exec import (
     MontyExecutor,
     MontyRunState,
-    MontySessionsNotStored,
     MontyTurnFailed,
     MontyTurnUnavailable,
     PrintCapture,
@@ -978,6 +977,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     events emitted from inside the sandbox dispatch carry the right owner.
     """
 
+    monty_turn: Callable[[RunContext[AgentDepsT], TurnRequest], Awaitable[MontyTurn]] | None = field(
+        default=None, kw_only=True, repr=False
+    )
+    """`CodeMode`'s durable operation that runs one remote sandbox turn, set when the capability has an `id`.
+
+    Inside a Temporal workflow it runs each turn in an activity; see `_durable_turn`.
+    """
+
     speculation: SpeculationCoordinator[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
     """Per-run claim store for calls launched while `run_code` arguments stream.
 
@@ -1296,34 +1303,22 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             return None
         return next((run_id for run_id, cap in ctx.capabilities.items() if cap is self.capability), None)
 
-    def _durable_turn(
-        self, ctx: RunContext[AgentDepsT], run_state: MontyRunState
-    ) -> Callable[[TurnRequest], Awaitable[MontyTurn]] | None:
+    def _durable_turn(self, ctx: RunContext[AgentDepsT]) -> Callable[[TurnRequest], Awaitable[MontyTurn]] | None:
         """Inside a Temporal workflow, the operation that runs each Monty turn in an activity, or `None` to run turns here.
 
         A remote sandbox otherwise keeps the workflow task waiting on the network while a snippet
         computes, and Temporal fails a workflow task that does not yield within 2 seconds. Turns move
-        out only where they behave as they do here: an `os_access` handler may use workflow APIs, and Monty
-        does not keep `'overlay'` mount writes across a stored snapshot. The operation needs the capability's `id`. The first `run_code`
-        call decides for the whole run, so a run never moves REPL state between the two paths, and
-        `workflow.patched` keeps runs that started before this existed on the path they started on.
+        out only where they behave as they do here: an `os_access` handler may use workflow APIs, and
+        Monty does not keep `'overlay'` mount writes across a stored snapshot. The answer depends only
+        on configuration, so every `run_code` call in a run takes the same path, and `workflow.patched`
+        keeps runs that started before this existed on the path they started on.
         """
-        from pydantic_ai_harness.code_mode._capability import CodeMode
-
-        capability = self.capability
-        if not isinstance(capability, CodeMode) or capability.id is None:
+        if self.monty_turn is None or self.monty_sandbox is None or self.os_access is not None:
             return None
-        if run_state.durable_turns is None:
-            mounts = self.mount if isinstance(self.mount, list) else [self.mount] if self.mount is not None else []
-            run_state.durable_turns = (
-                self.monty_sandbox is not None
-                and self.os_access is None
-                and all(mount.mode != 'overlay' for mount in mounts)
-                and _workflow_patched(_DURABLE_TURNS_PATCH)
-            )
-        if not run_state.durable_turns:
+        mounts = self.mount if isinstance(self.mount, list) else [self.mount] if self.mount is not None else []
+        if any(mount.mode == 'overlay' for mount in mounts) or not _workflow_patched(_DURABLE_TURNS_PATCH):
             return None
-        return partial(capability._monty_turn, ctx)  # pyright: ignore[reportPrivateUsage]
+        return partial(self.monty_turn, ctx)
 
     async def _feed_start(
         self,
@@ -1337,7 +1332,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         in_workflow: bool,
     ) -> tuple[Callable[[], Awaitable[Snapshot]], BlockingPortal | None]:
         """How to start feeding `code`, and the portal to call Monty through: in turns, or on the live session."""
-        if in_workflow and (run_turn := self._durable_turn(ctx, run_state)) is not None:
+        if in_workflow and (run_turn := self._durable_turn(ctx)) is not None:
             # The configured limits: Monty's elapsed-time check is replay-safe in an activity.
             feed = TurnFeed(run_turn, run_state, capture, _resolve_resource_limits(self.resource_limits))
             return partial(feed.start, code, type_check_stubs), None
@@ -1438,10 +1433,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 os_handler=as_os_handler(self.os_access),
             ).run(start)
             run_state.has_executed_feed = True
-        except MontySessionsNotStored:
-            # The first turn ran nothing, so run this call, and the rest of the run, in the workflow.
-            run_state.durable_turns = False
-            return await self._execute_code(code, ctx, tool, execution)
         except BaseException as exc:
             retry = await self._feed_failure_retry(exc, run_state, execution, fresh_repl=fresh_repl)
             if retry is None:

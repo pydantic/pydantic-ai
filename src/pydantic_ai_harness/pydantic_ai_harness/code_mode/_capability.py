@@ -195,8 +195,9 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`, called for each run, or for each turn when turns run as Temporal activities. Unset, code runs locally.
 
     A remote pool's `request_timeout` adds a per-turn transport deadline to `max_duration_seconds`.
-    In Temporal workflow code, only the transport deadline applies. Tools, mounts, `os_access`, and print
-    output stay in your process.
+    In Temporal workflow code, only the transport deadline applies. Tools, `os_access`, and print
+    output stay in your process, and so do mounts unless turns run as activities, where the activity
+    worker reads them.
     """
 
     monty_sandbox_url: str | None = field(default=None, repr=False)
@@ -360,6 +361,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 monty_sandbox=self.monty_sandbox,
                 repl_store=self.repl_store,
                 capability=self,
+                monty_turn=self._monty_turn if self.id is not None else None,
                 speculation=self._speculation,
             )
         return CodeModeToolset(
@@ -375,6 +377,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             monty_sandbox=self.monty_sandbox,
             repl_store=self.repl_store,
             capability=self,
+            monty_turn=self._monty_turn if self.id is not None else None,
             speculation=self._speculation,
         )
 

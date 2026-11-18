@@ -39,7 +39,7 @@ try:
     from temporalio import workflow
     from temporalio.client import Client, WorkflowExecutionStatus, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
-    from temporalio.exceptions import ActivityError, ApplicationError
+    from temporalio.exceptions import ActivityError, ApplicationError, RetryState
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker, WorkflowRunner
     from temporalio.worker.workflow_sandbox import (
@@ -337,27 +337,32 @@ def _call_site_model(messages: list[ModelRequest | ModelResponse], info: AgentIn
     )
 
 
-call_site_code_mode_agent = Agent(
-    FunctionModel(_call_site_model),
-    name='code_mode_temporal_call_site_agent',
-    toolsets=[FunctionToolset(tools=[add, Tool(double, sequential=True), blob, echo], id='math')],
-    capabilities=[
-        CodeMode(
-            id='code',
-            monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
-            mount=MountDir(virtual_path='/tests', host_path=str(Path(__file__).parent), mode='read-only'),
-            resource_limits={'max_suspensions': 16},
-        ),
-        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
-    ],
-)
+def _call_site_agent(*, turn_activities: bool) -> Agent:
+    """Without an `id`, `CodeMode` has no turn operation, so every turn stays in the workflow."""
+    return Agent(
+        FunctionModel(_call_site_model),
+        name=f'code_mode_temporal_call_site_{"turns" if turn_activities else "workflow_side"}_agent',
+        toolsets=[FunctionToolset(tools=[add, Tool(double, sequential=True), blob, echo], id='math')],
+        capabilities=[
+            CodeMode(
+                id='code' if turn_activities else None,
+                monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
+                mount=MountDir(virtual_path='/tests', host_path=str(Path(__file__).parent), mode='read-only'),
+                resource_limits={'max_suspensions': 16},
+            ),
+            TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        ],
+    )
+
+
+call_site_agents = {True: _call_site_agent(turn_activities=True), False: _call_site_agent(turn_activities=False)}
 
 
 @workflow.defn
 class CallSiteWorkflow:
     @workflow.run
-    async def run(self) -> str:
-        result = await call_site_code_mode_agent.run('Exercise the call sites')
+    async def run(self, turn_activities: bool) -> str:
+        result = await call_site_agents[turn_activities].run('Exercise the call sites')
         return result.output
 
 
@@ -400,10 +405,8 @@ def _session_loss_model(messages: list[ModelRequest | ModelResponse], info: Agen
         prompt = next(part.content for part in messages[0].parts if isinstance(part, UserPromptPart))
         if prompt == 'expire the record':
             SERVER.records.clear()
-        elif prompt == 'drop the connection':
-            SERVER.drops_next_feed = ConnectionResetError('wss://monty:secret-token@sandbox.example closed')
         else:
-            SERVER.stores = False
+            SERVER.drops_next_feed = ConnectionResetError('wss://monty:secret-token@sandbox.example closed')
         return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'x + 1'}, tool_call_id='read')])
     return ModelResponse(parts=[TextPart(content=json.dumps(results))])
 
@@ -895,30 +898,47 @@ async def test_remote_turns_run_as_activities(
     assert replay_result.replay_failure is None
 
 
-async def test_remote_turns_fall_back_without_stored_sessions(client: Client) -> None:
-    """A server that stores no sessions keeps the session open in the workflow, as before this change.
+@pytest.mark.parametrize(
+    ('refusal', 'message'),
+    [
+        ('stores nothing', 'The Monty server stores no sessions.'),
+        ('refuses the dump', "The Monty server could not store the session's state"),
+    ],
+)
+async def test_remote_turns_fail_without_storage(client: Client, refusal: str, message: str) -> None:
+    """A server that stores no sessions, or refuses to store one, fails the run on the first attempt.
 
-    The first turn finds nothing stored and runs nothing, and every later Monty call stays in the workflow.
+    A retry would meet the same refusal, for example a full snapshot quota, so the turn raises
+    `UserError`, which Temporal does not retry.
     """
-    workflow_id = 'test_code_mode_temporal_not_stored'
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[StoredSessionsWorkflow],
-        plugins=[AgentPlugin(not_storing_code_mode_agent)],
-        workflow_runner=_workflow_runner(),
-    ):
-        output = await client.execute_workflow(
-            StoredSessionsWorkflow.run,
-            args=['Calculate 3 + 4', False],
-            id=workflow_id,
+    stores = refusal != 'stores nothing'
+    agent = storing_code_mode_agent if stores else not_storing_code_mode_agent
+    SERVER.refuses_dumps = refusal == 'refuses the dump'
+    try:
+        async with Worker(
+            client,
             task_queue=TASK_QUEUE,
-            execution_timeout=timedelta(seconds=30),
-        )
-
-    assert output == 'done: 70'
-    history = await client.get_workflow_handle(workflow_id).fetch_history()
-    assert _activity_types(history) == ['model_request', 'monty_turn', 'call_tool', 'model_request', 'model_request']
+            workflows=[StoredSessionsWorkflow],
+            plugins=[AgentPlugin(agent)],
+            workflow_runner=_workflow_runner(),
+        ):
+            with pytest.raises(WorkflowFailureError) as exc_info:
+                await client.execute_workflow(
+                    StoredSessionsWorkflow.run,
+                    args=['Calculate 3 + 4', stores],
+                    id=f'test_code_mode_temporal_no_storage_{refusal.split()[0]}',
+                    task_queue=TASK_QUEUE,
+                    execution_timeout=timedelta(seconds=30),
+                )
+    finally:
+        SERVER.refuses_dumps = False
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert activity_error.activity_type.endswith('__monty_turn')
+    assert activity_error.retry_state == RetryState.NON_RETRYABLE_FAILURE
+    assert isinstance(activity_error.cause, ApplicationError)
+    assert activity_error.cause.type == 'UserError'
+    assert activity_error.cause.message.startswith(message)
 
 
 @pytest.mark.parametrize('reason', ['overlay', 'os_access', 'no_id', 'local', 'unpatched'])
@@ -957,34 +977,34 @@ async def test_remote_turns_stay_in_the_workflow(client: Client, monkeypatch: py
     assert _activity_types(history) == ['model_request', 'call_tool', 'model_request', 'model_request']
 
 
-async def _run_call_sites(client: Client, workflow_id: str, *, stores: bool) -> list[object]:
-    SERVER.stores = stores
-    try:
-        async with Worker(
-            client,
+async def _run_call_sites(client: Client, workflow_id: str, *, turn_activities: bool) -> list[object]:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CallSiteWorkflow],
+        plugins=[AgentPlugin(call_site_agents[turn_activities])],
+        workflow_runner=_workflow_runner(),
+    ):
+        output = await client.execute_workflow(
+            CallSiteWorkflow.run,
+            args=[turn_activities],
+            id=workflow_id,
             task_queue=TASK_QUEUE,
-            workflows=[CallSiteWorkflow],
-            plugins=[AgentPlugin(call_site_code_mode_agent)],
-            workflow_runner=_workflow_runner(),
-        ):
-            output = await client.execute_workflow(
-                CallSiteWorkflow.run, id=workflow_id, task_queue=TASK_QUEUE, execution_timeout=timedelta(seconds=30)
-            )
-    finally:
-        SERVER.stores = True
+            execution_timeout=timedelta(seconds=30),
+        )
     return json.loads(output)
 
 
 async def test_remote_turns_resume_calls_in_place(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
     """Calls resolved at the call site resume the stored snapshot with their result, errors included.
 
-    Every snippet returns what it returns on the workflow-side path, which a server that stores nothing
-    falls back to, except for an argument with no JSON form, which raises `TypeError` at the call site.
+    Every snippet returns what it returns on the workflow-side path, which a `CodeMode` without `id`
+    takes, except for an argument with no JSON form, which raises `TypeError` at the call site.
     """
     workflow_id = 'test_code_mode_temporal_call_sites'
     monkeypatch.setattr('pydantic_ai_harness._monty_exec._PRINT_LIMIT_BYTES', 200)
-    returns = await _run_call_sites(client, workflow_id, stores=True)
-    workflow_side = await _run_call_sites(client, f'{workflow_id}_workflow_side', stores=False)
+    returns = await _run_call_sites(client, workflow_id, turn_activities=True)
+    workflow_side = await _run_call_sites(client, f'{workflow_id}_workflow_side', turn_activities=False)
 
     type_error, prints, added, call_sites, syntax_error, no_json_form, values, not_utf8, sleeps = returns
     assert isinstance(type_error, str) and isinstance(prints, str) and isinstance(sleeps, str)
@@ -1069,7 +1089,6 @@ async def test_failed_turn_activity_fails_the_workflow(client: Client) -> None:
     ('prompt', 'reported'),
     [
         ('expire the record', 'The sandbox connection was lost and the session was reset.'),
-        ('stop storing', 'The sandbox connection was lost and the session was reset.'),
         ('drop the connection', 'Code execution failed and the session was reset.'),
     ],
 )
@@ -1098,7 +1117,6 @@ async def test_remote_turns_report_a_lost_session(client: Client, prompt: str, r
                 execution_timeout=timedelta(seconds=30),
             )
     finally:
-        SERVER.stores = True
         SERVER.drops_next_feed = None
     first, second = json.loads(output)
     assert first == 1

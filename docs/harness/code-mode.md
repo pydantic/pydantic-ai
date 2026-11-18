@@ -626,8 +626,9 @@ instructions or tool arguments.
 Use `https://` unless the server is on a network you trust: the connection carries your agent's tool
 calls and their results.
 
-Only code execution moves to the worker. Your tools, `mount` directories, `os_access`, and `print`
-output stay in your process, and REPL state persists across `run_code` calls as it does locally.
+Only code execution moves to the worker. Your tools, `os_access`, and `print` output stay in your
+process, and REPL state persists across `run_code` calls as it does locally. `mount` directories are
+read in your process too, except when turns run as activities, where the activity worker reads them.
 
 Run the Monty server on `pydantic-monty>=1.5.0`. Earlier servers speak WebSockets, which this
 client no longer uses. The `run_code` description lists the modules Monty 1.5 can import.
@@ -720,12 +721,16 @@ answered by Monty from the mounts first and reach the handler on another thread.
 
 ### Remote turns as activities
 
-With a remote `monty_sandbox` whose Monty server stores sessions, Code Mode runs each turn as its own
+With a remote `monty_sandbox`, Code Mode runs each turn as its own
 activity. A turn is the part of a snippet between two points where it waits on the host: a nested
 tool call, a sleep, or deferred calls. The server saves the session
 after each turn and returns an ID, and the next turn starts from that ID in whichever worker runs it.
 Computation in the sandbox then no longer counts against the workflow task's 2-second limit, and
 replay reads each turn's result from history instead of connecting to the server.
+
+The Monty server must store sessions, as Logfire Agent Sandboxes does. If it stores none, or cannot
+store a session's state, for example because its snapshot quota is full, the turn raises `UserError`
+and the workflow fails without retrying the turn.
 
 This needs an `id` on `CodeMode`, which names the turn activity:
 
@@ -736,7 +741,6 @@ CodeMode(id='code', monty_sandbox='https://monty.example.com')
 Code Mode keeps running `run_code` in workflow code, as described above, when any of these holds:
 
 - `CodeMode` has no `id`.
-- The server stores no sessions. The first turn reports this without running anything.
 - `os_access` is set: the handler may call `temporalio.workflow` APIs, which work only in workflow code.
 - A `mount` uses `'overlay'` mode, the default. Monty does not keep overlay writes in a stored session.
   Use `'read-only'` or `'read-write'` mounts to run turns as activities. The activity worker reads
@@ -758,9 +762,10 @@ first and retries it, instead of Code Mode reporting the time limit to the model
 
 Tool results and nested call arguments keep their types, `bytes` and tuples included, and the model
 sees the same snippet result as in workflow code. A nested call whose arguments have no JSON form,
-such as an instance of a class the snippet defined, raises `TypeError` in the snippet: its arguments cannot reach the tool's activity. If
-the server no longer has a run's stored state, for example because it expired, Code Mode resets the
-session and tells the model the connection was lost, as for a dropped connection outside Temporal.
+such as an instance of a class the snippet defined, raises `TypeError` in the snippet: its arguments
+cannot reach the tool's activity. If the server no longer has a run's stored state, for example
+because it expired, Code Mode resets the session and tells the model the connection was lost, as for
+a dropped connection outside Temporal.
 
 ## Observability
 

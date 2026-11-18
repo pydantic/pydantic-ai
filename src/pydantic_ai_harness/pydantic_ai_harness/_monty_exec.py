@@ -184,8 +184,6 @@ class MontyRunState:
     """The server's record of the session when each turn runs as a durable operation (see `TurnFeed`)."""
     suspensions: int = 0
     """The pauses the session's turns made, which count toward its `max_suspensions` (see `TurnFeed`)."""
-    durable_turns: bool | None = None
-    """Whether this run's `run_code` calls run each turn as a durable operation; `None` until the first call decides."""
     _pool_stack: AsyncExitStack = field(default_factory=AsyncExitStack, repr=False)
     _session_stack: AsyncExitStack = field(default_factory=AsyncExitStack, repr=False)
 
@@ -308,10 +306,6 @@ class PrintCapture:
         return f'[stdout before error]\n{printed}\n[/stdout before error]\n{error_message}'
 
 
-class MontySessionsNotStored(Exception):
-    """The Monty server stores no sessions, so a turn cannot run apart from the one before it."""
-
-
 class MontyTurnFailed(Exception):
     """A turn ended in a sandbox error, described by `failure`."""
 
@@ -385,11 +379,9 @@ class TurnFeed:
                 return TurnFutureSnapshot(self, turn.pending_call_ids)
             case 'complete':
                 return TurnComplete(from_wire(turn.output))
-            case 'failed':
+            case _:  # 'failed'
                 assert turn.failure is not None
                 raise MontyTurnFailed(turn.failure)
-            case _:  # 'not_stored'
-                raise MontySessionsNotStored
 
 
 @dataclass

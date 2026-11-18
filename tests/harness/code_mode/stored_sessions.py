@@ -27,12 +27,13 @@ from pydantic_monty import (
 
 @dataclass
 class Server:
-    """The store every pool shares. Tests change it to model a server that loses records or stops storing."""
+    """The store every pool shares. Tests change it to model a server that loses or refuses records."""
 
     records: dict[bytes, bytes] = field(default_factory=dict[bytes, bytes])
-    stores: bool = True
     drops_next_feed: Exception | None = None
     """An error the next `feed_start` raises, as a connection that drops mid-feed does."""
+    refuses_dumps: bool = False
+    """`dump()` raises `MontyRuntimeError`, as a server whose snapshot quota is full does."""
 
     def load(self, record_id: bytes) -> bytes:
         # Empty bytes are not a Monty dump, so loading a lost record raises Monty's own error.
@@ -48,6 +49,7 @@ class StoredSession:
 
     session: AsyncMontySession
     stores: bool
+    pool: AsyncMonty
 
     async def get_session_id(self) -> bytes | None:
         # As in Monty 1.6, which reads the ID only once a request has opened the session. Its
@@ -55,6 +57,10 @@ class StoredSession:
         return b'session' if self.stores else None
 
     async def dump(self) -> bytes:
+        if SERVER.refuses_dumps:
+            # `MontyRuntimeError` cannot be built directly; Monty raises it for bytes that are not a dump.
+            async with self.pool.checkout() as fresh:
+                await fresh.load_session(b'')
         record_id = f'record-{len(SERVER.records)}'.encode()
         SERVER.records[record_id] = await self.session.dump()
         return record_id
@@ -93,7 +99,7 @@ class StoredSessionPool:
     """Stands in for `AsyncMontyRemote`: an async context manager whose `checkout()` yields `StoredSession`s."""
 
     stores: bool = True
-    """`False` models a server without a store; `SERVER.stores` is what a test flips mid-run."""
+    """`False` models a server without a store."""
     _pool: AsyncMonty = field(default_factory=AsyncMonty)
 
     async def __aenter__(self) -> StoredSessionPool:
@@ -117,4 +123,4 @@ class StoredSessionPool:
             limits=limits, type_check=type_check, type_check_stubs=type_check_stubs, os_policy=os_policy
         ) as session:
             # As on a storing server, an ephemeral session is never stored.
-            yield StoredSession(session, self.stores and SERVER.stores and ephemeral is not True)
+            yield StoredSession(session, self.stores and ephemeral is not True, self._pool)

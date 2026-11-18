@@ -46,6 +46,7 @@ from pydantic_monty import (
     ResourceLimits,
 )
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import is_multi_modal_content
 from pydantic_ai_harness._typeguards import is_mapping
 
@@ -285,8 +286,7 @@ class MontyFailure:
 class MontyTurn:
     """How a turn ended, and the stored record to start the next turn from."""
 
-    kind: Literal['call', 'waiting', 'complete', 'failed', 'not_stored']
-    """`not_stored`: the server stores no sessions, so the turn ran nothing."""
+    kind: Literal['call', 'waiting', 'complete', 'failed']
     state: str | None = None
     """The record of the session after this turn, base64-encoded; `None` when it could not be saved.
 
@@ -334,7 +334,8 @@ async def run_monty_turn(
     Monty errors come back as a `failed` turn rather than raising, so Temporal does not retry a
     snippet that failed in the sandbox. Errors before the turn starts, such as a refused checkout,
     raise and are retried by the activity's retry policy: a retry starts again from `request.state`,
-    which never changes.
+    which never changes. A server that stores no sessions, or refuses to store this one, raises
+    `UserError`, which Temporal does not retry, since retrying soon would meet the same refusal.
     """
     type_check = request.type_check_stubs is not None
     async with pool.checkout(
@@ -345,9 +346,10 @@ async def run_monty_turn(
         ephemeral=False,
     ) as session:
         if await _session_id(session) is None:
-            # A server can also fail to store one session in time. Only a run with nothing stored yet
-            # can move to the workflow; later, the state the run has built is lost.
-            return MontyTurn('not_stored') if request.state is None else _session_lost()
+            raise UserError(
+                'The Monty server stores no sessions. Inside a durable workflow, CodeMode runs a remote '
+                '`monty_sandbox` one turn at a time and needs a server that stores sessions between turns.'
+            )
         capture = CollectString(max_bytes=request.print_bytes)
         pauses = _Pauses()
         try:
@@ -384,7 +386,13 @@ async def run_monty_turn(
                 with suppress(RuntimeError):
                     state = await _dump(session)
             return MontyTurn('failed', state=state, prints=capture.output, suspensions=pauses.count, failure=failure)
-        state = await _dump(session)
+        try:
+            state = await _dump(session)
+        except MontyRuntimeError as error:
+            # The server's message is not shown: a remote error's text can carry the pool's URL or credentials.
+            raise UserError(
+                "The Monty server could not store the session's state, for example because its snapshot quota is full."
+            ) from error
         prints = capture.output
         if isinstance(snapshot, MontyComplete):
             output = to_wire(model_safe_result(snapshot.output))
