@@ -75,6 +75,7 @@ from pydantic_ai_harness import (
     SubAgents,
     SummarizingCompaction,
     SystemReminders,
+    ToolBridge,
     ToolOutputLimits,
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
@@ -211,6 +212,10 @@ def _check_tool_output_limits(merged: Any) -> None:
     assert merged.strip_ansi is True
 
 
+def _check_tool_bridge(merged: ToolBridge[None]) -> None:
+    assert merged.max_results == 5
+
+
 def _check_advisor(merged: Any) -> None:
     assert merged.max_tokens == 4096
 
@@ -314,6 +319,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one output-limit policy; `tool_filter`/`per_tool` are how one instance varies by tool',
         lambda: (ToolOutputLimits[Any](), ToolOutputLimits[Any](strip_ansi=True)),
         _check_tool_output_limits,
+    ),
+    'ToolBridge': Combines(
+        'one set of dispatcher tools per agent; `tools` is how one instance picks what it bridges',
+        lambda: (ToolBridge[None](max_results=3), ToolBridge[None](max_results=5)),
+        _check_tool_bridge,
     ),
     'SubAgents': Combines(
         'one delegate tool per agent, so two rosters become one',

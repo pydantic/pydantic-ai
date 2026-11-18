@@ -177,6 +177,10 @@ def _run_look_up(topic: str) -> tuple[str, dict[str, Any]]:
     return 'run_code', {'code': f'await look_up(topic={topic!r})'}
 
 
+def _bridge_look_up(topic: str) -> tuple[str, dict[str, str]]:
+    return 'tool_call', {'name': 'look_up', 'args_json': f'{{"topic": "{topic}"}}'}
+
+
 class _PruneLatestReturn(AbstractCapability[None]):
     """Points a scripted `prune_tool_result` call at the previous step's result, whose ID differs by provider."""
 
@@ -499,6 +503,7 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
 
 SCENARIOS: dict[str, Scenario] = {
     'CodeMode': Scenario(look_up=_run_look_up),
+    'ToolBridge': Scenario(look_up=_bridge_look_up),
     'CompactOnRequest': Scenario(state_calls=(('compact_context', {'focus': 'the forecast'}),)),
     'DeduplicateFileReads': Scenario(
         state_calls=(('read_file', {'path': 'notes.md'}), ('read_file', {'path': 'notes.md'}))

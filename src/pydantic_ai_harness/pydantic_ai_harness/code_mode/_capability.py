@@ -42,6 +42,7 @@ from pydantic_ai_harness.code_mode._toolset import (
     in_durable_execution,
     monty_sandbox_from_url,
 )
+from pydantic_ai_harness.tool_bridge import ToolBridge
 
 if TYPE_CHECKING:
     from pydantic_monty import AsyncMontyRemote
@@ -326,8 +327,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         )
 
     def get_ordering(self) -> CapabilityOrdering:
-        """CodeMode wraps around ToolSearch so that search_tools stays native."""
-        return CapabilityOrdering(position='outermost', wraps=[_ToolSearch])
+        """CodeMode wraps around ToolSearch, so that `search_tools` stays native, and ToolBridge, so that its dispatchers are sandboxed."""
+        return CapabilityOrdering(position='outermost', wraps=[_ToolSearch, ToolBridge])
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> CodeMode[AgentDepsT]:
         """Return a fresh instance so concurrent runs don't share announcement or speculation state."""
