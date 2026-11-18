@@ -14,6 +14,7 @@ import subprocess
 import sys
 import traceback
 import urllib.request
+from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from urllib.parse import quote
@@ -235,6 +236,7 @@ def test_tokens_are_counted_and_never_stop_a_review(tmp_path: Path) -> None:
     with (tmp_path / 'out').open('w') as log:
         usage = run_opencode(['sh', '-c', f"printf '%s\\n' {lines}"], '', cwd=tmp_path, env={}, log=log, seconds=300)
     assert (usage.steps, usage.tokens, usage.stopped) == (2, 2 * (2 * 10**9 + 1), False)
+    assert usage.kinds == Counter({'input': 2 * 10**9, 'output': 2, 'cache.read': 2 * 10**9})
 
 
 def test_time_budget_stops_the_review(tmp_path: Path, expire_budget: list[float]) -> None:
@@ -443,6 +445,7 @@ def _run(
         'opencode_fallback.plan': provider.plan,
         'opencode_fallback.attempt': str(attempt),
         'opencode_fallback.provider': provider.name,
+        'opencode_fallback.model': provider.model,
         'opencode_fallback.steps': str(steps),
         'opencode_fallback.tokens': str(tokens),
         **{f'opencode_fallback.{key}': value for key, value in failure.items()},
@@ -462,8 +465,9 @@ RATE_LIMITED = json.dumps(
         },
     }
 )
+# Its one finding is on a line the stubbed diff did not change, so the review drops it.
 ANSWER = [
-    json.dumps({'type': 'text', 'part': {'messageID': 'msg_final', 'text': _result()}}),
+    json.dumps({'type': 'text', 'part': {'messageID': 'msg_final', 'text': _result('a.py')}}),
     json.dumps({'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': 'stop', 'tokens': {'input': 5}}}),
 ]
 
@@ -477,8 +481,12 @@ ANSWER = [
             {
                 'pr_review_checks.outcome': 'COMPLETE',
                 'pr_review_checks.findings': '0',
+                'pr_review_checks.dropped_findings': '1',
                 'pr_review_checks.steps': '1',
                 'pr_review_checks.tokens': '5',
+                'pr_review_checks.input_tokens': '5',
+                'pr_review_checks.output_tokens': '0',
+                'pr_review_checks.cache_read_tokens': '0',
             },
             {},
             (1, 5),
@@ -492,6 +500,9 @@ ANSWER = [
                 'pr_review_checks.exception': 'ValueError',
                 'pr_review_checks.steps': '1',
                 'pr_review_checks.tokens': '21',
+                'pr_review_checks.input_tokens': '10',
+                'pr_review_checks.output_tokens': '1',
+                'pr_review_checks.cache_read_tokens': '10',
             },
             {},
             (1, 21),
@@ -579,8 +590,12 @@ def test_review_span_marks_a_review_the_chain_restarted(
         **REVIEW_ATTRIBUTES,
         'pr_review_checks.outcome': 'COMPLETE',
         'pr_review_checks.findings': '0',
+        'pr_review_checks.dropped_findings': '1',
         'pr_review_checks.steps': '1',
         'pr_review_checks.tokens': '5',
+        'pr_review_checks.input_tokens': '5',
+        'pr_review_checks.output_tokens': '0',
+        'pr_review_checks.cache_read_tokens': '0',
         'pr_review_checks.provider': 'zai-coding-plan',
         'pr_review_checks.plan': 'the backup Coding Plan',
         'pr_review_checks.attempts': '3',

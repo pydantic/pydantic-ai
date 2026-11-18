@@ -14,7 +14,7 @@ import time
 import urllib.request
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import FrameType
 from typing import Literal, TextIO
@@ -52,6 +52,8 @@ class Usage:
 
     steps: int = 0
     tokens: int = 0
+    kinds: Counter[str] = field(default_factory=Counter[str])
+    """The tokens by kind, as `step_tokens` names them."""
     stopped: bool = False
     seconds: int = 0
 
@@ -181,7 +183,8 @@ def run_opencode(
                 if tokens is None:
                     continue
                 usage.steps += 1
-                usage.tokens += tokens
+                usage.tokens += tokens.total()
+                usage.kinds += tokens
             process.wait()
         finally:
             timer.cancel()
@@ -322,11 +325,18 @@ def main() -> None:
         values = {
             'pr_review_checks.steps': usage.steps,
             'pr_review_checks.tokens': usage.tokens,
+            'pr_review_checks.input_tokens': usage.kinds['input'],
+            'pr_review_checks.output_tokens': usage.kinds['output'],
+            'pr_review_checks.cache_read_tokens': usage.kinds['cache.read'],
             'pr_review_checks.seconds': usage.seconds,
         }
         changed = {change.path: change.positions for change in changes}
         result, private_report = check_result(check, files, stream, usage, changed=changed)
-        values |= {'pr_review_checks.outcome': result.outcome, 'pr_review_checks.findings': len(result.findings)}
+        values |= {
+            'pr_review_checks.outcome': result.outcome,
+            'pr_review_checks.findings': len(result.findings),
+            'pr_review_checks.dropped_findings': sum(result.dropped.values()),
+        }
     # A failed, rejected or interrupted review is exported too, under the exception's class name: its message can
     # repeat model or provider text.
     except BaseException as error:

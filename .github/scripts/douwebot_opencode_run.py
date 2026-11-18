@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -151,8 +152,8 @@ class Attempt:
     """Whether the failed run's stream holds a `step_finish` event; `None` while the run has not failed."""
 
 
-def step_tokens(line: str) -> int | None:
-    """Return the tokens a `step_finish` event reports, or None for any other event."""
+def step_tokens(line: str) -> Counter[str] | None:
+    """Return the tokens a `step_finish` event reports by kind, such as `input` or `cache.read`, or None otherwise."""
     try:
         event = _EVENT.validate_json(line)
         if event.get('type') != 'step_finish':
@@ -162,10 +163,11 @@ def step_tokens(line: str) -> int | None:
     except ValidationError:
         # A validation error repeats its input, a stream line can hold model text, and job logs are public.
         raise ValueError('OpenCode wrote an invalid stream event') from None
-    total = 0.0
-    for value in tokens.values():
-        total += sum(value.values()) if isinstance(value, dict) else value
-    return int(total)
+    kinds: Counter[str] = Counter()
+    for kind, value in tokens.items():
+        for name, count in value.items() if isinstance(value, dict) else [('', value)]:
+            kinds[f'{kind}.{name}' if name else kind] += int(count)
+    return kinds
 
 
 def logfire_endpoint() -> str:
@@ -296,14 +298,14 @@ def _stream_usage(output: Path) -> tuple[int, int]:
             continue
         if step is not None:
             steps += 1
-            tokens += step
+            tokens += step.total()
     return steps, tokens
 
 
 def _export_run(
     token: str, attempt: Attempt, resource: Mapping[str, str], *, trace_id: str, parent_id: str | None, served: bool
 ) -> None:
-    """Export the `OpenCode run` span of one ended run, with its provider, usage and how it failed, if `token` is set."""
+    """Export the `OpenCode run` span of one ended run, with its model, usage and how it failed, if `token` is set."""
     if not token:
         return
     fields = {
@@ -319,6 +321,7 @@ def _export_run(
     values = {
         **resource,
         'opencode_fallback.provider': attempt.provider.name,
+        'opencode_fallback.model': attempt.provider.model,
         **{f'opencode_fallback.{key}': value for key, value in fields.items() if value is not None},
     }
     span = otlp_span(
