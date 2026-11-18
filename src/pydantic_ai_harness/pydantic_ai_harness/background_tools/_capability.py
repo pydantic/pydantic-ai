@@ -81,9 +81,9 @@ def _instructions(ctx: RunContext[Any]) -> str | None:
 def _position_in_response(ctx: RunContext[Any], call: ToolCallPart) -> int:
     """The call's position among the tool calls of the response being executed, the last one in the history."""
     response = next((message for message in reversed(ctx.messages) if isinstance(message, ModelResponse)), None)
-    made = [made.tool_call_id for made in response.tool_calls] if response else []
+    call_ids = [part.tool_call_id for part in response.tool_calls] if response else []
     # A call the model didn't make, such as one a capability builds and runs itself, sorts after the step's own.
-    return made.index(call.tool_call_id) if call.tool_call_id in made else len(made)
+    return call_ids.index(call.tool_call_id) if call.tool_call_id in call_ids else len(call_ids)
 
 
 def _dispatched_by_tool(ctx: RunContext[Any]) -> bool:
