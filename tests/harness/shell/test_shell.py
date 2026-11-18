@@ -1146,6 +1146,22 @@ class TestProcessGroupKill:
         result = await ts.run_command(_ctx(shell_dir), 'echo before_timeout && sleep 100')
         assert 'timed out' in result
 
+    async def test_persist_cwd_timeout_keeps_the_saved_directory_and_no_staged_file(self, shell_dir: Path) -> None:
+        """A command killed after staging its directory, here in a slow `EXIT` trap, leaves the saved one as it was."""
+        ts = ShellToolset(
+            allowed_commands=[],
+            denied_commands=[],
+            denied_operators=[],
+            default_timeout=0.5,
+            max_output_chars=50_000,
+            persist_cwd=True,
+            allow_interactive=False,
+        )
+        await ts.run_command(_ctx(shell_dir), 'cd subdir')
+        assert 'timed out' in await ts.run_command(_ctx(shell_dir), "trap 'sleep 100' EXIT; cd ..")
+        assert await ts.run_command(_ctx(shell_dir), 'pwd') == f'[stdout]\n{shell_dir / "subdir"}\n'
+        assert len(list((shell_dir / '.pydantic-ai-harness' / 'shell' / 'run-state').iterdir())) == 1
+
     async def test_start_new_session_used(self, shell_dir: Path) -> None:
         """Verify the child is in a different process group from the parent."""
         ts = ShellToolset(

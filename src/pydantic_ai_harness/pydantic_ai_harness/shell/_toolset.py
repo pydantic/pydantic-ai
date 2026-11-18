@@ -26,7 +26,7 @@ from pydantic_ai.workspaces import Workspace, WorkspaceError, WorkspaceTimeoutEr
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import metadata_dir, require_workspace, supports_commands
-from pydantic_ai_harness.shell._jobs import Job
+from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, Job
 from pydantic_ai_harness.shell._limits import (
     file_limit_status,
     limited_script,
@@ -50,6 +50,61 @@ _OUTPUT_BYTES_PER_CHAR = 4
 
 
 _COMMAND_ID = re.compile(r'[0-9a-f]{32}')
+
+# The `persist_cwd` wrapper around a `run_command` command. `_command_script` sets `__harness_state` (the saved
+# directory's file), `__harness_staged` (this call's new directory, before it replaces the saved one),
+# `__harness_wd` (the working directory), `__harness_marker` and `__harness_lost` first.
+# `command -p` finds the tools whatever `PATH` the command sets; `$(...; printf x)` keeps a path's trailing newlines.
+# The start is one line, so the shell numbers the command's lines as before.
+_PERSIST_CWD_START = ' '.join(
+    (
+        # `__harness_put ln` or `__harness_put mv -f` saves `$__harness_cwd` through a temp file. `ln` never
+        # replaces a file a parallel call saved first.
+        '__harness_put() { { command -p mkdir -p -- "${__harness_state%/*}" &&',
+        'printf %s "$__harness_cwd" > "$__harness_state.$$" &&',
+        'command -p "$@" -- "$__harness_state.$$" "$__harness_state"; } 2>/dev/null;',
+        '__harness_ok=$?; command -p rm -f -- "$__harness_state.$$" 2>/dev/null; return $__harness_ok; };',
+        # A saved directory that is gone, or a state entry that isn't a file holding an absolute path, is removed
+        # and reported as `removed` instead of running the command.
+        'if test -e "$__harness_state"; then',
+        '__harness_cwd=$(test -f "$__harness_state" && command -p cat -- "$__harness_state" 2>/dev/null; printf x);',
+        '__harness_cwd=${__harness_cwd%x};',
+        'case $__harness_cwd in /*) test -d "$__harness_cwd" ;; *) false ;; esac ||',
+        '{ command -p rm -f -- "$__harness_state"; printf %s "${__harness_marker}removed"; exit 1; };',
+        # No saved directory yet: save the working directory. If this toolset saved one before, the file was
+        # lost; that is reported only when saving works, so a workspace that can't save runs on.
+        'else __harness_cwd=$__harness_wd;',
+        '__harness_put ln && $__harness_lost && { printf %s "${__harness_marker}lost"; exit 1; };',
+        'fi; cd "$__harness_cwd" || exit;',
+        # The command runs in a subshell, so an `EXIT` trap it sets runs before the outer shell reads its status.
+        # Its stderr moves to fd 3, so the shell's own report of a subshell killed by a signal can be dropped.
+        'exec 3>&2; { ( exec 2>&3 3>&-\n',
+    )
+)
+_PERSIST_CWD_SAVE = '\n'.join(
+    (
+        '',
+        '__harness_ec=$?',
+        # Still in the subshell: stage the final directory, recreating the state folder if the command removed it.
+        # A staged file whose write failed is removed; the `||` also keeps a `set -e` command from failing here.
+        '__harness_cwd=$(pwd 2>/dev/null; printf x); __harness_cwd=${__harness_cwd%?x}',
+        'case $__harness_cwd in /*) test -d "$__harness_cwd" &&',
+        '{ { test -d "${__harness_state%/*}" || command -p mkdir -p -- "${__harness_state%/*}"; } &&',
+        'printf %s "$__harness_cwd" > "$__harness_staged"; } 2>/dev/null ||',
+        'command -p rm -f -- "$__harness_staged" 2>/dev/null ;; esac',
+        'exit $__harness_ec',
+        '); } 2>/dev/null',
+        # Back in the outer shell: save the staged directory only on a final status of `0`, and only if it is
+        # still a directory after any `EXIT` trap ran. The last call to finish wins.
+        '__harness_ec=$?; exec 3>&-',
+        'if [ "$__harness_ec" -eq 0 ] && test -f "$__harness_staged"; then',
+        '__harness_cwd=$(command -p cat -- "$__harness_staged" 2>/dev/null; printf x); __harness_cwd=${__harness_cwd%x}',
+        'test -d "$__harness_cwd" && command -p mv -f -- "$__harness_staged" "$__harness_state" 2>/dev/null',
+        'fi',
+        'command -p rm -f -- "$__harness_staged" 2>/dev/null',
+        'exit $__harness_ec',
+    )
+)
 """A background command's ID: the name of its job directory."""
 
 _POSIX_JOB_HINT = '(e.g.\n`tail` in a later shell call) and stop the process with `kill` and the\nreturned PID.'
@@ -276,6 +331,9 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         run_key = hashlib.sha256(self._run_key(ctx).encode('utf-8')).hexdigest()
         return ctx.workspace.paths.join(await self._jobs_base(ctx), 'run-state', run_key)
 
+    async def _staged_cwd_path(self, ctx: RunContext[AgentDepsT], marker: str) -> str:
+        return f'{await self._cwd_state_path(ctx)}.{marker}'
+
     async def clear_run_cwd(self, ctx: RunContext[AgentDepsT]) -> None:
         """Remove the run's saved directory once its agent run ends."""
         self._saved_cwd_run = None
@@ -361,38 +419,12 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             return lambda command: f'cd {working_dir} || exit\n{limited_script(command, self._max_file_bytes)}'
         state = shlex.quote(await self._cwd_state_path(ctx))
         lost = 'true' if self._saved_cwd_run == self._run_key(ctx) else 'false'
-        # One line, so the shell numbers the command's lines as before. `$(...)` drops a path's trailing
-        # newlines; the `x` sentinel keeps them. `command -p` finds the tools whatever the command's `PATH` is.
-        # A run's first command saves the working directory with `ln`, which never replaces a parallel save.
-        # A lost state file is reported only when that save works, so a workspace that can't save runs on.
         start = (
-            f'__harness_state={state}; '
-            '__harness_put() { { command -p mkdir -p -- "${__harness_state%/*}" && '
-            'printf %s "$__harness_cwd" > "$__harness_state.$$" && '
-            'command -p "$@" -- "$__harness_state.$$" "$__harness_state"; } 2>/dev/null; '
-            '__harness_ok=$?; command -p rm -f -- "$__harness_state.$$" 2>/dev/null; return $__harness_ok; }; '
-            'if test -e "$__harness_state"; then '
-            '__harness_cwd=$(test -f "$__harness_state" && command -p cat -- "$__harness_state" 2>/dev/null; printf x); '
-            '__harness_cwd=${__harness_cwd%x}; '
-            'case $__harness_cwd in /*) test -d "$__harness_cwd" ;; *) false ;; esac || '
-            f'{{ command -p rm -f -- "$__harness_state"; printf %s {marker}removed; exit 1; }}; '
-            f'else __harness_cwd={working_dir}; __harness_put ln && {lost} && {{ printf %s {marker}lost; exit 1; }}; '
-            'fi; cd "$__harness_cwd" || exit; exec 3>&2; { ( exec 2>&3 3>&-\n'
+            f'__harness_state={state} __harness_staged={shlex.quote(await self._staged_cwd_path(ctx, marker))} '
+            f'__harness_wd={working_dir} __harness_marker={marker} __harness_lost={lost}; '
+            f'{_PERSIST_CWD_START}'
         )
-        # The shell's own report of a subshell killed by a signal goes to /dev/null; the command keeps stderr.
-        # The command runs in a subshell, so an `EXIT` trap it sets has run before the outer shell reads its
-        # final status. The subshell leaves its directory in a file that the outer shell saves only on exit `0`,
-        # and only when that file was written in full, so a failed write never replaces the saved directory.
-        save = (
-            '\n__harness_ec=$?; __harness_cwd=$(pwd 2>/dev/null; printf x); __harness_cwd=${__harness_cwd%?x}; '
-            'case $__harness_cwd in /*) test -d "$__harness_cwd" && '
-            '{ { test -d "${__harness_state%/*}" || command -p mkdir -p -- "${__harness_state%/*}"; } && '
-            'printf %s "$__harness_cwd" > "$__harness_state.$$.new"; } 2>/dev/null ;; esac; exit $__harness_ec\n'
-            '); } 2>/dev/null; __harness_ec=$?; exec 3>&-; [ "$__harness_ec" -eq 0 ] && test -s "$__harness_state.$$.new" && '
-            'command -p mv -f -- "$__harness_state.$$.new" "$__harness_state" 2>/dev/null; '
-            'command -p rm -f -- "$__harness_state.$$.new" 2>/dev/null; exit $__harness_ec'
-        )
-        return lambda command: f'{start}{command}{save}'
+        return lambda command: f'{start}{command}{_PERSIST_CWD_SAVE}'
 
     @recoverable
     async def run_command(
@@ -421,6 +453,13 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 timeout=timeout,
             )
         except WorkspaceTimeoutError as exc:
+            if self._persist_cwd:
+                # The kill can land after the command staged its directory and before the wrapper removed it.
+                with anyio.move_on_after(CONTROL_TIMEOUT, shield=True):
+                    try:
+                        await ctx.workspace.remove(await self._staged_cwd_path(ctx, marker))
+                    except FileNotFoundError:
+                        pass
             return _labelled(exc.stdout, exc.stderr, empty=None, trailer=f'[Command timed out after {timeout}s]')
 
         exit_code = result.exit_code
