@@ -2277,7 +2277,7 @@ def test_operation_schema_reads_no_attribute_docstrings(monkeypatch: pytest.Monk
     assert read_classes == []
 
     def take_note(note: _DocumentedNote) -> str:
-        return note.text  # pragma: no cover
+        raise NotImplementedError
 
     tool = Tool(take_note)
     assert read_classes == [_DocumentedNote]
