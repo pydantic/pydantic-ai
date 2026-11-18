@@ -280,7 +280,7 @@ A new sandbox runs E2B's `desktop` template: Ubuntu with XFCE, a terminal and Go
 
 XFCE takes `printscreen` (it opens its screenshot tool) and the media and volume keys itself, so the focused window never gets them.
 
-A custom `template` needs Xvfb, `xdotool`, `xwininfo` (`x11-utils` on Debian/Ubuntu), `scrot` and `setsid`, which [the first use installs](https://pydantic.dev/docs/ai/harness/computer-use/#what-the-display-needs) if it can, plus `startxfce4` for the XFCE desktop, which it doesn't.
+A custom `template` needs Xvfb, `xdotool`, `xwininfo` (`x11-utils` on Debian/Ubuntu), `scrot` and `setsid`, which [the first use installs](../computer_use/#what-the-display-needs) if it can, plus `startxfce4` for the XFCE desktop, which it doesn't.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
