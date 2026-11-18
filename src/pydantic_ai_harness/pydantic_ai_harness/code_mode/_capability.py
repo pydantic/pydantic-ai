@@ -277,15 +277,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     Earlier releases defaulted to `False`.
     """
 
-    speculation_stats: SpeculationStats = field(default_factory=SpeculationStats, init=False, repr=False)
+    speculation_stats: SpeculationStats = field(default_factory=SpeculationStats, init=False, repr=False, compare=False)
     """Aggregate launch/adopt/evict counters across this instance's runs, when `speculate` is set."""
 
     _durable_operations_need_id: ClassVar[bool] = False
     """A `CodeMode` given `id=None` binds no `monty_turn` operation and runs every Monty turn in the workflow."""
 
-    _speculation: SpeculationCoordinator[AgentDepsT] | None = field(default=None, init=False, repr=False)
+    _speculation: SpeculationCoordinator[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
 
-    _in_flight_announcements: set[str] = field(default_factory=set[str], init=False, repr=False)
+    _in_flight_announcements: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:

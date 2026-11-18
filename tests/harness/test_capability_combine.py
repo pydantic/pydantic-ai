@@ -59,6 +59,7 @@ from pydantic_ai_harness import (
     Advisor,
     BackgroundTools,
     BenchmarkInstructions,
+    CodeMode,
     Coder,
     CompactOnRequest,
     Planning,
@@ -787,6 +788,17 @@ def test_sub_agents_compose_the_roster_and_nothing_else(
 
     with pytest.raises(UserError, match=f'disagree on {field_name!r}'):
         SubAgents.combine([first, second])
+
+
+def test_code_mode_merges_after_a_run_changed_its_stats() -> None:
+    """Two identical `CodeMode` still merge once one has been used: its counters are state, not configuration.
+
+    Not a VCR test: `combine` makes no request.
+    """
+    first, second = CodeMode[Any](), CodeMode[Any]()
+    first.speculation_stats.launched += 1
+
+    assert CodeMode.combine([first, second]) is first
 
 
 def test_system_reminders_keep_two_llm_reminders_whose_models_differ_only_in_settings() -> None:
