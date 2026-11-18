@@ -93,7 +93,10 @@ async def test_destroy_by_ref_does_not_start_sandbox(
     client: daytona.AsyncDaytona, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Validates the fake-encoded assumptions that SDK get + delete does not resume a stopped sandbox,
-    and that a sandbox being deleted reports the `destroying` state, so destroying it again returns quietly."""
+    and that a sandbox being deleted reports the `destroying` state, so destroying it again returns quietly.
+
+    `delete()` does not wait, so Daytona may already have dropped the sandbox's record, which the
+    harness also treats as deleted."""
 
     async def refuse(*args: object, **kwargs: object) -> None:
         raise AssertionError('destroy started the sandbox')
@@ -103,10 +106,11 @@ async def test_destroy_by_ref_does_not_start_sandbox(
         await (await client.get(backend.ref.id)).stop()
         monkeypatch.setattr(daytona.AsyncSandbox, 'start', refuse)
         await DaytonaSandbox(client=client).destroy(backend.ref)
-        assert (await client.get(backend.ref.id)).state in (
-            daytona.SandboxState.DESTROYING,
-            daytona.SandboxState.DESTROYED,
-        )
+        try:
+            state = (await client.get(backend.ref.id)).state
+        except daytona.DaytonaNotFoundError:
+            state = None
+        assert state in (None, daytona.SandboxState.DESTROYING, daytona.SandboxState.DESTROYED)
         await DaytonaSandbox(client=client).destroy(backend.ref)
 
 

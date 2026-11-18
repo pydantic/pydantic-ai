@@ -129,6 +129,7 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.otari import OtariProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
     from pydantic_ai.providers.stav import StavProvider
@@ -151,6 +152,7 @@ else:
         from pydantic_ai.providers.ollama import OllamaProvider
         from pydantic_ai.providers.openai import OpenAIProvider
         from pydantic_ai.providers.openrouter import OpenRouterProvider
+        from pydantic_ai.providers.otari import OtariProvider
         from pydantic_ai.providers.ovhcloud import OVHcloudProvider
         from pydantic_ai.providers.sambanova import SambaNovaProvider
         from pydantic_ai.providers.stav import StavProvider
@@ -161,7 +163,7 @@ else:
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None
         CrusoeProvider = FireworksProvider = GitHubProvider = HerokuProvider = None
         MetaProvider = MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
-        OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = StavProvider = None
+        OpenRouterProvider = OtariProvider = OVHcloudProvider = SambaNovaProvider = StavProvider = None
         TogetherProvider = VercelProvider = VLLMProvider = None
 
     try:
@@ -6388,6 +6390,7 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
             ]
         )
@@ -10027,6 +10030,7 @@ async def test_azure_provider_lifecycle_closes_client():
             lambda: OllamaProvider(base_url='http://localhost:11434/v1'), marks=[requires_openai], id='ollama'
         ),
         pytest.param(lambda: OpenRouterProvider(api_key='t'), marks=[requires_openai], id='openrouter'),
+        pytest.param(lambda: OtariProvider(api_key='t'), marks=[requires_openai], id='otari'),
         pytest.param(lambda: OVHcloudProvider(api_key='t'), marks=[requires_openai], id='ovhcloud'),
         pytest.param(lambda: SambaNovaProvider(api_key='t'), marks=[requires_openai], id='sambanova'),
         pytest.param(lambda: StavProvider(api_key='t'), marks=[requires_openai], id='stav'),
@@ -11927,6 +11931,7 @@ async def test_hitl_tool_approval(serialize_history: bool):
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
         ]
     )
@@ -11997,6 +12002,7 @@ async def test_hitl_tool_approval(serialize_history: bool):
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
             ModelRequest(
                 parts=[

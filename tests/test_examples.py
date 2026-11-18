@@ -134,10 +134,13 @@ RUNNABLE_HARNESS_PAGES = frozenset(
         'artifact-scanning.md',
         'aws-lambda.md',
         'azure-durable-task.md',
+        'deny-unanswered.md',
         'detect-loops.md',
         'memory.md',
         'permissions.md',
+        'report-remaining-budget.md',
         'tool-budgets.md',
+        'wrap-up-at-limits.md',
     }
 )
 """`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
@@ -650,6 +653,7 @@ def test_docs_examples(
     env.set('MOONSHOTAI_API_KEY', 'testing')
     env.set('META_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')
+    env.set('OTARI_API_KEY', 'testing')
     env.set('OVHCLOUD_API_KEY', 'testing')
     env.set('ALIBABA_API_KEY', 'testing')
     env.set('SAMBANOVA_API_KEY', 'testing')
