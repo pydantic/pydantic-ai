@@ -20,8 +20,7 @@ from hypothesis import HealthCheck, given, settings, strategies as st
 from inline_snapshot import snapshot
 from pydantic import TypeAdapter, ValidationError
 
-from pydantic_ai import Agent, RunContext, ToolCallPart
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai import Agent, ToolCallPart
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     ComputerCallPart,
@@ -356,31 +355,77 @@ async def test_the_native_tool_is_sent_and_its_call_is_answered_with_a_screensho
     assert second['input'][-1] is output
 
 
-async def test_a_call_a_hook_changed_goes_back_as_a_function_call(allow_model_requests: None) -> None:
-    """Sent back as the `computer_call` GPT made, the call would say its click ran, when the screenshot ran instead."""
-    hooks = Hooks[object]()
+_CLICK: dict[str, Any] = {'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}
 
-    @hooks.on.after_model_request
-    async def look_instead(
-        ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
-    ) -> ModelResponse:
-        for part in response.parts:
-            if isinstance(part, ComputerCallPart):
-                part.args = {'actions': [{'type': 'screenshot'}]}
-        return response
 
-    client = MockOpenAIResponses.create_mock(
-        [_computer_call({'type': 'click', 'x': 1, 'y': 2, 'button': 'left'}), _done()]
+@pytest.mark.parametrize('state', ['none', 'previous-response', 'conversation'])
+@pytest.mark.parametrize('change', ['actions', 'name', 'native-off'])
+async def test_a_call_changed_since_gpt_made_it_is_never_replayed_as_made(
+    allow_model_requests: None, state: str, change: str
+) -> None:
+    """A hook changed the call's actions or renamed it, or the request dropped the native tool, after GPT made it.
+
+    Sent again, the call goes as what ran. Held by the server, it is answered by its ID with a note saying what ran,
+    while the request sends the native tool; without it the whole history goes, which a conversation can't take.
+    """
+    computer_call: dict[str, Any] = {
+        'type': 'computer_call',
+        'id': 'cu_1',
+        'call_id': 'call_1',
+        'status': 'completed',
+        'actions': [_CLICK],
+    }
+    args: dict[str, Any] = (
+        {'actions': [{'type': 'screenshot'}]} if change == 'actions' else {'actions': [{**_CLICK, 'modifiers': []}]}
     )
+    name = 'preview_computer' if change == 'name' else 'computer'
+    call = ToolCallPart(
+        name,
+        args,
+        tool_call_id='call_1',
+        tool_kind=COMPUTER_KIND.id,
+        provider_name='openai',
+        provider_details={'computer_call': computer_call},
+    )
+    held = ModelResponse(
+        parts=[call],
+        provider_name='openai',
+        provider_response_id='resp_1',
+        provider_details={'conversation_id': 'conv_1'},
+    )
+    kind = COMPUTER_KIND.id if name == 'computer' else None
+    result = ToolReturnPart(
+        name, ['Ran 1 action.', _SCREEN], tool_call_id='call_1', metadata={'performed': 1}, tool_kind=kind
+    )
+    history: list[ModelMessage] = [ModelRequest.user_text_prompt('Click.'), held, ModelRequest(parts=[result])]
+    settings = {
+        'none': OpenAIResponsesModelSettings(),
+        'previous-response': OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+        'conversation': OpenAIResponsesModelSettings(openai_conversation_id='conv_1'),
+    }[state]
+    client = MockOpenAIResponses.create_mock(_done())
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    await Agent(model, capabilities=[FakeComputer(), InMemoryProvider().capability(), hooks]).run('Click.')
-
-    _, second = get_mock_responses_kwargs(client)
-    sent = [(item['type'], item.get('arguments')) for item in second['input'] if item.get('call_id') == 'call_1']
-    assert sent == [
-        ('function_call', '{"actions":[{"type":"screenshot"}]}'),
-        ('function_call_output', None),
+    tools = [
+        ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id),
+        ToolDefinition(name='preview_computer', parameters_json_schema={'type': 'object'}),
     ]
+    params = ModelRequestParameters(
+        function_tools=tools, native_tools=[] if change == 'native-off' else [COMPUTER_TOOL], allow_text_output=True
+    )
+    if state == 'conversation' and change == 'native-off':
+        with pytest.raises(UserError, match='Keep the native tool until the call is answered'):
+            await model.request(with_history_digests(history), settings, params)
+        return
+    await model.request(with_history_digests(history), settings, params)
+
+    (request,) = get_mock_responses_kwargs(client)
+    sent = [(item['type'], item.get('name')) for item in request['input'] if item.get('call_id') == 'call_1']
+    notes = json.dumps([item for item in request['input'] if item.get('role') == 'user'])
+    if state == 'none' or change == 'native-off':
+        assert sent == [('function_call', name), ('function_call_output', None)]
+    else:
+        assert sent == [('computer_call_output', None)]
+        assert json.dumps(f'The call ran as {name} with the arguments {call.args_as_json_str()}.')[1:-1] in notes
 
 
 async def test_a_refused_action_reaches_gpt_beside_the_screenshot(allow_model_requests: None) -> None:
@@ -613,39 +658,84 @@ async def test_an_unfinished_call_runs_nothing(allow_model_requests: None) -> No
     assert _is_a_valid_png(output['output']['image_url'])
 
 
-@pytest.mark.parametrize('streamed', [False, True], ids=['response', 'stream'])
-async def test_a_finished_call_in_a_filtered_response_runs_nothing(allow_model_requests: None, streamed: bool) -> None:
-    """OpenAI says to stop when a response is incomplete, even when the call itself finished.
+@pytest.mark.parametrize('native', [True, False], ids=['native', 'function'])
+@pytest.mark.parametrize(
+    'ending, streamed',
+    [('incomplete', False), ('incomplete', True), ('refused', True)],
+    ids=['incomplete-response', 'incomplete-stream', 'refused-stream'],
+)
+async def test_a_finished_call_in_a_response_that_did_not_complete_runs_nothing(
+    allow_model_requests: None, native: bool, ending: str, streamed: bool
+) -> None:
+    """OpenAI says to stop when a response is incomplete, failed or refused, even when the computer call finished.
 
-    The call's arguments don't parse, so, as `test_an_unfinished_call_runs_nothing` shows, none of it runs.
+    The call's arguments don't parse, so, as `test_an_unfinished_call_runs_nothing` shows, none of it runs. A refused
+    response that isn't streamed has no parts at all, as for every other call.
     """
-    response = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
-    incomplete = response.model_copy(
+    item: resp.ResponseOutputItem = (
+        _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}).output[0]
+        if native
+        else resp.ResponseFunctionToolCall(
+            id='fc_1',
+            call_id='call_1',
+            name='computer',
+            arguments='{"actions": [{"type": "left_click", "position": [5, 6]}]}',
+            type='function_call',
+            status='completed',
+        )
+    )
+    refusal = resp.ResponseOutputMessage.model_validate(
+        {
+            'id': 'msg_1',
+            'type': 'message',
+            'role': 'assistant',
+            'status': 'completed',
+            'content': [{'type': 'refusal', 'refusal': 'No.'}],
+        }
+    )
+    final = response_message([item]).model_copy(
         update={'status': 'incomplete', 'incomplete_details': resp.response.IncompleteDetails(reason='content_filter')}
+        if ending == 'incomplete'
+        else {'output': [item, refusal]}
     )
     stream: list[resp.ResponseStreamEvent] = [
         resp.ResponseCreatedEvent(response=response_message([]), type='response.created', sequence_number=0),
         resp.ResponseOutputItemDoneEvent(
-            item=response.output[0], output_index=0, type='response.output_item.done', sequence_number=1
+            item=item, output_index=0, type='response.output_item.done', sequence_number=1
         ),
-        resp.ResponseIncompleteEvent(response=incomplete, type='response.incomplete', sequence_number=2),
     ]
-    client = MockOpenAIResponses.create_mock_stream(stream) if streamed else MockOpenAIResponses.create_mock(incomplete)
+    if ending == 'incomplete':
+        stream.append(resp.ResponseIncompleteEvent(response=final, type='response.incomplete', sequence_number=2))
+    else:
+        stream += [
+            resp.ResponseRefusalDoneEvent(
+                item_id='msg_1',
+                output_index=1,
+                content_index=0,
+                refusal='No.',
+                type='response.refusal.done',
+                sequence_number=2,
+            ),
+            resp.ResponseCompletedEvent(response=final, type='response.completed', sequence_number=3),
+        ]
+    client = MockOpenAIResponses.create_mock_stream(stream) if streamed else MockOpenAIResponses.create_mock(final)
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
     computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Go.')]
-    params = ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True)
+    params = ModelRequestParameters(
+        function_tools=[computer], native_tools=[COMPUTER_TOOL] if native else [], allow_text_output=True
+    )
     if streamed:
         async with model.request_stream(messages, None, params) as stream_response:
-            events = [event async for event in stream_response]
+            events = [type(event).__name__ async for event in stream_response]
         stored = stream_response.get()
         # The call was announced at its done event and isn't started a second time.
-        assert [type(event).__name__ for event in events] == ['PartStartEvent', 'PartEndEvent']
+        assert events[:2] == ['PartStartEvent', 'PartEndEvent'] and events.count('PartStartEvent') == 1
     else:
         stored = await model.request(messages, None, params)
 
     (call,) = stored.tool_calls
-    assert isinstance(call, ComputerCallPart) and call.actions is None
+    assert call.args == '{"actions": ['
 
 
 async def test_an_action_with_a_field_that_does_not_map_runs_nothing(allow_model_requests: None) -> None:
@@ -745,11 +835,12 @@ async def test_a_profile_that_turns_it_on_gets_the_native_tool(
     assert request['tools'] == [{'type': 'computer'}]
 
 
-def test_an_azure_client_and_the_gateway_keep_the_function_tool() -> None:
-    """The native computer tool isn't verified on Azure or the gateway, so both opt out."""
+def test_azure_the_gateway_and_openrouter_keep_the_function_tool() -> None:
+    """The native computer tool isn't verified on Azure or the gateway, and OpenRouter answers it with only reasoning."""
     from openai import AsyncAzureOpenAI
 
     from pydantic_ai.providers.gateway import gateway_provider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     client = AsyncAzureOpenAI(api_key='test', azure_endpoint='https://example.openai.azure.com', api_version='v1')
     azure = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
@@ -758,6 +849,8 @@ def test_an_azure_client_and_the_gateway_keep_the_function_tool() -> None:
     )
     assert ComputerTool not in (azure.profile.get('supported_native_tools') or ())
     assert ComputerTool not in (gateway.profile.get('supported_native_tools') or ())
+    openrouter = OpenAIResponsesModel('openai/gpt-5.5', provider=OpenRouterProvider(api_key='test'))
+    assert ComputerTool not in (openrouter.profile.get('supported_native_tools') or ())
 
 
 @pytest.mark.parametrize(

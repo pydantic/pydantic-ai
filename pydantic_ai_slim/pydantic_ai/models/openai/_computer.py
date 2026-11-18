@@ -3,9 +3,11 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Annotated, Any, Literal, assert_never
 
 from openai.types import responses
+from openai.types.responses.response_status import ResponseStatus
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from ..._framing import TOOL_RESULT_TAG, frame
@@ -15,6 +17,7 @@ from ...messages import (
     BinaryImage,
     ModelMessage,
     ModelResponse,
+    ModelResponsePart,
     ToolCallPart,
     ToolReturnPart,
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
@@ -225,13 +228,10 @@ def map_computer_call(
     model_request_parameters: ModelRequestParameters,
     tool_call_id: str,
     provider_name: str,
-    *,
-    response_completed: bool = True,
 ) -> ComputerCallPart | None:
     """A `computer_call` as a call of the `computer` tool, keeping the item to send back as it was.
 
-    `None` when the request has no `computer` tool to run it. In a response that stopped early (incomplete or failed),
-    the call gets arguments that don't parse, even when it finished: OpenAI says to stop there, so none of it runs.
+    `None` when the request has no `computer` tool to run it.
     """
     # A request always has it, but recorded streams are replayed without tools by the stream parity test.
     if not (tool_names := _computer_tool_names(model_request_parameters)):
@@ -241,12 +241,38 @@ def map_computer_call(
     dumped = item.model_dump(mode='json', exclude_none=True, warnings=False)
     return ComputerCallPart(
         tool_name,
-        _call_args(dumped) if response_completed else _UNFINISHED_ARGS,
+        _call_args(dumped),
         tool_call_id=tool_call_id,
         id=item.id,
         provider_name=provider_name,
         provider_details={'computer_call': dumped},
     )
+
+
+def stop_computer_calls_unless_completed(
+    parts: Sequence[ModelResponsePart],
+    model_request_parameters: ModelRequestParameters,
+    *,
+    status: ResponseStatus | None,
+    refused: bool,
+) -> list[ModelResponsePart]:
+    """The parts of a response, with no `computer` call left to run unless the response completed without a refusal.
+
+    OpenAI says to stop when a response is incomplete, failed or refused, even when a call in it finished. A stream
+    knows that only after it announced its calls, so this is decided on the final parts, for both paths and both the
+    native and the function `computer` call: the call keeps its place, with arguments that don't parse, as a cut-off
+    call's. Other function calls are left as they came. A response without a status, as some compatible APIs send,
+    counts as completed.
+    """
+    if status in (None, 'completed') and not refused:
+        return list(parts)
+    tool_names = _computer_tool_names(model_request_parameters)
+    return [
+        replace(part, args=_UNFINISHED_ARGS)
+        if isinstance(part, ToolCallPart) and part.tool_name in tool_names
+        else part
+        for part in parts
+    ]
 
 
 def _call_args(dumped: dict[str, Any]) -> dict[str, Any] | str:
@@ -305,11 +331,13 @@ def _needs_summary(result: ComputerResult | None) -> bool:
 
 
 def map_computer_call_output(
-    part: ToolReturnPart, call_id: str, call: ToolCallPart
+    part: ToolReturnPart, call_id: str, call: ToolCallPart, *, changed: bool
 ) -> list[responses.ResponseInputItemParam]:
     """A `computer` result as a `computer_call_output`, followed by a message when it needs more than an image.
 
-    The API needs a screenshot in every output, so a result without one sends a blank image instead.
+    The API needs a screenshot in every output, so a result without one sends a blank image instead. A `changed` call,
+    one a hook renamed or gave other actions after the API stored it, is answered by its ID all the same, with a note
+    saying what ran: the API's item still says what it made.
     """
     # A failed or denied call is a base part, without a screenshot.
     computer_return = part if isinstance(part, ComputerReturnPart) else None
@@ -331,20 +359,16 @@ def map_computer_call_output(
     # Images before the closing screenshot, such as a zoom, can't go in the output.
     images = [item for item in content if isinstance(item, BinaryImage)]
     extra_images = images[:-1] if image is not None else images
-    scroll_notes = _scroll_notes(call, computer_return.result) if computer_return else []
-    if (
-        computer_return is None
-        or image is None
-        or _needs_summary(computer_return.result)
-        or extra_images
-        or scroll_notes
-    ):
-        items.append(_summary_message(part, content, extra_images, scroll_notes))
+    notes = _scroll_notes(call, computer_return.result) if computer_return else []
+    if changed:
+        notes.append(f'The call ran as {call.tool_name} with the arguments {call.args_as_json_str()}.')
+    if computer_return is None or image is None or _needs_summary(computer_return.result) or extra_images or notes:
+        items.append(_summary_message(part, content, extra_images, notes))
     return items
 
 
 def _summary_message(
-    part: ToolReturnPart, content: Sequence[object], extra_images: list[BinaryImage], scroll_notes: list[str]
+    part: ToolReturnPart, content: Sequence[object], extra_images: list[BinaryImage], notes: list[str]
 ) -> responses.EasyInputMessageParam:
     """The output can only carry an image: say what didn't run, or why the image is blank.
 
@@ -354,8 +378,8 @@ def _summary_message(
     texts = [item for item in content if isinstance(item, str)]
     references = [f'See file {image.identifier}.' for image in extra_images]
     note = (
-        ' '.join([*texts, *scroll_notes, *references])
-        if texts or scroll_notes or references
+        ' '.join([*texts, *notes, *references])
+        if texts or notes or references
         else part.model_response_str(wrap_if_error=False)
     )
     framed = frame(TOOL_RESULT_TAG, note, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
