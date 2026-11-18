@@ -42,6 +42,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    CapabilityEvent,
     EnqueuedMessagesEvent,
     ImageUrl,
     InstructionPart,
@@ -2497,6 +2498,39 @@ async def test_content_recorded_at_a_deferred_pause_reaches_listeners_when_the_h
 
     assert len(enqueue_ids) == 2
     assert listener.seen == enqueue_ids
+
+
+async def test_run_that_ends_normally_leaves_events_emitted_after_its_last_stream_buffered():
+    """Only a deferred-tool pause delivers the events emitted after the run's last node stream closed.
+
+    Delivery there exists for the content recorded at the pause. An event a capability emits once a normal run's
+    final node has finished stays buffered, as it always has, instead of reaching the handler in an extra call.
+    """
+
+    @dataclass(kw_only=True)
+    class Finished(CapabilityEvent, namespace='pending_messages_test'):
+        pass
+
+    @dataclass
+    class EmitAtEnd(AbstractCapability[object]):
+        async def after_node_run(
+            self, ctx: RunContext[object], *, node: AgentNode[object], result: NodeResult[object]
+        ) -> NodeResult[object]:
+            if isinstance(result, End):
+                await ctx.emit(Finished())
+            return result
+
+    agent = Agent(TestModel(), capabilities=[EmitAtEnd()])
+    seen: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        seen.extend([event async for event in events])
+
+    result = await agent.run('Hello', event_stream_handler=handler)
+
+    assert result.output == 'success (no tool calls)'
+    assert seen
+    assert not any(isinstance(event, Finished) for event in seen)
 
 
 async def test_content_recorded_when_run_stream_finds_a_deferred_result_reaches_the_handler():

@@ -559,8 +559,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         # runner state so agent_run.result correctly reflects whether the run is finished.
         if result is not pre_hook_result:
             self._sync_graph_state(result)
-        if isinstance(result, End):
-            await self._deliver_leftover_events(events_handler)
+        await self._deliver_leftover_events(result, events_handler)
 
         _utils.raise_if_cancelling()
         return result
@@ -625,8 +624,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             result = drain_pending_messages_at_end(run_context, result)
             if not self._graph_reflects(result):
                 self._sync_graph_state(result)
-            if isinstance(result, End):
-                await self._deliver_leftover_events(events_handler)
+            await self._deliver_leftover_events(result, events_handler)
             return result
         finally:
             # See _node_error: cached tracebacks must not retain this run or bound callbacks.
@@ -716,16 +714,24 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             # See _node_error: cached tracebacks must not retain this run or bound callbacks.
             del self
 
-    async def _deliver_leftover_events(self, events_handler: EventsHandler | None) -> None:
-        """Deliver the events emitted after the run's last node stream closed, before the run ends.
+    async def _deliver_leftover_events(
+        self,
+        result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]],
+        events_handler: EventsHandler | None,
+    ) -> None:
+        """At a deferred-tool pause, deliver the events emitted after the run's last node stream closed.
 
-        Content recorded at a pause is one: listeners such as a capability's `@on_event` method see it through
-        the capability chain, as they see a node's events, and so does `events_handler`, the run's stream handler.
-        Without either, the events stay buffered, as a node's events do when nothing streams it.
+        The `EnqueuedMessagesEvent` for content recorded at the pause is one: listeners such as a capability's
+        `@on_event` method see it through the capability chain, as they see a node's events, and so does
+        `events_handler`, the run's stream handler. Without either, the events stay buffered, as a node's events do
+        when nothing streams it. A run that ends any other way records nothing after its last stream, so it leaves
+        the buffer as it always has.
 
         Listeners see every event before `events_handler` sees the first: `SubAgents` acknowledges a recorded
         report on its event, so a handler that stops partway must not leave later reports unacknowledged.
         """
+        if not (isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests)):
+            return
         capability = self.ctx.deps.root_capability
         if not self.ctx.state.event_stream_buffer or (
             events_handler is None and not (capability.has_wrap_run_event_stream or capability.has_on_event)

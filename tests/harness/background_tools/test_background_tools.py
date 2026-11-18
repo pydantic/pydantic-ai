@@ -16,7 +16,15 @@ from inline_snapshot import snapshot
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, ToolOutput, UsageLimits
-from pydantic_ai.capabilities import AbstractCapability, AgentNode, Capability, Hooks, NodeResult, SetToolMetadata
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    AgentNode,
+    Capability,
+    Hooks,
+    NodeResult,
+    SetToolMetadata,
+    ValidatedToolArgs,
+)
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -1494,8 +1502,8 @@ The user wants you to delete X.\
         @dataclass
         class GuardOne(AbstractCapability[object]):
             async def before_tool_execute(
-                self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
-            ) -> dict[str, Any]:
+                self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+            ) -> ValidatedToolArgs:
                 if call.tool_name == 'guarded':
                     raise ModelRetry('try again')
                 return args
