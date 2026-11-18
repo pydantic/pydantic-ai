@@ -25,6 +25,13 @@ pip/uv-add "pydantic-ai-slim[mcp]"
     [sampling](#mcp-sampling) and [elicitation](#elicitation); see
     [how the server asks](#how-the-server-asks).
 
+    `MCPToolset` refreshes its cached tools, resources and prompts when the server sends a
+    `list_changed` notification. On that protocol a server can only send one while it handles a
+    request: a FastMCP server does it with `ctx.send_notification(ToolListChangedNotification())`
+    (`ctx.session.send_tool_list_changed()` sends nothing). A change the server makes between
+    requests doesn't reach the toolset, so for such servers set
+    [`cache_tools=False`][pydantic_ai.mcp.MCPToolset.cache_tools].
+
     FastMCP 4 is also built on [`httpx2`](https://httpx2.pydantic.dev/) rather than legacy HTTPX.
     `MCPToolset` hands the [`auth`](#http-authentication) and
     [`http_client`](#custom-tls-ssl-configuration) objects you pass it straight to FastMCP without
@@ -777,8 +784,6 @@ agent.set_mcp_sampling_model()
 ```
 
 `MCPToolset` doesn't accept `sampling_model=` or `elicitation_handler=` together with a client you built, so set the sampling model with `set_mcp_sampling_model()` as above, and pass an elicitation handler to the `Client` itself.
-
-`MCPToolset` refreshes its cached tools, resources and prompts when the server sends a `list_changed` notification. On the 2026-07-28 protocol, a FastMCP server sends one while it handles a request with `ctx.send_notification(ToolListChangedNotification())` (or the resource or prompt equivalent); `ctx.session.send_tool_list_changed()` sends nothing there. A change the server makes outside a request reaches a client only on a `subscriptions/listen` stream, which `MCPToolset` doesn't open.
 
 ## Elicitation
 

@@ -856,6 +856,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     - The server sends a `notifications/tools/list_changed` notification
     - The toolset is fully exited (last `__aexit__` matches the first `__aenter__`)
 
+    On the 2026-07-28 MCP protocol (FastMCP 4's default), a server can only send that notification
+    while it handles a request, so a change it makes between requests doesn't invalidate the cache.
+
     Set to `False` for servers that change tools dynamically without sending notifications, or when
     passing a pre-built FastMCP Client (the cache-invalidation message handler isn't installed in
     that case, so caches are only invalidated by session close).

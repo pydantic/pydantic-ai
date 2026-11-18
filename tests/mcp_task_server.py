@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from fastmcp.server import Context, FastMCP
 
@@ -12,21 +12,16 @@ else:
     except ImportError:  # FastMCP 3 keeps `TaskConfig` in its server package.
         from fastmcp.server.tasks import TaskConfig
 
-# `fastmcp_tasks` is FastMCP 4's tasks extension, which the FastMCP 3 CI job doesn't install, so
-# pyright gets a declaration that allows `None`. It needs a value rather than a bare annotation:
-# this module registers the extension at import, and an annotation alone leaves the name unbound.
-if TYPE_CHECKING:
-    TasksExtension: Any = None
-else:
-    try:
-        from fastmcp_tasks import TasksExtension
-    except ImportError:
-        TasksExtension = None
+# `fastmcp_tasks` is FastMCP 4's tasks extension, which only the `mcp-tasks` extra installs.
+try:
+    import fastmcp_tasks
+except ImportError:
+    fastmcp_tasks = None
 
 # FastMCP 4 moved task execution into the optional `fastmcp-tasks` package, which only the
 # `mcp-tasks` extra installs, and refuses to start a server declaring task tools without it. Tests
 # that run this server skip on such installs; FastMCP 3 serves task tools itself.
-TASK_SERVER_UNAVAILABLE = MCP_SDK_V2 and TasksExtension is None
+TASK_SERVER_UNAVAILABLE = MCP_SDK_V2 and fastmcp_tasks is None
 
 mcp: FastMCP[None] = FastMCP('Pydantic AI MCP Task Server')
 
@@ -43,8 +38,8 @@ async def optional_task_tool(ctx: Context) -> str:
 
 # FastMCP 3 serves task-augmented tools itself (SEP-1686). FastMCP 4 hands them to the tasks
 # extension (SEP-2663) and refuses to start a server that declares them without it registered.
-if TasksExtension is not None:
-    mcp.add_extension(TasksExtension())
+if fastmcp_tasks is not None:
+    mcp.add_extension(fastmcp_tasks.TasksExtension())
 
 
 if __name__ == '__main__':

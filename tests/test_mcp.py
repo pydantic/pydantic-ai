@@ -123,7 +123,7 @@ with try_import() as imports_successful:
     from pydantic_ai.messages import TextContent
     from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
-    from .mcp_task_server import TASK_SERVER_UNAVAILABLE, TaskConfig, TasksExtension
+    from .mcp_task_server import TASK_SERVER_UNAVAILABLE, TaskConfig, fastmcp_tasks
 
 with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -3088,8 +3088,8 @@ class TestMCPToolsetBackgroundTasks:
     async def task_server(self) -> FastMCP[None]:
         server: FastMCP[None] = FastMCP('task_server')
         if MCP_SDK_V2:
-            assert TasksExtension is not None
-            server.add_extension(TasksExtension())
+            assert fastmcp_tasks is not None
+            server.add_extension(fastmcp_tasks.TasksExtension())
 
         @server.tool(task=TaskConfig(mode='required'))
         async def task_required_tool() -> str:
