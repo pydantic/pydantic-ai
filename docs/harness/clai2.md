@@ -90,7 +90,7 @@ Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
 Type `/set model ` and press Tab to pick another provider-qualified model name.
 The choice is saved in SQLite and used for the next prompt without restarting.
 
-From a source checkout, launch with `uv run --project pydantic-ai-pax clai2`.
+From a source checkout, launch with `uv run --package pydantic-ai-pax pax`.
 
 For API-key providers, export the provider's API key before starting, or put it in
 a `.env` in the launch directory. See [Environment variables](#environment-variables)
@@ -196,7 +196,7 @@ must be able to reach that callback on the machine running CLAI.
 Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-clai2/`
 (`credentials-ACCOUNT.enc`), not stored in SQLite or `~/.codex/auth.json`. The key
 that decrypts them is the only entry CLAI keeps in the configured Python `keyring`
-backend (service `pydantic-ai-pax`, account `encryption-key`). CLAI reads that entry
+backend (service `pydantic-clai2`, account `encryption-key`). CLAI reads that entry
 at most once per session, so macOS asks for keychain access at most once, instead of
 once per saved credential. Logins that older versions saved as keyring entries are
 moved into encrypted files the first time they are read. Choose an OS-backed credential store: CLAI
@@ -225,7 +225,7 @@ an awaitable string.
 From a source checkout:
 
 ```bash
-uv run --project pydantic-ai-pax clai2
+uv run --package pydantic-ai-pax pax
 ```
 
 Run `/login github-copilot`. Login adds every model your account's catalog lists
@@ -387,7 +387,7 @@ pip/uv-add "pydantic-ai-pax[typesafe]"
 From a pydantic-ai checkout, run CLAI with the extra instead:
 
 ```bash
-uv run --package pydantic-ai-pax --extra typesafe clai2
+uv run --package pydantic-ai-pax --extra typesafe pax
 ```
 
 Tab completes setting names, boolean values, and model names from Pydantic AI's

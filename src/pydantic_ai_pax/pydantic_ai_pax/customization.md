@@ -239,7 +239,7 @@ settings with:
 /plugins add observability pydantic_ai_pax.builtin_plugins.logfire '{"include_content": true, "include_binary_content": true}'
 ```
 
-Other options are service_name (default pydantic-ai-pax), send_to_logfire
+Other options are service_name (default pydantic-clai2), send_to_logfire
 (default "if-token-present", or false), token (the name of a /keys entry
 holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
 then receives the telemetry), variables_key (the name of a /keys entry holding a

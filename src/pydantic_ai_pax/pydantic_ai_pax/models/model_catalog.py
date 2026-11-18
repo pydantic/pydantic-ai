@@ -69,7 +69,7 @@ def check_installed(name: str) -> None:
         raise ValueError(
             f'Cannot use {name}: the `{provider}` extra is not installed in {where}. '
             f'Install it there with `pip install "pydantic-ai-slim[{provider}]"`, '
-            f'or from a pydantic-ai checkout run `uv run --package pydantic-ai-pax --extra {provider} clai2`.'
+            f'or from a pydantic-ai checkout run `uv run --package pydantic-ai-pax --extra {provider} pax`.'
         ) from exc
 
 

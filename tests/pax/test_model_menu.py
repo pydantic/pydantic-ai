@@ -561,7 +561,7 @@ async def test_select_model_whose_provider_extra_is_installed(tmp_path: Path, mo
             [
                 'Cannot use typesafe:jev-latest: the `typesafe` extra is not installed in the Python CLAI2 runs on',
                 'pip install "pydantic-ai-slim[typesafe]"',
-                'uv run --package pydantic-ai-pax --extra typesafe clai2',
+                'uv run --package pydantic-ai-pax --extra typesafe pax',
             ],
             id='clai2-extra',
         ),

@@ -55,7 +55,7 @@ dependencies = [
     # on start. `fastmcp-slim[client]` does not declare it, so without this the sign-in fails.
     # 15 for `connect(proxy=None)`, which keeps `web.client`'s loopback WebSocket off any configured proxy.
     "websockets>=15.0",
-    # The `web` plugin's server (`/web`, `clai2 --web`). A dependency rather than an extra so that
+    # The `web` plugin's server (`/web`, `pax --web`). A dependency rather than an extra so that
     # `uvx pydantic-ai-pax --web` works as is; uvicorn and starlette already come with `mcp`.
     "fastapi>=0.115.0",
     "uvicorn>=0.38.0",

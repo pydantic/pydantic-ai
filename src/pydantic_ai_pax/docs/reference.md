@@ -170,7 +170,7 @@ Without installing, run `uvx pydantic-ai-pax`; set `UV_COMPILE_BYTECODE=1` so uv
 the bytecode while it builds the environment, instead of CLAI compiling each module the
 first time it imports it. The package also installs a `pydantic-ai-pax` command that is an alias for `pax`.
 
-From a source checkout, launch with `uv run --project pydantic-ai-pax clai2`.
+From a source checkout, launch with `uv run --package pydantic-ai-pax pax`.
 
 For API-key providers, export the provider's API key before starting, or put it in
 a `.env` in the launch directory. See [Environment variables](#environment-variables)
@@ -673,7 +673,7 @@ pip install "pydantic-ai-pax[typesafe]"
 From a pydantic-ai checkout, run CLAI with the extra instead:
 
 ```bash
-uv run --package pydantic-ai-pax --extra typesafe clai2
+uv run --package pydantic-ai-pax --extra typesafe pax
 ```
 
 #### Model settings and custom parameters
@@ -900,7 +900,7 @@ completes the login.
 Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-clai2/`
 (`credentials-ACCOUNT.enc`), not stored in SQLite or `~/.codex/auth.json`. The key
 that decrypts them is the only entry CLAI keeps in the configured Python `keyring`
-backend (service `pydantic-ai-pax`, account `encryption-key`). CLAI reads that entry
+backend (service `pydantic-clai2`, account `encryption-key`). CLAI reads that entry
 at most once per session, so macOS asks for keychain access at most once, instead of
 once per saved credential. Logins that older versions saved as keyring entries are
 moved into encrypted files the first time they are read. Choose an OS-backed credential store: CLAI
@@ -3337,7 +3337,7 @@ which are saved as plaintext.
 its settings menu. Each option below is a row there; each edit saves at once and
 applies from the next run. The last command replaces the built-in configuration
 instead. Its options are
-`service_name` (default `pydantic-ai-pax`), `include_content` (default `false`),
+`service_name` (default `pydantic-clai2`), `include_content` (default `false`),
 `include_binary_content` (default `false`), `httpx` (default `false`), and `send_to_logfire` (either
 `"if-token-present"` or `false`). The plugin explicitly sets the latter, rather
 than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Content flags control
