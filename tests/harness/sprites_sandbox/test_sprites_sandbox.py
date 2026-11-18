@@ -573,6 +573,19 @@ class TestSpritesSandbox:
         assert (await backend.get_sandbox()).name == backend.ref.id
         assert transport.created == [backend.ref.id]
 
+    async def test_stalled_create_sent_again_reports_a_creation_timeout(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error = NetworkError('lost request')
+        with pytest.raises(NetworkError):
+            await backend.get_sandbox()
+        transport.create_error = None
+        monkeypatch.setattr('pydantic_ai_harness.sprites_sandbox._backend._ACQUIRE_TIMEOUT', 0.05)
+        transport.release_create = asyncio.Event()
+        with pytest.raises(TimeoutError, match='Sprite creation did not complete'):
+            await backend.get_sandbox()
+
     async def test_cancelled_create_sent_again_still_records_the_sprite(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()
         transport.create_error = NetworkError('lost request')

@@ -10,6 +10,9 @@ WebSocket transport probe (2026-09-15), and the live service on the dates given 
 * `create_sprite` and `get_sprite` raise `AuthenticationError` (401), `NotFoundError` (404),
   `NetworkError` (transport), and a plain `SpriteError` for any other HTTP failure:
   https://github.com/superfly/sprites-py/blob/v0.7.0/src/sprites/client.py
+* `create_sprite` under a name that exists, or that another create is making at the same time,
+  fails with a plain `SpriteError` whose message has `(status 409)` and makes no second Sprite
+  (observed 2026-11-18). Sending a create lost in transport again under the same name relies on it.
 * Commands run over the documented exec WebSocket through the SDK's `WSCommand`, the SDK's own
   default path. It sends stdin EOF when no stdin is given, reads the exit status from the binary
   EXIT frame or the JSON `exit` message, raises `NetworkError` when the socket closes before either,
@@ -602,7 +605,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             # A timed-out create may have committed; a subsequent call looks it up first.
             self._ref = WorkspaceRef(provider='sprites', id=self._new_sprite_name)
             self._uncertain_create = True
-        action = 'creation' if ref is None else 'connection'
+        # A lost create sent again by `_look_up` is a creation too, though it has a ref.
+        action = 'creation' if self._uncertain_create else 'connection'
         raise TimeoutError(
             f'Sprite {action} did not complete within {_ACQUIRE_TIMEOUT:g}s; '
             'the Sprites control plane may be unreachable.'
