@@ -573,15 +573,36 @@ class TestSpritesSandbox:
         assert (await backend.get_sandbox()).name == backend.ref.id
         assert transport.created == [backend.ref.id]
 
+    async def test_cancelled_create_sent_again_still_records_the_sprite(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error = NetworkError('lost request')
+        with pytest.raises(NetworkError):
+            await backend.get_sandbox()
+        transport.create_error = None
+        transport.release_create = asyncio.Event()
+        task = asyncio.create_task(backend.get_sandbox())
+        await transport.create_started.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        transport.release_create.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert backend.ref is not None
+        assert transport.created == [backend.ref.id]
+        assert (await backend.get_sandbox()).name == backend.ref.id
+
     async def test_create_sent_again_and_refused_otherwise_is_reported(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()
         transport.create_error = NetworkError('lost request')
         with pytest.raises(NetworkError):
             await backend.get_sandbox()
         transport.create_error = refused = SpriteError('Failed create sprite (status 400): unknown runtime')
-        with pytest.raises(WorkspaceError) as caught:
+        with pytest.raises(WorkspaceUnavailableError) as caught:
             await backend.get_sandbox()
+        assert type(caught.value) is WorkspaceUnavailableError
         assert caught.value.__cause__ is refused
+        assert str(caught.value) == f'Could not start Sprites sandbox: {refused}'
 
     async def test_auth_error_reports_safe_reason_without_token(self, transport: SpriteTransport) -> None:
         secret = 'secret-sprite-token-123'

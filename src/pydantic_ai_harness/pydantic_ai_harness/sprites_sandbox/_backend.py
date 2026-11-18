@@ -417,7 +417,12 @@ def _create_refused(error: Exception) -> bool:
 
     A transport failure, a timeout, or a 409 conflict leaves the create possibly committed.
     """
-    return isinstance(error, SpriteError) and not (isinstance(error, NetworkError) or '(status 409)' in str(error))
+    return isinstance(error, SpriteError) and not (isinstance(error, NetworkError) or _conflict(error))
+
+
+def _conflict(error: Exception) -> bool:
+    """Whether Sprites refused a create because a Sprite of that name exists, which sprites-py reports only in the text."""
+    return '(status 409)' in str(error)
 
 
 async def _recover_create(client: AsyncSpritesClient, name: str, error: Exception) -> AsyncSprite:
@@ -560,16 +565,18 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             self._unfetched = True
             return sandbox
 
+        # A create that may not have reached Sprites is still a creation: it may be sent again.
+        sprite_name = None if ref is None or self._uncertain_create else ref.id
         try:
             # Creation runs to completion even if the caller is cancelled, so a Sprite that
             # was created is never left unnamed; attaching creates nothing and stays cancellable.
             return await (
-                self._acquire(client, ref)
-                if ref is not None
-                else run_to_completion(functools.partial(self._acquire, client, ref))
+                run_to_completion(functools.partial(self._acquire, client, ref))
+                if sprite_name is None
+                else self._acquire(client, ref)
             )
         except SpriteError as error:
-            if (mapped := _map_error(error, None if ref is None else ref.id)) is None:
+            if (mapped := _map_error(error, sprite_name)) is None:
                 raise
             if ref is not None:
                 # A lookup `get_sandbox()` made outside an operation also clears what later backends trust.
@@ -590,7 +597,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     try:
                         sandbox = await self._create(client)
                     except SpriteError as resent:
-                        if '(status 409)' not in str(resent):
+                        if not _conflict(resent):
                             raise
                         # The first create committed, but lookups do not see the Sprite yet.
                         raise NetworkError(f'Sprite {ref.id!r} may still be becoming visible') from error

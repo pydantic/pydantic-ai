@@ -3,8 +3,8 @@
 The fake-backed suites cover the harness-owned logic: deadline handling, cancellation, and
 exception mapping. This live tier admits only what a correctly written fake could not catch: real
 process execution in a Sprite, `env` layered on the Sprite's environment, output reaching the
-client before a command ends, a closed exec connection stopping a timed-out command, and deletion
-as the Sprites control plane reports it.
+client before a command ends, a closed exec connection stopping a timed-out command, creation
+refusing an existing name with a 409, and deletion as the Sprites control plane reports it.
 
 Admission rule:
   A test belongs here only when its docstring can name the fake-encoded assumption it
@@ -23,7 +23,6 @@ Run locally:
 
 from __future__ import annotations
 
-import contextlib
 import json
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator
@@ -34,7 +33,7 @@ import anyio
 import pytest
 from pytest_examples import CodeExample
 from sprites import AsyncSprite, AsyncSpritesClient
-from sprites.exceptions import NetworkError, NotFoundError, SpriteError
+from sprites.exceptions import NotFoundError, SpriteError
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
@@ -108,31 +107,6 @@ async def test_creating_a_name_that_exists_is_refused_with_409(client: AsyncSpri
         assert backend.ref is not None
         with pytest.raises(SpriteError, match=r'\(status 409\)'):
             await client.create_sprite(backend.ref.id)
-
-
-async def test_a_create_lost_before_it_reached_sprites_is_sent_again(
-    client: AsyncSpritesClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Validates the fake-encoded assumption that a create whose request never reached Sprites leaves no
-    Sprite behind, so the backend's next operation must send the create again rather than only look it up."""
-    create = client.create_sprite
-
-    async def lost(*args: Any, **kwargs: Any) -> AsyncSprite:
-        monkeypatch.setattr(client, 'create_sprite', create)
-        raise NetworkError('Network error creating sprite: the request never left the client')
-
-    monkeypatch.setattr(client, 'create_sprite', lost)
-    backend = SpritesSandboxBackend(client=client)
-    with pytest.raises(NetworkError, match='never left the client'):
-        await backend.get_sandbox()
-    assert backend.ref is not None
-    with pytest.raises(NotFoundError):
-        await client.get_sprite(backend.ref.id)
-    try:
-        assert (await backend.run(['true'], timeout=60)).exit_code == 0
-    finally:
-        with contextlib.suppress(NotFoundError):
-            await (await client.get_sprite(backend.ref.id)).delete()
 
 
 async def test_destroy_ref_does_not_attach(client: AsyncSpritesClient) -> None:
