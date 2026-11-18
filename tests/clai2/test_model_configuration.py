@@ -1,6 +1,7 @@
 """Model-aware choices, native request settings, and custom parameter editing."""
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 
 import httpx2 as httpx
@@ -21,7 +22,7 @@ from pydantic_clai2.ui.menus.custom_params import (
     edit_custom_params,
 )
 from pydantic_clai2.ui.menus.dialogs import run_settings_menu
-from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.field_menu import FieldMenu, is_save_and_close
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command, model_settings_menu
 from tests.clai2.dialog_script import Back, Pick, ScriptedDialogs, Type
 from tests.clai2.menu_script import Script, make_context, pick
@@ -64,12 +65,9 @@ def test_efforts(name: str, included: str, excluded: str) -> None:
     assert included in efforts and excluded not in efforts
 
 
-def test_anthropic_modes_and_effort() -> None:
-    classic = model_options(model='anthropic:claude-sonnet-4-5')
-    assert classic['anthropic_thinking_mode'] == ('enabled', 'disabled')
-    adaptive = model_options(model='anthropic:claude-opus-4-6')
-    assert adaptive['anthropic_thinking_mode'] == ('adaptive', 'disabled')
-    assert 'xhigh' not in adaptive['anthropic_effort']
+def test_anthropic_effort_and_budget() -> None:
+    # The thinking modes per model are in `test_claude_thinking_modes_follow_the_profile`.
+    assert 'xhigh' not in model_options(model='anthropic:claude-opus-4-6')['anthropic_effort']
     assert 'xhigh' in model_options(model='anthropic:claude-opus-4-7')['anthropic_effort']
     assert 'anthropic_thinking_budget' in model_options(model='anthropic:unknown')
     assert 'max' not in model_options(model='anthropic:claude-opus-4-5')['anthropic_effort']
@@ -106,7 +104,7 @@ def test_native_settings_conversion() -> None:
         'openai_text_verbosity': 'low',
     }
     assert model_settings_from_json(openai).to_model_settings() == openai
-    for mode in ('adaptive', 'disabled'):
+    for mode in ('adaptive', 'disabled', 'between_tools'):
         form = model_settings_from_json({'anthropic_thinking_mode': mode, 'anthropic_effort': 'high'})
         assert form.to_model_settings() == {'anthropic_thinking': {'type': mode}, 'anthropic_effort': 'high'}
     for budget in (None, 2048):
@@ -310,12 +308,40 @@ def test_settings_search_does_not_reset_on_lowercase_r(tmp_path: Path, monkeypat
     context, _ = make_context(tmp_path)
     source = ModelSettingsSource(context.store, 'openai:gpt-5.6')
     menu = FieldMenu(source)
-    keys = iter([*'reasoning', 'enter', 'R'])
+    keys = iter(['/', *'reasoning', 'enter', 'enter', 'R'])
     monkeypatch.setattr('pydantic_clai2.ui.menus.field_menu.menu_key', lambda: next(keys))
     widget = menu.build()
     result = widget.run()
     assert result.item is not None and result.item.value == 'openai_reasoning_effort'
     assert widget.run() == menu.reset_marker(None, result.item)
+
+
+def test_space_cycles_model_setting_and_save_close_persists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    context, _ = make_context(tmp_path)
+    model = 'openai:gpt-5.6'
+    source = ModelSettingsSource(context.store, model)
+    menu = FieldMenu(source, searchable=False)
+    row = next(row for row in menu.rows if row.key == 'openai_reasoning_effort')
+    assert len(row.choices) > 2
+    context.store.save_model_settings(model, {row.key: row.choices[0]})
+    initial = menu.rows.index(row)
+
+    def keys() -> Iterator[str]:
+        for expected in (*row.choices[1:], row.choices[0]):
+            yield ' '
+            assert source.current(row) == expected
+            assert context.store.model_settings(model) == {row.key: expected}
+        yield from ['down'] * (len(menu.rows) - initial)
+        yield 'enter'
+
+    key_source = keys()
+    monkeypatch.setattr('pydantic_clai2.ui.menus.field_menu.menu_key', lambda: next(key_source))
+    result = menu.build(initial).run()
+    assert not result.cancelled
+    assert result.item is not None and is_save_and_close(result.item)
+    reopened, _ = make_context(tmp_path)
+    assert reopened.store.model_settings(model) == {row.key: row.choices[0]}
+    assert reopened.model_settings(model) == {**model_defaults(model=model), row.key: row.choices[0]}
 
 
 @pytest.mark.parametrize(('name', 'mode'), [('claude-sonnet-4-5', 'enabled'), ('claude-fable-5-1', 'adaptive')])

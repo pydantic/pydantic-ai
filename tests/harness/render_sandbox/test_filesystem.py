@@ -25,7 +25,10 @@ with try_import() as imports_successful:
 
     from .workspace_helpers import WorkspaceHarness
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='render not installed')
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='render not installed'),
+    pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host'),
+]
 
 
 async def test_native_bytes_do_not_travel_in_commands(workspace_harness: WorkspaceHarness) -> None:

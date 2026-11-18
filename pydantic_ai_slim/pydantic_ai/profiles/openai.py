@@ -1,11 +1,18 @@
 from __future__ import annotations as _annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
-from .._json_schema import JsonSchema, JsonSchemaTransformer, inline_objects, split_definitions
+from .._json_schema import (
+    InlineDefsJsonSchemaTransformer,
+    JsonSchema,
+    JsonSchemaTransformer,
+    inline_objects,
+    resolve_json_pointer,
+    split_definitions,
+)
 from ..exceptions import UserError
 from ..native_tools import (
     CodeExecutionTool,
@@ -126,28 +133,37 @@ _CHAT_LATEST_REASONING = _ReasoningSupport(
 _GPT_5_PRO_EFFORTS: frozenset[OpenAIReasoningEffort] = frozenset(('medium', 'high', 'xhigh'))
 """The efforts GPT-5.2+ -pro models accept (live-verified for gpt-5.2-pro, gpt-5.4-pro and gpt-5.5-pro, 2026-10)."""
 
-_GPT_6_MODEL_PREFIXES = ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra')
+_GPT_6_MODEL_PREFIXES = (
+    'gpt-6-astra',
+    'gpt-6-sol',
+    'gpt-6-luna',
+    'gpt-6.1-sol',
+    'gpt-6.1-terra',
+    'gpt-6.2-sol',
+    'gpt-6.2-astra',
+)
+
+_GPT_6_ALWAYS_ON_REASONING = _ReasoningSupport(
+    enabled_by_default=True,
+    can_be_disabled=False,
+    supports_mode=True,
+    supports_context=True,
+    efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
+)
+"""The GPT-6 models that always reason, at efforts `low` through `max`: they reject `effort='none'` and `'minimal'`."""
 
 _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # GPT-6 Astra reasons by default and does not accept `effort='none'` (its guide migrates
     # `none`/`minimal` users to `low`); it carries over GPT-5.6's `reasoning.mode` and
     # `reasoning.context='all_turns'` per https://developers.openai.com/api/docs/models/gpt-6-astra.
-    'gpt-6-astra': _ReasoningSupport(
-        enabled_by_default=True,
-        can_be_disabled=False,
-        supports_mode=True,
-        supports_context=True,
-        efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
-    ),
+    'gpt-6-astra': _GPT_6_ALWAYS_ON_REASONING,
     # GPT-6.1 Sol follows GPT-6 Astra rather than GPT-6 Sol: it rejects `effort='none'`.
     # https://developers.openai.com/api/docs/models/gpt-6.1-sol
-    'gpt-6.1-sol': _ReasoningSupport(
-        enabled_by_default=True,
-        can_be_disabled=False,
-        supports_mode=True,
-        supports_context=True,
-        efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
-    ),
+    'gpt-6.1-sol': _GPT_6_ALWAYS_ON_REASONING,
+    # GPT-6.2 Sol and Astra follow GPT-6 Astra too (live-verified 2026-11).
+    # https://developers.openai.com/api/docs/guides/latest-model
+    'gpt-6.2-sol': _GPT_6_ALWAYS_ON_REASONING,
+    'gpt-6.2-astra': _GPT_6_ALWAYS_ON_REASONING,
     # GPT-6.1 Terra, GPT-6 Sol and Luna retain GPT-5.6's default medium reasoning and accept `effort='none'`.
     # https://developers.openai.com/api/docs/guides/latest-model
     'gpt-6.1-terra': _ReasoningSupport(
@@ -272,13 +288,15 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """Whether the model includes thinking content in requests. Default: `'auto'`.
 
     This can be:
-    * `'auto'` (default): Automatically detects how to send thinking content. If thinking was received in a custom field
-    (tracked via `ThinkingPart.id` and `ThinkingPart.provider_name`), it's sent back in that same field. Otherwise,
-    it's sent using tags. Only the `reasoning` and `reasoning_content` fields are checked by
-    default when receiving responses. If your provider uses a different field name, you must explicitly set
-    `openai_chat_thinking_field` to that field name. When the request sends exactly one of these fields back, it's
-    also sent empty on tool-calling assistant turns after the last user message that don't already carry it, such as
-    a step served by another model or provider, since DeepSeek-style APIs reject those turns without it.
+    * `'auto'` (default): Automatically detects how to send thinking content. Thinking received from this provider
+    (tracked via `ThinkingPart.provider_name`) is sent back in a field only when its `ThinkingPart.id` is the
+    configured `openai_chat_thinking_field`, or, with none configured, `reasoning` or `reasoning_content`, the fields
+    checked by default when receiving responses. Any other thinking is sent using tags, including thinking received in
+    a field this profile doesn't name, such as history from another model on the same provider. If your provider uses
+    a different field name, you must explicitly set `openai_chat_thinking_field` to that field name. When the request
+    sends exactly one of these fields back, it's also sent empty on tool-calling assistant turns after the last user
+    message that don't already carry it, such as a step served by another model or provider, since DeepSeek-style APIs
+    reject those turns without it.
     * `'tags'`: The thinking content is included in the main `content` field, enclosed within thinking tags as
     specified in `thinking_tags` profile option.
     * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
@@ -409,6 +427,19 @@ class OpenAIModelProfile(ModelProfile, total=False):
     OpenAI's own Chat Completions API rejects `'max'` on every model, so only providers that accept it set this
     (DeepSeek V4, and Kimi K3, K2.6 and K2.7). Explicit `openai_reasoning_effort='max'` settings are still passed through unchanged."""
 
+    openai_chat_function_tools_require_reasoning_off: bool
+    """Whether the Chat Completions API rejects function tools while reasoning is on. Default: `False`.
+
+    When enabled, `OpenAIChatModel` raises a `ModelRequestRejectedError` for a request that sends tools, output tools
+    included, with reasoning on, before anything is sent: the API rejects the combination with a 400 pointing at
+    `/v1/responses` or `reasoning_effort='none'`. `OpenAIProvider` enables it for the GPT-6 families (verified live on
+    gpt-6-luna, gpt-6-sol, gpt-6.1-terra, gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra). `openai_model_profile` leaves it off,
+    because the restriction is unverified on the OpenAI-compatible endpoints that share that profile.
+    `OpenAIProvider(base_url=...)` keeps the flag, as a proxy to OpenAI should; for another server that serves
+    these model names, pass `profile=OpenAIModelProfile(openai_chat_function_tools_require_reasoning_off=False)`.
+    On models that pin `openai_reasoning_efforts` (e.g. gpt-6-astra), `thinking=False` maps to the lowest
+    accepted effort rather than `'none'`, so it is not a way out there."""
+
     openai_chat_thinking_false_body: dict[str, Any]
     """Request body fields that unified `thinking=False` sends on the Chat Completions API, in place of
     `reasoning_effort`. Default: unset.
@@ -457,12 +488,10 @@ class OpenAIModelProfile(ModelProfile, total=False):
     [`NativeOutput`][pydantic_ai.output.NativeOutput] becomes available on the Responses API alone."""
 
     openai_responses_tool_call_ids_are_response_scoped: bool
-    """Whether Responses API tool call IDs are only unique within one response. Default: `False`.
+    """Deprecated: use [`tool_call_ids_are_response_scoped`][pydantic_ai.profiles.ModelProfile.tool_call_ids_are_response_scoped] instead.
 
-    When enabled, response IDs are incorporated into tool call IDs as responses are ingested so
-    normalized message history keeps the history-wide uniqueness required by Pydantic AI. The qualified
-    `response_id:tool_call_id` form is restored to the original provider tool call ID when history is
-    replayed.
+    Translated (with a deprecation warning) whenever profiles are merged; an explicit
+    `tool_call_ids_are_response_scoped` in the same profile wins.
     """
 
     openai_responses_supports_interleaved_function_calls: bool
@@ -663,7 +692,9 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
     # the `NativeOutput` marker, so an error from the API is acceptable.
     profile = OpenAIModelProfile(
-        json_schema_transformer=OpenAIJsonSchemaTransformer,
+        json_schema_transformer=(
+            _GptOssJsonSchemaTransformer if model_name.startswith('gpt-oss') else OpenAIJsonSchemaTransformer
+        ),
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_image_output=supports_image_output,
@@ -689,7 +720,21 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     )
     if reasoning.efforts is not None:
         profile['openai_reasoning_efforts'] = reasoning.efforts
+    if model_name.startswith('gpt-oss'):
+        # Hosts that serve gpt-oss without a mid-conversation system role, such as OpenRouter and Bedrock Converse,
+        # render `<system>` blocks, and gpt-oss keeps to its system prompt more reliably once told what they mean, so
+        # it gets the announcement from the first request (see the field's docstring). Here rather than in
+        # `harmony_model_profile`, which builds on this one, because not every host of gpt-oss uses that.
+        profile['default_framing_announcement'] = 'always'
     return profile
+
+
+def _gpt_oss_schema_profile(model_name: str) -> ModelProfile:  # pyright: ignore[reportUnusedFunction]
+    """The gpt-oss schema fix alone, for providers that serve gpt-oss without `openai_model_profile`.
+
+    Callers only pass gpt-oss model names.
+    """
+    return OpenAIModelProfile(json_schema_transformer=_GptOssJsonSchemaTransformer)
 
 
 def is_openai_live_model(model_name: str) -> bool:
@@ -1023,6 +1068,48 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 )
             elif self.strict is None:  # pragma: no branch
                 self.is_strict_compatible = False
+
+
+class _GptOssInlineDefsJsonSchemaTransformer(InlineDefsJsonSchemaTransformer):
+    """`InlineDefsJsonSchemaTransformer` for the gpt-oss models, which don't see a tool schema's `$defs` on any host.
+
+    A `$ref` the inliner doesn't walk to, such as one under a `type` list like `['object', 'null']`, would be left
+    pointing at a definition it dropped, so such a schema is kept as it was.
+    """
+
+    def walk(self) -> JsonSchema:
+        inlined = super().walk()
+        if any(resolve_json_pointer(inlined, ref) is None for ref in _refs(inlined)):
+            return self.schema
+        return inlined
+
+
+class _GptOssJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
+    """`OpenAIJsonSchemaTransformer` on a schema whose `$defs` are inlined first, for the gpt-oss models.
+
+    gpt-oss doesn't see a tool schema's `$defs`, wherever it's served, so it guesses the shape of every field that
+    refers to one and fails validation. Only recursive definitions, which can't be inlined, are kept under `$defs`.
+    """
+
+    def walk(self) -> JsonSchema:
+        inlined = _GptOssInlineDefsJsonSchemaTransformer(self.schema).walk()
+        transformer = OpenAIJsonSchemaTransformer(inlined, strict=self.strict)
+        result = transformer.walk()
+        self.is_strict_compatible = transformer.is_strict_compatible
+        return result
+
+
+def _refs(node: object) -> Iterator[str]:
+    """Every `$ref` in `node`, at any depth."""
+    if isinstance(node, dict):
+        for key, value in cast(dict[str, object], node).items():
+            if key == '$ref' and isinstance(value, str):
+                yield value
+            else:
+                yield from _refs(value)
+    elif isinstance(node, list):
+        for value in cast(list[object], node):
+            yield from _refs(value)
 
 
 class _OpenAIGuardedJsonSchemaTransformer(OpenAIJsonSchemaTransformer):

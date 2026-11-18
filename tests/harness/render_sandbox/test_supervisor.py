@@ -118,8 +118,10 @@ async def test_supervisor_reports_executable_startup_failure(
 
 async def test_supervisor_output_bound_preserves_captured_prefix(workspace_harness: WorkspaceHarness) -> None:
     backend = workspace_harness.backend()
+    # 1 MiB past the limit is more than a pipe buffer holds, so `head` cannot exit before the supervisor reads past
+    # the limit. The limit then fires while the direct child runs, and the drain grace after its exit never decides.
     with pytest.raises(WorkspaceOutputLimitError) as caught:
-        await backend.run(['sh', '-c', 'head -c 10485761 /dev/zero'])
+        await backend.run(['sh', '-c', f'head -c {11 * 1024 * 1024} /dev/zero'])
     assert (caught.value.limit, caught.value.stdout) == (10 * 1024 * 1024, '\0' * (64 * 1024))
     await workspace_harness.wait_supervisors()
     assert (await backend.run(['printf', 'usable'])).stdout == 'usable'

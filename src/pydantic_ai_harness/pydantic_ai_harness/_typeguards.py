@@ -12,3 +12,11 @@ def is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
 
 def is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
     return isinstance(value, dict)
+
+
+def is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
+def is_object_list_or_tuple(value: object) -> TypeGuard[list[object] | tuple[object, ...]]:
+    return isinstance(value, list | tuple)

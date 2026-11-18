@@ -36,6 +36,7 @@ from urllib.parse import parse_qsl
 import anyio
 import httpx
 from opensandbox.config import ConnectionConfig
+from pydantic import TypeAdapter
 
 API_KEY = 'fake-key'
 DOMAIN = 'opensandbox.invalid'
@@ -63,6 +64,10 @@ def _error(status: int, code: str, message: str) -> httpx.Response:
     return _json(status, {'code': code, 'message': message})
 
 
+_CREDENTIALS = TypeAdapter(list[dict[str, object]])
+"""The credentials the SDK sends to the vault, each with a `name`."""
+
+
 @dataclass
 class FakeSandbox:
     id: str
@@ -72,10 +77,15 @@ class FakeSandbox:
     resource: dict[str, str]
     expires_at: str | None
     network_policy: dict[str, Any] | None = None
+    credential_proxy: dict[str, object] | None = None
     secure_access: bool = False
+    credential_vault: dict[str, object] | None = None
+    """What the egress sidecar's Credential Vault was created with, values included."""
     state: str = 'Running'
     processes: dict[str, asyncio.subprocess.Process] = field(default_factory=lambda: {})
     streams: list[asyncio.Queue[tuple[str, Any]]] = field(default_factory=lambda: [])
+    stream_breaks: int = 0
+    """How often its streams were broken, so a command starting meanwhile can tell."""
 
     def info(self) -> dict[str, Any]:
         info: dict[str, Any] = {
@@ -132,7 +142,8 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
             raise httpx.ConnectError('connection refused')
         if self.refuse is not None:
             return _error(*self.refuse, f'refused: {self.refuse[1]}')
-        if request.url.host != DOMAIN:
+        # Any API address reaches the fake, so tests can set the domain clients see.
+        if request.url.host == f'execd.{DOMAIN}':
             return await self._execd(request)
         if self.api_key is not None and request.headers.get('open-sandbox-api-key') != self.api_key:
             return _error(401, 'INVALID_API_KEY', 'Authentication credentials are invalid.')
@@ -172,6 +183,7 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
             env=body.get('env') or {},
             resource=body.get('resourceLimits') or {},
             network_policy=body.get('networkPolicy'),
+            credential_proxy=body.get('credentialProxy'),
             secure_access=body.get('secureAccess', False),
             expires_at=None if timeout is None else (datetime.now(UTC) + timedelta(seconds=timeout)).isoformat(),
         )
@@ -239,7 +251,9 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
 
     def break_streams(self, sandbox_id: str, sandbox: FakeSandbox | None = None) -> None:
         """Break the sandbox's command streams without stopping its commands, as a network failure does."""
-        for queue in (sandbox or self.sandboxes[sandbox_id]).streams:
+        sandbox = sandbox or self.sandboxes[sandbox_id]
+        sandbox.stream_breaks += 1
+        for queue in sandbox.streams:
             queue.put_nowait(('broken', None))
 
     async def _execd(self, request: httpx.Request) -> httpx.Response:
@@ -257,6 +271,22 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
                 if sandbox.state != 'Running':
                     raise httpx.ConnectError('connection refused')
                 return await self._command(sandbox, json.loads(request.content))
+            case ['credential-vault'] if request.method == 'POST':
+                # The egress sidecar's vault, which answers with sanitized metadata only.
+                vault: dict[str, object] = json.loads(request.content)
+                sandbox.credential_vault = vault
+                credentials = _CREDENTIALS.validate_python(vault['credentials'])
+                return _json(
+                    201,
+                    {
+                        'revision': 1,
+                        'credentials': [
+                            {'name': credential['name'], 'sourceType': 'inline', 'revision': 1}
+                            for credential in credentials
+                        ],
+                        'bindings': [],
+                    },
+                )
             # A request the backend never makes.
             case _:  # pragma: no cover
                 raise AssertionError(f'unexpected execd request {request.url.path}')
@@ -265,6 +295,7 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         cwd = body.get('cwd') or self.image_working_dir
         if not os.path.isdir(cwd):
             return _error(400, 'INVALID_REQUEST_BODY', f'working directory does not exist: {cwd}')
+        stream_breaks = sandbox.stream_breaks
         process = await asyncio.create_subprocess_exec(
             '/bin/bash',
             '-c',
@@ -281,11 +312,12 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         self.processes.append(process)
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         sandbox.streams.append(queue)
-        # The command can run before this registers it, so a kill that saw neither the process nor its stream ends
-        # them here.
+        # The command can run before this registers it, so a kill or a stream break that came meanwhile, and saw
+        # neither the process nor its stream, takes effect here.
         if sandbox.state != 'Running':  # pragma: lax no cover
             with suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
+        if sandbox.stream_breaks != stream_breaks:  # pragma: lax no cover
             queue.put_nowait(('broken', None))
         return httpx.Response(
             200,

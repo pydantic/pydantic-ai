@@ -198,7 +198,7 @@ async def test_clear_resume_and_reload_follow_saved_conversation_ids(recorder: R
         await shell.loader.load_all()
         first_id = shell.session.summary.id
         assert (await shell.run_turn(TurnStart(text='first'), headless=True)).outcome == 'completed'
-        child = shell.fork_session(None, [])
+        child = await shell.fork_session(None, [])
         await child.prompt('fork')
         await shell.session.clear()
         second_id = shell.session.summary.id
@@ -262,6 +262,7 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
         return [(span.attributes or {})['agent_session_id'] for span in opened]
 
     store = SettingsStore(tmp_path / 'config.db')
+    settings = Settings(model=None, session_namer=True)
     plugins = tuple(
         plugin.model_copy(update={'settings': {'ui_events': ui_events}})
         for plugin in DEFAULT_PLUGINS
@@ -273,7 +274,7 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
         assert (
             await headless.run_headless(
                 text='resumed',
-                settings=Settings(model=None),
+                settings=settings,
                 store=store,
                 project=ProjectSettings(),
                 resume=saved.summary.id,
@@ -295,6 +296,7 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
                 plugins=[_Commands(Command(name='probe', description='Probe', handler=probe))],
                 console=Console(file=io.StringIO()),
                 store=store,
+                settings=settings,
                 builtin_plugins=plugins,
                 resume='' if mode == 'browser' else saved.summary.id,
             )
@@ -321,6 +323,7 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
         for span in recorder.spans()
         if span.name == 'invoke_agent session_namer' and span.context is not None
     }
+    assert bool(namer) is (mode == 'browser')
     assert all(
         span.context is not None and span.context.trace_id in {root_context.trace_id, *namer}
         for span in recorder.spans()

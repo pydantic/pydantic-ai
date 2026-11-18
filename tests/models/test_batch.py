@@ -23,6 +23,7 @@ from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
     AgentStreamEvent,
+    Conversation,
     ModelRequest,
     NativeOutput,
     PendingModelResponse,
@@ -813,6 +814,51 @@ async def test_a_failed_submission_reaches_every_request_in_the_batch() -> None:
     results = await asyncio.gather(agent.run('one'), agent.run('two'), return_exceptions=True)
 
     assert [type(result).__name__ for result in results] == ['ModelHTTPError', 'ModelHTTPError']
+    # Each run gets its own error, so the conversation a failed run attaches isn't another run's.
+    first, second = results
+    assert isinstance(first, ModelHTTPError) and isinstance(second, ModelHTTPError)
+    assert first is not second
+    assert (first.status_code, first.body, str(first)) == (second.status_code, second.body, str(second))
+    assert [_prompt_of(error.conversation) for error in (first, second)] == ['one', 'two']
+
+
+async def test_a_failed_submission_whose_error_cant_be_copied_still_reaches_every_request() -> None:
+    class _CodedError(ModelAPIError):
+        def __init__(self, code: int) -> None:
+            super().__init__('test', f'batch creation failed with {code}')
+
+    error = _CodedError(7)
+
+    class FailingBatchModel(TestModel):
+        async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+            raise error
+
+    agent = Agent(FailingBatchModel(), capabilities=[BatchModelRequests(**FAST_POLLING, max_requests=2, max_wait=None)])
+    results = await asyncio.gather(agent.run('one'), agent.run('two'), return_exceptions=True)
+
+    assert results == [error, error]
+
+
+async def test_a_failed_submission_that_isnt_a_run_error_reaches_every_request_as_is() -> None:
+    error = RuntimeError('batch creation failed')
+
+    class FailingBatchModel(TestModel):
+        async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+            raise error
+
+    agent = Agent(FailingBatchModel(), capabilities=[BatchModelRequests(**FAST_POLLING, max_requests=2, max_wait=None)])
+    results = await asyncio.gather(agent.run('one'), agent.run('two'), return_exceptions=True)
+
+    assert results == [error, error]
+
+
+def _prompt_of(conversation: Conversation | None) -> object:
+    assert conversation is not None
+    request = conversation.messages[0]
+    assert isinstance(request, ModelRequest)
+    part = request.parts[0]
+    assert isinstance(part, UserPromptPart)
+    return part.content
 
 
 async def test_identical_requests_get_distinct_ids_in_a_batch() -> None:
@@ -1162,7 +1208,7 @@ async def test_a_batch_has_its_own_trace_linked_to_the_requests_in_it(capfire: C
         (batch.context.span_id, 'in_progress'),
         (batch.context.span_id, 'ended'),
     ]
-    assert not [span for span in spans if 'propagated trace context' in span.name]
+    assert not [span for span in spans if span.name.startswith('Found propagated')]
     for chat in chats:
         assert (chat.attributes or {})['pydantic_ai.batch.id'] == batch_id
         assert [link.context.span_id for link in chat.links] == [batch.context.span_id]

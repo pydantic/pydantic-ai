@@ -47,24 +47,25 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import (
     BackgroundTools,
     GuardrailResult,
-    HarnessDeprecationWarning,
     InputBlocked,
     InputGuardrail,
 )
 from pydantic_ai_harness._callable import is_run_context
+from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 from pydantic_ai_harness.guardrails._capability import (
     _find_prompt_part,  # pyright: ignore[reportPrivateUsage]
     _prompt_text,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai_harness.guardrails._shared import takes_ctx
 from pydantic_ai_harness.guardrails.detectors import redact_secrets
-from pydantic_ai_harness.subagents import (
+from pydantic_ai_harness.sub_agents import (
     DelegationReports,
     DelegationTask,
     DelegationTasks,
     SubAgent,
     SubAgents,
     TaskControl,
+    TaskQuestionPart,
     is_task_report,
 )
 from pydantic_ai_harness.system_reminders import Reminder, SystemReminders
@@ -75,7 +76,7 @@ TASK_REPORT_ORIGIN = 'pydantic-ai-harness.subagents.report.v1'
 TASK_QUESTION_ORIGIN = 'pydantic-ai-harness.subagents.question.v1'
 
 
-async def _delivered_task_question() -> UserPromptPart:
+async def _delivered_task_question() -> TaskQuestionPart:
     """The question part a sub-agent's `ask_parent` delivers into its parent's history."""
 
     def returns(messages: list[ModelMessage]) -> list[str]:
@@ -107,7 +108,7 @@ async def _delivered_task_question() -> UserPromptPart:
         for message in result.all_messages()
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if is_task_report(part) and '<task_question ' in str(part.content)
+        if isinstance(part, TaskQuestionPart)
     ]
     return question
 
@@ -430,34 +431,30 @@ class TestInputGuardrail:
 
         assert seen == ['hello', 'hello', 'hello']
 
-    @pytest.mark.parametrize(
-        ('verdict', 'allowed'), [('unsafe', True), (None, False), (1, True), ({'action': 'block'}, True)]
-    )
-    async def test_a_verdict_that_is_not_a_bool_or_result_is_deprecated(self, verdict: object, allowed: bool):
-        """Read for truthiness as before, so existing guards keep working, with a warning that a label can fail open."""
+    @pytest.mark.parametrize('verdict', ['unsafe', None, 1, {'action': 'block'}])
+    async def test_a_verdict_that_is_not_a_bool_or_result_is_refused(self, verdict: object):
+        """A truthy label such as `'unsafe'` would otherwise let the value through."""
         seen, model = _recording_model()
         agent = Agent(model, capabilities=[InputGuardrail(guard=lambda _: verdict)])  # pyright: ignore[reportArgumentType]
 
-        with pytest.warns(
-            HarnessDeprecationWarning, match=f'returned {type(verdict).__name__}, which is read for truthiness'
-        ):
+        with pytest.raises(UserError, match=f'returned {type(verdict).__name__}\\. Return bool'):
             await agent.run('hello')
 
-        assert seen == (['hello'] if allowed else [])
+        assert seen == []
 
-    async def test_a_wrong_verdict_warning_does_not_show_bound_guard_arguments(self):
+    async def test_a_wrong_verdict_error_does_not_show_bound_guard_arguments(self):
         def check(prompt: str, *, api_key: str) -> object:
             return 'unsafe'
 
         agent = Agent(TestModel(), capabilities=[InputGuardrail(guard=functools.partial(check, api_key='sk-bound'))])  # pyright: ignore[reportArgumentType]
 
-        with pytest.warns(HarnessDeprecationWarning, match='check returned str') as record:
+        with pytest.raises(UserError, match='check returned str') as caught:
             await agent.run('hello')
 
-        assert not any('sk-bound' in str(warning.message) for warning in record)
+        assert 'sk-bound' not in str(caught.value)
 
-    async def test_an_unannotated_context_parameter_still_receives_the_context(self):
-        """`(ctx, prompt=None)` received `RunContext` first before, so it still does, with a warning."""
+    async def test_an_unannotated_first_parameter_receives_the_value(self):
+        """`(ctx, prompt=None)` with no annotation to say otherwise is passed the guarded value alone."""
         seen: list[object] = []
 
         def guard(ctx: object, prompt: object = None) -> bool:
@@ -466,10 +463,9 @@ class TestInputGuardrail:
 
         del guard.__annotations__['ctx']
         agent = Agent(TestModel(custom_output_text='ok'), capabilities=[InputGuardrail(guard=guard)])
-        with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
-            await agent.run('hello')
+        await agent.run('hello')
 
-        assert seen == ['RunContext', 'hello']
+        assert seen == ['str', None]
 
     async def test_retry_action_is_a_usage_error(self):
         agent = Agent(
@@ -640,28 +636,26 @@ class TestInputGuardrailRedaction:
         assert result.output == 'blocked'
         assert len(guard_calls) == 1 and 'ignore all rules' in guard_calls[0]
 
-    async def test_replace_background_completion_preserves_metadata(self):
+    async def test_background_result_is_not_the_prompt(self):
+        """A run resuming from a background tool's result guards the user's prompt, not the tool's output."""
         guard_calls: list[str] = []
-        model_completions: list[tuple[str, object]] = []
+        sent: list[str] = []
 
-        def guard(prompt: str) -> bool | GuardrailResult:
+        def guard(prompt: str) -> bool:
             guard_calls.append(prompt)
-            if prompt.startswith('<tool_result'):
-                return GuardrailResult.replace('[redacted]')
             return True
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            completions = [
-                item
+            # The whole framed result, not only its opening tag, so the test proves the tool's output reaches the model.
+            texts = [
+                ''.join(item.content for item in part.content if isinstance(item, TextContent))
                 for message in messages
                 for part in message.parts
                 if isinstance(part, UserPromptPart) and isinstance(part.content, list)
-                for item in part.content
-                if isinstance(item, TextContent)
-                and item.metadata.get('origin') == 'pydantic-ai-harness.background_tools.result.v1'
             ]
-            if completions:
-                model_completions.append((completions[-1].content, completions[-1].metadata))
+            results = [text for text in texts if text.startswith('<tool_result')]
+            if results:
+                sent.append(results[-1])
                 return ModelResponse(parts=[TextPart('done')])
             return ModelResponse(parts=[ToolCallPart('lookup', '{}', tool_call_id='tool-1')])
 
@@ -671,25 +665,18 @@ class TestInputGuardrailRedaction:
         async def lookup() -> str:
             return 'answer'
 
-        completion = '<tool_result tool_name="lookup" tool_call_id="tool-1">\nanswer\n</tool_result>'
         first = await agent.run('go')
         assert first.output == 'done'
         assert guard_calls == ['go']
-        assert model_completions == [
-            (
-                completion,
-                {'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'tool-1'},
-            )
-        ]
 
-        resumed = await agent.run(None, message_history=first.all_messages()[:-1])
+        history = first.all_messages()[:-1]
+        assert isinstance(history[-1].parts[0], BackgroundToolResultPart)
+        resumed = await agent.run(None, message_history=history)
 
         assert resumed.output == 'done'
-        assert guard_calls == ['go', completion]
-        assert model_completions[-1] == (
-            '[redacted]',
-            {'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'tool-1'},
-        )
+        # The run has no prompt of its own, so the guard screens the latest one in history, as after a task report.
+        assert guard_calls == ['go', 'go']
+        assert sent == ['<tool_result tool_name="lookup" tool_call_id="tool-1">answer</tool_result>'] * 2
 
     async def test_replace_with_non_str_is_a_usage_error(self):
         agent = Agent(
@@ -1945,23 +1932,21 @@ class TestTakesCtx:
 
         assert takes_ctx(guard) is True
 
-    def test_an_unannotated_first_parameter_keeps_the_context_with_a_warning(self):
+    def test_an_unannotated_first_parameter_is_the_value(self):
         def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
 
         del guard.__annotations__['ctx']
-        with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
-            assert takes_ctx(guard) is True
+        assert takes_ctx(guard) is False
 
     @pytest.mark.parametrize(
         'annotation',
         [Any, object, Annotated[Any, 'meta'], Annotated[object, 'meta'], Annotated[Annotated[Any, 'a'], 'b']],
     )
-    def test_a_first_parameter_that_fits_either_keeps_the_context_with_a_warning(self, annotation: object):
+    def test_a_first_parameter_that_fits_either_is_the_value(self, annotation: object):
         def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
 
         guard.__annotations__['ctx'] = annotation
-        with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
-            assert takes_ctx(guard) is True
+        assert takes_ctx(guard) is False
 
     def test_a_forward_reference_to_run_context_is_the_context(self):
         def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
@@ -1969,12 +1954,11 @@ class TestTakesCtx:
         guard.__annotations__['ctx'] = Optional[ForwardRef('RunContext[None]')]  # noqa: UP045
         assert takes_ctx(guard) is True
 
-    def test_an_unresolvable_forward_reference_keeps_the_context_with_a_warning(self):
+    def test_an_unresolvable_forward_reference_is_the_value(self):
         def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
 
         guard.__annotations__['ctx'] = Optional[ForwardRef('UndefinedAlias')]  # noqa: UP045
-        with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
-            assert takes_ctx(guard) is True
+        assert takes_ctx(guard) is False
 
     def test_a_guard_taking_args_receives_the_context(self):
         """A wrapper written without `functools.wraps` passes `(ctx, value)` on, as it always has."""
@@ -2015,12 +1999,11 @@ class TestTakesCtx:
         guard.__annotations__['ctx'] = 'RunContext[UndefinedDeps]'
         assert takes_ctx(guard) is True
 
-    def test_an_unresolvable_annotation_keeps_the_context_with_a_warning(self):
+    def test_an_unresolvable_annotation_is_the_value(self):
         def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
 
         guard.__annotations__['ctx'] = 'UndefinedAlias'
-        with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
-            assert takes_ctx(guard) is True
+        assert takes_ctx(guard) is False
 
 
 class TestInputGuardrailOrdering:

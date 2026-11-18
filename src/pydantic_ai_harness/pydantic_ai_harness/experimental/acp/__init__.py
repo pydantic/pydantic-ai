@@ -9,8 +9,8 @@ Pydantic AI [`Agent`][pydantic_ai.Agent] to that interface, and
 from pydantic_ai_harness.experimental._warn import warn_experimental
 from pydantic_ai_harness.experimental.acp._adapter import PydanticAIACPAgent
 from pydantic_ai_harness.experimental.acp._client_toolsets import (
-    AcpFileSystemToolset,
-    AcpTerminalToolset,
+    ACPFileSystemToolset,
+    ACPTerminalToolset,
     acp_filesystem,
     acp_terminal,
 )
@@ -21,16 +21,16 @@ from pydantic_ai_harness.experimental.acp._presentation import (
     default_coding_presenter,
 )
 from pydantic_ai_harness.experimental.acp._server import run_acp_stdio, run_acp_stdio_sync
-from pydantic_ai_harness.experimental.acp._session import AcpSession, AcpSessionConfig, McpServer
+from pydantic_ai_harness.experimental.acp._session import ACPSession, ACPSessionConfig, McpServer
 from pydantic_ai_harness.experimental.acp._store import InMemorySessionStore, SessionStore, StoredSession
 
 warn_experimental('acp')
 
 __all__ = [
-    'AcpFileSystemToolset',
-    'AcpSession',
-    'AcpSessionConfig',
-    'AcpTerminalToolset',
+    'ACPFileSystemToolset',
+    'ACPSession',
+    'ACPSessionConfig',
+    'ACPTerminalToolset',
     'InMemorySessionStore',
     'McpServer',
     'PydanticAIACPAgent',

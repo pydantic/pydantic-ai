@@ -10,7 +10,6 @@ and source edge cases are exercised through the public
 from __future__ import annotations
 
 import re
-import warnings
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -33,6 +32,8 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    OperatorSource,
+    OperatorText,
     RetryFeedbackPart,
     RetryInfo,
     SpeechPart,
@@ -42,6 +43,7 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolResultSource,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -49,7 +51,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness import HarnessDeprecationWarning
+from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
 from pydantic_ai_harness.compaction._summarizing_compaction import SUMMARY_PREFIX
 from pydantic_ai_harness.compaction._summary import summary_request
@@ -72,6 +74,7 @@ from pydantic_ai_harness.step_persistence import (
     SqliteStepStore,
     StepPersistence,
 )
+from pydantic_ai_harness.system_reminders import ReminderPart
 from tests.conftest import legacy_retry_prompt_part
 
 
@@ -834,51 +837,18 @@ class TestSearchScope:
         )
         assert 'ZEBRA' not in detached_returned
 
-    def test_unset_scope_resolves_to_conversation_and_warns(self) -> None:
-        """The default moved from `all` to `conversation`, and nothing else would say so.
-
-        A caller who relied on the old default keeps working with a narrower corpus rather
-        than erroring, so the change is invisible without the warning.
-        """
+    def test_scope_defaults_to_conversation(self) -> None:
         source = SnapshotHistorySource(InMemoryStepStore())
-        with pytest.warns(HarnessDeprecationWarning) as record:
-            capability = ConversationSearch(source)
-        assert capability.scope is None
-        assert capability.effective_scope == 'conversation'
-        message = str(record[0].message)
-        assert "scope='all'" in message
-        assert "scope='conversation'" in message
-        assert 'warning will be removed in the next breaking release' in message
+        toolset = ConversationSearchToolset[None](
+            source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75
+        )
+        assert ConversationSearch(source).scope == 'conversation'
+        assert 'conversation' in (toolset.tools['search_conversation_history'].description or '')
 
-    def test_unset_scope_warns_once_per_instance(self) -> None:
-        """Per instance, not per search: warning on every tool invocation would be noise."""
-        source = SnapshotHistorySource(InMemoryStepStore())
-        with pytest.warns(HarnessDeprecationWarning) as record:
-            capability = ConversationSearch(source)
-            capability.get_toolset()
-            capability.get_toolset()
-            capability.get_instructions()
-        assert len(record) == 1
-
-    def test_unset_toolset_scope_warns(self) -> None:
-        """The toolset is public and its default moved too, so it announces the same change."""
-        source = SnapshotHistorySource(InMemoryStepStore())
-        with pytest.warns(HarnessDeprecationWarning):
-            ConversationSearchToolset[None](
-                source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75
-            )
-
-    def test_explicit_scope_never_warns(self) -> None:
-        """Choosing either value opts out of the warning; neither value is deprecated."""
-        source = SnapshotHistorySource(InMemoryStepStore())
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')  # any warning at all fails this test
-            assert ConversationSearch(source, scope='conversation').effective_scope == 'conversation'
-            assert ConversationSearch(source, scope='all').effective_scope == 'all'
-            ConversationSearch(source, scope='conversation').get_toolset()
-            ConversationSearchToolset[None](
-                source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75, scope='all'
-            )
+    async def test_a_scope_other_than_all_is_conversation_scoped(self) -> None:
+        """A `None` forwarded from optional configuration fails closed rather than searching every run."""
+        rendered = await _search(_StubSource({'r1': [_user('SECRET')]}), 'SECRET', scope=None)  # pyright: ignore[reportArgumentType]
+        assert 'SECRET' not in rendered
 
     async def test_explicit_all_scope_still_searches_store_wide(self) -> None:
         """The opt-out has to actually restore the old behavior, not just silence the warning."""
@@ -1105,8 +1075,8 @@ class TestSearchScope:
 Found 1 match(es) for 'DELTATAIL' in 1 persisted messages:
 
 [score: 0.3 | run: r1]
-[0] System: ...cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar DELTATAIL
-</context>\
+[0] System: ... cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar DELTATAIL
+</pyai:context>\
 """)
 
     async def test_max_matches_and_context_lines_honored(self) -> None:
@@ -1243,6 +1213,30 @@ class TestConfigValidation:
         await _seed_run(store, 'r1', [_user(f'needle entry {i} filler') for i in range(5)])
         with pytest.raises(ValueError, match='max_matches must be non-negative'):
             await _search(SnapshotHistorySource(store), 'needle', max_matches=-1)
+
+
+class TestCapabilityPartsAreSearchable:
+    """What a capability told the model is conversation, so it is indexed, labeled with its kind rather than as the user's."""
+
+    async def test_a_background_tool_result_is_indexed_and_labeled_with_its_kind(self) -> None:
+        result = BackgroundToolResultPart(
+            content='the QUOKKA figures are in',
+            source=ToolResultSource(tool_name='fetch_report', tool_call_id='call-1'),
+            tool_name='fetch_report',
+            tool_call_id='call-1',
+        )
+        history: list[ModelMessage] = [_user('start the report'), ModelRequest(parts=[result])]
+        rendered = await _search(_StubSource({'r1': history}), 'QUOKKA')
+        assert '[background_tools.tool_result]: the QUOKKA figures are in' in rendered
+        assert 'User: the QUOKKA' not in rendered
+
+    async def test_a_request_scoped_capability_part_is_not_indexed(self) -> None:
+        """A request-scoped part applied to its own request only, so it is not conversation."""
+        reminder = ReminderPart(
+            content=OperatorText('Mind the WOMBAT budget.'), source=OperatorSource(), scope='request'
+        )
+        history: list[ModelMessage] = [ModelRequest(parts=[reminder])]
+        assert 'No matches' in await _search(_StubSource({'r1': history}), 'WOMBAT')
 
 
 class TestSpeechIsSearchable:
@@ -1397,11 +1391,11 @@ Found 2 match(es) for 'ORCHID' in 4 persisted messages:
         assert rendered == snapshot("""\
 Found 1 match(es) for 'FINISHED' in 6 persisted messages:
 
-[score: 1.0 | run: r2]
+[score: 0.9 | run: r2]
 [2] Tool [finish]: ok
-System: <context id="agent:state">
+System: <pyai:context id="agent:state">
 status FINISHED
-</context>\
+</pyai:context>\
 """)
         assert (await _search(source, 'HERON')).count('[score:') == 1
         # The request that carries the change is indexed whole, so its tool return repeats once.
@@ -1482,12 +1476,3 @@ Found 1 match(es) for 'required' in 1 persisted messages:
         rendered = await _search(_StubSource({'r1': [_user(text)]}), 'ENDTERM')
         excerpt = rendered.split('[0] User: ', 1)[1]
         assert excerpt == '...' + text[-500:]
-
-
-def test_unset_toolset_scope_warning_points_at_the_constructing_code() -> None:
-    """A subscripted-generic construction adds a `typing` frame the warning must skip."""
-    source = SnapshotHistorySource(InMemoryStepStore())
-    for build in (ConversationSearchToolset[None], ConversationSearchToolset):
-        with pytest.warns(HarnessDeprecationWarning) as record:
-            build(source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75)
-        assert record[0].filename == __file__

@@ -4,7 +4,25 @@ Let an agent read and change GitHub repositories, issues, pull requests, and oth
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![Inside your agent, the GitHub capability connects to GitHub's hosted MCP server at api.githubcopilot.com/mcp/ with a bearer token, and the model sees the server's tools under the github_ prefix, such as github_get_me. Your auth function returns the token for each run from its deps. The toolsets, read_only and lockdown options are sent to the server as X-MCP headers, and read_only also drops any tool the server does not mark read-only.](https://pydantic.dev/docs/ai/img/harness/github.svg)
+```mermaid
+flowchart TB
+    accTitle: GitHub: repository, issue and pull request tools from GitHub's MCP server
+    accDescr: Inside your agent, the model calls tools of the GitHub capability, such as github_get_me, and gets their results. Your auth function gives the capability a token for each run. The capability calls the GitHub MCP server at api.githubcopilot.com/mcp/ with a Bearer token and X-MCP-* headers, and with read_only=True it drops the tools not marked read-only.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        github["GitHub()<br/>github_get_me,<br/>github_&lt;tool&gt;"]:::capability
+    end
+    dropped["tools not marked<br/>read-only, with<br/>read_only=True"]:::blocked
+    server["GitHub MCP server<br/>api.githubcopilot.com/mcp/"]:::external
+    model <-->|"tool call, result"| github
+    auth -->|"token for each run"| github
+    github <-->|"Bearer token,<br/>X-MCP-* headers"| server
+    github -.-x|"drops"| dropped
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Install and connect
 
@@ -101,7 +119,7 @@ With durable execution such as Temporal, read the credential from the run's deps
 
 ## Provider settings
 
-`toolsets=['repos', 'issues', 'actions']` picks which of GitHub's tool groups the server offers. Leave it unset to get the server's default groups. `read_only=True` asks the server for its read-only mode, and also drops any tool the server does not mark as read-only; if none are marked, the agent gets no GitHub tools and emits an `MCPReadOnlyNoToolsWarning`. `lockdown=True` asks GitHub to withhold issue, pull request, and comment content in public repositories written by users without push access; some tools return an error instead. GitHub describes it as a best-effort content filter, not a security boundary: other tools can still return that content. Set `url` to use a GitHub Enterprise Cloud endpoint; it must be an `https://` URL. A plain `http://` URL sends the token unencrypted, so it emits a `HarnessDeprecationWarning` and will raise in a future release.
+`toolsets=['repos', 'issues', 'actions']` picks which of GitHub's tool groups the server offers. Leave it unset to get the server's default groups. `read_only=True` asks the server for its read-only mode, and also drops any tool the server does not mark as read-only; if none are marked, the agent gets no GitHub tools and emits an `MCPReadOnlyNoToolsWarning`. `lockdown=True` asks GitHub to withhold issue, pull request, and comment content in public repositories written by users without push access; some tools return an error instead. GitHub describes it as a best-effort content filter, not a security boundary: other tools can still return that content. Set `url` to use a GitHub Enterprise Cloud endpoint; it must be an `https://` URL, since a plain `http://` URL would send the token unencrypted.
 
 The capability does not limit which repositories the agent can reach. Set that with the token's or GitHub App's permissions. To send other headers, or to use custom authentication, pass a configured `client`.
 

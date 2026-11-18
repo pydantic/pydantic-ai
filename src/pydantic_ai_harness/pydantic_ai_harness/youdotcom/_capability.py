@@ -16,6 +16,7 @@ from pydantic_ai_harness._durable import RetryRequest, retry_as_result
 from pydantic_ai_harness._web_search import native_web_search
 from pydantic_ai_harness.youdotcom._toolset import (
     DEFAULT_SEARCH_TIMEOUT_MS,
+    YOU_DEFAULT_MAX_RESULTS,
     YOU_MAX_NUM_RESULTS,
     ExtractionModeName,
     YouClient,
@@ -63,7 +64,7 @@ class YouSearch(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
 
-    num_results: int = 10
+    max_results: int = YOU_DEFAULT_MAX_RESULTS
     """Number of results `web_search` returns per query (1 to 20)."""
 
     extraction_mode: ExtractionModeName = 'highlights'
@@ -135,8 +136,8 @@ class YouSearch(AbstractCapability[AgentDepsT]):
         """Validate configuration against the You.com API's documented bounds."""
         if self.extraction_mode not in ('highlights', 'full_page'):
             raise ValueError(f"extraction_mode must be 'highlights' or 'full_page', got {self.extraction_mode!r}")
-        if not 1 <= self.num_results <= YOU_MAX_NUM_RESULTS:
-            raise ValueError(f'num_results must be between 1 and {YOU_MAX_NUM_RESULTS}, got {self.num_results}')
+        if not 1 <= self.max_results <= YOU_MAX_NUM_RESULTS:
+            raise ValueError(f'max_results must be between 1 and {YOU_MAX_NUM_RESULTS}, got {self.max_results}')
         if self.max_text_chars < 1:
             raise ValueError(f'max_text_chars must be at least 1, got {self.max_text_chars}')
         if self.include_domains and (self.exclude_domains or self.boost_domains):
@@ -186,7 +187,7 @@ class YouSearch(AbstractCapability[AgentDepsT]):
     ) -> YouSearchToolset[AgentDepsT]:
         return YouSearchToolset[AgentDepsT](
             client=self._client,
-            num_results=self.num_results,
+            max_results=self.max_results,
             extraction_mode=self.extraction_mode,
             max_text_chars=self.max_text_chars,
             include_domains=self.include_domains,
@@ -212,7 +213,7 @@ class YouSearch(AbstractCapability[AgentDepsT]):
     def from_spec(
         cls,
         *,
-        num_results: int = 10,
+        max_results: int = YOU_DEFAULT_MAX_RESULTS,
         extraction_mode: ExtractionModeName = 'highlights',
         max_text_chars: int = 10_000,
         include_domains: list[str] | None = None,
@@ -233,7 +234,7 @@ class YouSearch(AbstractCapability[AgentDepsT]):
         always build the default `youdotcom.You` from `YDC_API_KEY`.
         """
         return cls(
-            num_results=num_results,
+            max_results=max_results,
             extraction_mode=extraction_mode,
             max_text_chars=max_text_chars,
             include_domains=include_domains or [],

@@ -19,8 +19,9 @@ import hmac
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 from urllib.parse import quote
+
+import httpx2
 
 from pydantic_ai_harness.media._store import (
     _EMPTY_CONTEXT,  # pyright: ignore[reportPrivateUsage]
@@ -32,9 +33,6 @@ from pydantic_ai_harness.media._store import (
     parse_media_uri,
     resolve_public_url,
 )
-
-if TYPE_CHECKING:
-    import httpx
 
 _ALGORITHM = 'AWS4-HMAC-SHA256'
 _SERVICE = 's3'
@@ -51,8 +49,8 @@ def _hex_sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _hmac_sha256(key: bytes, msg: str) -> bytes:
-    return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
+def _hmac_sha256(key: bytes, message: str) -> bytes:
+    return hmac.new(key, message.encode('utf-8'), hashlib.sha256).digest()
 
 
 def _canonical_uri(path: str) -> str:
@@ -189,7 +187,7 @@ class S3MediaStore:
       the closure; `MediaContext` available for content-type-specific
       response headers etc.). Without a resolver `public_url(...)` returns
       `None`.
-    - `client=` -- bring your own `httpx.AsyncClient` for connection pooling.
+    - `client=` -- bring your own `httpx2.AsyncClient` for connection pooling.
 
     **Metadata persistence**: `context.metadata` is sent as signed
     `x-amz-meta-*` headers on PUT and read back via `get_metadata(uri)`,
@@ -208,10 +206,13 @@ class S3MediaStore:
         access_key_id: str,
         secret_access_key: str,
         key_prefix: str = '',
-        client: httpx.AsyncClient | None = None,
+        client: httpx2.AsyncClient | None = None,
         key_strategy: KeyStrategy = default_key_strategy,
         public_url: PublicUrlResolver | None = None,
     ) -> None:
+        # The parameter's type already excludes it; a legacy `httpx` client would only fail later, at the first request.
+        if client is not None and not isinstance(client, httpx2.AsyncClient):
+            raise TypeError('`S3MediaStore(client=...)` takes an `httpx2.AsyncClient`; the `httpx` client is removed.')
         self._bucket = bucket
         self._endpoint = endpoint.rstrip('/')
         self._region = region
@@ -238,9 +239,7 @@ class S3MediaStore:
         body: bytes = b'',
         content_type: str | None = None,
         meta_headers: Mapping[str, str] | None = None,
-    ) -> httpx.Response:
-        import httpx
-
+    ) -> httpx2.Response:
         headers = sign_request(
             method=method,
             host=self._host(),
@@ -254,13 +253,13 @@ class S3MediaStore:
         )
         # The signature covers `_canonical_uri(path)` (each segment percent-encoded).
         # Send that exact byte sequence as the wire path via `raw_path`, otherwise
-        # httpx applies its own (looser) path encoding and a custom key_prefix /
+        # HTTPX applies its own (looser) path encoding and a custom key_prefix /
         # key_strategy emitting reserved chars (`@`, `(`, `=`, ...) would diverge
         # from the signed path -> SignatureDoesNotMatch.
-        url = httpx.URL(self._endpoint).copy_with(raw_path=_canonical_uri(path).encode('ascii'))
+        url = httpx2.URL(self._endpoint).copy_with(raw_path=_canonical_uri(path).encode('ascii'))
         if self._client is not None:
             return await self._client.request(method, url, content=body, headers=headers)
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             return await client.request(method, url, content=body, headers=headers)
 
     async def put(self, data: bytes, *, context: MediaContext = _EMPTY_CONTEXT) -> str:

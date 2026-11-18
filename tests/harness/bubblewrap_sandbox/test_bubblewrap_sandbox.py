@@ -1,4 +1,4 @@
-"""Tests for `BubblewrapWorkspace` and the `BubblewrapSandbox` capability.
+"""Tests for `BubblewrapWorkspace` and the `BubblewrappedWorkspace` capability.
 
 Most use a fake `bwrap` that records its arguments, so they run anywhere; the last class needs a working `bwrap`.
 """
@@ -35,11 +35,16 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
-from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
+from pydantic_ai_harness import BubblewrappedWorkspace
+from pydantic_ai_harness.bubblewrap_sandbox import (
+    BubblewrappedWorkspace as SubmoduleBubblewrappedWorkspace,
+    BubblewrapWorkspace,
+)
 from pydantic_ai_harness.bubblewrap_sandbox._seccomp import NETWORK_FILTER_BASE64
 from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
 
-from .._fake_remote_tools import BWRAP_WORKS, FakeRemoteTools, install_fake_remote_tools
+from .. import _fake_remote_tools
+from .._fake_remote_tools import FakeRemoteTools, install_fake_remote_tools, require_bwrap
 
 pytestmark = [
     pytest.mark.anyio,
@@ -210,14 +215,23 @@ async def test_shell_startup_files_inside_the_working_dir_are_mounted_read_only(
     assert (home / '.tcshrc').read_text() == 'source ~/.cshrc\n'
     assert (home / '.zshenv').read_text() == ''
     assert (home / '.pam_environment').read_text() == ''
+    assert (home / '.bashrc.d').is_dir()
+    assert (home / '.cargo' / 'env').read_text() == ''
+    assert (home / '.local' / 'bin' / 'env').read_text() == ''
     assert (home / '.config' / 'fish').is_dir()
     mounts = ' '.join(
         [
             f'--ro-bind {home}/.bashrc {home}/.bashrc',
+            f'--ro-bind {home}/.bashrc.d {home}/.bashrc.d',
+            f'--bind {home}/.cargo {home}/.cargo',
+            f'--ro-bind {home}/.cargo/env {home}/.cargo/env',
             # A mount point can't be renamed, so a command can't move `~/.config` aside to plant its own.
             f'--bind {home}/.config {home}/.config',
             f'--ro-bind {home}/.config/fish {home}/.config/fish',
             f'--ro-bind {home}/.cshrc {home}/.cshrc',
+            f'--bind {home}/.local {home}/.local',
+            f'--bind {home}/.local/bin {home}/.local/bin',
+            f'--ro-bind {home}/.local/bin/env {home}/.local/bin/env',
             f'--ro-bind {home}/.pam_environment {home}/.pam_environment',
             f'--ro-bind {home}/.ssh {home}/.ssh',
             f'--ro-bind {home}/.tcshrc {home}/.tcshrc',
@@ -616,11 +630,11 @@ async def test_invalid_commands_and_arguments_are_rejected(tmp_path: Path) -> No
     with pytest.raises(TypeError, match='bwrap_args must be a sequence'):
         BubblewrapWorkspace(wrapped, bwrap_args='--share-net')
     with pytest.raises(TypeError, match='requires shell=True'):
-        await workspace.run('true')
+        await workspace.run('true', cwd='missing')
     with pytest.raises(TypeError, match='cannot be combined with shell=True'):
-        await workspace.run(['true'], shell=True)
+        await workspace.run(['true'], shell=True, cwd='missing')
     with pytest.raises(ValueError, match='must not be empty'):
-        await workspace.run([])
+        await workspace.run([], cwd='.')
     with pytest.raises(ValueError, match='timeout'):
         await workspace.run(['true'], timeout=0)
 
@@ -656,9 +670,10 @@ async def test_bubblewrap_around_ssh_sandboxes_commands_on_the_remote_host(
 
 
 async def test_capability_wraps_the_ssh_workspace(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    assert BubblewrappedWorkspace is SubmoduleBubblewrappedWorkspace
     agent = Agent(
         TestModel(call_tools=['probe']),
-        capabilities=[BubblewrapSandbox(SSHWorkspace('box', working_dir=str(tmp_path)), network=True)],
+        capabilities=[BubblewrappedWorkspace(SSHWorkspace('box', working_dir=str(tmp_path)), network=True)],
     )
 
     @agent.tool
@@ -675,7 +690,7 @@ async def test_capability_wraps_the_ssh_workspace(tools: FakeRemoteTools, tmp_pa
 
 
 async def test_capability_keeps_the_wrapped_policy_and_declines_foreign_refs(tmp_path: Path) -> None:
-    agent = Agent(TestModel(), capabilities=[BubblewrapSandbox(LocalWorkspace(tmp_path, read_only=True))])
+    agent = Agent(TestModel(), capabilities=[BubblewrappedWorkspace(LocalWorkspace(tmp_path, read_only=True))])
 
     result = await agent.run('go')
 
@@ -684,8 +699,28 @@ async def test_capability_keeps_the_wrapped_policy_and_declines_foreign_refs(tmp
         await agent.run('go', workspace=WorkspaceRef(provider='local', id=str(tmp_path / 'elsewhere')))
 
 
-@pytest.mark.skipif(not BWRAP_WORKS, reason='needs a working `bwrap` (Linux with user namespaces)')
-class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
+@pytest.mark.parametrize(
+    ('works', 'require_live', 'outcome'),
+    [(True, '1', None), (False, '', pytest.skip.Exception), (False, '1', pytest.fail.Exception)],
+)
+def test_require_bwrap_fails_only_where_ci_needs_it(
+    monkeypatch: pytest.MonkeyPatch, works: bool, require_live: str, outcome: type[BaseException] | None
+) -> None:
+    """Without `bwrap` the real-sandbox tests skip, unless `BWRAP_REQUIRE_LIVE` is set, where they must fail."""
+    monkeypatch.setattr(_fake_remote_tools, 'BWRAP_WORKS', works)
+    monkeypatch.setenv('BWRAP_REQUIRE_LIVE', require_live)
+    if outcome is None:
+        require_bwrap()
+    else:
+        with pytest.raises(outcome, match='needs a working `bwrap`'):
+            require_bwrap()
+
+
+class TestRealBubblewrap:  # pragma: lax no cover - CI hosts may not have bubblewrap
+    @pytest.fixture(autouse=True)
+    def _require_bwrap(self) -> None:
+        require_bwrap()
+
     @pytest.fixture
     def host_dir(self) -> Iterator[Path]:
         """A host directory outside `/tmp`, which the sandbox replaces with its own, so only the read-only root guards it."""
@@ -846,7 +881,8 @@ class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
                         while True:
                             try:
                                 state = status.read_text(encoding='utf-8').rsplit(')', 1)[1].split()[0]
-                            except FileNotFoundError:
+                            # Reaped before the open, or between the open and the read, which then fails with ESRCH.
+                            except (FileNotFoundError, ProcessLookupError):
                                 break
                             if state == 'Z':
                                 break

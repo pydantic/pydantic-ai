@@ -87,6 +87,7 @@ except ImportError as _import_error:
         'Please install `google-genai` to use the Google Interactions API: `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
 
+from ..google import LatestGoogleModelNames
 from ._replay import replay_step, step_index
 from ._response import JSON_OBJECT, media_kind, process_response, replay_steps
 from ._streaming import GoogleInteractionsStreamedResponse
@@ -98,8 +99,12 @@ __all__ = (
     'GoogleInteractionsStreamedResponse',
 )
 
-GoogleInteractionsModelName = str | gi.ModelParam
-"""Public Interactions model names, or another model ID supported by the API."""
+GoogleInteractionsModelName = str | LatestGoogleModelNames
+"""Possible Interactions model names.
+
+The `Literal` lists the models to pick from, for autocomplete. Any other model id the Interactions API accepts works
+too, as a `str`.
+"""
 
 _MODEL_NAME = TypeAdapter(gi.ModelParam)
 _CONTENT_PARAM = TypeAdapter(gi.ContentParam, config=ConfigDict(arbitrary_types_allowed=True))

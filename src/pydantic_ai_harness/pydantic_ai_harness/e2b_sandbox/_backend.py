@@ -28,6 +28,7 @@ import shlex
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
+from functools import partial
 from typing import TYPE_CHECKING
 
 import anyio
@@ -59,6 +60,8 @@ from pydantic_ai_harness._workspace_provider import (
 )
 
 if TYPE_CHECKING:
+    from e2b import SandboxNetworkOpts
+
     from pydantic_ai.workspaces import WorkspaceCommand
 
 __all__ = ('E2BSandboxBackend',)
@@ -245,6 +248,10 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             `pwd -P` on first use.
         env: Environment variables every command gets, on a created or an attached sandbox;
             per-command `env` is layered on top. Nothing is read from the host environment.
+        network: E2B's network options for a newly created sandbox, passed to `Sandbox.create`
+            unchanged: egress allow and deny lists, and `rules` that set headers on requests to a
+            host, from E2B's proxy outside the sandbox. An attached sandbox keeps the options it
+            was created with.
     """
 
     def __init__(
@@ -258,6 +265,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        network: SandboxNetworkOpts | None = None,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'e2b')
@@ -282,6 +290,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         self._sandbox_timeout = sandbox_timeout
         self._env = dict(env) if env is not None else None
         self._allow_internet_access = allow_internet_access
+        self._network = network
         self._probe_setsid = template is not None or sandbox is not None or ref is not None
         self._setsid: bool | None = None
         self._setsid_lock = anyio.Lock()
@@ -507,6 +516,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                         timeout=self._sandbox_timeout,
                         envs=dict(self._env) if self._env is not None else None,
                         allow_internet_access=self._allow_internet_access,
+                        network=self._network,
                         # Pause at the end of the lifetime instead of killing, so the files survive.
                         lifecycle={'on_timeout': 'pause'},
                     )
@@ -627,46 +637,11 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         # Probe only custom/attached images: default E2B images include util-linux.
         isolated = await self._has_setsid(sandbox) if self._probe_setsid else True
         launch = f'{"setsid " if isolated else ""}sh -c {shlex.quote(launch)}'
-
-        async def stop() -> None:
-            # A new SDK command can run even when the original output stream is blocked.
-            script = (
-                f'if mkdir {claim} 2>/dev/null; then exit 0; fi; {identify}'
-                f'i=0; while [ ! -s {pgid_file} ] && [ "$i" -lt 100 ]; do '
-                'sleep 0.1; i=$((i+1)); done; '
-                # A registered launcher consumed its claim, so it can go; a claim this stop won stays.
-                f'if [ -s {pgid_file} ]; then record=$(cat {pgid_file}); rm -rf {claim}; '
-                'p=${record%%:*}; recorded=${record#*:}; current=$(_pydantic_e2b_id "$p"); '
-                # The start time alone identifies the process: a leader stop must still reach one that
-                # has since moved to its own group. A group stop also needs that group to be the one setsid made.
-                '[ "${current% *}" = "${recorded% *}" ] || exit 0; '
-                + ('[ "${current##* }" = "$p" ] || exit 0; ' if isolated else '')
-                + f'kill -TERM {"-" if isolated else ""}"$p" 2>/dev/null || true; sleep 0.1; '
-                + f'kill -KILL {"-" if isolated else ""}"$p" 2>/dev/null || true; fi'
-            )
-            try:
-                stopper = await sandbox.commands.run(
-                    f'sh -c {shlex.quote(script)}', background=True, timeout=_SDK_STREAM_UNBOUNDED, user=self._user
-                )
-                await stopper.wait()
-            except Exception:
-                # A failed control-plane stop must not mask the original failure; the command may
-                # still be running, and the sandbox ref stays available for explicit cleanup.
-                logger.warning('Could not stop E2B command in sandbox %s', sandbox.sandbox_id, exc_info=True)
-
         # Counted as the SDK receives it, so `yes` or a large `cat` stops at the cap instead of
         # growing this process; the SDK calls these from its own event-pump task.
-        output_bytes = 0
-        overflow = anyio.CancelScope()
-
-        def count(chunk: str) -> None:
-            nonlocal output_bytes
-            output_bytes += len(chunk.encode())
-            if output_bytes > _MAX_OUTPUT_BYTES:
-                overflow.cancel()
-
+        counter = _OutputCounter()
         try:
-            with anyio.move_on_after(timeout), overflow:
+            with anyio.move_on_after(timeout), counter.overflow:
                 # A lost start ACK must not hide a launched command from the side-channel stop.
                 handle = await sandbox.commands.run(
                     launch,
@@ -675,8 +650,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                     cwd=self._working_dir,
                     timeout=_SDK_STREAM_UNBOUNDED,
                     user=self._user,
-                    on_stdout=count,
-                    on_stderr=count,
+                    on_stdout=counter.add,
+                    on_stderr=counter.add,
                 )
                 assert handle is not None
                 try:
@@ -684,7 +659,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 except e2b.CommandExitException as exited:
                     # A nonzero exit is a completed result; the SDK's exception carries it.
                     result = exited
-            if output_bytes > _MAX_OUTPUT_BYTES:
+            if counter.bytes > _MAX_OUTPUT_BYTES:
                 # The SDK builds the handle before its pump delivers any output, so one exists here.
                 assert handle is not None
                 # Raised inside the `try`, so the stop below kills the command like on a timeout.
@@ -705,16 +680,22 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         except BaseException as error:
             # A child task shields the side-channel stop from repeated task cancellation.
             # Allow the winning launcher to publish its PID before bounding a lost start ACK.
-            await stop_shielded(stop, grace=12)
-            if isinstance(error, Exception):
-                context = (
-                    'Command could not run in the E2B sandbox'
-                    if handle is None
-                    else 'Could not read the command result (the command may still be running)'
-                )
-                translated = await self._translate(error, context, None, sandbox.sandbox_id)
-                if translated is not error:
-                    raise translated from error
+            await stop_shielded(
+                partial(
+                    self._stop_command, sandbox, claim=claim, pgid_file=pgid_file, identify=identify, isolated=isolated
+                ),
+                grace=12,
+            )
+            if not isinstance(error, Exception):
+                raise
+            context = (
+                'Command could not run in the E2B sandbox'
+                if handle is None
+                else 'Could not read the command result (the command may still be running)'
+            )
+            translated = await self._translate(error, context, None, sandbox.sandbox_id)
+            if translated is not error:
+                raise translated from error
             raise
         finally:
             # Only a completed start and result proves no late RPC can use this claim.
@@ -725,6 +706,47 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                     except Exception:
                         # A leftover claim is a small directory in `/tmp`; it cannot fence a later command.
                         logger.debug('Could not remove E2B stop claim %s', claim, exc_info=True)
+
+    async def _stop_command(
+        self, sandbox: e2b.AsyncSandbox, *, claim: str, pgid_file: str, identify: str, isolated: bool
+    ) -> None:
+        # A new SDK command can run even when the original output stream is blocked.
+        script = (
+            f'if mkdir {claim} 2>/dev/null; then exit 0; fi; {identify}'
+            f'i=0; while [ ! -s {pgid_file} ] && [ "$i" -lt 100 ]; do '
+            'sleep 0.1; i=$((i+1)); done; '
+            # A registered launcher consumed its claim, so it can go; a claim this stop won stays.
+            f'if [ -s {pgid_file} ]; then record=$(cat {pgid_file}); rm -rf {claim}; '
+            'p=${record%%:*}; recorded=${record#*:}; current=$(_pydantic_e2b_id "$p"); '
+            # The start time alone identifies the process: a leader stop must still reach one that
+            # has since moved to its own group. A group stop also needs that group to be the one setsid made.
+            '[ "${current% *}" = "${recorded% *}" ] || exit 0; '
+            + ('[ "${current##* }" = "$p" ] || exit 0; ' if isolated else '')
+            + f'kill -TERM {"-" if isolated else ""}"$p" 2>/dev/null || true; sleep 0.1; '
+            + f'kill -KILL {"-" if isolated else ""}"$p" 2>/dev/null || true; fi'
+        )
+        try:
+            stopper = await sandbox.commands.run(
+                f'sh -c {shlex.quote(script)}', background=True, timeout=_SDK_STREAM_UNBOUNDED, user=self._user
+            )
+            await stopper.wait()
+        except Exception:
+            # A failed control-plane stop must not mask the original failure; the command may
+            # still be running, and the sandbox ref stays available for explicit cleanup.
+            logger.warning('Could not stop E2B command in sandbox %s', sandbox.sandbox_id, exc_info=True)
+
+
+class _OutputCounter:
+    """The output bytes the SDK has delivered for one command, cancelling `overflow` once they pass the cap."""
+
+    def __init__(self) -> None:
+        self.bytes = 0
+        self.overflow = anyio.CancelScope()
+
+    def add(self, chunk: str) -> None:
+        self.bytes += len(chunk.encode())
+        if self.bytes > _MAX_OUTPUT_BYTES:
+            self.overflow.cancel()
 
 
 def _sandboxes(client: e2b.E2B | None) -> type[e2b.AsyncSandbox]:

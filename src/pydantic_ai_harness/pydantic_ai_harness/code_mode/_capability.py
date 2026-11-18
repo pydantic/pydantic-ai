@@ -14,9 +14,12 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Too
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    InstructionCapabilityPart,
     ModelMessage,
     ModelResponse,
     NativeToolSearchReturnPart,
+    OperatorSource,
+    OperatorText,
     SystemPromptPart,
     post_compaction_window,
 )
@@ -31,12 +34,12 @@ from pydantic_ai_harness.code_mode._speculation import (
 from pydantic_ai_harness.code_mode._toolset import (
     CodeModeMount,
     CodeModeOS,
+    CodeModeOSPolicy,
     CodeModeResourceLimits,
     CodeModeToolset,
-    as_os_handler,
     in_durable_execution,
-    monty_sandbox_from_url,
 )
+from pydantic_ai_harness.tool_bridge import ToolBridge
 
 if TYPE_CHECKING:
     from pydantic_monty import AsyncMontyRemote
@@ -51,7 +54,20 @@ _DISCOVERY_ANNOUNCEMENT_PREFIX = (
     'added to the available-functions catalog in the system prompt'
 )
 _DISCOVERY_ANNOUNCEMENT_ORIGIN = 'pydantic-ai-harness.code_mode.discovery.v1'
-"""`SystemPromptPart.metadata['origin']` of a discovery announcement, whose `metadata['tools']` lists the names it announced."""
+"""`SystemPromptPart.metadata['origin']` of a discovery announcement an earlier version recorded, whose
+`metadata['tools']` lists the names it announced."""
+
+
+@dataclass(kw_only=True)
+class DiscoveryAnnouncementPart(InstructionCapabilityPart, namespace='code_mode', name='discovery_announcement'):
+    """The notice `CodeMode(dynamic_catalog=True)` enqueues when a tool search makes new functions callable in `run_code`.
+
+    Its text names each new function by the Python identifier `run_code` calls it by. Find announcements in history
+    by this type.
+    """
+
+    tools: tuple[str, ...] = ()
+    """The names of the tools it announces, as the search found them. Never sent to the model."""
 
 
 @dataclass
@@ -61,8 +77,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     By default (`tools='all'`) every eligible regular tool the agent has is wrapped
     behind a single `run_code` tool -- the model writes Python that calls them as
     functions instead of issuing tool calls directly. Framework control tools,
-    undiscovered deferred tools, native fallbacks, and other code-execution tools
-    remain native.
+    undiscovered deferred tools, `requires_approval=True` and external tools, native
+    fallbacks, and other code-execution tools remain native.
 
     Pass a list of tool names or a callable predicate to `tools` to split the
     toolset: matching tools become callables inside the sandbox, and the rest
@@ -80,13 +96,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     ```
 
     By default, sandboxed code cannot touch the host -- no filesystem, environment
-    variables, or clock. Two parameters open it up:
+    variables, or clock. Three parameters open it up:
 
     - `mount` shares specific host directories: reach for it when the agent reads or
       writes real files.
     - `os_access` routes the sandbox's OS calls to a handler you provide: reach for it
       when the agent needs environment variables, the clock, or filesystem behavior you
       control.
+    - `os_policy` sets the sandbox's own clock and time zone (or sleep and random-seed
+      policies), merged over the defaults that route them to `os_access`.
 
     The built-in `OSAccess` has an isolated filesystem and environment but uses the
     host clock by default; custom OS handlers can expose other host resources.
@@ -102,9 +120,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     """Which wrapped tools should be sandboxed inside `run_code`.
 
     - `'all'` (default): every eligible regular tool the agent has is sandboxed.
+      Tools registered with `requires_approval=True` and external tools stay native,
+      so their deferred calls pause the run as usual. Tools gated by `.approval_required()`
+      keep `kind='function'` and are still sandboxed.
     - `Sequence[str]`: only tools whose names are listed are sandboxed.
     - Callable `(ctx, tool_def) -> bool | Awaitable[bool]`: tools where the
       callable returns `True` are sandboxed; the rest stay as native tool calls.
+
+    An explicit selector can sandbox `requires_approval=True` and external tools, but calling one
+    from `run_code` then needs a `HandleDeferredToolCalls` capability to resolve it inline.
     """
 
     max_retries: int = 3
@@ -127,16 +151,29 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     loop's thread, with the run's contextvars set, so it must not touch asyncio objects; an `async`
     handler is awaited on an event loop instead. Inside a Temporal workflow, clock, environment, and
     randomness calls run on the workflow's own thread, so the handler can use `workflow.now()`.
-    The positional `(name, args, kwargs)` form is deprecated.
     """
 
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
 
+    os_policy: CodeModeOSPolicy | None = None
+    """Monty session policies for the sandbox's clock, timezone, sleep, and randomness.
+
+    Keys you set are merged over the defaults, which route the clock, sleeps, and random seeding
+    to `os_access` (so without a handler, the clock and unseeded `random` are unavailable).
+    `{'datetime': 'system', 'timezone': 'Europe/Paris'}` gives sandboxed code the worker's clock
+    in that zone without any handler; a `datetime` value freezes the clock at that instant;
+    `{'timezone': 'Europe/Paris'}` alone keeps the clock on `os_access` but makes `astimezone()`,
+    `%Z`, and `time.tzname` report that zone. See `pydantic_monty.OSPolicy` for every key.
+
+    Inside a Temporal workflow, a `'system'` clock or `random_start` is read again on replay; keep
+    the defaults (or fixed values) there.
+    """
+
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None
     """Sandbox execution limits.
 
-    `None` applies a 30-second execution and 256 MiB heap backstop. `max_duration_secs` is per
+    `None` applies a 30-second execution and 256 MiB heap backstop. `max_duration_seconds` is per
     snippet: no single `run_code` snippet runs longer than it, and it is not a run-wide budget.
     `'unlimited'` removes the time and memory caps, but Monty's finite suspension budget still
     applies. Set `max_suspensions` to bound cumulative host interactions across consecutive snippets.
@@ -169,13 +206,10 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     )
     """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`, called for each run. Unset, code runs locally.
 
-    A function's pool limits how long code runs between tool calls with its own `request_timeout`
-    (10 seconds by default), in place of `max_duration_secs`. Tools, mounts, `os_access`, and print
+    A remote pool's `request_timeout` adds a per-turn transport deadline to `max_duration_seconds`.
+    Inside Temporal, only the transport deadline applies. Tools, mounts, `os_access`, and print
     output stay in your process.
     """
-
-    monty_sandbox_url: str | None = field(default=None, repr=False)
-    """Deprecated: pass `monty_sandbox=url` instead."""
 
     repl_store: CodeModeReplStore[AgentDepsT] | None = None
     """Keep the `run_code` REPL across agent runs in this store.
@@ -233,10 +267,6 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     _in_flight_announcements: set[str] = field(default_factory=set[str], init=False, repr=False)
 
     def __post_init__(self) -> None:
-        # Converted once here, so the per-run copies and the toolsets built from this do not warn again.
-        self.os_access = as_os_handler(self.os_access)
-        self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeMode')
-        self.monty_sandbox_url = None
         if isinstance(self.speculate, str) and self.speculate != 'declared':
             raise UserError(
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
@@ -285,8 +315,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         )
 
     def get_ordering(self) -> CapabilityOrdering:
-        """CodeMode wraps around ToolSearch so that search_tools stays native."""
-        return CapabilityOrdering(position='outermost', wraps=[_ToolSearch])
+        """CodeMode wraps around ToolSearch, so that `search_tools` stays native, and ToolBridge, so that its dispatchers are sandboxed."""
+        return CapabilityOrdering(position='outermost', wraps=[_ToolSearch, ToolBridge])
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> CodeMode[AgentDepsT]:
         """Return a fresh instance so concurrent runs don't share announcement or speculation state."""
@@ -327,6 +357,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 dynamic_catalog=self.dynamic_catalog,
                 os_access=self.os_access,
                 mount=self.mount,
+                os_policy=self.os_policy,
                 monty_sandbox=self.monty_sandbox,
                 repl_store=self.repl_store,
                 capability=self,
@@ -341,6 +372,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             dynamic_catalog=self.dynamic_catalog,
             os_access=self.os_access,
             mount=self.mount,
+            os_policy=self.os_policy,
             monty_sandbox=self.monty_sandbox,
             repl_store=self.repl_store,
             capability=self,
@@ -433,13 +465,12 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         # identifier `run_code` calls it by, which can't carry markup or prose. The tool names as found are
         # kept in the metadata, which the model never sees.
         listing = ', '.join(f'`{function}`' for function in functions.values())
-        # Enqueue a `SystemPromptPart` so the announcement is framed as system-level context.
-        # Mid-conversation `SystemPromptPart`s are rendered inline (not hoisted to the top-level
-        # system prompt) on all providers since pydantic/pydantic-ai#5509, so this is cache-safe.
+        # The framework's own wording, naming each function by the identifier `run_code` calls it by.
         ctx.enqueue(
-            SystemPromptPart(
-                content=f'{_DISCOVERY_ANNOUNCEMENT_PREFIX}: {listing}.',
-                metadata={'origin': _DISCOVERY_ANNOUNCEMENT_ORIGIN, 'tools': list(functions)},
+            DiscoveryAnnouncementPart(
+                content=OperatorText(f'{_DISCOVERY_ANNOUNCEMENT_PREFIX}: {listing}.'),
+                source=OperatorSource(),
+                tools=tuple(functions),
             )
         )
 
@@ -447,16 +478,19 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 def _visible_announced_tools(messages: Sequence[ModelMessage]) -> set[str]:
     """Read the names announced after the latest compaction boundary.
 
-    An announcement is identified only by its `SystemPromptPart.metadata` (`origin` and the `tools` it lists),
-    which survives serialization and the merging of adjacent requests; its text never counts, so a system
-    prompt that merely reads like one, or a name shaped like a list of names, adds nothing. An announcement a
-    history processor or a UI round trip dropped no longer counts, so the tool is announced again when it's
-    next discovered, and so is a tool from a history recorded before announcements were marked.
+    An announcement is a `DiscoveryAnnouncementPart`, identified by its type and the `tools` it lists, which survive
+    serialization and the merging of adjacent requests; its text never counts, so a system prompt that merely reads
+    like one adds nothing. An earlier version recorded it as a `SystemPromptPart` marked by its `metadata` (`origin`
+    and `tools`), which still counts. An announcement a history processor or a UI round trip dropped no longer
+    counts, so the tool is announced again when it's next discovered, and so is a tool from a history recorded before
+    announcements were marked.
     """
     announced: set[str] = set()
     for message in post_compaction_window(messages):
         for part in message.parts:
-            if (
+            if isinstance(part, DiscoveryAnnouncementPart):
+                announced.update(part.tools)
+            elif (
                 isinstance(part, SystemPromptPart)
                 and part.metadata is not None
                 and part.metadata.get('origin') == _DISCOVERY_ANNOUNCEMENT_ORIGIN

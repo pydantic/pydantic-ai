@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from pydantic_ai_harness.media import PostgresConnection, PostgresPool
 from pydantic_ai_harness.step_persistence._capability import StepPersistence
-from pydantic_ai_harness.step_persistence._events import SnapshotSaved
+from pydantic_ai_harness.step_persistence._events import STEP_PERSISTENCE_EVENTS, SnapshotSavedEvent
 from pydantic_ai_harness.step_persistence._helpers import (
     annotate_tool_effect,
     continue_run,
@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from pydantic_ai_harness.step_persistence._mongo import MongoStepStore
 
 __all__ = [
+    'STEP_PERSISTENCE_EVENTS',
     'ContinuableSnapshot',
     'EventKind',
     'FileStepStore',
@@ -48,7 +49,7 @@ __all__ = [
     'PostgresPool',
     'PostgresStepStore',
     'RunRecord',
-    'SnapshotSaved',
+    'SnapshotSavedEvent',
     'SnapshotState',
     'SqliteStepStore',
     'StepEvent',

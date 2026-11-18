@@ -6,6 +6,9 @@ traces the tool call.
 """
 
 from dataclasses import dataclass
+from typing import Annotated
+
+from pydantic import AliasChoices, Field
 
 from pydantic_ai import CapabilityEvent
 
@@ -13,7 +16,7 @@ SHELL_EVENTS = 'shell'
 
 
 @dataclass(kw_only=True)
-class CommandStartedEvent(CapabilityEvent, namespace=SHELL_EVENTS, name='command_started'):
+class CommandStartedEvent(CapabilityEvent, namespace=SHELL_EVENTS):
     """A command supervisor has started; its output log combines stdout and stderr."""
 
     command: str
@@ -21,14 +24,14 @@ class CommandStartedEvent(CapabilityEvent, namespace=SHELL_EVENTS, name='command
 
 
 @dataclass(kw_only=True)
-class CommandOutputEvent(CapabilityEvent, namespace=SHELL_EVENTS, name='command_output'):
+class CommandOutputEvent(CapabilityEvent, namespace=SHELL_EVENTS):
     """A bounded chunk of the command's combined output log."""
 
     text: str
 
 
 @dataclass(kw_only=True)
-class CommandFinishedEvent(CapabilityEvent, namespace=SHELL_EVENTS, name='command_finished'):
+class CommandFinishedEvent(CapabilityEvent, namespace=SHELL_EVENTS):
     """The tool stopped waiting for the command, which may still be running.
 
     `exit_code` is `None` while no completed status has been published.
@@ -40,5 +43,5 @@ class CommandFinishedEvent(CapabilityEvent, namespace=SHELL_EVENTS, name='comman
     exit_code: int | None
     truncated: bool
     """Whether output beyond the per-call event budget was left in the log, or `max_log_bytes` emptied it."""
-    total_lines: int | None = 0
+    line_count: Annotated[int | None, Field(validation_alias=AliasChoices('line_count', 'total_lines'))] = 0
     """Logical lines in the log up to 1 MiB; `None` for larger logs, which are not scanned, and emptied ones."""

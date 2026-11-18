@@ -31,7 +31,7 @@ from pydantic_ai_harness.ask_user import (
     Question,
     QuestionOption,
 )
-from pydantic_ai_harness.subagents import DelegationTasks, SubAgent, SubAgents
+from pydantic_ai_harness.sub_agents import DelegationTasks, SubAgent, SubAgents
 from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
 from pydantic_clai2.builtin_plugins.ask_user_menu import (
     AskUserPlugin,

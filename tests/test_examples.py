@@ -48,6 +48,7 @@ from pydantic_ai import (
     NativeToolReturnPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]
     StructuredContent,
+    SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -129,7 +130,19 @@ class ExamplesConfig(BaseExamplesConfig):
 
 
 RUNNABLE_HARNESS_PAGES = frozenset(
-    {'artifact-scanning.md', 'azure-durable-task.md', 'detect-loops.md', 'memory.md', 'permissions.md'}
+    {
+        'artifact-scanning.md',
+        'aws-lambda.md',
+        'azure-durable-task.md',
+        'deny-unanswered.md',
+        'detect-loops.md',
+        'memory.md',
+        'permissions.md',
+        'report-remaining-budget.md',
+        'report-tool-errors.md',
+        'tool-budgets.md',
+        'wrap-up-at-limits.md',
+    }
 )
 """`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
 
@@ -187,6 +200,15 @@ def find_filter_examples() -> Iterable[ParameterSet]:
             )
             if _is_harness_page(ex.path) and ex.path.name == 'azure-durable-task.md':
                 marks.append(pytest.mark.skipif(find_spec('durabletask') is None, reason='durabletask not installed'))
+            if (
+                _is_harness_page(ex.path) and ex.path.name == 'aws-lambda.md'
+            ) or title == 'deferred_tool_calls_lambda.py':
+                marks.append(
+                    pytest.mark.skipif(
+                        find_spec('aws_durable_execution_sdk_python') is None,
+                        reason='aws-durable-execution-sdk-python not installed',
+                    )
+                )
             if title in _MOVES_CACHE_PREFIX:
                 marks.append(pytest.mark.moves_cache_prefix(reason=_MOVES_CACHE_PREFIX[title]))
             yield pytest.param(ex, id=test_id, marks=marks)
@@ -241,7 +263,7 @@ def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
     else:
         mocker.patch('pydantic_ai.mcp.MCPToolset', return_value=MockMCPServer())
     try:
-        mocker.patch('mcp.server.fastmcp.FastMCP')
+        mocker.patch('fastmcp.FastMCP')
     except (ImportError, AttributeError):
         pass
 
@@ -594,11 +616,6 @@ def test_docs_examples(
     # Reset global DEFAULT_CONFIG so configure() calls in doc examples don't leak between tests
     mocker.patch('pydantic_evals.online.DEFAULT_CONFIG', OnlineEvalConfig())
 
-    # Doc examples register framing tags at module level, as on a fresh import: don't warn that registration came
-    # after other tests escaped text. Registrations are kept, as they are in a real process: one made by a module an
-    # example imports stays valid after the example, since the module stays imported.
-    mocker.patch('pydantic_ai._framing._data_tag_openers_used', False)
-
     _patch_optional_mcp_modules(mocker)
     _patch_realtime_models(mocker, answers_a_send='.send(' in example.source)
     _prepare_heavy_imports(request, mocker, example)
@@ -619,6 +636,7 @@ def test_docs_examples(
     env.set('VERCEL_AI_GATEWAY_API_KEY', 'testing')
     env.set('CEREBRAS_API_KEY', 'testing')
     env.set('NEBIUS_API_KEY', 'testing')
+    env.set('STAV_API_KEY', 'testing')
     env.set('CRUSOE_API_KEY', 'testing')
     env.set('HEROKU_INFERENCE_KEY', 'testing')
     env.set('FIREWORKS_API_KEY', 'testing')
@@ -636,6 +654,7 @@ def test_docs_examples(
     env.set('MOONSHOTAI_API_KEY', 'testing')
     env.set('META_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')
+    env.set('OTARI_API_KEY', 'testing')
     env.set('OVHCLOUD_API_KEY', 'testing')
     env.set('ALIBABA_API_KEY', 'testing')
     env.set('SAMBANOVA_API_KEY', 'testing')
@@ -959,6 +978,10 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Was I refunded for the duplicate charge on my last statement?': ToolCallPart(
         tool_name='load_capability', args={'id': 'refunds'}
     ),
+    # docs/models/decision.md: the decision model picks the `refunds` capability
+    'Has the refund for my returned blender gone through?': ToolCallPart(
+        tool_name='load_capability', args={'id': 'refunds'}
+    ),
     'I just lost my card!': ToolCallPart(
         tool_name='final_result',
         args={
@@ -1174,6 +1197,10 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Continue from where you left off': 'Python is a versatile programming language.',
     'What are people saying about AI on X today?': "There's a lot of excitement about new AI models being released...",
     'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
+    # docs/capabilities/handle-deferred-tool-calls.md: the refund waits for the approval endpoint
+    'Refund order 1234, it arrived broken.': ToolCallPart(
+        tool_name='issue_refund', args={'order_id': '1234', 'amount': 50}, tool_call_id='issue_refund_1234'
+    ),
 }
 
 model_routes: dict[str, str] = {
@@ -1843,6 +1870,17 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[ToolCallPart(tool_name='refund_status', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
+    elif isinstance(m, SystemPromptPart) and m.content == (
+        '<pyai:context id="capability:refunds">\nConfirm the order ID before issuing a refund.\n</pyai:context>'
+    ):
+        # docs/models/decision.md: with `refunds` loaded, the decision model picks its tool
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='latest_refund', args={}, tool_call_id='pyd_ai_tool_call_id')]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'latest_refund':
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args={'resolved': True}, tool_call_id='pyd_ai_tool_call_id')]
+        )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'recent_reviews':
         return ModelResponse(
             parts=[
@@ -2000,6 +2038,9 @@ async def model_logic(  # noqa: C901
                 )
             ],
         )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'issue_refund':
+        # docs/capabilities/handle-deferred-tool-calls.md: the approved refund ran
+        return ModelResponse(parts=[TextPart("I've refunded $50 for order 1234.")])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'calculate_answer':
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
@@ -2099,7 +2140,7 @@ def mock_infer_image_generation_model(model: ImageGenerationModel | str) -> Imag
     return TestImageGenerationModel(actual_model.model_name, provider_name=actual_model.system)
 
 
-def mock_infer_model(model: Model | KnownModelName) -> Model:
+def mock_infer_model(model: Model | KnownModelName | str) -> Model:
     if model == 'test':
         return TestModel()
 

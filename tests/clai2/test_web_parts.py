@@ -48,9 +48,9 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse, Question, QuestionOption
-from pydantic_ai_harness.filesystem import (
+from pydantic_ai_harness.file_system import (
     EditFileCallPart,
-    FileChangeRequestEvent,
+    FileChangeRequestedEvent,
     FileEditedEvent,
     FileSystem,
     FileWrittenEvent,
@@ -114,6 +114,7 @@ from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.rendering.status import Status
 from pydantic_clai2.ui.rendering.usage_report import session_usage
 from tests.clai2.test_web import WIRE
+from tests.conftest import _reserve_loopback_port  # pyright: ignore[reportPrivateUsage]
 
 REQUEST = AskUserRequest(
     questions=(
@@ -160,7 +161,7 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
     assert translate(CommandOutputEvent(tool_call_id='c1', text='a.py\n')) == [ToolOutput(id='c1', text='a.py\n')]
     assert translate(CommandOutputEvent(tool_call_id=None, text='lost')) == []
     finished = CommandFinishedEvent(
-        tool_call_id='c1', pid=1, output_path='o', status_path='s', exit_code=0, truncated=False, total_lines=1
+        tool_call_id='c1', pid=1, output_path='o', status_path='s', exit_code=0, truncated=False, line_count=1
     )
     assert translate(finished) == [ShellDone(id='c1', exit_code=0)]
     assert translate(FunctionToolResultEvent(part=ToolReturnPart('shell', 'a.py', tool_call_id='c1'))) == [
@@ -181,8 +182,8 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
         == []
     )
 
-    def write(call_id: str, *, cancelled: bool = False) -> FileChangeRequestEvent:
-        return FileChangeRequestEvent(
+    def write(call_id: str, *, cancelled: bool = False) -> FileChangeRequestedEvent:
+        return FileChangeRequestedEvent(
             tool_call_id=call_id,
             path='n.py',
             root_dir='/w',
@@ -200,7 +201,7 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
     assert translate(FileWrittenEvent(tool_call_id='w2', path='n.py', root_dir='/w', content_hash='h')) == []
     assert translate(FileWrittenEvent(tool_call_id='w3', path='n.py', root_dir='/w', content_hash='h')) == []
     assert translate(FileWrittenEvent(tool_call_id=None, path='n.py', root_dir='/w', content_hash='h')) == []
-    edit_request = FileChangeRequestEvent(
+    edit_request = FileChangeRequestedEvent(
         tool_call_id='e2', path='a.py', root_dir='/w', operation='edit', diff='', truncated=False
     )
     assert translate(edit_request) == []
@@ -818,7 +819,7 @@ def test_web_flag_reads_a_private_token_file(
     elsewhere = tmp_path / 'checkout'
     elsewhere.mkdir()
 
-    def enter_worktree(*, name: str, headless: bool) -> Worktree:
+    def enter_worktree(*, name: str, headless: bool, store: object) -> Worktree:
         os.chdir(elsewhere)
         return Worktree(path=elsewhere, branch='clai-x', head='0', created=False)
 
@@ -856,9 +857,9 @@ async def test_run_web_on_a_launchers_port_and_token(
     store.save_plugin(PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', settings=saved))
     opened: list[str] = []
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.web.open_browser', opened.append)
-    with socket.socket() as probe:
-        probe.bind(('127.0.0.1', 0))
-        port = probe.getsockname()[1]
+    # A port bound and closed again stays free until `run_web` binds it, so another worker's port-0 server can be
+    # handed it and listen first, and the request below would reach that server.
+    port = _reserve_loopback_port()
     token = 'b' * 43 if launcher_token else None
     output = io.StringIO()
     with anyio.fail_after(30):
@@ -1002,8 +1003,8 @@ def test_dump_names_the_session_of_a_per_session_message() -> None:
         'id': 'live1',
         'text': 'hi',
     }
-    live = LiveChanged(sessions=[LiveEntry(id='c1', state='queued', title=None, workspace='/w')])
+    live = LiveChanged(sessions=[LiveEntry(id='c1', state='queued', busy=True, title=None, workspace='/w')])
     assert json.loads(dump(live)) == {
         'type': 'live',
-        'sessions': [{'id': 'c1', 'state': 'queued', 'title': None, 'workspace': '/w'}],
+        'sessions': [{'id': 'c1', 'state': 'queued', 'busy': True, 'title': None, 'workspace': '/w'}],
     }

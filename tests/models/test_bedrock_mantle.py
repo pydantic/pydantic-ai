@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from decimal import Decimal
 
 import httpx2
@@ -20,6 +21,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import infer_model
+from pydantic_ai.models._tool_call_ids import hashed_tool_call_id
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import NativeOutput
 
@@ -80,7 +82,12 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None, re
     ]
     assert [call.tool_name for _, call in tool_calls] == ['first_tool', 'second_tool']
     assert len({call.tool_call_id for _, call in tool_calls}) == len(tool_calls)
-    assert all(call.tool_call_id.startswith(f'{response_id}:') for response_id, call in tool_calls)
+    # Each ID is qualified with a hash of its own response's ID.
+    assert all(
+        re.fullmatch(r'call_\d+_[0-9A-Za-z]{8}', call.tool_call_id)
+        and call.tool_call_id.endswith(f'_{hashed_tool_call_id(str(response_id), 8)}')
+        for response_id, call in tool_calls
+    )
 
     if not stream:
         # Pin the full non-streaming message shape (reasoning parts, part ids, response-qualified
@@ -100,7 +107,7 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None, re
                         ToolCallPart(
                             tool_name='first_tool',
                             args='{}',
-                            tool_call_id='resp_43amfn3g3uar3i4sa5b7sz35cukuufaisldkwel5v6o47xzpr5va:call_0',
+                            tool_call_id='call_0_nYmVunD4',
                             id='fc_ccdc17fdac4f5c7e863e8d8fd3812a13',
                             provider_name='bedrock-mantle',
                         )
@@ -133,7 +140,7 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None, re
                         ToolReturnPart(
                             tool_name='first_tool',
                             content='first result',
-                            tool_call_id='resp_43amfn3g3uar3i4sa5b7sz35cukuufaisldkwel5v6o47xzpr5va:call_0',
+                            tool_call_id='call_0_nYmVunD4',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -147,7 +154,7 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None, re
                         ToolCallPart(
                             tool_name='second_tool',
                             args='{}',
-                            tool_call_id='resp_cizhrpixixp4ylkykezegmnkbgixq2qteaqq2gigeu5aluj6dhva:call_0',
+                            tool_call_id='call_0_iKVOozOV',
                             id='fc_a0cc01696625559fbb1e15fde9c518f5',
                             provider_name='bedrock-mantle',
                         )
@@ -180,7 +187,7 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None, re
                         ToolReturnPart(
                             tool_name='second_tool',
                             content='second result',
-                            tool_call_id='resp_cizhrpixixp4ylkykezegmnkbgixq2qteaqq2gigeu5aluj6dhva:call_0',
+                            tool_call_id='call_0_iKVOozOV',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -235,7 +242,7 @@ Second tool result: `second result`\
         )
         # Non-streaming Mantle reuses the raw `call_0` id across separate responses; the qualified ids
         # stay unique, and replaying the full (normalized) history back to Mantle succeeds.
-        assert all(call.tool_call_id.endswith(':call_0') for _, call in tool_calls)
+        assert all(call.tool_call_id.startswith('call_0_') for _, call in tool_calls)
         replay_result = await Agent(model).run('Reply with exactly OK.', message_history=messages)
         assert replay_result.output == 'OK'
 
@@ -312,10 +319,15 @@ async def test_reused_tool_call_ids_gpt_5_5(allow_model_requests: None) -> None:
     ]
     assert [call.tool_name for _, call in tool_calls] == ['first_tool', 'second_tool']
     assert len({call.tool_call_id for _, call in tool_calls}) == len(tool_calls)
-    assert all(call.tool_call_id.startswith(f'{response_id}:') for response_id, call in tool_calls)
+    # Each ID is qualified with a hash of its own response's ID.
+    assert all(
+        re.fullmatch(r'call_\d+_[0-9A-Za-z]{8}', call.tool_call_id)
+        and call.tool_call_id.endswith(f'_{hashed_tool_call_id(str(response_id), 8)}')
+        for response_id, call in tool_calls
+    )
     # gpt-5.5 reuses the raw `call_0` id across separate responses (like gpt-5.6); the qualified ids
     # stay unique, and replaying the full (normalized) history back to Mantle succeeds.
-    assert all(call.tool_call_id.endswith(':call_0') for _, call in tool_calls)
+    assert all(call.tool_call_id.startswith('call_0_') for _, call in tool_calls)
     replay_result = await Agent(model).run('Reply with exactly OK.', message_history=messages)
     assert replay_result.output == 'OK'
 
@@ -327,6 +339,24 @@ async def test_gpt_oss_responses(allow_model_requests: None) -> None:
     result = await Agent(model).run('Reply with exactly OSS.')
 
     assert result.output == 'OSS'
+
+
+async def test_gpt_oss_tool_output(allow_model_requests: None, request_capture: RequestCapture) -> None:
+    """Mantle's `/v1/responses` endpoint only accepts `tool_choice='auto'` for GPT-OSS, so the default `ToolOutput`
+    doesn't force the output tool there.
+    """
+
+    class City(BaseModel):
+        city: str
+        country: str
+
+    model = infer_model('bedrock-mantle:openai.gpt-oss-120b', lambda _: _provider(request_capture.client))
+    agent = Agent(model, output_type=City)
+
+    result = await agent.run('The Eiffel Tower is in which city and country?')
+
+    assert result.output == City(city='Paris', country='France')
+    assert [body['tool_choice'] for body in request_capture.bodies('/responses')] == snapshot(['auto'])
 
 
 async def test_safeguard_chat_routing(allow_model_requests: None) -> None:

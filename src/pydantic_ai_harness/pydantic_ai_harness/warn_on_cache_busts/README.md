@@ -36,7 +36,21 @@ every request.
 Providers report cache reads and writes in `RequestUsage.cache_read_tokens` and
 `cache_write_tokens`, so the monitor works the same on every provider that reports them.
 
-![WarnOnCacheBusts runs in the after_model_request hook and only observes. For each response it compares cache_read_tokens with the cacheable prefix the conversation has established. Requests 2 to 4 read back the whole prefix; request 5 reads back 4K of an established 40K, so it emits a CacheBustWarning with reason unexpected. Collapses explained by an expired cache, compaction or unreported usage do not warn.](https://pydantic.dev/docs/ai/img/harness/warn-on-cache-busts.svg)
+```mermaid
+flowchart TB
+    accTitle: Warn On Cache Busts: notice when the prompt cache stops hitting
+    accDescr: WarnOnCacheBusts receives each response from the model in after_model_request. When cache_read_tokens falls short of the established prefix, it checks the reason. The reasons unexpected and unknown lead to a CacheBustWarning, and the reasons ttl_expired, compacted and unreported lead to no warning.
+    model(["model"])
+    cap["WarnOnCacheBusts()<br/>after_model_request"]:::capability
+    reason{"reason?"}
+    warning["CacheBustWarning"]:::capability
+    quiet["no warning"]
+    model -->|"each response"| cap
+    cap -->|"cache_read_tokens<br/>falls short of the<br/>established prefix"| reason
+    reason -->|"unexpected, unknown"| warning
+    reason -->|"ttl_expired, compacted,<br/>unreported"| quiet
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
@@ -145,16 +159,6 @@ that does).
   established prefix by at least this many tokens, which keeps small partial misses
   on small prefixes out. Lower both to catch smaller regressions, such as in a test
   with a small prompt.
-- `collapse_ratio`: deprecated, with a `HarnessDeprecationWarning`. It warned when a
-  request read back less than this fraction of the established prefix, and is still
-  honored as `min_missed_ratio=1 - collapse_ratio`; pass that instead.
-- `min_prefix_tokens`: deprecated, with a `HarnessDeprecationWarning`, and still
-  honored as a floor on the established prefix. `min_missed_tokens` implies a prefix
-  at least that large; pass it instead.
-- `cache_ttl_seconds`: deprecated and ignored, with a `HarnessDeprecationWarning`.
-  The retention window now comes from the model, as described above; remove the
-  argument. To classify against a longer window, request it through the model's
-  settings (such as `anthropic_cache='1h'`) or a `CachePoint(ttl='1h')`.
 
 ## Silencing and escalation
 

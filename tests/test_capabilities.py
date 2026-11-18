@@ -6,6 +6,7 @@ import inspect
 import re
 import threading
 import time
+import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from traceback import extract_tb
@@ -25,6 +26,7 @@ from pydantic_ai.capabilities import (
     Capability,
     CapabilityOrdering,
     DynamicCapability,
+    HandleDeferredToolCalls,
     PrefixTools,
     ResolveModelId,
     Thinking,
@@ -39,6 +41,7 @@ from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     AgentNode,
     NodeResult,
+    ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapNodeRunHandler,
 )
@@ -46,7 +49,9 @@ from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.exceptions import (
     AgentRunError,
+    CallDeferred,
     ModelRetry,
+    ToolFailed,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -79,7 +84,7 @@ from pydantic_ai.output import OutputContext, ToolOutput
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import (
     resolve_capability_id,
@@ -2556,10 +2561,10 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
     assert result.output == 'done'
     # The deferred capability is surfaced in the catalog under the wrapped capability's id.
     assert first_request_instructions == [
-        '<context id="capability:deferred_capabilities">\n'
+        '<pyai:context id="capability:deferred_capabilities">\n'
         "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:\n"
-        '- refunds: Refund policy tools.\n</context>\n'
-        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+        '- refunds: Refund policy tools.\n</pyai:context>\n'
+        'A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     ]
 
 
@@ -2684,6 +2689,75 @@ async def test_wrapper_capability_delegates_hooks():
 
     assert 'before_run' in hook_calls
     assert 'after_run' in hook_calls
+
+
+@pytest.mark.parametrize('provided', [None, 'legacy-run-id'])
+@pytest.mark.parametrize('container', ['leaf', 'wrapper', 'combined', 'wrapper_override'])
+async def test_legacy_default_run_id_hook(provided: str | None, container: str) -> None:
+    calls: list[str] = []
+
+    class LegacyCapability(AbstractCapability[object]):
+        def get_default_run_id(self) -> str | None:
+            calls.append('leaf')
+            return 'child-run-id' if container == 'wrapper_override' else provided
+
+    class LegacyWrapper(WrapperCapability[object]):
+        def get_default_run_id(self) -> str | None:
+            calls.append('wrapper')
+            return provided
+
+    capability: AbstractCapability[object] = LegacyCapability()
+    if container == 'wrapper':
+        capability = WrapperCapability(capability)
+    elif container == 'combined':
+        capability = CombinedCapability([capability, AbstractCapability()])
+    elif container == 'wrapper_override':
+        capability = LegacyWrapper(capability)
+
+    agent = Agent(TestModel(), capabilities=[capability])
+    result = await agent.run('hello')
+    if provided is not None:
+        assert result.run_id == provided
+    else:
+        assert uuid.UUID(result.run_id).version == 7
+    assert calls == ['wrapper' if container == 'wrapper_override' else 'leaf']
+    calls.clear()
+    assert (await agent.run('hello', run_id='explicit')).run_id == 'explicit'
+    assert calls == []
+
+
+@pytest.mark.parametrize('provided', [None, 'container-run-id'])
+async def test_combined_default_run_id_override(provided: str | None) -> None:
+    """A wrapped container override owns bootstrap even when it declines to supply an ID."""
+
+    class LegacyCombined(CombinedCapability[object]):
+        def get_default_run_id(self) -> str | None:
+            return provided
+
+    class ChildCapability(AbstractCapability[object]):
+        def get_default_run_id(self) -> str:
+            return 'child-run-id'
+
+    child = ChildCapability()
+    assert child.get_default_run_id() == 'child-run-id'
+    # A wrapper retains the group; plain nested combined capabilities are flattened during composition.
+    capability = WrapperCapability(LegacyCombined([child]))
+    result = await Agent(TestModel(), capabilities=[capability]).run('hello')
+    if provided is None:
+        assert uuid.UUID(result.run_id).version == 7
+    else:
+        assert result.run_id == provided
+
+
+@pytest.mark.parametrize('provided', [None, 'legacy-run-id'])
+def test_public_default_run_id_container_delegation(provided: str | None) -> None:
+    class LegacyCapability(AbstractCapability[object]):
+        def get_default_run_id(self) -> str | None:
+            return provided
+
+    capability = LegacyCapability()
+    assert WrapperCapability(capability).get_default_run_id() == provided
+    assert CombinedCapability([capability, AbstractCapability[object]()]).get_default_run_id() == provided
 
 
 def test_wrapper_capability_for_agent_replaces():
@@ -4842,3 +4916,196 @@ def test_a_synthetic_key_retries_until_it_is_unused(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr('pydantic_ai.agent.uuid4', lambda: next(minted))
 
     assert _synthetic_capability_id(_Unnamed, taken={'<_unnamed:aaaaaa>'}) == '<_unnamed:bbbbbb>'
+
+
+async def test_an_answer_given_during_the_run_passes_the_tools_result_hooks() -> None:
+    """A question the tool raised itself, answered by a handler, passes `after_tool_execute` as the tool's own result would."""
+    seen: list[Any] = []
+
+    class Redact(AbstractCapability[None]):
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[None],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: Any,
+        ) -> Any:
+            seen.append(result)
+            return result.replace('hunter2', '[redacted]') if isinstance(result, str) else result
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('ask', {}, tool_call_id='question'),
+                    ToolCallPart('look_up', {}, tool_call_id='external'),
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    ' | '.join(str(part.content) for part in messages[-1].parts if isinstance(part, ToolReturnPart))
+                )
+            ]
+        )
+
+    def answer(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(calls={'question': 'my password is hunter2', 'external': 'hunter2 found'})
+
+    agent = Agent(
+        FunctionModel(model),
+        deps_type=type(None),
+        capabilities=[Redact(), HandleDeferredToolCalls(answer)],
+    )
+
+    @agent.tool_plain
+    def ask() -> str:
+        raise CallDeferred(kind='question')
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise CallDeferred
+
+    result = await agent.run('go')
+
+    assert result.output == 'my password is [redacted] | hunter2 found'
+    assert seen == ['my password is hunter2'], "an external result is not the tool's own, so it is passed on as is"
+
+
+@pytest.mark.parametrize(
+    ('error', 'expected'),
+    [
+        (ModelRetry('Answer in English.'), 'Answer in English.'),
+        (ToolFailed('The answer was blocked.'), 'The answer was blocked.'),
+    ],
+)
+async def test_a_result_hook_can_reject_an_answer_given_during_the_run(error: Exception, expected: str) -> None:
+    class Block(AbstractCapability[None]):
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[None],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: Any,
+        ) -> Any:
+            raise error
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('ask', {}, tool_call_id='question')])
+        return ModelResponse(parts=[TextPart(str([getattr(part, 'content', None) for part in messages[-1].parts]))])
+
+    def answer(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(calls={'question': ToolReturn('nein', content='notes')})
+
+    agent = Agent(FunctionModel(model), deps_type=type(None), capabilities=[Block(), HandleDeferredToolCalls(answer)])
+
+    @agent.tool_plain
+    def ask() -> str:
+        raise CallDeferred(kind='question')
+
+    assert expected in (await agent.run('go')).output
+
+
+def _call_outer_then_echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('outer', {}, tool_call_id='outer')])
+    return ModelResponse(
+        parts=[
+            TextPart(' | '.join(str(part.content) for part in messages[-1].parts if isinstance(part, ToolReturnPart)))
+        ]
+    )
+
+
+def _answer_by_tool_name(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    answers = {'ask': 'my password is hunter2', 'look_up': 'hunter2 found'}
+    return requests.build_results(calls={call.tool_call_id: answers[call.tool_name] for call in requests.calls})
+
+
+async def test_an_answer_given_to_a_call_made_with_handle_call_passes_the_tools_result_hooks() -> None:
+    """As in the graph, a question the tool raised itself passes `after_tool_execute` when `handle_call` resolves it inline."""
+
+    class Redact(AbstractCapability[None]):
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[None],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: Any,
+        ) -> Any:
+            return result.replace('hunter2', '[redacted]') if call.tool_name == 'ask' else result
+
+    agent = Agent(
+        FunctionModel(_call_outer_then_echo),
+        deps_type=type(None),
+        capabilities=[Redact(), HandleDeferredToolCalls(_answer_by_tool_name)],
+    )
+
+    @agent.tool
+    async def outer(ctx: RunContext[None]) -> str:
+        assert ctx.tool_manager is not None
+        answer = await ctx.tool_manager.handle_call(ToolCallPart('ask', {}, tool_call_id='inner-ask'))
+        found = await ctx.tool_manager.handle_call(ToolCallPart('look_up', {}, tool_call_id='inner-look-up'))
+        return f'{answer}; {found}'
+
+    @agent.tool_plain
+    def ask() -> str:
+        raise CallDeferred(kind='question')
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise CallDeferred
+
+    result = await agent.run('go')
+
+    assert result.output == 'my password is [redacted]; hunter2 found'
+
+
+@pytest.mark.parametrize('error', [ModelRetry('Answer in English.'), ToolFailed('The answer was blocked.')])
+async def test_a_result_hook_rejecting_an_answer_raises_raw_from_handle_call_when_asked(error: Exception) -> None:
+    """With `wrap_validation_errors=False`, as sandboxed dispatch uses, the hook's error propagates as raised."""
+
+    class Block(AbstractCapability[None]):
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[None],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: Any,
+        ) -> Any:
+            if call.tool_name == 'ask':
+                raise error
+            return result
+
+    agent = Agent(
+        FunctionModel(_call_outer_then_echo),
+        deps_type=type(None),
+        capabilities=[Block(), HandleDeferredToolCalls(_answer_by_tool_name)],
+    )
+
+    @agent.tool
+    async def outer(ctx: RunContext[None]) -> str:
+        assert ctx.tool_manager is not None
+        try:
+            await ctx.tool_manager.handle_call(
+                ToolCallPart('ask', {}, tool_call_id='inner'), wrap_validation_errors=False
+            )
+        except (ModelRetry, ToolFailed) as raised:
+            return f'raw {type(raised).__name__}: {raised}'
+        return 'no error'  # pragma: no cover
+
+    @agent.tool_plain
+    def ask() -> str:
+        raise CallDeferred(kind='question')
+
+    result = await agent.run('go')
+
+    assert result.output == f'raw {type(error).__name__}: {error}'

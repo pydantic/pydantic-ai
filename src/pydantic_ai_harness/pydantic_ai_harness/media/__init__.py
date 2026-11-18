@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from pydantic_ai_harness.media._postgres import PostgresConnection, PostgresMediaStore, PostgresPool
 from pydantic_ai_harness.media._s3 import S3MediaStore
 from pydantic_ai_harness.media._store import (
-    DiskMediaStore,
+    FileMediaStore,
     KeyStrategy,
     MediaContext,
     MediaStore,
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from pydantic_ai_harness.media._mongo import MongoMediaStore
 
 __all__ = [
-    'DiskMediaStore',
+    'FileMediaStore',
     'KeyStrategy',
     'MediaContext',
     'MediaStore',

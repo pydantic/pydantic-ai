@@ -9,7 +9,21 @@ Warn when a conversation's prompt cache hit collapses between model requests, wi
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![WarnOnCacheBusts runs in the after_model_request hook and only observes. For each response it compares cache_read_tokens with the cacheable prefix the conversation has established. Requests 2 to 4 read back the whole prefix; request 5 reads back 4K of an established 40K, so it emits a CacheBustWarning with reason unexpected. Collapses explained by an expired cache, compaction or unreported usage do not warn.](../img/harness/warn-on-cache-busts.svg)
+```mermaid
+flowchart TB
+    accTitle: Warn On Cache Busts: notice when the prompt cache stops hitting
+    accDescr: WarnOnCacheBusts receives each response from the model in after_model_request. When cache_read_tokens falls short of the established prefix, it checks the reason. The reasons unexpected and unknown lead to a CacheBustWarning, and the reasons ttl_expired, compacted and unreported lead to no warning.
+    model(["model"])
+    cap["WarnOnCacheBusts()<br/>after_model_request"]:::capability
+    reason{"reason?"}
+    warning["CacheBustWarning"]:::capability
+    quiet["no warning"]
+    model -->|"each response"| cap
+    cap -->|"cache_read_tokens<br/>falls short of the<br/>established prefix"| reason
+    reason -->|"unexpected, unknown"| warning
+    reason -->|"ttl_expired, compacted,<br/>unreported"| quiet
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## What it watches
 
@@ -71,9 +85,6 @@ Models such as Anthropic's (including on the Bedrock and Vertex AI SDK clients),
 
 - `min_missed_ratio` (default `0.05`): only warn when a request falls short of the established prefix by more than this fraction of it. The default only keeps provider rounding out. It must be at least `0.0` and less than `1.0` -- a request can't miss more than the whole prefix.
 - `min_missed_tokens` (default `2000`): only warn when a request falls short of the established prefix by at least this many tokens, which keeps small partial misses on small prefixes out. Lower both to catch smaller regressions, such as in a test with a small prompt.
-- `collapse_ratio`: deprecated, with a `HarnessDeprecationWarning`. It warned when a request read back less than this fraction of the established prefix, and is still honored as `min_missed_ratio=1 - collapse_ratio`; pass that instead.
-- `min_prefix_tokens`: deprecated, with a `HarnessDeprecationWarning`, and still honored as a floor on the established prefix. `min_missed_tokens` implies a prefix at least that large; pass it instead.
-- `cache_ttl_seconds`: deprecated and ignored, with a `HarnessDeprecationWarning`. The retention window now comes from the model, as described above; remove the argument. To classify against a longer window, request it through the model's settings (such as `anthropic_cache='1h'`) or a `CachePoint(ttl='1h')`.
 
 ## Silencing and escalation
 

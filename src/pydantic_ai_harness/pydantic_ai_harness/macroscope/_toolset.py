@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import timedelta
-from pathlib import Path
 from typing import Literal, NoReturn
 
 from pydantic import BaseModel, ConfigDict
@@ -14,7 +13,6 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError
-from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import raise_tool_failure, supports_commands
 
 _INSTALL_COMMAND = 'curl -sSL https://raw.githubusercontent.com/prassoai/macroscope-local/main/install.sh | bash'
@@ -155,12 +153,9 @@ class MacroscopeToolset(FunctionToolset[AgentDepsT]):
         command: str,
         base: str | None,
         timeout: float,
-        cwd: Path | None = None,
         id: str | None = None,
     ) -> None:
         super().__init__(id=id)
-        if cwd is not None:
-            warn_argument_ignored('MacroscopeToolset', 'cwd', SET_WORKING_DIR_ON_THE_WORKSPACE, stacklevel=3)
         if command.startswith('-') or '=' in command:
             # `_LAUNCHER` hands the command to `env`, which would read it as an option or a variable assignment.
             raise UserError(
@@ -208,13 +203,13 @@ class MacroscopeToolset(FunctionToolset[AgentDepsT]):
         try:
             result = await ctx.workspace.run(['sh', '-c', _LAUNCHER, 'sh', *args], timeout=self._timeout)
         # Before `WorkspaceError`: a timeout keeps its partial output, other workspace failures are not retryable.
-        except WorkspaceTimeoutError as e:
-            review = parse_macroscope_stream(_combined_output(e.stdout, e.stderr).splitlines())
+        except WorkspaceTimeoutError as exc:
+            review = parse_macroscope_stream(_combined_output(exc.stdout, exc.stderr).splitlines())
             if review.review_id is None:
                 raise ModelRetry(f'The Macroscope review timed out after {self._timeout}s.') from None
             return _stopped_early(review, 'timed_out')
-        except WorkspaceError as e:
-            raise_tool_failure(e)
+        except WorkspaceError as exc:
+            raise_tool_failure(exc)
         output = _combined_output(result.stdout, result.stderr)
         review = parse_macroscope_stream(output.splitlines())
         if review.review_id is not None:

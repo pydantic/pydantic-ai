@@ -111,6 +111,9 @@ completed results from history. This shapes how you write agents for it:
   capability's `@durable_operation` method.
 - **Names are persisted.** Activity names come from the agent's `name`, toolset IDs and tool names.
   Don't rename them while orchestrations that use them are still running.
+- **Token counts are activities.** With `count_tokens_before_request=True`, the count ahead of each
+  model request runs as an activity. Earlier versions counted in orchestrator code, so let
+  orchestrations that set it finish before you upgrade.
 - **Replay cost grows with run length.** Each replay re-runs the agent up to its latest step, so
   orchestrator CPU grows with the square of the number of model and tool steps. Keep very long
   conversations in separate orchestrations.
@@ -262,10 +265,30 @@ durability = AzureDurableTaskDurability(
 `@durable_operation` methods. [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] and deferred calls
 are agent control flow, not activity failures. `UserError` and serialization failures are not retried.
 
+A model activity that fails with a model error that has a `retry_after` (read from a provider's
+`Retry-After` header, for example) is attempted again after that long, on a durable timer, instead of
+the policy's backoff. A `RetryPolicy` can't set the delay of one retry, so the activity completes with
+the wait, and the orchestration waits it and calls the activity again with the attempts the policy has
+left: the history shows the completed activity, a timer, and the activity again. The wait is capped at
+`max_retry_interval`, or without one at the policy's own backoff for that attempt or a minute,
+whichever is longer. Once the policy allows no more attempts, the orchestration gets a
+`TaskFailedError` with the model error's type, message and cause, rebuilt from the activity's result:
+the last attempt shows as completed in the history rather than failed, its message names the activity
+rather than its task number, and properties from a worker's `exception_properties_provider` aren't
+included. Without `model_options`, or with `max_number_of_attempts=1`, no retry can happen, so a
+model activity fails with the model error like any other activity. Set
+`model_settings={'max_retries': 0}` on the agent so the provider SDK doesn't also retry inside the
+activity.
+
 `resolve_tool_options(operation_id, tool, tool_name)` sets a policy per tool: return a `RetryPolicy`,
 `None` to keep `tool_options`, or `False` to run a function tool inline in the orchestrator. A function
 tool can also opt out with `metadata={'azure_durable_task': False}`. Inline tools must be deterministic
-and do no I/O. MCP and dynamic tools always run as activities.
+and do no I/O outside `ctx.workspace`, whose calls still run as activities. The harness `FileSystem`
+write tools opt out this way, so their file-change requests reach listeners in the orchestrator. MCP
+and dynamic tools always run as activities.
+Async function tools can also opt out with the engine-neutral [`durable=False`](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit),
+which works on every engine and wins over `resolve_tool_options`; an `'azure_durable_task'` key on
+the same tool wins over it.
 
 `name=` sets the activity name prefix (the agent's `name` by default), `models=` registers extra models
 by ID for `agent.run(model=...)`, and `event_stream_handler=` runs a handler as activities.

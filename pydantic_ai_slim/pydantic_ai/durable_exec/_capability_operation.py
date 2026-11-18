@@ -416,8 +416,12 @@ def _capability_operation_schema(
     *,
     annotation_replacements: dict[str, Any],
 ) -> FunctionSchema:
+    # Only the validator is used, so field descriptions would go unread. Reading attribute docstrings is also slow on
+    # Python < 3.13, where Pydantic re-parses a dataclass's whole module for each one
+    # (https://github.com/pydantic/pydantic/issues/14309), and the `ModelRequestContextProjection` schema reaches every
+    # message type.
     if ctx_parameter is None and not annotation_replacements:
-        return function_schema(function, GenerateToolJsonSchema)
+        return function_schema(function, GenerateToolJsonSchema, attribute_docstrings=False)
 
     schema_target = _schema_target(function)
     schema_target.__annotations__ = {
@@ -447,7 +451,7 @@ def _capability_operation_schema(
     )
     if cache_key is not None and (cached := _FRAMEWORK_TYPED_SCHEMAS.get(cache_key)) is not None:
         return replace(cached, function=schema_target)
-    schema = function_schema(schema_target, GenerateToolJsonSchema, takes_ctx=False)
+    schema = function_schema(schema_target, GenerateToolJsonSchema, takes_ctx=False, attribute_docstrings=False)
     if cache_key is not None:
         _FRAMEWORK_TYPED_SCHEMAS[cache_key] = schema
     return schema
@@ -569,7 +573,7 @@ async def recover_capability(ctx: RunContext[Any], *, capability_id: str) -> Abs
     capability = matches[0]
     if type(capability).for_run is AbstractCapability.for_run:
         return capability
-    return await capability.for_run(ctx)
+    return await capability._for_run_keeping_authority(ctx)  # pyright: ignore[reportPrivateUsage]
 
 
 CapabilityBoundOperation = BoundDurableOperation[CapabilityOperationParams, Any, Any]
