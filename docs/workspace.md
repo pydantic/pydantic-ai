@@ -76,8 +76,6 @@ it or its provider stops it; see [Cleaning up](#cleaning-up).
 
 ## Supported workspaces {#supported-workspaces}
 
-<span id="harness-workspace-capabilities"></span>
-
 `LocalWorkspace` and `WindowsWorkspace` come with `pydantic-ai`; the rest come with
 [Pydantic AI Harness](harness/index.md), each behind its own install extra.
 
@@ -173,7 +171,8 @@ async def save_notes(ctx: RunContext, notes: str) -> str:
   from it so the model can try again; uncaught, it ends the run (on Temporal, it follows the
   [retry policy](#durable-execution)).
 - An environment that is gone, such as a sandbox deleted during a command, raises
-  `WorkspaceUnavailableError` and ends the run.
+  `WorkspaceUnavailableError` and ends the run. A command killed by a signal while its environment stays
+  live returns its exit code instead.
 
 ## Pick up where you left off {#continuing-in-the-same-workspace}
 
@@ -345,6 +344,8 @@ whatever the agent's capability, the history or `workspace=` say.
 
 ## Durable execution
 
+<span id="harness-workspace-capabilities"></span>
+
 Under [Temporal](durable_execution/temporal.md), [DBOS](durable_execution/dbos.md) or
 [Prefect](durable_execution/prefect.md), attach the workspace capability next to the durability capability:
 
@@ -390,10 +391,14 @@ the workspace calls it makes still run as the engine's activities, steps or task
 - A retried `start_command` reattaches to its job instead of starting a second process. If a launch failed
   partway, the retry reports a pending launch; once the process has stopped, remove its files under
   `.pydantic-ai-harness/shell/`.
+- Without an explicit `run_id`, a durable run takes its ID from the Temporal run ID, DBOS workflow ID or
+  Prefect flow run ID, so workspace state such as a sticky `cd` or a background job survives a worker
+  restart.
 - On DBOS, tool calls in a run with a workspace run one at a time, so their steps replay in order.
 - `workspace=` passes only the reference; each step rebuilds the workspace from the agent's capability.
-  Put policy on that capability, such as `LocalWorkspace(..., read_only=True)`: a `ReadOnlyWorkspace(...)`
-  passed to the run raises `UserError`, because rebuilding would drop it. A workspace capability passed to
+  Put policy on that capability, such as `LocalWorkspace(..., read_only=True)` or
+  `LocalWorkspace(..., authority='none')`: a `ReadOnlyWorkspace(...)` or `AuthorityWorkspace(...)` passed to
+  the run raises `UserError`, because rebuilding would drop it. A workspace capability passed to
   the run doesn't apply its own settings, such as a sandbox image, for the same reason.
 - Workspace calls made from workflow code store their arguments, `env=` and file contents included, in
   durable history. Keep secrets in the capability's `env=` or use them inside a tool.
@@ -408,7 +413,8 @@ the workspace calls it makes still run as the engine's activities, steps or task
     Adding or removing a workspace capability changes what runs record, so runs started before the change
     no longer match their history: Temporal replay fails with a nondeterminism error, and DBOS can't recover
     the workflow. Let in-flight runs finish first, or deploy the change with Temporal worker versioning, a
-    new task queue, or a new DBOS application version.
+    new task queue, or a new DBOS application version. On Prefect, let running flows finish before you
+    deploy.
 
 ## Platforms
 

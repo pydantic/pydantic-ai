@@ -121,7 +121,8 @@ framed data for `'none'`.
   [tool approval](deferred-tools.md#human-in-the-loop-tool-approval) or a sandbox for that.
 - It's checked when a file is read. Text already in a conversation keeps its level, so start a new
   conversation after lowering it.
-- For one run, pass `workspace=AuthorityWorkspace(workspace, authority=...)`. Wrappers only lower
+- For one run, pass `workspace=AuthorityWorkspace(workspace, authority=...)`; under
+  [durable execution](workspace.md#durable-execution), set it on the capability instead. Wrappers only lower
   authority: with several, the lowest wins.
 
 ### Authority by path {#path-authority}
