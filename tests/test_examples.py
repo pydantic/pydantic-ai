@@ -134,6 +134,7 @@ RUNNABLE_HARNESS_PAGES = frozenset(
         'artifact-scanning.md',
         'aws-lambda.md',
         'azure-durable-task.md',
+        'deny-unanswered.md',
         'detect-loops.md',
         'memory.md',
         'permissions.md',

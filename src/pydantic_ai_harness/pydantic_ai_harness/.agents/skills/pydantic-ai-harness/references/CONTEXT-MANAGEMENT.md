@@ -2,7 +2,8 @@
 
 Capabilities that keep a long run inside the model's context window and its prompt cache healthy:
 the compaction family (edit history before each request), `ToolOutputLimits` (shrink or spill big
-tool returns when they are produced), `WarnOnCacheBusts` (observe cache collapses), and the media
+tool returns when they are produced), `ToolBridge` (a fixed tool list in front of many tools),
+`WarnOnCacheBusts` (observe cache collapses), and the media
 stores `StepPersistence` uses. None needs an extra, except `MongoMediaStore`, which needs
 `pydantic-ai-harness[mongodb]` (`PostgresMediaStore` takes your own `asyncpg` pool and needs no
 harness extra). All compaction strategies keep tool-call /
@@ -25,6 +26,7 @@ tool-return pairs intact, and their edits persist into the run's message history
 | UI needs a live "context: 73%" gauge | `ReportContextUsage` |
 | A single tool return is huge (file read, logs, JSON) | `ToolOutputLimits` |
 | Cache hit rate drops / costs jump with no error | `WarnOnCacheBusts` |
+| Many or changing tools (several MCP servers) bust the cached tool list | `ToolBridge` |
 | OpenAI Responses or Anthropic only, server-side compaction is fine | core `OpenAICompaction` / `AnthropicCompaction` |
 | Need exact details compaction dropped | `ConversationSearch` (see KNOWLEDGE-AND-MEMORY.md) |
 
@@ -428,6 +430,37 @@ it only fires when the provider reports cache tokens; route to Logfire with
 `logging.captureWarnings(True)`. On a provider with no published retention window (`unknown`)
 it can't tell a moved prefix from an expired cache.
 
+## ToolBridge
+
+Replaces the agent's tools with three fixed tools, so the tool definitions stay cached however many
+tools sit behind them and however they change mid-run: `tool_search(queries)` returns matching names
+and descriptions, `tool_describe(name)` returns the description and `parameters_json_schema`, and
+`tool_call(name, args_json)` runs the tool with its arguments as a JSON object string. Bridged calls
+go through the normal tool path (validation, hooks, usage; approval only through a
+`HandleDeferredToolCalls` handler), and both `tool_call` and the
+bridged tool count as tool calls. A bridged tool's retries count under its own name (its `ctx.retry` and
+`max_retries`) and also spend a `tool_call` retry; a `sequential` bridged tool makes `tool_call` sequential.
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import ToolBridge
+
+agent = Agent('test', capabilities=[ToolBridge(['github_search', 'github_get_issue'])])
+```
+
+Options: `tools` (`'all'`, a list of names, a metadata dict such as `{'bridge': True}`, or a
+`(ctx, tool_def) -> bool` callable; the rest stay
+native), `search` (a `ToolSearchFunc`; `None` matches query words against names and descriptions), `max_results=10`, `max_retries=None` (the agent's tool retry budget).
+Gotchas: approval-required and external tools, tools with a `tool_kind` or `unless_tool_kind` (control
+tools, `read_file`, so kind-based capabilities still find them), code-execution tools (`run_code`,
+`run_command`) and `unless_native` fallbacks stay native, as do deferred tools a capability owns; other `defer_loading=True` tools are bridged, so `ToolSearch` has nothing left to reveal; a bridged tool that
+raises `ApprovalRequired`/`CallDeferred` needs a `HandleDeferredToolCalls` handler (it sees the real tool name),
+else the run raises `UserError`; the names `tool_search`, `tool_describe` and `tool_call` are reserved; each call costs an extra step and
+loses provider-side strict schema validation. Two merge into one (default `id='tool_bridge'`). It orders itself just inside `ToolSearch` and
+outside other wrappers (`SetToolMetadata`, `PrefixTools`); `CodeMode` wraps it. Recognize `tool_call` by its kind,
+`TOOL_CALL_KIND` (`tool_bridge.tool_call`, from `pydantic_ai_harness.tool_bridge`), not its name.
+
 ## Media externalization (not a capability)
 
 `pydantic_ai_harness.media` holds content-addressed stores (`FileMediaStore`, `SqliteMediaStore`,
@@ -448,6 +481,7 @@ Use `warn_on_cache_busts.WarnOnCacheBusts` (not `cache_stability` / `CacheStabil
 
 - https://pydantic.dev/docs/ai/harness/compaction/
 - https://pydantic.dev/docs/ai/harness/tool-output-limits/
+- https://pydantic.dev/docs/ai/harness/tool-bridge/
 - https://pydantic.dev/docs/ai/harness/warn-on-cache-busts/
 - https://pydantic.dev/docs/ai/harness/media/
 - https://pydantic.dev/docs/ai/capabilities/compaction/
