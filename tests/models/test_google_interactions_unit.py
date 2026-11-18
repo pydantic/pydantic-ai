@@ -54,7 +54,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     sanitize_messages,
 )
-from pydantic_ai.models import ModelRequestParameters, infer_model
+from pydantic_ai.models import ModelRequestParameters, get_user_agent, infer_model
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import FileSearchTool, ImageGenerationTool, MCPServerTool, MemoryTool
 from pydantic_ai.settings import ThinkingEffort
@@ -96,10 +96,14 @@ class MockGoogle:
         }
     )
     requests: list[dict[str, JsonValue]] = field(default_factory=list[dict[str, JsonValue]])
+    user_agents: list[list[str]] = field(default_factory=list[list[str]])
     status: int = 200
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(_JSON.validate_json(request.read()))
+        self.user_agents.append(
+            [value.decode() for name, value in request.headers.raw if name.lower() == b'user-agent']
+        )
         return httpx2.Response(self.status, json=self.body)
 
 
@@ -115,6 +119,41 @@ def mock_model(mock_google: MockGoogle) -> GoogleInteractionsModel:
         provider=GoogleProvider(
             api_key='test-key', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(mock_google.handle))
         ),
+    )
+
+
+@pytest.mark.parametrize(
+    ('extra_headers', 'expected'),
+    [
+        pytest.param({}, 'google-genai pydantic-ai', id='no extra_headers'),
+        pytest.param({'User-Agent': 'support-bot'}, 'support-bot', id='User-Agent'),
+        pytest.param({'user-agent': 'support-bot'}, 'support-bot', id='user-agent'),
+        pytest.param({'USER-AGENT': 'support-bot'}, 'support-bot', id='USER-AGENT'),
+        pytest.param({'User-Agent': 'a', 'user-agent': 'b'}, 'a b', id='two spellings'),
+        pytest.param({'User-Agent': ''}, 'google-genai', id='empty'),
+    ],
+)
+async def test_one_user_agent(
+    allow_model_requests: None,
+    mock_google: MockGoogle,
+    mock_model: GoogleInteractionsModel,
+    extra_headers: dict[str, str],
+    expected: str,
+):
+    """A request carries one user-agent line: the caller's in any spelling, or the SDK's label with ours.
+
+    Not recorded: the claim is about the header lines the SDK sends, which no response bears on.
+    """
+    await model_request(
+        mock_model, [ModelRequest.user_text_prompt('hello')], model_settings={'extra_headers': extra_headers}
+    )
+
+    [[user_agent]] = mock_google.user_agents
+    assert (
+        user_agent.replace(get_user_agent(), 'pydantic-ai').replace(
+            mock_model.client.aio.interactions.sdk_configuration.user_agent, 'google-genai'
+        )
+        == expected
     )
 
 

@@ -379,7 +379,17 @@ class GoogleInteractionsModel(Model[Client]):
         )
 
     def _http_options(self, settings: ModelSettings, steps: list[dict[str, JsonValue]]) -> _HttpOptions:
-        options: _HttpOptions = {'extra_headers': {'User-Agent': get_user_agent(), **settings.get('extra_headers', {})}}
+        headers = dict(settings.get('extra_headers', {}))
+        # The SDK sends its own lowercase `user-agent` and merges per-request headers by exact name, so only a
+        # lowercase line replaces it; any other spelling would go out as a second `User-Agent` line.
+        caller_user_agents = [headers.pop(name) for name in [*headers] if name.lower() == 'user-agent']
+        sdk_user_agent = self.client.aio.interactions.sdk_configuration.user_agent
+        headers['user-agent'] = (
+            ' '.join(filter(None, caller_user_agents)).strip() or sdk_user_agent
+            if caller_user_agents
+            else f'{sdk_user_agent} {get_user_agent()}'
+        )
+        options: _HttpOptions = {'extra_headers': headers}
         if (timeout := settings.get('timeout')) is not None:
             options['timeout'] = (
                 timeout
