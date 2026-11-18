@@ -67,7 +67,7 @@ _POINTER_NOTE = (
     '{frame}. Read the file if it is relevant to your task.'
 )
 _UNLOADED_NOTE = (
-    "This directory has an instruction file that is not loaded here, because it isn't from the operator: "
+    "The working directory has an instruction file that is not loaded here, because it isn't from the operator: "
     '`{label}`. Read it with your file tools if it is relevant to your task.'
 )
 _NESTED_PRECEDENCE = (

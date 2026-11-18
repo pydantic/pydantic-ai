@@ -246,9 +246,9 @@ class Memory(AbstractCapability[AgentDepsT]):
         # that continues earlier work can put back the same one after the boundary. Taken from the whole history:
         # a provider can compact in the very response that asked for the approval being resumed.
         metadata = snapshot_metadata(scope, self.id)
-        self._run_snapshot = _latest_snapshot(ctx.messages, metadata)
         # Put back with the source it was recorded with, read from history rather than the store, without I/O.
-        self._run_source = _latest_snapshot_source(ctx.messages, metadata)
+        latest = _latest_snapshot(ctx.messages, metadata)
+        self._run_snapshot, self._run_source = latest if latest is not None else (None, _MEMORY_SOURCE)
         if isinstance(store, FileMemoryStore) and store.workspace is None and not ctx.workspace.attached:
             raise UserError(
                 "`Memory(store=FileMemoryStore(...))` keeps memory files in the run's workspace, but none is attached "
@@ -361,7 +361,8 @@ class Memory(AbstractCapability[AgentDepsT]):
         metadata = snapshot_metadata(scope, self.id)
         scope_hash = metadata['scope']
         # Compaction replaces what came before its boundary, so a snapshot there is no longer seen by the model.
-        latest = _latest_snapshot(post_compaction_window(ctx.messages), metadata)
+        latest_snapshot = _latest_snapshot(post_compaction_window(ctx.messages), metadata)
+        latest = None if latest_snapshot is None else latest_snapshot[0]
         first_request = not self._run_started
         self._run_started = True
         # Only a run's first request injects. Even then, Memory waits for the next prompt when the model has
@@ -616,13 +617,13 @@ def _snapshot_part(content: str, metadata: dict[str, str], source: CapabilityPar
     )
 
 
-def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> str | None:
-    """The content of the latest snapshot for this scope in history, or `None` when there is none.
+def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> tuple[str, CapabilityPartSource] | None:
+    """The content and source of the latest snapshot for this scope in history, or `None` when there is none.
 
     Snapshots are `MemorySnapshotPart`s, recognized by their type, scope and capability id, never by their text.
     Earlier versions recorded them as user text marked with metadata, or before that a plain string, which still
     identifies them. That text includes the `<memory>` frame, which is left out, so a snapshot that matches the
-    current memory isn't recorded again.
+    current memory isn't recorded again. Those recorded no source: they were the agent's own memory.
     """
     legacy = (f'{MEMORY_ORIGIN}:{metadata["scope"]}', MEMORY_ORIGIN)
     for message in reversed(messages):
@@ -632,20 +633,6 @@ def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> 
             if (snapshot := _part_snapshot(part, metadata, legacy)) is not None:
                 return snapshot
     return None
-
-
-def _latest_snapshot_source(messages: list[ModelMessage], metadata: dict[str, str]) -> CapabilityPartSource:
-    """The source of the latest `MemorySnapshotPart` for this scope in history, or the agent's when there is none."""
-    for message in reversed(messages):
-        if isinstance(message, ModelRequest):
-            for part in reversed(message.parts):
-                if (
-                    isinstance(part, MemorySnapshotPart)
-                    and part.scope_hash == metadata['scope']
-                    and part.memory_id == metadata['id']
-                ):
-                    return part.source
-    return _MEMORY_SOURCE
 
 
 def _snapshot_to_append(
@@ -669,8 +656,10 @@ def _record_load_error(span: Span, exception_type: str) -> None:
         span.set_attributes({'memory.outcome': 'error', 'memory.exception_type': exception_type})
 
 
-def _part_snapshot(part: ModelRequestPart, metadata: dict[str, str], legacy: tuple[str, str]) -> str | None:
-    """The content of the snapshot for this scope that `part` is or holds, or `None` when it has none.
+def _part_snapshot(
+    part: ModelRequestPart, metadata: dict[str, str], legacy: tuple[str, str]
+) -> tuple[str, CapabilityPartSource] | None:
+    """The content and source of the snapshot for this scope that `part` is or holds, or `None` when it has none.
 
     `legacy` is the plain-string metadata older versions marked a snapshot with.
     """
@@ -679,13 +668,13 @@ def _part_snapshot(part: ModelRequestPart, metadata: dict[str, str], legacy: tup
         and part.scope_hash == metadata['scope']
         and part.memory_id == metadata['id']
     ):
-        return part.content
+        return part.content, part.source
     if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
         return None
     for item in reversed(part.content):
         if isinstance(item, TextContent) and (item.metadata == metadata or item.metadata in legacy):
             # A legacy snapshot's body sits on lines of its own, between the tags.
-            return item.content.removeprefix('<memory>\n').removesuffix('\n</memory>')
+            return item.content.removeprefix('<memory>\n').removesuffix('\n</memory>'), _MEMORY_SOURCE
     return None
 
 
