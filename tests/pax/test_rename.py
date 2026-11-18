@@ -2,36 +2,39 @@
 
 import importlib
 import sys
-from importlib import metadata
+import tomllib
+from pathlib import Path
 from types import ModuleType
 
 import pytest
-from packaging.requirements import Requirement
 
 import pydantic_ai_pax.commands
 import pydantic_ai_pax.plugins
 from pydantic_clai2 import __main__ as clai2_main
 
-
-def _scripts(distribution: str) -> dict[str, str]:
-    return {
-        entry.name: entry.value
-        for entry in metadata.distribution(distribution).entry_points
-        if entry.group == 'console_scripts'
-    }
+SOURCES = Path(__file__).parents[2] / 'src'
 
 
 def test_pax_is_the_command_and_clai2_its_deprecated_name() -> None:
-    assert _scripts('pydantic-ai-pax') == {
+    """Read from the projects, since a test cell installs `pydantic-ai-pax` without the `pydantic-clai2` shim."""
+    pax = tomllib.loads((SOURCES / 'pydantic_ai_pax' / 'pyproject.toml').read_text())
+    shim = tomllib.loads((SOURCES / 'pydantic_clai2' / 'pyproject.toml').read_text())
+    assert pax['project']['scripts'] == {
         'pax': 'pydantic_ai_pax.__main__:main',
         'pydantic-ai-pax': 'pydantic_ai_pax.__main__:main',
     }
-    assert _scripts('pydantic-clai2') == {
+    assert shim['project']['scripts'] == {
         'clai2': 'pydantic_clai2.__main__:main',
         'pydantic-clai2': 'pydantic_clai2.__main__:main',
     }
-    [pax] = [Requirement(text) for text in metadata.requires('pydantic-clai2') or [] if 'extra ==' not in text]
-    assert (pax.name, str(pax.specifier)) == ('pydantic-ai-pax', f'=={metadata.version("pydantic-ai-pax")}')
+    version = pax['tool']['uv-dynamic-versioning']['format-jinja']
+    assert shim['tool']['uv-dynamic-versioning']['format-jinja'] == version
+    pax_hook = pax['tool']['hatch']['metadata']['hooks']['uv-dynamic-versioning']
+    shim_hook = shim['tool']['hatch']['metadata']['hooks']['uv-dynamic-versioning']
+    assert shim_hook['dependencies'] == [f'pydantic-ai-pax=={version}']
+    assert shim_hook['optional-dependencies'] == {
+        extra: [f'pydantic-ai-pax[{extra}]=={version}'] for extra in pax_hook['optional-dependencies']
+    }
 
 
 def test_clai2_points_at_pax_then_runs_it(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
