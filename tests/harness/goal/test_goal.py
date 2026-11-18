@@ -184,7 +184,7 @@ Continue within the supplied constraints; do not bypass approvals or fabricate s
             return ' '
 
         agent = Agent(TestModel(), capabilities=[Goal(goal='Finish', verify=empty)])
-        with pytest.raises(UserError, match='nonempty explanation'):
+        with pytest.raises(UserError, match=r'The `Goal` verifier must return `None` or a nonempty explanation\.'):
             await agent.run('Start')
 
     async def test_reuse_and_multiple_goals(self) -> None:
@@ -220,7 +220,7 @@ Continue within the supplied constraints; do not bypass approvals or fabricate s
 
     @pytest.mark.parametrize('goal', ['', ' \n'])
     def test_empty_goal(self, goal: str) -> None:
-        with pytest.raises(UserError, match='nonempty goal'):
+        with pytest.raises(UserError, match=r'`Goal` requires a nonempty `goal`\.'):
             Goal(goal=goal, verify=complete)
 
     @pytest.mark.parametrize('include_content', [False, True])

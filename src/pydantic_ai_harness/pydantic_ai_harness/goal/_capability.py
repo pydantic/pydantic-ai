@@ -62,7 +62,7 @@ class Goal(AbstractCapability[AgentDepsT]):
 
     def __post_init__(self) -> None:
         if not self.goal.strip():
-            raise UserError('Goal requires a nonempty goal.')
+            raise UserError('`Goal` requires a nonempty `goal`.')
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
@@ -101,7 +101,7 @@ class Goal(AbstractCapability[AgentDepsT]):
         ) as span:
             gap = await self._verify(ctx, output)
             if gap is not None and not gap.strip():
-                raise UserError('Goal verifier must return None or a nonempty explanation.')
+                raise UserError('The `Goal` verifier must return `None` or a nonempty explanation.')
             if span.is_recording():
                 span.set_attribute('goal.met', gap is None)
                 if ctx.trace_include_content:
