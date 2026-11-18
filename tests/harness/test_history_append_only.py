@@ -61,6 +61,7 @@ from pydantic_ai_harness import (
     Pylon,
     RelevanceCompaction,
     RepoContext,
+    ReportStaleFiles,
     Researcher,
     Shell,
     Skills,
@@ -83,6 +84,7 @@ from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox, read_peer_message
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
+from pydantic_ai_harness.report_stale_files import StaleFilesPart
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from pydantic_ai_harness.sub_agents import (
@@ -619,6 +621,14 @@ ALLOWED: dict[str, Allowed] = {
         records=('request-scoped system prompt',),
         providers=('openai-responses', 'openai-chat'),
     ),
+    'ReportStaleFiles': Allowed(
+        'Request-scoped stale-file notice: sent for one request, then left out. Anthropic clears it natively with '
+        '`clear_at`; elsewhere it is a request-only tail',
+        (('messages', 'system-prompt'),),
+        tail=True,
+        records=('request-scoped system prompt',),
+        providers=('openai-responses', 'openai-chat'),
+    ),
     'SystemReminders': Allowed(
         f'Request-scoped system prompt ({_PULLS}9712): sent for one request, then left out. Anthropic clears it '
         'natively with `clear_at`; elsewhere it is a request-only tail',
@@ -793,8 +803,38 @@ def _peer_message(
     return [Peers(network=view, inbox=inbox)], Scenario(between_runs=send), delivered_once
 
 
+def _stale_files(
+    tmp_path: Path,
+) -> tuple[list[AbstractCapability[None]], Scenario, Callable[[ConversationResult], None]]:
+    """A file the model read and edited changes from outside between the runs, so the second run gets notices."""
+    notes = tmp_path / 'notes.md'
+    notes.write_text('Sunny.\n')
+
+    async def change() -> None:
+        notes.write_text('Snowy.\n')
+
+    def notified(result: ConversationResult) -> None:
+        parts = [
+            part
+            for message in result.history
+            for part in getattr(message, 'parts', ())
+            if isinstance(part, StaleFilesPart)
+        ]
+        assert parts, 'expected a stale-file notice in the second run'
+
+    scenario = Scenario(
+        state_calls=(
+            ('read_file', {'path': 'notes.md'}),
+            ('edit_file', {'path': 'notes.md', 'old_text': 'Sunny.', 'new_text': 'Rainy.'}),
+        ),
+        between_runs=change,
+    )
+    return [ReportStaleFiles(), FileSystem(), LocalWorkspace(tmp_path)], scenario, notified
+
+
 CONVERSATIONS = {
     'Peers': _peer_message,
+    'ReportStaleFiles': _stale_files,
     'DelegationReports': _delegation_reports,
     'SummarizingCompaction+Capability(defer_loading=True)': _summarized_load(
         ('load_capability', {'id': 'forecasting'})

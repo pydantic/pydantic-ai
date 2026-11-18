@@ -595,6 +595,9 @@ navigation:
             slug: "harness/repo-context"
             aliases:
               - "harness/context"
+          - page: "Report Stale Files"
+            path: "harness/report-stale-files.md"
+            slug: "harness/report-stale-files"
           - page: "Pydantic AI Docs"
             path: "harness/pydantic-ai-docs.md"
             slug: "harness/pydantic-ai-docs"
