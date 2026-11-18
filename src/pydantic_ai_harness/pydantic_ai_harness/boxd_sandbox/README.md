@@ -293,7 +293,7 @@ A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed w
 
 ## Security model
 
-Machines `BoxdSandbox` creates, and copies `fork` makes, are isolated: code the agent runs holds no boxd credentials and can't reach your other boxd machines. It can reach the internet, and like every boxd machine it has a public HTTPS address that serves the port its code listens on.
+Machines `BoxdSandbox` creates, and copies `fork` makes, are isolated: code the agent runs holds no boxd credentials and can't reach your other boxd machines. It can reach the internet, and like every boxd machine it has a public HTTPS address that serves the port its code listens on. With `desktop=True`, anyone in your boxd organization can also watch, and may be able to act on, the agent's screen in the boxd console; see [Give the agent a desktop](#give-the-agent-a-desktop).
 
 `BoxdSandbox` refuses to attach to or fork a machine that isn't isolated or is on a named boxd network, and `destroy` refuses one that isn't isolated. A machine from a snapshot keeps the networks of the machine the snapshot was saved from, so save snapshots from a machine on no network. A ref can still name any isolated machine your credentials can see, so keep refs server-side.
 
