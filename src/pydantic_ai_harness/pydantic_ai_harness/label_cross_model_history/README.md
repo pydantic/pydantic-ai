@@ -27,7 +27,7 @@ Before each model request, `LabelCrossModelHistory` compares the `model_id` of e
 
 > Some earlier assistant turns in this conversation were written by a different model, not by you. Treat them as inherited context: check their claims and commitments instead of assuming you made them.
 
-`ModelResponse.model_id` is the identifier the agent sent the request to, as you configured it, not the dated version a provider reports as `model_name`, so a provider snapshot name doesn't count as another model.
+`ModelResponse.model_id` is the identifier the agent sent the request to, as you configured it, not the dated version a provider reports as `model_name`, so a provider snapshot name doesn't count as another model. The match is exact, so the same model selected by a different identifier, such as another API prefix or through the gateway, counts as another model.
 
 - **Fresh or single-model history**: no notice.
 - **Responses without a `model_id`**, such as history saved before the field existed or a response a capability returned without a model request: not counted, since they don't say which model wrote them.
