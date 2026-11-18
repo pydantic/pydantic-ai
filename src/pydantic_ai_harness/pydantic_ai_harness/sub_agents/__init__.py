@@ -7,7 +7,7 @@ copyright (c) 2026 Vstorm.
 
 from __future__ import annotations
 
-from pydantic_ai_harness._task_report import is_task_report
+from pydantic_ai_harness._task_report import TaskOutputPart, TaskQuestionPart, is_task_report
 from pydantic_ai_harness.sub_agents._capability import SubAgents, ToolResolver
 from pydantic_ai_harness.sub_agents._control import (
     DynamicAgentFactory,
@@ -115,8 +115,10 @@ __all__ = [
     'TaskControl',
     'TaskFailedEvent',
     'TaskForceCancelRequestedEvent',
+    'TaskOutputPart',
     'TaskProgressEvent',
     'TaskQuestionAskedEvent',
+    'TaskQuestionPart',
     'TaskRequestEvent',
     'TaskResumedEvent',
     'TaskRetriedEvent',

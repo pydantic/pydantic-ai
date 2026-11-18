@@ -61,6 +61,8 @@ from pydantic_ai_harness import (
     BenchmarkInstructions,
     Coder,
     CompactOnRequest,
+    ModelChoice,
+    ModelRouter,
     Planning,
     PruneToolResults,
     RelevanceCompaction,
@@ -73,6 +75,7 @@ from pydantic_ai_harness import (
     SubAgents,
     SummarizingCompaction,
     SystemReminders,
+    ToolBridge,
     ToolOutputLimits,
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
@@ -168,6 +171,10 @@ def _check_skills(merged: Any) -> None:
     assert [source.directories for source in merged._sources] == [('first',), ('second',)]
 
 
+def _check_model_router(merged: ModelRouter[object]) -> None:
+    assert (list(merged.choices), merged.default) == (['fast', 'capable'], 'capable')
+
+
 def _check_planning(merged: Any) -> None:
     assert merged.inject is False
 
@@ -205,6 +212,10 @@ def _check_tool_output_limits(merged: Any) -> None:
     assert merged.strip_ansi is True
 
 
+def _check_tool_bridge(merged: ToolBridge[None]) -> None:
+    assert merged.max_results == 5
+
+
 def _check_advisor(merged: Any) -> None:
     assert merged.max_tokens == 4096
 
@@ -236,6 +247,21 @@ COMBINE_POLICY: dict[str, Policy] = {
     'Memory': Narrows(
         'one notebook per id, and its store and namespace are a tenant boundary; two that differ need their own ids',
         lambda cls: (cls(namespace='first'), cls(namespace='second')),
+    ),
+    'ModelRouter': Combines(
+        'only the last model contribution selects, so two routers become one whose menu has both sets of choices',
+        lambda: (
+            ModelRouter[object](
+                choices={'fast': ModelChoice('test', 'Use for lookups.')},
+                router_model='test',
+                default='fast',
+                mode='per_step',
+            ),
+            ModelRouter[object](
+                choices={'capable': ModelChoice('test', 'Use for hard work.')}, router_model='test', default='capable'
+            ),
+        ),
+        _check_model_router,
     ),
     'Planning': Combines(
         'one plan per agent; `PlanningToolset` registers fixed tool names',
@@ -293,6 +319,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one output-limit policy; `tool_filter`/`per_tool` are how one instance varies by tool',
         lambda: (ToolOutputLimits[Any](), ToolOutputLimits[Any](strip_ansi=True)),
         _check_tool_output_limits,
+    ),
+    'ToolBridge': Combines(
+        'one set of dispatcher tools per agent; `tools` is how one instance picks what it bridges',
+        lambda: (ToolBridge[None](max_results=3), ToolBridge[None](max_results=5)),
+        _check_tool_bridge,
     ),
     'SubAgents': Combines(
         'one delegate tool per agent, so two rosters become one',
@@ -365,6 +396,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     '_WorkerLink': Anonymous('`SubAgentWorker` attaches one to each task run it serves'),
     '_ForwardingWorkerLink': Anonymous('`SubAgentWorker` attaches one to each task run that forwards its events'),
     'ClearToolResults': Anonymous('several form an escalation ladder, like `TieredCompaction` tiers'),
+    'DenyUnanswered': Anonymous('a second instance would deny what the first already denied'),
     'DeduplicateFileReads': Anonymous('file-read identification is agent-specific; one per `file_key`'),
     'DynamicWorkflow': Anonymous('one per workflow definition'),
     'FallbackCompaction': Anonymous('drives a fallback chain; several independent chains compose'),
@@ -386,6 +418,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'RepoContext': Anonymous('one per workspace root'),
     'ReportContextUsage': Anonymous('a passive observer; several callbacks compose'),
     'ReportRemainingBudget': Anonymous('only a hook; each reports the run limits and its own `SpendLimits`'),
+    'ReportStaleFiles': Anonymous('only an event listener and a hook; two would send two notices'),
     'SlidingWindowCompaction': Anonymous('composes as a tier under `TieredCompaction`'),
     'GoogleWorkspace': Anonymous('one per set of products, and `services` is what names it'),
     'StackOne': Anonymous('one per linked account, and `account_id` is what names it'),

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pydantic_ai_harness._message_text import CHARS_PER_TOKEN
-from pydantic_ai_harness.memory._store import MemoryStore
+from pydantic_ai_harness.memory._store import MemoryStore, list_scope_paths
 from pydantic_ai_harness.memory._toolset import MAIN_FILENAME
 
 _MIN_FILENAME_LIST_CHARS = 6
@@ -14,7 +14,7 @@ async def list_subfiles(store: MemoryStore, scope: str, *, limit: int) -> tuple[
     prefix = f'{scope}/'
     names: list[str] = []
     request_limit = limit + 2  # one main notebook plus one truncation sentinel
-    returned_paths = await store.list_paths(prefix, limit=request_limit)
+    returned_paths = await list_scope_paths(store, prefix, limit=request_limit)
     paths = returned_paths[:request_limit]
     for path in paths:
         if not path.startswith(prefix):

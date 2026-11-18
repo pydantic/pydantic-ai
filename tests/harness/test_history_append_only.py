@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 import pytest
-from mcp.server.fastmcp import FastMCP
 
 import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext, Tool
@@ -30,7 +29,7 @@ from pydantic_ai.capabilities import (
     Toolset,
 )
 from pydantic_ai.capabilities.abstract import leaf_capabilities
-from pydantic_ai.messages import ModelMessage, TextContent, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -62,6 +61,7 @@ from pydantic_ai_harness import (
     Pylon,
     RelevanceCompaction,
     RepoContext,
+    ReportStaleFiles,
     Researcher,
     Shell,
     Skills,
@@ -84,6 +84,7 @@ from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox, read_peer_message
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
+from pydantic_ai_harness.report_stale_files import StaleFilesPart
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from pydantic_ai_harness.sub_agents import (
@@ -92,7 +93,7 @@ from pydantic_ai_harness.sub_agents import (
     DelegationTasks,
     SubAgent,
     SubAgents,
-    is_task_report,
+    TaskOutputPart,
 )
 from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
@@ -114,19 +115,15 @@ from ..append_only import (
     run_conversation,
     skip_unless_installed,
 )
+from ._mcp_server import MCPServer
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
 
-# MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
-pytestmark = pytest.mark.filterwarnings(
-    "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
-)
 
-
-def _hosted_server() -> FastMCP:
+def _hosted_server() -> MCPServer:
     """An in-process stand-in for a hosted MCP service, with server instructions and one tool."""
-    server = FastMCP('hosted', instructions='Hosted service instructions.')
+    server = MCPServer('hosted', instructions='Hosted service instructions.')
 
     @server.tool()
     def search() -> str:
@@ -178,6 +175,10 @@ def _deduplicate_file_reads(tmp_path: Path) -> list[AbstractCapability[Any]]:
 
 def _run_look_up(topic: str) -> tuple[str, dict[str, Any]]:
     return 'run_code', {'code': f'await look_up(topic={topic!r})'}
+
+
+def _bridge_look_up(topic: str) -> tuple[str, dict[str, str]]:
+    return 'tool_call', {'name': 'look_up', 'args_json': f'{{"topic": "{topic}"}}'}
 
 
 class _PruneLatestReturn(AbstractCapability[None]):
@@ -502,6 +503,7 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
 
 SCENARIOS: dict[str, Scenario] = {
     'CodeMode': Scenario(look_up=_run_look_up),
+    'ToolBridge': Scenario(look_up=_bridge_look_up),
     'CompactOnRequest': Scenario(state_calls=(('compact_context', {'focus': 'the forecast'}),)),
     'DeduplicateFileReads': Scenario(
         state_calls=(('read_file', {'path': 'notes.md'}), ('read_file', {'path': 'notes.md'}))
@@ -549,6 +551,9 @@ EXEMPT: dict[str, Exempt] = {
     'AWSLambdaDurability': Exempt('Durable engine: needs the AWS Lambda durable functions runtime.'),
     'DynamicWorkflow': Exempt('Runs sub-agents a caller supplies, whose requests are their own conversations.'),
     'GoogleWorkspace': Exempt('Needs Google OAuth credentials to list its tools.'),
+    'ModelRouter': Exempt(
+        "Replaces the run's model with one from its menu, so the scenario's provider model is never requested."
+    ),
     'PGTaskDurability': Exempt('Durable engine: needs Postgres.'),
     'RenderWorkflows': Exempt('Durable engine: needs a Render Workflows app.'),
     'SSHWorkspace': Exempt('Needs an SSH host to attach a workspace to.'),
@@ -624,6 +629,14 @@ ALLOWED: dict[str, Allowed] = {
     'ReportRemainingBudget': Allowed(
         f'Request-scoped system prompt ({_ISSUES}9019): sent for one request, then left out. Anthropic clears it '
         'natively with `clear_at`; elsewhere it is a request-only tail',
+        (('messages', 'system-prompt'),),
+        tail=True,
+        records=('request-scoped system prompt',),
+        providers=('openai-responses', 'openai-chat'),
+    ),
+    'ReportStaleFiles': Allowed(
+        'Request-scoped stale-file notice: sent for one request, then left out. Anthropic clears it natively with '
+        '`clear_at`; elsewhere it is a request-only tail',
         (('messages', 'system-prompt'),),
         tail=True,
         records=('request-scoped system prompt',),
@@ -752,12 +765,10 @@ def _delegation_reports(
     def delivered_once(result: ConversationResult) -> None:
         parts = [part for message in result.history for part in getattr(message, 'parts', ()) if _REPORT in str(part)]
         assert len(parts) == 1, f'expected the report in history once, found {len(parts)}'
-        # Delivered as framed `<task_output>` data on the user channel, recognized by its metadata.
+        # Delivered as a typed `<task_output>` capability part, which survives serialization as one.
         (part,) = parts
-        assert is_task_report(part), f'expected a task report, found {part!r}'
-        assert not isinstance(part.content, str)
-        (text,) = part.content
-        assert isinstance(text, TextContent) and text.content.startswith('<task_output task_id=')
+        assert isinstance(part, TaskOutputPart), f'expected a task report, found {part!r}'
+        assert part.content == _REPORT
 
     scenario = Scenario(
         turns=(
@@ -805,8 +816,38 @@ def _peer_message(
     return [Peers(network=view, inbox=inbox)], Scenario(between_runs=send), delivered_once
 
 
+def _stale_files(
+    tmp_path: Path,
+) -> tuple[list[AbstractCapability[None]], Scenario, Callable[[ConversationResult], None]]:
+    """A file the model read and edited changes from outside between the runs, so the second run gets notices."""
+    notes = tmp_path / 'notes.md'
+    notes.write_text('Sunny.\n')
+
+    async def change() -> None:
+        notes.write_text('Snowy.\n')
+
+    def notified(result: ConversationResult) -> None:
+        parts = [
+            part
+            for message in result.history
+            for part in getattr(message, 'parts', ())
+            if isinstance(part, StaleFilesPart)
+        ]
+        assert parts, 'expected a stale-file notice in the second run'
+
+    scenario = Scenario(
+        state_calls=(
+            ('read_file', {'path': 'notes.md'}),
+            ('edit_file', {'path': 'notes.md', 'old_text': 'Sunny.', 'new_text': 'Rainy.'}),
+        ),
+        between_runs=change,
+    )
+    return [ReportStaleFiles(), FileSystem(), LocalWorkspace(tmp_path)], scenario, notified
+
+
 CONVERSATIONS = {
     'Peers': _peer_message,
+    'ReportStaleFiles': _stale_files,
     'DelegationReports': _delegation_reports,
     'SummarizingCompaction+Capability(defer_loading=True)': _summarized_load(
         ('load_capability', {'id': 'forecasting'})
