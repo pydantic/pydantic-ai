@@ -1331,6 +1331,49 @@ async def test_an_update_keeps_a_field_another_update_changed_since_it_read_the_
     assert (record.title, record.metadata) == ('Greetings', {'pinned': True})
 
 
+async def test_an_update_with_expected_title_never_replaces_a_title_set_since() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation()
+    await store.save(conversation)
+    conversation_id = conversation.conversation_id
+
+    # A titling agent titles it while it has no title.
+    titled = await store.update(conversation_id, title='Login page 500 error', expected_title=None)
+    assert titled.title == 'Login page 500 error'
+
+    # The user renames it, and the agent's next title is refused rather than written over theirs.
+    await store.update(conversation_id, title='Prod outage')
+    with pytest.raises(
+        ConversationConflict, match="is titled 'Prod outage', not None, so it was not updated"
+    ) as conflict:
+        await store.update(conversation_id, title='Debugging auth', expected_title=None)
+    assert conflict.value.conversation_id == conversation_id
+    record = await store.read_record(conversation_id)
+    assert record is not None
+    assert record.title == 'Prod outage'
+
+    # Naming the title it has now applies the update.
+    retitled = await store.update(conversation_id, title='Prod outage, fixed', expected_title='Prod outage')
+    assert retitled.title == 'Prod outage, fixed'
+
+
+async def test_an_update_with_expected_title_keeps_a_rename_made_after_it_read_the_record() -> None:
+    store = _RecordRacingStore()
+    conversation = Conversation()
+    await store.save(conversation)
+
+    async def rename() -> None:
+        await store.update(conversation.conversation_id, title='Prod outage')
+
+    store.race = rename
+    with pytest.raises(ConversationConflict, match="is titled 'Prod outage'"):
+        await store.update(conversation.conversation_id, title='Login page 500 error', expected_title=None)
+
+    record = await store.read_record(conversation.conversation_id)
+    assert record is not None
+    assert record.title == 'Prod outage'
+
+
 async def test_updating_a_conversation_the_store_does_not_have_or_another_scope_s_raises() -> None:
     store = InMemoryConversationStore()
     conversation = Conversation()

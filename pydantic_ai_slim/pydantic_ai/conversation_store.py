@@ -46,7 +46,7 @@ __all__ = (
 
 
 class ConversationDetails(TypedDict, total=False):
-    """The fields of a [`ConversationRecord`][pydantic_ai.conversation_store.ConversationRecord] an update changes.
+    """The fields of a [`ConversationRecord`][pydantic_ai.conversation_store.ConversationRecord] an update changes, or expects.
 
     A key that's missing leaves that field as it is, and `None` clears it.
     """
@@ -114,14 +114,15 @@ class ConversationRecord:
     title: str | None = None
     """What the conversation is about, for a list of conversations to show.
 
-    Set with [`update`][pydantic_ai.conversation_store.ConversationStore.update], say by an agent that
-    keeps it current as the topic shifts. A save never changes it.
+    Set with [`update`][pydantic_ai.conversation_store.ConversationStore.update], by the user or by an
+    agent that titles the conversation after its first turn. A save never changes it.
     """
 
     metadata: dict[str, Any] | None = None
-    """Anything else the app keeps about the conversation, such as whether the user pinned it.
+    """Anything else the app keeps about the conversation, such as the model the user picked for it.
 
-    Set with [`update`][pydantic_ai.conversation_store.ConversationStore.update]. A save never changes it.
+    Set with [`update`][pydantic_ai.conversation_store.ConversationStore.update], which replaces it
+    whole. A save never changes it.
     """
 
     branches: list[str] = dataclasses.field(default_factory=list[str])
@@ -147,20 +148,23 @@ class ConversationRecord:
 
 
 class ConversationConflict(UserError):
-    """Raised when a conversation changed in the store since it was loaded, so saving it would lose those changes.
+    """Raised when a conversation changed in the store since it was read, so writing it would lose those changes.
 
-    It's an expected outcome when more than one writer saves the same conversation: catch it, load the
-    conversation again, and retry. It subclasses [`UserError`][pydantic_ai.exceptions.UserError], so a
-    broad `except UserError` catches it too.
+    It's an expected outcome when more than one writer changes the same conversation. Whether to load
+    it again and retry depends on what changed: retry a save, but not an
+    [`update`][pydantic_ai.conversation_store.ConversationStore.update] whose `expected_title` no
+    longer matched. It subclasses [`UserError`][pydantic_ai.exceptions.UserError], so a broad
+    `except UserError` catches it too.
     """
 
     conversation_id: str
     """The conversation that changed."""
 
-    def __init__(self, conversation_id: str):
+    def __init__(self, conversation_id: str, *, message: str | None = None):
         self.conversation_id = conversation_id
         super().__init__(
-            f'Conversation {conversation_id!r} was saved or deleted since it was loaded, '
+            message
+            or f'Conversation {conversation_id!r} was saved or deleted since it was loaded, '
             'or already exists in the store. Load it again before saving.'
         )
 
@@ -621,6 +625,7 @@ class ConversationStore(ABC):
         *,
         title: str | None | Unset = UNSET,
         metadata: dict[str, Any] | None | Unset = UNSET,
+        expected_title: str | None | Unset = UNSET,
         scope: str | None = None,
     ) -> ConversationRecord:
         """Change a conversation's title or metadata.
@@ -629,21 +634,27 @@ class ConversationStore(ABC):
         [`metadata`][pydantic_ai.conversation_store.ConversationRecord.metadata]. Only what's passed
         changes, and `None` clears it. An update doesn't change the conversation's
         [`revision`][pydantic_ai.conversation.Conversation.revision], so it never makes a save of the
-        conversation conflict, and a save never undoes it: an agent can keep the title current while
-        the conversation goes on. Of two updates to the same field at once, the last one written wins.
+        conversation conflict, and a save never undoes it. Of two updates to the same field at once,
+        the last one written wins.
+
+        Pass `expected_title` to change it only if the title is still that one, or with `None`, only
+        if it has none. An agent that titles conversations passes `expected_title=None`, so a title
+        the user set is never replaced.
 
         Args:
             conversation_id: The conversation to update.
             title: Its new title.
             metadata: Its new metadata, which replaces the old.
+            expected_title: The title it must still have for the update to be written.
             scope: Only update it if it was saved with this scope.
 
         Returns:
-            The record as read before the update, with the fields passed changed. A field that a
-            concurrent update changed keeps the value that was read.
+            The record as stored after the update.
 
         Raises:
             UserError: If the store doesn't have the conversation.
+            ConversationConflict: If its title isn't `expected_title`. Nothing is written. Don't
+                retry with the title read back: that would replace the one set since.
             NotImplementedError: If the backend doesn't implement
                 [`write_details`][pydantic_ai.conversation_store.ConversationStore.write_details].
         """
@@ -652,14 +663,24 @@ class ConversationStore(ABC):
             details['title'] = title
         if not isinstance(metadata, Unset):
             details['metadata'] = metadata
+        expected: ConversationDetails = {}
+        if not isinstance(expected_title, Unset):
+            expected['title'] = expected_title
         while (record := await self._read_record(conversation_id, scope=scope)) is not None:
+            if 'title' in expected and record.title != expected['title']:
+                raise ConversationConflict(
+                    conversation_id,
+                    message=f'Conversation {conversation_id!r} is titled {record.title!r}, '
+                    f'not {expected_title!r}, so it was not updated.',
+                )
             if not details:
                 return record
             try:
-                await self.write_details(conversation_id, details, expected_revision=record.revision)
+                return await self.write_details(
+                    conversation_id, details, expected_revision=record.revision, expected=expected
+                )
             except ConversationConflict:
-                continue  # Saved or replaced since it was read: check its scope again.
-            return dataclasses.replace(record, **details)
+                continue  # Saved, replaced or retitled since it was read: check it again.
         raise UserError(f'Conversation {conversation_id!r} is not in the store.')
 
     async def delete(self, conversation_id: str, *, scope: str | None = None) -> None:
@@ -744,20 +765,31 @@ class ConversationStore(ABC):
         raise NotImplementedError
 
     async def write_details(
-        self, conversation_id: str, details: ConversationDetails, *, expected_revision: str
-    ) -> None:
+        self,
+        conversation_id: str,
+        details: ConversationDetails,
+        *,
+        expected_revision: str,
+        expected: ConversationDetails | None = None,
+    ) -> ConversationRecord:
         """Replace the record's `title` or `metadata`, or both, keeping its `revision` and `updated_at`.
 
         Only the keys in `details` are written, so a concurrent update of the other field isn't undone.
+        The write is made only if the stored record has `expected_revision` and, for each key in
+        `expected`, that value, checked and written in one step, such as one `UPDATE ... WHERE`. A
+        backend raises `NotImplementedError` for a key in `details` or `expected` it doesn't store.
 
         A backend that implements this keeps a stored record's `title` and `metadata` when
         [`write_record`][pydantic_ai.conversation_store.ConversationStore.write_record] replaces it, so a
         save that read the record before an update doesn't undo it. The default raises
         `NotImplementedError`, for backends written before conversations had titles.
 
+        Returns:
+            The record as stored after the write.
+
         Raises:
-            ConversationConflict: If no record with `expected_revision` is stored, because the
-                conversation was saved, replaced or deleted since it was read.
+            ConversationConflict: If no record with `expected_revision` and the `expected` values is
+                stored, because the conversation was saved, replaced, deleted or updated since it was read.
         """
         raise NotImplementedError(
             f"{type(self).__name__} doesn't implement `write_details`, which `update` needs to change a "
@@ -828,15 +860,23 @@ class InMemoryConversationStore(ConversationStore):
         self._records[record.conversation_id] = deepcopy(record)
 
     async def write_details(
-        self, conversation_id: str, details: ConversationDetails, *, expected_revision: str
-    ) -> None:
+        self,
+        conversation_id: str,
+        details: ConversationDetails,
+        *,
+        expected_revision: str,
+        expected: ConversationDetails | None = None,
+    ) -> ConversationRecord:
         stored = self._records.get(conversation_id)
         if stored is None or stored.revision != expected_revision:
+            raise ConversationConflict(conversation_id)
+        if expected and 'title' in expected and stored.title != expected['title']:
             raise ConversationConflict(conversation_id)
         if 'title' in details:
             stored.title = details['title']
         if 'metadata' in details:
             stored.metadata = deepcopy(details['metadata'])
+        return deepcopy(stored)
 
     async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
         stored = self._records.get(conversation_id)
