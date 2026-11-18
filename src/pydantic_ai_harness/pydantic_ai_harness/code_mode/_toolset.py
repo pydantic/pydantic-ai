@@ -1309,14 +1309,18 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         A remote sandbox otherwise keeps the workflow task waiting on the network while a snippet
         computes, and Temporal fails a workflow task that does not yield within 2 seconds. Turns move
         out only where they behave as they do here: an `os_access` handler may use workflow APIs, and
-        Monty does not keep `'overlay'` mount writes across a stored snapshot. The answer depends only
-        on configuration, so every `run_code` call in a run takes the same path, and `workflow.patched`
+        Monty restarts a mount's `write_bytes_limit` count and drops its `'overlay'` writes when a
+        stored session loads. Only a durability capability binds the operation to an activity; under
+        the deprecated `TemporalAgent` it would run inline in the workflow. The answer depends only on
+        configuration, so every `run_code` call in a run takes the same path, and `workflow.patched`
         keeps runs that started before this existed on the path they started on.
         """
         if self.monty_turn is None or self.monty_sandbox is None or self.os_access is not None:
             return None
         mounts = self.mount if isinstance(self.mount, list) else [self.mount] if self.mount is not None else []
-        if any(mount.mode == 'overlay' for mount in mounts) or not _workflow_patched(_DURABLE_TURNS_PATCH):
+        if any(mount.mode == 'overlay' or mount.write_bytes_limit is not None for mount in mounts):
+            return None
+        if not in_durable_execution(ctx) or not _workflow_patched(_DURABLE_TURNS_PATCH):
             return None
         return partial(self.monty_turn, ctx)
 

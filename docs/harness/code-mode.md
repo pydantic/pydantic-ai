@@ -741,8 +741,10 @@ CodeMode(id='code', monty_sandbox='https://monty.example.com')
 Code Mode keeps running `run_code` in workflow code, as described above, when any of these holds:
 
 - `CodeMode` has no `id`.
+- The agent is wrapped in the deprecated `TemporalAgent`, which runs no capability operations as activities.
 - `os_access` is set: the handler may call `temporalio.workflow` APIs, which work only in workflow code.
-- A `mount` uses `'overlay'` mode, the default. Monty does not keep overlay writes in a stored session.
+- A `mount` uses `'overlay'` mode, the default, or sets `write_bytes_limit`. Monty does not keep
+  overlay writes, or the count of bytes written, in a stored session.
   Use `'read-only'` or `'read-write'` mounts to run turns as activities. The activity worker reads
   them, so their directories must exist wherever turn activities run.
 - The workflow started before this version of Code Mode, so its history replays as it was recorded.
@@ -761,7 +763,11 @@ first and retries it, instead of Code Mode reporting the time limit to the model
 `'unlimited'`, `start_to_close_timeout` is the only bound on a turn.
 
 Tool results and nested call arguments keep their types, `bytes` and tuples included, and the model
-sees the same snippet result as in workflow code. A nested call whose arguments have no JSON form,
+sees the same snippet result as in workflow code. A result dict whose keys would not come back distinct,
+such as a `date` and the same date's ISO string, arrives as its `repr`. Each turn returns at most 1 MiB
+of prints and result, half Temporal's default payload limit, and cuts the rest with a note saying how
+much was left out. If the server will not store the session a snippet error left, Code Mode resets the
+session, as it does after a memory error. A nested call whose arguments have no JSON form,
 such as an instance of a class the snippet defined, raises `TypeError` in the snippet: its arguments
 cannot reach the tool's activity. If the server no longer has a run's stored state, for example
 because it expired, Code Mode resets the session and tells the model the connection was lost, as for

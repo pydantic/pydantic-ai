@@ -26,6 +26,7 @@ import json
 import re
 import subprocess
 import sys
+import warnings
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
@@ -52,13 +53,14 @@ try:
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         PydanticAIPlugin,
+        TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
     )
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
 from pydantic_ai import Agent, Tool, ToolDefinition
-from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.exceptions import PydanticAIDeprecationWarning, UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -458,6 +460,25 @@ workflow_side_code_mode_agents = {
                 id='code',
                 monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
                 os_access=_workflow_os,
+            ),
+            TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        ],
+    ),
+    # Monty restarts a mount's write count when a stored session loads.
+    'write_limit': Agent(
+        FunctionModel(_code_mode_model),
+        name='code_mode_temporal_write_limit_agent',
+        toolsets=[FunctionToolset(tools=[add], id='math')],
+        capabilities=[
+            CodeMode(
+                id='code',
+                monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
+                mount=MountDir(
+                    virtual_path='/tests',
+                    host_path=str(Path(__file__).parent),
+                    mode='read-write',
+                    write_bytes_limit=6,
+                ),
             ),
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
         ],
@@ -941,10 +962,11 @@ async def test_remote_turns_fail_without_storage(client: Client, refusal: str, m
     assert activity_error.cause.message.startswith(message)
 
 
-@pytest.mark.parametrize('reason', ['overlay', 'os_access', 'no_id', 'local', 'unpatched'])
+@pytest.mark.parametrize('reason', ['overlay', 'write_limit', 'os_access', 'no_id', 'local', 'unpatched'])
 async def test_remote_turns_stay_in_the_workflow(client: Client, monkeypatch: pytest.MonkeyPatch, reason: str) -> None:
-    """An `'overlay'` mount (the default mode), `os_access`, a `CodeMode` without `id`, a local sandbox, or a
-    workflow that started before this version of Code Mode keeps every turn in the workflow.
+    """An `'overlay'` mount (the default mode), a mount with `write_bytes_limit`, `os_access`, a `CodeMode`
+    without `id`, a local sandbox, or a workflow that started before this version of Code Mode keeps every
+    turn in the workflow.
 
     Unsandboxed for `'unpatched'`, so `workflow.patched` can be faked.
     """
@@ -1082,7 +1104,12 @@ async def test_failed_turn_activity_fails_the_workflow(client: Client) -> None:
     assert isinstance(activity_error, ActivityError)
     assert activity_error.activity_type.endswith('__monty_turn')
     assert isinstance(activity_error.cause, ApplicationError)
-    assert activity_error.cause.type == 'ConnectionRefusedError'
+    # Only the error's type is recorded: a connection error's text can carry the pool's URL or credentials.
+    assert activity_error.cause.type == 'MontyServerError'
+    assert activity_error.cause.message == 'ConnectionRefusedError'
+    assert activity_error.cause.cause is None
+    history = await client.get_workflow_handle('test_code_mode_temporal_refused_turn').fetch_history()
+    assert 'refused the connection' not in history.to_json()
 
 
 @pytest.mark.parametrize(
@@ -1130,3 +1157,162 @@ async def test_remote_turns_report_a_lost_session(client: Client, prompt: str, r
     ]
     assert activity_results
     assert not [result for result in activity_results if b'secret-token' in result]
+
+
+def _snippet_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+    """Model that runs the user prompt as one snippet, then returns what `run_code` returned."""
+    returns = [
+        part.content
+        for msg in messages
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+    ]
+    if returns:
+        return ModelResponse(parts=[TextPart(content=str(returns[0]))])
+    code = next(part.content for part in messages[0].parts if isinstance(part, UserPromptPart))
+    return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='snippet')])
+
+
+def _snippet_agent(name: str, **code_mode: Any) -> Agent:
+    return Agent(
+        FunctionModel(_snippet_model),
+        name=f'code_mode_temporal_snippet_{name}_agent',
+        toolsets=[FunctionToolset(tools=[echo], id='echo')],
+        capabilities=[
+            CodeMode(id='code', monty_sandbox=StoredSessionPool, **code_mode),  # pyright: ignore[reportArgumentType]
+            TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        ],
+    )
+
+
+snippet_agents = {
+    'default': _snippet_agent('default'),
+    'unlimited': _snippet_agent('unlimited', resource_limits='unlimited'),
+}
+
+
+@workflow.defn
+class SnippetWorkflow:
+    @workflow.run
+    async def run(self, agent: str, code: str) -> str:
+        result = await snippet_agents[agent].run(code)
+        return result.output
+
+
+async def _run_snippet(client: Client, workflow_id: str, code: str, *, agent: str = 'default') -> str:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SnippetWorkflow],
+        plugins=[AgentPlugin(snippet_agents[agent])],
+        workflow_runner=_workflow_runner(),
+    ):
+        return await client.execute_workflow(
+            SnippetWorkflow.run,
+            args=[agent, code],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+
+
+async def test_remote_turns_reset_a_session_the_server_will_not_store(client: Client) -> None:
+    """A server that refuses to store a session a snippet error left resets it, rather than retrying the turn.
+
+    Logfire Agent Sandboxes refused such a dump in a live run, and the retries outlasted the workflow.
+    """
+    workflow_id = 'test_code_mode_temporal_error_not_stored'
+    SERVER.refuses_dumps = True
+    try:
+        output = await _run_snippet(client, workflow_id, '1 / 0')
+    finally:
+        SERVER.refuses_dumps = False
+    assert 'ZeroDivisionError' in output
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    assert _activity_types(history) == ['model_request', 'monty_turn', 'model_request']
+
+
+async def test_remote_turns_cut_output_to_fit_a_payload(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prints and a result larger than a turn may return are cut with a note, rather than failing the upload.
+
+    The limit is lowered from 1 MiB so the snippet stays small.
+    """
+    monkeypatch.setattr('pydantic_ai_harness._monty_turns._TURN_PAYLOAD_BYTES', 400)
+    output = await _run_snippet(client, 'test_code_mode_temporal_cut_output', 'print("p" * 1000)\n"r" * 1000')
+    assert 'more bytes not shown: a turn returns at most 200 bytes]' in output
+    assert 'more bytes not shown: a turn returns at most' in output.split('r' * 10)[0]
+    assert len(output) < 1000
+
+
+@pytest.mark.parametrize(
+    ('code', 'expected'),
+    [
+        (
+            'import datetime\n{datetime.date(2020, 1, 1): 1, "2020-01-01": 2}',
+            "{datetime.date(2020, 1, 1): 1, '2020-01-01': 2}",
+        ),
+        (
+            'try:\n    await echo(value={frozenset({1}): 1})\nexcept TypeError as e:\n    error = str(e)\nerror',
+            'echo() got an argument that has no JSON form, so it cannot be sent to the tool',
+        ),
+    ],
+)
+async def test_remote_turns_keep_every_mapping_key(client: Client, code: str, expected: str) -> None:
+    """A result whose keys would not come back distinct crosses as its `repr`, losing no entry, and a nested
+    call whose argument holds a key that would come back unhashable raises `TypeError` at the call site."""
+    output = await _run_snippet(client, f'test_code_mode_temporal_keys_{len(code)}', code)
+    assert output == expected
+
+
+async def test_remote_turns_keep_the_default_suspension_cap(client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Under `'unlimited'`, Monty's default `max_suspensions` still counts across a session's turns.
+
+    The default is lowered from 1000 so a few sleeps reach it.
+    """
+    monkeypatch.setattr('pydantic_ai_harness._monty_exec._MONTY_DEFAULT_MAX_SUSPENSIONS', 3)
+    code = 'import time\nfor _ in range(5):\n    time.sleep(0)'
+    output = await _run_snippet(client, 'test_code_mode_temporal_default_cap', code, agent='unlimited')
+    assert 'suspension limit' in output
+
+
+with warnings.catch_warnings():
+    warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+    legacy_code_mode_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(
+            FunctionModel(_code_mode_model),
+            name='code_mode_temporal_legacy_agent',
+            toolsets=[FunctionToolset(tools=[add], id='math')],
+            capabilities=[CodeMode(id='code', monty_sandbox=StoredSessionPool)],  # pyright: ignore[reportArgumentType]
+        ),
+        activity_config=BASE_ACTIVITY_CONFIG,
+    )
+
+
+@workflow.defn
+class LegacyWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await legacy_code_mode_agent.run('Calculate 3 + 4')
+        return result.output
+
+
+async def test_remote_turns_stay_in_the_workflow_under_temporal_agent(client: Client) -> None:
+    """The deprecated `TemporalAgent` binds no capability operations, so turns stay in the workflow.
+
+    Run as an operation there, a turn would reach the server from the workflow's event loop.
+    """
+    workflow_id = 'test_code_mode_temporal_legacy_agent'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[LegacyWorkflow],
+        activities=legacy_code_mode_agent.temporal_activities,
+        workflow_runner=_workflow_runner(),
+    ):
+        output = await client.execute_workflow(
+            LegacyWorkflow.run, id=workflow_id, task_queue=TASK_QUEUE, execution_timeout=timedelta(seconds=30)
+        )
+    assert output == 'done: 70'
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    assert 'monty_turn' not in _activity_types(history)

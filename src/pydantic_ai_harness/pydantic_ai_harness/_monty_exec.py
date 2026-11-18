@@ -326,6 +326,10 @@ class MontyTurnUnavailable(Exception):
         self.error = error
 
 
+_MONTY_DEFAULT_MAX_SUSPENSIONS = 1000
+"""The `max_suspensions` Monty applies when none is set; it cannot be turned off (see `ResourceLimits`)."""
+
+
 @dataclass
 class TurnFeed:
     """One feed of a remote session, run one turn at a time through `run_turn`, a durable operation.
@@ -357,9 +361,10 @@ class TurnFeed:
         Monty counts `max_suspensions` across a session's feeds, but a loaded record restarts the
         count: at 0 for a session, and at 1 for a snapshot, counting the pause it resumes.
         """
+        # Monty keeps its default cap when the key is missing or `None`, as under `'unlimited'`.
         max_suspensions = self.limits.get('max_suspensions')
         if max_suspensions is None:
-            return self.limits
+            max_suspensions = _MONTY_DEFAULT_MAX_SUSPENSIONS
         return {**self.limits, 'max_suspensions': max_suspensions - self.run_state.suspensions + restored_pauses}
 
     async def _turn(self, request: TurnRequest) -> TurnSnapshot:

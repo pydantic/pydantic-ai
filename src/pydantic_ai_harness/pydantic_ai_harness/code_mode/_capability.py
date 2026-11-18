@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
 from pydantic_ai_harness._monty_exec import build_remote_pool, session_os_policy
-from pydantic_ai_harness._monty_turns import MontyTurn, TurnRequest, run_monty_turn
+from pydantic_ai_harness._monty_turns import MontyServerError, MontyTurn, TurnRequest, run_monty_turn
 from pydantic_ai_harness._warn import renamed_duration_limit
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore
@@ -389,8 +389,18 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         session lives on the server between turns, so nothing here needs to outlive one.
         """
         assert self.monty_sandbox is not None, 'only a remote sandbox runs turns as durable operations'
-        async with await build_remote_pool(self.monty_sandbox, request.limits) as pool:
-            return await run_monty_turn(pool, request, os_policy=session_os_policy(self.os_policy), mount=self.mount)
+        try:
+            async with await build_remote_pool(self.monty_sandbox, request.limits) as pool:
+                return await run_monty_turn(
+                    pool, request, os_policy=session_os_policy(self.os_policy), mount=self.mount
+                )
+        except UserError:
+            raise
+        except Exception as error:
+            # Temporal records an activity's failure, cause included, in workflow history, and a pool
+            # or connection error's text can carry the pool's URL or credentials. The retry policy still
+            # applies, since this is not a `UserError`.
+            raise MontyServerError(type(error).__name__) from None
 
     @property
     def has_wrap_run_event_stream(self) -> bool:

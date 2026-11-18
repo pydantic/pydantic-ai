@@ -240,9 +240,10 @@ With a remote `monty_sandbox` and `CodeMode(id=...)`, each turn (the code betwee
 host: nested calls, sleeps, deferred calls) runs as its own activity instead, so sandbox computation
 does not count against the 2 seconds and replay reads turn results from history. The server must store
 sessions (Logfire Agent Sandboxes does); one that stores none or cannot store a session's state raises
-a non-retried `UserError`. Runs stay workflow-side without an `id`, with `os_access` set, with an
-`'overlay'` mount (the default mode; use `'read-only'` or `'read-write'`), or when the workflow
-started before this change.
+a non-retried `UserError`. Runs stay workflow-side without an `id`, under the deprecated
+`TemporalAgent`, with `os_access` set, with an `'overlay'` mount (the default mode; use `'read-only'`
+or `'read-write'`) or a `write_bytes_limit`, or when the workflow started before this change. Each
+turn returns at most 1 MiB of prints and result and cuts the rest.
 Turns use `TemporalDurability`'s `activity_config`; a turn that still fails after its retries fails
 the workflow with `ActivityError`. In a turn activity `max_duration_seconds` applies again, so keep
 `start_to_close_timeout` above it. A retried turn repeats its `'read-write'` mount writes. Tool results
