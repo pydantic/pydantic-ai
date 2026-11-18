@@ -469,11 +469,12 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         timeout = timeout_seconds if timeout_seconds is not None else self._default_timeout
 
         marker = f'__harness_cwd_{uuid.uuid4().hex}_'
+        script = await self._command_script(ctx, marker)
         interrupted = True
         try:
             result = await run_model_command(
                 ctx.workspace,
-                await self._command_script(ctx, marker),
+                script,
                 command,
                 env=self._resolve_env(),
                 timeout=timeout,
