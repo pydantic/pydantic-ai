@@ -37,7 +37,7 @@ async def main():
     print(result.output)
 ```
 
-1. Any capability whose workspace has a display, such as `DockerSandbox(desktop=True)`. See
+1. Any capability whose workspace has a display, such as `DockerContainer(desktop=True)`. See
    [Giving a workspace a screen](#giving-a-workspace-a-screen) to write your own.
 
 On a [read-only](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only-access) workspace the `computer` tool offers only the actions that look,
@@ -135,7 +135,7 @@ largest size that fits. A 1280x800 screen fits every model.
 The toolset also counts image tokens, 28x28 pixels each, and refuses a screenshot over 4784 of them, such as
 2549x1457, so the run stops with Anthropic's error.
 
-GPT-5.5 clicks accurately up to 2560x1440 and GPT-5.4 up to 2048x1280; larger screens make them miss. Keep the screen at
+GPT-5.5 clicks accurately up to 1920x1200 and GPT-5.4 up to 2048x1280; larger screens can make them miss. Keep the screen at
 or below those sizes.
 
 ## When something goes wrong

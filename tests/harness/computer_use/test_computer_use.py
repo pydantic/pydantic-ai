@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import replace
 
 import anyio
+import anyio.lowlevel
 import pytest
 from dirty_equals import IsPartialDict
 from inline_snapshot import snapshot
@@ -90,6 +91,21 @@ READY_TIMEOUT = 30
 """How long a test waits for another run to reach a step, so a run that never gets there fails the test.
 
 Only a hang reaches it, so it allows for a slow, loaded CI runner."""
+
+
+@pytest.fixture(autouse=True)
+def no_real_waits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every `anyio.sleep` a checkpoint, so settling after an action costs no real time.
+
+    The fake screen never changes, so the settle check would only wait out its interval between two matching
+    screenshots. Tests about waiting patch `anyio.sleep` again to see the pauses.
+    """
+    checkpoint = anyio.lowlevel.checkpoint
+
+    async def sleep(seconds: float) -> None:
+        await checkpoint()
+
+    monkeypatch.setattr(anyio, 'sleep', sleep)
 
 
 @pytest.fixture(params=['in-process', 'durable'])
