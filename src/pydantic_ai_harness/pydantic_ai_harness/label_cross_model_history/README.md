@@ -32,7 +32,7 @@ Before each model request, `LabelCrossModelHistory` compares the `model_id` of e
 - **Fresh or single-model history**: no notice.
 - **Responses without a `model_id`**, such as history saved before the field existed or a response a capability returned without a model request: not counted, since they don't say which model wrote them.
 - **`FallbackModel`**: responses from any of its candidates count as the current model's own. Which candidate will serve a request isn't known before it is sent, so a switch between candidates isn't labeled.
-- **`ModelFallback`**: the notice is decided for the model the request goes to first. If the request then falls back to another candidate, that candidate gets the instructions decided for the first.
+- **`ModelFallback`**: the notice is decided again for each candidate a request falls back to, so a candidate that wrote the earlier turns itself gets none.
 
 The notice stays on every request while a turn from another model is in the history, and goes away once compaction or a sliding window drops the last one. It never names the other model: model identifiers from replayed or client-supplied history are not put into the prompt.
 

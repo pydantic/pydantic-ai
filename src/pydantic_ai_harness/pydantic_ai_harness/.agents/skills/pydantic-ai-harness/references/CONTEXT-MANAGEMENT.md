@@ -445,8 +445,9 @@ agent = Agent('test', capabilities=[LabelCrossModelHistory()])
 ```
 
 Gotchas: responses without a `model_id` (old saved history) are not counted; a `FallbackModel`'s candidates
-all count as the current model; under `ModelFallback` the notice is decided for the first model tried. Returning
-to an earlier model adds the notice to its instructions, which moves that model's cached prompt prefix once.
+all count as the current model; under `ModelFallback` the notice is decided again for each candidate tried.
+Returning to an earlier model adds the notice to its instructions, which moves that model's cached prompt prefix
+once.
 
 ## Media externalization (not a capability)
 

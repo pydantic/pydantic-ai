@@ -99,7 +99,7 @@ class TestLabelCrossModelHistory:
         agent.run_sync('again', message_history=first.all_messages(), model=FallbackModel(b, TestModel()))
         assert seen == [None, None, None, DEFAULT_CROSS_MODEL_NOTICE]
 
-    def test_model_fallback_keeps_the_notice_decided_for_the_first_model(self):
+    def test_model_fallback_decides_the_notice_for_each_candidate(self):
         seen: list[str | None] = []
 
         def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -111,4 +111,4 @@ class TestLabelCrossModelHistory:
             capabilities=[ModelFallback(_model('b', seen)), LabelCrossModelHistory()],
         )
         agent.run_sync('again', message_history=_history('function:b'))
-        assert seen == [DEFAULT_CROSS_MODEL_NOTICE, DEFAULT_CROSS_MODEL_NOTICE]
+        assert seen == [DEFAULT_CROSS_MODEL_NOTICE, None]
