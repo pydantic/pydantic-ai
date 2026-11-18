@@ -8,7 +8,7 @@ transport without a public accessor, so the tests record what the client hands i
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 import anyio
@@ -85,29 +85,22 @@ async def test_httpx2_client_concurrent_first_requests_configure_tls_one_at_a_ti
         monkeypatch.delenv(var, raising=False)
 
     configure_context = truststore_api._configure_context  # pyright: ignore[reportPrivateUsage]
-    lock = threading.Lock()
-    active = 0
-    overlaps = 0
-    overlap = threading.Event()
-    first = True
+    changed = threading.Condition()
+    entered = active = most_active = 0
 
     @contextmanager
-    def tracking_configure_context(ctx: object) -> Iterator[None]:
-        nonlocal active, overlaps, first
-        with lock:
+    def tracking_configure_context(ctx: object) -> Generator[None]:
+        nonlocal entered, active, most_active
+        with changed:
+            entered += 1
             active += 1
-            if active > 1:
-                overlaps += 1
-                overlap.set()
-            wait, first = first, False
-        try:
-            if wait:
-                overlap.wait(0.2)
-            with configure_context(ctx):  # pyright: ignore[reportArgumentType]
-                yield
-        finally:
-            with lock:
-                active -= 1
+            most_active = max(most_active, active)
+            changed.notify_all()
+            changed.wait_for(lambda: entered > 1, timeout=0.2)
+        with configure_context(ctx):  # pyright: ignore[reportArgumentType]
+            yield
+        with changed:
+            active -= 1
 
     monkeypatch.setattr(truststore_api, '_configure_context', tracking_configure_context)
 
@@ -128,7 +121,8 @@ async def test_httpx2_client_concurrent_first_requests_configure_tls_one_at_a_ti
                     requests.start_soon(first_request)
             server.cancel_scope.cancel()
 
-    assert overlaps == 0
+    assert entered == 4
+    assert most_active == 1
 
 
 async def test_legacy_httpx_client_defaults(transport_limits: list[httpx.Limits | httpx2.Limits]):
