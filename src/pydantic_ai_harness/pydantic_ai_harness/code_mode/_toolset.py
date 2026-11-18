@@ -892,6 +892,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     - `unless_native` tools, so `Model.prepare_request` can drop them when the
       provider supports the native tool.
 
+    Under the default `'all'` selector, `requires_approval=True` and external tools
+    (`ToolDefinition.defer`) also stay native, so their deferred calls work as usual. An
+    explicit selector can sandbox them for an agent with a `HandleDeferredToolCalls` handler.
+
     To keep a Tool Search corpus native even after discovery (e.g. for prompt-cache
     stability), pass a `tool_selector` that excludes tools with `with_native` set.
     """
@@ -1094,9 +1098,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         owners: dict[str, str] = {}
         for name, tool in run_code.wrapped_tools.items():
             if name in current or (
-                name in revealed
-                and can_be_sandboxed(tool.tool_def)
-                and await matches_tool_selector(self.tool_selector, ctx, tool.tool_def)
+                name in revealed and can_be_sandboxed(tool.tool_def) and await self._selects(ctx, tool.tool_def)
             ):
                 owners.setdefault(sanitize_tool_name(name), name)
         return {name: function for function, name in owners.items() if name in revealed}
@@ -1224,11 +1226,17 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # capability reveals share the same wire-side semantics. A hidden tool stays
             # native until revealed and is sandboxed from then on, unless
             # `_place_hidden_tools` keeps it off the wire altogether.
-            hidden = self.dynamic_catalog and await matches_tool_selector(self.tool_selector, ctx, tool_def)
+            hidden = self.dynamic_catalog and await self._selects(ctx, tool_def)
             return 'hidden' if hidden else 'native'
-        if await matches_tool_selector(self.tool_selector, ctx, tool_def):
+        if await self._selects(ctx, tool_def):
             return 'sandboxed'
         return 'native'
+
+    async def _selects(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> bool:
+        """Whether `tool_selector` sandboxes `tool_def`; `'all'` leaves `ToolDefinition.defer` tools native."""
+        if self.tool_selector == 'all' and tool_def.defer:
+            return False
+        return await matches_tool_selector(self.tool_selector, ctx, tool_def)
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

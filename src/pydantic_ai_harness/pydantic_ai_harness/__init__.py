@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         CompactOnRequest,
         DeduplicateFileReads,
         FallbackCompaction,
+        PruneToolResults,
         RelevanceCompaction,
         ReportContextUsage,
         SlidingWindowCompaction,
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
     from .conversation_search import ConversationSearch
     from .day_ai import DayAI
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
+    from .deny_unanswered import DenyUnanswered
     from .detect_loops import DetectLoops
     from .docker_container import DockerContainer, DockerContainerBackend
 
@@ -67,6 +69,7 @@ if TYPE_CHECKING:
     from .macroscope import Macroscope
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
+    from .model_router import ModelChoice, ModelRouter
     from .opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
     from .ordinal import Ordinal
     from .peers import Peers
@@ -82,6 +85,7 @@ if TYPE_CHECKING:
     from .render import RenderWorkflows
     from .render_sandbox import RenderSandbox, RenderSandboxBackend
     from .repo_context import RepoContext
+    from .report_stale_files import ReportStaleFiles
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
@@ -94,6 +98,7 @@ if TYPE_CHECKING:
     from .step_persistence import StepPersistence
     from .sub_agents import SubAgent, SubAgents
     from .system_reminders import SystemReminders
+    from .tool_bridge import ToolBridge
     from .tool_budgets import ToolBudgets
     from .tool_call_judge import ToolCallJudge
     from .tool_output_limits import ToolOutputLimits
@@ -130,6 +135,7 @@ __all__ = [
     'DaytonaSandbox',
     'DaytonaSandboxBackend',
     'DeduplicateFileReads',
+    'DenyUnanswered',
     'DetectLoops',
     'DockerContainer',
     'DockerContainerBackend',
@@ -161,6 +167,8 @@ __all__ = [
     'Memory',
     'ModalSandbox',
     'ModalSandboxBackend',
+    'ModelChoice',
+    'ModelRouter',
     'OpenSandbox',
     'OpenSandboxBackend',
     'Ordinal',
@@ -174,6 +182,7 @@ __all__ = [
     'Planning',
     'PostHog',
     'PromptInjectionDefender',
+    'PruneToolResults',
     'PydanticAIDocs',
     'Pylon',
     'READ_ONLY_TOOL_NAMES',
@@ -183,6 +192,7 @@ __all__ = [
     'RenderSandboxBackend',
     'RenderWorkflows',
     'ReportContextUsage',
+    'ReportStaleFiles',
     'RepoContext',
     'Researcher',
     'SSHWorkspace',
@@ -205,6 +215,7 @@ __all__ = [
     'SummarizingCompaction',
     'SystemReminders',
     'TieredCompaction',
+    'ToolBridge',
     'ToolBudgets',
     'ToolCallJudge',
     'ToolGuardrail',
@@ -245,6 +256,7 @@ _LAZY_EXPORTS = {
     'DeduplicateFileReads': 'compaction',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS': 'refine_output',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
+    'DenyUnanswered': 'deny_unanswered',
     'DetectLoops': 'detect_loops',
     'DockerContainer': 'docker_container',
     'DockerContainerBackend': 'docker_container',
@@ -274,6 +286,8 @@ _LAZY_EXPORTS = {
     'Memory': 'memory',
     'ModalSandbox': 'modal_sandbox',
     'ModalSandboxBackend': 'modal_sandbox',
+    'ModelChoice': 'model_router',
+    'ModelRouter': 'model_router',
     'OpenSandbox': 'opensandbox_sandbox',
     'OpenSandboxBackend': 'opensandbox_sandbox',
     'Ordinal': 'ordinal',
@@ -287,6 +301,7 @@ _LAZY_EXPORTS = {
     'Planning': 'planning',
     'PostHog': 'posthog',
     'PromptInjectionDefender': 'prompt_injection_defender',
+    'PruneToolResults': 'compaction',
     'PydanticAIDocs': 'pydantic_ai_docs',
     'Pylon': 'pylon',
     'READ_ONLY_TOOL_NAMES': 'file_system',
@@ -297,6 +312,7 @@ _LAZY_EXPORTS = {
     'RenderWorkflows': 'render',
     'RepoContext': 'repo_context',
     'ReportContextUsage': 'compaction',
+    'ReportStaleFiles': 'report_stale_files',
     'Researcher': 'researcher',
     'Shell': 'shell',
     'Skills': 'skills',
@@ -318,6 +334,7 @@ _LAZY_EXPORTS = {
     'SummarizingCompaction': 'compaction',
     'SystemReminders': 'system_reminders',
     'TieredCompaction': 'compaction',
+    'ToolBridge': 'tool_bridge',
     'ToolBudgets': 'tool_budgets',
     'ToolCallJudge': 'tool_call_judge',
     'ToolGuardrail': 'guardrails',

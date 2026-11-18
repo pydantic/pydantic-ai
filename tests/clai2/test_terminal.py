@@ -196,6 +196,8 @@ def test_set_autocomplete() -> None:
     codex = list(commands.get_completions(Document('/set model openai-codex'), CompleteEvent()))
     assert {item.text for item in codex} >= {
         'openai-codex:',
+        'openai-codex:gpt-6.2-sol',
+        'openai-codex:gpt-6.2-astra',
         'openai-codex:gpt-6.1-sol',
         'openai-codex:gpt-6-astra',
         'openai-codex:gpt-6-sol',

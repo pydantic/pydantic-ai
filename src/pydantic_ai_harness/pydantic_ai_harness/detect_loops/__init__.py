@@ -5,6 +5,7 @@ from pydantic_ai_harness.detect_loops._capability import (
     DetectLoops,
     LoopDetectedError,
     LoopHandler,
+    LoopNudgePart,
     LoopPattern,
 )
 from pydantic_ai_harness.detect_loops._detectors import (
@@ -23,6 +24,7 @@ __all__ = [
     'LoopDetector',
     'LoopHandler',
     'LoopJudge',
+    'LoopNudgePart',
     'LoopPattern',
     'Repetition',
     'RepetitionDetector',

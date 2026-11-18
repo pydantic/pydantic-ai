@@ -114,7 +114,15 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import LoadCapabilityReturnPart
+from pydantic_ai.messages import (
+    CapabilitySource,
+    DataCapabilityPart,
+    InstructionCapabilityPart,
+    LoadCapabilityReturnPart,
+    OperatorSource,
+    OperatorText,
+    ToolResultSource,
+)
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -189,8 +197,9 @@ try:
     from fastmcp.client.transports import StdioTransport
     from fastmcp.server.dependencies import get_http_request
 
-    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
+    from pydantic_ai._mcp_compat import MCP_SDK_V2
     from pydantic_ai.mcp import MCPToolset
+    from tests.mcp_task_server import TASK_SERVER_UNAVAILABLE
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -214,6 +223,9 @@ from ..workspace_fakes import ref_workspace
 from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 from .preamble_text import RunAndStreamResult, plain_run_and_stream, preamble_text_agents, run_and_stream
+from .span_utils import drop_fastmcp_client_spans
+
+_OPTIONAL_TASK_ROUTING = 'optional_task' if MCP_SDK_V2 else 'optional_sync'
 
 
 def test_durability_codecs() -> None:
@@ -715,6 +727,9 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
             parent_span = basic_spans_by_id[parent_id]
             parent_span.children.append(basic_span)
 
+    assert root_span is not None
+    drop_fastmcp_client_spans(root_span)
+
     assert root_span == snapshot(
         BasicSpan(
             content=IsStr(regex=r'\w+-\w+'),  # Random Prefect flow run name
@@ -1203,11 +1218,15 @@ def test_prefect_mcp_wrappers_of_same_host_servers_keep_their_derived_id() -> No
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_task_server` over stdio')
+@pytest.mark.skipif(TASK_SERVER_UNAVAILABLE, reason='fastmcp-tasks not installed')
 async def test_prefect_mcptoolset_preserves_task_routing() -> None:
     """Effective task routing forwards through Prefect task wrappers end-to-end.
 
     Unlike Temporal/DBOS, Prefect passes live `ToolsetTool` objects through without serializing
-    `ToolDefinition`, so this pins wrapper forwarding rather than serialization round-tripping."""
+    `ToolDefinition`, so this pins wrapper forwarding rather than serialization round-tripping.
+
+    `prefer_tasks=False` is the client's say under FastMCP 3's SEP-1686, so the optional tool runs
+    inline there; FastMCP 4's SEP-2663 hands that decision to the server, which takes it up."""
     agent = PrefectAgent(  # pyright: ignore[reportDeprecated]
         Agent(
             TestModel(call_tools=['required_task_tool', 'optional_task_tool']),
@@ -1227,7 +1246,10 @@ async def test_prefect_mcptoolset_preserves_task_routing() -> None:
     async def run_agent() -> str:
         return (await agent.run('Call both tools')).output
 
-    assert await run_agent() == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
+    assert (
+        await run_agent()
+        == f'{{"required_task_tool":"required_completed","optional_task_tool":"{_OPTIONAL_TASK_ROUTING}"}}'
+    )
 
 
 async def test_capability_contributed_toolset_id_from_capability():
@@ -1625,7 +1647,8 @@ async def test_prefect_agent_run_with_runtime_external_toolset() -> None:
     )
 
     assert result.output == DeferredToolRequests(
-        calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
+        calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')],
+        validated_args={'call-1': {'query': 'runtime'}},
     )
 
 
@@ -1653,35 +1676,35 @@ RUNTIME_TOOLSET_REJECTION_CASES = [
         id='multiple-named',
         toolsets=(FunctionToolset(id='search-tools'), FunctionToolset(id='billing-tools')),
         expected=snapshot(
-            "FunctionToolset 'search-tools', FunctionToolset 'billing-tools' cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+            "FunctionToolset 'search-tools', FunctionToolset 'billing-tools' cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with durable=False (or metadata={'prefect': False}, which takes precedence when set) to be allowed at runtime."
         ),
     ),
     RuntimeToolsetRejectionCase(
         id='anonymous',
         toolsets=(FunctionToolset(),),
         expected=snapshot(
-            "FunctionToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+            "FunctionToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with durable=False (or metadata={'prefect': False}, which takes precedence when set) to be allowed at runtime."
         ),
     ),
     RuntimeToolsetRejectionCase(
         id='anonymous-mcp',
         toolsets=(MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),),
         expected=snapshot(
-            "MCPToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+            'MCPToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
         ),
     ),
     RuntimeToolsetRejectionCase(
         id='anonymous-custom-mcp',
         toolsets=(CustomLabelMCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),),
         expected=snapshot(
-            "custom MCP toolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+            'custom MCP toolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
         ),
     ),
     RuntimeToolsetRejectionCase(
         id='mixed-custom-and-anonymous',
         toolsets=(CustomLabelFunctionToolset(id='named'), FunctionToolset()),
         expected=snapshot(
-            "custom function toolset 'named', FunctionToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+            "custom function toolset 'named', FunctionToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with durable=False (or metadata={'prefect': False}, which takes precedence when set) to be allowed at runtime."
         ),
     ),
 ]
@@ -2217,6 +2240,50 @@ def test_cache_policy_excludes_timestamps_on_parts_outside_messages_module():
         return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'messages': [part]}, flow_parameters={})
 
     assert key_for(time1) == key_for(time2)
+
+
+def test_cache_policy_excludes_a_capability_parts_per_record_fields():
+    """A capability part's `record_id`, `timestamp` and a run's synthetic `capability_id` never reach the model.
+
+    Its content and an `id` the application chose still fork the key. Unit test because key stability across separately
+    constructed inputs can't be observed through a recorded run.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(content: str = 'Page text.', capability_id: str = '<reporter:abc123>') -> str | None:
+        part = _CachedPagePart(
+            content=content, source=CapabilitySource(capability_id, authority='none'), capability_id=capability_id
+        )
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx, inputs={'messages': [ModelRequest(parts=[part])]}, flow_parameters={}
+        )
+
+    assert key_for() == key_for() == key_for(capability_id='<reporter:def456>')
+    assert key_for() != key_for(content='Other text.')
+    assert key_for(capability_id='reporter') != key_for(capability_id='budget')
+
+
+def test_cache_policy_normalizes_a_synthetic_capability_id_on_a_source():
+    """A run's synthetic `capability_id` on a part's source doesn't fork the key, even when the part's own id is set.
+
+    An id the application chose on the source still does.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(source_capability_id: str) -> str | None:
+        part = _CachedPagePart(
+            content='Page text.',
+            source=CapabilitySource(source_capability_id, authority='none'),
+            capability_id='reporter',
+        )
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx, inputs={'messages': [ModelRequest(parts=[part])]}, flow_parameters={}
+        )
+
+    assert key_for('<fetcher:abc123>') == key_for('<fetcher:def456>')
+    assert key_for('fetcher') != key_for('crawler')
 
 
 def test_cache_policy_normalizes_only_framework_tool_call_ids():
@@ -2892,6 +2959,69 @@ async def test_durability_repeated_run_hits_cache_preserves_provenance():
         producing_conversation_id,
     ]
     assert result2.all_messages()[0].run_id != response2.run_id
+
+
+@dataclass(kw_only=True)
+class _CachedNotePart(InstructionCapabilityPart, namespace='test_prefect', name='note'):
+    pass
+
+
+@dataclass(kw_only=True)
+class _CachedPagePart(DataCapabilityPart, namespace='test_prefect', name='page', tag='page'):
+    pass
+
+
+@dataclass
+class _EnqueuesCapabilityParts(AbstractCapability[object]):
+    """Sends an instruction part and a data part with each request, as a capability reporting on its work."""
+
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(
+            _CachedNotePart(content=OperatorText('Be brief.'), source=OperatorSource()),
+            _CachedPagePart(content='Page text.', source=ToolResultSource(tool_name='fetch')),
+        )
+        return request_context
+
+
+async def test_durability_repeated_run_with_capability_parts_hits_cache():
+    """A capability part gets a fresh `record_id`, `timestamp` and, from an unnamed capability, `capability_id` each run.
+
+    None of them reaches the model, so a retried flow that sends the same parts must read the cached response
+    rather than call the model again.
+    """
+    call_count = 0
+
+    def counting_model(messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart('4')])
+
+    agent = Agent(
+        FunctionModel(counting_model),
+        name='capability_part_cache_test_agent',
+        capabilities=[
+            _EnqueuesCapabilityParts(),
+            PrefectDurability(model_task_config=TaskConfig(cache_policy=PrefectAgentInputs())),
+        ],
+    )
+
+    @flow
+    async def run_agent(prompt: str) -> AgentRunResult[str]:
+        return await agent.run(prompt)
+
+    prompt = f'What is 2+2? {uuid.uuid4()}'
+    first = await run_agent(prompt)
+    second = await run_agent(prompt)
+    parts = [
+        [part for message in result.all_messages() for part in message.parts if isinstance(part, _CachedPagePart)]
+        for result in (first, second)
+    ]
+    # The parts differ between the runs only in what never reaches the model.
+    [[first_part], [second_part]] = parts
+    assert first_part.record_id != second_part.record_id
+    assert call_count == 1
 
 
 async def test_durability_cache_identity_distinguishes_model_inputs_and_tool_arguments() -> None:
@@ -5947,7 +6077,7 @@ async def test_prefect_mcp_auth_function_connects_each_run_as_its_own_user(block
     # A `localhost` URL keeps the module's VCR cassettes from intercepting the in-process requests.
     # Each run of the CI matrix installs one FastMCP generation, so it covers only one of the branches.
     client: httpx.AsyncClient | httpx2.AsyncClient
-    if is_mcp_sdk_v2():
+    if MCP_SDK_V2:
         client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))  # pragma: lax no cover
     else:
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))  # pragma: lax no cover
@@ -6004,7 +6134,7 @@ async def test_prefect_mcp_server_keeps_one_session_per_flow(blockbuster_enabled
         return (await agent.run('go')).output
 
     assert await run_flow() == 'done'
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
     # The run closed the session it held; nothing keeps the server connected between runs.
     assert not toolset.is_running
 
