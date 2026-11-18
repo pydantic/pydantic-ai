@@ -31,7 +31,7 @@ async def research(topic: str) -> str:
 When the run's [`UsageLimits`][pydantic_ai.usage.UsageLimits] leave room for one more model request but not for another after it, `WrapUpAtLimits` makes that request the last:
 
 - It sets `tool_choice='none'` and keeps the tool definitions, so the cached tools and instructions still match. Some providers still miss part of the cache: Anthropic caches messages per `tool_choice`, and [some cases](../tools-advanced.md#tool-choice-caching) send a trimmed tool list. With [tool output](../output.md#tool-output), `tool_choice='none'` sends only the output tools.
-- It adds a [request-scoped system prompt](../message-history.md#request-scoped-system-prompts) asking the model to answer now with what it has. The model's answer is the run's output.
+- It adds a request-scoped [instruction capability part](../capabilities/custom.md#capability-parts), a `WrapUpPart`, asking the model to answer now with what it has. The model's answer is the run's output.
 
 | Field | Default | Meaning |
 |---|---|---|

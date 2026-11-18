@@ -54,7 +54,7 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
 
     When the run's [`UsageLimits`][pydantic_ai.usage.UsageLimits] leave room for only one more model
     request, that request is made the last: it keeps the tool definitions with `tool_choice='none'`, so
-    the cached tools and instructions still match, and gets a request-scoped system prompt asking the
+    the cached tools and instructions still match, and gets a request-scoped instruction asking the
     model to answer now. That prompt is a
     [`WrapUpPart`][pydantic_ai_harness.wrap_up_at_limits.WrapUpPart] carrying the `limit` that triggered it, which
     [`wrapped_up_by`][pydantic_ai_harness.wrap_up_at_limits.wrapped_up_by] reads back.
