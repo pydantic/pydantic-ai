@@ -2642,7 +2642,9 @@ def _bedrock_error(
             id='model-error',
         ),
         pytest.param(
-            lambda: _bedrock_error('ModelErrorException', 'The model returned an error.', 424, original_status_code=429),
+            lambda: _bedrock_error(
+                'ModelErrorException', 'The model returned an error.', 424, original_status_code=429
+            ),
             {ModelHTTPError, ModelRateLimitError},
             {'status_code': 424, 'provider_error_code': 'ModelErrorException'},
             id='model-error-original-status',
