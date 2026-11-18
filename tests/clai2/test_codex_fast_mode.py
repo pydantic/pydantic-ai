@@ -20,7 +20,7 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
-from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.field_menu import FieldMenu, shown
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command
 from tests.clai2.menu_script import Script, make_context, pick
 
@@ -40,23 +40,27 @@ def _shell(store: SettingsStore, model: str | None, agent_model: str = 'test') -
     )
 
 
-@pytest.mark.parametrize('name', ['gpt-6-astra', 'gpt-5.6-luna', 'gpt-5.4'])
-def test_codex_speed_row_defaults_to_ultrafast(tmp_path: Path, name: str) -> None:
+@pytest.mark.parametrize(
+    ('name', 'default'),
+    [('gpt-6-astra', 'ultrafast'), ('gpt-6.2-sol', 'ultrafast'), ('gpt-5.6-luna', None), ('gpt-5.4', None)],
+)
+def test_codex_speed_row(tmp_path: Path, name: str, default: str | None) -> None:
+    """Ultrafast is the default speed only of the Codex models that offer it."""
     context, _ = make_context(tmp_path)
     model = f'openai-codex:{name}'
     source = ModelSettingsSource(context.store, model)
-    row = FieldMenu(source).row_for('openai_codex_speed')
+    row = FieldMenu(source).row_for('codex_speed')
     assert row is not None
     assert row.label == 'Speed'
     assert row.choices == ('standard', 'fast', 'ultrafast')
     assert 'more ChatGPT credits' in row.description
-    assert source.current(row) == row.default == 'ultrafast'
-    assert (context.model_settings(model) or {}).get('openai_codex_speed') == 'ultrafast'
+    assert source.current(row) == row.default == shown(default)
+    assert (context.model_settings(model) or {}).get('openai_service_tier') == default
     assert source.apply(row, 'fast').startswith('Saved')
-    assert (context.model_settings(model) or {}).get('openai_codex_speed') == 'fast'
+    assert (context.model_settings(model) or {}).get('openai_service_tier') == 'priority'
     source.reset(row)
     assert context.store.model_settings(model) == {}
-    assert source.current(row) == 'ultrafast'
+    assert source.current(row) == shown(default)
 
 
 @pytest.mark.parametrize('provider', ['openai', 'openai-chat', 'openai-responses', 'openrouter'])
@@ -64,37 +68,39 @@ def test_other_providers_have_no_codex_speed(tmp_path: Path, provider: str) -> N
     context, _ = make_context(tmp_path)
     model = f'{provider}:gpt-6-astra'
     menu = FieldMenu(ModelSettingsSource(context.store, model))
-    assert menu.row_for('openai_codex_speed') is None
+    assert menu.row_for('codex_speed') is None
     tier = menu.row_for('service_tier')
     assert tier is not None and tier.label == 'Service Tier' and not tier.choice_labels
-    assert 'openai_codex_speed' not in (context.model_settings(model) or {})
+    assert 'openai_service_tier' not in (context.model_settings(model) or {})
 
 
 async def test_model_settings_flow_saves_speed_without_selecting_model(tmp_path: Path) -> None:
     context, applied = make_context(tmp_path)
     original = context.settings.model
     model = 'openai-codex:gpt-6-astra'
-    script = Script(lists=[pick('openai_codex_speed'), MenuResult(cancelled=True)], choices=[pick('fast')], texts=[])
-    assert 'Saved openai_codex_speed' in await model_settings_command(context, [model], runners=script.runners)
-    assert context.store.model_settings(model) == {'openai_codex_speed': 'fast'}
+    script = Script(lists=[pick('codex_speed'), MenuResult(cancelled=True)], choices=[pick('fast')], texts=[])
+    assert 'Saved codex_speed' in await model_settings_command(context, [model], runners=script.runners)
+    assert context.store.model_settings(model) == {'codex_speed': 'fast'}
     assert context.settings.model == original and not applied
 
 
 @pytest.mark.parametrize(
-    ('saved', 'command', 'tier'),
+    ('model', 'saved', 'command', 'tier'),
     [
-        pytest.param({}, None, 'ultrafast', id='default'),
-        pytest.param({}, '/fast off', 'default', id='off'),
-        pytest.param({}, '/fast on', 'priority', id='on'),
-        pytest.param({'openai_codex_speed': 'standard'}, '/fast ultrafast', 'ultrafast', id='ultrafast'),
-        pytest.param({'service_tier': 'priority'}, None, 'priority', id='saved-tier'),
+        pytest.param('gpt-6-astra', {}, None, 'ultrafast', id='default'),
+        pytest.param('gpt-5.6-luna', {}, None, 'default', id='default-without-ultrafast'),
+        pytest.param('gpt-5.6-luna', {}, '/fast', 'priority', id='toggle-without-ultrafast'),
+        pytest.param('gpt-6-astra', {}, '/fast off', 'default', id='off'),
+        pytest.param('gpt-6-astra', {}, '/fast on', 'priority', id='on'),
+        pytest.param('gpt-6-astra', {'codex_speed': 'standard'}, '/fast ultrafast', 'ultrafast', id='ultrafast'),
+        pytest.param('gpt-6-astra', {'service_tier': 'priority'}, None, 'priority', id='saved-tier'),
     ],
 )
 async def test_speed_reaches_codex_request(
-    tmp_path: Path, saved: dict[str, JsonValue], command: str | None, tier: str
+    tmp_path: Path, model: str, saved: dict[str, JsonValue], command: str | None, tier: str
 ) -> None:
     context, _ = make_context(tmp_path)
-    name = 'openai-codex:gpt-6-astra'
+    name = f'openai-codex:{model}'
     context.store.save_model_settings(name, saved)
     if command is not None:
         await _shell(context.store, name).commands.execute_async(command)
@@ -140,7 +146,7 @@ async def test_speed_reaches_codex_request(
             http_client=client,
         )
         with override_allow_model_requests(True):
-            result = await Agent(OpenAICodexModel('gpt-6-astra', provider=provider)).run(
+            result = await Agent(OpenAICodexModel(model, provider=provider)).run(
                 'hello', model_settings=context.model_settings(name)
             )
     assert result.output == 'done'
@@ -175,6 +181,9 @@ async def test_fast_command_tracks_active_model(tmp_path: Path, model: str | Non
             await shell.commands.execute_async('/fast off')
 
 
+_TIERS = {'standard': 'default', 'fast': 'priority', 'ultrafast': 'ultrafast'}
+
+
 async def test_fast_toggle_preserves_other_preferences(tmp_path: Path) -> None:
     model = 'openai-codex:xyz'
     saved: dict[str, JsonValue] = {'openai_reasoning_effort': 'high', 'future_setting': {'value': 1}}
@@ -182,33 +191,43 @@ async def test_fast_toggle_preserves_other_preferences(tmp_path: Path) -> None:
     store.save_model_settings(model, saved)
     shell = _shell(store, None, agent_model=model)
     for command, speed in [
+        ('/fast', 'fast'),
         ('/fast', 'standard'),
-        ('/fast', 'ultrafast'),
+        ('/fast ultrafast', 'ultrafast'),
+        ('/fast', 'standard'),
         ('/fast on', 'fast'),
-        ('/fast', 'standard'),
         ('/fast off', 'standard'),
         ('/fast ultrafast', 'ultrafast'),
     ]:
         result = await shell.commands.execute_async(command)
         assert f'Codex speed {speed} for {model}' in result
         assert ('more ChatGPT credits' in result) is (speed != 'standard')
-        assert SettingsStore(store.path).model_settings(model) == {**saved, 'openai_codex_speed': speed}
-        assert (shell.context.model_settings(model) or {}).get('openai_codex_speed') == speed
+        assert SettingsStore(store.path).model_settings(model) == {**saved, 'codex_speed': speed}
+        assert (shell.context.model_settings(model) or {}).get('openai_service_tier') == _TIERS[speed]
     for command in ('/fast yes', '/fast on off'):
         with pytest.raises(ValueError, match='Usage: /fast'):
             await shell.commands.execute_async(command)
-        assert store.model_settings(model) == {**saved, 'openai_codex_speed': 'ultrafast'}
+        assert store.model_settings(model) == {**saved, 'codex_speed': 'ultrafast'}
     store.save_model_settings(model, {**saved, 'custom_params': {'service_tier': 'flex'}})
     with pytest.raises(ValueError, match='Custom service_tier overrides the Codex speed'):
         await shell.commands.execute_async('/fast')
     assert store.model_settings(model) == {**saved, 'custom_params': {'service_tier': 'flex'}}
 
 
+async def test_fast_toggles_ultrafast_where_offered(tmp_path: Path) -> None:
+    model = 'openai-codex:gpt-6-astra'
+    store = SettingsStore(tmp_path / 'config.db')
+    shell = _shell(store, model)
+    assert 'Codex speed standard' in await shell.commands.execute_async('/fast')
+    assert 'Codex speed ultrafast' in await shell.commands.execute_async('/fast')
+    assert store.model_settings(model) == {'codex_speed': 'ultrafast'}
+
+
 async def test_fast_toggle_turns_a_saved_priority_tier_off(tmp_path: Path) -> None:
     """A `service_tier` that `/fast on` saved before Codex speeds counts as on."""
-    model = 'openai-codex:xyz'
+    model = 'openai-codex:gpt-6-astra'
     store = SettingsStore(tmp_path / 'config.db')
     store.save_model_settings(model, {'service_tier': 'priority'})
     result = await _shell(store, model).commands.execute_async('/fast')
     assert 'Codex speed standard' in result
-    assert store.model_settings(model) == {'service_tier': 'priority', 'openai_codex_speed': 'standard'}
+    assert store.model_settings(model) == {'service_tier': 'priority', 'codex_speed': 'standard'}

@@ -170,7 +170,7 @@ def setting_label(key: str) -> str:
         'base_url': 'Base URL',
         'api_key': 'API Key',
         'openai_text_verbosity': 'Verbosity',
-        'openai_codex_speed': 'Speed',
+        'codex_speed': 'Speed',
         'anthropic_thinking_mode': 'Extended Thinking',
         'anthropic_thinking_budget': 'Thinking Budget',
         'anthropic_effort': 'Effort',

@@ -138,19 +138,17 @@ The Codex backend caches prompts implicitly and rejects the explicit prompt cach
 
 ## Speed
 
-Like the Codex CLI's `/fast` and `/ultrafast` commands, the [`openai_codex_speed`][pydantic_ai.models.openai_codex.OpenAICodexModelSettings.openai_codex_speed] setting picks how fast the model runs, by sending the `service_tier` the Codex CLI sends for it: `'fast'` sends `priority`, `'ultrafast'` sends `ultrafast`, and `'standard'` sends `default`. Faster speeds use more of your plan's usage, and their availability depends on the model and your account.
+The Codex CLI's [Fast and Ultrafast speeds](https://developers.openai.com/codex/speed) are service tiers, which you select with [`openai_service_tier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_service_tier]. The CLI's `/fast` sends `'priority'`, `/ultrafast` sends `'ultrafast'`, and Standard sends no tier. Faster speeds use more of your plan's usage. Ultrafast is only offered on some models, and whether you can use a speed depends on your plan.
 
 ```python {title="codex_speed.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.models.openai_codex import OpenAICodexModelSettings
+from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 
 agent = Agent(
-    'openai-codex:gpt-5.6-luna',
-    model_settings=OpenAICodexModelSettings(openai_codex_speed='ultrafast'),
+    'openai-codex:gpt-6-astra',
+    model_settings=OpenAIResponsesModelSettings(openai_service_tier='ultrafast'),
 )
 ```
-
-The speed takes precedence over the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] setting, and an explicit [`openai_service_tier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_service_tier] wins over it.
 
 ## Continuing on the OpenAI API
 

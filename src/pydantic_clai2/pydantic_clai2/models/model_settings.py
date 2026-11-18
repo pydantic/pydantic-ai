@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from pydantic_ai.settings import CacheRetention, ModelSettings
 from pydantic_clai2.models.custom_params import expand_params
-from pydantic_clai2.models.profiles import KEY_NAME, provider_of
+from pydantic_clai2.models.profiles import KEY_NAME, base_model
 
 if TYPE_CHECKING:
     # Typing only: the provider modules load the Anthropic and OpenAI SDKs, and every turn loads this module.
@@ -21,7 +21,19 @@ if TYPE_CHECKING:
     )
 
     from pydantic_ai.models.anthropic import AnthropicModelSettings
-    from pydantic_ai.models.openai_codex import OpenAICodexModelSettings
+    from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+
+ULTRAFAST_CODEX_MODELS = frozenset(
+    f'openai-codex:{name}' for name in ('gpt-6.2-astra', 'gpt-6.2-sol', 'gpt-6.1-sol', 'gpt-6-astra')
+)
+"""Codex models that offer the Ultrafast speed, per https://developers.openai.com/codex/speed."""
+
+_CODEX_SERVICE_TIERS: dict[str, Literal['default', 'priority', 'ultrafast']] = {
+    'standard': 'default',
+    'fast': 'priority',
+    'ultrafast': 'ultrafast',
+}
+"""The `openai_service_tier` each Codex speed sends, as the Codex CLI's `/fast` and `/ultrafast` do."""
 
 
 class ModelSettingsForm(BaseModel):
@@ -71,11 +83,11 @@ class ModelSettingsForm(BaseModel):
     openai_text_verbosity: Literal['low', 'medium', 'high'] | None = Field(
         default=None, description='OpenAI answer verbosity.'
     )
-    openai_codex_speed: Literal['standard', 'fast', 'ultrafast'] | None = Field(
+    codex_speed: Literal['standard', 'fast', 'ultrafast'] | None = Field(
         default=None,
         description=(
             'Codex speed. Fast and ultrafast use more ChatGPT credits; availability depends on your model and '
-            'account. Overrides service_tier.'
+            'plan. Overrides service_tier.'
         ),
     )
     anthropic_cache: bool | Literal['5m', '1h'] | None = Field(
@@ -196,8 +208,8 @@ class ModelSettingsForm(BaseModel):
             settings['extra_body'] = body
         return settings or None
 
-    def _openai_settings(self) -> 'OpenAICodexModelSettings':
-        openai: OpenAICodexModelSettings = {}
+    def _openai_settings(self) -> 'OpenAIResponsesModelSettings':
+        openai: OpenAIResponsesModelSettings = {}
         if self.openai_reasoning_effort is not None:
             openai['openai_reasoning_effort'] = self.openai_reasoning_effort
         if self.openai_reasoning_context is not None:
@@ -208,8 +220,8 @@ class ModelSettingsForm(BaseModel):
             openai['openai_reasoning_summary'] = self.openai_reasoning_summary
         if self.openai_text_verbosity is not None:
             openai['openai_text_verbosity'] = self.openai_text_verbosity
-        if self.openai_codex_speed is not None:
-            openai['openai_codex_speed'] = self.openai_codex_speed
+        if self.codex_speed is not None:
+            openai['openai_service_tier'] = _CODEX_SERVICE_TIERS[self.codex_speed]
         return openai
 
     def _anthropic_settings(self) -> 'AnthropicModelSettings':
@@ -287,16 +299,16 @@ class ModelSettingsForm(BaseModel):
 
 
 def model_defaults(*, model: str, saved: Mapping[str, JsonValue] | None = None) -> dict[str, JsonValue]:
-    """CLAI's prompt caching default for every model, reasoning defaults for GPT families, and ultrafast for Codex.
+    """CLAI's prompt caching default for every model, reasoning defaults for GPT families, and Codex's ultrafast.
 
     Caching uses the unified `cache` setting, which providers without configurable caching ignore. A
     saved `anthropic_cache*` override still applies, since provider-specific cache settings take
-    precedence over it. A `service_tier` in `saved`, as `/fast` saved before Codex speeds, keeps
-    Codex at that tier instead of ultrafast.
+    precedence over it. Ultrafast is the default speed of the Codex models that offer it, unless
+    `saved` has a `service_tier`, as `/fast` saved before Codex speeds.
     """
     defaults: dict[str, JsonValue] = {'cache': True, **gpt_defaults(model=model)}
-    if provider_of(model) == 'openai-codex' and 'service_tier' not in (saved or {}):
-        defaults['openai_codex_speed'] = 'ultrafast'
+    if base_model(model) in ULTRAFAST_CODEX_MODELS and 'service_tier' not in (saved or {}):
+        defaults['codex_speed'] = 'ultrafast'
     return defaults
 
 

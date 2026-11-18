@@ -168,11 +168,15 @@ def _fast_command(
     context: CommandContext,
     store: SettingsStore,
 ) -> str:
-    """`/fast [on|off|ultrafast]`: set the session model's Codex speed; no argument toggles standard and ultrafast."""
+    """`/fast [on|off|ultrafast]`: set the session model's Codex speed.
+
+    No argument toggles standard and the model's default speed, ultrafast where it is offered, else fast.
+    """
+    from pydantic_clai2.models.model_settings import model_defaults, model_settings_from_json
+
     if args not in ([], ['on'], ['off'], ['ultrafast']):
         raise ValueError('Usage: /fast [on|off|ultrafast]')
     model = session.model or _model_label(agent)
-    current = context.model_settings(model) or {}
     saved = store.model_settings(model)
     custom = saved.get('custom_params')
     if isinstance(custom, dict) and any(key.partition('.')[0] == 'service_tier' for key in custom):
@@ -180,9 +184,12 @@ def _fast_command(
     if args:
         speed = {'on': 'fast', 'off': 'standard'}.get(args[0], args[0])
     else:
-        enabled = current.get('openai_codex_speed', 'fast' if current.get('service_tier') == 'priority' else 'standard')
-        speed = 'ultrafast' if enabled == 'standard' else 'standard'
-    store.save_model_settings(model, {**saved, 'openai_codex_speed': speed})
+        settings_as = context.settings_model(model)
+        form = model_settings_from_json(saved, model=settings_as)
+        active = form.codex_speed or ('fast' if form.service_tier == 'priority' else 'standard')
+        on = model_defaults(model=settings_as).get('codex_speed', 'fast')
+        speed = on if active == 'standard' else 'standard'
+    store.save_model_settings(model, {**saved, 'codex_speed': speed})
     return f'Codex speed {speed} for {model}. Applies on the next prompt.' + (
         ' Uses more ChatGPT credits; availability depends on your model and account.' if speed != 'standard' else ''
     )

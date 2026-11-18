@@ -759,17 +759,19 @@ does the same, with a file list and the drafts to edit first. A plugin's own
 by them, and CLAI says so.
 
 For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
-(or your saved Codex model), then **Speed**. CLAI defaults Codex models to
-**ultrafast**; choose **fast** for priority processing, or **standard** to turn
-both off. [Codex speeds](https://developers.openai.com/codex/speed) use more
-ChatGPT credits and depend on model and account availability. They do not lower
-reasoning effort. Reset restores the ultrafast default. A `service_tier` saved by
-an older CLAI's `/fast` keeps applying instead of that default until you choose a
-speed. The speed overrides the **Service Tier** row, and a custom `service_tier`
+(or your saved Codex model), then **Speed**. GPT-6.2 Astra, GPT-6.2 Sol,
+GPT-6.1 Sol, and GPT-6 Astra, the Codex models that offer
+[Ultrafast](https://developers.openai.com/codex/speed), default to
+**ultrafast**. Choose **fast** for priority processing, or **standard** to turn
+both off. Faster speeds use more ChatGPT credits and depend on your plan. They do
+not lower reasoning effort. Reset restores the model's default. A `service_tier`
+saved by an older CLAI's `/fast` keeps applying instead of that default until you
+choose a speed. The speed overrides the **Service Tier** row, and a custom `service_tier`
 body parameter still takes precedence over both.
 
 While the active model starts with `openai-codex:`, `/fast` toggles between
-ultrafast and standard. `/fast on` selects fast, `/fast off` standard, and
+standard and the model's default speed: ultrafast where it is offered, fast
+elsewhere. `/fast on` selects fast, `/fast off` standard, and
 `/fast ultrafast` ultrafast. It saves the active model's speed for subsequent
 prompts and sessions, without changing reasoning effort or other preferences. It
 is absent from help and Tab completion on other models, and typing it there

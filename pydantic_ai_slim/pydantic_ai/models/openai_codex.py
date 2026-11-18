@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from functools import cached_property
-from typing import Literal, TypeAlias, cast
+from typing import Literal, cast
 
 from typing_extensions import override
 
@@ -21,35 +21,9 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
-__all__ = ('OpenAICodexModel', 'OpenAICodexModelSettings', 'OpenAICodexSpeed')
+__all__ = ('OpenAICodexModel',)
 
 _SESSION_HEADERS = ('session-id', 'thread-id', 'x-client-request-id')
-
-OpenAICodexSpeed: TypeAlias = Literal['standard', 'fast', 'ultrafast']
-"""A Codex speed, as the Codex CLI's `/fast` and `/ultrafast` commands select it."""
-
-_SPEED_SERVICE_TIERS: dict[OpenAICodexSpeed, Literal['default', 'priority', 'ultrafast']] = {
-    'standard': 'default',
-    'fast': 'priority',
-    'ultrafast': 'ultrafast',
-}
-
-
-class OpenAICodexModelSettings(OpenAIResponsesModelSettings, total=False):
-    """Settings used for an OpenAI Codex model request.
-
-    ALL FIELDS MUST BE `openai_codex_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
-
-    openai_codex_speed: OpenAICodexSpeed
-    """The speed to run the model at, which sends the `service_tier` the Codex CLI sends for it.
-
-    `'fast'` sends `priority`, `'ultrafast'` sends `ultrafast`, and `'standard'` sends `default`. Faster speeds use
-    more of your plan's usage, and their availability depends on the model and your account.
-
-    Takes precedence over the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] setting; an
-    explicit [`openai_service_tier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_service_tier] wins over it.
-    """
 
 
 class OpenAICodexModel(OpenAIResponsesModel):
@@ -101,9 +75,6 @@ class OpenAICodexModel(OpenAIResponsesModel):
         messages: list[ModelRequest | ModelResponse],
         model_settings: OpenAIResponsesModelSettings,
     ) -> OpenAIResponsesModelSettings:
-        if speed := cast(OpenAICodexModelSettings, model_settings).get('openai_codex_speed'):
-            model_settings.setdefault('openai_service_tier', _SPEED_SERVICE_TIERS[speed])
-
         session_id = next((m.conversation_id for m in reversed(messages) if m.conversation_id), None)
         if session_id is None:
             return model_settings

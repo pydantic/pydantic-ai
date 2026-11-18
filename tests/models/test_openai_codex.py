@@ -29,11 +29,8 @@ with try_import() as imports_successful:
     import logfire
     from logfire.testing import CaptureLogfire
 
-    from pydantic_ai.models.openai_codex import OpenAICodexModel, OpenAICodexModelSettings
-    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
-
-    from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 pytestmark = [
     pytest.mark.vcr,
@@ -215,30 +212,6 @@ async def test_codex_ignores_cache_settings(
     body = request_capture.bodies('/responses')[-1]
     assert 'prompt_cache_options' not in body
     assert body['input'] == snapshot([{'role': 'user', 'content': [{'text': 'Say hello.', 'type': 'input_text'}]}])
-
-
-@pytest.mark.parametrize(
-    ('settings', 'service_tier'),
-    [
-        pytest.param({'openai_codex_speed': 'fast'}, 'priority', id='fast'),
-        pytest.param({'openai_codex_speed': 'ultrafast', 'service_tier': 'default'}, 'ultrafast', id='ultrafast'),
-        pytest.param({'openai_codex_speed': 'standard', 'service_tier': 'priority'}, 'default', id='standard'),
-        pytest.param(
-            {'openai_codex_speed': 'ultrafast', 'openai_service_tier': 'priority'}, 'priority', id='explicit-tier'
-        ),
-    ],
-)
-async def test_codex_speed(allow_model_requests: None, settings: OpenAICodexModelSettings, service_tier: str):
-    """`openai_codex_speed` selects the Codex CLI's service tier, over the unified `service_tier` but not `openai_service_tier`.
-
-    Not a VCR test: the cassette matchers ignore the request body, and this pins only the field the setting sends.
-    """
-    client = MockOpenAIResponses.create_mock(response_message([]))
-    model = OpenAICodexModel('gpt-6-astra', provider=OpenAIProvider(openai_client=client))
-
-    await model.request([ModelRequest.user_text_prompt('Say hello.')], settings, ModelRequestParameters())
-
-    assert get_mock_responses_kwargs(client)[0]['service_tier'] == service_tier
 
 
 async def test_codex_calls_additional_tool(

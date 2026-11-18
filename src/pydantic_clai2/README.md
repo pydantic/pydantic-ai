@@ -178,7 +178,7 @@ settings first, such as reasoning effort or thinking.
 
 Each model keeps its own settings. Change them later with `/model settings`, or use the
 shortcuts: `/effort high` sets reasoning effort, and `/fast` picks the speed of Codex
-models, which run at ultrafast by default.
+models, ultrafast by default on the models that offer it.
 
 ### Sign in: `/login` and `/accounts`
 

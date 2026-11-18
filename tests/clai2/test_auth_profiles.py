@@ -502,7 +502,7 @@ def test_chains_and_profiles_take_their_model_settings(tmp_path: Path) -> None:
     assert (context.model_settings('chain:pool') or {}).get('openai_reasoning_effort') == 'medium'
     source = ModelSettingsSource(store, 'chain:pool', settings_as=context.settings_model('chain:pool'))
     rows = {row.key: row for row in source.rows()}
-    assert source.current(rows['openai_codex_speed']) == 'ultrafast'
+    assert source.current(rows['codex_speed']) == 'ultrafast'
     assert source.current(rows['openai_reasoning_effort']) == 'medium'
     summary = model_settings_summary(store=store, model='chain:pool', settings_as=context.settings_model('chain:pool'))
     assert 'Reasoning' in summary
@@ -542,7 +542,7 @@ async def test_shell_runs_a_chain_of_codex_accounts(tmp_path: Path, monkeypatch:
     assert 'openai-codex:test answered' in text
     # `ModelFallback` resolves a later model only once the run falls back to it.
     assert resolved == ['openai-codex:test']
-    assert store.model_settings('chain:pool') == {'openai_codex_speed': 'fast'}
+    assert store.model_settings('chain:pool') == {'codex_speed': 'fast'}
 
 
 @pytest.mark.parametrize('stock', [False, True])
@@ -557,7 +557,7 @@ async def test_shell_chain_falls_back_with_its_settings(
 
     def model(self: CodexAuth, name: str) -> FunctionModel:
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-            tiers.append((name, (info.model_settings or {}).get('openai_codex_speed')))
+            tiers.append((name, (info.model_settings or {}).get('openai_service_tier')))
             if name == 'openai-codex:test':
                 raise ModelHTTPError(status_code=429, model_name=name, body='usage limit reached')
             yield f'{name} answered'
@@ -574,7 +574,7 @@ async def test_shell_chain_falls_back_with_its_settings(
         console=Console(file=output, width=200),
     )
     assert 'openai-codex@work:test answered' in output.getvalue()
-    assert tiers == [('openai-codex:test', 'fast'), ('openai-codex@work:test', 'fast')]
+    assert tiers == [('openai-codex:test', 'priority'), ('openai-codex@work:test', 'priority')]
 
 
 def test_key_users_cover_profile_connections() -> None:
