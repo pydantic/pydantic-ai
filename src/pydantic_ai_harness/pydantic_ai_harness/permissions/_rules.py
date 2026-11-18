@@ -7,7 +7,7 @@ import ntpath
 import posixpath
 import re
 import shlex
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from fnmatch import fnmatchcase
 from typing import Any, Generic, Literal, NamedTuple, Required
@@ -102,32 +102,40 @@ def _words(command: str) -> list[str]:
         return []
 
 
-def _hides_words(command: str) -> bool:
-    """Whether `command` quotes or escapes an operator, or uses brace expansion, which `shlex` cannot follow."""
+def _chars(command: str) -> Iterator[tuple[str, str]]:
+    """Each character of `command` other than quoting syntax, with how it is quoted: unquoted, in single or double quotes, or escaped."""
     quote = ''
     escaped = False
     for char in command:
         if escaped:
             escaped = False
-            if char in _OPERATOR_CHARS:
-                return True
+            yield char, '\\'
         elif char == '\\' and quote != "'":
             escaped = True
-        elif quote:
-            if char == quote:
-                quote = ''
-            elif char in _OPERATOR_CHARS:
-                return True
-        elif char in '\'"':
+        elif char == quote:
+            quote = ''
+        elif not quote and char in '\'"':
             quote = char
-        elif char == '{':
-            return True
-    return False
+        else:
+            yield char, quote
+
+
+def _quotes_an_operator(command: str) -> bool:
+    """Whether `command` quotes or escapes an operator character, which `shlex` would not tell apart from a real one."""
+    return any(char in _OPERATOR_CHARS and how for char, how in _chars(command))
+
+
+def _expands(command: str) -> bool:
+    """Whether the shell expands part of `command`, which could hide a rule's words from a scan of its text.
+
+    That is `$` or a backtick outside single quotes, or an unquoted `{` (brace expansion).
+    """
+    return any((char in '$`' and how in ('', '"')) or (char == '{' and not how) for char, how in _chars(command))
 
 
 def _tokens(command: str) -> list[str] | None:
     """`command`'s words and operators, or `None` when it has syntax the lexer cannot follow."""
-    if any(marker in command for marker in _UNSPLITTABLE) or _hides_words(command):
+    if any(marker in command for marker in _UNSPLITTABLE) or _quotes_an_operator(command) or _expands(command):
         return None
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
@@ -209,24 +217,31 @@ _UNSPLITTABLE_RULE = PermissionRule[Any](
 )
 
 
-def _unsplittable_rule(rules: Sequence[PermissionRule[Any]], command: str) -> PermissionRule[Any] | None:
-    """Match a command too complex to split word by word, quotes removed; with ask or deny rules, it asks at least."""
+def _unsplittable_rule(
+    rules: Sequence[PermissionRule[Any]], command: str, *, expands: bool
+) -> PermissionRule[Any] | None:
+    """Match a command too complex to split word by word, quotes removed; no rule allows it.
+
+    When the shell `expands` part of it, a rule's words could be hidden, so an ask or deny rule makes it ask.
+    """
     if all(rule.verdict == 'allow' for rule in rules):
         return None
     words = _loose([re.sub(r'[\'"\\]', '', command)])
     restrictive = _strictest(
         rule for rule in rules if rule.verdict != 'allow' and _contains(words, _loose(_words(rule.command or '')))
     )
-    return restrictive or _UNSPLITTABLE_RULE
+    return restrictive or (_UNSPLITTABLE_RULE if expands else None)
 
 
 def _command_rule(
     rules: Sequence[PermissionRule[Any]], command: str, segments: list[_Segment] | None
 ) -> PermissionRule[Any] | None:
     """The rule deciding a shell command: the strictest any simple command matches, `'allow'` only if all do."""
-    if segments is None or any(_GLOB.search(segment.words[0]) for segment in segments if segment.words):
+    if segments is None:
+        return _unsplittable_rule(rules, command, expands=_expands(command))
+    if any(_GLOB.search(segment.words[0]) for segment in segments if segment.words):
         # A pattern in a command name, such as `/bin/r[m]`, is expanded by the shell into the program run.
-        return _unsplittable_rule(rules, command)
+        return _unsplittable_rule(rules, command, expands=True)
     parsed = [_CommandRule(rule, words := _words(rule.command or ''), _loose(words)) for rule in rules]
     deciders = [_segment_rule(parsed, segment) for segment in segments]
     restrictive = _strictest(rule for rule in deciders if rule is not None and rule.verdict != 'allow')
