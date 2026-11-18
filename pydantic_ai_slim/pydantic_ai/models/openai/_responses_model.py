@@ -87,6 +87,7 @@ from ...messages import (
     ModelResponse,
     ModelResponsePart,
     ModelSettingsDeltaPart,
+    MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchReturnPart,
@@ -3409,16 +3410,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         Iterates content directly to preserve order of mixed file/data content.
         """
-        # A `computer` result is read as validated content, so content stored as a JSON string keeps its screenshot.
-        typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
-        if typed is None and not part.files:
+        items = _tool_return_items(part)
+        if items is None:
             return part.model_response_str()
 
         output: list[
             ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam
         ] = []
 
-        for item in part.content_items(mode='str') if typed is None else typed:
+        for item in items:
             if isinstance(item, UploadedFile):
                 output.append(self._map_uploaded_file_to_response_content(item))
             elif is_multi_modal_content(item):
@@ -3433,6 +3433,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 if content['type'] == 'input_image':
                     content['detail'] = 'original'
         return output
+
+
+def _tool_return_items(part: ToolReturnPart) -> Sequence[str | MultiModalContent] | None:
+    """The items a tool result goes back as, or `None` when it goes back as text.
+
+    A `computer` result is read as validated content, so content stored as a JSON string keeps its screenshot.
+    """
+    typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
+    if typed is not None:
+        return typed
+    return part.content_items(mode='str') if part.files else None
 
 
 @dataclass
