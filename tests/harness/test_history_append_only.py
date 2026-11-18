@@ -62,6 +62,7 @@ from pydantic_ai_harness import (
     RelevanceCompaction,
     RepoContext,
     ReportStaleFiles,
+    RequireVerification,
     Researcher,
     Shell,
     Skills,
@@ -363,6 +364,12 @@ FIXTURES: dict[str, Fixture] = {
     'Pixeltable': lambda _: pydantic_ai_harness.Pixeltable(tables=['*']),
     'PruneToolResults': lambda _: [PruneToolResults(), _PruneLatestReturn()],
     'RepoContext': _repo_context,
+    'RequireVerification': lambda tmp_path: [
+        RequireVerification(verification_commands=[r'true\b']),
+        FileSystem(),
+        Shell(denied_commands=[]),
+        LocalWorkspace(tmp_path),
+    ],
     'RelevanceCompaction': lambda _: RelevanceCompaction(TestModel(), max_tokens=20, keep_tokens=1),
     'Researcher': _workspace(Researcher),
     'Shell': _workspace(Shell),
@@ -535,6 +542,17 @@ SCENARIOS: dict[str, Scenario] = {
             Turn(calls=(('look_up', {'topic': 'sports'}),)),
             Turn(text='Here is more.'),
             Turn(text='Here is more, checked.'),
+        )
+    ),
+    # The first run edits, is sent back to verify, and passes a check; the second makes no edit.
+    'RequireVerification': Scenario(
+        turns=(
+            Turn(calls=(('write_file', {'path': 'weather.py', 'content': 'FORECAST = "sunny"\n'}),)),
+            Turn(text='Saved the forecast.'),
+            Turn(calls=(('run_command', {'command': 'true'}),)),
+            Turn(text='Saved and verified the forecast.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='Here is more.'),
         )
     ),
     'RepoContext': Scenario(

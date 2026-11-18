@@ -290,6 +290,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Report Remaining Budget](report-remaining-budget.md) | Harness | Tell the model on every request how many requests, tool calls, tokens and dollars its usage limits and spend budgets have left |
 | [Trajectory Judge](trajectory-judge.md) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
 | [Refine Output](refine-output.md) | Harness | Send the agent back to review and revise its output before the run ends |
+| [Require Verification](require-verification.md) | Harness | Send the agent back to run its checks when it tries to finish after editing code without a passing check since its last edit |
 | [Wrap Up At Limits](wrap-up-at-limits.md) | Harness | End the run with a final answer, not `UsageLimitExceeded`, when a usage limit would stop it |
 
 ### Self-extension
