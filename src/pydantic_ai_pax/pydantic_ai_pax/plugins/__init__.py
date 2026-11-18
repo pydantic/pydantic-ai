@@ -124,7 +124,7 @@ class SessionCatalog(Protocol):
         conversations listed do not change as older ones are used again.
         Archived ones are left out unless `archived` is `True`, which lists only them, or `None`, which lists both.
         As when `/resume` opens, the newest untitled ones are queued for background naming, which
-        calls the naming model, so poll it no more often than a person would look.
+        calls the naming model when `sessions.naming` is on, so poll it no more often than a person would look.
         """
         ...
 

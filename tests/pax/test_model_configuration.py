@@ -65,12 +65,9 @@ def test_efforts(name: str, included: str, excluded: str) -> None:
     assert included in efforts and excluded not in efforts
 
 
-def test_anthropic_modes_and_effort() -> None:
-    classic = model_options(model='anthropic:claude-sonnet-4-5')
-    assert classic['anthropic_thinking_mode'] == ('enabled', 'disabled')
-    adaptive = model_options(model='anthropic:claude-opus-4-6')
-    assert adaptive['anthropic_thinking_mode'] == ('adaptive', 'disabled')
-    assert 'xhigh' not in adaptive['anthropic_effort']
+def test_anthropic_effort_and_budget() -> None:
+    # The thinking modes per model are in `test_claude_thinking_modes_follow_the_profile`.
+    assert 'xhigh' not in model_options(model='anthropic:claude-opus-4-6')['anthropic_effort']
     assert 'xhigh' in model_options(model='anthropic:claude-opus-4-7')['anthropic_effort']
     assert 'anthropic_thinking_budget' in model_options(model='anthropic:unknown')
     assert 'max' not in model_options(model='anthropic:claude-opus-4-5')['anthropic_effort']
@@ -107,7 +104,7 @@ def test_native_settings_conversion() -> None:
         'openai_text_verbosity': 'low',
     }
     assert model_settings_from_json(openai).to_model_settings() == openai
-    for mode in ('adaptive', 'disabled'):
+    for mode in ('adaptive', 'disabled', 'between_tools'):
         form = model_settings_from_json({'anthropic_thinking_mode': mode, 'anthropic_effort': 'high'})
         assert form.to_model_settings() == {'anthropic_thinking': {'type': mode}, 'anthropic_effort': 'high'}
     for budget in (None, 2048):
