@@ -58,6 +58,7 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 `Coder`'s shell and file tools now run in a boxd machine. For a narrower agent, use [`Shell`](https://pydantic.dev/docs/ai/harness/shell/), [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) or your own tools on [`ctx.workspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#using-the-workspace-in-tools).
 
+- **`Coder` creates it when the run starts**, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
 - **It keeps its disk until you delete it.** boxd suspends it when idle, but never deletes it unless your organization's defaults say so. See [Clean up](#clean-up).
 - **Commands run as the non-root `boxd` user in `/home/boxd`**, with passwordless `sudo`. Pass `working_dir='/home/boxd/project'` to give the agent a project directory; it is created on a new machine.
 - **The default image is Ubuntu 24.04 with git, Python 3, uv, Node.js and `rg`**, but not your project's dependencies. Install them in a machine, save it with `boxd snapshots save`, and pass `snapshot='my-snapshot'`. An unknown snapshot, or one still saving, fails on first use with `WorkspaceUnavailableError`.

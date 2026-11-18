@@ -71,8 +71,10 @@ agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and run its tests.')
 ```
 
-The sandbox is created the first time the run uses it, and keeps running after the run until you delete
-it or its provider stops it; see [Cleaning up](#cleaning-up).
+The sandbox is created the first time the run uses it. With `Coder`, that's when the run starts, since it
+loads the repository's instructions; pass `Coder(repo_context=False)` to wait for the first tool call. A
+durable run also creates it when it starts. It keeps running after the run until you delete it or its
+provider stops it; see [Cleaning up](#cleaning-up).
 
 ## Supported workspaces {#supported-workspaces}
 

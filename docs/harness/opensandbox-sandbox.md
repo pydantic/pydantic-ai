@@ -45,6 +45,7 @@ result = agent.run_sync('Write a script that prints the first 10 primes, and run
 
 `Coder`'s shell and file tools now run in the sandbox. For a narrower agent, use [`Shell`](shell.md), [`FileSystem`](filesystem.md) or your own tools on [`ctx.workspace`](../workspace.md#using-the-workspace-in-tools).
 
+- **`Coder` creates it when the run starts**, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
 - **It keeps running after the run** until you destroy it, or until `sandbox_timeout` passes with no use. See [Clean up](#clean-up).
 - **Commands run as the image's user, usually `root`, in `/workspace`**, which is created if missing. The image needs a POSIX `sh` and the usual file utilities.
 - **Its network access is whatever the server configures.** Pass `allow_internet_access=False` for deny-all egress; see [Network access](#network-access).
