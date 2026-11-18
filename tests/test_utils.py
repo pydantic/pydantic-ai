@@ -1526,7 +1526,11 @@ def test_format_inlined_text_file() -> None:
 
 
 def test_has_yaml_structured_suffix() -> None:
-    """`+yaml` types match with or without parameters (RFC 2045); bare YAML and other suffixes don't."""
+    """`+yaml` types match with or without parameters (RFC 2045); bare YAML and other suffixes don't.
+
+    This is a plain unit test rather than a public-API/VCR test because it exercises the pure media-type
+    predicate directly.
+    """
     assert has_yaml_structured_suffix('application/openapi+yaml') is True
     assert has_yaml_structured_suffix('application/openapi+yaml; charset=utf-8') is True
     assert has_yaml_structured_suffix('application/yaml') is False
