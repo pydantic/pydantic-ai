@@ -559,8 +559,8 @@ jobs:
       # from that runtime passes every step above and fails every workflow at "Install
       # repository workflow policy" (#11935, https://github.com/pydantic/pydantic-ai/actions/runs/44225247904).
       # These steps set up that runtime as the compiled agent job does. They come last because
-      # `setup-python` changes `python3` and its environment for every later step. They need no
-      # earlier step, so they run after a failed one too.
+      # `setup-python` changes `python3` and its environment for every later step. They need only
+      # the checkout, so they run after a failed step too.
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         if: ${{ !cancelled() }}
         with:
