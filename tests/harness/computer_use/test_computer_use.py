@@ -1675,10 +1675,8 @@ The `computer` tool shows and controls this computer's screen.
         # A durable engine replays a run by its steps' order, so the replay must schedule the steps the run did, such
         # as the run end's release of a button pressed before the environment was lost.
         class Lost(ScreenBackend):
-            async def screenshot(self) -> bytes:
-                if any(isinstance(action, MouseDown) for action in self.screens.actions):
-                    raise WorkspaceUnavailableError('the environment is gone')
-                return await super().screenshot()
+            async def screenshot(self) -> bytes:  # first taken after the button is pressed
+                raise WorkspaceUnavailableError('the environment is gone')
 
         class Provider(ScreenProvider):
             def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
