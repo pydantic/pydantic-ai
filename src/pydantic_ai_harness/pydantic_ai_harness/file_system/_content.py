@@ -130,11 +130,6 @@ def bytes_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:12]
 
 
-def text_hash(content: str) -> str:
-    """The hash of `content` as the tools write it: its UTF-8 bytes."""
-    return bytes_hash(content.encode('utf-8'))
-
-
 def check_expected_hash(path: str, current_hash: str, expected_hash: str) -> None:
     """Reject a write or edit whose `expected_hash` no longer matches the file."""
     if current_hash != expected_hash:
