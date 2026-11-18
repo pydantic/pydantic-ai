@@ -74,52 +74,52 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011ChAoWGjJv4g92KRK2hATo","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":0,"cache_read_input_tokens":4643,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01AxfS95sDcjtxhshfCfArZS","name":"screenshot","input":{},"toolset_name":"computer","caller":{"type":"direct"}}        }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}         }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}              }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0    }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01BJUogBjxGTR1YAFq7rBs6e","name":"left_click","input":{},"toolset_name":"computer","caller":{"type":"direct"}}             }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}  }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"coordinate\":[100,200]}"}        }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":1       }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_01MAc87K9vQJdzGJiiEjgSgx","name":"type","input":{},"toolset_name":"computer","caller":{"type":"direct"}}            }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}              }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"text\":\"hello\"}"}           }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":2               }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":0,"cache_read_input_tokens":4643,"output_tokens":98,"output_tokens_details":{"thinking_tokens":0}} }
-        
+
         event: message_stop
         data: {"type":"message_stop"     }
-        
+
   recorded_at: 2026-11-18T17:39:32.896166+00:00
 - request:
     method: POST
@@ -251,25 +251,25 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011ChAoWL6iVqQpo5m9ojQfg","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":7507,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}   }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}          }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}             }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0       }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":7507,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}           }
-        
+
         event: message_stop
         data: {"type":"message_stop"      }
-        
+
   recorded_at: 2026-11-18T17:39:33.480843+00:00
 - request:
     method: POST
@@ -370,35 +370,35 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011ChAoWNCU5Ti99G74wa4Sk","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2915,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":9,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}              }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}      }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSmwYKEAgTGAI4AUIIdGhpbmtpbmcSDD1TMQSXVuufFLQYnRoMdMobxuIjy6h5xLwlIjCXXVdCZ213PfN0p86GmB8KFPkCDdrzXHFb5DwFFFi4R+sDPxmq2wxVE/Ej650HO78quAXSIgUHMLRUC8t6FT4X7cb3o+LvvL+u3SZ6YOVLxKNb8le5GDToYNkjes3dAVrkN6NZ8jJwpQt99VO7GtDGeAo6GKDF2hkuVLxzOlNbWAD2J6aNVTGKe9kkUWgOmFXXgMva0ci18hZ6mylpaIWsmH9WQYyqCNusovK29eG/eHdsC3kJmYi84zDIUM1rh+plIyEzG6dEpUqf8CN7UCgM1hTnC4xEAGS84d0cu3tVImKXSI2iQU/rw8gXo4rWE7wu6ONm0WY7UBWUnfXCAsVdcgWz/tyqDza4ZSMaUAlye4/zaRQSIkjON+DmnCAva6mLeKGGmmPg0ETvh0B5cWTiKONFnD0lWkhzAvVoPtZFO1SGDob8hQ9VaqLOIekEr52o/WRQ/x5MmvrxDiubY6vuZu9clW7N0cFzSYWdvFDdcB/ec/wCrirw8LNt/x9whwlTLJRUg19RzcSoHBw+TOai4b3iaLiZy/xJt09p5pT5wf1JPXRlib1im28o3VcgCz1ZVOm0bHbz3fiaWDNLFBZwu+YDWmTmPSNgCRaLDNKdjBdRBfgAlcXaMdVhTStTC0HykwzL5Lo0RfYbXo7u0NPoE+9UJ96phqQSRA8pWY5ZWQpxDKgLPctJ1rTcCA+OOGlwtasgowMnOxvmCuRfN8aIAxAYndUe/klHY7eFXBlkdl39a95sh3T7OwS3fMhet1mXHOny89Yr3wR0PWG+OkpqqxP1vyn9wxDqp31mUDBwd4kXd7862r11CF5tmB/d5iGbqp0sLVQB411Vs4XwFErjale220evg8T2+9ExWr+zjF7yNdPww30QjoVREOQfiQltvLuPGtgZO0wunocaJi++7YAbyOhTfy52Ofat3M7LBebos0M8EGsGRQiqVTGUhTIWiRJ+FM/R+M0NqBkIXOCpRBEX/epEWdbHkowYAQ=="}      }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0        }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}       }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"x=100, y=200"}               }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":1         }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2915,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":62,"output_tokens_details":{"thinking_tokens":53}}           }
-        
+
         event: message_stop
         data: {"type":"message_stop"          }
-        
+
   recorded_at: 2026-11-18T17:39:34.273518+00:00
