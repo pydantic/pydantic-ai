@@ -340,7 +340,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'AdaptiveReasoning': Combines(
         'one effort policy per agent; each sets the same `thinking` setting',
-        lambda: (AdaptiveReasoning[Any](deliberate='xhigh'), AdaptiveReasoning[Any](routine='low')),
+        lambda: (AdaptiveReasoning[None](deliberate='xhigh'), AdaptiveReasoning[None](routine='low')),
         _check_adaptive_reasoning,
     ),
     'Advisor': Combines(
