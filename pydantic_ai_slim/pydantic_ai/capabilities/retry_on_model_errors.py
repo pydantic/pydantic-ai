@@ -7,10 +7,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 import anyio
 
-from pydantic_ai._agent_graph import (
-    _agent_graph_sleep,  # pyright: ignore[reportPrivateUsage]
-    _unwrap_model,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai._agent_graph import _agent_graph_sleep  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._fallback import (
     FallbackOn,
     FallbackPredicates,
@@ -32,6 +29,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model
+from pydantic_ai.models._unwrap import unwrap_model
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -210,7 +208,7 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
         deadline covers the retries and the waits between them.
         """
         # The model may be wrapped by now, e.g. by a durable-execution capability, and wasn't on the previous attempt.
-        model = _unwrap_model(request_context.model)
+        model = unwrap_model(request_context.model)
         settings: ModelSettings = merge_model_settings(model.settings, request_context.model_settings) or {}
         updates: ModelSettings = {}
         if self._step == ctx.run_step and model is self._model:

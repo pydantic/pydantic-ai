@@ -277,7 +277,9 @@ def test_anthropic_claude_sonnet_4_6():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'anthropic_enforces_strict_schema_limits': True,
-            'anthropic_supports_on_demand_compaction': True,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'replaces_prompt',
+            'compaction_result_readable': True,
             'supports_auto_cache': True,
         }
     )
@@ -321,7 +323,9 @@ def test_anthropic_claude_opus_4_7():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'anthropic_enforces_strict_schema_limits': True,
-            'anthropic_supports_on_demand_compaction': True,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'replaces_prompt',
+            'compaction_result_readable': True,
             'supports_auto_cache': True,
         }
     )
@@ -355,7 +359,7 @@ def test_anthropic_claude_haiku_4_5():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'anthropic_enforces_strict_schema_limits': True,
-            'anthropic_supports_on_demand_compaction': False,
+            'supports_compaction_on_demand': False,
             'supports_auto_cache': True,
         }
     )
@@ -388,7 +392,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'anthropic_enforces_strict_schema_limits': True,
-            'anthropic_supports_on_demand_compaction': False,
+            'supports_compaction_on_demand': False,
             'supports_auto_cache': True,
         }
     )
@@ -423,6 +427,9 @@ def test_openai_gpt_5_4():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
+            'compaction_result_readable': False,
             'rejects_unpaired_tool_calls': True,
         }
     )
@@ -483,6 +490,9 @@ def test_openai_gpt_5_6():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
+            'compaction_result_readable': False,
             'rejects_unpaired_tool_calls': True,
         }
     )
@@ -533,6 +543,9 @@ def test_openai_gpt_6_astra():
             'supports_mid_conversation_effort': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
+            'compaction_result_readable': False,
             'openai_chat_function_tools_require_reasoning_off': True,
             'rejects_unpaired_tool_calls': True,
         }
@@ -720,6 +733,9 @@ def test_openai_gpt_4o():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
+            'compaction_result_readable': False,
             'rejects_unpaired_tool_calls': True,
         }
     )
@@ -755,6 +771,9 @@ def test_openai_o3_mini():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
+            'compaction_result_readable': False,
             'rejects_unpaired_tool_calls': True,
         }
     )
@@ -796,6 +815,9 @@ def test_openai_codex_gpt_5_6():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': False,
             'may_tokenize_special_tokens_in_content': False,
+            'supports_compaction_on_demand': False,
+            'compaction_instructions': 'system_prompt',
+            'compaction_result_readable': False,
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
@@ -2480,6 +2502,9 @@ def test_azure_openai_gpt_5():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
+            'compaction_result_readable': False,
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
             'may_tokenize_special_tokens_in_content': False,
@@ -2905,6 +2930,23 @@ def test_vllm_qwen_hf_namespace():
             'may_tokenize_special_tokens_in_content': True,
         }
     )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_compaction_on_demand_is_off_where_responses_compact_is_not_served():
+    """`OpenAIProvider` sets `supports_compaction_on_demand`, but neither Chat Completions nor the gateway serves it.
+
+    So `NativeCompaction` declines for them, instead of calling `compact_messages`.
+    """
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.providers.gateway import gateway_provider
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    provider = OpenAIProvider(api_key='test')
+    assert OpenAIResponsesModel('gpt-5.4', provider=provider).profile.get('supports_compaction_on_demand') is True
+    assert OpenAIChatModel('gpt-5.4', provider=provider).profile.get('supports_compaction_on_demand') is False
+    gateway = gateway_provider('openai', api_key='paig_test', base_url='https://gateway.example')
+    assert OpenAIResponsesModel('gpt-5.4', provider=gateway).profile.get('supports_compaction_on_demand') is False
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -3652,7 +3694,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'anthropic_enforces_strict_schema_limits': True,
-            'anthropic_supports_on_demand_compaction': False,
+            'supports_compaction_on_demand': False,
             'supports_auto_cache': True,
         }
     )

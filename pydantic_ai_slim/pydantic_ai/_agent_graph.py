@@ -158,7 +158,8 @@ from .models._continuation import (
     resumed_response,
 )
 from .models._request_timeout import enforce_request_deadline, start_request_deadline, without_carried_deadline
-from .models.wrapper import WrapperModel, serving_wrapper_scope
+from .models._unwrap import unwrap_model
+from .models.wrapper import serving_wrapper_scope
 from .output import OutputDataT, OutputSpec, PendingModelResponse, StructuredOutputMode
 from .settings import ModelSettings, ThinkingEffort
 from .tools import (
@@ -611,7 +612,7 @@ class _AttemptBaseline:
         step's model may not be supported by, or mean the same to, another one. Only the factory sees the model
         serving the attempt as `ctx.model`; to everything else, `RunContext.model` stays the step's model.
         """
-        if not self.native_tool_factories or _unwrap_model(request_context.model) is _unwrap_model(self.model):
+        if not self.native_tool_factories or unwrap_model(request_context.model) is unwrap_model(self.model):
             return
         attempt_context = _attempt_run_context(run_context, request_context)
         parameters = request_context.model_request_parameters
@@ -1164,12 +1165,7 @@ def _standing_prompt_count(messages: Sequence[_messages.ModelMessage]) -> int:
 
     The requests a history starts with are merged into one before they're sent, so their parts are counted together.
     """
-    parts: list[_messages.ModelRequestPart] = []
-    for message in messages:
-        if not isinstance(message, _messages.ModelRequest):
-            break
-        parts.extend(message.parts)
-    return models._standing_system_prompt_count(_messages.ModelRequest(parts=parts))  # pyright: ignore[reportPrivateUsage]
+    return len(models._leading_standing_system_prompt(messages))  # pyright: ignore[reportPrivateUsage]
 
 
 class _PartPosition(NamedTuple):
@@ -2138,12 +2134,6 @@ def _apply_instruction_parts(
 
 _NativeToolFactoryResult: TypeAlias = tuple[NativeToolFunc[DepsT], AbstractNativeTool | None]
 """A native tool factory, and what it resolved to."""
-
-
-def _unwrap_model(model: models.Model) -> models.Model:
-    while isinstance(model, WrapperModel):
-        model = model.wrapped
-    return model
 
 
 async def _resolve_native_tool_factory(
@@ -4161,7 +4151,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         the attempt was sent, so the accepted attempt's instructions and settings are the ones in history.
         """
         recording = self._step_recording
-        if _unwrap_model(request_context.model) is _unwrap_model(baseline.model):
+        if unwrap_model(request_context.model) is unwrap_model(baseline.model):
             if recording is not None and self._recorded_for_other_model:
                 # Back at the step's model after an attempt at another: record what the step resolved for it again.
                 recording.record(

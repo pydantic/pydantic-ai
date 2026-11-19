@@ -4496,6 +4496,21 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
     return count
 
 
+def _leading_standing_system_prompt(messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:  # pyright: ignore[reportUnusedFunction]
+    """The parts of the standing system prompt of `messages`, as the request to a model counts them.
+
+    The requests a history starts with are merged into one before they're sent, so their parts are counted together,
+    with `_standing_system_prompt_count`'s rule.
+    """
+    parts: list[ModelRequestPart] = []
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            break
+        parts.extend(message.parts)
+    count = _standing_system_prompt_count(ModelRequest(parts=parts))
+    return [part for part in parts[:count] if isinstance(part, SystemPromptPart)]
+
+
 def _trim_messages_before_compaction(
     messages: list[ModelMessage],
     accepts: _StatelessArtifactPredicate,

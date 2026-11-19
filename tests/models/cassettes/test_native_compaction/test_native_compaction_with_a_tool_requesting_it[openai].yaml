@@ -1,0 +1,565 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "501"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-nano
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: My name is Bob and my favorite color is teal.
+        instructions: Answer in one short sentence.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: compact_conversation
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: Compact the conversation, then report the user's favorite color.
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "959"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0ae808aa21f32794006aeaa4b3ba6487d185da6892acf382e4
+        object: response
+        created_at: 1793762483
+        completed_at: 1793762484
+        status: completed
+        background: false
+        billing:
+          payer: developer
+        frequency_penalty: 0.0
+        presence_penalty: 0.0
+        moderation: null
+        model: gpt-5.4-nano-2026-03-17
+        access_programs:
+          cyber: daybreak_blue
+        previous_response_id: null
+        instructions: Answer in one short sentence.
+        output:
+        - type: message
+          id: msg_0ae808aa21f32794006aeaa4b40eac87d198ef5bca800f38c4
+          role: assistant
+          status: completed
+          content:
+          - type: output_text
+            text: Nice to meet you, Bob--my favorite color is teal too.
+            annotations: []
+            logprobs: []
+          phase: final_answer
+        error: null
+        incomplete_details: null
+        tools:
+        - type: function
+          name: compact_conversation
+          description: Compact the conversation, then report the user's favorite color.
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          output_schema: null
+          strict: false
+        tool_choice: auto
+        parallel_tool_calls: true
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        text:
+          format:
+            type: text
+          verbosity: medium
+        top_p: 0.98
+        top_logprobs: 0
+        temperature: 1.0
+        reasoning:
+          context: all_turns
+          effort: none
+          summary: null
+          mode: standard
+        user: null
+        usage:
+          input_tokens: 63
+          input_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+          output_tokens: 18
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 81
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            output_tokens: 0
+            total_tokens: 0
+            input_tokens_details:
+              text_tokens: 0
+              image_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+          web_search:
+            num_requests: 0
+        safety_identifier: null
+        store: true
+        metadata: {}
+        max_output_tokens: null
+        max_tool_calls: null
+        service_tier: default
+        truncation: disabled
+        image:
+          context_compression: disabled
+  recorded_at: 2026-11-04T03:21:24.687407+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "857"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-nano
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: My name is Bob and my favorite color is teal.
+        - role: assistant
+          id: msg_0ae808aa21f32794006aeaa4b40eac87d198ef5bca800f38c4
+          content:
+          - text: Nice to meet you, Bob--my favorite color is teal too.
+            type: output_text
+            annotations: []
+          type: message
+          status: completed
+          phase: final_answer
+        - role: user
+          content: Call the compact_conversation tool, then tell me my favorite color.
+        instructions: Answer in one short sentence.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: compact_conversation
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: Compact the conversation, then report the user's favorite color.
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "724"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0ae808aa21f32794006aeaa4b4d4ec87d1b366cbfc89caa7b7
+        object: response
+        created_at: 1793762484
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1793762485
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        instructions: Answer in one short sentence.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-nano-2026-03-17
+        moderation: null
+        output:
+        - id: fc_0ae808aa21f32794006aeaa4b542d887d1adce2d5eb9acd7c8
+          type: function_call
+          status: completed
+          arguments: "{}"
+          call_id: call_gtiIVhYUM1Zh7f2cD5Y1DYJG
+          name: compact_conversation
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: Compact the conversation, then report the user's favorite color.
+          name: compact_conversation
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 101
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 16
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 117
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-04T03:21:25.563148+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "3311"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-nano
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - id: cmp_0ae808aa21f32794016aeaa4b6841087d1bd6b874cdccacb47
+          encrypted_content: >-
+            gAAAAABq6qS3Pf-mfcEtAm9zscsqmsRNL8KX0xnalkLa1SuKZZzfQIw3ulOEgumjz_7iJOMZGv1dm62HP-t2ofxuJI0hZ3YAlS-1bBPU3TcB4sDZji4d4c7rXvjKzfpuYk8mIw7zKnRtgWsllNXP2OPl2eZKvyJZwGwUYC5HnSQQzWTnVXKkiKDraJqCWY8oaAxQtaTHWFOXt_DoRre0VM2QVhFejWktLtfzLVKKsdwnjDEYJwuR1xVdHjOqIQItx6StRGN-6JdMZsfpxifYetv06OBfMQhQtroO2fq-BRCOojTm7tlM0AWqnjYCuAOPITBBMDrjXshO37-Z5Ckbdj71QlyQnmXSeYZhYt7P8OpryisTfVPAo2mF-uVeBwikDqYe_B8_VfPKQI5Knu_9HiSMGaI5kPdwM2218Vnc71bxe1PQDE4Qg_fBxb29MyKkfJhg-_S8BbczDxkDP94XpHlJRtc4Sip1NSUyeIYh5atSPuWtRas3VlyKIDTO8g2RaOqoOIm2MsyNILDwIatoSxavCTDqUTglcXPVHwlFOa0_rs2OBvJmLWMQtTlEEmWpOdf5EJ6dBlqoekEEwDLq6ayyEznLHVQ5CWFl6LAOyT6gnlWVKIOO2CiIRlCrMAgEKw_dn0_vIBKcVmVioAz75m5PIW_xBkt9R4AH_uOZyQlmm565LsnnNVNECO9EnatRUqXhQMPttH17LPdc0kHHujn7sL_m4HufF85W7j_0CSMmPnxZFhE_5vxxaKO6rsiLZte4mpn6MdFcHpeha0XpdI4u0SeTyAK_r1TNq-bKt77rYGWvxz8MSkOPmxjOOzkDRywQgwFLdifGFwAMe5vTp3t9-XXaQi_JDn4cyyYI1z0M9-sZZ0ZWL5vnwZ_RcK6kG9GBQEoZoIJEqeYCEgi5G4reuWbBtVHcVkEDjJPz8CmXwNHkQSgBN0Gc-CKVo9YU_Bi2D-76Z3iJlfQcg7TPcftSCmSAmsyfqHb4q1DOmzGt2OiPN612A0cZTpuuxUeU7hPfZ0Xa5oQzH5v1aJ6OTHsXMRsQU021ulOYd_CQC7lySb0MwIKeO0pLy2qtT9ZkhJ4SRR4sZZomxNsOhQ1lMzCKpWlLD6UUlcVbovrA3vgwD7xhVg7_O-jeVWnS39BHK1RakBGF20V1zOq13IQ0ECyqPfRPJi_fYGtjRo_1A-2o10XVNIzpKRw8aYBSJ6m91wAkNamIZMNcc5rXzTfRg65qoNyTzgAA4edRbTG5whXpXXyFw6um_jY_aSfwr5xh2RU-ESAlux32gv4038PDFBPww7quPcGbquqpKgtsTAfVH_3RvGN16HbT2r1fp0mojHPBOgjvmn_ic8C4Eo_KhagZ3tlB0m0BnmHIAAw26dW5G7lx4HM6xsTe4Oa7S2ZL0alWwfcaUK-JvOTf5jzr0Oy3Zh4Wdz38t7VEghK51Q_qnziPq3GF24s_Zu0vQxB27WrRS83clhgxq9Guc7SzFYgCRL9SPhYvhLu192lDvCD8_4WaJEnmxEq1x1csONF-oRp09nTskzWapPdUJDu5rSNViZnMaDT6U4L2bdMKEeodYRGSugwppi02pTlzfzCR66ams-2WJh0OwrguXR_7H2id8S1HgXnhzEMvvnRUC1v0VMgOqjMAb4dzGJx2TF9knL4RNtrmdSJbHXEaQC5ftcxHHtQJ1jk2WJWUygcJQVK_tjzPvRguDU-sRbDIbHu_2ei1K8MvWcZM1RtncRBObeUwIrH3eDGhfck2G56h0EgIvS0rVHtc88XpFgCSs-KI8kQFctZFC0FDUvxJfzY2afgrHsMHYPfZetcV9QcH8P6EA-nCA-cv_2_fw03H0Kwg_VCqqZy3A7-MkjvPQbbW9sTYlnzbJD3Qem6k_c16ZOP-Lvn0FJMqsXnx0gtXoGG8ZgJ40l6E0zogQxqXyZiPuuaOrWCko8rJdQmDWGCpJwI5_gjysqOGL-Rt2jkFVehsHq3p674X6Bk42lfR8vQPFuVmB4e0ch-m2IJdjljRpLLOanWNvSdlvCwCJEAZdaEylnfUNnliDw0uzn5HSC5dgFErJiVO44RB_2KBYit_ptr0BabAqPEITGx6GFSIdw0EDlSS6xX6sTI04Y7O2PLgqWhkeAB4BwpkJqulRsxq3PfbIKbATldM8bZtyxezWwevVTH2Vg3xQddooZ6Qbz-O-Bmviz5LqrFsdJUfVf1VTR57v8MQ-RCI0meOjNTUjbG5Uy47dVylk41vCU6Gtkx_jFN1ESv1lScUSgXcbHBGroOx2zFWpph7nXY6Wf20WNskRKogp2xSsJWlexFlvqxncAlb8lIaW19MSj-v5_hYilBVM_bwYq_P0gwsmVupSTirlpD7ZH_iG8piTgMLeHyrDUS4KfaC0Igwkx-K2ufbxUspF7JMRhEar9p0gw2QiVWDFtcBNMhoPwLAK6CmXdiQv8UAHT6btWIijQ==
+          type: compaction
+        - name: compact_conversation
+          arguments: "{}"
+          call_id: call_gtiIVhYUM1Zh7f2cD5Y1DYJG
+          type: function_call
+          id: fc_0ae808aa21f32794006aeaa4b542d887d1adce2d5eb9acd7c8
+        - type: function_call_output
+          call_id: call_gtiIVhYUM1Zh7f2cD5Y1DYJG
+          output: "Compacted. Reminder: the favorite color is teal."
+        instructions: Answer in one short sentence.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: compact_conversation
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: Compact the conversation, then report the user's favorite color.
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "810"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0ae808aa21f32794006aeaa4b7345487d18807a7bca2183ecf
+        object: response
+        created_at: 1793762487
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1793762487
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        instructions: Answer in one short sentence.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-nano-2026-03-17
+        moderation: null
+        output:
+        - id: msg_0ae808aa21f32794006aeaa4b7875487d1a9d2154636450429
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: Your favorite color is teal.
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: Compact the conversation, then report the user's favorite color.
+          name: compact_conversation
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 207
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 10
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 217
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-04T03:21:28.074348+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses/compact
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "511"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-nano
+        input:
+        - role: user
+          content: My name is Bob and my favorite color is teal.
+        - role: assistant
+          id: msg_0ae808aa21f32794006aeaa4b40eac87d198ef5bca800f38c4
+          content:
+          - text: Nice to meet you, Bob--my favorite color is teal too.
+            type: output_text
+            annotations: []
+          type: message
+          status: completed
+          phase: final_answer
+        - role: user
+          content: Call the compact_conversation tool, then tell me my favorite color.
+        instructions: Answer in one short sentence.
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1369"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0ae808aa21f32794016aeaa4b5aec487d19c543d53cb7ab697
+        object: response.compaction
+        created_at: 1793762487
+        image:
+          context_compression: disabled
+        output:
+        - id: msg_0ae808aa21f32794016aeaa4b5c2a487d18e2f1294db732a58
+          type: message
+          status: completed
+          content:
+          - type: input_text
+            text: My name is Bob and my favorite color is teal.
+          role: user
+        - id: msg_0ae808aa21f32794016aeaa4b5c2e487d1937df0d8624be959
+          type: message
+          status: completed
+          content:
+          - type: input_text
+            text: Call the compact_conversation tool, then tell me my favorite color.
+          role: user
+        - id: cmp_0ae808aa21f32794016aeaa4b6841087d1bd6b874cdccacb47
+          type: compaction
+          encrypted_content: >-
+            gAAAAABq6qS3Pf-mfcEtAm9zscsqmsRNL8KX0xnalkLa1SuKZZzfQIw3ulOEgumjz_7iJOMZGv1dm62HP-t2ofxuJI0hZ3YAlS-1bBPU3TcB4sDZji4d4c7rXvjKzfpuYk8mIw7zKnRtgWsllNXP2OPl2eZKvyJZwGwUYC5HnSQQzWTnVXKkiKDraJqCWY8oaAxQtaTHWFOXt_DoRre0VM2QVhFejWktLtfzLVKKsdwnjDEYJwuR1xVdHjOqIQItx6StRGN-6JdMZsfpxifYetv06OBfMQhQtroO2fq-BRCOojTm7tlM0AWqnjYCuAOPITBBMDrjXshO37-Z5Ckbdj71QlyQnmXSeYZhYt7P8OpryisTfVPAo2mF-uVeBwikDqYe_B8_VfPKQI5Knu_9HiSMGaI5kPdwM2218Vnc71bxe1PQDE4Qg_fBxb29MyKkfJhg-_S8BbczDxkDP94XpHlJRtc4Sip1NSUyeIYh5atSPuWtRas3VlyKIDTO8g2RaOqoOIm2MsyNILDwIatoSxavCTDqUTglcXPVHwlFOa0_rs2OBvJmLWMQtTlEEmWpOdf5EJ6dBlqoekEEwDLq6ayyEznLHVQ5CWFl6LAOyT6gnlWVKIOO2CiIRlCrMAgEKw_dn0_vIBKcVmVioAz75m5PIW_xBkt9R4AH_uOZyQlmm565LsnnNVNECO9EnatRUqXhQMPttH17LPdc0kHHujn7sL_m4HufF85W7j_0CSMmPnxZFhE_5vxxaKO6rsiLZte4mpn6MdFcHpeha0XpdI4u0SeTyAK_r1TNq-bKt77rYGWvxz8MSkOPmxjOOzkDRywQgwFLdifGFwAMe5vTp3t9-XXaQi_JDn4cyyYI1z0M9-sZZ0ZWL5vnwZ_RcK6kG9GBQEoZoIJEqeYCEgi5G4reuWbBtVHcVkEDjJPz8CmXwNHkQSgBN0Gc-CKVo9YU_Bi2D-76Z3iJlfQcg7TPcftSCmSAmsyfqHb4q1DOmzGt2OiPN612A0cZTpuuxUeU7hPfZ0Xa5oQzH5v1aJ6OTHsXMRsQU021ulOYd_CQC7lySb0MwIKeO0pLy2qtT9ZkhJ4SRR4sZZomxNsOhQ1lMzCKpWlLD6UUlcVbovrA3vgwD7xhVg7_O-jeVWnS39BHK1RakBGF20V1zOq13IQ0ECyqPfRPJi_fYGtjRo_1A-2o10XVNIzpKRw8aYBSJ6m91wAkNamIZMNcc5rXzTfRg65qoNyTzgAA4edRbTG5whXpXXyFw6um_jY_aSfwr5xh2RU-ESAlux32gv4038PDFBPww7quPcGbquqpKgtsTAfVH_3RvGN16HbT2r1fp0mojHPBOgjvmn_ic8C4Eo_KhagZ3tlB0m0BnmHIAAw26dW5G7lx4HM6xsTe4Oa7S2ZL0alWwfcaUK-JvOTf5jzr0Oy3Zh4Wdz38t7VEghK51Q_qnziPq3GF24s_Zu0vQxB27WrRS83clhgxq9Guc7SzFYgCRL9SPhYvhLu192lDvCD8_4WaJEnmxEq1x1csONF-oRp09nTskzWapPdUJDu5rSNViZnMaDT6U4L2bdMKEeodYRGSugwppi02pTlzfzCR66ams-2WJh0OwrguXR_7H2id8S1HgXnhzEMvvnRUC1v0VMgOqjMAb4dzGJx2TF9knL4RNtrmdSJbHXEaQC5ftcxHHtQJ1jk2WJWUygcJQVK_tjzPvRguDU-sRbDIbHu_2ei1K8MvWcZM1RtncRBObeUwIrH3eDGhfck2G56h0EgIvS0rVHtc88XpFgCSs-KI8kQFctZFC0FDUvxJfzY2afgrHsMHYPfZetcV9QcH8P6EA-nCA-cv_2_fw03H0Kwg_VCqqZy3A7-MkjvPQbbW9sTYlnzbJD3Qem6k_c16ZOP-Lvn0FJMqsXnx0gtXoGG8ZgJ40l6E0zogQxqXyZiPuuaOrWCko8rJdQmDWGCpJwI5_gjysqOGL-Rt2jkFVehsHq3p674X6Bk42lfR8vQPFuVmB4e0ch-m2IJdjljRpLLOanWNvSdlvCwCJEAZdaEylnfUNnliDw0uzn5HSC5dgFErJiVO44RB_2KBYit_ptr0BabAqPEITGx6GFSIdw0EDlSS6xX6sTI04Y7O2PLgqWhkeAB4BwpkJqulRsxq3PfbIKbATldM8bZtyxezWwevVTH2Vg3xQddooZ6Qbz-O-Bmviz5LqrFsdJUfVf1VTR57v8MQ-RCI0meOjNTUjbG5Uy47dVylk41vCU6Gtkx_jFN1ESv1lScUSgXcbHBGroOx2zFWpph7nXY6Wf20WNskRKogp2xSsJWlexFlvqxncAlb8lIaW19MSj-v5_hYilBVM_bwYq_P0gwsmVupSTirlpD7ZH_iG8piTgMLeHyrDUS4KfaC0Igwkx-K2ufbxUspF7JMRhEar9p0gw2QiVWDFtcBNMhoPwLAK6CmXdiQv8UAHT6btWIijQ==
+        usage:
+          input_tokens: 158
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 42
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 200
+  recorded_at: 2026-11-04T03:21:27.081999+00:00

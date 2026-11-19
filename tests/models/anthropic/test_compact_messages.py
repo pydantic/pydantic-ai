@@ -307,7 +307,7 @@ def test_compact_messages_supported_on_every_client(client: Callable[[], AsyncAn
     """
     model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(anthropic_client=client()))
 
-    assert model.profile.get('anthropic_supports_on_demand_compaction') is True
+    assert model.profile.get('supports_compaction_on_demand') is True
 
 
 async def test_compact_messages_settles_rejected_parameters(
