@@ -262,6 +262,7 @@ To make a tool step aside when a more general tool is on the agent, set `ToolDef
 - A deferred (`defer_loading`) tool counts as present, so the answer doesn't change when it is revealed.
 - A tool is only left out in favor of a tool that stays; when tools would each be left out in favor of the other, the one listed first stays. The kind doesn't need to be defined: only ids are compared, so an unknown kind means there's nothing to step aside for.
 - `tool_name_for_kind` returns the prefixed name, `None` when no tool has the kind, and the first in `ctx.tools` order when several do. Instruction functions see the current step's tools; `get_tools` / `prepare_tools` see the previous step's.
+- In a model adapter, `model_request_parameters.available_tool_names_for_kind(kind)` lists every tool of the kind the model can call on this request, leaving out a deferred tool until history reveals it.
 
 See [Superseding a tool by kind](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind).
 
