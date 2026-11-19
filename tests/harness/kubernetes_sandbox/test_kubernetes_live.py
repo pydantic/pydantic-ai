@@ -382,9 +382,12 @@ async def test_a_desktop_pool_serves_the_display() -> None:
     try:
         await check_display_contract(screen(backend))
         assert (await backend.run('xwininfo -root | grep -c Width', shell=True)).stdout == '1\n'
-        # The window manager and the panel run, not only the display. Read from `/proc`, since the image has no `pgrep`.
-        running = await backend.run('cat /proc/[0-9]*/comm 2>/dev/null | sort -u', shell=True)
-        assert {'fluxbox', 'tint2'} <= set(running.stdout.split())
+        assert (await backend.run(['xdotool', 'getdisplaygeometry'])).stdout == '1280 800\n'
+        # The window manager answers on the display, and the panel's window shows, not only their processes running.
+        window_manager = await backend.run(['xprop', '-root', '_NET_SUPPORTING_WM_CHECK'])
+        assert 'window id' in window_manager.stdout
+        panel = await backend.run(['xdotool', 'search', '--onlyvisible', '--class', 'tint2'])
+        assert panel.exit_code == 0 and panel.stdout.strip()
     finally:
         await _destroy(backend)
 
