@@ -1,8 +1,9 @@
 """Where a JSON Schema keeps its subschemas: each keyword whose value holds them, and the shape of that value.
 
-A walker that has to reach the subschemas of a node goes through `iter_subschemas` or `map_subschemas`, so a keyword
-added to `SUBSCHEMA_KEYWORDS` reaches every walker. The table says nothing about walking: each walker still picks
-which of these keywords it enters, and on which schema types.
+`SUBSCHEMA_KEYWORDS` is the one record of those keywords and shapes, and `iter_subschemas` and `map_subschemas` read
+it. `merge_json_schema_defs` reaches every keyword through them; `JsonSchemaTransformer` reads the shapes but picks
+which keywords it enters, and on which schema types. `tests/test_json_schema_conformance.py` fails when a walker
+misses a keyword added here.
 
 This module imports nothing from Pydantic AI, so `_utils` and `_json_schema` can both import it.
 """

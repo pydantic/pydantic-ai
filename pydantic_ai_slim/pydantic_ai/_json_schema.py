@@ -4,12 +4,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
-from functools import partial
 from typing import Any, ClassVar, Literal, NoReturn, TypeAlias, assert_never, cast
 
 from pydantic import JsonValue
 
-from ._json_schema_keywords import SUBSCHEMA_KEYWORDS, Subschema, iter_subschemas, map_subschemas
+from ._json_schema_keywords import SUBSCHEMA_KEYWORDS, Subschema, is_subschema, iter_subschemas, map_subschemas
 from ._utils import contains_ref
 from .exceptions import UserError
 
@@ -151,8 +150,12 @@ def _invalid_schema(path: str, what: str, value: Any) -> NoReturn:
     raise UserError(f'Invalid JSON Schema at `{path or "<root>"}`: {what}, got {value!r}')
 
 
-def _check_schema_shape(node: Any, path: str = '') -> None:
-    """Raise `UserError` naming the offending node if `node` is not shaped like the JSON Schema the transformers read."""
+def _check_schema_shape(node: Any, path: str = '', *, inlining: bool = False) -> None:
+    """Raise `UserError` naming the offending node if `node` is not shaped like the JSON Schema the transformers read.
+
+    `inlining` also checks the subschemas an inlining walker enters under `_REF_KEYWORDS` and the like. A definition
+    under `$defs` is checked that way only once a `$ref` to it is walked, as inlining drops one nothing refers to.
+    """
     # Draft 2020-12, section 4.3: "A JSON Schema MUST be an object or a boolean."
     if isinstance(node, bool):
         return
@@ -165,30 +168,66 @@ def _check_schema_shape(node: Any, path: str = '') -> None:
         # `None` is skipped like an absent key, as the walker and OpenAI's `transform()` do.
         if (value := schema.get(key)) is None:
             continue
+        nested = inlining and key != '$defs'
         match shape := SUBSCHEMA_KEYWORDS[key]:
             case 'schema' | 'schema_or_list':
-                _check_subschema(value, f'{prefix}{key}', allow_list=shape == 'schema_or_list')
+                _check_subschema(value, f'{prefix}{key}', allow_list=shape == 'schema_or_list', inlining=nested)
             case 'schema_map':
-                _check_schema_container(key, dict, value, f'{prefix}{key}')
+                _check_schema_container(key, dict, value, f'{prefix}{key}', inlining=nested)
             case 'schema_list':
-                _check_schema_container(key, list, value, f'{prefix}{key}')
+                _check_schema_container(key, list, value, f'{prefix}{key}', inlining=nested)
             case _:
                 assert_never(shape)
     for key, (is_well_formed, what) in _VALUE_KEYWORDS.items():
         if (value := schema.get(key)) is not None and not is_well_formed(value):
             _invalid_schema(f'{prefix}{key}', f'`{key}` {what}', value)
+    if inlining:
+        _check_ref_subschemas(schema, prefix, root=not path)
 
 
-def _check_subschema(value: Any, path: str, *, allow_list: bool) -> None:
+def _check_ref_subschemas(schema: dict[str, Any], prefix: str, *, root: bool) -> None:
+    """Check each subschema an inlining walker enters under a keyword it walks only for a `$ref` into `$defs`."""
+    for key in _entered_ref_keywords(schema, root=root):
+        value = schema.get(key)
+        if SUBSCHEMA_KEYWORDS[key] == 'schema':
+            members: list[tuple[str, Any]] = [(f'{prefix}{key}', value)]
+        elif isinstance(value, dict):
+            members = [(f'{prefix}{key}.{name}', member) for name, member in cast(dict[str, Any], value).items()]
+        else:
+            # The walker keeps a value that isn't an object of schemas as written.
+            continue
+        for member_path, member in members:
+            if is_subschema(member) and _refers_to_defs(member):
+                _check_schema_shape(member, member_path, inlining=True)
+
+
+def _entered_ref_keywords(schema: dict[str, Any], *, root: bool) -> list[str]:
+    """The keywords of `_REF_KEYWORDS` and its type-gated siblings an inlining walker enters on `schema`.
+
+    They are gated by `type` as the walker gates them, and a root `definitions` is entered too.
+    """
+    keywords = [*_REF_KEYWORDS]
+    if schema.get('type') == 'object':
+        keywords.extend(_REF_OBJECT_KEYWORDS)
+    elif schema.get('type') == 'array':
+        keywords.extend(_REF_ARRAY_KEYWORDS)
+    if root:
+        keywords.append('definitions')
+    return keywords
+
+
+def _check_subschema(value: Any, path: str, *, allow_list: bool, inlining: bool) -> None:
     """Check a keyword whose value is a schema; `items` may also be a list of schemas (draft 4 to 2019-09 tuples)."""
     if allow_list and isinstance(value, list):
         for index, member in enumerate(cast(list[Any], value)):
-            _check_schema_shape(member, f'{path}.{index}')
+            _check_schema_shape(member, f'{path}.{index}', inlining=inlining)
     else:
-        _check_schema_shape(value, path)
+        _check_schema_shape(value, path, inlining=inlining)
 
 
-def _check_schema_container(key: str, container: type[dict[str, Any]] | type[list[Any]], value: Any, path: str) -> None:
+def _check_schema_container(
+    key: str, container: type[dict[str, Any]] | type[list[Any]], value: Any, path: str, *, inlining: bool
+) -> None:
     """Check a keyword whose value is an object or a list of schemas."""
     # A tuple of schemas worked before this check existed: the walker iterates it like a list.
     if not (isinstance(value, container) or (container is list and isinstance(value, tuple))):
@@ -198,7 +237,7 @@ def _check_schema_container(key: str, container: type[dict[str, Any]] | type[lis
         cast(dict[str, Any], value).items() if isinstance(value, dict) else enumerate(cast(Sequence[Any], value))
     )
     for name, member in members:
-        _check_schema_shape(member, f'{path}.{name}')
+        _check_schema_shape(member, f'{path}.{name}', inlining=inlining)
 
 
 def _json_pointer_path(ref: str) -> str:
@@ -265,7 +304,7 @@ class JsonSchemaTransformer(ABC):
         prefer_inlined_defs: bool = False,
         simplify_nullable_unions: bool = False,
     ):
-        _check_schema_shape(schema)
+        _check_schema_shape(schema, inlining=prefer_inlined_defs)
         self.schema = schema
 
         self.strict = strict
@@ -417,11 +456,14 @@ class JsonSchemaTransformer(ABC):
         walk copies into it.
         """
         def_schema = self.defs.get(key)
-        if def_schema is None:
+        if def_schema is not None:
+            # The up-front check leaves the keywords only an inlining walk enters until a definition is walked.
+            _check_schema_shape(def_schema, f'$defs.{key}', inlining=self.prefer_inlined_defs)
+        else:
             def_schema = resolve_json_pointer(self.schema, key)
             # A pointer can reach nodes the up-front check doesn't visit, like draft-07 `definitions`.
             if def_schema is not None:
-                _check_schema_shape(def_schema, _json_pointer_path(key))
+                _check_schema_shape(def_schema, _json_pointer_path(key), inlining=self.prefer_inlined_defs)
         if def_schema is None:
             raise UserError(f'Could not find $ref definition for {key}')
 
@@ -496,14 +538,11 @@ class JsonSchemaTransformer(ABC):
         """When inlining, walk each subschema under `keywords` that refers to `$defs`, leaving the others as written."""
         if self.prefer_inlined_defs:
             for keyword in keywords:
-                map_subschemas(schema, partial(self._handle_ref_subschema, keyword=keyword), (keyword,))
+                map_subschemas(schema, self._handle_ref_subschema, (keyword,))
 
-    def _handle_ref_subschema(self, subschema: _JsonSchemaNode, *, keyword: str) -> _JsonSchemaNode:
-        if not _refers_to_defs(subschema):
-            return subschema
-        # The up-front check doesn't visit these keywords, so a node under one is checked once it's walked.
-        _check_schema_shape(subschema, keyword)
-        return self._handle(subschema)
+    def _handle_ref_subschema(self, subschema: _JsonSchemaNode) -> _JsonSchemaNode:
+        # The up-front check covered it, with its full path; a definition is checked as `_walk_def` reaches it.
+        return self._handle(subschema) if _refers_to_defs(subschema) else subschema
 
     def _handle_union(self, schema: JsonSchema, union_kind: Literal['allOf', 'anyOf', 'oneOf']) -> JsonSchema:
         try:

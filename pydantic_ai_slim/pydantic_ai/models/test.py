@@ -503,7 +503,7 @@ _FORMATS: dict[str, Callable[[int], str]] = {
     'duration': lambda seed: f'PT{seed}S',
     'email': lambda seed: f'user{seed}@example.com',
     'uri': lambda seed: f'https://example.com/{seed}',
-    'uuid': lambda seed: str(UUID(int=seed)),
+    'uuid': lambda seed: str(UUID(int=seed % (1 << 128))),
     'ipv4': lambda seed: f'192.0.2.{seed % 256}',
     'ipv6': lambda seed: f'2001:db8::{seed % 65536:x}',
 }
@@ -662,13 +662,13 @@ class _JsonSchemaTestData:
             if key in required:
                 data[key] = self._gen_any(value)
 
-        max_properties = schema.get('maxProperties')
+        max_properties = self._finite_bound(schema, 'maxProperties')
         if (addition_props := schema.get('additionalProperties')) and (
             max_properties is None or max_properties > len(data)
         ):
             data[self._additional_key(data)] = self._gen_any(addition_props)
 
-        self._add_min_properties(data, properties, addition_props, schema.get('minProperties', 0))
+        self._add_min_properties(data, properties, addition_props, self._finite_bound(schema, 'minProperties') or 0)
         return data
 
     def _add_min_properties(
@@ -676,7 +676,7 @@ class _JsonSchemaTestData:
         data: dict[str, Any],
         properties: dict[str, Any],
         addition_props: dict[str, Any] | bool | None,
-        min_properties: int,
+        min_properties: float,
     ) -> None:
         """Add optional properties, then additional ones where the schema allows them, until `minProperties` holds."""
         optional = [key for key in properties if key not in data]
@@ -699,7 +699,8 @@ class _JsonSchemaTestData:
         # A value of a known format, unless it breaks the length bounds an ordinary string below keeps to.
         if isinstance(fmt := schema.get('format'), str) and fmt in _FORMATS:
             value = _FORMATS[fmt](self.seed)
-            if schema.get('minLength', 0) <= len(value) <= schema.get('maxLength', len(value)):
+            min_length, max_length = self._finite_bound(schema, 'minLength'), self._finite_bound(schema, 'maxLength')
+            if (min_length or 0) <= len(value) <= (len(value) if max_length is None else max_length):
                 return value
 
         min_len = schema.get('minLength')
@@ -761,12 +762,23 @@ class _JsonSchemaTestData:
     def _multiple_of(value: _BoundT, schema: dict[str, Any]) -> _BoundT:
         """`value`, or the nearest multiple of the schema's `multipleOf` above or below it that stays within bounds."""
         step = schema.get('multipleOf')
-        if isinstance(step, bool) or not isinstance(step, int | float) or step <= 0 or value % step == 0:
+        if isinstance(step, bool) or not isinstance(step, int | float) or step <= 0:
             return value
-        if not math.isfinite(value / step):
-            # A step so small that the quotient overflows has no multiple to move to.
+        try:
+            if value % step == 0:
+                return value
+            if isinstance(value, int) and isinstance(step, int):
+                # Integer arithmetic, which an integer too large for a float needs.
+                lower = value // step
+                candidates = ((lower + 1) * step, lower * step)
+            elif math.isfinite(quotient := value / step):
+                candidates = (math.ceil(quotient) * step, math.floor(quotient) * step)
+            else:
+                # A step so small that the quotient overflows has no multiple to move to.
+                return value
+        except OverflowError:
+            # An integer too large for a float, with a fractional step.
             return value
-        candidates = (math.ceil(value / step) * step, math.floor(value / step) * step)
         # An integer value skips a fractional multiple, which converting it to an integer would truncate.
         within_bounds = (
             converted

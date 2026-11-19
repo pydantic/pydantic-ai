@@ -1383,3 +1383,46 @@ def test_boolean_extra_subschemas_round_trip(type_: str, keyword: str, value: bo
     """Pydantic does not emit these boolean schemas, so exercise the walker directly."""
     schema: JsonSchema = {'type': type_, keyword: value}
     assert InlineDefsJsonSchemaTransformer(schema).walk() == schema
+
+
+def test_inline_defs_leaves_a_ref_in_data_as_written():
+    """A `$ref` in a value like `const` is data, so the subschema holding it is sent as written."""
+    field: JsonSchema = {'not': {'const': {'$ref': '#/$defs/Leaf'}}}
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'field': deepcopy(field)},
+        '$defs': {'Leaf': {'type': 'string'}},
+    }
+    assert InlineDefsJsonSchemaTransformer(schema).walk()['properties']['field'] == field
+
+
+@pytest.mark.parametrize(
+    ('field', 'path'),
+    [
+        pytest.param(
+            {'not': {'$ref': '#/$defs/Leaf', 'properties': 'bad'}}, 'properties.field.not.properties', id='not'
+        ),
+        pytest.param(
+            {'type': 'object', 'dependentSchemas': {'a': {'$ref': '#/$defs/Leaf', 'properties': 'bad'}}},
+            'properties.field.dependentSchemas.a.properties',
+            id='dependentSchemas-member',
+        ),
+        pytest.param({'$ref': '#/$defs/Used'}, '$defs.Used.not.properties', id='referenced-definition'),
+    ],
+)
+def test_inline_defs_names_the_full_path_of_a_malformed_ref_subschema(field: JsonSchema, path: str):
+    """A malformed node under a keyword an inlining walk enters only for a `$ref` is reported at its full path."""
+    defs: JsonSchema = {'Leaf': {'type': 'string'}, 'Used': {'not': {'$ref': '#/$defs/Leaf', 'properties': 'bad'}}}
+    schema: JsonSchema = {'type': 'object', 'properties': {'field': field}, '$defs': defs}
+    with pytest.raises(UserError, match=re.escape(f'Invalid JSON Schema at `{path}`')):
+        InlineDefsJsonSchemaTransformer(schema).walk()
+
+
+def test_inline_defs_skips_an_unreferenced_malformed_definition():
+    """Inlining drops a definition nothing refers to, so a malformed node in it doesn't fail the walk."""
+    defs: JsonSchema = {'Leaf': {'type': 'string'}, 'Unused': {'not': {'$ref': '#/$defs/Leaf', 'properties': 'bad'}}}
+    schema: JsonSchema = {'type': 'object', 'properties': {'field': {'type': 'string'}}, '$defs': defs}
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == {
+        'type': 'object',
+        'properties': {'field': {'type': 'string'}},
+    }
