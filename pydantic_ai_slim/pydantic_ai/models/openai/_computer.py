@@ -22,7 +22,7 @@ from ...messages import (
     ToolReturnPart,
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
-from .. import ModelRequestParameters, _computer_tool_names  # pyright: ignore[reportPrivateUsage]
+from .. import ModelRequestParameters
 
 _SCROLL_PIXELS_PER_CLICK = 114
 """OpenAI scrolls by pixels and the `computer` tool by wheel clicks; one click scrolls about this far.
@@ -234,7 +234,7 @@ def map_computer_call(
     `None` when the request has no `computer` tool to run it.
     """
     # A request always has it, but recorded streams are replayed without tools by the stream parity test.
-    if not (tool_names := _computer_tool_names(model_request_parameters)):
+    if not (tool_names := model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)):
         return None
     tool_name = tool_names[0]
     # The SDK doesn't validate a response, so the item can hold anything; it is kept as sent, without a warning.
