@@ -336,7 +336,9 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
         )
 
     def _map_media(self, index: int, delta: gi.ImageDelta | gi.AudioDelta | gi.VideoDelta | gi.DocumentDelta) -> None:
-        # Files have no deltas: defer later content until the complete file can be emitted in order.
+        # Media deltas carry no content index, and a live stream splits one file across many of them (31 for one
+        # audio file in `test_audio_output[True]`), so adjacent deltas of one type in a step are chunks of one file.
+        # A file part has no deltas, so later content waits until the complete file can be emitted in order.
         self._media_steps.add(index)
         content = self._content_for_step(index)
         if not content or content[-1].raw.get('type') != delta.type:

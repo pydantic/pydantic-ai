@@ -58,6 +58,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters, get_user_agent, infer_model
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import FileSearchTool, ImageGenerationTool, MCPServerTool, MemoryTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ThinkingEffort
 from pydantic_ai.tools import ToolDefinition
 
@@ -237,6 +238,26 @@ def test_gemini_api_thinking_levels_follow_the_client_transport(
         for thinking in (False, deeper)
     ]
     assert tuple(sent) == expected
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'profile', 'supports_native'),
+    [
+        ('gemini-3.8-flash', None, False),
+        ('gemini-3.1-flash-image', None, True),
+        ('gemini-3.8-flash', {'supports_image_output': True}, True),
+    ],
+)
+def test_image_generation_tool_follows_supports_image_output(
+    model_name: str, profile: ModelProfile | None, supports_native: bool
+):
+    """`ImageGenerationTool` is native on Interactions exactly when the resolved `supports_image_output` is true.
+
+    Not a VCR test: the flag is resolved on the profile, including a `profile=` override; the image-model recordings
+    in `test_google_interactions.py` pin the flag-on request path.
+    """
+    model = GoogleInteractionsModel(model_name, provider=GoogleProvider(api_key='test-key'), profile=profile)
+    assert (ImageGenerationTool in model.profile.get('supported_native_tools', frozenset())) is supports_native
 
 
 def test_inference_preserves_instance(monkeypatch: pytest.MonkeyPatch):
