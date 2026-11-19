@@ -277,10 +277,12 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive starting values, to be
   tuned down from recorded runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN`
   set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
-  on every outcome, a failed, rejected or cancelled review included. The span names the provider and
-  plan of the review's last OpenCode run, such as `the backup Coding Plan`, and how many runs the
+  on every outcome, a failed, rejected or cancelled review included. The span names the provider,
+  model and plan of the review's last OpenCode run, such as `the backup Coding Plan`, and how many runs the
   review took. When the review's run completes or reaches its time budget, the span adds its steps,
-  tokens and duration. A validated answer adds the outcome and the number of findings. A review that
+  tokens, its input, output and cache-read tokens, and its duration. A validated answer adds the
+  outcome, the number of findings, and how many findings the review dropped as outside its files or
+  changed lines. A review that
   raised has the outcome `FAILED`, the exception's class name and an error status. When the last
   run's process failed, the span adds the type, status and provider code of its stream's last
   `error` event, and whether the stream holds a `step_finish`. As each OpenCode run of the review
@@ -416,8 +418,10 @@ accounts call the same endpoint, so only `opencode_fallback.plan` tells their ru
 attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` when the review's chain restarted a run.
 
 As each run ends, `run_with_fallback` also exports an `OpenCode run` span for it, under the service
-`opencode-fallback`, so a later run's failure cannot drop it. Each span carries its run's resource attributes above and
-`opencode_fallback.provider`. It also counts the `step_finish` events in the run's stream and the tokens they report,
+`opencode-fallback`, so a later run's failure cannot drop it. Each span carries its run's resource attributes above,
+`opencode_fallback.provider`, and the run's model as `opencode_fallback.model`. The model tells apart links on one
+provider that run different models, such as two OpenCode Go links of a configured chain. Each span also counts the
+`step_finish` events in the run's stream and the tokens they report,
 every kind summed as in `pr_review_checks.tokens`, as `opencode_fallback.steps` and `opencode_fallback.tokens`, a failed
 or handed-over run's included. A run that did not serve has an error status. When the run's process failed, the span
 adds the error type, status, provider code, Go usage window and retry-after the job log names, as
@@ -499,10 +503,11 @@ This value runs the chain above, then falls back to Hy4 Flash on Go, then to Hy4
 # A copy of the repository picks the `CI` Linux runner
 
 The `CI_LINUX_RUNNER` repository variable sets the runner label of `check` and of every Linux job
-it depends on, including the jobs of `clai2-web.yml` and `latest-versions-canary.yml`. Those two
-reusable workflows read it wherever they run, so it also moves the build that `clai2-bleeding.yml`
-publishes and the scheduled canary of `latest-versions-canary-nightly.yml`. A fork or other copy
-sets it when GitHub's standard runners are too small or unavailable for those jobs.
+it depends on, including the jobs of `clai2-web.yml`. It also sets the label of the
+`latest-versions-canary.yml` jobs that `ci.yml` runs on tags. Those two reusable workflows read
+it wherever they run, so it also moves the build that `clai2-bleeding.yml` publishes and the
+scheduled canary of `latest-versions-canary-nightly.yml`. A fork or other copy sets it when
+GitHub's standard runners are too small or unavailable for those jobs.
 Leave it unset in pydantic/pydantic-ai: unset, each job runs on its fallback label,
 `ubuntu-24.04` for `test-all-extras` and `ubuntu-latest` for the rest.
 
@@ -548,7 +553,7 @@ Compile with [gh-aw v1.2.1](https://github.com/github/gh-aw/releases/tag/v1.2.1)
 It is the first release that lets the review failure reporter read trusted pre-agent eligibility outputs
 after detection errors ([gh-aw#74939](https://github.com/github/gh-aw/pull/74939)).
 `shared/engine-zai.md` sets `max-ai-credits: -1`; AWF accepts that value only from v0.29.1.
-`shared/engine-zai.md` imports the public Pydantic AI engine and explicitly pins runtime 0.64.0. Keep each workflow's
+`shared/engine-zai.md` imports the public Pydantic AI engine and explicitly pins runtime 0.70.0. Keep each workflow's
 root engine block model-only; the shared import owns identity and credentials.
 `stage-gh-aw-agent.sh` configures the existing request limits in an isolated CLAI
 settings store. It also outputs the staged shim's source digest, which `shared/engine-zai.md`
@@ -843,6 +848,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | `provider-health-*` | a Z.AI source missing the shared gate, generic failure-as-issue or failed-job reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment, both Z.AI keys and the step id `agent_start_health`, and stop before its engine step when blocked or when a failed replacement would hide the recheck's account, a workflow without the host job that records the agent job's terminal result, a monitor that accepts unlisted workflows or itself, or a monitor that queues completions `triage` did not hand over | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. A queue of every completion overflowed at 100 pending runs, dropped reconciliations, and delayed scheduled recovery ([run 39816847357](https://github.com/pydantic/pydantic-ai/actions/runs/39816847357)). |
 | `provider-engine-config` | a shared threat-detection engine other than `false`, or a workflow-local engine override, whose endpoint or credential differs from the shared primary engine, or an empty shared primary endpoint or credential | Engine overrides drift when the provider endpoint or secret changes, which can send requests to the wrong provider or make them fail authentication. |
 | `assigned-alert-metadata-gate` | the `@claude` issue and comment entry points lack an exclusion for `pydanty:meta` issues | Operational incidents may mention `@claude`; assigning or commenting on the alert must not start an agent on controller metadata. |
+| `at-claude-maintainer-threads` | an `at-claude` job in `at-claude.yml` whose `if:` does not require `write` or `admin` permission from the thread author, or whose `claude-code-action` step does not take `include_comments_by_actor` from `get-pr-info`, or whose `if:` does not skip an empty author list | `at-claude` ran on any same-repo thread a maintainer mentioned `@claude` on, and the action built Claude's context from every comment on it. The action reads an empty `include_comments_by_actor` as every commenter. |
 | `safe-output-job-max` | a `safe-outputs.jobs.*` entry with no `max:` | The default is 1; extra items land in an `errors` array nothing reads. Set it explicitly even when 1 is right. |
 | `prompt-path-outside-workspace` | prompt text pointing at `/tmp/gh-aw/...` | Outside the agent's file-tool root — `Read` rejects it and the agent burns turns rediscovering the file. Stage context under `$GITHUB_WORKSPACE`. |
 | `timeout-declared` | a source with no `timeout-minutes:` | An unbounded agent can spend a full run and be killed with nothing to show. |
