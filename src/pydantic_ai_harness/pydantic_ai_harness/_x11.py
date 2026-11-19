@@ -410,14 +410,21 @@ def x11_display(
 _START_DESKTOP = start_x_server('/tmp/pydantic-ai-xvfb.log')
 
 
-def desktop_display(run: RunCommand, size: tuple[int, int] | None, where: Callable[[], str]) -> LazyDisplay | None:
-    """A sandbox's display on a plain Xvfb at `size`, with no window manager, or `None` without a desktop.
+def desktop_display(
+    run: RunCommand,
+    size: tuple[int, int] | None,
+    where: Callable[[], str],
+    *,
+    started: Callable[[], None] = lambda: None,
+) -> LazyDisplay | None:
+    """A sandbox's desktop on Xvfb at `size`, or `None` without one.
 
-    For a sandbox with no desktop of its own: `start_x_server` installs what's missing on first use.
+    For a sandbox with no desktop of its own: `start_x_server` installs what's missing on first use. `started` is
+    called after each start that succeeds, as for `x11_display`.
     """
     if size is None:
         return None
-    return x11_display(run, size, _START_DESKTOP, where)
+    return x11_display(run, size, _START_DESKTOP, where, started=started)
 
 
 class X11Computer:
