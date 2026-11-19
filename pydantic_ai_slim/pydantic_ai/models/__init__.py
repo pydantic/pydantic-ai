@@ -158,6 +158,8 @@ from ..messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolKind,
+    ToolKindLike,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -539,6 +541,25 @@ class ModelRequestParameters:
         # per-tool loops.
         tool_def = self.tool_defs.get(tool_name)
         return 'withheld' if tool_def is not None and tool_def.defer_loading else 'visible'
+
+    def available_tool_names_for_kind(self, kind: ToolKindLike) -> list[str]:
+        """The names of the function tools with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that the model can call on this request.
+
+        A tool counts when it isn't deferred, or when history has revealed it. That is the difference from
+        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind], which also counts a
+        still-deferred tool so that instructions naming it stay the same when it is revealed. A model adapter uses
+        this to find the tool that runs the calls of a provider's native tool. The names are in the order of
+        `function_tools`.
+
+        Args:
+            kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
+        """
+        kind_id = kind.id if isinstance(kind, ToolKind) else kind
+        return [
+            t.name
+            for t in self.function_tools
+            if t.tool_kind == kind_id and (not t.defer_loading or t.name in self.revealed_tool_names)
+        ]
 
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
@@ -4134,25 +4155,6 @@ def _needs_tool_resolution(params: ModelRequestParameters) -> bool:
     )
 
 
-def _callable_now(tool: ToolDefinition, params: ModelRequestParameters) -> bool:
-    """Whether the model can call `tool` on this request: it isn't deferred, or history has revealed it."""
-    return not tool.defer_loading or tool.name in params.revealed_tool_names
-
-
-def _computer_tool_names(params: ModelRequestParameters, sent_ids: Collection[str] = ()) -> list[str]:
-    """The function tools of the `computer` kind that the model can call: not deferred, or revealed by history.
-
-    A model adapter sends a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] in place of the first of them, and
-    turns the provider's calls into calls of it. A tool dropped because a native tool in `sent_ids` is sent in its place
-    can't run any calls.
-    """
-    return [
-        t.name
-        for t in params.function_tools
-        if t.tool_kind == COMPUTER_KIND.id and _callable_now(t, params) and t.unless_native not in sent_ids
-    ]
-
-
 def _natives_with_computer_tool(
     params: ModelRequestParameters, natives: list[AbstractNativeTool]
 ) -> list[AbstractNativeTool]:
@@ -4160,7 +4162,13 @@ def _natives_with_computer_tool(
 
     An optional `ComputerTool` without one is dropped; a required one raises `UserError`, as does one with more than one.
     """
-    computer_tools = _computer_tool_names(params, {t.unique_id for t in natives})
+    # A tool left out because a native tool sent in its place covers it can't run any calls.
+    sent_ids = {t.unique_id for t in natives}
+    computer_tools = [
+        name
+        for name in params.available_tool_names_for_kind(COMPUTER_KIND)
+        if params.tool_defs[name].unless_native not in sent_ids
+    ]
     kept: list[AbstractNativeTool] = []
     for native_tool in natives:
         if isinstance(native_tool, ComputerTool) and not computer_tools:
