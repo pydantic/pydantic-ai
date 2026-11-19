@@ -96,8 +96,8 @@ ALLOWED_HEADERS = {
 
 SCRUBBED_JSON_FIELDS = ('access_token', 'id_token', 'refresh_token', 'safety_identifier')
 # OpenRouter error responses echo the id of the account whose key made the request. Requests keep `user_id`: Z.AI
-# takes the caller's own end-user id there. OpenAI Responses bodies name the recording account's access programs.
-SCRUBBED_RESPONSE_JSON_FIELDS = ('user_id', 'access_programs')
+# takes the caller's own end-user id there.
+SCRUBBED_RESPONSE_JSON_FIELDS = ('user_id',)
 # ElevenLabs `GET /v1/convai/agents/{id}` bodies carry the workspace owner's identity in `access_info`.
 SCRUBBED_NESTED_JSON_FIELDS = ('creator_email', 'creator_name')
 SCRUBBED_FORM_FIELDS = (
