@@ -430,6 +430,8 @@ async def test_the_desktop_settings_are_written_for_the_user_unless_present(
     # New windows fill the screen, the panel aside.
     assert (home / '.fluxbox' / 'apps').read_text() == '[app] (class!=Tint2)\n  [Maximized] {yes}\n[end]\n'
     assert (home / '.config' / 'tint2' / 'tint2rc').read_text() == 'panel_position = top\n'
+    # The terminal uses a large, clear font, however it's opened.
+    assert (home / '.Xdefaults').read_text() == 'XTerm*faceName: Monospace\nXTerm*faceSize: 14\n'
 
 
 async def test_the_panel_settings_go_where_tint2_reads_them(
