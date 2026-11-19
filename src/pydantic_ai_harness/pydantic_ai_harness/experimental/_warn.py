@@ -40,3 +40,20 @@ def warn_experimental(feature: str) -> None:
         category=HarnessExperimentalWarning,
         stacklevel=2,
     )
+
+
+def warn_moved(old: str, new: str) -> None:
+    """Emit a `HarnessDeprecationWarning` that `experimental.old` now lives at top-level `new`.
+
+    Left behind at each old `pydantic_ai_harness.experimental.<name>` path when a capability
+    graduates out of `experimental`, so existing imports keep working with a clear pointer to
+    the new location.
+    """
+    from pydantic_ai_harness._warn import HarnessDeprecationWarning
+
+    warnings.warn(
+        f'`pydantic_ai_harness.experimental.{old}` has moved to `pydantic_ai_harness.{new}`. '
+        f'Update your imports; this compatibility shim will be removed in a future release.',
+        category=HarnessDeprecationWarning,
+        stacklevel=2,
+    )

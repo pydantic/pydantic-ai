@@ -10,6 +10,7 @@ and source edge cases are exercised through the public
 from __future__ import annotations
 
 import re
+import warnings
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -51,6 +52,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
 from pydantic_ai_harness.compaction._summarizing_compaction import SUMMARY_PREFIX
@@ -837,18 +839,51 @@ class TestSearchScope:
         )
         assert 'ZEBRA' not in detached_returned
 
-    def test_scope_defaults_to_conversation(self) -> None:
-        source = SnapshotHistorySource(InMemoryStepStore())
-        toolset = ConversationSearchToolset[None](
-            source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75
-        )
-        assert ConversationSearch(source).scope == 'conversation'
-        assert 'conversation' in (toolset.tools['search_conversation_history'].description or '')
+    def test_unset_scope_resolves_to_conversation_and_warns(self) -> None:
+        """The default moved from `all` to `conversation`, and nothing else would say so.
 
-    async def test_a_scope_other_than_all_is_conversation_scoped(self) -> None:
-        """A `None` forwarded from optional configuration fails closed rather than searching every run."""
-        rendered = await _search(_StubSource({'r1': [_user('SECRET')]}), 'SECRET', scope=None)  # pyright: ignore[reportArgumentType]
-        assert 'SECRET' not in rendered
+        A caller who relied on the old default keeps working with a narrower corpus rather
+        than erroring, so the change is invisible without the warning.
+        """
+        source = SnapshotHistorySource(InMemoryStepStore())
+        with pytest.warns(HarnessDeprecationWarning) as record:
+            capability = ConversationSearch(source)
+        assert capability.scope is None
+        assert capability.effective_scope == 'conversation'
+        message = str(record[0].message)
+        assert "scope='all'" in message
+        assert "scope='conversation'" in message
+        assert 'warning will be removed in the next breaking release' in message
+
+    def test_unset_scope_warns_once_per_instance(self) -> None:
+        """Per instance, not per search: warning on every tool invocation would be noise."""
+        source = SnapshotHistorySource(InMemoryStepStore())
+        with pytest.warns(HarnessDeprecationWarning) as record:
+            capability = ConversationSearch(source)
+            capability.get_toolset()
+            capability.get_toolset()
+            capability.get_instructions()
+        assert len(record) == 1
+
+    def test_unset_toolset_scope_warns(self) -> None:
+        """The toolset is public and its default moved too, so it announces the same change."""
+        source = SnapshotHistorySource(InMemoryStepStore())
+        with pytest.warns(HarnessDeprecationWarning):
+            ConversationSearchToolset[None](
+                source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75
+            )
+
+    def test_explicit_scope_never_warns(self) -> None:
+        """Choosing either value opts out of the warning; neither value is deprecated."""
+        source = SnapshotHistorySource(InMemoryStepStore())
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')  # any warning at all fails this test
+            assert ConversationSearch(source, scope='conversation').effective_scope == 'conversation'
+            assert ConversationSearch(source, scope='all').effective_scope == 'all'
+            ConversationSearch(source, scope='conversation').get_toolset()
+            ConversationSearchToolset[None](
+                source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75, scope='all'
+            )
 
     async def test_explicit_all_scope_still_searches_store_wide(self) -> None:
         """The opt-out has to actually restore the old behavior, not just silence the warning."""
@@ -1476,3 +1511,12 @@ Found 1 match(es) for 'required' in 1 persisted messages:
         rendered = await _search(_StubSource({'r1': [_user(text)]}), 'ENDTERM')
         excerpt = rendered.split('[0] User: ', 1)[1]
         assert excerpt == '...' + text[-500:]
+
+
+def test_unset_toolset_scope_warning_points_at_the_constructing_code() -> None:
+    """A subscripted-generic construction adds a `typing` frame the warning must skip."""
+    source = SnapshotHistorySource(InMemoryStepStore())
+    for build in (ConversationSearchToolset[None], ConversationSearchToolset):
+        with pytest.warns(HarnessDeprecationWarning) as record:
+            build(source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75)
+        assert record[0].filename == __file__
