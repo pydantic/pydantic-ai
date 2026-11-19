@@ -2,7 +2,8 @@
 
 See `tests/spec_conformance.py` for what each check does. `tests/harness/test_spec_conformance.py` and
 `tests/evals/test_spec_conformance.py` run the same checks over the Harness capabilities and the evaluators. Native
-tools are covered here through `NativeTool`, whose forms take each of them.
+tools are covered here through `NativeTool`, whose forms take each of them. `OpenAICompaction` and `AnthropicCompaction`
+load only as custom capability types, so they're swept as such where their provider SDKs are installed.
 
 A parameter a class keeps out of its spec on purpose goes in `OPT_OUT` with the reason, and one a defect keeps out
 goes in `KNOWN`, linked to the issue tracking it. `KNOWN_REJECTED` holds a class whose `from_spec` rejects some form
@@ -19,13 +20,19 @@ import pytest
 
 from pydantic_ai.agent.spec import AgentSpec, get_capability_registry
 
+from .conftest import try_import
 from .spec_conformance import JsonSchema, argument_errors, check_capability_forms_load, check_capability_parameters
+
+with try_import() as compaction_imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicCompaction
+    from pydantic_ai.models.openai import OpenAICompaction
 
 if TYPE_CHECKING:
     # Imported for type checking only, so a hint naming it doesn't resolve at runtime.
     from decimal import Decimal as TypeCheckingOnly
 
-REGISTRY = get_capability_registry()
+CUSTOM_TYPES = [OpenAICompaction, AnthropicCompaction] if compaction_imports_successful() else []
+REGISTRY = get_capability_registry(CUSTOM_TYPES)
 
 OPT_OUT: dict[str, dict[str, str]] = {
     'Instrumentation': {
@@ -50,7 +57,7 @@ KNOWN_REJECTED: dict[str, str] = {
 
 @pytest.fixture(scope='module')
 def schema() -> JsonSchema:
-    return AgentSpec.model_json_schema_with_capabilities()
+    return AgentSpec.model_json_schema_with_capabilities(CUSTOM_TYPES)
 
 
 @pytest.mark.parametrize('name', sorted(REGISTRY))
@@ -62,7 +69,7 @@ def test_schema_publishes_spec_parameters(name: str, schema: JsonSchema):
 @pytest.mark.filterwarnings('ignore::pydantic_ai.PydanticAIDeprecationWarning')
 @pytest.mark.parametrize('name', sorted(REGISTRY))
 def test_spec_forms_load(name: str, schema: JsonSchema, tmp_path: Path):
-    check_capability_forms_load(REGISTRY[name], schema, tmp_path, known_rejected=name in KNOWN_REJECTED)
+    check_capability_forms_load(REGISTRY[name], schema, tmp_path, CUSTOM_TYPES, known_rejected=name in KNOWN_REJECTED)
 
 
 def test_tables_name_registered_classes():
