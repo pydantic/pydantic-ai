@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -19,6 +19,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.abstract import leaf_capabilities
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.toolsets import AbstractToolset
@@ -26,7 +27,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from .. import capability_cases as core
 from ..append_only import ToolCall, build_capabilities, discover_capabilities, drain_events, skip_unless_installed
 from ..capability_cases import (
-    CONTRACTS,
+    CONTRACTS as CORE_CONTRACTS,
     CORE_CAPABILITY_PACKAGES,
     CUSTOM_ID,
     RENAMED,
@@ -34,9 +35,16 @@ from ..capability_cases import (
     CapabilityCase,
     Contract,
 )
-from .capability_cases import CASES as HARNESS_CASES, HARNESS_CAPABILITY_PACKAGES
+from .capability_cases import (
+    CASES as HARNESS_CASES,
+    CONTRACTS as HARNESS_CONTRACTS,
+    HARNESS_CAPABILITY_PACKAGES,
+    HOSTED_MCP_CONNECTION,
+    hosted_server,
+)
 
 CASES: dict[str, CapabilityCase] = {**core.CASES, **HARNESS_CASES}
+CONTRACTS: tuple[Contract, ...] = (*CORE_CONTRACTS, *HARNESS_CONTRACTS)
 PUBLIC = {**discover_capabilities(CORE_CAPABILITY_PACKAGES), **discover_capabilities(HARNESS_CAPABILITY_PACKAGES)}
 """The public capabilities, which the suites build; a private class only has to say what two of it mean."""
 
@@ -48,7 +56,7 @@ def _cases(contract: Contract) -> list[Any]:
         if case.calls is not None and (reason := case.calls.moves_cache_prefix)
         else name
         for name, case in sorted(CASES.items())
-        if name in PUBLIC and contract.applies(case)
+        if name in PUBLIC and contract.applies(name, case)
     ]
 
 
@@ -58,7 +66,7 @@ def test_every_exemption_names_a_case_the_contract_applies_to() -> None:
         f'`{contract.name}` exempts {name!r}, which it does not apply to: remove the exemption.'
         for contract in CONTRACTS
         for name in contract.exempt
-        if name not in PUBLIC or not contract.applies(CASES[name])
+        if name not in PUBLIC or not contract.applies(name, CASES[name])
     ]
     problems += [
         f'`{contract.name}` exempts {name!r} with no reason.'
@@ -196,3 +204,16 @@ def test_a_custom_id_reaches_every_toolset(name: str, tmp_path: Path, monkeypatc
         assert not reached, f'{name} now passes: remove its `custom_id` exemption ({exempt.reason})'
     else:
         assert reached, f"with `id='custom'`, its toolset ids are {ids}"
+
+
+def _through_client(cls: Callable[..., AbstractCapability[Any]], *, auth: str) -> AbstractCapability[Any]:
+    return cls(client=hosted_server(), auth=auth)
+
+
+@pytest.mark.parametrize('name', _cases(HOSTED_MCP_CONNECTION))
+def test_a_hosted_connection_takes_a_client_or_auth(name: str) -> None:
+    cls = PUBLIC[name].load()
+    with pytest.raises(UserError, match='`client` owns the connection'):
+        _through_client(cls, auth='key')
+    capability = _through_client(cls, auth='')
+    assert _toolset_ids(capability) == [capability.id]

@@ -622,13 +622,14 @@ class Contract:
     """
 
     name: str
-    applies: Callable[[CapabilityCase], bool]
+    applies: Callable[[str, CapabilityCase], bool]
+    """Whether it applies to the case of the capability with this class name."""
     exempt: Mapping[str, Exempt] = field(default_factory=dict[str, Exempt])
 
 
 RENAMED = Contract(
     'renamed',
-    applies=lambda case: case.calls is not None,
+    applies=lambda _, case: case.calls is not None,
     exempt={
         'DeduplicateFileReads': Exempt(
             'its documented `file_key` example matches `read_file` by name, so under a prefix it never '
@@ -639,7 +640,7 @@ RENAMED = Contract(
 """A capability's tools behave the same under `prefix_tools()`: a tool, hook or event found by name breaks it."""
 
 
-def _buildable(case: CapabilityCase) -> bool:
+def _buildable(_: str, case: CapabilityCase) -> bool:
     return not isinstance(case.build, Unbuildable)
 
 

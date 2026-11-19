@@ -21,8 +21,11 @@ value.
 
 from __future__ import annotations
 
+import ast
+import importlib.util
 import tempfile
 from collections.abc import Callable
+from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -104,13 +107,14 @@ from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from pydantic_ai_harness.sub_agents import DelegationReports, DelegationTasks
 from pydantic_ai_harness.system_reminders import Reminder
 
-from ..append_only import CLOCK, Fixture
+from ..append_only import CLOCK, Fixture, discover_capabilities
 from ..capability_cases import (
     Anonymous,
     Calls,
     CapabilityCase,
     Collides,
     Combines,
+    Contract,
     Narrows,
     Rejected,
     Unbuildable,
@@ -135,7 +139,7 @@ HARNESS_CAPABILITY_PACKAGES = ('pydantic_ai_harness',)
 """The package whose capability classes `CASES` covers."""
 
 
-def _hosted_server() -> MCPServer:
+def hosted_server() -> MCPServer:
     """An in-process stand-in for a hosted MCP service, with server instructions and one tool."""
     server = MCPServer('hosted', instructions='Hosted service instructions.')
 
@@ -148,7 +152,7 @@ def _hosted_server() -> MCPServer:
 
 def _hosted(cls: Callable[..., AbstractCapability[Any]]) -> Fixture:
     """A hosted MCP integration, run against an in-process server through its `client` field."""
-    return lambda _: cls(client=_hosted_server())
+    return lambda _: cls(client=hosted_server())
 
 
 def _workspace(build: Callable[[], AbstractCapability[Any]]) -> Fixture:
@@ -716,7 +720,7 @@ CASES: dict[str, CapabilityCase] = {
     ),
     'StackOne': CapabilityCase(
         Anonymous('one per linked account, and `account_id` is what names it'),
-        build=lambda _: StackOne('account', client=_hosted_server()),
+        build=lambda _: StackOne('account', client=hosted_server()),
     ),
     'TieredCompaction': CapabilityCase(
         Anonymous('drives other strategies; one per tier list'),
@@ -1059,3 +1063,34 @@ CASES: dict[str, CapabilityCase] = {
     ),
 }
 """Every Pydantic AI Harness capability, public or not, keyed by class name."""
+
+
+@cache
+def _hosted_mcp_capabilities() -> frozenset[str]:
+    """The capabilities whose module connects through `hosted_toolset`, found by reading the source.
+
+    Reads each module's file from the package root rather than importing it, so a module whose optional
+    dependency group isn't installed is still read.
+    """
+    spec = importlib.util.find_spec('pydantic_ai_harness')
+    assert spec is not None and spec.submodule_search_locations is not None
+    root = Path(next(iter(spec.submodule_search_locations)))
+    found: set[str] = set()
+    for name, ref in discover_capabilities(HARNESS_CAPABILITY_PACKAGES).items():
+        path = root.joinpath(*ref.module.split('.')[1:])
+        source = (path / '__init__.py' if path.is_dir() else path.with_suffix('.py')).read_text(encoding='utf-8')
+        if any(isinstance(node, ast.Name) and node.id == 'hosted_toolset' for node in ast.walk(ast.parse(source))):
+            found.add(name)
+    return frozenset(found)
+
+
+HOSTED_MCP_CONNECTION = Contract('hosted_mcp_connection', applies=lambda name, _: name in _hosted_mcp_capabilities())
+"""A hosted MCP integration connects through either `client` or `auth`, and names the connection by its own id.
+
+`client` owns the connection, so passing `auth` with it raises, and `auth=''`, documented as unset, doesn't. It
+applies to every capability whose module calls `hosted_toolset`, so a new integration is covered without a case
+saying so.
+"""
+
+CONTRACTS = (HOSTED_MCP_CONNECTION,)
+"""The contracts only Pydantic AI Harness capabilities are subject to."""
