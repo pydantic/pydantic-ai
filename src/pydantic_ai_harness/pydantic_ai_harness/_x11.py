@@ -265,7 +265,13 @@ def start_x_server(log: str) -> str:
         # A stale lock, such as one left by `docker stop`, names a PID that is gone or belongs to another process.
         # A running X server's lock names it, whichever server it is, such as `Xvnc`.
         f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
-        f'*) rm -f {_X_LOCK} {_X_SOCKET}; '
+        f'*) '
+        # No X server here holds the lock, and ours doesn't listen on the abstract socket, so one listening there is
+        # another namespace's, such as the host's under `--network host`: `xdotool` would reach it before ours.
+        f'if grep -q " @{_X_SOCKET}$" /proc/net/unix 2>/dev/null; then echo "another X server, outside this sandbox, '
+        f'already uses display {DISPLAY} through a network namespace the sandbox shares, such as the host network" >&2; '
+        'exit 1; fi; '
+        f'rm -f {_X_LOCK} {_X_SOCKET}; '
         # Xvfb makes the socket directory only as root; without root, one the user makes works, so the mkdir then runs
         # unprefixed.
         f'if [ ! -d {_X_SOCKET_DIR} ]; then [ "$elevate" = none ] && elevate=; '
