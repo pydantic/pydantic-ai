@@ -533,7 +533,7 @@ The interactive editor owns its layout explicitly. Do not reintroduce a
 PromptSession renderer. `PromptSurface` starts inline on the main screen, repainting
 only the rows the terminal's scrollback lacks plus the editor, and switches to the
 alternate screen for good once they would fill the terminal or the width changes.
-`display.full_screen` (`LivePrompt(full_screen=True)`, `PromptSurface(inline=False)`)
+`display.full_screen` (`LivePrompt(full_screen=True)`, `PromptSurface.full_screen`)
 starts on the alternate screen; tests that need fixed frame rows use it. The inline
 phase pushes only `KEYS_ON`, never mouse reporting, so the terminal keeps its own wheel
 scrollback and selection; it shows every unprinted row, so it has nothing to scroll and

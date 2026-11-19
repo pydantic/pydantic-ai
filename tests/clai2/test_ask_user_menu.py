@@ -766,7 +766,8 @@ async def test_custom_decoder_cancellation_detaches_before_editor_resumes(
 def test_dragging_question_text_highlights_and_copies_without_answering(question: Question, target: str) -> None:
     terminal = SurfaceTerminal(width=80, height=24)
     # Selecting painted cells is the full-screen panel's; the inline one leaves the mouse to the terminal.
-    surface = PromptSurface(output=terminal, size=lambda: (80, 24), inline=False)
+    surface = PromptSurface(output=terminal, size=lambda: (80, 24))
+    surface.full_screen = True
     surface.write('Transcript control\n')
     menu = QuestionMenu(question=question, position=1, total=1)
 

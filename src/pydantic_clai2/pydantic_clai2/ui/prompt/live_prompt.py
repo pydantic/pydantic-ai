@@ -114,9 +114,8 @@ class LivePrompt:
         self._chord_prefix = ''
         self._last_escape: float | None = None
         self.buffer = PromptBuffer(history=list(reversed(list(history.load_history_strings()))))
-        self.output = PromptSurface(
-            output=console.file, size=lambda: console.size, transcript=transcript, inline=not full_screen
-        )
+        self.output = PromptSurface(output=console.file, size=lambda: console.size, transcript=transcript)
+        self.output.full_screen = full_screen
         self.keys = PromptKeys(
             source=get_app_session().input,
             feed=self.feed,

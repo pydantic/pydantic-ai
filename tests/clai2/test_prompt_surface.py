@@ -51,8 +51,8 @@ class Screen:
             size=lambda: (self.terminal.width, self.terminal.height),
             clock=lambda: self.now,
             open_url=self.opened.append,
-            inline=inline,
         )
+        self.surface.full_screen = not inline
 
     def write(self, text: str) -> None:
         """Write a frame interval apart, so every write paints."""
@@ -65,7 +65,8 @@ class Screen:
 
 def test_modified_key_and_mouse_reporting_are_scoped_to_editor_ownership() -> None:
     output = io.StringIO()
-    surface = PromptSurface(output=output, size=lambda: (80, 24), inline=False)
+    surface = PromptSurface(output=output, size=lambda: (80, 24))
+    surface.full_screen = True
     for activation in range(1, 3):
         surface.paint(ROWS)
         surface.paint((*ROWS, 'EXTRA ROW'))
@@ -391,8 +392,8 @@ def test_scroll_anchor_survives_eviction_by_following_again() -> None:
         size=lambda: (40, 8),
         transcript=TranscriptBuffer(max_lines=10),
         clock=lambda: 1.0,
-        inline=False,
     )
+    surface.full_screen = True
     surface.paint(('EDITOR',))
     for index in range(10):
         surface.write(f'line {index}\n')
