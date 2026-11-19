@@ -145,11 +145,13 @@ def test_known_schema_failures(name: str):
 
 
 def test_tables_name_checked_classes():
-    tables = {**OPT_OUT, **KNOWN, **KNOWN_UNLOADABLE, **KNOWN_REJECTED}.keys() | {*NARROWED_FROM_SPEC}
     # Only meaningful when every module imported: a class whose optional group isn't installed looks deleted. Every
-    # optional group imports only where browser-use is installed.
+    # module imports in the `test harness browser-use` CI job, which runs this file.
+    tables = {**OPT_OUT, **KNOWN, **KNOWN_UNLOADABLE, **KNOWN_REJECTED}.keys() | {*NARROWED_FROM_SPEC}
     if not SKIPPED_MODULES:  # pragma: lax no cover
         assert tables <= set(CHECKED), f'Remove the entries for classes that are gone: {sorted(tables - set(CHECKED))}'
+    else:  # pragma: lax no cover
+        pytest.skip(f'Modules that did not import: {", ".join(sorted(SKIPPED_MODULES))}')
 
 
 @pytest.mark.parametrize('name', NARROWED_FROM_SPEC)
