@@ -9,6 +9,7 @@ eagerly.
 
 from typing import TYPE_CHECKING
 
+from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.media import PostgresConnection, PostgresPool
 from pydantic_ai_harness.step_persistence._capability import StepPersistence
 from pydantic_ai_harness.step_persistence._events import STEP_PERSISTENCE_EVENTS, SnapshotSavedEvent
@@ -65,6 +66,9 @@ __all__ = [
 
 
 def __getattr__(name: str) -> object:
+    if name == 'SnapshotSaved':
+        warn_class_renamed(name, 'SnapshotSavedEvent', __name__)
+        return SnapshotSavedEvent
     if name == 'MongoStepStore':
         from pydantic_ai_harness.step_persistence._mongo import MongoStepStore
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import html
 import re
+import warnings
 from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import UTC, datetime
@@ -48,6 +49,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._message_text import capability_part_text, tool_return_text, user_prompt_text, with_text
 from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness._usage import reserved_usage_limits
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -825,9 +827,13 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         if self.tool_return_max_chars is not None and self.tool_return_max_chars < 1:
             raise ValueError('tool_return_max_chars must be positive.')
         if not _is_valid_summary_prompt(self.summary_prompt):
-            raise ValueError(
+            # Such a prompt used to be accepted here, and either fails at the first compaction or
+            # sends no transcript, so warn now rather than break code that constructs one.
+            warnings.warn(
                 '`summary_prompt` must contain a `{messages}` placeholder and no other replacement field; '
-                'write a literal brace as `{{` or `}}`.'
+                'write a literal brace as `{{` or `}}`. This will raise `ValueError` in a future release.',
+                HarnessDeprecationWarning,
+                stacklevel=3,
             )
 
     def with_focus(self, focus: str) -> SummarizingCompaction[AgentDepsT]:

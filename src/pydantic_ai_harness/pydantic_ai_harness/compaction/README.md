@@ -256,6 +256,9 @@ async def show(ctx, event):
 
 Each reading carries `used_tokens`, `window_tokens`, and `resolved` -- `False` when the window is the
 fallback rather than the model's real one, so a gauge can show that the percentage is a guess.
+Migration: `on_usage` remains supported but is deprecated. Move its callback body to a
+`ContextUsageMeasuredEvent` subscription.
+
 Order matters: register the monitor *after* a compaction capability to observe the corrected current
 history after same-cycle compaction, or before it to see what triggered the compaction.
 
@@ -727,7 +730,7 @@ with `Summary of previous conversation:`, keeps working: that summary anchors th
 replaced by it.
 
 Both prompt surfaces of the summary request are fields: `summary_prompt` is the user-turn template (it
-must contain a `{messages}` placeholder and no other replacement field; any other prompt raises `ValueError`), and `instructions` sets the internal agent's static instructions,
+must contain a `{messages}` placeholder and no other replacement field; any other prompt emits a `HarnessDeprecationWarning` and will raise `ValueError` in a future release), and `instructions` sets the internal agent's static instructions,
 which Pydantic AI sends in the request's system prompt. Override `instructions` when the summarizer
 endpoint requires a fixed leading instruction.
 The default `summary_prompt` asks for the summary under fixed section headings. Its `## Intent` section

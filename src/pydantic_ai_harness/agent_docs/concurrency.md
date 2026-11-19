@@ -126,12 +126,16 @@ before writing cleanup.
   and discards writes, and `asyncio.get_running_loop()` raises there. This
   covers `def` tools, output functions and validators, instructions functions,
   hooks, and history processors.
-- Harness callbacks take the other lane. `PromptInjectionDefender.on_detection`
-  is called inline from the hook and awaited only if it returns an awaitable, so a
+- Harness callbacks take the other lane. `SpendLimits.on_spend`,
+  `ReportContextUsage.on_usage`, and `PromptInjectionDefender.on_detection` are
+  called inline from the hook and awaited only if they return an awaitable;
+  `SystemReminders.on_fire` is typed `Callable[[str], None]` and called bare,
+  so an `async def` there produces a coroutine that is never run. Either way a
   sync callback blocks the loop and its `ContextVar` writes stick. That is
-  deliberate (it is a cheap notification) but it is a contract: do not move it
-  to `to_thread` without saying so, and prefer emitting a `CapabilityEvent` over
-  adding another callback.
+  deliberate (they are cheap notifications) but it is a contract: do not move
+  one to `to_thread` without saying so, and prefer emitting a
+  `CapabilityEvent` over adding another callback (#714 deprecates those four
+  toward events).
 - Not every sync callback is dispatched. Core awaits `Tool.prepare`,
   `PreparedToolset.prepare_func`, `FallbackModel` handlers, and model-id
   resolvers inline via `_utils.await_maybe`: they block the loop and their
@@ -168,8 +172,9 @@ before writing cleanup.
   `__aenter__` or `agen.aclose()` by hand. Core's realtime early-break tests
   called `aclose()` themselves and passed while the shipped syntax leaked its
   tasks.
-- Order steps with `Event`s, not sleeps, and wait on them with a module-level
-  readiness timeout, not a one-second literal: short waits flake under `xdist`
+- Order steps with `Event`s, not sleeps, and wait on them with
+  `READINESS_WAIT_TIMEOUT` from `tests/_timeouts.py`, not a one-second
+  literal: short waits flake under `xdist`
   (pydantic/pydantic-ai#5399). `tests/harness/shell/test_shell.py` and
   `tests/harness/guardrails/test_input_guardrail.py` already carry sleeps; when you touch
   one, convert it.

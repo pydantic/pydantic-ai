@@ -74,6 +74,7 @@ from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset, FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_graph import End
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -91,7 +92,6 @@ from .continuation_utils import ScriptedContinuationModel, StreamSegment, script
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-READINESS_WAIT_TIMEOUT = 10
 
 pytestmark = []
 

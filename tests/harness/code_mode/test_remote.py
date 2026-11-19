@@ -8,9 +8,10 @@ Real subprocess bridge tests remain skipped until #8824 is resolved.
 from __future__ import annotations
 
 import asyncio
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Never
 from unittest.mock import AsyncMock, MagicMock
@@ -33,7 +34,8 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning
+from pydantic_ai_harness.code_mode import CodeModeToolset
 from tests.harness.code_mode.grpc_relay import MontyRelay, serve_monty_relay
 from tests.harness.code_mode.repl_store import MemoryReplStore
 
@@ -251,6 +253,26 @@ async def test_pool_instead_of_function_rejected() -> None:
         await agent.run('dial')
 
 
+def test_deprecated_sandbox_url_becomes_monty_sandbox() -> None:
+    """`monty_sandbox_url` still works, warns once at the caller's line, and moves into `monty_sandbox`."""
+    with pytest.warns(HarnessDeprecationWarning, match='monty_sandbox_url') as warned:
+        capability = CodeMode(monty_sandbox_url='https://sandbox.example.com')
+    assert warned[0].filename == __file__
+    assert capability.monty_sandbox == 'https://sandbox.example.com'
+    assert capability.monty_sandbox_url is None
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        replace(capability)
+
+    with pytest.warns(HarnessDeprecationWarning, match='monty_sandbox_url') as warned:
+        toolset = CodeModeToolset(FunctionToolset(), monty_sandbox_url='https://sandbox.example.com')
+    assert warned[0].filename == __file__
+    assert toolset.monty_sandbox == 'https://sandbox.example.com'
+
+    with pytest.raises(UserError, match='`monty_sandbox_url` is its deprecated form'):
+        CodeMode(monty_sandbox='https://a.example.com', monty_sandbox_url='https://b.example.com')
+
+
 @pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
 async def test_disconnect_mid_snippet_reports_started_calls(monty_relay: MontyRelay) -> None:
     """A dropped worker connection resets the session and lists the calls that already started."""
@@ -448,8 +470,8 @@ class TestCodeModeErrorRouting:
         at the public native snapshot boundary after a real tool call, not into the harness executor.
         """
         assert _SECRET in str(error)
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', _CrashedError)
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyDisconnectError', _DisconnectError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyCrashedError', _CrashedError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyDisconnectError', _DisconnectError)
         original_resume = AsyncFutureSnapshot.resume
 
         async def fail_after_tool(

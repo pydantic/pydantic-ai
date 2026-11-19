@@ -111,9 +111,9 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
 
 async def _delete(machine_id: str) -> None:
     try:
-        machine = await asyncio.to_thread(smol.Machine.connect, machine_id, _backend.local_target())
+        machine = await asyncio.to_thread(smol.Machine.connect, machine_id, _backend.local_target())  # noqa: TID251  (not converted to anyio yet)
     except smol.SmolError as error:
         if error.code == 'NOT_FOUND':
             return
         raise
-    await asyncio.to_thread(machine.delete)
+    await asyncio.to_thread(machine.delete)  # noqa: TID251  (not converted to anyio yet)

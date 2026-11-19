@@ -151,7 +151,8 @@ example a decision model) needs `model=` set or the first compaction raises `Use
 Useful keyword options: `model_settings`, `summarization_capabilities` (outer capabilities do not
 run on the summary call), `incremental=True` (update the previous summary rather than
 re-summarize), `keep_user_messages=False`, `tool_return_max_chars=500`, `summary_prompt` (must
-contain `{messages}` and no other replacement field, or it raises `ValueError`; a custom prompt replaces the default's rule that instructions
+contain `{messages}` and no other replacement field; any other prompt emits a `HarnessDeprecationWarning`
+and will raise `ValueError` in a future release; a custom prompt replaces the default's rule that instructions
 inside tool results aren't the user's, so include your own), `instructions`, `bridge_prefix=False`, `receipts=False`,
 `event_stream_handler` (pass `drain_summary_events` for endpoints that reject non-streaming).
 `keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
@@ -269,7 +270,8 @@ least one limit is required; `warn_on` may only name configured kinds (`'iterati
 
 `ReportContextUsage(context_window=None, fallback_context_window=200_000, tokenizer=None)` emits a
 `ContextUsageMeasuredEvent` (`used_tokens`, `window_tokens`, `fraction`, `resolved`) before each request.
-`resolved=False` means the window is the fallback guess.
+`resolved=False` means the window is the fallback guess. The `on_usage=` callback is deprecated;
+subscribe to the event.
 
 ```python
 from pydantic_ai import Agent
@@ -415,8 +417,10 @@ the conversation established (per provider, endpoint, and model) by more than `m
 of it and at least `min_missed_tokens=2000` tokens, unless the provider's cache retention window or a
 `CompactionPart` explains it. It shares core instrumentation's detector: `warning.reason` is
 `'unexpected'` (inside the retention window) or `'unknown'` (no published window); `ttl_expired`,
-`compacted`, and `unreported` collapses don't warn. It adds no tools or instructions.
-Retention comes from the model's settings, its profile's `default_cache_retention`, and `CachePoint` TTLs.
+`compacted`, and `unreported` collapses don't warn. It adds no tools or instructions. Deprecated:
+`collapse_ratio` (honored as `min_missed_ratio=1 - collapse_ratio`), `min_prefix_tokens` (honored;
+use `min_missed_tokens`), and `cache_ttl_seconds` (ignored: retention comes from the model's
+settings, its profile's `default_cache_retention`, and `CachePoint` TTLs).
 
 ```python
 import warnings
@@ -495,7 +499,7 @@ caller-owned `asyncpg` pool) and the `externalize_media` /
 `media_threshold_bytes` 64 KiB) to keep snapshots small; configure a store only to change where
 payloads live. Nothing here goes in `capabilities=[...]`.
 
-## Removed names
+## Deprecated names
 
 Use `warn_on_cache_busts.WarnOnCacheBusts` (not `cache_stability` / `CacheStabilityMonitor`),
 `tool_output_limits.ToolOutputLimits` (not `overflowing_tool_output` / `OverflowingToolOutput`),
