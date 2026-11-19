@@ -3,6 +3,7 @@
 import asyncio
 import io
 import re
+import threading
 import time
 import webbrowser
 from collections.abc import Callable
@@ -484,22 +485,22 @@ async def test_terminal_waiting_screen_links_the_url(monkeypatch: pytest.MonkeyP
     """The preview pane cuts long lines, so the link carries the whole URL behind a label that fits."""
     previews: list[str] = []
     urls: list[str] = []
+    shown = threading.Event()
     seen = asyncio.Event()
     loop = asyncio.get_running_loop()
 
     def run_choice(menu: Menu) -> MenuResult:
         render = menu._preview  # pyright: ignore[reportPrivateUsage]
-        assert render is not None
-        while 'https://' not in (text := render(menu._items[0])):  # pyright: ignore[reportPrivateUsage]
-            time.sleep(0.01)
-        previews.append(text)
+        assert render is not None and shown.wait(timeout=5)
+        previews.append(render(menu._items[0]))  # pyright: ignore[reportPrivateUsage]
         loop.call_soon_threadsafe(seen.set)
         while not worker_stopping():
             time.sleep(0.01)
         return MenuResult(cancelled=True)
 
     async def exchange(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
-        urls.append(self.authorization_url())
+        urls.append(self.authorization_url())  # The screen shows the link before the callback is awaited.
+        shown.set()
         await seen.wait()
         return CREDENTIALS
 
