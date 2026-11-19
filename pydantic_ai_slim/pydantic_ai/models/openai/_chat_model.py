@@ -1448,10 +1448,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _is_inlined_as_text(item: BinaryContent) -> bool:
         """Whether `item` is inlined as a text block.
 
-        A `+yaml` type the OS mime table knows an extension for is a document, and is sent as a file instead.
+        An `image/*+yaml` type is an image, and a `+yaml` type the OS mime table knows an extension for is a
+        document: both keep their own part.
         """
         return _is_text_like_media_type(item.media_type) or (
-            _has_yaml_structured_suffix(item.media_type) and not item.is_document
+            _has_yaml_structured_suffix(item.media_type) and not item.is_image and not item.is_document
         )
 
     async def _map_binary_content_item(self, item: BinaryContent) -> ChatCompletionContentPartParam:

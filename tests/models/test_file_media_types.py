@@ -10,12 +10,14 @@ from __future__ import annotations as _annotations
 
 import copy
 import io
+import json
 import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NotRequired
 from unittest.mock import patch
 
+import httpx2
 import pytest
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
@@ -109,6 +111,7 @@ class _InputAudio(TypedDict):
 
 
 class _ChatPart(TypedDict):
+    type: str
     input_audio: NotRequired[_InputAudio]
     text: NotRequired[str]
 
@@ -192,25 +195,27 @@ async def test_anthropic_sends_image_jpg_as_jpeg(
 
 
 @dataclass(frozen=True)
-class _YamlInlineCase:
+class _YamlAdapterCase:
     id: str
     marks: tuple[pytest.MarkDecorator, ...]
 
 
-_YAML_INLINE_CASES = [
-    _YamlInlineCase(id='openai', marks=(pytest.mark.skipif(not openai_available(), reason='openai not installed'),)),
-    _YamlInlineCase(id='mistral', marks=(pytest.mark.skipif(not mistral_available(), reason='mistral not installed'),)),
+_YAML_ADAPTER_CASES = [
+    _YamlAdapterCase(id='openai', marks=(pytest.mark.skipif(not openai_available(), reason='openai not installed'),)),
+    _YamlAdapterCase(
+        id='mistral', marks=(pytest.mark.skipif(not mistral_available(), reason='mistral not installed'),)
+    ),
 ]
 
 
 @pytest.mark.vcr()
-@pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in _YAML_INLINE_CASES])
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in _YAML_ADAPTER_CASES])
 async def test_yaml_structured_suffix_is_inlined_as_text(
     allow_model_requests: None,
     openai_api_key: str,
     mistral_api_key: str,
     request_capture: RequestCapture,
-    case: _YamlInlineCase,
+    case: _YamlAdapterCase,
 ):
     """Chat Completions and Mistral send a `+yaml` type as a text file block, as they send `application/yaml`.
 
@@ -248,6 +253,36 @@ paths: {}
 """,
         ]
     )
+
+
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in _YAML_ADAPTER_CASES])
+async def test_yaml_structured_suffix_image_is_sent_as_an_image(allow_model_requests: None, case: _YamlAdapterCase):
+    """An `image/*+yaml` type is an image, so Chat Completions and Mistral send it as an image part, not as text.
+
+    Unit test, not VCR: no registered `image/*+yaml` type exists for an API to read, so the request goes to a
+    mocked transport.
+    """
+    requests: list[httpx2.Request] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        message = {'role': 'assistant', 'content': 'ok'}
+        choice = {'index': 0, 'finish_reason': 'stop', 'message': message}
+        usage = {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2}
+        body = {'id': 'x', 'object': 'chat.completion', 'created': 0, 'model': 'm', 'choices': [choice], 'usage': usage}
+        return httpx2.Response(200, json=body)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as client:
+        if case.id == 'openai':
+            model: Model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key='test', http_client=client))
+        else:
+            model = MistralModel('mistral-large-latest', provider=MistralProvider(api_key='test', http_client=client))
+        image = BinaryContent(data=b'x: 1\n', media_type='image/x+yaml')
+
+        await Agent(model).run(['Describe this image.', image])
+
+    [message] = _ChatBody.validate_python(json.loads(requests[0].content))['messages']
+    assert [part['type'] for part in message['content']] == ['text', 'image_url']
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
