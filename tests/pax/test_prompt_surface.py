@@ -956,12 +956,20 @@ def test_releasing_the_inline_panel_prints_it_so_others_can_write_below() -> Non
     assert not screen.terminal.alternate
     assert screen.lines()[:3] == ['$ clai2', 'answer', ''], 'the transcript is in scrollback; the editor is gone'
     screen.write('command output\n')
+    screen.write('progress.')
+    screen.write('.')
+    screen.surface.refresh()  # The frame interval's float sum can fall just short.
+    assert screen.lines()[2:5] == ['command output', 'progress..', ''], 'an unfinished line shows as it grows'
+    screen.write(' done\n')
+    screen.surface.refresh()
+    assert screen.lines()[2:5] == ['command output', 'progress.. done', '']
     screen.terminal.write('written by the command itself\r\n')
     screen.surface.paint(ROWS)
     assert not screen.terminal.alternate, 'the panel comes back inline below it'
-    assert screen.lines()[:9] == ['$ clai2', 'answer', 'command output', 'written by the command itself', '', *ROWS]
+    printed = ['$ clai2', 'answer', 'command output', 'progress.. done', 'written by the command itself']
+    assert screen.lines() == [*printed, '', *ROWS]
     screen.surface.restore()
-    assert screen.lines()[:5] == ['$ clai2', 'answer', 'command output', 'written by the command itself', '']
+    assert screen.lines()[:6] == [*printed, '']
 
 
 def test_releasing_the_inline_panel_mid_turn_moves_it_to_full_screen() -> None:

@@ -372,7 +372,7 @@ class PromptSurface(io.StringIO):
         if self._inline_moved(width=width, height=height):
             return False
         if not self._rows:
-            self._print_released(width=width)
+            self._print_released(width=width, height=height)
             return True
         pinned = self._rows[-(height - 2) :] if height > 2 else ()
         if (shown := self._unprinted(width=width, limit=height - len(pinned))) is None:
@@ -412,20 +412,25 @@ class PromptSurface(io.StringIO):
         self._painted_at = self.clock()
         self._painted_as = (width, height, theme.name())
 
-    def _print_released(self, *, width: int) -> None:
-        """Erase the inline rows and print the settled transcript into scrollback, while nothing is pinned.
+    def _print_released(self, *, width: int, height: int) -> None:
+        """Print the completed transcript into scrollback while nothing is pinned, and paint only an unfinished line.
 
-        A command run meanwhile may write to the terminal itself, so no rows stay that a later erase would
-        count.
+        A command run meanwhile may write to the terminal itself, so no more rows stay than that line,
+        which a later erase would count; a progress line such as a `!` command's dots still shows.
         """
         parts = [self._erase_inline() + INLINE_OFF] if self._inline_rows else []
         if printed := self.transcript.printed(width=width):
             parts.append(printed.replace('\n', '\r\n') if self.output.isatty() else printed)
+        if self._partial:
+            tail = self.transcript.rows(self.transcript.end, width=width)
+            parts.append('\x1b[?2026h' + INLINE_ON + '\r\n'.join(f'{row}\x1b[0m' for row in tail) + '\x1b[?2026l')
+            self._inline_rows = len(tail)
         if parts:
             self.output.write(''.join(parts))
             self.output.flush()
         self._dirty = False
         self._painted_at = self.clock()
+        self._painted_as = (width, height, theme.name())
 
     def _erase_inline(self) -> str:
         """Return to the inline panel's first row and clear it and everything below, or nothing without one."""
