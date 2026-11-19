@@ -122,6 +122,9 @@ Some models only take screenshots up to a size, set by `computer_use_screenshot_
 `ComputerUse` sends screenshots at the screen's size, so a larger screen stops the run with an error naming the
 largest size that fits. A 1280x800 screen fits every model.
 
+Claude's native toolset also refuses a screenshot over 4784 image tokens of 28x28 pixels each, such as 2549x1457,
+even when it fits those limits, and the run stops with Anthropic's error.
+
 GPT-5.5 clicks accurately up to 1920x1200 and GPT-5.4 up to 2048x1280, and can miss on a larger screen.
 
 ## When something goes wrong
