@@ -63,8 +63,9 @@ jobs:
       # comments. A maintainer is a user with `write` or `admin` permission, resolved one
       # user at a time: the collaborator list endpoint omits private org members (see
       # `maintainer_login` in `.github/scripts/issue_pr_attention_monitor.py`). The
-      # endpoint answers `read` for a non-collaborator and `none` for a bot, so a failed
-      # lookup fails the job rather than guessing.
+      # endpoint answers `read` for a non-collaborator, so a failed lookup fails the job
+      # rather than guessing. Only `User` accounts are looked up: the endpoint answers 404
+      # for some bots, such as `Copilot`, and a bot is never a maintainer.
       #
       # The action reads an empty `include_comments_by_actor` as "everyone", so the list
       # always starts with the triggering actor, whom the action itself requires to have
@@ -78,7 +79,10 @@ jobs:
             gh api "repos/${REPO}/collaborators/$1/permission" --jq '.permission'
           }
 
-          author_permission=$(permission "$THREAD_AUTHOR")
+          author_permission=none
+          if [ "$THREAD_AUTHOR_TYPE" = User ]; then
+            author_permission=$(permission "$THREAD_AUTHOR")
+          fi
           echo "Thread author ${THREAD_AUTHOR} has ${author_permission} access."
           included=("$GITHUB_ACTOR")
           case "$author_permission" in
@@ -89,7 +93,7 @@ jobs:
               fi
               found=""
               for endpoint in "${endpoints[@]}"; do
-                page=$(gh api --paginate "repos/${REPO}/${endpoint}?per_page=100" --jq '.[].user.login // empty')
+                page=$(gh api --paginate "repos/${REPO}/${endpoint}?per_page=100" --jq '.[] | select(.user.type == "User") | .user.login')
                 found+="${page}"$'\n'
               done
               mapfile -t authors < <(printf '%s' "$found" | sed '/^$/d' | sort -u)
@@ -113,6 +117,7 @@ jobs:
           NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
           IS_PR: ${{ github.event.issue.pull_request != null || github.event.pull_request != null }}
           THREAD_AUTHOR: ${{ github.event.issue.user.login || github.event.pull_request.user.login }}
+          THREAD_AUTHOR_TYPE: ${{ github.event.issue.user.type || github.event.pull_request.user.type }}
 
   at-claude:
     needs: get-pr-info
