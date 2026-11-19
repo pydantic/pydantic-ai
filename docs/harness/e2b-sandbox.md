@@ -277,7 +277,7 @@ A new sandbox runs E2B's `desktop` template: Ubuntu with XFCE, a terminal and Go
 
 XFCE takes `printscreen` (it opens its screenshot tool) and the media and volume keys itself, so the focused window never gets them.
 
-A custom `template` needs Xvfb, `xdotool`, `xwininfo` (`x11-utils` on Debian/Ubuntu), `scrot` and `setsid`, which [the first use installs](computer-use.md#what-the-display-needs) if it can, plus `startxfce4` for the XFCE desktop, which it doesn't.
+A custom `template` needs `xdotool`, `xwininfo` (`x11-utils` on Debian/Ubuntu), `scrot` and `setsid`, and Xvfb when no X server is running already. [The first use installs them](computer-use.md#what-the-display-needs) if it can. For the XFCE desktop it also needs `startxfce4`, which it doesn't install; without it, the screen stays black until a program opens a window.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 

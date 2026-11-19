@@ -206,7 +206,7 @@ python -c "from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE; 
 
 Then pass `DockerContainer(image='my-desktop', desktop=True)`.
 
-A custom `image` needs Xvfb, `xdotool`, `xwininfo` (Debian's `x11-utils`), `scrot` and `setsid`, which [the first use installs](computer-use.md#what-the-display-needs) if it can, plus `fluxbox` and `xprop` for a window manager, which it doesn't. Start from `DESKTOP_DOCKERFILE`.
+A custom `image` gets the same desktop. It needs the programs listed in [What the display needs](computer-use.md#what-the-display-needs), which the first use installs if it can. Xvfb is needed only when no X server is running already. Start from `DESKTOP_DOCKERFILE`.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 

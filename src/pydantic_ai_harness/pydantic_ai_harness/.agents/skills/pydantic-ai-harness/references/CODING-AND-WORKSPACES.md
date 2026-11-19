@@ -407,12 +407,14 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   Daytona or boxd backend you build needs `await backend.aclose()`.
 - `E2BSandbox(desktop=True)` gives a new sandbox E2B's `desktop` template (Ubuntu, XFCE, a terminal, Chrome) at
   1280x800 for `ComputerUse()`, or pass `desktop=(w, h)`. XFCE takes `printscreen` and the media and volume keys
-  itself. The agent can type only ASCII. A custom `template` needs Xvfb, `xdotool`, `xwininfo`, `scrot` and
-  `setsid`, which the first use installs with `apt-get` as root or with passwordless `sudo`, and `startxfce4`.
-- `KubernetesSandbox(warm_pool=..., desktop=True)` gives the pod a 1280x800 screen for `ComputerUse()`, or pass
-  `desktop=(w, h)`. Without root or passwordless `sudo` in the pod, the template's image must already have `xvfb`,
-  `xdotool`, `x11-utils`, `scrot` and `util-linux` (and a browser if the agent needs one); otherwise the first use
-  refuses, naming what is missing.
+  itself. The agent can type only ASCII. A custom `template` needs `xdotool`, `xwininfo`, `scrot`, `setsid`, and
+  Xvfb unless an X server runs, which the first use installs with `apt-get` as root or with passwordless `sudo`,
+  and `startxfce4`.
+- `KubernetesSandbox(warm_pool=..., desktop=True)` gives the pod a 1280x800 desktop for `ComputerUse()`, or pass
+  `desktop=(w, h)`. Without root or passwordless `sudo` in the pod, the template's image must already have
+  `xdotool`, `x11-utils`, `scrot`, `util-linux`, and `xvfb` unless an X server runs (and `fluxbox`, `tint2` and
+  `xterm` for the desktop, a browser if the agent needs one); otherwise the first use refuses, naming what is
+  missing.
 - Idempotent per-turn setup goes in a `@hooks.on.before_run` hook: `await ctx.workspace.run('test -d
   repo/.git || git clone <url> repo', shell=True, timeout=300)`. Clone into a subdirectory: `shell`,
   background commands, and output spills create `.pydantic-ai-harness/` in the working directory, so
@@ -515,8 +517,9 @@ Python up to 3.14.
   With Podman, `run()` returns when the command exits.
 - `desktop=True` gives the container a 1280x800 X display for `ComputerUse()`; commands and files stay available.
   Without `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, xterm, Firefox) and later runs reuse
-  it; a custom `image` needs Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid`, which the first use installs with
-  `apt-get` as root or with passwordless `sudo`. Under durable execution, build the image first and pass it as `image`.
+  it; a custom `image` needs `xdotool`, `xwininfo`, `scrot`, `setsid`, Xvfb unless an X server runs, and `fluxbox`,
+  `tint2` and `xterm` for the desktop, which the first use installs with `apt-get` as root or with passwordless
+  `sudo`. Under durable execution, build the image first and pass it as `image`.
 
 ### OpenSandbox
 
