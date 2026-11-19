@@ -259,12 +259,17 @@ def _toolset_ids(capability: AbstractCapability[DepsT]) -> list[str | None] | No
     if toolset is None:
         return None
     if not isinstance(toolset, AbstractToolset):
-        # The agent wraps a toolset function in one `DynamicToolset`, with no id of its own. No case returns one yet.
-        return [None]  # pragma: no cover
+        # The agent wraps a toolset function in one `DynamicToolset`, with no id of its own.
+        return [None]
     leaves: list[AbstractToolset[DepsT]] = []
     # Pyright can't narrow the toolset function out of `AgentToolset`, as core's `CombinedCapability` notes.
     toolset.apply(leaves.append)  # pyright: ignore[reportUnknownMemberType]
     return [leaf.id for leaf in leaves]
+
+
+def test_a_toolset_function_has_no_toolset_id() -> None:
+    """No case's capability returns a toolset function, so this is the one place `_toolset_ids` reads one."""
+    assert _toolset_ids(Toolset[None](lambda ctx: FunctionToolset[None]([]))) == [None]
 
 
 def _unset_id_breaks(capability: AbstractCapability[DepsT]) -> list[str]:

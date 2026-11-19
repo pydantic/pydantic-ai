@@ -117,8 +117,10 @@ class Collides:
     """
 
     reason: str
-    # `type[Any]`: each class is called with its own keyword arguments, which `type[AbstractCapability[None]]` rejects.
-    make: Callable[[type[Any]], tuple[AbstractCapability[None], AbstractCapability[None]]] | None = None
+    make: (
+        Callable[[Callable[..., AbstractCapability[None]]], tuple[AbstractCapability[None], AbstractCapability[None]]]
+        | None
+    ) = None
     """Builds two from the discovered class, when two can be built without credentials or a network.
 
     Takes the class rather than closing over an import: these capabilities live in optional groups,
@@ -150,8 +152,7 @@ class Narrows:
     """
 
     reason: str
-    # `type[Any]`: each class is called with its own keyword arguments, which `type[AbstractCapability[None]]` rejects.
-    make: Callable[[type[Any]], tuple[AbstractCapability[None], AbstractCapability[None]]]
+    make: Callable[[Callable[..., AbstractCapability[None]]], tuple[AbstractCapability[None], AbstractCapability[None]]]
     """Builds two that differ, from the discovered class, without credentials or a network."""
 
 
