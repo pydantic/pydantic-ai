@@ -76,7 +76,8 @@ def main(api: GhApi = gh_api, now: datetime | None = None) -> int:
                     f'repos/{repo}/actions/runs/{run_id}/jobs?filter=latest&per_page=100',
                     '--jq',
                     f'.jobs[] | select(.name == "{JOB_NAME}") | .steps[]'
-                    f' | select(.name == "{STEP_NAME}" and .conclusion == "success") | [.started_at, .completed_at] | @tsv',
+                    f' | select(.name == "{STEP_NAME}" and .conclusion == "success")'
+                    ' | [.started_at, .completed_at] | @tsv',
                 ]
             )
             if step:
@@ -87,7 +88,10 @@ def main(api: GhApi = gh_api, now: datetime | None = None) -> int:
                 if len(durations) == 2 * WINDOW:
                     break
         if len(durations) < 2 * WINDOW:
-            report = f'Only {len(durations)} of the newest {len(runs)} `main` runs ran `{STEP_NAME}`; {2 * WINDOW} are needed.'
+            report = (
+                f'Only {len(durations)} of the newest {len(runs)} `main` runs ran `{STEP_NAME}`; '
+                f'{2 * WINDOW} are needed.'
+            )
         else:
             newer = statistics.median(seconds for _, seconds in durations[:WINDOW])
             older = statistics.median(seconds for _, seconds in durations[WINDOW:])

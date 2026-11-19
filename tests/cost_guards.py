@@ -480,11 +480,11 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 # --- Collection time --------------------------------------------------------------------------------------------------
 #
 # Collection runs once per `pytest-xdist` worker, so its cost multiplies with the worker count; it mostly comes from
-# test modules importing heavy optional dependencies. The summary names the slowest modules to collect, so a module
-# that starts importing something expensive shows up in the next CI run, and `PYTEST_COLLECT_BUDGET_SECONDS` fails the
-# session over one that takes longer than that in every worker: one slow worker is runner noise, not the module's cost. Whichever module first imports a dependency that many modules share
-# would be charged for it, so with the budget set these are imported before collection, and the budget judges each
-# module on its own imports.
+# test modules importing heavy optional dependencies. The summary names the slowest modules to collect, so a module that
+# starts importing something expensive shows up in the next CI run, and `PYTEST_COLLECT_BUDGET_SECONDS` fails the
+# session over one that takes longer than that in every worker: one slow worker is runner noise, not the module's cost.
+# Whichever module first imports a dependency that many modules share would be charged for it, so with the budget set
+# these are imported before collection, and the budget judges each module on its own imports.
 
 _SLOWEST_MODULES_SHOWN = 10
 SHARED_DEPENDENCIES = ('anthropic', 'openai', 'hypothesis')
