@@ -209,6 +209,10 @@ logfire-sdk = false
 # TODO(adtyavrdhn): Remove after 2026-11-19 19:37 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 k8s-agent-sandbox = "2026-11-12T19:37:00Z"
+# pixeltable 0.7.25 is the `pixeltable` extra's floor: it is the first release with `RowCountStats.updated_rows`.
+# TODO(dsfaccini): Remove after 2026-11-25 16:53 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+pixeltable = "2026-11-18T16:53:00Z"
 
 [dependency-groups]
 dev = [

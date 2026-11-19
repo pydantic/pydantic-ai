@@ -365,7 +365,7 @@ class PixeltableMemoryStore:
                 _insert_rows(t, [{'path': path, **values, 'fingerprint': None}])
             return
         where = (t.path == path) & (t.kind == row['kind']) & (t.version == row['version'])
-        if t.update(values, where=where).row_count_stats.upd_rows != 1:
+        if t.update(values, where=where).row_count_stats.updated_rows != 1:
             action = 'deleted' if deleting else 'written'
             raise MemoryConflictError(f'memory path {path!r} changed before it could be {action}')
 
