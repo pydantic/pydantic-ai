@@ -24,7 +24,7 @@ from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 
-from ..conftest import IsStr, try_import
+from ..conftest import IsStr, ignore_deprecated_models_in_recordings, try_import
 
 with try_import() as imports_successful:
     from anthropic import (
@@ -259,3 +259,22 @@ def test_anthropic_sdk_copy_is_ignored():
     )
     shown = [line for line in result.stderr.splitlines() if 'Warning: ' in line]
     assert shown == [IsStr(regex=r".*DeprecatedModelWarning: Model 'anthropic:claude-sonnet-4-5' is deprecated .*")]
+
+
+def test_recording_a_deprecated_model_fails():
+    """The suite ignores the warning for the deprecated models its recordings use only while it replays them.
+
+    Recording a test against one of them fails, so the test moves to a current model before it's re-recorded.
+    """
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='mock-api-key'))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        ignore_deprecated_models_in_recordings('none')
+        model.prepare_request(None, ModelRequestParameters())
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        ignore_deprecated_models_in_recordings('rewrite')
+        with pytest.raises(DeprecatedModelWarning, match="Model 'openai:gpt-5' is deprecated"):
+            model.prepare_request(None, ModelRequestParameters())

@@ -735,11 +735,6 @@ def test_openai_gpt_4o():
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
             'rejects_unpaired_tool_calls': True,
-            'deprecation': ModelDeprecation(
-                source_url='https://developers.openai.com/api/docs/deprecations#2026-10-14-gpt-4-series-model-deprecations',
-                retirement_date=date(2027, 1, 14),
-                replacement='gpt-6-luna',
-            ),
         }
     )
 

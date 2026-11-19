@@ -818,10 +818,7 @@ OPENAI_MODEL_DEPRECATIONS: dict[str, ModelDeprecation] = {
             ),
         ),
         (
-            (
-                'gpt-4.1',
-                'gpt-4.1-2025-04-14',
-            ),
+            ('gpt-4.1-2025-04-14',),
             ModelDeprecation(
                 source_url='https://developers.openai.com/api/docs/deprecations#2026-10-14-gpt-4-series-model-deprecations',
                 retirement_date=date(2027, 1, 14),
@@ -829,10 +826,7 @@ OPENAI_MODEL_DEPRECATIONS: dict[str, ModelDeprecation] = {
             ),
         ),
         (
-            (
-                'gpt-4.1-mini',
-                'gpt-4.1-mini-2025-04-14',
-            ),
+            ('gpt-4.1-mini-2025-04-14',),
             ModelDeprecation(
                 source_url='https://developers.openai.com/api/docs/deprecations#2026-10-14-gpt-4-series-model-deprecations',
                 retirement_date=date(2027, 1, 14),
@@ -840,11 +834,7 @@ OPENAI_MODEL_DEPRECATIONS: dict[str, ModelDeprecation] = {
             ),
         ),
         (
-            (
-                'gpt-4o',
-                'gpt-4o-2024-08-06',
-                'gpt-4o-2024-11-20',
-            ),
+            ('gpt-4o-2024-08-06',),
             ModelDeprecation(
                 source_url='https://developers.openai.com/api/docs/deprecations#2026-10-14-gpt-4-series-model-deprecations',
                 retirement_date=date(2027, 1, 14),
@@ -852,10 +842,15 @@ OPENAI_MODEL_DEPRECATIONS: dict[str, ModelDeprecation] = {
             ),
         ),
         (
-            (
-                'gpt-4o-mini',
-                'gpt-4o-mini-2024-07-18',
+            ('gpt-4o-2024-11-20',),
+            ModelDeprecation(
+                source_url='https://developers.openai.com/api/docs/deprecations#2026-10-14-gpt-4-series-model-deprecations',
+                retirement_date=date(2027, 1, 14),
+                replacement='gpt-6-luna',
             ),
+        ),
+        (
+            ('gpt-4o-mini-2024-07-18',),
             ModelDeprecation(
                 source_url='https://developers.openai.com/api/docs/deprecations#2026-10-14-gpt-4-series-model-deprecations',
                 retirement_date=date(2027, 1, 14),
@@ -936,39 +931,6 @@ OPENAI_MODEL_DEPRECATIONS: dict[str, ModelDeprecation] = {
                 retirement_date=date(2027, 4, 1),
                 replacement='gpt-6-luna',
             ),
-        ),
-        (
-            ('gpt-4o-audio-preview-2024-12-17',),
-            ModelDeprecation(source_url='https://developers.openai.com/api/docs/models/gpt-4o-audio-preview'),
-        ),
-        (
-            ('gpt-4o-audio-preview-2025-06-03',),
-            ModelDeprecation(source_url='https://developers.openai.com/api/docs/models/gpt-4o-audio-preview'),
-        ),
-        (
-            ('gpt-4o-mini-audio-preview-2024-12-17',),
-            ModelDeprecation(source_url='https://developers.openai.com/api/docs/models/gpt-4o-mini-audio-preview'),
-        ),
-        (
-            ('gpt-4o-mini-search-preview',),
-            ModelDeprecation(source_url='https://developers.openai.com/api/docs/models/gpt-4o-mini-search-preview'),
-        ),
-        (
-            ('gpt-4o-search-preview',),
-            ModelDeprecation(source_url='https://developers.openai.com/api/docs/models/gpt-4o-search-preview'),
-        ),
-        (
-            ('gpt-daybreak-blue-latest',),
-            ModelDeprecation(source_url='https://developers.openai.com/api/docs/models/gpt-daybreak-blue-latest'),
-        ),
-        (
-            ('gpt-daybreak-red-latest',),
-            ModelDeprecation(source_url='https://developers.openai.com/api/docs/models/gpt-daybreak-red-latest'),
-        ),
-        (('o1-mini-2024-09-12',), ModelDeprecation(source_url='https://developers.openai.com/api/docs/models/o1-mini')),
-        (
-            ('o1-preview-2024-09-12',),
-            ModelDeprecation(source_url='https://developers.openai.com/api/docs/models/o1-preview'),
         ),
     )
     for model_id in model_ids
