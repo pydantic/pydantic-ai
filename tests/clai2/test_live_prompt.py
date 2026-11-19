@@ -374,6 +374,10 @@ async def test_draft_rows_follow_a_prompt_marker() -> None:
         first = live.frame()[1]
         assert Text.from_ansi(first).plain == '❯ ' + 'a' * 78
         assert first.index('❯') < first.index('\x1b[7ma\x1b[27m')
+        # A draft taller than its rows scrolls to the cursor, and the marker stays on the top row shown.
+        live.buffer.replace('\n'.join(f'line {index}' for index in range(20)))
+        plain = [Text.from_ansi(row).plain for row in live.frame()[1:-2]]
+        assert plain == ['❯ line 12', *(f'  line {index}' for index in range(13, 19)), '  line 19 ']
 
 
 async def test_completion_acceptance_and_cycling() -> None:

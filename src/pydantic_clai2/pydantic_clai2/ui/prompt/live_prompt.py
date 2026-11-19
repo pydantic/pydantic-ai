@@ -591,7 +591,8 @@ class LivePrompt:
         rows.append(muted + title + '─' * max(0, width - visible_length(title)) + reset)
         # The box has no side borders: the draft and the suggestions are rows between the top and
         # bottom rules, so no row can drift out of alignment with the corners. The draft wraps two
-        # cells narrower, after a `❯ ` marker on its first row and an indent on the rest.
+        # cells narrower, after a `❯ ` marker on its first row shown (a tall draft scrolls to the
+        # cursor, and the marker stays visible) and an indent on the rest.
         # The pinned row only takes a spare row: `paint` keeps `height - 2` rows, and the title,
         # one draft row, the rule, and the footer come first.
         pinned = self.pinned() if height - len(rows) - 5 >= 1 else ''
