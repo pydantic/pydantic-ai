@@ -1,6 +1,8 @@
-"""Tells a model that points on a grid so, and labels its `computer` calls with its grid and screenshot limits.
+"""Adds a model's coordinate grid and screenshot limits to the `computer` tool and its calls.
 
-The agent applies this per attempt, so it follows the model serving the request, also after `ModelFallback` switches.
+A model that points on a grid instead of in pixels is told so in the `computer` tool's description. Each `computer`
+call a model makes is labelled with its grid and screenshot limits. The agent does this on every attempt, so the
+labels match the model that answered, also after `ModelFallback` switches to another model.
 """
 
 from __future__ import annotations as _annotations
@@ -30,14 +32,14 @@ def _grid_hint(grid: int) -> str:
 
 
 def candidate_models(model: Model) -> list[Model]:
-    """The models that may answer a request to `model`: itself, a `FallbackModel`'s models, or those a wrapper wraps."""
+    """The models that may answer a request to `model`: itself, each of a `FallbackModel`'s models, or what it wraps."""
     if isinstance(model, FallbackModel):
         return [answering for inner in model.models for answering in candidate_models(inner)]
     try:
         model.profile
     except NotImplementedError:
-        # Only `WrapperModel`'s own `profile` forwards to `wrapped`. An override may pick another model for the run,
-        # as `TemporalModel.using_model()` does, so its `wrapped` would give the wrong limits.
+        # Only `WrapperModel`'s own `profile` reads from `wrapped`. A subclass that overrides `profile` may run another
+        # model, as `TemporalModel.using_model()` does, so the limits of `wrapped` could be the wrong ones.
         if isinstance(model, WrapperModel) and type(model).profile is WrapperModel.profile:
             return candidate_models(model.wrapped)
         return []
@@ -58,7 +60,7 @@ def smallest_limit(
 
 
 def add_grid_hint(model: Model, params: ModelRequestParameters) -> ModelRequestParameters:
-    """Tell a model that points on a grid so in each `computer` tool's description."""
+    """For a model that points on a grid, add a sentence saying so to each `computer` tool's description."""
     if not any(tool.tool_kind == COMPUTER_KIND.id for tool in params.function_tools):
         return params
     if (grid := shared_grid(model)) is None:
@@ -89,5 +91,6 @@ def label_calls(model: Model, params: ModelRequestParameters, response: _message
         return
     for part in response.parts:
         if isinstance(part, _messages.ToolCallPart) and part.tool_name in names:
-            # `provider_name` stays as sent, as the response digest includes it; when unset, the response's applies.
+            # `provider_name` is left as sent, because the response digest includes it. When it is unset, the
+            # response's `provider_name` applies.
             part.provider_details = {**(part.provider_details or {}), **labels}

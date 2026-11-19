@@ -1,4 +1,4 @@
-"""`LazyDisplay`, a backend's display started on first use and again after a failure, and helpers the displays share."""
+"""`LazyDisplay`, which starts a backend's display on first use and again after a failure, plus shared helpers."""
 
 from __future__ import annotations as _annotations
 
@@ -42,19 +42,19 @@ def png_from_base64(encoded: str | None, source: str) -> bytes:
 
 
 class DisplayDriver(Display, SupportsZoom, SupportsCursorPosition, Protocol):
-    """Drives one running display, such as an X server through commands or a provider's API."""
+    """Controls one running display, such as an X server through commands, or a provider's API."""
 
 
 class LazyDisplay:
-    """The display a backend hands out for its lifetime: started on first use, and again after a failure.
+    """The display a backend hands out for its whole life. It starts on first use, and again after a failure.
 
-    Building it does nothing. `start` brings the display up and leaves a running one alone; `driver` then drives it.
-    `scope` wraps every call, including the start. A backend uses it, for example, to turn a provider's errors
-    into workspace errors. The backend also starts it before
-    each shell command, so a program the command opens shows on the screen.
+    Creating it does nothing. `start` starts the display, and does nothing if the display already runs. `driver` then
+    controls it. `scope` wraps every call, including the start. For example, a backend uses it to turn a provider's
+    errors into workspace errors. The backend also calls `start` before each shell command, so a program the command
+    opens shows on the screen.
 
-    A call that only looks, such as a screenshot, is retried once after a failure, which restarts a lost display. An
-    action isn't retried, so nothing is done twice.
+    A call that only looks, such as a screenshot, is retried once after a failure, and the retry restarts a lost
+    display. An action is never retried, so nothing is done twice.
 
     It implements [`Display`][pydantic_ai_harness.computer_use.Display] and every optional ability.
     """
@@ -81,7 +81,7 @@ class LazyDisplay:
         self._running = False
 
     async def start(self) -> None:
-        """Start the display unless it is known to run."""
+        """Start the display, unless it is known to be running."""
         async with self._scope():
             await self._start_unless_running()
 
@@ -102,8 +102,8 @@ class LazyDisplay:
             except UnsupportedActionError:
                 raise  # a refused action, such as an unknown key: the display is fine
             except Exception as error:
-                # The display may have stopped, or the environment restarted: the next call starts it again, which
-                # does nothing to a display that is still running.
+                # The display may have stopped, or the environment restarted. The next call starts it again. Starting a
+                # display that still runs does nothing.
                 self._running = False
                 # Retrying can't help an unavailable environment, and would double a timeout.
                 if isinstance(error, WorkspaceUnavailableError | WorkspaceTimeoutError):

@@ -85,8 +85,8 @@ def call_as_sent(part: ToolCallPart) -> ToolCallPart:
     """`part` as the server holds it: a base call, without what the agent graph adds after `request()`.
 
     The digest is taken in `request()`. The graph then promotes the call to its typed subclass and, on a `computer`
-    call, adds its model's grid and screenshot limits to `provider_details`. None of that is sent, so leaving it in
-    would stop a later response from matching.
+    call, adds its model's grid and screenshot limits to `provider_details`. None of that is sent to the provider.
+    Leaving it in would change the digest, so a later response would never match.
     """
     args = part.args if part.args is None or isinstance(part.args, str) else {**part.args}
     details = part.provider_details
