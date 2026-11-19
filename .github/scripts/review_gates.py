@@ -311,6 +311,29 @@ def finding_reviewer(comment: ReviewComment, parent: Review | None) -> str | Non
     return gh_aw_reviewer(comment, parent)
 
 
+def _rejection(
+    login: str,
+    line: re.Match[str],
+    finding: ReviewComment,
+    pull: ReviewPullRequest,
+    writers: set[str],
+    own: set[str],
+    opened: dict[str, datetime],
+    optional: bool,
+) -> str | None:
+    """Why a disposition reply does not answer its finding, or `None` when it does."""
+    writer = login in writers
+    if not writer and login != pull.user.login:
+        return f'`{login}` is neither the PR author nor a user with write access'
+    if sha := line['sha']:
+        return None if sha in own else f'`{sha}` is not a commit of this PR'
+    if number := line['number']:
+        if (at := opened.get(number)) is None:
+            return f'#{number} is not another issue or PR'
+        return None if writer or at >= finding.created_at else f'#{number} was opened before the finding'
+    return None if writer or optional else '`Declined:` needs write access'
+
+
 def finding_dispositions(
     github: ReviewGitHub,
     pull: ReviewPullRequest,
@@ -353,17 +376,18 @@ def finding_dispositions(
             unregistered.append(f'{url}: no registered reviewer started this `{finding.user.login}` thread.')
             continue
         optional = reviewer == 'douwebot' and finding.body.startswith(OPTIONAL_FINDING_PREFIX)
-        if any(
-            (login in writers or login == pull.user.login)
-            and (
-                line['sha'] in own
-                or ((at := opened.get(line['number'])) is not None and (login in writers or at >= finding.created_at))
-                or (line['declined'] and (optional or login in writers))
-            )
+        rejections = [
+            _rejection(login, line, finding, pull, writers, own, opened, optional)
             for login, line in answers.get(finding.id, [])
-        ):
+        ]
+        if None in rejections:
             continue
-        unanswered.append(f'{url}: the {reviewer} finding has no disposition reply.')
+        reasons = '; '.join(reason for reason in rejections if reason)
+        unanswered.append(
+            f'{url}: the {reviewer} finding has no accepted disposition reply: {reasons}.'
+            if reasons
+            else f'{url}: the {reviewer} finding has no disposition reply.'
+        )
     failures: list[str] = []
     if unanswered:
         failures += [

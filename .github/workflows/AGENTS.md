@@ -232,6 +232,9 @@ The reply's first line that starts with one of these forms answers the finding:
   one opened at or after the finding.
 - `Declined: <reason>`: counts from a user with write access, and from the author on a douwebot `Optional:` finding.
 
+The status names why each reply in one of these forms does not count. Rewriting the pull request's history drops
+earlier commits from it, so post `Fixed in` again with the new commits.
+
 Resolving a thread does not answer it, except that a thread started before 2026-11-19 needs no reply once
 resolved. `REVIEWER_LOGINS` in `review_gates.py` names the review bots, and receipts tell douwebot,
 `PR Review Checks` and `CI Review` apart on `github-actions[bot]`. A thread from an unregistered bot, or a

@@ -1032,6 +1032,33 @@ def test_a_finding_needs_a_disposition_reply(body: str, user: review_gates.Revie
     assert bool(verdicts(github)['dispositions'].failures) is not passes
 
 
+@pytest.mark.parametrize(
+    ('body', 'user', 'reason'),
+    [
+        pytest.param('Fixed in 7777777', CONTRIBUTOR, '`7777777` is not a commit of this PR', id='rewritten-history'),
+        pytest.param('Tracked in #13', CONTRIBUTOR, '#13 is not another issue or PR', id='tracked-missing'),
+        pytest.param('Tracked in #11', CONTRIBUTOR, '#11 was opened before the finding', id='tracked-older-issue'),
+        pytest.param('Declined: noise.', CONTRIBUTOR, '`Declined:` needs write access', id='declined-reader'),
+        pytest.param(
+            'Fixed in 1234abc',
+            STRANGER,
+            '`stranger` is neither the PR author nor a user with write access',
+            id='third-party',
+        ),
+    ],
+)
+def test_a_rejected_reply_names_its_reason(body: str, user: review_gates.ReviewUser, reason: str):
+    """A rebase drops the commits earlier `Fixed in` replies name, so the status says why a reply does not count."""
+    github = ReviewGitHub(
+        comments=[finding(), reply(body, user)],
+        commits={'1234abc' + 'f' * 33},
+        issues={11: POSTED.replace(day=1, month=11)},
+    )
+    assert verdicts(github)['dispositions'].failures[1:] == [
+        f'https://github.com/o/r/pull/7#discussion_r40: the Veria finding has no accepted disposition reply: {reason}.'
+    ]
+
+
 @pytest.mark.parametrize('size', ['size: S', 'size: M', 'size: L', 'size: XL'])
 def test_findings_on_every_head_and_size_need_an_answer(size: review_gates.Size):
     github = ReviewGitHub(size_label=size, comments=[finding()])
