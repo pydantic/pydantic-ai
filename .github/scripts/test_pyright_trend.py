@@ -97,7 +97,7 @@ def test_too_few_runs_with_the_step_are_not_judged(outputs: Path):
     assert 'Only 39 of the newest 49 `main` runs' in (outputs / 'summary.md').read_text()
 
 
-def test_a_window_with_no_newly_finished_run_is_not_judged_again(outputs: Path):
+def test_a_window_whose_newest_run_is_older_than_fresh_for_is_not_judged(outputs: Path):
     api = FakeApi([*[300.0] * 20, *[200.0] * 20], newest_finished=NOW - timedelta(minutes=91))
 
     pyright_trend.main(api, NOW)
