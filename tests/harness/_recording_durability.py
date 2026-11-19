@@ -15,6 +15,7 @@ from pydantic_ai.durable_exec import (
     OperationConfigRole,
 )
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import Model
 from pydantic_ai.tools import RunContext
 
 
@@ -106,8 +107,9 @@ class RecordingDurability(BaseDurabilityCapability[object]):
         isolated: bool = False,
         journal: Mapping[str, object] | None = None,
         failure: type[Exception] = RuntimeError,
+        models: Mapping[str, Model] | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(models=models)
         self.calls: list[tuple[str, tuple[object, ...]]] = []
         self.results: list[tuple[str, object]] = []
         """Each completed operation's result, as an engine would journal it."""
