@@ -198,10 +198,10 @@ The section is public. Leave out confidential or privileged reasoning. Keep sess
 
 ### Keep labels current with the title and body
 
-For prose-only documentation, handle title, body, and labels directly. Otherwise, assign updates to the same subagent.
+For prose-only documentation, handle title, body, and labels directly. Otherwise, assign updates to the final metadata check's session.
 Reconcile labels whenever the title or body changes.
 
-Run `.agents/skills/pushing-commits-to-the-repo/label-catalog`. Read the printed file directly for prose-only documentation; otherwise give it to the subagent.
+Run `.agents/skills/pushing-commits-to-the-repo/label-catalog`. Read the printed file directly for prose-only documentation; otherwise give it to that session.
 The checked-in catalog supplies clones and worktrees without label-read requests.
 Run the helper with `--refresh` after creating, renaming, or updating repository labels.
 Commit refreshed catalog changes.
