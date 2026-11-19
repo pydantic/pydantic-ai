@@ -105,7 +105,7 @@ class DenyUnansweredInSession(DenyUnanswered[AgentDepsT]):
 class KeepDelegatesChecked(AbstractCapability[AgentDepsT]):
     """Refuse a `SubAgents` delegation, outside `full`, whose delegate would run without the session's `Permissions`.
 
-    A delegate runs what is bound to its agent plus the `SubAgents` `shared_capabilities`. CLAI binds its
+    A delegate runs what is bound to its agent plus the `SubAgents` `shared_capabilities`. Pax binds its
     plugins, `Permissions` included, to its own agent, so a delegation to `self` carries it; an agent you
     supply gets them per run, and a named sub-agent runs its own agent, so neither does.
     """

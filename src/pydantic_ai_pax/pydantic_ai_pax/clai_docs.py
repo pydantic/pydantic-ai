@@ -1,4 +1,4 @@
-"""CLAI's own docs, shipped with the package and looked up by the agent on demand."""
+"""Pax's own docs, shipped with the package and looked up by the agent on demand."""
 
 from __future__ import annotations
 
@@ -14,11 +14,11 @@ from pydantic_ai import ModelRetry, Tool
 from pydantic_ai.capabilities import Capability
 
 _CLAI_DOCS: dict[str, tuple[str, str]] = {
-    'readme': ('README.md', 'The product tour: what CLAI does and how to start.'),
+    'readme': ('README.md', 'The product tour: what Pax does and how to start.'),
     'reference': (
         'docs/reference.md',
         'The user reference: commands, options, settings, models and accounts, the prompt, output, '
-        'the agent, sessions, and using CLAI from code.',
+        'the agent, sessions, and using Pax from code.',
     ),
     'plugins': (
         'PLUGINS.md',
@@ -27,12 +27,12 @@ _CLAI_DOCS: dict[str, tuple[str, str]] = {
     ),
     'customization': (
         'pydantic_ai_pax/customization.md',
-        'How to customize CLAI: plugins, hooks, tools, settings, rendering, TUI menus, and models and '
+        'How to customize Pax: plugins, hooks, tools, settings, rendering, TUI menus, and models and '
         'providers, and what needs a source change.',
     ),
     'declarative-plugins': ('docs/declarative-plugins.md', 'Why the `Plugin` API declares instead of registering.'),
 }
-"""CLAI's docs by id: the path under the project root and what the doc covers.
+"""Pax's docs by id: the path under the project root and what the doc covers.
 
 Docs outside the package are copied into `pydantic_ai_pax/_docs/` by the wheel's `force-include`.
 """
@@ -73,7 +73,7 @@ _HARNESS_DOCS = (
     'sub_agents',
     'tool_call_judge',
 )
-"""The harness capabilities CLAI uses, whose READMEs ship in the `pydantic-ai-harness` package."""
+"""The harness capabilities Pax uses, whose READMEs ship in the `pydantic-ai-harness` package."""
 
 _DOC_IDS = (*_CLAI_DOCS, *(f'harness/{name}' for name in _HARNESS_DOCS))
 
@@ -93,15 +93,15 @@ _WORD = re.compile(r'\w+')
 
 CAPABILITY_ID = 'clai_customization'
 _DESCRIPTION = (
-    'Use when asked to customize CLAI itself (plugins, CLI UX/UI, commands, rendering, TUI menus, '
-    'models or providers), or when asked about CLAI commands, settings, sessions, or its harness '
+    'Use when asked to customize Pax itself (plugins, CLI UX/UI, commands, rendering, TUI menus, '
+    'models or providers), or when asked about Pax commands, settings, sessions, or its harness '
     'capabilities. Load to search or read the installed docs; do not assume plugin APIs exist.'
 )
 
 _HINT = (
-    'For questions about CLAI itself (its commands, settings, models, sessions, plugins, or the harness '
+    'For questions about Pax itself (its commands, settings, models, sessions, plugins, or the harness '
     'capabilities it runs on), look in its docs with search_clai_docs and read_clai_docs. '
-    'When asked to customize CLAI itself (plugins, CLI UX/UI, commands, rendering, TUI menus, models or '
+    'When asked to customize Pax itself (plugins, CLI UX/UI, commands, rendering, TUI menus, models or '
     "providers), first call read_clai_docs with the path 'customization'. It documents supported APIs and "
     'boundaries. Do not assume plugin APIs exist.'
 )
@@ -202,9 +202,9 @@ def _outline(sections: list[_Section]) -> str:
 
 
 def _read_clai_docs(path: str = '') -> str:
-    """Read CLAI's docs: the list of docs, one doc, or one section of a doc.
+    """Read Pax's docs: the list of docs, one doc, or one section of a doc.
 
-    The docs ship with the installed package: CLAI's user reference, plugin contract, and
+    The docs ship with the installed package: Pax's user reference, plugin contract, and
     customization guide, and the READMEs of the harness capabilities it runs on. A long doc
     returns an outline of section paths. A long section returns its own text (truncated if
     needed), followed by an outline of any subsections.
@@ -216,7 +216,7 @@ def _read_clai_docs(path: str = '') -> str:
     """
     path = path.strip()
     if not path:
-        lines = ['CLAI docs. Read one with read_clai_docs(path), or find a section with search_clai_docs(query).', '']
+        lines = ['Pax docs. Read one with read_clai_docs(path), or find a section with search_clai_docs(query).', '']
         for doc_id in _DOC_IDS:
             doc = _doc(doc_id)
             lines.append(f'- {doc_id} ({len(doc.text()) // 1000} KB): {doc.description}')
@@ -225,7 +225,7 @@ def _read_clai_docs(path: str = '') -> str:
     if doc_id not in _DOC_IDS:
         close = get_close_matches(doc_id, _DOC_IDS, n=3, cutoff=0.5)
         hint = f' Did you mean {", ".join(close)}?' if close else ''
-        raise ModelRetry(f'There is no CLAI doc {doc_id!r}.{hint} Call read_clai_docs with no path to list the docs.')
+        raise ModelRetry(f'There is no Pax doc {doc_id!r}.{hint} Call read_clai_docs with no path to list the docs.')
     doc = _doc(doc_id)
     if not anchor:
         text = doc.text()
@@ -262,7 +262,7 @@ _SearchResult: TypeAlias = tuple[int, int, int, str, str]
 
 
 def _search_clai_docs(query: str) -> str:
-    """Search CLAI's docs and return the best matching sections, with a short snippet of each.
+    """Search Pax's docs and return the best matching sections, with a short snippet of each.
 
     Matches words, and words that contain them, in the headings and text of every doc
     `read_clai_docs` lists.
@@ -282,7 +282,7 @@ def _search_clai_docs(query: str) -> str:
             if (result := _search_result(doc, section, terms)) is not None:
                 scored.append(result)
     if not scored:
-        return f'No CLAI docs section matches {query!r}. Call read_clai_docs with no path to list the docs.'
+        return f'No Pax docs section matches {query!r}. Call read_clai_docs with no path to list the docs.'
     # Sections that match more of the words first, then more of them in the heading, then more often.
     scored.sort(key=lambda result: (-result[0], -result[1], -result[2], result[3]))
     results = '\n'.join(summary for *_, summary in scored[:_SEARCH_RESULTS])
@@ -317,7 +317,7 @@ def _snippet(body: list[str], matched: list[str]) -> str | None:
 
 
 class ClaiDocs(Capability[None]):
-    """Search and read installed CLAI docs, exposed only after the model loads this capability."""
+    """Search and read installed Pax docs, exposed only after the model loads this capability."""
 
     def __init__(self) -> None:
         """Offer the docs as a deferred capability; no doc is read until a tool is called."""

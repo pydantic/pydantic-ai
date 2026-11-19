@@ -1,7 +1,7 @@
 """`Workspaces`: make, list, and destroy workspaces of the configured kinds, keeping the registry current.
 
 This is what the `/workspaces` command and the web UI's orchestrator both call. A workspace's sessions run
-in the CLAI that opens them, in its checkout, as any other session does.
+in the Pax that opens them, in its checkout, as any other session does.
 """
 
 import secrets
@@ -46,7 +46,7 @@ class Workspaces:
     """The workspaces in the registry, and the kinds new ones can be made of."""
 
     def __init__(self, *, kinds: Mapping[str, WorktreeKind], directory: Path | None = None) -> None:
-        """`directory` holds the registry and clones; by default `workspaces` in CLAI's state directory."""
+        """`directory` holds the registry and clones; by default `workspaces` in Pax's state directory."""
         directory = directory or workspaces_dir()
         self.kinds = dict(kinds)
         self.registry = Registry(directory / 'registry')

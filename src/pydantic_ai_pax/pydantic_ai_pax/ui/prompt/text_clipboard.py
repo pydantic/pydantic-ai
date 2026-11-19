@@ -1,4 +1,4 @@
-"""Copy text out of CLAI: the local clipboard command, or OSC 52 for the terminal to set it."""
+"""Copy text out of Pax: the local clipboard command, or OSC 52 for the terminal to set it."""
 
 import os
 import shutil
@@ -24,7 +24,7 @@ class ClipboardCommand:
 
     argv: tuple[str, ...]
     env: dict[str, str] = field(default_factory=dict[str, str])
-    """Variables set for the command on top of CLAI's own environment."""
+    """Variables set for the command on top of Pax's own environment."""
 
 
 def copy_command(*, platform: str = sys.platform) -> ClipboardCommand | None:

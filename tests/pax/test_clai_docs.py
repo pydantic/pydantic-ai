@@ -1,4 +1,4 @@
-"""CLAI's docs ship with the package and the agent reads them a section at a time."""
+"""Pax's docs ship with the package and the agent reads them a section at a time."""
 
 from __future__ import annotations
 
@@ -224,9 +224,9 @@ This section is too long to read whole. Read a subsection by its path:
     [
         (
             'refrence',
-            "There is no CLAI doc 'refrence'. Did you mean reference? Call read_clai_docs with no path to list the docs.",
+            "There is no Pax doc 'refrence'. Did you mean reference? Call read_clai_docs with no path to list the docs.",
         ),
-        ('nothing', "There is no CLAI doc 'nothing'. Call read_clai_docs with no path to list the docs."),
+        ('nothing', "There is no Pax doc 'nothing'. Call read_clai_docs with no path to list the docs."),
         (
             'reference#saved-api-key',
             "reference has no section 'saved-api-key'. Did you mean reference#saved-api-keys? Read 'reference' for its outline.",
@@ -280,7 +280,7 @@ def test_search_with_only_short_or_common_words_still_searches() -> None:
 
 def test_search_without_a_match_says_so() -> None:
     assert search_docs('zzzqqq') == (
-        "No CLAI docs section matches 'zzzqqq'. Call read_clai_docs with no path to list the docs."
+        "No Pax docs section matches 'zzzqqq'. Call read_clai_docs with no path to list the docs."
     )
 
 
@@ -307,7 +307,7 @@ def test_docs_resolve_in_editable_and_wheel_installs(tmp_path: Path, monkeypatch
 def test_wheel_and_sdist_ship_every_doc_outside_the_package() -> None:
     build = tomllib.loads((PROJECT / 'pyproject.toml').read_text(encoding='utf-8'))['tool']['hatch']['build']['targets']
     outside = [source for source, _ in _CLAI_DOCS.values() if not source.startswith('pydantic_ai_pax/')]
-    assert len({Path(source).name for source in outside}) == len(outside), 'Bundled CLAI docs need unique basenames'
+    assert len({Path(source).name for source in outside}) == len(outside), 'Bundled Pax docs need unique basenames'
     assert build['wheel']['force-include'] == {
         source: f'pydantic_ai_pax/_docs/{Path(source).name}' for source in outside
     }
@@ -324,7 +324,7 @@ def test_every_clai_user_doc_is_cataloged() -> None:
 
 
 def test_every_harness_capability_clai_imports_has_its_readme_listed() -> None:
-    """A capability CLAI starts using gets its README into `_HARNESS_DOCS`; one it stops using leaves it."""
+    """A capability Pax starts using gets its README into `_HARNESS_DOCS`; one it stops using leaves it."""
     imported: set[str] = set()
     for module in (PROJECT / 'pydantic_ai_pax').rglob('*.py'):
         for node in ast.walk(ast.parse(module.read_text(encoding='utf-8'))):

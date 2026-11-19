@@ -3207,7 +3207,7 @@ def test_observability_names_the_running_shim_sources(monkeypatch: pytest.Monkey
 
 
 def test_clai2_engine_names_the_staged_shim_sources():
-    """The CLAI 2 engine configures Logfire before it loads the shim, so the staging step supplies `service.version`.
+    """The Pax engine configures Logfire before it loads the shim, so the staging step supplies `service.version`.
 
     It digests the staged copy: CI Review checks out the pull request head after staging.
     """

@@ -56,7 +56,7 @@ class OpenSandboxProvider:
 
     def missing(self) -> str | None:
         if find_spec('opensandbox') is None:
-            return "OpenSandbox support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[opensandbox]'."
+            return "OpenSandbox support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[opensandbox]'."
         if saved_key(DOMAIN_NAME) is None:
             return (
                 f"Add your OpenSandbox server's address in /keys as {DOMAIN_NAME}, such as localhost:8080 or "

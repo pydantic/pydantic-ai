@@ -68,7 +68,7 @@ class MCPStore:
     """Read and write the user file; find and gate the project file."""
 
     def __init__(self, directory: Path | None = None, *, workspace: Path | None = None) -> None:
-        """`directory` defaults to the CLAI config folder, `workspace` to the current directory."""
+        """`directory` defaults to the Pax config folder, `workspace` to the current directory."""
         directory = directory or config_dir()
         self.path = directory / 'mcp.json'
         self.logs = directory / 'mcp_logs'

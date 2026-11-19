@@ -752,7 +752,7 @@ def _submission(text: str, commands: Commands) -> dict[str, telemetry.Attribute]
     Only a prompt's text is recorded, as `prompt`, since agent spans already carry it. A `!` line never reaches
     the agent and can hold a secret such as `!export KEY=...`, so it records only its kind and length. A command
     records only its registered name, never its arguments: any plugin can add a command, and arguments such as
-    `/plugins add` settings JSON or an MCP server's headers can hold a secret CLAI cannot recognize.
+    `/plugins add` settings JSON or an MCP server's headers can hold a secret Pax cannot recognize.
     """
     kind = input_kind(text)
     if kind == 'command':

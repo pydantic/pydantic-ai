@@ -85,11 +85,11 @@ SPECULATIVE_TOOLS: Mapping[str, type[object]] = {
 keyed to the capability that must provide them.
 
 A plugin or MCP tool can share one of these names when `Coder` is off, so the name alone does not
-vouch for it. CLAI's docs tools only read files shipped inside the installed packages.
+vouch for it. Pax's docs tools only read files shipped inside the installed packages.
 """
 
 NATIVE_TOOLS = frozenset({'write_file', 'edit_file'})
-"""CLAI's equivalents of Code Puppy's native `create_file` and `replace_in_file`."""
+"""Pax's equivalents of Code Puppy's native `create_file` and `replace_in_file`."""
 
 FOLDED_CODE_TOOLS = frozenset({'shell'})
 """Tools marked `code_arg_name` that fold in anyway, as Code Puppy's shell tool does.
@@ -428,7 +428,7 @@ class SpeculativeExecution(AbstractCapability[AgentDepsT]):
     """The run's `Permissions`, one or several; any of them in `read-only` mode mounts the directory read-only, as the guidance then says."""
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], str]:
-        """Code Puppy's guidance, with CLAI's tool and argument names, the run's actual mount, and its REPL's lifetime."""
+        """Code Puppy's guidance, with Pax's tool and argument names, the run's actual mount, and its REPL's lifetime."""
 
         def describe(ctx: RunContext[AgentDepsT]) -> str:
             local = self.mount is None or _is_local(ctx.workspace)

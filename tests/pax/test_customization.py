@@ -1,4 +1,4 @@
-"""CLAI lists its docs as one deferred capability, then reads them only on demand."""
+"""Pax lists its docs as one deferred capability, then reads them only on demand."""
 
 from collections.abc import AsyncIterator
 from importlib.resources import files
@@ -29,7 +29,7 @@ from pydantic_ai_pax.plugins import PluginHost, load_plugin
 from pydantic_ai_pax.runtime.session import WorkspacelessCapability
 
 DOC_TOOLS = {'search_clai_docs', 'read_clai_docs'}
-CATALOG_LINE = f'- {CAPABILITY_ID}: Use when asked to customize CLAI itself'
+CATALOG_LINE = f'- {CAPABILITY_ID}: Use when asked to customize Pax itself'
 
 
 @pytest.mark.parametrize('supported', [True, False])
@@ -85,7 +85,7 @@ async def test_default_agent_lists_docs_without_reading_them(monkeypatch: pytest
     assert {tool.name for tool in params.function_tools if tool.defer_loading} == DOC_TOOLS
     instructions = '\n'.join(part.content for part in params.instruction_parts or ())
     assert CATALOG_LINE in instructions
-    assert '# Customizing CLAI 2' not in instructions
+    assert '# Customizing Pax' not in instructions
     assert 'search_clai_docs' not in instructions
 
 
@@ -108,7 +108,7 @@ async def test_default_agent_loads_docs_then_reads_guide(tmp_path: Path, monkeyp
 
     agent = create_agent()
     with agent.override(model=FunctionModel(stream_function=stream)):
-        result = await Session(agent, deps=None).prompt('How do I customize CLAI menus and providers?')
+        result = await Session(agent, deps=None).prompt('How do I customize Pax menus and providers?')
     assert result.output == 'guide loaded'
     guide = files('pydantic_ai_pax').joinpath('customization.md').read_text(encoding='utf-8')
     assert tool_returns(result.all_messages()) == [guide]
@@ -197,4 +197,4 @@ async def test_loading_docs_does_not_read_docs_or_inject_the_guide(monkeypatch: 
     assert str(loaded.id) == 'capability:clai_customization'
     assert loaded.content is not None
     assert 'search_clai_docs' in loaded.content and 'read_clai_docs' in loaded.content
-    assert '# Customizing CLAI 2' not in loaded.content
+    assert '# Customizing Pax' not in loaded.content

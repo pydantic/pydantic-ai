@@ -1,5 +1,5 @@
 ---
-# Shared public CLAI 2 engine with repository workflow policy and Z.ai routing.
+# Shared public Pax engine with repository workflow policy and Z.ai routing.
 # Each workflow declares only engine.model. Keep identity and credentials here:
 # gh-aw validates root engine.env before registering imported engines.
 #
