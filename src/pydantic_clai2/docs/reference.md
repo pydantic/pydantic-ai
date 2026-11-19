@@ -1385,6 +1385,8 @@ wherever it reaches CLAI, and elsewhere Ctrl+Enter works like Enter.
 Terminals that do not report modified keys send Ctrl+Enter as Ctrl-J, so on
 Windows Ctrl-J steers too. Shift+Enter inserts a newline when the terminal
 reports it separately from Enter, such as Windows Terminal 1.25 or later.
+Older terminals send Shift+Enter as Enter, so there a newline needs a paste or
+a terminal that reports modified keys.
 SSH does not forward `WT_SESSION`, so a remote session started from Windows
 Terminal has no working steer chord. Set `WT_SESSION` on the remote host, for
 example with `export WT_SESSION=1` in the shell you start CLAI from.
