@@ -154,15 +154,27 @@ def test_account_id_is_scrubbed_from_responses_only():
     assert json.loads(request.body) == {'user_id': 'pydantic-ai-test-user'}
 
 
-def test_access_programs_are_cleared_from_responses():
+@pytest.mark.parametrize(
+    'body, content_type, expected',
+    [
+        pytest.param(
+            b'{"id":"resp_1","access_programs":{"program":"synthetic"}}',
+            'application/json',
+            b'{"id": "resp_1", "access_programs": null}',
+            id='json',
+        ),
+        pytest.param(
+            b'event: response.created\ndata: {"response":{"id":"resp_1","access_programs":{"program":"synthetic"}}}\n\n',
+            'text/event-stream',
+            b'event: response.created\ndata: {"response": {"id": "resp_1", "access_programs": null}}\n\n',
+            id='stream',
+        ),
+    ],
+)
+def test_access_programs_are_cleared_from_responses(body: bytes, content_type: str, expected: bytes):
     """OpenAI Responses bodies name the recording account's access programs, typed as an object, so they become null."""
-    response = before_record_response(
-        _response(
-            body=b'{"id":"resp_1","access_programs":{"program":"synthetic"}}', **{'content-type': 'application/json'}
-        )
-    )
-    assert response.body is not None
-    assert json.loads(response.body) == {'id': 'resp_1', 'access_programs': None}
+    response = before_record_response(_response(body=body, **{'content-type': content_type}))
+    assert response.body == expected
 
 
 @pytest.mark.parametrize('encoding', ['gzip', 'br'])

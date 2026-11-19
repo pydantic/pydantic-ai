@@ -96,8 +96,8 @@ ALLOWED_HEADERS = {
 
 SCRUBBED_JSON_FIELDS = ('access_token', 'id_token', 'refresh_token', 'safety_identifier')
 # OpenRouter error responses echo the id of the account whose key made the request. Requests keep `user_id`: Z.AI
-# takes the caller's own end-user id there. OpenAI Responses bodies name the recording account's `access_programs`.
-SCRUBBED_RESPONSE_JSON_FIELDS = ('user_id', 'access_programs')
+# takes the caller's own end-user id there.
+SCRUBBED_RESPONSE_JSON_FIELDS = ('user_id',)
 # ElevenLabs `GET /v1/convai/agents/{id}` bodies carry the workspace owner's identity in `access_info`.
 SCRUBBED_NESTED_JSON_FIELDS = ('creator_email', 'creator_name')
 SCRUBBED_FORM_FIELDS = (
@@ -215,13 +215,47 @@ def scrub_json_body(body: bytes, fields: tuple[str, ...] = SCRUBBED_JSON_FIELDS)
     parsed = normalize_body(parsed)
     if is_str_dict(parsed):
         for field in fields:
-            if (value := parsed.get(field)) is not None:
-                # A non-string value is cleared, so the SDK still parses the body.
-                parsed[field] = 'scrubbed' if isinstance(value, str) else None
+            if parsed.get(field) is not None:
+                parsed[field] = 'scrubbed'
         if isinstance(signed_url := parsed.get('signed_url'), str):
             parsed['signed_url'] = _SIGNED_URL_TOKEN.sub(r'\1=scrubbed', signed_url)
     _scrub_nested_fields(parsed)
     return json.dumps(parsed).encode('utf-8')
+
+
+def clear_access_programs(body: bytes | None) -> bytes | None:
+    """Clear the recording account's `access_programs` from an OpenAI Responses body, streamed or not.
+
+    The SDK types the field as an object, so it becomes null rather than a string. A streamed event has it inside `response`.
+    """
+    if not body or b'"access_programs"' not in body:
+        return body
+    if not body.startswith((b'event:', b'data:')):
+        return _clear_access_programs_json(body)
+    return b'\n'.join(
+        b'data: ' + _clear_access_programs_json(line[5:])
+        if line.startswith(b'data:') and b'"access_programs"' in line
+        else line
+        for line in body.split(b'\n')
+    )
+
+
+def _clear_access_programs_json(text: bytes) -> bytes:
+    parsed: Any = json.loads(text)
+    _clear_nested(parsed, 'access_programs')
+    return json.dumps(parsed).encode('utf-8')
+
+
+def _clear_nested(obj: Any, field: str) -> None:
+    if isinstance(obj, dict):
+        for key, value in cast('dict[Any, Any]', obj).items():
+            if key == field:
+                obj[key] = None
+            else:
+                _clear_nested(value, field)
+    elif isinstance(obj, list):
+        for item in cast('list[Any]', obj):
+            _clear_nested(item, field)
 
 
 def scrub_form_credentials(body: bytes) -> bytes:
@@ -278,5 +312,7 @@ def before_record_request(request: RawRequest) -> RawRequest:
 
 def before_record_response(response: RawResponse) -> RawResponse:
     response.headers = filter_headers(response.headers)
-    response.body = scrub_body(response.body, response.headers, SCRUBBED_JSON_FIELDS + SCRUBBED_RESPONSE_JSON_FIELDS)
+    response.body = clear_access_programs(
+        scrub_body(response.body, response.headers, SCRUBBED_JSON_FIELDS + SCRUBBED_RESPONSE_JSON_FIELDS)
+    )
     return response
