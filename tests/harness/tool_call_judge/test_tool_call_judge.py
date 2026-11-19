@@ -274,8 +274,7 @@ class TestConfiguration:
             custom_capability_types=[ToolCallJudge],
         )
 
-        capability = agent.root_capability.capabilities[-1]
-        assert isinstance(capability, ToolCallJudge)
+        capability = next(c for c in agent.root_capability.capabilities if isinstance(c, ToolCallJudge))
         assert capability.question == 'Would this cause harm?'
         assert capability.tools == ['danger']
         assert capability.on_uncertain == 'block'

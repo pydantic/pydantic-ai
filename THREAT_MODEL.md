@@ -173,6 +173,8 @@ Usage limits, timeouts, and concurrency limits control different resources. Eval
 
 An output-length cap does not bound downloading, parsing, or conversion work performed before truncation. Review where each limit is applied. Per-run usage limits also do not establish tenant-wide admission or provider spend controls. Per-run usage limits bound one run's own consumption. A run that exceeds its own limit is a bug, not a vulnerability, unless it exhausts a resource shared with other runs. `SpendLimits` refuses the next request once a recorded response spends a window; the crossing request and concurrent runs can exceed the ceiling, and an abandoned stream is not counted.
 
+The Pydantic AI Gateway can answer a request to a `gateway/` model with a `424` naming another model, and the agent sends the rebuilt request there: a provider response chooses the next outbound request. The controls bounding it: only a `gateway/<provider>:<model>` target is followed; the new provider reuses the original API key, base URL and route, and the Gateway request hook adds credentials only for that scheme, host and port; at most five hand-backs in a row are followed per request step; and durable, batched and `FallbackModel` requests, and requests outside an agent run, never advertise that they follow one. See [Gateway fallback](docs/gateway.md#falling-back-across-api-formats).
+
 Canonical guidance: [agent usage limits](docs/agent.md), [timeouts](docs/timeouts.md), [model concurrency](docs/models/overview.md), [spend limits](docs/harness/spend.md#what-the-gate-guarantees), and [background tools](docs/harness/background-tools.md).
 
 ### Repository CI and agentic workflows
