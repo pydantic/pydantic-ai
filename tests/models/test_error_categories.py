@@ -54,6 +54,8 @@ with try_import() as imports_successful:
         ReadTimeoutError,
     )
     from cohere import AsyncClientV2
+    from google.genai import Client as GoogleClient
+    from google.genai.types import HttpOptions, HttpRetryOptions
     from groq import AsyncGroq
     from huggingface_hub import AsyncInferenceClient
     from huggingface_hub.errors import HfHubHTTPError
@@ -221,15 +223,22 @@ def _google(handler: Handler) -> Model:
 
 
 def _google_interactions(handler: Handler | httpx2.AsyncClient) -> Model:
-    http_client = (
-        handler
-        if isinstance(handler, httpx2.AsyncClient)
-        else httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    if isinstance(handler, httpx2.AsyncClient):
+        return GoogleInteractionsModel(
+            'gemini-3.8-flash',
+            provider=GoogleProvider(api_key='test', http_client=handler, base_url='http://localhost'),
+        )
+    # The Interactions SDK retries a 429 or 5xx and waits out its `Retry-After`, and `google-genai` won't take
+    # `attempts=0`, so it retries only a status no case returns: the first response is the one classified.
+    client = GoogleClient(
+        api_key='test',
+        http_options=HttpOptions(
+            base_url='http://localhost',
+            httpx_async_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+            retry_options=HttpRetryOptions(http_status_codes=[599]),
+        ),
     )
-    return GoogleInteractionsModel(
-        'gemini-3.8-flash',
-        provider=GoogleProvider(api_key='test', http_client=http_client, base_url='http://localhost'),
-    )
+    return GoogleInteractionsModel('gemini-3.8-flash', provider=GoogleProvider(client=client))
 
 
 def _mistral(handler: Handler) -> Model:
