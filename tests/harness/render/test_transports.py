@@ -4,7 +4,7 @@ import dataclasses
 import inspect
 from dataclasses import dataclass
 from datetime import date
-from typing import Annotated, Any
+from typing import Annotated
 
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, Json, SecretStr, computed_field, model_validator
@@ -12,7 +12,7 @@ from render.workflows import TaskContext, Workflows
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai.capabilities import Hooks, RawToolArgs, ValidatedToolArgs
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolKind, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -298,20 +298,20 @@ async def test_arguments_changed_by_hooks_reach_the_task_as_changed() -> None:
 
     @hooks.on.before_tool_validate(tools=['stay'])
     async def repair(
-        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
-    ) -> dict[str, Any]:
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
+    ) -> RawToolArgs:
         return {'nights': 2}
 
     @hooks.on.after_tool_validate(tools=['order'])
     async def replace_note(
-        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
-    ) -> dict[str, Any]:
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
         return {**args, 'note': 'hook'}
 
     @hooks.on.before_tool_execute(tools=['order'])
     async def mutate_order(
-        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
-    ) -> dict[str, Any]:
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
         args['order'].qty = 99
         return args
 

@@ -499,7 +499,8 @@ class Filters(BaseModel):
 async def test_raw_tool_args_for_unit_keeps_the_dump_when_a_check_raises():
     """Validating a dump without a single model argument's key, as a hook could leave it, raises `KeyError`.
 
-    The check leaves the call on today's path, so the unit raises it there instead of the workflow.
+    The check leaves the call on today's path, so the unit raises it there instead of the workflow. Not a VCR test:
+    it pins the helper's own fallback in-process, with no model request.
     """
     calls: list[RunContext[None]] = []
     toolset = FunctionToolset[None]()
