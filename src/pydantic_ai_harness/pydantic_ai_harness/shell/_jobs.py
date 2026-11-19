@@ -49,6 +49,16 @@ POLL_MIN = 0.05
 POLL_MAX = 1.0
 """Bounds of the backoff between polls of a job's status, so a remote workspace is not asked every 50 ms."""
 
+_STATUS_READ_ATTEMPTS = 100
+_STATUS_READ_DELAY = 0.02
+"""Reads of `status.json` a `'windows'` workspace refuses before the refusal is raised, and the seconds between them.
+
+`Move-Item -Force` replaces the file by deleting it and renaming `status.tmp`, holding it open for `DELETE` at each
+step. Windows refuses an open that does not share delete while it does, and `os.open` does not share delete. It
+reports that refusal and an access denial alike, so a refusal that outlasts these attempts is raised. They match the
+retry `_powershell`'s `Publish` gives its replace. Counted rather than timed, so a durable engine replays the reads.
+"""
+
 _WRAPPER = f"""{LIMIT_FUNCTION}
 dir=$1
 publish() {{
@@ -378,10 +388,21 @@ class Job:
         """`status.json` as the wrapper published it, or `None` before the first publication."""
         if self._final_status is not None:
             return self._final_status
-        try:
-            text = (await self.workspace.read_bytes(self.status_path)).decode('utf-8', errors='replace')
-        except FileNotFoundError:
-            return None
+        attempts = 1
+        while True:
+            try:
+                text = (await self.workspace.read_bytes(self.status_path)).decode('utf-8', errors='replace')
+                break
+            except FileNotFoundError:
+                return None
+            # Before `PermissionError`: a `WorkspaceError` subclassing it is a backend failure, not a sharing violation.
+            except WorkspaceError:
+                raise
+            except PermissionError:
+                if self.workspace.platform != 'windows' or attempts == _STATUS_READ_ATTEMPTS:
+                    raise
+            attempts += 1
+            await anyio.sleep(_STATUS_READ_DELAY)
         try:
             exit_code = json.loads(text)['exit_code']
         except (ValueError, KeyError, TypeError):
