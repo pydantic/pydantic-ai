@@ -9,7 +9,7 @@ from functools import partial
 
 from anyio import to_thread
 from termflow.ansi import make_link
-from termflow.tui import MenuBuilder, MenuItem, PagerBuilder, TextInputBuilder
+from termflow.tui import MenuBuilder, MenuItem, PagerBuilder, TextInputBuilder, terminal_size
 from termflow.tui.pager import Pager
 
 from pydantic_clai2.plugins.menus import Action, Option, SettingsMenu
@@ -152,7 +152,7 @@ class TerminalDialogs:
             MenuBuilder(title)
             .style(markdown_style())
             .items([MenuItem('Cancel', value=None)])
-            .preview(lambda item: _URL.sub(_link, '\n\n'.join([description, *shown])))
+            .preview(lambda item: _linked('\n\n'.join([description, *shown]), width=_preview_width()))
             .footer_hint('Enter or Esc cancel')
             .key_source(read_key)
             .build()
@@ -174,14 +174,33 @@ class TerminalDialogs:
         return True
 
 
-def _link(match: re.Match[str]) -> str:
-    """A terminal hyperlink to the whole URL, labelled without its query.
+def _preview_width() -> int:
+    """The width of the preview pane termflow lays out beside a list of its default width."""
+    columns = max(10, terminal_size()[0] - 1)
+    return max(1, columns - max(20, columns // 2) - 3)
 
-    The preview pane cuts each line at its width, which would also cut off a long label's closing escape.
+
+def _linked(text: str, *, width: int) -> str:
+    """`text` with each URL a terminal hyperlink to all of it; a line with a URL is folded at `width`.
+
+    The preview pane cuts each line at its width, which would also cut off a link's closing escape, so a
+    URL too long for one line shows on several, each a link to the whole URL, as Rich prints one.
     """
-    url = match[0]
-    address, separator, _ = url.partition('?')
-    return make_link(url, f'{address}?…' if separator else url)
+    lines: list[str] = []
+    for line in text.split('\n'):
+        urls = [(match.start(), match.end(), match[0]) for match in _URL.finditer(line)]
+        if not urls:
+            lines.append(line)
+            continue
+        for start in range(0, len(line), width):
+            end, row, done = start + width, '', start
+            for first, last, url in urls:
+                label_start, label_end = max(first, start), min(last, end)
+                if label_start < label_end:
+                    row += line[done:label_start] + make_link(url, line[label_start:label_end])
+                    done = label_end
+            lines.append(row + line[done:end])
+    return '\n'.join(lines)
 
 
 def wrap(text: str, width: int) -> list[str]:

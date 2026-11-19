@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import threading
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 
@@ -9,6 +10,7 @@ import anyio
 import pytest
 from pydantic import BaseModel
 from rich.console import Console
+from termflow.ansi import make_link
 from termflow.tui import MenuItem
 from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.pager import Pager
@@ -186,6 +188,41 @@ async def test_wait_raises_when_its_screen_fails_rather_than_reading_as_a_cancel
         await TerminalDialogs(Runners(run_choice=broken)).wait(
             title='Signing in', description='Finish it.', task=forever
         )
+
+
+async def test_wait_links_each_url_and_folds_one_too_long_for_the_pane(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pane cuts long lines, which would drop a link's closing escape, so such a URL is folded, as Rich does."""
+    monkeypatch.setattr(dialogs, 'terminal_size', lambda: (81, 24))  # An 80-column frame: a 37-column preview.
+    short = 'https://example.test/device?code=ABCD'
+    long = 'https://example.test/authorize?' + 'x' * 60
+    shown = threading.Event()
+    previews: list[str] = []
+
+    def run_choice(menu: Menu) -> MenuResult:
+        assert shown.wait(timeout=5)
+        previews.append(preview(menu, menu._items[0]))  # pyright: ignore[reportPrivateUsage]
+        return CLOSED
+
+    async def task(show: Callable[[str], None]) -> None:
+        show(f'{short}\n\nOpen {long} now\nIf no browser opened, enter the code {short}')
+        shown.set()
+        await anyio.sleep_forever()
+
+    with anyio.fail_after(5):
+        assert not await TerminalDialogs(Runners(run_choice=run_choice)).wait(
+            title='Signing in', description='Finish it.', task=task
+        )
+    assert previews[0].splitlines() == [
+        'Finish it.',
+        '',
+        make_link(short, short),
+        '',
+        f'Open {make_link(long, long[:32])}',
+        make_link(long, long[32:69]),
+        f'{make_link(long, long[69:])} now',
+        'If no browser opened, enter the code ',
+        make_link(short, short),
+    ]
 
 
 def _on_loop() -> bool:

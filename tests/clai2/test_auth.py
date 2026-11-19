@@ -4,7 +4,6 @@ import asyncio
 import io
 import re
 import threading
-import time
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
@@ -39,7 +38,7 @@ from pydantic_clai2.plugins import PluginLogin
 from pydantic_clai2.plugins.menus import Dialogs
 from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import Runners
-from pydantic_clai2.ui.menus.menu_worker import holding_output, worker_stopping
+from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from tests.clai2.dialog_script import Back, ScriptedDialogs
 from tests.clai2.surface_terminal import SurfaceTerminal
@@ -454,11 +453,15 @@ def hyperlinks(text: str) -> list[str]:
 
 
 async def test_terminal_sign_in_links_the_url_and_opens_it_with_webbrowser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The sign-in's own opener is mocked at `webbrowser`, so this pins the whole path from the login to it."""
     opened: list[str] = []
     urls: list[str] = []
+    launched = asyncio.Event()
+    loop = asyncio.get_running_loop()
 
     def open_url(url: str, *args: object, **kwargs: object) -> bool:
         opened.append(url)
+        loop.call_soon_threadsafe(launched.set)  # The browser opens in a thread.
         return True
 
     def default_browser(using: str | None = None) -> webbrowser.BaseBrowser:
@@ -466,8 +469,7 @@ async def test_terminal_sign_in_links_the_url_and_opens_it_with_webbrowser(monke
 
     async def exchange(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
         urls.append(self.authorization_url())
-        while not opened:  # The browser opens in a thread.
-            await asyncio.sleep(0.01)
+        await launched.wait()
         return CREDENTIALS
 
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
@@ -482,32 +484,28 @@ async def test_terminal_sign_in_links_the_url_and_opens_it_with_webbrowser(monke
 
 
 async def test_terminal_waiting_screen_links_the_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The preview pane cuts long lines, so the link carries the whole URL behind a label that fits."""
+    """The URL is folded over the preview pane's lines, each a link to all of it."""
     previews: list[str] = []
     urls: list[str] = []
     shown = threading.Event()
-    seen = asyncio.Event()
-    loop = asyncio.get_running_loop()
 
     def run_choice(menu: Menu) -> MenuResult:
         render = menu._preview  # pyright: ignore[reportPrivateUsage]
         assert render is not None and shown.wait(timeout=5)
         previews.append(render(menu._items[0]))  # pyright: ignore[reportPrivateUsage]
-        loop.call_soon_threadsafe(seen.set)
-        while not worker_stopping():
-            time.sleep(0.01)
         return MenuResult(cancelled=True)
 
     async def exchange(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
         urls.append(self.authorization_url())  # The screen shows the link before the callback is awaited.
         shown.set()
-        await seen.wait()
-        return CREDENTIALS
+        return await never_called_back(self)
 
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
     dialogs = TerminalDialogs(Runners(run_choice=run_choice))
     with anyio.fail_after(5):
-        assert 'connected' in await CodexAuth(Console(file=io.StringIO())).login([], dialogs=dialogs)
-    [preview] = previews
-    assert hyperlinks(preview) == urls
-    assert 'https://auth.openai.com/oauth/authorize?…' in preview
+        assert await CodexAuth(Console(file=io.StringIO())).login([], dialogs=dialogs) == (
+            'ChatGPT/Codex sign-in cancelled.'
+        )
+    [preview], [url] = previews, urls
+    assert set(hyperlinks(preview)) == {url}
+    assert url in re.sub(r'\x1b\]8;[^\x1b]*\x1b\\|\n', '', preview), 'the whole URL shows, over several lines'
