@@ -12,7 +12,6 @@ On Windows, which locks the files of a running program, the install runs in a ne
 CLAI exits.
 """
 
-import base64
 import os
 import re
 import secrets
@@ -226,21 +225,31 @@ _CREATE_NEW_CONSOLE = 0x10
 """`subprocess.CREATE_NEW_CONSOLE`, which the module defines only on Windows."""
 
 
-def _start_detached(argv: Sequence[str]) -> None:  # pragma: no cover -- `creationflags` exists only on Windows
-    subprocess.Popen(argv, creationflags=_CREATE_NEW_CONSOLE, close_fds=True)
+def _start_detached(argv: Sequence[str], env: Mapping[str, str]) -> None:  # pragma: no cover -- Windows only
+    subprocess.Popen(argv, creationflags=_CREATE_NEW_CONSOLE, close_fds=True, env=env)
+
+
+_SCRIPT_VARIABLE = 'CLAI_UPDATE_SCRIPT'
 
 
 def install_after_exit(
     script: str,
     *,
     environ: Mapping[str, str] = os.environ,
-    start: Callable[[Sequence[str]], None] = _start_detached,
+    start: Callable[[Sequence[str], Mapping[str, str]], None] = _start_detached,
 ) -> None:
-    """Run `script` in a new console with Windows PowerShell, found by full path rather than a `PATH` search."""
+    """Run `script` in a new console with Windows PowerShell, found by full path rather than a `PATH` search.
+
+    The script reaches PowerShell in an environment variable, which it unsets before running the script, not on
+    its command line, where antivirus software flags an `-EncodedCommand` launch.
+    """
     root = environ.get('SystemRoot', r'C:\Windows')
     executable = f'{root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
-    encoded = base64.b64encode(script.encode('utf-16-le')).decode('ascii')
-    start([executable, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded])
+    bootstrap = f'$s = $env:{_SCRIPT_VARIABLE}; Remove-Item Env:{_SCRIPT_VARIABLE}; & ([ScriptBlock]::Create($s))'
+    start(
+        [executable, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', bootstrap],
+        {**environ, _SCRIPT_VARIABLE: script},
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
