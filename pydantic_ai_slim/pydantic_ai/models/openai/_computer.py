@@ -7,7 +7,6 @@ Turns OpenAI's `computer_call` items into calls of the `computer` tool, and the 
 from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
-from dataclasses import replace
 from typing import Annotated, Any, Literal, assert_never
 
 from openai.types import responses
@@ -27,6 +26,7 @@ from ...messages import (
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from .. import ModelRequestParameters
+from .._computer_calls import UNFINISHED_COMPUTER_ARGS, block_computer_calls
 
 _SCROLL_PIXELS_PER_CLICK = 114
 """How many pixels one mouse-wheel click scrolls.
@@ -214,13 +214,6 @@ _COMPUTER_CALL_KEYS = (
 """The keys of a `computer_call` input item. Any other stored key is dropped before the item is sent back."""
 
 
-_UNFINISHED_ARGS = '{"actions": ['
-"""The arguments given to a call that must not run.
-
-They aren't valid JSON, like the arguments of a function call cut off by the token limit, so the call doesn't run.
-"""
-
-
 def stored_computer_call(part: ToolCallPart) -> dict[str, Any] | None:
     """Return the stored `computer_call` item to send back for a call, or `None` if it must not be sent.
 
@@ -233,7 +226,7 @@ def stored_computer_call(part: ToolCallPart) -> dict[str, Any] | None:
     if not is_str_dict(stored) or stored.get('type') != 'computer_call':
         return None
     # A call stopped because its response didn't complete keeps its item, which is sent back unchanged.
-    if part.args != _UNFINISHED_ARGS and _call_args(stored) not in (part.args, part.args_as_dict()):
+    if part.args != UNFINISHED_COMPUTER_ARGS and _call_args(stored) not in (part.args, part.args_as_dict()):
         return None
     return {key: value for key, value in stored.items() if key in _COMPUTER_CALL_KEYS}
 
@@ -275,26 +268,13 @@ def stop_computer_calls_unless_completed(
 
     OpenAI says not to run the actions of a response that is incomplete, failed or refused, even when a call in it
     finished. A stream learns the final status only after it has sent its calls. So the check runs on the final parts,
-    for streamed and non-streamed responses, and for native and function-tool `computer` calls alike. A blocked call
-    keeps its place, with arguments that aren't valid JSON, like a call cut off by the token limit. Other function
-    calls are left as they came. A response without a status counts as completed, since some OpenAI-compatible APIs
-    send none. Calls to a deferred `computer` tool are blocked too, because tool search can reveal it in the same
-    response.
-
-    This doesn't end the run. The agent treats a blocked call like any function call whose arguments don't parse: it
-    asks the model for the call again, and raises once the tool's retries are used up. When the response hit the token
-    limit and the call is its last part, that error is `IncompleteToolCall`. A refused response that isn't streamed
-    has no parts, so the run raises `ContentFilterError` without asking again.
+    for streamed and non-streamed responses, with `block_computer_calls`. A response without a status counts as
+    completed, since some OpenAI-compatible APIs send none. A refused response that isn't streamed has no parts, so the
+    run raises `ContentFilterError` without asking again.
     """
     if status in (None, 'completed') and not refused:
         return list(parts)
-    tool_names = {tool.name for tool in model_request_parameters.function_tools if tool.tool_kind == COMPUTER_KIND.id}
-    return [
-        replace(part, args=_UNFINISHED_ARGS)
-        if isinstance(part, ToolCallPart) and part.tool_name in tool_names
-        else part
-        for part in parts
-    ]
+    return block_computer_calls(parts, model_request_parameters)
 
 
 def _call_args(dumped: dict[str, Any]) -> dict[str, Any] | str:
@@ -302,7 +282,7 @@ def _call_args(dumped: dict[str, Any]) -> dict[str, Any] | str:
     if dumped.get('status') != 'completed':
         # The item was cut off or is still being generated. OpenAI says not to run a partly generated action, so give
         # it arguments that aren't valid JSON, and none of it runs.
-        return _UNFINISHED_ARGS
+        return UNFINISHED_COMPUTER_ARGS
     return {'actions': [action for action, _ in _map_actions(dumped)]}
 
 

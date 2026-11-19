@@ -364,23 +364,32 @@ async def test_an_x_server_that_starts_during_the_install_is_kept(docker: FakeDo
     assert docker.x_lock_exists(backend.ref.id)
 
 
-@pytest.mark.parametrize('kind', ['directory', 'named-pipe'])
+@pytest.mark.parametrize('kind', ['directory', 'named-pipe', 'symlink'])
 async def test_a_desktop_log_that_isnt_a_file_still_starts_the_desktop(
     docker: FakeDocker, container_dir: Path, kind: str
 ) -> None:
     backend = _desktop(container_dir, image='my-desktop')
     await backend.working_dir()
     assert backend.ref is not None
-    # Something other than a file where the log goes. Opening a named pipe would wait forever for a reader.
+    # Something other than a file where the log goes. Opening a named pipe would wait forever for a reader. Writing
+    # through a symlink as root would truncate the file it points to.
     log = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop.log'
+    target = log.with_name('target')
+    target.write_text('kept')
     if kind == 'directory':
         log.mkdir()
-    else:
+    elif kind == 'named-pipe':
         os.mkfifo(log)
+    else:
+        log.symlink_to(target)
+        docker.uninstall('tint2')
+        _hide_host_programs(docker)
+        docker.run_as(0)
 
     with anyio.fail_after(10):
         assert await screen(backend).screenshot() == FAKE_SCREENSHOT
     assert docker.panel_starts == 1
+    assert target.read_text() == 'kept'
 
 
 async def test_a_desktop_program_the_package_lists_lack_leaves_the_display_working(
