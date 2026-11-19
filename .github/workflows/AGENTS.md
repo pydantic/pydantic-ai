@@ -504,9 +504,10 @@ This value runs the chain above, then falls back to Hy4 Flash on Go, then to Hy4
 
 The `CI_LINUX_RUNNER` repository variable sets the runner label of `check` and of every Linux job
 it depends on, including the jobs of `clai2-web.yml`. It also sets the label of the
-`latest-versions-canary.yml` jobs that `ci.yml` runs on tags. Those two reusable workflows read it wherever they run, so it also moves the build that `clai2-bleeding.yml`
-publishes and the scheduled canary of `latest-versions-canary-nightly.yml`. A fork or other copy
-sets it when GitHub's standard runners are too small or unavailable for those jobs.
+`latest-versions-canary.yml` jobs that `ci.yml` runs on tags. Those two reusable workflows read
+it wherever they run, so it also moves the build that `clai2-bleeding.yml` publishes and the
+scheduled canary of `latest-versions-canary-nightly.yml`. A fork or other copy sets it when
+GitHub's standard runners are too small or unavailable for those jobs.
 Leave it unset in pydantic/pydantic-ai: unset, each job runs on its fallback label,
 `ubuntu-24.04` for `test-all-extras` and `ubuntu-latest` for the rest.
 
