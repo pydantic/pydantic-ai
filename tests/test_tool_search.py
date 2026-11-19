@@ -2913,15 +2913,17 @@ async def test_client_tool_search_replay_omits_incompatible_fc_item_id(allow_mod
     )
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(
-        model=model, capabilities=[ToolSearch(strategy='keywords')], model_settings={'openai_send_reasoning_ids': True}
+        model=model,
+        capabilities=[ToolSearch(strategy='keywords')],
+        model_settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
     )
 
     @agent.tool_plain
-    def get_time() -> str:
+    def get_time() -> str:  # pragma: no cover
         return 'noon'
 
     @agent.tool_plain(defer_loading=True)
-    def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:  # pragma: no cover
         return '0.92'
 
     call_part = ToolSearchCallPart(args={'queries': ['time']}, tool_call_id='call_1')
@@ -2969,15 +2971,17 @@ async def test_client_tool_search_replay_preserves_real_tsc_item_id(allow_model_
     )
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(
-        model=model, capabilities=[ToolSearch(strategy='keywords')], model_settings={'openai_send_reasoning_ids': True}
+        model=model,
+        capabilities=[ToolSearch(strategy='keywords')],
+        model_settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
     )
 
     @agent.tool_plain
-    def get_time() -> str:
+    def get_time() -> str:  # pragma: no cover
         return 'noon'
 
     @agent.tool_plain(defer_loading=True)
-    def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:  # pragma: no cover
         return '0.92'
 
     call_part = ToolSearchCallPart(args={'queries': ['time']}, tool_call_id='call_1')
