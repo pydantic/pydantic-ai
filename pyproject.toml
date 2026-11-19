@@ -326,8 +326,11 @@ include = [
     "docs/**/*.py",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/_ratchet.py",
     "scripts/check_complexity.py",
     "scripts/test_check_complexity.py",
+    "scripts/check_test_waits.py",
+    "scripts/test_check_test_waits.py",
     "scripts/durable_exec_contract.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
@@ -357,6 +360,7 @@ include = [
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
     ".github/scripts/test_pr_guard.py",
+    ".github/scripts/test_lint_exemptions.py",
     ".github/scripts/test_ci_content_classifier.py",
     ".github/scripts/test_ci_matrix.py",
     ".github/scripts/test_gh_aw_engine_pin_bump.py",
@@ -428,6 +432,17 @@ banned-module-level-imports = [
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
 "asyncio.Lock".msg = "Use anyio.Lock instead."
+# Backend-neutral code runs on Trio too. `.github/scripts/test_lint_exemptions.py` checks the `TID251`
+# `per-file-ignores` below: the bans above still hold in those files, and each one still uses an `asyncio` primitive.
+# `tests/test_examples.py` lints docs examples without the bans below.
+"asyncio.sleep".msg = "Use anyio.sleep instead."
+"asyncio.Event".msg = "Use anyio.Event instead."
+"asyncio.to_thread".msg = "Use anyio.to_thread.run_sync instead."
+"asyncio.wait_for".msg = "Use anyio.fail_after or anyio.move_on_after instead."
+"asyncio.timeout".msg = "Use anyio.fail_after or anyio.move_on_after instead."
+"asyncio.Queue".msg = "Use anyio.create_memory_object_stream instead."
+"asyncio.Semaphore".msg = "Use anyio.Semaphore instead."
+"asyncio.Condition".msg = "Use anyio.Condition instead."
 
 [tool.ruff.format]
 # don't format python in docstrings, pytest-examples takes care of it
@@ -435,8 +450,14 @@ docstring-code-format = false
 quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
-"examples/**/*.py" = ["D101", "D103"]
-"tests/**/*.py" = ["D"]
+# The `asyncio` bans in `banned-api` (`TID251`) are for backend-neutral library code. Tests run on asyncio by default,
+# examples show asyncio usage, and CI and helper scripts are not library code.
+"examples/**/*.py" = ["D101", "D103", "TID251"]
+"tests/**/*.py" = ["D", "TID251"]
+".github/scripts/pydantic_ai_gh_aw_shim/cli.py" = ["TID251"]
+".github/scripts/test_pydantic_ai_runner.py" = ["D", "TID251"]
+"src/pydantic_ai_harness/scripts/**/*.py" = ["TID251"]
+"src/pydantic_ai_harness/integration_tests/**/*.py" = ["TID251"]
 "docs/**/*.py" = ["D"]
 ".github/scripts/ci_duration.py" = ["D"]
 ".github/scripts/shard_durations.py" = ["D"]
@@ -445,7 +466,6 @@ quote-style = "single"
 ".github/scripts/test_ci_duration.py" = ["D"]
 ".github/scripts/test_check_api_compatibility.py" = ["D"]
 ".github/scripts/test_pr_gates.py" = ["D"]
-".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 ".github/scripts/test_review_lifecycle.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
 ".github/scripts/test_community_demand.py" = ["D"]
@@ -456,6 +476,7 @@ quote-style = "single"
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
 ".github/scripts/test_pr_guard.py" = ["D"]
+".github/scripts/test_lint_exemptions.py" = ["D"]
 ".github/scripts/test_ci_content_classifier.py" = ["D"]
 ".github/scripts/test_ci_matrix.py" = ["D"]
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]
@@ -466,7 +487,11 @@ quote-style = "single"
 ".github/scripts/test_douwebot_opencode_result.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 "scripts/test_check_complexity.py" = ["D"]
+"scripts/test_check_test_waits.py" = ["D"]
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]
+# clai2 owns its asyncio loop (`asyncio.run` in `cli/cli.py`), and agent runs need asyncio today; revisit with
+# https://github.com/pydantic/pydantic-ai/issues/7112.
+"src/pydantic_clai2/**/*.py" = ["TID251"]
 "!tests/**/*.py" = ["TID253"]
 # Modules dedicated to one of the heavy dependencies `TID253` bans need it at module level, e.g. for Temporal
 # workflow definitions; the cost is paid only where that dependency is what is being tested.
@@ -506,8 +531,11 @@ include = [
     "src/pydantic_clai2",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/_ratchet.py",
     "scripts/check_complexity.py",
     "scripts/test_check_complexity.py",
+    "scripts/check_test_waits.py",
+    "scripts/test_check_test_waits.py",
     "scripts/durable_exec_contract.py",
 ]
 # Pyright always skips paths under a dot directory, even ones named here or on its command line, so
@@ -529,6 +557,7 @@ executionEnvironments = [
     { root = "scripts/typecheck_changed.py", pythonVersion = "3.11" },
     { root = "scripts/test_typecheck_changed.py", extraPaths = ["scripts"], pythonVersion = "3.11", reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = "scripts/test_check_complexity.py", extraPaths = ["scripts"], reportPrivateUsage = false },
+    { root = "scripts/test_check_test_waits.py", extraPaths = ["scripts"], reportPrivateUsage = false },
 ]
 exclude = [
     # Need `browser-use`, which the workspace lock excludes; the `harness browser-use` CI job checks them.
