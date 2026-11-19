@@ -66,6 +66,8 @@ async def test_a_desktop_size_sets_the_display_it_starts(display: FakeDisplay) -
 
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')
+    # The desktop: its programs installed when missing, and the window manager started.
+    assert 'fluxbox tint2 xterm' in start and 'setsid fluxbox' in start
 
 
 async def test_a_desktop_sprite_reattaches_with_its_display(display: FakeDisplay) -> None:

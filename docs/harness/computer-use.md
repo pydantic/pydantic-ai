@@ -69,12 +69,29 @@ the same three cases. Pass `description=` to change when the model loads it.
 
 ## What the display needs
 
-Computer use runs five programs inside the sandbox: Xvfb draws the screen, `xdotool` moves the mouse and types,
-`xwininfo` (Debian's `x11-utils`) reads the screen size, `scrot` takes screenshots, and `setsid` keeps the screen
-running after the command that started it ends. If any is missing, the first use of the display installs it with
-`apt-get`, as root or with passwordless `sudo`. That can take a minute; add them to your image to skip it. If they
-can't be installed, because the image has no `apt-get` or no root, the run ends with a `WorkspaceUnavailableError`
-that names what's missing.
+The agent sees a desktop: a panel along the bottom with a button that opens a terminal. Each new window fills the
+screen above the panel. There's no web browser unless the image has one, or the agent installs one with
+[`Coder`](coder.md).
+
+Eight programs inside the sandbox make this desktop:
+
+- Xvfb draws the screen. It's needed only when no X server is running already.
+- `xdotool` moves the mouse and types.
+- `xwininfo` (in Debian's `x11-utils`) reads the screen size.
+- `scrot` takes screenshots.
+- `setsid` keeps the screen running after the command that started it ends.
+- `fluxbox` gives each window a title bar and focuses the window the agent clicks.
+- `tint2` draws the panel, and `xterm` is the terminal its button opens.
+
+The first use of the display installs any of them that's missing with `apt-get`, as root or with passwordless `sudo`.
+That takes 20 to 60 seconds; add them to your image to skip it.
+
+If the first five can't be installed, because the image has no `apt-get` or no root, the run ends with a
+`WorkspaceUnavailableError` that names what's missing. If only `fluxbox`, `tint2` or `xterm` can't be installed, the
+display starts without them: the screen stays black until a program opens a window, and windows have no title bars.
+To get the desktop, add them to your image.
+
+[E2B](e2b-sandbox.md#give-the-agent-a-desktop) and Daytona start their own desktop, XFCE, and don't get this one.
 
 ## Models
 

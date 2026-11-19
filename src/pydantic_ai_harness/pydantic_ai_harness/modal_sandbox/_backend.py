@@ -217,8 +217,8 @@ def _check_image(image: str | modal.Image | None) -> None:
             raise TypeError('image must be a registry tag or modal.Image')
 
 
-_DESKTOP_PACKAGES = ('xvfb', 'xdotool', 'scrot', 'x11-utils')
-"""Added to the default image with `desktop`, so the display starts without installing anything. `x11-utils` has
+_DESKTOP_PACKAGES = ('xvfb', 'xdotool', 'scrot', 'x11-utils', 'fluxbox', 'tint2', 'xterm')
+"""Added to the default image with `desktop`, so the desktop starts without installing anything. `x11-utils` has
 `xwininfo`."""
 
 
@@ -233,7 +233,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
     Commands run in isolated process groups. Cancellation and command deadlines attempt to stop
     the foreground group without terminating the sandbox shared by other commands.
 
-    With `desktop`, the sandbox gets a display on first use. The default image has the programs it needs; another
+    With `desktop`, the sandbox gets a desktop on first use. The default image has the programs it needs; another
     image gets them installed on first use, if it can.
 
     Args:
@@ -304,6 +304,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             self._run_argv,
             self._desktop_size,
             lambda: f'Modal sandbox {self._ref.id if self._ref else "(not created)"}',
+            started=self._recheck_setsid,
         )
         # `_working_dir` is what was configured (`None` for the image's); the protocol needs the
         # canonical absolute path, which only `pwd -P` in the sandbox can give.
@@ -661,10 +662,12 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             # Started after the command is checked, so a bad one doesn't create a sandbox, and before it runs, so a
             # program the command opens shows on the screen.
             await self._display.start()
-            # A display that started has `setsid`, which its start installs when missing, so a "no" is asked again.
-            if self._setsid_available is False:
-                self._setsid_available = None
         return await self._run_argv(argv, env=env or {}, timeout=timeout, shell=shell)
+
+    def _recheck_setsid(self) -> None:
+        """Forget a "no setsid" answer once the display has started, since its start installs `setsid` when missing."""
+        if self._setsid_available is False:
+            self._setsid_available = None
 
     async def _run_argv(
         self, argv: list[str], *, env: Mapping[str, str], timeout: float | None, shell: bool = False

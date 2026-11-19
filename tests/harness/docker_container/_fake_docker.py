@@ -96,6 +96,8 @@ exec)
         [ "$name" != readonly ] || tmp=/nonexistent-pydantic-ai-dir
         mkdir -p "$state/$name.tmp"
         export FAKE_TMP="$tmp"
+        # The container's home, so the desktop's settings never land in the host's.
+        export HOME="$tmp/home"
         for arg; do
             shift
             case $arg in */run/pydantic-ai/* | */tmp/.X* | */tmp/.pydantic-ai-* | */tmp/pydantic-ai-*)
@@ -205,7 +207,7 @@ Also keeps a host's real Xvfb from starting.
 
 _FAKE_FLUXBOX = """#!/bin/sh
 """
-"""Stands in for the window manager and `xprop`, so a host's real ones never run."""
+"""Stands in for the window manager, `xprop` and the terminal, so a host's real ones never run."""
 
 _FAKE_SETSID = """#!/bin/sh
 exec "$@"
@@ -241,10 +243,15 @@ bin=$(dirname "$0")
 echo "${FAKE_SUDO:+sudo }$*" >> "$bin/apt-get-calls"
 if [ "$1" = install ] && [ -e "$bin/apt-get-fails" ]; then echo 'E: Unable to locate package xdotool' >&2; exit 100; fi
 [ "$1" != install ] || mv "$bin"/uninstalled/* "$bin"/ 2>/dev/null
+if [ "$1" = install ] && [ -e "$bin/x-starts-during-install" ]; then
+    printf '%10d\\n' 25 > "$FAKE_TMP/.X1-lock" && mkdir -p "$FAKE_TMP/proc/25" && echo Xvnc > "$FAKE_TMP/proc/25/comm"
+    rm -f "$bin/no-display"
+fi
 exit 0
 """
 """Stands in for `apt-get`: logs each call, prefixed `sudo` when run through the fake `sudo`, and has `install` put back
-the programs `uninstall` took away, or fail if `apt-get-fails` exists."""
+the programs `uninstall` took away, or fail if `apt-get-fails` exists. With `x-starts-during-install`, an install also
+brings up the image's own X server, `Xvnc`, as PID 25."""
 
 
 class FakeDocker:
@@ -348,6 +355,10 @@ class FakeDocker:
             (host / program).symlink_to(path)
         (self.bin_dir / 'container-path').write_text(f'{self.bin_dir}{os.pathsep}{host}')
 
+    def start_x_during_install(self) -> None:
+        """Have the next install bring up the image's own X server, as one the image starts at boot may."""
+        (self.bin_dir / 'x-starts-during-install').touch()
+
     def fail_installs(self) -> None:
         (self.bin_dir / 'apt-get-fails').touch()
 
@@ -382,6 +393,7 @@ def install_fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fake
         ('fluxbox', _FAKE_FLUXBOX),
         ('tint2', _FAKE_TINT2),
         ('xprop', _FAKE_FLUXBOX),
+        ('xterm', _FAKE_FLUXBOX),
         ('setsid', _FAKE_SETSID),
         ('scrot', _FAKE_SCROT),
         ('xwininfo', _FAKE_XWININFO),
