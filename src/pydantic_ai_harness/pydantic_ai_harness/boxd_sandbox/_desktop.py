@@ -26,6 +26,7 @@ from contextlib import suppress
 from typing import TYPE_CHECKING
 
 import anyio
+from boxd import AuthenticationError, PermissionDeniedError
 
 from pydantic_ai.computer_use import (
     Click,
@@ -193,8 +194,6 @@ class BoxdDesktop:
                 await computer.move(machine_id, point.x, point.y)
             await computer.mouse_up(machine_id, end.x, end.y)
         except BaseException as error:
-            import boxd  # already imported by the backend, which reports a missing `boxd` extra
-
             released = False
             with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
                 await computer.mouse_up(machine_id)
@@ -203,7 +202,7 @@ class BoxdDesktop:
             if (
                 released
                 or not isinstance(error, Exception)
-                or isinstance(error, boxd.AuthenticationError | boxd.PermissionDeniedError)
+                or isinstance(error, AuthenticationError | PermissionDeniedError)
             ):
                 raise
             raise WorkspaceError(

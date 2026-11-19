@@ -80,7 +80,6 @@ from pydantic_ai_harness._workspace_provider import (
     run_to_completion,
     running_on_asyncio,
 )
-from pydantic_ai_harness.boxd_sandbox._desktop import DISPLAY, BoxdDesktop
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay, UnsupportedActionError
 
 if TYPE_CHECKING:
@@ -91,12 +90,14 @@ if TYPE_CHECKING:
 
 __all__ = ('BoxdSandboxBackend',)
 
-_T = TypeVar('_T')
-
 try:
     import boxd
 except ImportError as _import_error:
     raise ImportError('Install `pydantic-ai-harness[boxd]` to use BoxdSandbox.') from _import_error
+
+from pydantic_ai_harness.boxd_sandbox._desktop import DISPLAY, BoxdDesktop
+
+_T = TypeVar('_T')
 
 _AUTH_MESSAGE = (
     'boxd did not accept the credentials. Set BOXD_API_KEY, run inside a boxd machine, '
