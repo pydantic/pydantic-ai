@@ -4,7 +4,8 @@ The launcher writes the command to `command.ps1` and the wrapper to `supervisor.
 and starts the wrapper as a hidden PowerShell of its own. Each script reaches its PowerShell as a file, not
 on the command line, where antivirus software flags an `-EncodedCommand` launch. The wrapper publishes
 `status.json` as the `sh` one does, runs the command, copies its output into the log files byte for byte,
-and publishes the exit code when it ends. Stopping a job runs `stop.ps1`, which ends the wrapper's process tree with `taskkill`.
+and publishes the exit code when it ends. Stopping a job runs `stop.ps1`, which ends the wrapper's process
+tree with `taskkill`.
 """
 
 from __future__ import annotations

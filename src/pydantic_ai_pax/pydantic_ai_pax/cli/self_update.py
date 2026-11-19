@@ -239,8 +239,8 @@ def install_after_exit(
     """Run `script` in a new console with Windows PowerShell, found by full path rather than a `PATH` search.
 
     The script goes in a temporary file that PowerShell reads and deletes, not on its command line, where
-    antivirus software flags an `-EncodedCommand` launch. Its directory is `mkdtemp`'s, private to this user,
-    and the file is UTF-8 with a BOM, which Windows PowerShell needs to read anything but ASCII.
+    antivirus software flags an `-EncodedCommand` launch. Its directory is `mkdtemp`'s, which Python 3.11.10, 3.12.4
+    and 3.13 make private to this user on Windows too, and the file is UTF-8 with a BOM, which Windows PowerShell needs to read anything but ASCII.
     """
     root = environ.get('SystemRoot', r'C:\Windows')
     executable = f'{root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
