@@ -419,9 +419,9 @@ async def test_feedback_never_reaches_googles_system_instruction(gemini_api_key:
                             'type': 'text',
                             'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 answer with a word
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                         }
                     ],
