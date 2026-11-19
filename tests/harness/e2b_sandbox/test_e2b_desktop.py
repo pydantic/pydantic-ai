@@ -13,6 +13,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.computer_use import ComputerReturnPart
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import WorkspaceRef, WorkspaceUnavailableError
 from pydantic_ai_harness.computer_use import ComputerUse
@@ -99,6 +100,11 @@ async def test_a_desktop_sandbox_reattaches_with_its_display(fake_e2b: FakeE2B, 
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')
     assert E2BSandbox().backend(ref).display is None
+
+
+def test_a_desktop_size_is_checked_when_the_capability_is_created() -> None:
+    with pytest.raises(UserError, match=r'`desktop` must be a `\(width, height\)` of at least 1 pixel each'):
+        E2BSandbox(desktop=(0, 800))
 
 
 async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(

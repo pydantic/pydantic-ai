@@ -525,6 +525,11 @@ def test_a_desktop_sandbox_reattaches_with_its_display() -> None:
     assert DaytonaSandbox().backend(ref).display is None
 
 
+def test_a_desktop_size_is_checked_when_the_capability_is_created() -> None:
+    with pytest.raises(UserError, match=r'`desktop` must be a `\(width, height\)` of at least 1 pixel each'):
+        DaytonaSandbox(desktop=(0, 800))
+
+
 async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(fake_daytona: FakeDaytona) -> None:
     sandbox_capability = DaytonaSandbox(desktop=True)
     agent = Agent(
