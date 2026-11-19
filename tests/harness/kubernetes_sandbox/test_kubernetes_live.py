@@ -393,9 +393,11 @@ async def test_a_desktop_pool_serves_the_display() -> None:
         # Firefox's button comes first when the image has it.
         firefox = await backend.run(['test', '-e', '/usr/share/applications/firefox-esr.desktop'])
         await screen(backend).act(Click(x=49 if firefox.exit_code == 0 else 18, y=780))
-        with anyio.fail_after(15):
-            while (await backend.run(['xdotool', 'search', '--onlyvisible', '--class', 'xterm'])).exit_code != 0:
-                await anyio.sleep(0.5)
+
+        async def xterm_shows() -> bool:
+            return (await backend.run(['xdotool', 'search', '--onlyvisible', '--class', 'xterm'])).exit_code == 0
+
+        await _eventually(xterm_shows, timeout=15)
     finally:
         await _destroy(backend)
 
