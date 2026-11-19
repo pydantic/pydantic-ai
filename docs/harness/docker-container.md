@@ -223,9 +223,9 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 
 ## Renamed from `DockerSandbox`
 
-This capability was `DockerSandbox`, with `DockerSandboxBackend`, in `pydantic_ai_harness.docker_sandbox`. That name implied a security sandbox, which a container sharing your kernel isn't; see [Security model](#security-model). The old names are removed. The `DockerSandbox` name is kept for a possible capability built on [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/), Docker's microVM product, which would be a different capability with a VM boundary. The two names follow Docker's own split: a container shares your kernel, and a Sandbox is a microVM with its own.
+This capability was `DockerSandbox`, with `DockerSandboxBackend`, in `pydantic_ai_harness.docker_sandbox`. That name implied a security sandbox, which a container sharing your kernel isn't; see [Security model](#security-model). The old names still import from `pydantic_ai_harness.docker_sandbox`, with a `HarnessDeprecationWarning`, until a future release removes them. After that, the `DockerSandbox` name is kept for a possible capability built on [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/), Docker's microVM product, which would be a different capability with a VM boundary. The two names follow Docker's own split: a container shares your kernel, and a Sandbox is a microVM with its own. Migrate to `DockerContainer` now, so your agent keeps running in a plain container.
 
-Specs saved before the rename use the `DockerSandbox` block name. Rename the block to `DockerContainer` to load them; the options are unchanged.
+Specs saved before the rename use the `DockerSandbox` block name. To keep loading them, pass the deprecated `DockerSandbox` class in `custom_capability_types`, alongside or instead of `DockerContainer`: its class name is the block name. To migrate a spec, rename its `DockerSandbox` block to `DockerContainer`; the options are unchanged.
 
 ## Configuration
 

@@ -76,7 +76,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     ```python {test="skip" lint="skip"}
     capabilities = [
-        FileSystem(), Shell(), RepoContext(), SubAgents(...),
+        FileSystem('.'), Shell(cwd='.'), RepoContext(), SubAgents(...),
         ClearToolResults(), ToolOutputLimits(), RepairToolArguments(),
     ]
     ```

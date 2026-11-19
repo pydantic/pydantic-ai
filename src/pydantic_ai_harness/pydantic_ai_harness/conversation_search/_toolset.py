@@ -9,9 +9,11 @@ within that scope, while context windows around a match stay within the match's 
 
 from __future__ import annotations
 
+import inspect
 import json
 import math
 import re
+import typing
 from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, assert_never
@@ -43,6 +45,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._message_text import capability_part_text, tool_return_text, user_prompt_texts
+from pydantic_ai_harness._warn import warn_default_changed
 from pydantic_ai_harness.conversation_search._source import SUMMARY_PREFIX, HistorySource, message_hash
 
 SEARCH_HISTORY_DESCRIPTION = """\
@@ -81,6 +84,13 @@ run's. `all` searches every run the source enumerates and must only be used when
 is already isolated to one principal; otherwise, a run can retrieve verbatim excerpts
 from other conversations in the store.
 """
+
+SCOPE_DEFAULT_CHANGE_IMPACT = (
+    "Searches are now limited to the calling run's conversation instead of every run in the store, "
+    'so a caller relying on the old default stops seeing other conversations without an error. '
+    'This transitional warning will be removed in the next breaking release; the conversation-scoped default will remain.'
+)
+"""Why the `scope` default change matters, for the deprecation warning both public entry points emit."""
 
 _TOKENIZE_RE = re.compile(r'\w+')
 """Tokenizer regex: word runs (unicode letters, digits, underscore).
@@ -341,6 +351,24 @@ def _inherited_prefix(messages: list[ModelMessage], hashes: list[str], seen: dic
     return inherited
 
 
+def _construction_stacklevel() -> int:
+    """The `warn_default_changed` stacklevel that reaches the code constructing the toolset.
+
+    Called from `ConversationSearchToolset.__init__`. Constructing through a subscripted
+    generic (`ConversationSearchToolset[Deps](...)`) adds a `typing` frame between `__init__`
+    and that code, which a fixed level would blame instead.
+    """
+    # 1 is `warn_default_changed`, 2 is `__init__`, 3 is whatever called `__init__`.
+    level = 3
+    frame = inspect.currentframe()
+    caller = frame.f_back.f_back if frame is not None and frame.f_back is not None else None
+    while caller is not None and caller.f_code.co_filename == typing.__file__:
+        level += 1
+        caller = caller.f_back
+    del frame, caller
+    return level
+
+
 class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
     """A single `search_conversation_history` tool over a `HistorySource`."""
 
@@ -353,8 +381,22 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         context_lines: int,
         bm25_k1: float,
         bm25_b: float,
-        scope: SearchScope = 'conversation',
+        scope: SearchScope | None = None,
     ) -> None:
+        # `None` means the caller did not choose. It resolves to `conversation` and warns once
+        # here, for the same reason `ConversationSearch` does: this default was `all`, and the
+        # change is invisible to a store-wide caller who keeps working with a narrower corpus.
+        # `ConversationSearch` always passes a resolved scope, so it never double-warns.
+        if scope is None:
+            warn_default_changed(
+                owner='ConversationSearchToolset',
+                option='scope',
+                old='all',
+                new='conversation',
+                impact=SCOPE_DEFAULT_CHANGE_IMPACT,
+                stacklevel=_construction_stacklevel(),
+            )
+            scope = 'conversation'
         super().__init__(id=tool_id)
         if max_matches < 0:
             raise ValueError(f'max_matches must be non-negative, got {max_matches!r}.')
@@ -374,7 +416,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         self._params = _Bm25Params(k1=bm25_k1, b=bm25_b)
         self._scope: SearchScope = scope
         description = SEARCH_HISTORY_DESCRIPTION
-        if scope != 'all':
+        if scope == 'conversation':
             description += _CONVERSATION_SCOPE_NOTE
         self.add_function(
             self.search_conversation_history,
@@ -401,8 +443,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
 
     async def _search(self, ctx: RunContext[AgentDepsT], query: str, run_id: str | None) -> str:
         conversation_id: str | None = None
-        # Anything but an explicit `'all'`, such as a `None` forwarded from optional config, is conversation-scoped.
-        if self._scope != 'all':
+        if self._scope == 'conversation':
             # Fail closed. Filtering on `conversation_id is None` would match every
             # unlabelled run in the store, which is the exposure the scope exists to
             # prevent, so an unlabelled run searches nothing rather than everything.

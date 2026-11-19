@@ -163,6 +163,8 @@ def run_limited_code_mode_agent(prompt: str, tool_calls_limit: int) -> None:
         _limit_errors.append(str(error))
         if len(_limit_errors) == 1:
             raise _LimitAbortCrash from error
+        # Recovery runs on a DBOS executor thread, where `run_sync` sets a new event loop that nothing else closes.
+        asyncio.get_event_loop().close()
         raise
 
 

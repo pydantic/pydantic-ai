@@ -999,6 +999,15 @@ conversation, not a message in it, and the application decides which copies reco
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.
 
+`pydantic_ai_harness.step_persistence.naming` is deprecated and emits a
+`HarnessDeprecationWarning` on import. Its naming prompt, queue bounds, and
+failure policy are CLAI's resume-browser policy rather than a Harness primitive,
+so CLAI now owns its own copy. Copy the helpers you use into your application;
+the module will be removed in a future release. The conversation store above is
+unaffected. Until then, applications using its `SessionNamer` must join the worker
+before closing its model clients or storage, and failed or timed-out naming
+requests may still incur provider usage.
+
 ## Earlier checkpoints and notifications
 
 Set `capture_frontier=True` to save accepted request histories before model

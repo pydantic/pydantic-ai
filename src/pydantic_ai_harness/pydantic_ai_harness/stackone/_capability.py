@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, FunctionToolset
 from pydantic_ai_harness._mcp import per_run_connection
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness.stackone._toolset import (
+    STACKONE_API_KEY_ENV,
     STACKONE_BASE_URL,
     MCPToolsetClient,
     StackOneToolset,
@@ -67,6 +71,9 @@ class StackOne(AbstractCapability[AgentDepsT]):
     StackOne tools.
     """
 
+    api_key: str | None = field(default=None, repr=False)
+    """Deprecated alias of `auth`."""
+
     base_url: str = STACKONE_BASE_URL
     """HTTPS StackOne API host. Point at a regional or staging host if needed."""
 
@@ -93,6 +100,11 @@ class StackOne(AbstractCapability[AgentDepsT]):
     is not applied to them."""
 
     def __post_init__(self) -> None:
+        if self.api_key is not None:
+            if self.auth is not None:
+                raise UserError('Pass `auth` only; `api_key` is its deprecated name.')
+            warn_argument_renamed('StackOne', 'api_key', 'auth', stacklevel=4)
+            self.auth, self.api_key = self.api_key, None
         self.tool_mode, self.actions = validate_configuration(self.tool_mode, self.actions)
         self.id = self._derived_id()
 
@@ -149,6 +161,7 @@ class StackOne(AbstractCapability[AgentDepsT]):
         id: str | None = None,
         description: str | None = _DEFAULT_DESCRIPTION,
         defer_loading: bool = False,
+        api_key: str | None = None,
         base_url: str = STACKONE_BASE_URL,
         actions: str | Sequence[str] = (),
         tool_mode: ToolMode | None = None,
@@ -157,13 +170,21 @@ class StackOne(AbstractCapability[AgentDepsT]):
     ) -> StackOne[AgentDepsT]:
         """Construct from serializable options, excluding the runtime-only `client` and `auth`.
 
-        Specs take no credential: the API key comes from `STACKONE_API_KEY`.
+        Specs take no credential: the API key comes from `STACKONE_API_KEY`. `api_key` is still accepted, deprecated.
         """
+        if api_key is not None:
+            warnings.warn(
+                f'The `StackOne` spec option `api_key` is deprecated: set the `{STACKONE_API_KEY_ENV}` environment '
+                'variable instead, so the key stays out of the spec. The option will be removed in a future release.',
+                HarnessDeprecationWarning,
+                stacklevel=2,
+            )
         return cls(
             account_id=account_id,
             id=id,
             description=description,
             defer_loading=defer_loading,
+            auth=api_key,
             base_url=base_url,
             actions=actions,
             tool_mode=tool_mode,

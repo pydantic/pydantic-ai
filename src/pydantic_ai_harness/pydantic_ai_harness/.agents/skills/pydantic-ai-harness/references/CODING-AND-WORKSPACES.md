@@ -44,7 +44,7 @@ except UserError as e:
 - Add `LocalWorkspace('.')` (from `pydantic_ai.capabilities`; `- LocalWorkspace: .` in an agent spec)
   or a sandbox capability, or pass `workspace=` to `run()`.
 - Set the directory **on the workspace**: `LocalWorkspace('./repo')`. `Coder('dir')`, `Shell(cwd=)`,
-  `FileSystem(cwd=)`, `Macroscope(cwd=)`, `RepoContext(workspace_dir=)` are removed.
+  `FileSystem(cwd=)`, `Macroscope(cwd=)`, `RepoContext(workspace_dir=)` warn and are **ignored**.
 - `LocalWorkspace` needs a POSIX host and is not a sandbox.
   Commands inherit only `PATH`, `HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`; pass the rest with
   `LocalWorkspace('.', env={'GH_TOKEN': ...})`. Never pass `os.environ` (leaks LLM API keys to the
