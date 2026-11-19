@@ -1,7 +1,8 @@
 """The contracts in `tests/capability_cases.py`, run over every core and Harness case they apply to.
 
-They run here, where the Harness is installed, because its cases are most of what they apply to. A case a
-contract exempts must still break it, so fixing the capability fails the suite until the exemption is removed.
+They run here, where the Harness is installed, because its cases are most of what they apply to, over the public
+capabilities the suites build. A case a contract exempts must still break it, so fixing the capability fails the
+suite until the exemption is removed.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -16,15 +18,27 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.toolsets import AbstractToolset
 
 from .. import capability_cases as core
-from ..append_only import ToolCall, drain_events
-from ..capability_cases import CONTRACTS, RENAMED, CapabilityCase, Contract
-from .capability_cases import CASES as HARNESS_CASES
+from ..append_only import ToolCall, build_capabilities, discover_capabilities, drain_events, skip_unless_installed
+from ..capability_cases import (
+    CONTRACTS,
+    CORE_CAPABILITY_PACKAGES,
+    CUSTOM_ID,
+    RENAMED,
+    UNSET_ID,
+    CapabilityCase,
+    Contract,
+)
+from .capability_cases import CASES as HARNESS_CASES, HARNESS_CAPABILITY_PACKAGES
 
 CASES: dict[str, CapabilityCase] = {**core.CASES, **HARNESS_CASES}
+PUBLIC = {**discover_capabilities(CORE_CAPABILITY_PACKAGES), **discover_capabilities(HARNESS_CAPABILITY_PACKAGES)}
+"""The public capabilities, which the suites build; a private class only has to say what two of it mean."""
 
 
 def _cases(contract: Contract) -> list[Any]:
@@ -34,7 +48,7 @@ def _cases(contract: Contract) -> list[Any]:
         if case.calls is not None and (reason := case.calls.moves_cache_prefix)
         else name
         for name, case in sorted(CASES.items())
-        if contract.applies(case)
+        if name in PUBLIC and contract.applies(case)
     ]
 
 
@@ -44,7 +58,7 @@ def test_every_exemption_names_a_case_the_contract_applies_to() -> None:
         f'`{contract.name}` exempts {name!r}, which it does not apply to: remove the exemption.'
         for contract in CONTRACTS
         for name in contract.exempt
-        if name not in CASES or not contract.applies(CASES[name])
+        if name not in PUBLIC or not contract.applies(CASES[name])
     ]
     problems += [
         f'`{contract.name}` exempts {name!r} with no reason.'
@@ -121,3 +135,64 @@ async def test_tools_behave_the_same_under_a_prefix(name: str, tmp_path: Path) -
         assert prefixed != plain, f'{name} now behaves the same under a prefix: remove its exemption ({exempt.reason})'
     else:
         assert prefixed == plain
+
+
+def _built(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AbstractCapability[Any]:
+    """The capability `name`, as its case builds it."""
+    case = CASES[name]
+    skip_unless_installed(name, case.requires)
+    for key, value in case.env.items():
+        monkeypatch.setenv(key, value)
+    built = build_capabilities(name, PUBLIC[name].load, case.fixture, tmp_path)
+    [capability] = [capability for capability in built if type(capability).__name__ == name]
+    return capability
+
+
+def _toolset_ids(capability: AbstractCapability[Any]) -> list[str | None] | None:
+    """The id of every toolset `capability` builds itself, or `None` when it builds none or is made of others."""
+    if leaf_capabilities(capability) != [capability]:
+        return None
+    toolset = capability.get_toolset()
+    if toolset is None:
+        return None
+    if not isinstance(toolset, AbstractToolset):
+        # The agent wraps a toolset function in one `DynamicToolset`, with no id of its own.
+        return [None]
+    leaves: list[AbstractToolset[Any]] = []
+    # Pyright can't narrow the toolset function out of `AgentToolset`, as core's `CombinedCapability` notes.
+    toolset.apply(leaves.append)  # pyright: ignore[reportUnknownMemberType]
+    return [leaf.id for leaf in leaves]
+
+
+def _unset_id_breaks(capability: AbstractCapability[Any]) -> list[str]:
+    breaks: list[str] = []
+    for label, built in (('its defaults', capability), ('`id=None`', replace(capability, id=None))):
+        ids = _toolset_ids(built)
+        if ids is not None and any(toolset_id != built.id for toolset_id in ids):
+            breaks.append(f'with {label}, the capability id is {built.id!r} and its toolset ids are {ids}')
+    return breaks
+
+
+@pytest.mark.parametrize('name', _cases(UNSET_ID))
+def test_an_unset_id_is_every_toolset_id(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    capability = _built(name, tmp_path, monkeypatch)
+    if _toolset_ids(capability) is None:
+        return
+    breaks = _unset_id_breaks(capability)
+    if exempt := UNSET_ID.exempt.get(name):
+        assert breaks, f'{name} now passes: remove its `unset_id` exemption ({exempt.reason})'
+    else:
+        assert not breaks, '; '.join(breaks)
+
+
+@pytest.mark.parametrize('name', _cases(CUSTOM_ID))
+def test_a_custom_id_reaches_every_toolset(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    capability = _built(name, tmp_path, monkeypatch)
+    if _toolset_ids(capability) is None:
+        return
+    ids = _toolset_ids(replace(capability, id='custom'))
+    reached = ids is None or all(toolset_id == 'custom' for toolset_id in ids)
+    if exempt := CUSTOM_ID.exempt.get(name):
+        assert not reached, f'{name} now passes: remove its `custom_id` exemption ({exempt.reason})'
+    else:
+        assert reached, f"with `id='custom'`, its toolset ids are {ids}"

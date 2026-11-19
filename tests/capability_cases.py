@@ -638,5 +638,82 @@ RENAMED = Contract(
 )
 """A capability's tools behave the same under `prefix_tools()`: a tool, hook or event found by name breaks it."""
 
-CONTRACTS = (RENAMED,)
+
+def _buildable(case: CapabilityCase) -> bool:
+    return not isinstance(case.build, Unbuildable)
+
+
+_ISSUES = 'https://github.com/pydantic/pydantic-ai/issues/'
+_UNSET_ID_KEEPS_TOOLSET_ID = (
+    f'with `id=None` the capability is anonymous, but its toolset keeps the default id: {_ISSUES}13968'
+)
+_SEPARATE_TOOLSET_ID = (
+    'its toolset id is kept apart from the capability id, so durable operation names do not change (#10904): '
+    f'{_ISSUES}13968'
+)
+_NO_DEFAULT_ID = f'it declares no default id, but its toolset has a fixed one: {_ISSUES}9233'
+_TOOLSET_WITHOUT_ID = f'its toolset has no id, so a durable engine refuses it: {_ISSUES}9233'
+_USERS_TOOLSET = 'its toolset is one the user built, which keeps the id the user gave it'
+_WRAPPED_TOOLSET = "it wraps another capability, whose toolset keeps that capability's id"
+_NO_DURABLE_TOOLSET_ID = (
+    'it declares a default id, but its toolset has none; it refuses durable agents, so no durable unit is '
+    f'named after it: {_ISSUES}13968'
+)
+
+UNSET_ID = Contract(
+    'unset_id',
+    applies=_buildable,
+    exempt={
+        **dict.fromkeys(
+            (
+                'CompactOnRequest',
+                'DayAI',
+                'GitHub',
+                'Linear',
+                'Macroscope',
+                'Memory',
+                'Notion',
+                'Ordinal',
+                'PostHog',
+                'PruneToolResults',
+                'Pylon',
+                'Slack',
+                'SmartSearch',
+                'ToolOutputLimits',
+            ),
+            Exempt(_UNSET_ID_KEEPS_TOOLSET_ID),
+        ),
+        'Planning': Exempt(f'{_UNSET_ID_KEEPS_TOOLSET_ID}; it hardcodes the toolset id (#10904)'),
+        'ConversationSearch': Exempt(_SEPARATE_TOOLSET_ID),
+        'PlaywrightBrowser': Exempt(_SEPARATE_TOOLSET_ID),
+        'FileSystem': Exempt(_NO_DEFAULT_ID),
+        'Shell': Exempt(_NO_DEFAULT_ID),
+        'PydanticAIDocs': Exempt(_TOOLSET_WITHOUT_ID),
+        'Peers': Exempt(_NO_DURABLE_TOOLSET_ID),
+    },
+)
+"""Built with its defaults, and with `id=None`, a capability's id is the id of every toolset it builds.
+
+This is what both answers to what an unset `id` means (#13968) share: the default everywhere, or no id
+anywhere. A capability made of others is checked through its parts, which are cases of their own.
+"""
+
+CUSTOM_ID = Contract(
+    'custom_id',
+    applies=_buildable,
+    exempt={
+        'ConversationSearch': Exempt(_SEPARATE_TOOLSET_ID),
+        'PlaywrightBrowser': Exempt(_SEPARATE_TOOLSET_ID),
+        'Planning': Exempt(f'its toolset hardcodes the id `planning`: {_ISSUES}13968'),
+        'PydanticAIDocs': Exempt(_TOOLSET_WITHOUT_ID),
+        'Peers': Exempt(_NO_DURABLE_TOOLSET_ID),
+        'MCP': Exempt(_USERS_TOOLSET),
+        'Toolset': Exempt(_USERS_TOOLSET),
+        'PrefixTools': Exempt(_WRAPPED_TOOLSET),
+    },
+)
+"""A capability built with a custom `id` gives it to every toolset it builds, so two with distinct ids never
+share a toolset id, which a durable engine names its units after."""
+
+CONTRACTS = (RENAMED, UNSET_ID, CUSTOM_ID)
 """Every contract, so a meta-test can check each one's exemptions."""

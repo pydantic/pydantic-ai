@@ -96,11 +96,12 @@ from pydantic_ai_harness.linear import Linear
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.memory import InMemoryMemoryStore
 from pydantic_ai_harness.notion import Notion
-from pydantic_ai_harness.peers import InMemoryPeerNetwork
+from pydantic_ai_harness.peers import InMemoryPeerNetwork, Peers
 from pydantic_ai_harness.planning import SqlitePlanStore
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
+from pydantic_ai_harness.sub_agents import DelegationReports, DelegationTasks
 from pydantic_ai_harness.system_reminders import Reminder
 
 from ..append_only import CLOCK, Fixture
@@ -625,7 +626,8 @@ CASES: dict[str, CapabilityCase] = {
         build=lambda _: ClampOversizedMessages(max_part_chars=100_000),
     ),
     'DelegationReports': CapabilityCase(
-        Anonymous('one per task owner and conversation; each delivers only its own reports, so several coexist')
+        Anonymous('one per task owner and conversation; each delivers only its own reports, so several coexist'),
+        build=lambda tmp_path: DelegationReports(DelegationTasks(directory=tmp_path / 'tasks'), conversation_id='c'),
     ),
     'TaskLink': CapabilityCase(Anonymous('the abstract base of the links below; never attached itself')),
     'LocalTaskLink': CapabilityCase(
@@ -810,7 +812,8 @@ CASES: dict[str, CapabilityCase] = {
                 cls(network=InMemoryPeerNetwork().join(handle='a')),
                 cls(network=InMemoryPeerNetwork().join(handle='b')),
             ),
-        )
+        ),
+        build=lambda _: Peers(network=InMemoryPeerNetwork().join(handle='a')),
     ),
     'Shell': CapabilityCase(
         Collides(
