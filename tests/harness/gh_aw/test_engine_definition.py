@@ -53,11 +53,11 @@ if shutil.which('node') is None:  # pragma: no cover
     pytest.skip('the gh-aw harness script is JavaScript and needs node', allow_module_level=True)
 
 DEFINITION = Path(__file__).parents[3] / 'src' / 'pydantic_ai_harness' / 'gh-aw' / 'pydantic.md'
-CLAI2_SOURCE = Path(__file__).parents[3] / 'src' / 'pydantic_clai2'
+CLAI2_SOURCE = Path(__file__).parents[3] / 'src' / 'pydantic_ai_pax'
 
 requires_clai2 = pytest.mark.skipif(
-    importlib.util.find_spec('pydantic_clai2') is None,
-    reason='running the launcher requires pydantic-clai2',
+    importlib.util.find_spec('pydantic_ai_pax') is None,
+    reason='running the launcher requires pydantic-ai-pax',
 )
 
 # The first `node` start on a runner is slow; `started_node` pays it outside every test's budget.
@@ -1792,7 +1792,7 @@ def code_mode_off_args(tmp_path: Path) -> tuple[str, str]:
 
     CLAI folds tools into `run_code` by default, and `TestModel` cannot write code that runs.
     """
-    from pydantic_clai2.config.settings_store import SettingsStore
+    from pydantic_ai_pax.config.settings_store import SettingsStore
 
     database = tmp_path / 'clai2.db'
     SettingsStore(database).set('run.code_mode', False)

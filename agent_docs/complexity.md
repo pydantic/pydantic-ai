@@ -112,7 +112,7 @@ The function was already over the limit, and the change made it worse. Keep the 
 
 **Shape**: terminal UI and reports: Rich tables and panels, menus, frames, diff rows and prompt loops.
 
-**Fix**: build each row, card or frame in its own method, and use guard clauses. `task_row` in `pydantic_clai2/runtime/tasks.py` is such a builder.
+**Fix**: build each row, card or frame in its own method, and use guard clauses. `task_row` in `pydantic_ai_pax/runtime/tasks.py` is such a builder.
 
 ### algorithm
 
