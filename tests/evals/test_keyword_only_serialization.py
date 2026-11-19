@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from pathlib import Path
 from typing import ClassVar, Literal
 
@@ -178,6 +178,44 @@ with try_import() as imports_successful:
             return len(ctx.output) + self.bonus >= self.minimum
 
     @dataclass
+    class InitFalseRenamedByInit(Evaluator[str, str, str]):
+        """A hand-written `__init__` fills `_needle` from a parameter of another name, so a file keeps every field."""
+
+        _needle: str = field(init=False)
+
+        def __init__(self, needle: str) -> None:
+            self._needle = needle
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            return self._needle in ctx.output
+
+    @dataclass
+    class InitFalseTakenByArgs(Evaluator[str, str, str]):
+        """A hand-written `__init__` fills `pattern` from `*args`, so a file keeps every field."""
+
+        pattern: str = field(init=False)
+
+        def __init__(self, *args: str) -> None:
+            self.pattern = args[0]
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            return re.fullmatch(self.pattern, ctx.output) is not None
+
+    @dataclass
+    class InitFalseWithInitVar(Evaluator[str, str, str]):
+        """The generated `__init__` takes `pattern` and the `InitVar` `flags`, but not `compiled`."""
+
+        pattern: str
+        flags: InitVar[int] = 0
+        compiled: re.Pattern[str] = field(init=False, repr=False)
+
+        def __post_init__(self, flags: int) -> None:
+            self.compiled = re.compile(self.pattern, flags)
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            return self.compiled.fullmatch(ctx.output) is not None
+
+    @dataclass
     class InitFalseOnly(Evaluator[str, str, str]):
         """Every field is `init=False`, and `build_serialization_arguments` saves the `text` that `__init__` takes."""
 
@@ -252,6 +290,10 @@ with try_import() as imports_successful:
         'InitFalseTakenByKwargs': RoundTripCase(
             InitFalseTakenByKwargs(minimum=4, bonus=1), {'minimum': 4, 'bonus': 1}, KEYWORD_FORMS
         ),
+        'InitFalseRenamedByInit': RoundTripCase(
+            InitFalseRenamedByInit('ell'), 'ell', frozenset({'short_spec'}) | KEYWORD_FORMS
+        ),
+        'InitFalseTakenByArgs': RoundTripCase(InitFalseTakenByArgs('h.llo'), 'h.llo', frozenset({'short_spec'})),
         'InitFalseOnly': RoundTripCase(
             InitFalseOnly('hello'), {'text': 'hello'}, frozenset({'short_spec'}) | KEYWORD_FORMS
         ),
@@ -303,6 +345,8 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals
         'WithClassVar',
         'InitFalseTakenByInit',
         'InitFalseTakenByKwargs',
+        'InitFalseRenamedByInit',
+        'InitFalseTakenByArgs',
         'InitFalseOnly',
     ],
 )
@@ -310,7 +354,8 @@ def test_evaluator_file_round_trip(tmp_path: Path, fmt: Literal['json', 'yaml'],
     """File persistence retains constructor names without changing existing positional short forms.
 
     A file holds `__init__` arguments only, so an `init=False` field `__init__` doesn't take is left out and rebuilt
-    on load.
+    on load. An `__init__` that takes `*args` or a parameter no field declares may fill any field, so a file keeps
+    every field.
     """
     case = ROUND_TRIP_CASES[evaluator_name]
     evaluator = case.evaluator
@@ -431,6 +476,22 @@ def test_init_false_field_taken_through_kwargs_declared_first(tmp_path: Path):
 
     assert yaml.safe_load(path.read_text())['evaluators'] == [{'InitFalseTakenByKwargs': {'minimum': 4}}]
     loaded = Dataset[str, str, str].from_file(path, custom_evaluator_types=[InitFalseTakenByKwargs])
+    assert loaded.evaluators == [evaluator]
+
+
+def test_init_false_field_with_init_var(tmp_path: Path):
+    """An `init=False` field stays out of a file when the generated `__init__` also takes an `InitVar`.
+
+    An `InitVar` annotation fails schema generation (https://github.com/pydantic/pydantic-ai/issues/13505), so the
+    file is saved without a schema.
+    """
+    evaluator = InitFalseWithInitVar('h.llo')
+    dataset = Dataset[str, str, str](name='init-var', cases=[Case(inputs='hello')], evaluators=[evaluator])
+    path = tmp_path / 'dataset.yaml'
+    dataset.to_file(path, custom_evaluator_types=[InitFalseWithInitVar], schema_path=None)
+
+    assert yaml.safe_load(path.read_text())['evaluators'] == [{'InitFalseWithInitVar': 'h.llo'}]
+    loaded = Dataset[str, str, str].from_file(path, custom_evaluator_types=[InitFalseWithInitVar])
     assert loaded.evaluators == [evaluator]
 
 

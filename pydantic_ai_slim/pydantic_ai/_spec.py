@@ -367,12 +367,13 @@ def _spec_annotation_hints(target: Callable[..., object]) -> dict[str, Any]:
     """The resolved type hints of `target`'s annotations that can be spec parameters.
 
     A class target's annotations also name attributes its `__init__` doesn't take, like a `ClassVar` or an
-    `init=False` dataclass field. A target accepting `**kwargs` can take any of them except a `ClassVar`.
+    `init=False` dataclass field. A target that takes `*args` or `**kwargs` may take any of them except a `ClassVar`.
     """
-    if _accepts_var_keyword(target):
+    parameters = inspect.signature(target).parameters
+    if any(p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in parameters.values()):
         hints = get_function_type_hints(target)
         return {name: hint for name, hint in hints.items() if not is_classvar_annotation(hint)}
-    return get_function_type_hints(target, include_keys=set(inspect.signature(target).parameters))
+    return get_function_type_hints(target, include_keys=set(parameters))
 
 
 def _without_not_required(type_hint: object) -> object:

@@ -77,11 +77,14 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
         """The dataclass fields that `__init__` takes, which are all a spec holds.
 
         `__post_init__` or the field's default restores an `init=False` field, but a hand-written `__init__` can
-        still take one, by name or through `**kwargs`.
+        still take one by name. An `__init__` that takes `*args`, `**kwargs` or a parameter no field or `InitVar`
+        declares may fill any field, so then every field counts.
         """
         parameters = inspect.signature(type(self)).parameters
-        takes_any_keyword = any(p.kind is p.VAR_KEYWORD for p in parameters.values())
-        return [field for field in fields(self) if field.init or field.name in parameters or takes_any_keyword]
+        declared = type(self).__dataclass_fields__
+        if any(p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) or p.name not in declared for p in parameters.values()):
+            return list(fields(self))
+        return [field for field in fields(self) if field.init or field.name in parameters]
 
     def as_spec(self) -> EvaluatorSpec:
         raw_arguments = self.build_serialization_arguments()
@@ -111,6 +114,7 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
     def build_serialization_arguments(self) -> dict[str, Any]:
         """Build the arguments for serialization.
 
+        By default, these are the dataclass fields `__init__` takes, except those still at their default value.
         If you want to modify how the evaluator is serialized, you can override this method.
 
         Returns:
