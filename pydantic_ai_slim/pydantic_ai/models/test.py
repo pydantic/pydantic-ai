@@ -12,7 +12,7 @@ from typing import Any, Literal, TypeVar, assert_never, cast
 import pydantic_core
 
 from .. import _utils
-from .._json_schema import resolve_json_pointer
+from .._json_schema import JsonSchema, resolve_json_pointer
 from .._run_context import RunContext
 from ..exceptions import UserError
 from ..messages import (
@@ -549,7 +549,7 @@ class _JsonSchemaTestData:
             case type_:
                 raise NotImplementedError(f'Unknown type: {type_}, please submit a PR to extend JsonSchemaTestData!')
 
-    def _resolve_ref(self, ref: str) -> dict[str, Any]:
+    def _resolve_ref(self, ref: str) -> JsonSchema | bool:
         """Look up a JSON Schema `$ref` in the schema's `$defs`, or as a local JSON pointer like `#/properties/from`."""
         name = ref.removeprefix('#/$defs/')
         if name not in self.defs and (target := resolve_json_pointer(self.schema, ref)) is not None:
@@ -572,6 +572,9 @@ class _JsonSchemaTestData:
         if required:
             if ref := member.get('$ref'):
                 member = self._resolve_ref(ref)
+                if not _utils.is_str_dict(member):
+                    # the `$ref` points at a boolean subschema, which has no structure to generate from
+                    return self._char()
             member = {**member, 'required': [*member.get('required', []), *required]}
         return self._gen_any(member)
 

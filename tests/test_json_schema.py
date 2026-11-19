@@ -12,7 +12,12 @@ from pydantic import BaseModel, create_model
 from typing_extensions import TypeAliasType
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, PromptedOutput, TextPart, Tool, UserError
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
+from pydantic_ai._json_schema import (
+    InlineDefsJsonSchemaTransformer,
+    JsonSchema,
+    JsonSchemaTransformer,
+    resolve_json_pointer,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, GoogleOpenAPISchemaTransformer
@@ -1383,3 +1388,32 @@ def test_boolean_extra_subschemas_round_trip(type_: str, keyword: str, value: bo
     """Pydantic does not emit these boolean schemas, so exercise the walker directly."""
     schema: JsonSchema = {'type': type_, keyword: value}
     assert InlineDefsJsonSchemaTransformer(schema).walk() == schema
+
+
+@pytest.mark.parametrize('node', [True, False])
+def test_resolve_json_pointer_returns_boolean_schema(node: bool):
+    """Boolean schemas are valid JSON Schema nodes, so a pointer to one must resolve to it."""
+    schema: JsonSchema = {'properties': {'flag': node, 'obj': {'type': 'string'}}}
+    assert resolve_json_pointer(schema, '#/properties/flag') is node
+    assert resolve_json_pointer(schema, '#/properties/obj') == {'type': 'string'}
+    assert resolve_json_pointer(schema, '#/properties/missing') is None
+    assert resolve_json_pointer(schema, '#') == schema
+
+
+@pytest.mark.parametrize(('flag', 'inlined'), [(True, {}), (False, {'not': {}})])
+def test_inline_defs_resolves_boolean_schema_via_json_pointer(flag: bool, inlined: dict[str, Any]):
+    """A `$ref` to a boolean schema outside `$defs` must inline rather than raise `UserError`.
+
+    `_walk_def` already handles boolean definitions, but `resolve_json_pointer` used to return `None`
+    for every non-dict node, so the reference looked unresolved and inlining failed.
+    """
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'flag': {'$ref': '#/defs/allow'}},
+        'defs': {'allow': flag},
+    }
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == {
+        'type': 'object',
+        'properties': {'flag': inlined},
+        'defs': {'allow': flag},
+    }

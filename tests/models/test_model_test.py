@@ -1209,3 +1209,17 @@ async def test_usage_consistent_across_run_modes(case: UsageCase):
     assert run_response_usages == case.response_usages
     assert run_total == case.total
     assert usages == dict.fromkeys(['run', 'run_stream', 'run_stream_events', 'iter_node_stream'], usages['run'])
+
+
+def test_one_of_ref_to_boolean_schema_via_json_pointer():
+    """A required `oneOf` member whose `$ref` points at a boolean schema must not be spread as a dict."""
+    from pydantic_ai.models.test import _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
+
+    schema = {
+        'type': 'object',
+        'properties': {'x': {'oneOf': [{'$ref': '#/defs/any'}], 'required': ['kind']}},
+        'required': ['x'],
+        'defs': {'any': True},
+    }
+    data = _JsonSchemaTestData(schema).generate()
+    assert isinstance(data['x'], str)
