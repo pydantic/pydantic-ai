@@ -543,10 +543,11 @@ class ModelRequestParameters:
         return 'withheld' if tool_def is not None and tool_def.defer_loading else 'visible'
 
     def available_tool_names_for_kind(self, kind: ToolKindLike) -> list[str]:
-        """The names of the function tools with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that the model can call on this request: those not deferred, and those history has revealed.
+        """The names of the function tools of this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that the model can call on this request.
 
-        That is the difference from [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind],
-        which also counts a still-deferred tool so that instructions naming it stay the same when it is revealed.
+        A tool with `defer_loading=True` is included only once the message history has revealed it. This is how it
+        differs from [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind], which also
+        returns a tool that is still deferred, so that instructions naming the tool don't change when it is revealed.
 
         Args:
             kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
@@ -4159,7 +4160,7 @@ def _natives_with_computer_tool(
 
     An optional `ComputerTool` without one is dropped; a required one raises `UserError`, as does one with more than one.
     """
-    # A tool left out because a native tool sent in its place covers it can't run any calls.
+    # A tool that is left out because a native tool is sent in its place can't run any calls.
     sent_ids = {t.unique_id for t in natives}
     computer_tools = [
         name
@@ -4301,7 +4302,8 @@ def resolve_request_tools(
     supported_natives = [
         t for t in supported_natives if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
     ]
-    # After the drop above, so a tool kept only while that tool search is absent can run a `ComputerTool`'s calls.
+    # Runs after the optional tool search is dropped above. A tool that is kept only while that tool search isn't
+    # sent can then run a `ComputerTool`'s calls.
     supported_natives = _natives_with_computer_tool(params, supported_natives)
 
     # Computed after the drop above so it names the native tools this request really sends:

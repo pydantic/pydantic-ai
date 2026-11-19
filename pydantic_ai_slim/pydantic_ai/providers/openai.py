@@ -89,8 +89,8 @@ class OpenAIProvider(_OpenAISDKProvider):
         profile = openai_model_profile(model_name)
         supported_native_tools = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
         if _is_computer_use_model(model_name):
-            # Added here, not in `openai_model_profile`, because the native `computer` tool is unverified on the
-            # OpenAI-compatible endpoints that share that profile. `OpenAIChatModel` never sends it.
+            # Added here, not in `openai_model_profile`, because the native computer tool is unverified on the other
+            # OpenAI-compatible servers that use that profile. `OpenAIChatModel` never sends it.
             # https://developers.openai.com/api/docs/guides/tools-computer-use
             supported_native_tools = supported_native_tools | {ComputerTool}
         return merge_profile(

@@ -33,7 +33,7 @@ _OPENAI_BASE_BUILTINS = frozenset(
 )
 """Builtin tool types OpenAI supports — the union of what `OpenAIChatModel` and
 `OpenAIResponsesModel` can handle. `ToolSearchTool` is gated per-model in the
-profile below, and `OpenAIProvider` adds `ComputerTool` for the models OpenAI serves it to."""
+profile below. `OpenAIProvider` adds `ComputerTool` for the models that OpenAI offers it on."""
 
 OpenAIReasoningEffort = Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 """A `reasoning_effort` value accepted by the OpenAI API, from least to most reasoning."""
@@ -730,10 +730,11 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 
 
 def _is_computer_use_model(model_name: str) -> bool:  # pyright: ignore[reportUnusedFunction]
-    """Whether OpenAI serves its native `computer` tool to the model.
+    """Whether OpenAI offers its native computer tool on this model.
 
-    GPT-5.4 (also mini and pro), GPT-5.5 (also pro), GPT-5.6 and GPT-6 take it. GPT-5.4 nano, GPT-5.3 Codex and GPT-5.2
-    reject it, unlike tool search. A new family gets the `computer` function tool until it is added here.
+    GPT-5.4 (with mini and pro), GPT-5.5 (with pro), GPT-5.6 and GPT-6 accept it. GPT-5.4 nano, GPT-5.3 Codex and
+    GPT-5.2 reject it, though they accept tool search. A new model family gets the `computer` function tool until it
+    is added here.
     """
     return model_name.startswith(
         ('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES)
