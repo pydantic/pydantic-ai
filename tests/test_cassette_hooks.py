@@ -154,6 +154,17 @@ def test_account_id_is_scrubbed_from_responses_only():
     assert json.loads(request.body) == {'user_id': 'pydantic-ai-test-user'}
 
 
+def test_access_programs_are_cleared_from_responses():
+    """OpenAI Responses bodies name the recording account's access programs, typed as an object, so they become null."""
+    response = before_record_response(
+        _response(
+            body=b'{"id":"resp_1","access_programs":{"program":"synthetic"}}', **{'content-type': 'application/json'}
+        )
+    )
+    assert response.body is not None
+    assert json.loads(response.body) == {'id': 'resp_1', 'access_programs': None}
+
+
 @pytest.mark.parametrize('encoding', ['gzip', 'br'])
 def test_compressed_bodies_are_inflated_before_scrubbing(encoding: str):
     raw = b'{"access_token": "secret", "ok": true}'
