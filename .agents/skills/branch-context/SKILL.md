@@ -162,7 +162,7 @@ Use when the **user** asks to hand off, clear and continue, or otherwise turn th
    - optional: point the plan at the latest handoff path
 3. **Exit plan / turn over** — harness-specific:
 
-| Your harness | What to do |
+| Harness | What to do |
 |---------|------------|
 | **Claude Code** | `ExitPlanMode` → choose **clear context and continue** with the plan. Put the preserved `HANDOFF_LANE` in the continuation plan; the fresh session uses it for its first handoff read. |
 | **Grok Build** | Plan mode has **no** clear-context-on-approve. After writing handoff + plan: stop and tell the user to start a **new** `grok` session in this worktree. Put the preserved `HANDOFF_LANE` in the continuation prompt; the new agent uses it to resolve and read the handoff. (`/compact` / `/flush` are not a full handoff.) |

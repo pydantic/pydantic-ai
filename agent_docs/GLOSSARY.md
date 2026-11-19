@@ -28,8 +28,8 @@ A **hosted** review runs on GitHub against the pushed head. A **local** review r
 - **durable** — durable execution: an engine such as Temporal, DBOS or Prefect persists the agent run's progress
   (`pydantic_ai_slim/pydantic_ai/durable_exec/`). *Durable state* and *durable knowledge* outlive a session. They
   have nothing to do with durable execution.
-- **guard** — a capability that validates inputs or outputs, or controls tool access, such as `InputGuard` or
-  `OutputGuard`.
+- **guardrail** — a capability that validates inputs or outputs, or controls tool access, such as
+  `InputGuardrail` or `OutputGuardrail`.
 - **harness** — a program with an interface that runs an agent, such as pax, Claude Code or Codex. The harness
   that runs you loads these files. A capability composition such as `Coder` is a harness once it has an
   interface. Until then, it is a harness in development.
