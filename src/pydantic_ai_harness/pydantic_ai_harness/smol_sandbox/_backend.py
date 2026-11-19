@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, TypeVar, cast
 
 import anyio
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     SupportsCommands,
@@ -226,6 +227,16 @@ class _Output:
         return ''.join(self.stdout)[:chars], ''.join(self.stderr)[:chars]
 
 
+def check_desktop(desktop: bool | tuple[int, int], image: str | None, allow_internet_access: bool) -> None:
+    """Refuse a new desktop VM that can't install its display programs."""
+    if desktop and image is None and not allow_internet_access:
+        raise UserError(
+            f'A new desktop VM without an `image` runs `{DESKTOP_IMAGE}` and installs the display programs on first '
+            'use, which needs `allow_internet_access=True`. Pass that, or an `image` that has Xvfb, xdotool, '
+            'xwininfo, scrot and setsid.'
+        )
+
+
 class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     """A local [smolvm](https://github.com/smol-machines/smolvm) microVM as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
@@ -279,6 +290,8 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
         check_env(env)
+        if sandbox is None and ref is None:
+            check_desktop(desktop, image, allow_internet_access)
         # On the local target a VM's id is its name, so the backend attaches to it like to a ref.
         self._ref = ref if sandbox is None else WorkspaceRef(provider='smol', id=sandbox.id)
         self._passed_in = sandbox is not None

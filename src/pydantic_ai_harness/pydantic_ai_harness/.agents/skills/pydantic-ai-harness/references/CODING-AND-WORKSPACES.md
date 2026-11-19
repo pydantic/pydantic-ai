@@ -470,7 +470,7 @@ Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`
 - File operations go through the VM's shell, 64 KiB per command; multi-MiB files take seconds.
 - `desktop=True` gives the VM a plain 1280x800 Xvfb (no window manager) for `ComputerUse()`, or pass
   `desktop=(w, h)`. The first start installs the display programs with `apt-get`, which needs
-  `allow_internet_access=True`, or an `image` that has them.
+  `allow_internet_access=True`, or an `image` that has them; without either, `UserError`.
 
 ### BoxLiteSandbox
 
