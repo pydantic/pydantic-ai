@@ -121,6 +121,7 @@ from ...native_tools import (
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
+    WebFetchTool,
     WebSearchTool,
 )
 from ...native_tools._tool_search import ToolSearchTool
@@ -185,6 +186,7 @@ from ._computer import (
     map_computer_result,
     stored_computer_call,
 )
+from ._deepseek_web_tools import web_tool_param, web_tool_parts, web_tool_replay
 from ._errors import (
     check_azure_content_filter,
     is_azure,
@@ -743,6 +745,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # Chat Completions endpoint rejects it, so the generic flag can only be raised per model class.
         if profile.get('openai_responses_supports_json_schema_output', False):
             profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
+        if not profile.get('deepseek_responses_web_tools', False):
+            tools = profile.get('supported_native_tools', self.supported_native_tools()) - {WebFetchTool}
+            profile = merge_profile(profile, ModelProfile(supported_native_tools=tools))
         if isinstance(self._provider, OAuthCredentialsProvider):
             # These providers authenticate HTTP requests without configuring the SDK socket client.
             profile = merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
@@ -789,6 +794,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return frozenset(
             {
                 WebSearchTool,
+                WebFetchTool,
                 CodeExecutionTool,
                 FileSearchTool,
                 MCPServerTool,
@@ -800,6 +806,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
         """Return `native_tool`'s restricting settings that the Responses `web_search` tool doesn't take: `max_uses`."""
+        if self.profile.get('deepseek_responses_web_tools', False) and isinstance(
+            native_tool, WebSearchTool | WebFetchTool
+        ):
+            return native_tool.restricting_settings
         if isinstance(native_tool, WebSearchTool):
             return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains', 'external_web_access'}
         return frozenset()
@@ -1306,7 +1316,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 case responses.ResponseCodeInterpreterToolCall():
                     items.extend(self._map_code_interpreter_call(item))
                 case responses.ResponseFunctionWebSearch():
-                    items.extend(map_web_search_tool_call(item, self.system))
+                    deepseek_parts = (
+                        web_tool_parts(item, self.system)
+                        if self.profile.get('deepseek_responses_web_tools', False)
+                        else None
+                    )
+                    items.extend(deepseek_parts or map_web_search_tool_call(item, self.system))
                 case responses.ResponseToolSearchCall():
                     items.extend(self._map_tool_search_call(item, tool_search_outputs))
                 case responses.ResponseToolSearchOutputItem():
@@ -1490,6 +1505,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _is_websocket=is_websocket,
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
             _process_provider_details=self._process_provider_details,
+            _deepseek_web_tools=self.profile.get('deepseek_responses_web_tools', False),
         )
         streamed_response.canonical_system = self._canonical_system_stamp
         if tool_call_ids_are_response_scoped:
@@ -2478,8 +2494,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _get_native_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []
         has_image_generating_tool = False
+        deepseek_web_tools = self.profile.get('deepseek_responses_web_tools', False)
         for tool in model_request_parameters.native_tools:
             match tool:
+                case WebSearchTool() | WebFetchTool() if deepseek_web_tools:
+                    tools.append(web_tool_param(tool))
                 case WebSearchTool():
                     tools.append(map_web_search_tool_param(tool))
                 case FileSearchTool():
@@ -3061,6 +3080,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             same_endpoint=same_endpoint,
             response_start=len(context.openai_messages),
         )
+        if self.profile.get('deepseek_responses_web_tools', False):
+            # Streaming returns can complete in a different order from the calls.
+            response_context.deepseek_web_items = {
+                (part.tool_name, part.tool_call_id): wire
+                for part in message.parts
+                if isinstance(part, NativeToolReturnPart)
+                and self.accepts_stateless_artifacts(message, part)
+                and (wire := web_tool_replay(part)) is not None
+            }
         response_parts: Sequence[ModelResponsePart] = message.parts
         if not self.profile.get('openai_responses_supports_interleaved_function_calls', True):
             response_parts = group_settled_portable_function_calls(
@@ -3301,6 +3329,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         from_same_provider: bool,
         should_send_item_id: bool,
     ) -> None:
+        if (wire := response_context.deepseek_web_items.get((item.tool_name, item.tool_call_id))) is not None:
+            context.openai_messages.append(wire)
+            response_context.message_item = None
+            return
         # Hosted tool-search items carry their state inline, so they replay to any provider
         # that accepts this one's stateless data; their IDs stay with the same provider.
         if (
@@ -3726,6 +3758,9 @@ class _ResponsesMapModelResponseContext:
     message: ModelResponse
     same_endpoint: bool
     response_start: int
+    deepseek_web_items: dict[tuple[str, str], responses.ResponseInputItemParam] = field(
+        default_factory=dict[tuple[str, str], responses.ResponseInputItemParam]
+    )
     message_item: responses.ResponseOutputMessageParam | None = None
     reasoning_item: responses.ResponseReasoningItemParam | None = None
     web_search_item: responses.ResponseFunctionWebSearchParam | None = None

@@ -531,6 +531,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
     `tool_call_ids_are_response_scoped` in the same profile wins.
     """
 
+    deepseek_responses_web_tools: bool
+    """Whether the Responses endpoint uses DeepSeek Flash's signed web tool protocol."""
+
     openai_responses_supports_interleaved_function_calls: bool
     """Whether the Responses API accepts function calls interleaved with other assistant items in one
     assistant turn. Default: `True`.
