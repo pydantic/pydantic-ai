@@ -136,6 +136,22 @@ class TestWindowsCommands:
         assert (result.exit_code, result.stdout) == (0, 'héllo ✓')
         assert list(temp.iterdir()) == []
 
+    async def test_the_script_directory_is_owner_only(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The script may hold secrets, so its directory doesn't inherit the temporary directory's ACL."""
+        temp = tmp_path / 'temp'
+        temp.mkdir()
+        monkeypatch.setattr(tempfile, 'tempdir', str(temp))
+        script = (
+            f"$acl = Get-Acl -LiteralPath (Get-ChildItem -LiteralPath '{temp}' -Directory)[0].FullName; "
+            '[Console]::Out.Write("$($acl.AreAccessRulesProtected) " + ($acl.Access.IdentityReference -join \';\'))'
+        )
+        result = await WindowsWorkspaceBackend(tmp_path).run(script, shell=True)
+        protected, identities = result.stdout.split(' ', 1)
+        assert protected == 'True', result
+        assert not {'Users', 'Everyone', 'Authenticated Users'} & {
+            name.split('\\')[-1] for name in identities.split(';')
+        }
+
     async def test_capability(self, tmp_path: Path) -> None:
         agent = Agent(TestModel(call_tools=[]), capabilities=[WindowsWorkspace(tmp_path)])
         result = await agent.run('hello')
@@ -209,7 +225,7 @@ class TestPowerShellLaunch:
             f"& ([ScriptBlock]::Create([IO.File]::ReadAllText('{quoted}')))",
         ]
         assert len(subprocess.list2cmdline(argv)) < 1_000
-        # UTF-8 with a BOM, which Windows PowerShell needs to read non-ASCII.
+        # UTF-8 with a BOM, like the harness's `command.ps1`.
         assert content == codecs.BOM_UTF8 + powershell_script(script).encode()
         # The script may hold secrets, so its directory is `mkdtemp`'s: owner-only here, and an owner-only ACL on Windows.
         assert stat.S_IMODE(mode) == 0o700

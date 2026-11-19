@@ -90,16 +90,55 @@ def powershell_script(script: str) -> str:
 
 _SCRIPT_NAME = 'script.ps1'
 
+_PRIVATE_DACL = 'D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)'
+"""Full control for SYSTEM, Administrators and the owner only, inherited by what the directory holds."""
+
+_DACL_SECURITY_INFORMATION = 0x00000004
+_PROTECTED_DACL_SECURITY_INFORMATION = 0x80000000
+
+
+def _make_private(directory: str) -> None:
+    """Replace `directory`'s ACL, which it inherits from the temporary directory, with `_PRIVATE_DACL`.
+
+    `mkdtemp` does the same itself since Python 3.11.10, 3.12.4 and 3.13, but not on earlier patch releases.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    # `WinDLL` exists only on Windows; it is a `CDLL` subclass.
+    win_dll: type[ctypes.CDLL] = getattr(ctypes, 'WinDLL')
+    advapi32 = win_dll('advapi32')
+    convert = advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW
+    convert.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p)
+    convert.restype = wintypes.BOOL
+    set_security = advapi32.SetFileSecurityW
+    set_security.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p)
+    set_security.restype = wintypes.BOOL
+    local_free = win_dll('kernel32').LocalFree
+    local_free.argtypes = (ctypes.c_void_p,)
+
+    descriptor = ctypes.c_void_p()
+    if not convert(_PRIVATE_DACL, 1, ctypes.byref(descriptor), None):  # pragma: no cover - the descriptor is fixed
+        raise OSError(errno.EINVAL, 'invalid security descriptor', _PRIVATE_DACL)
+    try:
+        information = _DACL_SECURITY_INFORMATION | _PROTECTED_DACL_SECURITY_INFORMATION
+        if not set_security(directory, information, descriptor):  # pragma: no cover - the owner can set its ACL
+            raise OSError(errno.EACCES, 'could not make the directory private', directory)
+    finally:
+        local_free(descriptor)
+
 
 def _write_script(script: str) -> str:
     """A new temporary directory holding `powershell_script(script)` as `_SCRIPT_NAME`.
 
-    The script may hold secrets, so it goes in a directory `mkdtemp` creates for this user alone: on Windows
-    too, with an owner-only ACL, since Python 3.11.10, 3.12.4 and 3.13, whatever the temporary directory's
-    own ACL. UTF-8 with a BOM, which Windows PowerShell needs to read anything but ASCII.
+    The script may hold secrets, so the directory is for this user alone: `mkdtemp` gives it mode `0o700`, and on
+    Windows it gets `_PRIVATE_DACL` before the script is written. UTF-8 with a BOM, like the harness's `command.ps1`,
+    so the file reads correctly with `-File` too; `ReadAllText` doesn't need it.
     """
     directory = tempfile.mkdtemp(prefix='pydantic-ai-')
     try:
+        if sys.platform == 'win32':
+            _make_private(directory)
         with open(os.path.join(directory, _SCRIPT_NAME), 'x', encoding='utf-8-sig', newline='') as file:
             file.write(powershell_script(script))
     except BaseException:

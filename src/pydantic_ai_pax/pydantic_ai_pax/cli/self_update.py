@@ -16,7 +16,6 @@ import os
 import re
 import secrets
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -226,41 +225,31 @@ _CREATE_NEW_CONSOLE = 0x10
 """`subprocess.CREATE_NEW_CONSOLE`, which the module defines only on Windows."""
 
 
-def _start_detached(argv: Sequence[str]) -> None:  # pragma: no cover -- `creationflags` exists only on Windows
-    subprocess.Popen(argv, creationflags=_CREATE_NEW_CONSOLE, close_fds=True)
+def _start_detached(argv: Sequence[str], env: Mapping[str, str]) -> None:  # pragma: no cover -- Windows only
+    subprocess.Popen(argv, creationflags=_CREATE_NEW_CONSOLE, close_fds=True, env=env)
+
+
+_SCRIPT_VARIABLE = 'CLAI_UPDATE_SCRIPT'
 
 
 def install_after_exit(
     script: str,
     *,
     environ: Mapping[str, str] = os.environ,
-    start: Callable[[Sequence[str]], None] = _start_detached,
+    start: Callable[[Sequence[str], Mapping[str, str]], None] = _start_detached,
 ) -> None:
     """Run `script` in a new console with Windows PowerShell, found by full path rather than a `PATH` search.
 
-    The script goes in a temporary file that PowerShell reads and deletes, not on its command line, where
-    antivirus software flags an `-EncodedCommand` launch. Its directory is `mkdtemp`'s, which Python 3.11.10, 3.12.4
-    and 3.13 make private to this user on Windows too, and the file is UTF-8 with a BOM, which Windows PowerShell needs to read anything but ASCII.
+    The script reaches PowerShell in an environment variable, which it unsets before running the script, not on
+    its command line, where antivirus software flags an `-EncodedCommand` launch.
     """
     root = environ.get('SystemRoot', r'C:\Windows')
     executable = f'{root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
-    directory = tempfile.mkdtemp(prefix='clai2-update-')
-    path = os.path.join(directory, 'update.ps1')
-    # PowerShell also ends a single-quoted string at a typographic single quote, so those are doubled too.
-    quoted_path, quoted_directory = (
-        re.sub("(['\u2018\u2019\u201a\u201b])", r'\1\1', name) for name in (path, directory)
+    bootstrap = f'$s = $env:{_SCRIPT_VARIABLE}; Remove-Item Env:{_SCRIPT_VARIABLE}; & ([ScriptBlock]::Create($s))'
+    start(
+        [executable, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', bootstrap],
+        {**environ, _SCRIPT_VARIABLE: script},
     )
-    bootstrap = (
-        f"$s = [IO.File]::ReadAllText('{quoted_path}'); [IO.Directory]::Delete('{quoted_directory}', $true); "
-        '& ([ScriptBlock]::Create($s))'
-    )
-    try:
-        with open(path, 'x', encoding='utf-8-sig') as file:
-            file.write(script)
-        start([executable, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', bootstrap])
-    except BaseException:
-        shutil.rmtree(directory, ignore_errors=True)
-        raise
 
 
 @dataclass(frozen=True, kw_only=True)

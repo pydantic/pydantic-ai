@@ -1,14 +1,12 @@
 """`/update`: release lookup, install commands, the footer notice, and the shell exit after an install."""
 
 import argparse
-import codecs
 import json
 import os
 import shlex
 import sys
-import tempfile
 import threading
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from functools import partial
 from importlib import metadata
 from importlib.abc import MetaPathFinder
@@ -607,47 +605,26 @@ def test_after_exit_script(tmp_path: Path) -> None:
     assert 'Remove-Item' not in after_exit_script(['uv'], pid=42, overrides=None)
 
 
-def test_install_after_exit_starts_windows_powershell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The script goes in a file PowerShell deletes once read, not on the command line, where antivirus flags it."""
-    # PowerShell ends a single-quoted string at `'` and at U+2019, so both are doubled.
-    temp = tmp_path / "o'temp\u2019"
-    temp.mkdir()
-    monkeypatch.setattr(tempfile, 'tempdir', str(temp))
-    started: list[Sequence[str]] = []
-    install_after_exit('Write-Host é', environ={'SystemRoot': r'D:\Win'}, start=started.append)
-    [argv] = started
-    [directory] = temp.iterdir()
-    [script] = directory.iterdir()
+def test_install_after_exit_starts_windows_powershell() -> None:
+    """The script goes in an environment variable, not on the command line, where antivirus flags `-EncodedCommand`."""
+    started: list[tuple[Sequence[str], Mapping[str, str]]] = []
 
-    def quoted(path: Path) -> str:
-        return str(path).replace("'", "''").replace('\u2019', '\u2019\u2019')
+    def start(argv: Sequence[str], env: Mapping[str, str]) -> None:
+        started.append((argv, env))
 
+    install_after_exit('Write-Host é', environ={'SystemRoot': r'D:\Win'}, start=start)
+    [(argv, env)] = started
     assert argv == [
         r'D:\Win\System32\WindowsPowerShell\v1.0\powershell.exe',
         '-NoProfile',
         '-ExecutionPolicy',
         'Bypass',
         '-Command',
-        f"$s = [IO.File]::ReadAllText('{quoted(script)}'); [IO.Directory]::Delete('{quoted(directory)}', $true); "
-        '& ([ScriptBlock]::Create($s))',
+        '$s = $env:CLAI_UPDATE_SCRIPT; Remove-Item Env:CLAI_UPDATE_SCRIPT; & ([ScriptBlock]::Create($s))',
     ]
-    # UTF-8 with a BOM, which Windows PowerShell needs to read anything but ASCII.
-    assert script.read_bytes() == codecs.BOM_UTF8 + 'Write-Host é'.encode()
-    install_after_exit('', environ={}, start=started.append)
-    assert started[1][0] == r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-
-
-def test_install_after_exit_removes_the_script_when_powershell_cannot_start(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path))
-
-    def fail(argv: Sequence[str]) -> None:
-        raise FileNotFoundError(argv[0])
-
-    with pytest.raises(FileNotFoundError):
-        install_after_exit('Write-Host hi', start=fail)
-    assert list(tmp_path.iterdir()) == []
+    assert env == {'SystemRoot': r'D:\Win', 'CLAI_UPDATE_SCRIPT': 'Write-Host é'}
+    install_after_exit('', environ={}, start=start)
+    assert started[1][0][0] == r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 
 
 async def test_windows_hands_the_install_off_and_exits() -> None:
