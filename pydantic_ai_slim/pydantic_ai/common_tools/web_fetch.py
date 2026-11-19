@@ -173,7 +173,7 @@ class WebFetchLocalTool:
         media_type = media_type.split(';')[0].strip().lower()
 
         if media_type and not is_text_like_media_type(media_type):
-            return BinaryContent(data=response.content, media_type=media_type or 'application/octet-stream')
+            return BinaryContent(data=response.content, media_type=media_type)
 
         title = ''
 
@@ -407,7 +407,9 @@ class _HTMLConversionEstimate:
         self.cost += indent_width + indent_depth
         work = 8 * (indent_depth + 1)
         if tag.name in ('td', 'th'):
-            colspan = self._colspan(tag)
+            colspan_attr = tag.get('colspan')
+            digits = colspan_attr.lstrip('0') if isinstance(colspan_attr, str) and colspan_attr.isdecimal() else ''
+            colspan = min(1000, int(digits[:4] or '1'))
             # A first-row cell can also generate two full-width header lines.
             work += 8 * colspan
             self.cost += 8 * colspan
@@ -443,12 +445,6 @@ class _HTMLConversionEstimate:
         if isinstance(start_attr, str) and start_attr.isdecimal():
             start_digits = len(start_attr.lstrip('0')) or 1
         return max(start_digits, len(str(len(parent.contents)))) + 3
-
-    @staticmethod
-    def _colspan(cell: Tag) -> int:
-        colspan_attr = cell.get('colspan')
-        digits = colspan_attr.lstrip('0') if isinstance(colspan_attr, str) and colspan_attr.isdecimal() else ''
-        return min(1000, int(digits[:4] or '1'))
 
     def _visit_text(self, text: NavigableString, context: _HTMLWalkContext) -> None:
         depth, indent_depth, indent_width, inline, noformat, in_pre = context
