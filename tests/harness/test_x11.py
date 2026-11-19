@@ -34,6 +34,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness import _x11
 from pydantic_ai_harness.computer_use import Display, DisplayAction, SupportsZoom, UnsupportedActionError
 from pydantic_ai_harness.docker_container import DockerContainerBackend
 
@@ -165,24 +166,28 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: DisplayA
     assert desktop.calls == [(['sh', '-c', INPUT, 'sh', *argv], {'DISPLAY': ':1'})]
 
 
-async def test_x11_computer_splits_long_typing_and_drags_into_commands_under_the_size_limit() -> None:
-    """Each command's `xdotool` arguments stay under 100,000 bytes.
+async def test_x11_computer_splits_long_typing_and_drags_into_commands_under_the_size_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each command's `xdotool` arguments stay under the size limit.
 
-    E2B runs a command as a single argument, and Linux limits one argument to 131,072 bytes."""
+    E2B runs a command as a single argument, and Linux limits one argument to 131,072 bytes. The limit is lowered
+    here, so short input crosses it."""
+    monkeypatch.setattr(_x11, '_MAX_CHAIN_BYTES', 200)
     desktop = ScriptedDesktop()
 
-    await desktop.screen.act(TypeText(text='a' * 17_000))
+    await desktop.screen.act(TypeText(text='a' * 40))
     typed = desktop.argvs
     assert len(typed) == 2
-    assert all(len(shlex.join(argv[5:])) < 100_000 for argv in typed)
+    assert all(len(shlex.join(argv[5:])) < 200 for argv in typed)
     assert [argv[4:9] for argv in typed] == [['xdotool', 'key', '--delay', '12', '--']] * 2
-    assert sum(argv.count('U0061') for argv in typed) == 17_000
+    assert sum(argv.count('U0061') for argv in typed) == 40
 
     # Held keys go down in the first command and come up in the last, so they stay held in between.
-    await desktop.screen.act(Drag(path=tuple(Point(x=n % 2, y=0) for n in range(2_500)), modifiers=('alt',)))
+    await desktop.screen.act(Drag(path=tuple(Point(x=n % 2, y=0) for n in range(5)), modifiers=('alt',)))
     dragged = desktop.argvs[2:]
     assert len(dragged) == 2
-    assert all(len(shlex.join(argv[5:])) < 100_000 for argv in dragged)
+    assert all(len(shlex.join(argv[5:])) < 200 for argv in dragged)
     assert dragged[0][4:7] == ['xdotool', 'keydown', 'alt']
     assert dragged[-1][-4:] == ['mouseup', '1', 'keyup', 'alt']
 
