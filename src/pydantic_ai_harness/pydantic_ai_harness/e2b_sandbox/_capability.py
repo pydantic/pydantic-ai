@@ -91,8 +91,8 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     """
 
     desktop: bool | tuple[int, int] = False
-    """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
-    for 1280x800, or its `(width, height)`. Without a `template`, a new sandbox runs E2B's `desktop` template."""
+    """Give the sandbox a screen for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800,
+    or a `(width, height)`. Without a `template`, a new sandbox uses E2B's `desktop` template."""
 
     def __post_init__(self) -> None:
         reject_defer_loading('E2BSandbox', self.defer_loading)

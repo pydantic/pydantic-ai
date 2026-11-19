@@ -197,13 +197,16 @@ def _move(x: int | None, y: int | None) -> list[str]:
 
 
 _MAX_CHAIN_BYTES = 100_000
-"""The most bytes of `xdotool` arguments sent in one command. E2B runs a command as one `bash -l -c` argument, which
-Linux caps at 131,072 bytes: a live probe started a 130,630-byte line and refused 130,664 bytes with "argument list
-too long", and typing 25,000 characters in one command failed. The rest is room for the backend's own wrapping."""
+"""The most bytes of `xdotool` arguments sent in one command. Longer input is split across several commands.
+
+E2B runs a command as a single `bash -l -c` argument, and Linux limits one argument to 131,072 bytes. In a live
+probe, a 130,630-byte line ran and a 130,664-byte line failed with "argument list too long". Typing 25,000
+characters in one command also failed. The gap between 100,000 and the limit leaves room for the text the backend
+wraps around each command."""
 
 
 def _chains(steps: list[list[str]], prefix: tuple[str, ...] = ()) -> list[list[str]]:
-    """`steps` in order, grouped into `xdotool` chains that each start with `prefix` and fit `_MAX_CHAIN_BYTES`."""
+    """Group `steps`, in order, into `xdotool` commands that each start with `prefix` and fit in `_MAX_CHAIN_BYTES`."""
     chains: list[list[str]] = []
     size = _MAX_CHAIN_BYTES
     for step in steps:
@@ -228,27 +231,29 @@ _X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY_NUMBER}'
 
 
 def start_x_server(log: str) -> str:
-    """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one runs.
+    """Return a shell fragment that starts Xvfb on `DISPLAY` unless an X server already runs there.
 
-    Whether one runs is read from the display's X lock, not from an X server answering.
+    `$1` is the screen size, such as `1280x800`. The fragment checks the display's X lock file to see whether an X
+    server runs. It does not ask the X server itself.
 
-    It fails once the X server exits, or after 10 seconds, printing the end of `log`.
+    The fragment fails if the X server exits, or if it isn't ready after 10 seconds. It then prints the end of `log`.
 
-    It takes `START_LOCK`, so a second start waits and finds the first one's X server. The lock is held until the
-    script exits, so the rest of the script runs under it too; anything started in the background must close it with
-    `9>&-`.
+    The fragment takes `START_LOCK`, so a second start waits for the first and then finds its X server. The lock stays
+    held until the whole script exits, so the rest of the script runs under it too. Anything the script starts in the
+    background must close the lock with `9>&-`.
     """
     return (
-        # Decided from the X lock, not from an X server answering: in a shared network namespace, such as Docker's
-        # `--network host`, another X server on the same display answers through Linux's shared abstract socket.
-        # A stale lock, such as one left by `docker stop`, names a PID that is gone or belongs to another process.
-        # A running X server's lock names it, whichever server it is, such as `Xvnc`.
+        # Read the X lock instead of asking for an X server. With a shared network, such as Docker's `--network host`,
+        # another X server on the same display number answers through Linux's shared abstract socket.
+        # A stale lock, such as one `docker stop` leaves, holds a process ID that is gone or now belongs to another
+        # program. A running X server's lock holds that server's process ID, whichever server it is, such as `Xvnc`.
         f'{START_LOCK}case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
         f'*) rm -f {_X_LOCK} {_X_SOCKET}; '
-        # Without `-noreset`, X resets when its last client exits, such as an `xdotool` command with no window manager
-        # running: the pointer goes back to the middle and held buttons are let go.
-        # `-nolisten local` closes Linux's abstract socket, which a shared network namespace such as Docker's
-        # `--network host` shares with every host user; the socket file in /tmp/.X11-unix stays for local commands.
+        # Without `-noreset`, X resets whenever its last program disconnects, such as an `xdotool` command when no
+        # window manager runs. A reset moves the pointer back to the middle and lets go of held buttons.
+        # `-nolisten local` turns off Linux's abstract socket. With a shared network, such as Docker's `--network host`,
+        # every user on the host could reach that socket. Commands in the container or sandbox still use the socket
+        # file in /tmp/.X11-unix.
         f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset >/dev/null 2>{log} 9>&- & '
         + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', log)
         + ';; esac; '
@@ -313,17 +318,17 @@ class X11Computer:
     async def _xdotool(
         self, *chains: list[str], hold: tuple[str, ...] = (), release: tuple[str, ...] = (), pauses: float = 0
     ) -> None:
-        """Run `xdotool` command chains in turn with `hold` held down; if one fails or is cancelled, let go of everything.
+        """Run `xdotool` command chains one after another, with the `hold` keys held down the whole time.
 
-        `release` is an `xdotool` chain that lets go of what the chains press; each command may take `pauses` on top of
-        the usual time limit.
+        If a chain fails or is cancelled, everything is let go. `release` is an `xdotool` chain that lets go of what
+        the chains press. Each command gets `pauses` extra seconds on top of the usual time limit.
         """
         keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
         keydown = ['keydown', *keysyms] if keysyms else []
         try:
             for index, chain in enumerate(chains):
-                # Held keys stay down from the first command to the last.
+                # The held keys go down in the first command and come up in the last one.
                 first = keydown if index == 0 else []
                 last = keyup if index == len(chains) - 1 else []
                 await self._run(['sh', '-c', _INPUT, 'sh', 'xdotool', *first, *chain, *last], pauses=pauses)
