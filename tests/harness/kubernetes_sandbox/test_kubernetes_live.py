@@ -41,6 +41,7 @@ from k8s_agent_sandbox.models import SandboxdInClusterConnectionConfig, Sandboxd
 from pydantic import SecretStr
 from pytest_examples import CodeExample
 
+from pydantic_ai.computer_use import Click
 from pydantic_ai.tools import RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef, WorkspaceUnavailableError
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
@@ -388,6 +389,13 @@ async def test_a_desktop_pool_serves_the_display() -> None:
         assert 'window id' in window_manager.stdout
         panel = await backend.run(['xdotool', 'search', '--onlyvisible', '--class', 'tint2'])
         assert panel.exit_code == 0 and panel.stdout.strip()
+        # The panel's terminal button opens xterm. Under a pod's high open-file limit it once opened nothing.
+        # Firefox's button comes first when the image has it.
+        firefox = await backend.run(['test', '-e', '/usr/share/applications/firefox-esr.desktop'])
+        await screen(backend).act(Click(x=49 if firefox.exit_code == 0 else 18, y=780))
+        with anyio.fail_after(15):
+            while (await backend.run(['xdotool', 'search', '--onlyvisible', '--class', 'xterm'])).exit_code != 0:
+                await anyio.sleep(0.5)
     finally:
         await _destroy(backend)
 
