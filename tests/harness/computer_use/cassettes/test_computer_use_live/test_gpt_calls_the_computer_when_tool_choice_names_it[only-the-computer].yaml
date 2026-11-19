@@ -54,7 +54,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "3107"
+      - "2287"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -64,16 +64,15 @@ interactions:
     body:
       type: json
       content:
-        id: resp_01f0fcefa2921890006afad970a4ec87d28e18bed79583545a
+        id: resp_0e904134cc98f746006afeb406d37887d294791506b6447176
         object: response
-        created_at: 1794824560
+        created_at: 1795077126
         status: completed
-        access_programs:
-          cyber: daybreak_blue
+        access_programs: null
         background: false
         billing:
           payer: developer
-        completed_at: 1794824563
+        completed_at: 1795077128
         error: null
         frequency_penalty: 0.0
         image:
@@ -86,12 +85,12 @@ interactions:
         model: gpt-5.4-mini-2026-03-17
         moderation: null
         output:
-        - id: cu_01f0fcefa2921890006afad9726a7087d283dc19aafbe3606b
+        - id: cu_0e904134cc98f746006afeb4083da887d296b89e2eaba9faba
           type: computer_call
           status: completed
           actions:
           - type: screenshot
-          call_id: call_xBl8MCVU2CADdhsxhsC5jh3R
+          call_id: call_iWfhZMHDVBEXGg0PKVNny6tl
         parallel_tool_calls: true
         presence_penalty: 0.0
         previous_response_id: null
@@ -153,4 +152,4 @@ interactions:
           total_tokens: 859
         user: null
         metadata: {}
-  recorded_at: 2026-11-16T10:22:43.754292+00:00
+  recorded_at: 2026-11-19T08:32:09.131832+00:00

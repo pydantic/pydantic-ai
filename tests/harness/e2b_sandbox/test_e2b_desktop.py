@@ -12,6 +12,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.computer_use import ComputerReturnPart
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import WorkspaceRef, WorkspaceUnavailableError
 from pydantic_ai_harness.computer_use import ComputerUse
@@ -38,7 +39,7 @@ async def test_a_desktop_sandbox_runs_the_desktop_template_unless_given_one(
 
 
 async def test_a_shell_command_finds_the_desktop_running(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    # The shell is told a program it starts opens on the screen, before anything has looked at the screen.
+    # The shell command gets `DISPLAY`, so a program it starts opens on the screen, even before the first screenshot.
     await E2BSandboxBackend(desktop=True, env={'FOO': 'bar'}).run('xterm &', shell=True)
 
     assert len(display.starts) == 1
@@ -80,6 +81,11 @@ async def test_a_desktop_sandbox_reattaches_with_its_display(fake_e2b: FakeE2B, 
     assert E2BSandbox().backend(ref).display is None
 
 
+def test_a_desktop_size_is_checked_when_the_capability_is_created() -> None:
+    with pytest.raises(UserError, match=r'`desktop` must be a `\(width, height\)` of at least 1 pixel each'):
+        E2BSandbox(desktop=(0, 800))
+
+
 async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(
     fake_e2b: FakeE2B, display: FakeDisplay
 ) -> None:
@@ -103,22 +109,22 @@ async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(
 
 _STUBS = {
     'setsid': 'exec "$@"',  # macOS has no `setsid`
-    'Xvfb': ':',  # the display answers through `xdotool`
+    'Xvfb': ':',  # the `xdotool` stub plays the X server
     # The start script checks these are installed; the display answers, so they don't run.
     **dict.fromkeys(['xwininfo', 'scrot'], 'exit 1'),
     # The start script runs as root and makes the X socket directory, which these keep off the host's `/tmp`.
     'id': 'echo 0',
     **dict.fromkeys(['mkdir', 'chmod'], ':'),
-    'xdotool': '[ "$1" != search ] || [ -e "$bin/xfce-started" ]',  # the display answers; XFCE's window once started
-    # Shows its window, then stays up past the script's next 0.1 second check, so the start succeeds without leaving a
-    # process behind; `startxfce4-fails` makes it exit with an error instead.
+    'xdotool': '[ "$1" != search ] || [ -e "$bin/xfce-started" ]',  # X answers; XFCE's window shows once started
+    # Shows its window, then keeps running past the script's next 0.1-second check, so the start succeeds and no
+    # process is left behind. A `startxfce4-fails` flag file makes it exit with an error instead.
     'startxfce4': '[ -e "$bin/startxfce4-fails" ] && { echo no session bus; exit 17; }; '
     'echo started >>"$bin/xfce-starts"; touch "$bin/xfce-started"; exec sleep 1',
 }
 
 
 async def _start_script(fake_e2b: FakeE2B) -> str:
-    """The desktop start script, as the backend sends it."""
+    """Return the desktop start script exactly as the backend sends it."""
     scripts: list[str] = []
 
     def respond(command: str, timeout: float | None) -> tuple[str, str, int]:
@@ -135,12 +141,12 @@ async def _start_script(fake_e2b: FakeE2B) -> str:
 
 
 _TOOLS = ('cat', 'grep', 'rm', 'sleep', 'tail', 'touch', 'tr')
-"""The host programs the script and the stubs use; every other program is a stub or missing, never the host's."""
+"""Host programs the script and the stubs may use. Every other program is a stub or missing, never the host's."""
 
 
 @pytest.fixture
 def stubs(tmp_path: Path) -> Path:
-    """The directory of stub programs, which a test's flag files sit beside: the only one on the script's `PATH`."""
+    """The directory of stub programs, the only directory on the script's `PATH`. Tests put flag files in it."""
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     for name, body in _STUBS.items():
@@ -154,7 +160,7 @@ def stubs(tmp_path: Path) -> Path:
 
 
 def _run(script: str, stubs: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """Runs `script` under `/bin/sh` with only the stubs on `PATH` and its fixed paths moved beside them."""
+    """Run `script` under `/bin/sh` with only the stubs on `PATH` and its fixed file paths moved into the stubs."""
     root = stubs.parent
     for old, new in [('/tmp/', f'{root}/'), ('/proc/', f'{root}/proc/')]:
         script = script.replace(old, new)

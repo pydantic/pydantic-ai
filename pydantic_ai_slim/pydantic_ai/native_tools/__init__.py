@@ -902,18 +902,18 @@ class MemoryTool(AbstractNativeTool):
 
 @dataclass(kw_only=True)
 class ComputerTool(AbstractNativeTool):
-    """A provider's native computer use tool, whose calls the request's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool runs.
+    """A provider's own (native) computer use tool, sent to the model in place of the request's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool.
 
-    Pydantic AI Harness's `ComputerUse` adds it with each step's display size. A model adapter sends it in place of
-    that tool, turns the provider's calls into [`ComputerCallPart`][pydantic_ai.computer_use.ComputerCallPart] calls,
-    and turns the results back into the provider's format. It is only sent when the request has exactly one tool of
-    that kind that the model can call: not deferred, or revealed by history. With none, it is left out when it is
-    [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional], and the request is refused when it isn't. With
-    more than one, the request is refused. See [Computer Tool](../native-tools.md#computer-tool).
+    Pydantic AI Harness's `ComputerUse` adds it for you. The request's `computer` tool still runs the calls the model
+    makes. A `ComputerTool` is sent only when the request has exactly one `computer` tool the model can call. With
+    none, an [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional] one is left out and a required one
+    raises [`UserError`][pydantic_ai.exceptions.UserError]. With more than one, the request raises `UserError`. See
+    [Computer Tool](../native-tools.md#computer-tool).
 
     Supported by:
 
-    * OpenAI Responses, on GPT-5.4 (not nano), GPT-5.5, GPT-5.6 and GPT-6 through OpenAI and Bedrock Mantle
+    * OpenAI Responses, on GPT-5.4 (except GPT-5.4 nano), GPT-5.5, GPT-5.6 and GPT-6, through OpenAI and Bedrock
+      Mantle
     * Anthropic, on Claude Haiku 4.5, Sonnet 4.6, Opus 4.5 and later through the Claude API and Amazon Bedrock
     """
 
@@ -925,7 +925,7 @@ class ComputerTool(AbstractNativeTool):
 
     def __post_init__(self) -> None:
         if min(self.display_size) < 1:
-            raise UserError(f'`ComputerTool.display_size` must be positive, got {self.display_size}.')
+            raise ValueError(f'`ComputerTool.display_size` must be positive, got {self.display_size}.')
 
 
 @dataclass(kw_only=True)
