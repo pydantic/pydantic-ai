@@ -232,9 +232,11 @@ class CommandContext:
         """
         from pydantic_clai2.models.model_settings import default_model_settings
 
-        return lambda name: default_model_settings(
-            model=name, saved=self.store.model_settings(model) if name == model else {}
-        )
+        def defaults(name: str) -> ModelSettings | None:
+            saved = self.store.model_settings(model)
+            return default_model_settings(model=name, saved=saved if name == model else {}, selected=saved)
+
+        return defaults
 
     def reset_setting(self, key: str) -> str:
         """Forget the saved override and apply the default now."""

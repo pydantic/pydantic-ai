@@ -154,11 +154,10 @@ async def announce(ctx, event):
 The family contains
 `PlanCreatedEvent`, `PlanUpdatedEvent`, `PlanStatusChangedEvent`, `PlanCompletedEvent`, and
 `PlanDeletedEvent`; each carries the affected `item` and, for updates, `previous_item`.
-`previous_state` is the deprecated name of `previous_item`. It still reads, with a warning, and a payload saved under it still loads.
+A payload saved under the earlier `previous_state` key still loads into `previous_item`.
 
 Run events come from planning tool paths, including `write_plan`. Direct application mutations on a
-`PlanStore` have no run context and do not produce run events. `PlanEventEmitter`, `EventCallback`,
-and store `event_emitter` parameters remain supported but are deprecated.
+`PlanStore` have no run context and do not produce run events.
 
 ## Why whole-plan replacement
 
@@ -168,7 +167,7 @@ Addressing steps by mutable integer index (insert/remove/reorder) is error-prone
 
 The system prompt and instructions carry only the static guidance and the note on the plan's tag. The plan reaches the model in the plan tools' results, or in a part `Planning` records when the latest plan isn't visible; both are appended to the history, so the cached prefix stays valid. With `inject=True`, a tool that changes the plan returns a `ToolReturn` with `metadata` when called through the agent, and a plain string when you call the `PlanningToolset` method directly; the read tools and refusals return plain strings.
 
-`Planning` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoints it places cover the plan tools' results with the rest of the history. `cache_ttl` is deprecated and has no effect; setting it warns. The tag was `<plan-reminder>` in earlier releases; update any prompt or parser that names the old spelling.
+`Planning` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoints it places cover the plan tools' results with the rest of the history. The tag was `<plan-reminder>` in earlier releases; update any prompt or parser that names the old spelling.
 
 With a [UI adapter](https://pydantic.dev/docs/ai/ui/overview/#trust-model-for-client-submitted-messages), history that goes through the client may lose the metadata that marks a plan tool's result (AG-UI drops it), and leaves out the plan records `Planning` made, which are capability parts. Then when the client sends that history back, `Planning` records the plan on the next request. Keep history on the server when that matters.
 

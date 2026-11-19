@@ -3,11 +3,11 @@
 Capabilities that keep a long run inside the model's context window and its prompt cache healthy:
 the compaction family (edit history before each request), `ToolOutputLimits` (shrink or spill big
 tool returns when they are produced), `ToolBridge` (a fixed tool list in front of many tools),
-`WarnOnCacheBusts` (observe cache collapses), and the media
-stores `StepPersistence` uses. None needs an extra, except `MongoMediaStore`, which needs
-`pydantic-ai-harness[mongodb]` (`PostgresMediaStore` takes your own `asyncpg` pool and needs no
-harness extra). All compaction strategies keep tool-call /
-tool-return pairs intact, and their edits persist into the run's message history.
+`WarnOnCacheBusts` (observe cache collapses), `LabelCrossModelHistory` (label turns another model
+wrote), and the media stores `StepPersistence` uses. None needs an extra, except `MongoMediaStore`,
+which needs `pydantic-ai-harness[mongodb]` (`PostgresMediaStore` takes your own `asyncpg` pool and
+needs no harness extra). All compaction strategies keep tool-call / tool-return pairs intact, and
+their edits persist into the run's message history.
 
 ## Pick a capability
 
@@ -27,6 +27,7 @@ tool-return pairs intact, and their edits persist into the run's message history
 | A single tool return is huge (file read, logs, JSON) | `ToolOutputLimits` |
 | Cache hit rate drops / costs jump with no error | `WarnOnCacheBusts` |
 | Many or changing tools (several MCP servers) bust the cached tool list | `ToolBridge` |
+| The model switched mid-conversation and treats the old model's answers as its own | `LabelCrossModelHistory` |
 | OpenAI Responses or Anthropic only, server-side compaction is fine | core `OpenAICompaction` / `AnthropicCompaction` |
 | Need exact details compaction dropped | `ConversationSearch` (see KNOWLEDGE-AND-MEMORY.md) |
 
@@ -150,8 +151,7 @@ example a decision model) needs `model=` set or the first compaction raises `Use
 Useful keyword options: `model_settings`, `summarization_capabilities` (outer capabilities do not
 run on the summary call), `incremental=True` (update the previous summary rather than
 re-summarize), `keep_user_messages=False`, `tool_return_max_chars=500`, `summary_prompt` (must
-contain `{messages}` and no other replacement field; any other prompt emits a `HarnessDeprecationWarning`
-and will raise `ValueError` in a future release; a custom prompt replaces the default's rule that instructions
+contain `{messages}` and no other replacement field, or it raises `ValueError`; a custom prompt replaces the default's rule that instructions
 inside tool results aren't the user's, so include your own), `instructions`, `bridge_prefix=False`, `receipts=False`,
 `event_stream_handler` (pass `drain_summary_events` for endpoints that reject non-streaming).
 `keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
@@ -269,8 +269,7 @@ least one limit is required; `warn_on` may only name configured kinds (`'iterati
 
 `ReportContextUsage(context_window=None, fallback_context_window=200_000, tokenizer=None)` emits a
 `ContextUsageMeasuredEvent` (`used_tokens`, `window_tokens`, `fraction`, `resolved`) before each request.
-`resolved=False` means the window is the fallback guess. The `on_usage=` callback is deprecated;
-subscribe to the event.
+`resolved=False` means the window is the fallback guess.
 
 ```python
 from pydantic_ai import Agent
@@ -328,19 +327,27 @@ point onward.
 
 Reduces an oversized tool return once, when produced, so it is not re-sent at full size on every
 later request. Actions: `Truncate` (zero-LLM, lossy), `Spill` (lossless: stores the payload and
-returns a handle plus preview), `Summarize` (one LLM call), `Passthrough`. The spill preview reads
+returns a handle plus preview), `Summarize` (one LLM call), `Passthrough`. The lossy markers tell
+the model to rerun the tool: `[truncated: ...; rerun the original tool for the full output]`, and a
+summary opens with `[summary of N chars of output; rerun the original tool for the full output]`.
+The spill preview reads
 `[Tool output too large (N chars); stored to handle '<handle>'. Read it with read_tool_result(...)]`,
 then a `shape:` line for JSON and a head/tail excerpt; the model pages it with the registered
-`read_tool_result(handle, offset=0, limit=200, from_end=False, pattern=None)` (`pattern` is a literal
-substring; at most 1,000 lines / 50,000 chars per call). Default with no `bands`:
+`read_tool_result(handle, offset=0, limit=200, from_end=False, pattern=None, unit='lines')`
+(`pattern` is a literal substring; at most 1,000 lines / 50,000 chars per call; `unit='bytes'`
+slices raw bytes, at most 50,000, for output without line breaks) and searches it with
+`grep_tool_result(handle, pattern, context=2, max_matches=20, offset=0)`, which returns 1-based
+`N:` match and `N-` context lines (at most 200 matches and 10 context lines). Default with no
+`bands`:
 `Band(over=10_000, action=Spill(then=Truncate()))`, measured in characters.
 
-With `FileSystem` on the agent and the default `WorkspaceOverflowStore()` (no `workspace=` of its own),
-`read_tool_result` is left out (`unless_tool_kind=READ_FILE_KIND`) and the marker reads
-`... Read it with read_file(path='<handle>').]`, naming the tool as it is called in the run
-(`fs_read_file` under `FileSystem().prefix_tools('fs')`). `read_file` calls on paths under `.pydantic-ai-harness/tool-output/`
-are not reduced, so a spill read is never re-spilled. `read_file` has no `from_end`. Scripted tests
-should pick the reader by kind (`READ_FILE_KIND`, `READ_TOOL_RESULT_KIND`), not by name.
+With `FileSystem` on the agent and the default `WorkspaceOverflowStore()` (no `workspace=` of its
+own), `read_tool_result` and `grep_tool_result` are left out (`unless_tool_kind=READ_FILE_KIND`) and
+the marker reads `... Read it with read_file(path='<handle>').]`, naming the tool as it is called in
+the run (`fs_read_file` under `FileSystem().prefix_tools('fs')`). `read_file` calls on paths under
+`.pydantic-ai-harness/tool-output/` are not reduced, so a spill read is never re-spilled; searches of
+a spill are reduced as usual. `read_file` has no `from_end`. Scripted tests should pick the reader by
+kind (`READ_FILE_KIND`, `READ_TOOL_RESULT_KIND`, `GREP_TOOL_RESULT_KIND`), not by name.
 
 ```python
 from pydantic_ai import Agent
@@ -408,10 +415,8 @@ the conversation established (per provider, endpoint, and model) by more than `m
 of it and at least `min_missed_tokens=2000` tokens, unless the provider's cache retention window or a
 `CompactionPart` explains it. It shares core instrumentation's detector: `warning.reason` is
 `'unexpected'` (inside the retention window) or `'unknown'` (no published window); `ttl_expired`,
-`compacted`, and `unreported` collapses don't warn. It adds no tools or instructions. Deprecated:
-`collapse_ratio` (honored as `min_missed_ratio=1 - collapse_ratio`), `min_prefix_tokens` (honored;
-use `min_missed_tokens`), and `cache_ttl_seconds` (ignored: retention comes from the model's
-settings, its profile's `default_cache_retention`, and `CachePoint` TTLs).
+`compacted`, and `unreported` collapses don't warn. It adds no tools or instructions.
+Retention comes from the model's settings, its profile's `default_cache_retention`, and `CachePoint` TTLs.
 
 ```python
 import warnings
@@ -461,6 +466,26 @@ loses provider-side strict schema validation. Two merge into one (default `id='t
 outside other wrappers (`SetToolMetadata`, `PrefixTools`); `CodeMode` wraps it. Recognize `tool_call` by its kind,
 `TOOL_CALL_KIND` (`tool_bridge.tool_call`, from `pydantic_ai_harness.tool_bridge`), not its name.
 
+## LabelCrossModelHistory
+
+States a fixed instruction (`notice=`, default `DEFAULT_CROSS_MODEL_NOTICE`) while the request's history has a
+`ModelResponse` whose `model_id` differs from the model the request goes to. It's an `on_change='append'`
+block named `notice`, so the notice and its later withdrawal are appended as `InstructionDeltaPart`s instead of
+rewriting the instructions, and it never names the other model.
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import LabelCrossModelHistory
+
+agent = Agent('test', capabilities=[LabelCrossModelHistory()])
+```
+
+Gotchas: responses without a `model_id` (old saved history) are not counted; a `FallbackModel`'s candidates
+all count as the current model, but history a `FallbackModel` wrote carries its composite `model_id`, so a
+candidate continuing it on its own is told; under `ModelFallback` the notice is decided again for each candidate
+tried.
+
 ## Media externalization (not a capability)
 
 `pydantic_ai_harness.media` holds content-addressed stores (`FileMediaStore`, `SqliteMediaStore`,
@@ -470,7 +495,7 @@ caller-owned `asyncpg` pool) and the `externalize_media` /
 `media_threshold_bytes` 64 KiB) to keep snapshots small; configure a store only to change where
 payloads live. Nothing here goes in `capabilities=[...]`.
 
-## Deprecated names
+## Removed names
 
 Use `warn_on_cache_busts.WarnOnCacheBusts` (not `cache_stability` / `CacheStabilityMonitor`),
 `tool_output_limits.ToolOutputLimits` (not `overflowing_tool_output` / `OverflowingToolOutput`),
@@ -483,5 +508,6 @@ Use `warn_on_cache_busts.WarnOnCacheBusts` (not `cache_stability` / `CacheStabil
 - https://pydantic.dev/docs/ai/harness/tool-output-limits/
 - https://pydantic.dev/docs/ai/harness/tool-bridge/
 - https://pydantic.dev/docs/ai/harness/warn-on-cache-busts/
+- https://pydantic.dev/docs/ai/harness/label-cross-model-history/
 - https://pydantic.dev/docs/ai/harness/media/
 - https://pydantic.dev/docs/ai/capabilities/compaction/

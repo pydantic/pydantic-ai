@@ -256,9 +256,6 @@ async def show(ctx, event):
 
 Each reading carries `used_tokens`, `window_tokens`, and `resolved` -- `False` when the window is the
 fallback rather than the model's real one, so a gauge can show that the percentage is a guess.
-Migration: `on_usage` remains supported but is deprecated. Move its callback body to a
-`ContextUsageMeasuredEvent` subscription.
-
 Order matters: register the monitor *after* a compaction capability to observe the corrected current
 history after same-cycle compaction, or before it to see what triggered the compaction.
 
@@ -611,6 +608,9 @@ for iterations once the remaining request count drops to `critical_remaining_ite
 It watches `max_iterations`, `max_context_tokens` (or `max_context_fraction`), and `max_total_tokens`,
 warning on whichever are configured; narrow that with `warn_on`.
 
+To tell the model on every request how much of the run's `UsageLimits` and spend budgets is left,
+from the first request rather than past a threshold, use [Report Remaining Budget](../report_remaining_budget/).
+
 ## Cost: why summarization is the last resort
 
 Summarization turns input tokens into output tokens, which are billed at a premium and generated
@@ -727,7 +727,7 @@ with `Summary of previous conversation:`, keeps working: that summary anchors th
 replaced by it.
 
 Both prompt surfaces of the summary request are fields: `summary_prompt` is the user-turn template (it
-must contain a `{messages}` placeholder and no other replacement field; any other prompt emits a `HarnessDeprecationWarning` and will raise `ValueError` in a future release), and `instructions` sets the internal agent's static instructions,
+must contain a `{messages}` placeholder and no other replacement field; any other prompt raises `ValueError`), and `instructions` sets the internal agent's static instructions,
 which Pydantic AI sends in the request's system prompt. Override `instructions` when the summarizer
 endpoint requires a fixed leading instruction.
 The default `summary_prompt` asks for the summary under fixed section headings. Its `## Intent` section

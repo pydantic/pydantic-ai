@@ -7,9 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from functools import cached_property, partial
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, assert_never, cast, overload
-
-from typing_extensions import TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, assert_never, cast, overload
 
 from ... import UnexpectedModelBehavior, _utils, usage
 from ..._context_size import mark_context_input_tokens
@@ -87,9 +85,8 @@ from ...providers._bedrock_model_names import (
 )
 from ...providers.anthropic import AsyncAnthropicClient
 from ...providers.gateway import is_gateway_provider
-from ...settings import CacheConfig, CacheRetention, CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
+from ...settings import CacheConfig, CacheRetention, CacheSetting, ModelSettings, merge_model_settings
 from ...tools import AgentDepsT, ToolDefinition
-from ...toolsets._tool_search import discovered_tool_names_in_order
 from .. import (
     Model,
     ModelRequestContext,
@@ -121,66 +118,7 @@ from .._prompt_cache import (
     split_cache_setting,
     split_instruction_cache_points,
 )
-from .._sdk_retries import with_max_retries
-from .._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
-
-
-def _native_tool_is_a_tools_entry(tool: AbstractNativeTool) -> bool:
-    """Whether `_add_native_tools` sends this native tool as an entry in the request's `tools`.
-
-    An MCP server goes in `mcp_servers` instead, and a custom tool search strategy is served by the
-    `search_tools` function tool, which `function_tools` already carries.
-    """
-    if isinstance(tool, MCPServerTool):
-        return False
-    return not (isinstance(tool, ToolSearchTool) and tool.strategy == 'custom')
-
-
-def _revealed_deferred_tool_order(
-    messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
-) -> list[str]:
-    """Order revealed non-corpus deferred entries at the tail by their first reveal in history.
-
-    Deferred entries are outside Anthropic's cache key, so this is a determinism rule, not a cache rule.
-    A mid-run newcomer (`introduced_tool_names`) is declared deferred for the same reason and joins them.
-
-    Without a tool-search surface, `resolve_request_tools` declares a deferred tool from the first request,
-    so its reveal leaves it where earlier requests sent it: moving it would reorder entries already sent.
-    """
-    tool_defs = model_request_parameters.tool_defs
-    pre_declared = not any(isinstance(tool, ToolSearchTool) for tool in model_request_parameters.native_tools)
-    return [
-        name
-        for name in discovered_tool_names_in_order(messages)
-        if name in tool_defs
-        and (
-            name in model_request_parameters.introduced_tool_names
-            or (tool_defs[name].defer_loading and not pre_declared)
-        )
-        and tool_defs[name].with_native is None
-        and model_request_parameters.visibility_of(name) == 'deferred'
-    ]
-
-
-def _validate_wire_tools_not_all_deferred(tools: list[BetaToolUnionParam]) -> None:
-    """Raise before sending a `tools` list in which every tool has `defer_loading=True`, which Anthropic rejects."""
-    if tools and all(tool.get('defer_loading') is True for tool in tools):
-        raise UserError(
-            'Anthropic rejects a request whose wire tools all have `defer_loading=True`. '
-            'Make at least one tool visible, or add a tool-search surface or capability catalog.'
-        )
-
-
-def _append_revealed_tool_params(tools: list[BetaToolUnionParam], revealed_tool_order: list[str]) -> None:
-    """Move revealed deferred definitions behind the request's stable tool segments."""
-    by_name = {tool.get('name'): tool for tool in tools}
-    revealed_names = [name for name in revealed_tool_order if name in by_name]
-    if revealed_names:
-        revealed_name_set = set(revealed_names)
-        tools[:] = [tool for tool in tools if tool.get('name') not in revealed_name_set] + [
-            by_name[name] for name in revealed_names
-        ]
-
+from .._tool_choice import resolve_tool_choice
 
 try:
     from anthropic import (
@@ -275,7 +213,7 @@ try:
     )
 
     from . import _batch
-    from ._bedrock_count_tokens import BEDROCK_ANTHROPIC_VERSION, count_tokens_via_bedrock
+    from ._bedrock_count_tokens import count_tokens_via_bedrock
     from ._betas import extends_max_output
     from ._cache_control import (
         ANTHROPIC_CACHEABLE_PARAM_TYPES,
@@ -308,6 +246,11 @@ try:
         without_unanswered_tool_calls,
     )
     from ._containers import is_tool_result_only
+    from ._deferred_loading import (
+        append_revealed_tool_params,
+        revealed_deferred_tool_order,
+        validate_wire_tools_not_all_deferred,
+    )
     from ._errors import (
         is_expired_container_error,
         is_thread_replay_error,
@@ -329,6 +272,7 @@ try:
         build_code_execution_tool_result_block,
         build_custom_tool_search_replay_blocks,
         build_tool_search_replay_block,
+        code_execution_may_call_web_tools,
         code_execution_tool_result_content_ta,
         get_anthropic_code_execution_tool_name,
         map_advisor_tool,
@@ -344,11 +288,23 @@ try:
         map_tool_search_tool_result_block,
         map_web_fetch_tool_result_block,
         map_web_search_tool_result_block,
+        native_tool_is_a_tools_entry,
         open_turn_has_code_execution,
         provisions_code_execution,
         text_editor_code_execution_tool_result_content_ta,
         web_search_tool_result_content_ta,
         with_native_memory_tool,
+    )
+    from ._request_params import (
+        MAX_NON_STREAMING_TOKENS,
+        CountTokensArgs,
+        MessagesCreateArgs,
+        PreparedMessagesCreate,
+        build_extra_body,
+        default_max_tokens,
+        resolve_anthropic_service_tier,
+        resolve_effective_thinking,
+        with_max_retries_keeping_aws_profile,
     )
     from ._response import (
         FINISH_REASON_MAP,
@@ -369,6 +325,7 @@ try:
         thinking_with_stale_block_history,
         warn_stale_thinking_block_recovery,
     )
+    from ._thinking_type import request_allows_tool_forcing, request_thinking_type
     from ._threads import (
         MESSAGE_THREADS_BETA,
         Thread,
@@ -406,13 +363,13 @@ __all__ = (
     'web_search_tool_result_content_ta',
 )
 
-# Fast mode is not available on any Bedrock transport, so it goes in `_FAST_MODE_UNSUPPORTED_CLIENTS`.
 _CACHE_SETTINGS_KEYS = (
     'anthropic_cache',
     'anthropic_cache_instructions',
     'anthropic_cache_tool_definitions',
     'anthropic_cache_messages',
 )
+# Fast mode is not available on any Bedrock transport, so both Bedrock clients are listed.
 _FAST_MODE_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicBedrock,
     AsyncAnthropicBedrockMantle,
@@ -558,19 +515,6 @@ _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
 _ANTHROPIC_FILES_API_BETA = 'files-api-2025-04-14'
 _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
-
-
-def _with_max_retries(client: AsyncAnthropicClient, model_settings: ModelSettings) -> AsyncAnthropicClient:
-    """The client to send one request with, carrying `ModelSettings['max_retries']` when it's set."""
-    if model_settings.get('max_retries') is None or not isinstance(client, AsyncAnthropicBedrock):
-        return with_max_retries(client, model_settings)
-    copy = with_max_retries(client, model_settings)
-    if copy.aws_profile == client.aws_profile:
-        return copy
-    # Below anthropic 2.6, `AsyncAnthropicBedrock.with_options()` doesn't copy `aws_profile`, so its copy would sign
-    # requests with the default AWS credential chain instead of the profile the client was built with. From 2.6 it
-    # copies the profile itself, and raises a `TypeError` if `_extra_kwargs` passes it again.
-    return with_max_retries(client, model_settings, carry_over={'aws_profile': client.aws_profile})
 
 
 LatestAnthropicModelNames = Literal[
@@ -889,198 +833,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
 
-def _build_extra_body(
-    model_settings: AnthropicModelSettings,
-    thinking_override: dict[str, object] | None = None,
-    *,
-    bedrock: bool = False,
-) -> object | None:
-    """Merge the sampling settings, and a `thinking` object the SDK cannot type, into `extra_body`.
-
-    `anthropic>=1` dropped `temperature`/`top_p`/`top_k` from the `messages.create()` signature, and
-    passing one is a `TypeError`. The API still takes them, so they ride in `extra_body` — the route
-    the SDK's own migration guide names — rather than being silently dropped. Models that reject them
-    never get here: `_drop_unsupported_sampling_settings` has already removed them.
-
-    On the legacy Bedrock client, `anthropic_version` is pinned to `bedrock-2023-05-31`. `anthropic>=2`
-    defaults it to the Messages API version `2026-10-21` instead, which Bedrock rejects with `Invalid API
-    version` for some Claude models (Sonnet 4.5 and Opus 4.5, though not Haiku 4.5, when verified live).
-    The SDK fills the field in only when the body has none. Reported upstream as
-    https://github.com/anthropics/anthropic-sdk-python/issues/2031; drop the pin once that is fixed.
-
-    An explicit `extra_body` entry wins over the setting of the same name, preserving the precedence
-    the SDK gave it while the parameters were still named arguments.
-    """
-    fields: dict[str, Any] = {
-        setting: value for setting in ANTHROPIC_SAMPLING_PARAMS if (value := model_settings.get(setting)) is not None
-    }
-    if thinking_override is not None:
-        fields['thinking'] = thinking_override
-    if bedrock:
-        fields['anthropic_version'] = BEDROCK_ANTHROPIC_VERSION
-    extra_body = model_settings.get('extra_body')
-    if not fields:
-        return extra_body
-    if not is_str_mapping(extra_body):
-        return fields
-    merged = {**fields, **extra_body}
-    if thinking_override is not None:
-        # The override was built from the effective wire object, including any caller-provided
-        # `extra_body['thinking']`, so it must replace that original object to add `block_binding`.
-        merged['thinking'] = thinking_override
-    return merged
-
-
-def _extra_body_thinking(model_settings: AnthropicModelSettings) -> dict[str, object] | None:
-    """The `thinking` object a caller hand-rolled in `extra_body`, if any.
-
-    `extra_body` is how a caller reaches a field the installed SDK cannot type yet, so it can carry
-    `thinking` — including a `block_binding` of their own, which must be honored rather than
-    retried over.
-    """
-    extra_body = model_settings.get('extra_body')
-    if not is_str_mapping(extra_body):
-        return None
-    thinking = extra_body.get('thinking')
-    if not is_str_mapping(thinking):
-        return None
-    return dict(thinking)
-
-
-def _effective_thinking(
-    model_settings: AnthropicModelSettings, thinking: BetaThinkingConfigParam | Omit
-) -> dict[str, object] | Omit:
-    """Resolve the thinking object that reaches the wire after `extra_body` precedence."""
-    if (caller_thinking := _extra_body_thinking(model_settings)) is not None:
-        return caller_thinking
-    return OMIT if isinstance(thinking, Omit) else dict(thinking)
-
-
-_DEFAULT_MAX_TOKENS = 16384
-"""The `max_tokens` sent when the request doesn't set one and the model's maximum output is unknown.
-
-It stays under the SDK's non-streaming limit (`_MAX_NON_STREAMING_TOKENS`).
-"""
-
-_MAX_NON_STREAMING_TOKENS = 21_333
-"""The largest `max_tokens` the Anthropic SDK sends without streaming with its default timeout.
-
-The SDK expects a response to take up to an hour per 128,000 tokens, and requires streaming past 10 minutes.
-"""
-
-_LEGACY_DEFAULT_MAX_TOKENS = 4096
-"""The default `max_tokens` for models that reject input plus `max_tokens` beyond the context window."""
-
-_MIN_TOKENS_AFTER_THINKING_BUDGET = 4096
-"""The room the default `max_tokens` leaves beyond an extended thinking `budget_tokens`."""
-
-
-class _MessageCreateParams(TypedDict):
-    max_tokens: int
-    system: str | list[BetaTextBlockParam] | Omit
-    messages: list[BetaMessageParam]
-    model: str
-    tools: list[BetaToolUnionParam] | Omit
-    tool_choice: BetaToolChoiceParam | Omit
-    mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] | Omit
-    output_config: BetaOutputConfigParam | Omit
-    cache_control: BetaCacheControlEphemeralParam | Omit
-    thinking: BetaThinkingConfigParam | Omit
-    stop_sequences: list[str] | Omit
-    metadata: BetaMetadataParam | Omit
-    context_management: BetaContextManagementConfigParam | Omit
-    compaction: BetaCompactionConfigParam | Omit
-    container: BetaContainerParams | str | Omit
-    service_tier: Literal['auto', 'standard_only'] | Omit
-    inference_geo: str | Omit
-    diagnostics: BetaDiagnosticsParam | Omit
-    extra_body: object | None
-
-
-@dataclass(kw_only=True)
-class _PreparedMessagesCreate:
-    """The `messages.create` parameters of one request, before any recovery retry changes them.
-
-    `_messages_create` sends them, retrying with a different container or thinking object when the API
-    rejects one; a batch request encodes the initial values once, as it gets no retry.
-    """
-
-    system_prompt: str | list[BetaTextBlockParam]
-    anthropic_messages: list[BetaMessageParam]
-    tools: list[BetaToolUnionParam]
-    tool_choice: BetaToolChoiceParam | None
-    mcp_servers: list[BetaRequestMCPServerURLDefinitionParam]
-    output_config: BetaOutputConfigParam | None
-    auto_cache_control: BetaCacheControlEphemeralParam | None
-    cache_breakpoints: tuple[list[str], list[str]] | None
-    """The cache breakpoints the request asks for and the ones it keeps, for each attempt to record as it's sent.
-
-    `None` when there are none, or when `_prepare_messages_create` recorded them already.
-    """
-    max_tokens: int
-    stop_sequences: list[str] | Omit
-    effective_thinking: dict[str, object] | Omit
-    betas: set[str]
-    extra_headers: dict[str, str]
-    context_management: BetaContextManagementConfigParam | None
-    compaction: BetaCompactionConfigParam | None
-    container: BetaContainerParams | str | None
-    container_from_history: bool
-    initial_thinking: BetaThinkingConfigParam | Omit
-    initial_betas: set[str]
-    initial_thinking_override: dict[str, object] | None
-    initial_effective_thinking: dict[str, object] | Omit
-    inference_geo: str | Omit
-
-
-def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
-    """The `max_tokens` to send when the request doesn't set one.
-
-    That's the model's maximum output, so responses are only cut off at the model's limit. Above about 21,000 tokens
-    the request is streamed behind the scenes (see `_messages_create`). Models that reject input
-    plus `max_tokens` beyond the context window keep a lower default, so conversations close to the window still fit.
-    Extended thinking's `budget_tokens` counts toward `max_tokens`, and Anthropic rejects a request whose `max_tokens`
-    isn't greater than the budget, so a large budget raises a lower default to leave room for the answer.
-    """
-    if profile.get('anthropic_rejects_max_tokens_beyond_context_window', False):
-        default = _LEGACY_DEFAULT_MAX_TOKENS
-    else:
-        default = profile.get('anthropic_max_output_tokens') or _DEFAULT_MAX_TOKENS
-    wire_thinking: dict[str, object] = {} if isinstance(thinking, Omit) else thinking
-    budget = wire_thinking.get('budget_tokens') if wire_thinking.get('type') == 'enabled' else None
-    return max(default, (budget if isinstance(budget, int) else 0) + _MIN_TOKENS_AFTER_THINKING_BUDGET)
-
-
-def _resolve_anthropic_service_tier(
-    model_settings: AnthropicModelSettings,
-) -> Literal['auto', 'standard_only'] | Omit:
-    """Resolve the value to send as `service_tier` on the Anthropic request.
-
-    Per-provider [`anthropic_service_tier`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_service_tier]
-    wins; otherwise the top-level [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] is mapped
-    (`'default'` → `'standard_only'`, `'auto'` → `'auto'`). `'flex'`/`'priority'` are dropped as Anthropic
-    does not expose them via this field.
-    """
-    if anthropic_tier := model_settings.get('anthropic_service_tier'):
-        return anthropic_tier
-    unified = model_settings.get('service_tier')
-    if unified == 'auto':
-        return 'auto'
-    if unified == 'default':
-        return 'standard_only'
-    return OMIT
-
-
-def _code_execution_may_call_web_tools(
-    supports_dynamic_filtering: bool, model_settings: AnthropicModelSettings
-) -> bool:
-    """Whether code execution may call the web tools.
-
-    Models with dynamic filtering allow it by default. Without it, the web tools are called directly unless
-    `anthropic_web_tools_allowed_callers` names a code execution caller.
-    """
-    allowed_callers = model_settings.get('anthropic_web_tools_allowed_callers') or []
-    return supports_dynamic_filtering or any(caller != 'direct' for caller in allowed_callers)
+_ResponseT = TypeVar('_ResponseT')
 
 
 @dataclass(init=False)
@@ -1602,7 +1355,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _request_thinks(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> bool:
-        return _request_thinking_type(self.profile, model_settings, model_request_parameters) is not None
+        return request_thinking_type(self.profile, model_settings, model_request_parameters) is not None
 
     def _overrides_unified_effort(self, model_settings: Mapping[str, object]) -> bool:
         return model_settings.get('anthropic_effort') is not None
@@ -1627,7 +1380,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # Extended thinking rejects the forced tool choice Tool Output relies on.
         if (
             model_request_parameters.output_tools
-            and _request_thinking_type(self.profile, model_settings, model_request_parameters) == 'enabled'
+            and request_thinking_type(self.profile, model_settings, model_request_parameters) == 'enabled'
         ):
             mode: StructuredOutputMode = (
                 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
@@ -1730,7 +1483,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self,
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> BetaThinkingConfigParam:
+    ) -> BetaThinkingConfigParam | Omit:
         """Get the thinking parameter, falling back to unified thinking."""
         if anthropic_thinking := model_settings.get('anthropic_thinking'):
             return anthropic_thinking
@@ -1741,15 +1494,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 # which `_build_output_config` adds. A model without an effort setting is left at its default.
                 if self.profile.get('anthropic_supports_effort', False):
                     return {'type': 'adaptive'}
-                return OMIT  # type: ignore[return-value]
+                return OMIT
             if self.profile.get('anthropic_disables_thinking_with_between_tools', False):
                 return {'type': 'between_tools'}
             if self.profile.get('thinking_enabled_by_default', False):
                 # Omitting `thinking` leaves it on for these models.
                 return {'type': 'disabled'}
-            return OMIT  # type: ignore[return-value]
+            return OMIT
         if thinking is None:
-            return OMIT  # type: ignore[return-value]
+            return OMIT
         if self.profile.get('anthropic_supports_adaptive_thinking', False):
             return {'type': 'adaptive'}
         return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
@@ -1816,7 +1569,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             record_cache_breakpoints_on_send=thread_record is not None,
         )
         anthropic_profile = self.profile
-        client = _with_max_retries(self.client, model_settings)
+        client = with_max_retries_keeping_aws_profile(self.client, model_settings)
         create = partial(self._create_message, client, messages, model_settings, prepared, stream)
 
         initial_thinking = prepared.initial_thinking
@@ -1861,22 +1614,40 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     anthropic_profile, prepared.initial_effective_thinking, *response
                 ):
                     raise error
-
-            result = await create(
-                retry_container,
-                OMIT,
-                prepared.betas | {ANTHROPIC_THINKING_BINDING_BETA},
-                drop_stale_thinking_blocks(prepared.effective_thinking),
+            return await self._retry_dropping_stale_thinking_blocks(
+                prepared,
+                lambda thinking, betas, thinking_override: create(retry_container, thinking, betas, thinking_override),
             )
-            warn_stale_thinking_block_recovery(self.model_name)
-            return result
+
+    async def _retry_dropping_stale_thinking_blocks(
+        self,
+        prepared: PreparedMessagesCreate,
+        send: Callable[[BetaThinkingConfigParam | Omit, set[str], dict[str, object] | None], Awaitable[_ResponseT]],
+        *,
+        count_tokens_history: list[ModelMessage] | None = None,
+    ) -> _ResponseT:
+        """Send a request Anthropic rejected for a stale thinking block again, asking it to drop the block, and warn.
+
+        With `count_tokens_history`, it's a count of that history, which is marked so later counts of it drop the
+        block too. The mark comes before the warning, so it stays when warnings are errors.
+        """
+        result = await send(
+            OMIT,
+            prepared.betas | {ANTHROPIC_THINKING_BINDING_BETA},
+            drop_stale_thinking_blocks(prepared.effective_thinking),
+        )
+        if count_tokens_history is not None:
+            mark_history_to_drop_stale_thinking_blocks_for_count_tokens(count_tokens_history)
+        # The warning points at the line that called this method.
+        warn_stale_thinking_block_recovery(self.model_name, stacklevel=3)
+        return result
 
     async def _first_attempt(
         self,
         messages: list[ModelMessage],
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-        prepared: _PreparedMessagesCreate,
+        prepared: PreparedMessagesCreate,
         send: Callable[[Thread | None], Awaitable[BetaMessage | AnthropicEventStream]],
         thread_record: ThreadRecord | None,
     ) -> BetaMessage | AnthropicEventStream:
@@ -2016,7 +1787,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         client: AsyncAnthropicClient,
         messages: list[ModelMessage],
         model_settings: AnthropicModelSettings,
-        prepared: _PreparedMessagesCreate,
+        prepared: PreparedMessagesCreate,
         stream: bool,
         container_param: BetaContainerParams | str | None,
         thinking: BetaThinkingConfigParam | Omit,
@@ -2065,7 +1836,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # custom timeout is set too, rather than hold one connection open for the whole response.
         if (
             'max_tokens' not in model_settings
-            and max_tokens > _MAX_NON_STREAMING_TOKENS
+            and max_tokens > MAX_NON_STREAMING_TOKENS
             and ('timeout' in model_settings or self.client.timeout != DEFAULT_TIMEOUT)
         ):
             return await open_stream()
@@ -2080,11 +1851,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self,
         messages: list[ModelMessage],
         model_settings: AnthropicModelSettings,
-        prepared: _PreparedMessagesCreate,
+        prepared: PreparedMessagesCreate,
         container: BetaContainerParams | str | None,
         thinking: BetaThinkingConfigParam | Omit,
         thinking_override: dict[str, object] | None,
-    ) -> _MessageCreateParams:
+    ) -> MessagesCreateArgs:
         return {
             'max_tokens': prepared.max_tokens,
             'system': prepared.system_prompt or OMIT,
@@ -2101,10 +1872,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             'context_management': prepared.context_management or OMIT,
             'compaction': prepared.compaction or OMIT,
             'container': container or OMIT,
-            'service_tier': _resolve_anthropic_service_tier(model_settings),
+            'service_tier': resolve_anthropic_service_tier(model_settings),
             'inference_geo': prepared.inference_geo,
             'diagnostics': self._cache_diagnostics(messages, model_settings),
-            'extra_body': _build_extra_body(
+            'extra_body': build_extra_body(
                 model_settings, thinking_override, bedrock=isinstance(self.client, AsyncAnthropicBedrock)
             ),
         }
@@ -2118,32 +1889,84 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         compaction: BetaCompactionConfigParam | None = None,
         continues_thread: bool = False,
         record_cache_breakpoints_on_send: bool = False,
-    ) -> _PreparedMessagesCreate:
+        count_tokens: bool = False,
+    ) -> PreparedMessagesCreate:
         """The `messages.create` parameters of a request.
 
         With `record_cache_breakpoints_on_send`, the request's cache breakpoints are left for each attempt to record
         as it's sent, rather than recorded here: in a message thread, a continue request leaves some of them out.
+
+        With `count_tokens`, these are the parameters of the `count_tokens` request that counts it, which differ where
+        the comments below say.
         """
         model_request_parameters = self._declare_newcomers_left_alone(model_settings, model_request_parameters)
+        map_parameters = native_tool_parameters = model_request_parameters
+        if count_tokens:
+            # Anthropic docs: https://platform.claude.com/docs/en/api/messages/count_tokens
+            # The count's `tools` list keeps client-side tools like `MemoryTool`, which contribute real tokens, and
+            # the server tools where `anthropic_count_tokens_accepts_server_tools` says the endpoint takes them.
+            # Verified 2026-10-27 on the Claude 5.5 models: with tool search, the advisor tool and its replayed
+            # history, or any web search, web fetch or code execution version the SDK lists, the count equals the
+            # real request's `input_tokens`, though
+            # https://platform.claude.com/docs/en/build-with-claude/token-counting says the endpoint rejects every
+            # server tool but the advisor. Where the flag is off, server tools are dropped, as the endpoint once
+            # rejected them (https://github.com/pydantic/pydantic-ai/issues/5702), which undercounts the prompt by
+            # their definitions.
+            # TODO: Send `mcp_servers` once the endpoint accepts it. Rechecked 2026-10-27, it rejects the param with
+            # a 400: "The mcp_servers parameter is not supported on the count_tokens endpoint".
+            counted_native_tools: tuple[type[AbstractNativeTool], ...] = (
+                (MemoryTool, ToolSearchTool, WebSearchTool, WebFetchTool, CodeExecutionTool, AdvisorTool)
+                if self.profile.get('anthropic_count_tokens_accepts_server_tools', False)
+                else (MemoryTool,)
+            )
+            native_tool_parameters = replace(
+                model_request_parameters,
+                native_tools=[
+                    tool for tool in model_request_parameters.native_tools if isinstance(tool, counted_native_tools)
+                ],
+            )
+            # The rest of the count keeps `ToolSearchTool`, so it describes the request we'd really send, deferred
+            # tools and all: `function_tools` keep their `defer_loading` and the tool-search replay still renders
+            # the same `tool_reference` wire shape as `/v1/messages`. The endpoint honors the flag rather than
+            # ignoring it — one deferred 30-field tool counts 440 tokens with it and 1761 without on
+            # `claude-opus-4-8` — so this is the difference between counting the prompt and counting the hidden
+            # schemas too.
+            # Where the count drops advisor, dropping it here too makes `advisor_active` False so its call/result
+            # history blocks are stripped during replay: replaying them without the tool definition would 400.
+            map_parameters = replace(
+                model_request_parameters,
+                native_tools=[
+                    tool
+                    for tool in model_request_parameters.native_tools
+                    if not isinstance(tool, AdvisorTool) or isinstance(tool, counted_native_tools)
+                ],
+            )
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
         # entries are then appended in history order; Anthropic excludes them from its cache key.
         messages, effort_request_parameters = self._effort_delta_request(
             messages, model_settings, model_request_parameters
         )
-        revealed_tool_order = _revealed_deferred_tool_order(messages, model_request_parameters)
-        tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, model_request_parameters)
+        revealed_tool_order = revealed_deferred_tool_order(messages, map_parameters)
+        tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, map_parameters)
         tools, mcp_servers, native_tool_betas = self._add_native_tools(
             tools,
-            model_request_parameters,
+            native_tool_parameters,
             model_settings,
             code_execution_in_open_turn=open_turn_has_code_execution(messages, self.system),
         )
-        _append_revealed_tool_params(tools, revealed_tool_order)
-        _validate_wire_tools_not_all_deferred(tools)
+        append_revealed_tool_params(tools, revealed_tool_order)
+        # Without a server tool, a request whose function tools are all deferred can't be counted either: the endpoint
+        # rejects a `tools` list in which every tool is deferred. A count is judged on the request's `tools`, which also
+        # hold any server tool the count leaves off. A native tool entry is never deferred, and without one the
+        # request's `tools` equal the count's.
+        if not count_tokens or not any(
+            native_tool_is_a_tools_entry(tool) for tool in model_request_parameters.native_tools
+        ):
+            validate_wire_tools_not_all_deferred(tools)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(
-            messages, model_request_parameters, model_settings, continues_thread=continues_thread
+            messages, map_parameters, model_settings, continues_thread=continues_thread
         )
         request_scoped_texts = _request_scoped_tail_texts(messages)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages, request_scoped_texts)
@@ -2151,13 +1974,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # The API rejects automatic caching when the last block's explicit breakpoint has a different TTL, and
         # ignores it when the TTL is the same, since both mark the same breakpoint. The explicit one wins.
         auto_cache_control = None if last_cacheable_block_has_cache_control(anthropic_messages) else auto_cache_control
-        # Only the request records its breakpoints: `count_tokens` builds the same request outside its span.
+        # Only the request records its breakpoints, not a count of it.
         cache_breakpoints = self._limit_cache_points(
             system_prompt,
             anthropic_messages,
             tools,
             automatic_caching=auto_cache_control is not None,
-            return_breakpoints=current_model_request_span() is not None,
+            return_breakpoints=not count_tokens and current_model_request_span() is not None,
         )
         if not record_cache_breakpoints_on_send:
             record_cache_breakpoints(cache_breakpoints)
@@ -2165,9 +1988,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         output_config = self._build_output_config(effort_request_parameters, model_settings)
         anthropic_profile = self.profile
         thinking = self._translate_thinking(model_settings, model_request_parameters)
-        effective_thinking = _effective_thinking(model_settings, thinking)
+        effective_thinking = resolve_effective_thinking(model_settings, thinking)
         betas, extra_headers = self._get_betas_and_extra_headers(
-            model_settings, anthropic_profile, messages, model_request_parameters, effective_thinking
+            model_settings, anthropic_profile, messages, map_parameters, effective_thinking
         )
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
@@ -2189,9 +2012,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 effective_thinking,
                 betas,
                 compaction_boundary=compaction_boundary,
+                # A count also keeps dropping blocks after an earlier count of this conversation dropped them.
+                include_count_tokens_recovery=count_tokens,
             )
         )
-        return _PreparedMessagesCreate(
+        return PreparedMessagesCreate(
             system_prompt=system_prompt,
             anthropic_messages=anthropic_messages,
             tools=tools,
@@ -2200,7 +2025,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             output_config=output_config,
             auto_cache_control=auto_cache_control,
             cache_breakpoints=cache_breakpoints if record_cache_breakpoints_on_send else None,
-            max_tokens=model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile)),
+            max_tokens=model_settings.get('max_tokens', default_max_tokens(effective_thinking, anthropic_profile)),
             stop_sequences=stop_sequences,
             effective_thinking=effective_thinking,
             betas=betas,
@@ -2213,7 +2038,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             initial_betas=initial_betas,
             initial_thinking_override=initial_thinking_override,
             initial_effective_thinking=initial_effective_thinking,
-            inference_geo=self._effective_inference_geo(model_settings, anthropic_profile),
+            # `count_tokens` takes no `inference_geo`, so a count doesn't resolve it or warn that it's ignored.
+            inference_geo=OMIT if count_tokens else self._effective_inference_geo(model_settings, anthropic_profile),
         )
 
     def _stale_thinking_block_recovery_history(
@@ -2556,177 +2382,60 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> BetaMessageTokensCount:
-        # Anthropic docs: https://platform.claude.com/docs/en/api/messages/count_tokens
-        # The wire `tools` list keeps client-side tools like `MemoryTool`, which contribute real tokens, and the
-        # server tools where `anthropic_count_tokens_accepts_server_tools` says the endpoint takes them. Verified
-        # 2026-10-27 on the Claude 5.5 models: with tool search, the advisor tool and its replayed history, or
-        # any web search, web fetch or code execution version the SDK lists, the count equals the real request's
-        # `input_tokens`, though https://platform.claude.com/docs/en/build-with-claude/token-counting says the
-        # endpoint rejects every server tool but the advisor. Without a server tool, a request whose function tools
-        # are all deferred can't be counted: the endpoint rejects a `tools` list in which every tool is deferred.
-        # Where the flag is off, server tools are dropped, as the endpoint once rejected them
-        # (https://github.com/pydantic/pydantic-ai/issues/5702), which undercounts the prompt by their definitions.
-        # TODO: Send `mcp_servers` once the endpoint accepts it. Rechecked 2026-10-27, it rejects the param with a
-        # 400: "The mcp_servers parameter is not supported on the count_tokens endpoint".
-        counted_native_tools: tuple[type[AbstractNativeTool], ...] = (
-            (MemoryTool, ToolSearchTool, WebSearchTool, WebFetchTool, CodeExecutionTool, AdvisorTool)
-            if self.profile.get('anthropic_count_tokens_accepts_server_tools', False)
-            else (MemoryTool,)
+        prepared = await self._prepare_messages_create(
+            messages, model_settings, model_request_parameters, count_tokens=True
         )
-        count_tokens_parameters = replace(
-            model_request_parameters,
-            native_tools=[
-                tool for tool in model_request_parameters.native_tools if isinstance(tool, counted_native_tools)
-            ],
-        )
-        # Params that keep `ToolSearchTool`, and `AdvisorTool` where the count keeps it. Keeping tool search means the
-        # count describes the request we'd really send, deferred tools and all: `function_tools`
-        # aren't stripped here, so they keep their `defer_loading` and the tool-search replay still
-        # renders the same `tool_reference` wire shape as `/v1/messages`. The endpoint honors the flag
-        # rather than ignoring it — one deferred 30-field tool counts 440 tokens with it and 1761
-        # without on `claude-opus-4-8` — so this is the difference between counting the prompt and
-        # counting the hidden schemas too.
-        # Where the count drops advisor, dropping it here too makes `advisor_active` False so its
-        # call/result history blocks are stripped during replay: replaying them without the tool
-        # definition would 400.
-        map_parameters = replace(
-            self._declare_newcomers_left_alone(model_settings, model_request_parameters),
-            native_tools=[
-                tool
-                for tool in model_request_parameters.native_tools
-                if not isinstance(tool, AdvisorTool) or isinstance(tool, counted_native_tools)
-            ],
-        )
-
-        # The stale-thinking recovery below marks the caller's history: `_effort_delta_request` copies each request
-        # it drops a `ModelSettingsDeltaPart` from, and a mark on that copy would be lost.
-        history = messages
-        # standalone function to make it easier to override
-        messages, effort_request_parameters = self._effort_delta_request(
-            messages, model_settings, model_request_parameters
-        )
-
-        revealed_tool_order = _revealed_deferred_tool_order(messages, map_parameters)
-        tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, map_parameters)
-        # `count_tokens_parameters` here, not `map_parameters`: the server-side tool definitions left off
-        # the count are the one thing that has to differ from the real request.
-        tools, mcp_servers, native_tool_betas = self._add_native_tools(
-            tools,
-            count_tokens_parameters,
+        count = partial(
+            self._count_message_tokens,
+            with_max_retries_keeping_aws_profile(self.client, model_settings),
             model_settings,
-            code_execution_in_open_turn=open_turn_has_code_execution(messages, self.system),
+            prepared,
         )
-        _append_revealed_tool_params(tools, revealed_tool_order)
-        # Judged on the request's `tools`, which also hold any server tool the count leaves off. A native tool entry is
-        # never deferred, and without one the request's `tools` equal these.
-        if not any(_native_tool_is_a_tools_entry(tool) for tool in model_request_parameters.native_tools):
-            _validate_wire_tools_not_all_deferred(tools)
-
-        auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
-        system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
-        request_scoped_texts = _request_scoped_tail_texts(messages)
-        self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages, request_scoped_texts)
-        self._apply_explicit_message_caching(model_settings, anthropic_messages, request_scoped_texts)
-        # The API rejects automatic caching when the last block's explicit breakpoint has a different TTL, and
-        # ignores it when the TTL is the same, since both mark the same breakpoint. The explicit one wins.
-        auto_cache_control = None if last_cacheable_block_has_cache_control(anthropic_messages) else auto_cache_control
-        self._limit_cache_points(
-            system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
-        )
-        raise_earlier_breakpoint_ttls(system_prompt, anthropic_messages, tools, auto_cache_control)
-        output_config = self._build_output_config(effort_request_parameters, model_settings)
-        anthropic_profile = self.profile
-        thinking = self._translate_thinking(model_settings, model_request_parameters)
-        effective_thinking = _effective_thinking(model_settings, thinking)
-        betas, extra_headers = self._get_betas_and_extra_headers(
-            model_settings, anthropic_profile, messages, map_parameters, effective_thinking
-        )
-        betas.update(native_tool_betas)
-        context_management = self._add_compaction_params(messages, betas, model_settings)
-        self._validate_task_budget_vs_context_management(model_settings, context_management)
-        recovery_messages, compaction_boundary = self._stale_thinking_block_recovery_history(messages)
-        initial_thinking, initial_betas, initial_thinking_override, initial_effective_thinking = (
-            thinking_with_stale_block_history(
-                anthropic_profile,
-                recovery_messages,
-                thinking,
-                effective_thinking,
-                betas,
-                compaction_boundary=compaction_boundary,
-                include_count_tokens_recovery=True,
-            )
-        )
-        client = _with_max_retries(self.client, model_settings)
-
-        async def count(
-            thinking: BetaThinkingConfigParam | Omit,
-            betas: set[str],
-            thinking_override: dict[str, object] | None,
-        ) -> BetaMessageTokensCount:
-            extra_body = (
-                _build_extra_body(model_settings, thinking_override)
-                if thinking_override is not None
-                else model_settings.get('extra_body')
-            )
-            if isinstance(client, AsyncAnthropicBedrock):
-                return await count_tokens_via_bedrock(
-                    client,
-                    self._model_name,
-                    system=system_prompt or OMIT,
-                    messages=anthropic_messages,
-                    max_tokens=model_settings.get(
-                        'max_tokens', _default_max_tokens(effective_thinking, anthropic_profile)
-                    ),
-                    tools=tools or OMIT,
-                    tool_choice=tool_choice or OMIT,
-                    mcp_servers=mcp_servers or OMIT,
-                    betas=sorted(betas) or OMIT,
-                    output_config=output_config or OMIT,
-                    cache_control=auto_cache_control or OMIT,
-                    thinking=thinking,
-                    context_management=context_management or OMIT,
-                    timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
-                    speed=self._effective_speed(model_settings, anthropic_profile),
-                    extra_headers=extra_headers,
-                    extra_body=extra_body,
-                )
-
-            return await client.beta.messages.count_tokens(
-                system=system_prompt or OMIT,
-                messages=anthropic_messages,
-                model=self._model_name,
-                tools=tools or OMIT,
-                tool_choice=tool_choice or OMIT,
-                mcp_servers=mcp_servers or OMIT,
-                betas=sorted(betas) or OMIT,
-                output_config=output_config or OMIT,
-                cache_control=auto_cache_control or OMIT,
-                thinking=thinking,
-                context_management=context_management or OMIT,
-                timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
-                speed=self._effective_speed(model_settings, anthropic_profile),
-                extra_headers=extra_headers,
-                extra_body=extra_body,
-            )
-
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
-                return await count(initial_thinking, initial_betas, initial_thinking_override)
+                return await count(
+                    prepared.initial_thinking, prepared.initial_betas, prepared.initial_thinking_override
+                )
             except (APIStatusError, APIConnectionError) as error:
                 # As in `_messages_create`, a status a retrying transport gave up on is recovered from too.
                 if (response := status_and_body(error)) is None or not is_stale_thinking_block_error(
-                    anthropic_profile, initial_effective_thinking, *response
+                    self.profile, prepared.initial_effective_thinking, *response
                 ):
                     raise
+            return await self._retry_dropping_stale_thinking_blocks(prepared, count, count_tokens_history=messages)
 
-            result = await count(
-                OMIT,
-                betas | {ANTHROPIC_THINKING_BINDING_BETA},
-                drop_stale_thinking_blocks(effective_thinking),
-            )
-            mark_history_to_drop_stale_thinking_blocks_for_count_tokens(history)
-            warn_stale_thinking_block_recovery(self.model_name)
-            return result
+    async def _count_message_tokens(
+        self,
+        client: AsyncAnthropicClient,
+        model_settings: AnthropicModelSettings,
+        prepared: PreparedMessagesCreate,
+        thinking: BetaThinkingConfigParam | Omit,
+        betas: set[str],
+        thinking_override: dict[str, object] | None,
+    ) -> BetaMessageTokensCount:
+        """Send one attempt of `_messages_count_tokens`, with the thinking object and betas this attempt uses."""
+        params: CountTokensArgs = {
+            'system': prepared.system_prompt or OMIT,
+            'messages': prepared.anthropic_messages,
+            'model': self._model_name,
+            'tools': prepared.tools or OMIT,
+            'tool_choice': prepared.tool_choice or OMIT,
+            'mcp_servers': prepared.mcp_servers or OMIT,
+            'betas': sorted(betas) or OMIT,
+            'output_config': prepared.output_config or OMIT,
+            'cache_control': prepared.auto_cache_control or OMIT,
+            'thinking': thinking,
+            'context_management': prepared.context_management or OMIT,
+            'timeout': to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
+            'speed': self._effective_speed(model_settings, self.profile),
+            'extra_headers': prepared.extra_headers,
+            'extra_body': build_extra_body(model_settings, thinking_override)
+            if thinking_override is not None
+            else model_settings.get('extra_body'),
+        }
+        if isinstance(client, AsyncAnthropicBedrock):
+            return await count_tokens_via_bedrock(client, max_tokens=prepared.max_tokens, **params)
+        return await client.beta.messages.count_tokens(**params)
 
     def _process_response(  # noqa: C901
         self,
@@ -3058,7 +2767,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         supports_dynamic_filtering = self.profile.get('anthropic_supports_dynamic_filtering', False)
-        code_execution_may_call = _code_execution_may_call_web_tools(supports_dynamic_filtering, model_settings)
+        code_execution_may_call = code_execution_may_call_web_tools(supports_dynamic_filtering, model_settings)
 
         for tool in model_request_parameters.native_tools:
             match tool:
@@ -3168,12 +2877,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             case 'none':
                 tool_choice = {'type': 'none'}
             case 'required':
-                supports = _support_tool_forcing(
+                supports = request_allows_tool_forcing(
                     self.model_name, self.profile, model_settings, model_request_parameters
                 )
                 tool_choice = {'type': 'any'} if supports else {'type': 'auto'}
             case (tool_choice_mode, tool_names):
-                supports = _support_tool_forcing(
+                supports = request_allows_tool_forcing(
                     self.model_name, self.profile, model_settings, model_request_parameters
                 )
                 if tool_choice_mode == 'required' and len(tool_names) == 1 and supports:
@@ -3203,7 +2912,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
             tool_defs.keys(),
             wire_native_tools=[
-                tool for tool in model_request_parameters.native_tools if _native_tool_is_a_tools_entry(tool)
+                tool for tool in model_request_parameters.native_tools if native_tool_is_a_tools_entry(tool)
             ],
         )
 
@@ -3255,7 +2964,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         *,
         continues_thread: bool = False,
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
-        """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`.
+        """Map `messages` to the request's `system` and `messages` parameters.
 
         With `continues_thread`, `messages` are the new messages of a thread continue request, which follow the
         thread's history, so their first request doesn't open the conversation and its system prompts aren't
@@ -4389,7 +4098,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         `output_config.effort`, as it would without them.
         """
         baseline, has_changes = _effort_window_baseline(messages)
-        thinking = _effective_thinking(
+        thinking = resolve_effective_thinking(
             model_settings, self._translate_thinking(model_settings, model_request_parameters)
         )
         if (
@@ -4433,7 +4142,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # Validate what reaches the wire, where a caller's `extra_body` thinking wins.
             self._validate_effort_vs_disabled_thinking(
                 effort,
-                _effective_thinking(model_settings, self._translate_thinking(model_settings, model_request_parameters)),
+                resolve_effective_thinking(
+                    model_settings, self._translate_thinking(model_settings, model_request_parameters)
+                ),
             )
 
         task_budget = self._get_task_budget(model_settings)
@@ -4610,79 +4321,6 @@ class _MapModelRequestContext:
     # depends on whether anything else follows the marker.
     deferred_cache_points: list[tuple[int, Literal['5m', '1h']]] = field(
         default_factory=list[tuple[int, Literal['5m', '1h']]]
-    )
-
-
-def _effective_thinking_type(
-    anthropic_thinking: BetaThinkingConfigParam | None,
-    unified_thinking: ThinkingLevel | None,
-    profile: AnthropicModelProfile,
-) -> Literal['enabled', 'adaptive'] | None:
-    """Resolve whether a request will think, and how, for the output-mode and tool-forcing decisions.
-
-    Extended thinking (`{'type': 'enabled'}`) rejects a forced `tool_choice`; adaptive thinking accepts it, but
-    the model then answers without thinking. Unified thinking maps to `adaptive` when the profile advertises it
-    and to `enabled` otherwise, the same mapping `_translate_thinking` uses to build the wire payload. With no
-    thinking setting, models that think by default resolve to `adaptive`, as does `thinking=False` on a model
-    that can't turn thinking off, which then thinks at its lowest effort. Returns `None` when the request won't
-    think, including Claude Sonnet 5.5's `between_tools`, which doesn't think before responding.
-    """
-    if anthropic_thinking:
-        thinking_type = anthropic_thinking.get('type')
-        return thinking_type if thinking_type in ('enabled', 'adaptive') else None
-    if unified_thinking:
-        return 'adaptive' if profile.get('anthropic_supports_adaptive_thinking', False) else 'enabled'
-    if unified_thinking is False and not profile.get('thinking_always_enabled', False):
-        return None
-    return 'adaptive' if profile.get('thinking_enabled_by_default', False) else None
-
-
-def _request_thinking_type(
-    profile: AnthropicModelProfile,
-    model_settings: ModelSettings | None,
-    model_request_parameters: ModelRequestParameters,
-) -> Literal['enabled', 'adaptive'] | None:
-    """`_effective_thinking_type` for a request, before or after `Model.prepare_request` runs.
-
-    `params.thinking` is checked first since `Model.prepare_request` moves unified `thinking` from `model_settings`
-    into it, but `AnthropicModel.prepare_request` also asks before that happens.
-    """
-    anthropic_settings = cast(AnthropicModelSettings, model_settings or {})
-    unified_thinking = model_request_parameters.thinking
-    if unified_thinking is None:
-        unified_thinking = anthropic_settings.get('thinking')
-    return _effective_thinking_type(anthropic_settings.get('anthropic_thinking'), unified_thinking, profile)
-
-
-def _support_tool_forcing(
-    model_name: str,
-    profile: AnthropicModelProfile,
-    model_settings: AnthropicModelSettings,
-    model_request_parameters: ModelRequestParameters,
-) -> bool:
-    """Whether to send a forced `tool_choice` ('any'/specific tool), raising if explicitly requested but unavailable.
-
-    On top of the profile's forcing flags, extended thinking rejects forcing, and adaptive thinking accepts it
-    but answers without thinking, so only an explicit forcing `tool_choice` is sent then.
-    Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
-    """
-    thinking_type = _request_thinking_type(profile, model_settings, model_request_parameters)
-    unavailable_reason = tool_forcing_unavailable_reason(
-        profile,
-        thinking=thinking_type is not None,
-        thinking_remedy="Disable thinking with `thinking=False` or `anthropic_thinking={'type': 'disabled'}`",
-    )
-    if unavailable_reason is None and thinking_type == 'enabled':
-        unavailable_reason = (
-            "Extended thinking doesn't support forcing tool use. Disable thinking or use `tool_choice='auto'`."
-        )
-        if profile.get('anthropic_supports_adaptive_thinking', False):
-            unavailable_reason += " Alternatively, `anthropic_thinking={'type': 'adaptive'}` supports forcing."
-    return support_tool_forcing(
-        model_name,
-        model_settings,
-        unavailable_reason,
-        disables_thinking=thinking_type == 'adaptive' and profile.get('forced_tool_choice_disables_thinking', False),
     )
 
 
