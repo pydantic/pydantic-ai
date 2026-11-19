@@ -243,7 +243,11 @@ result = agent.run_sync(
 print(result.output)
 ```
 
-The agent sees [a desktop](computer-use.md#what-the-display-needs): a panel along the bottom with a button that opens a terminal, and no web browser. It needs `xdotool`, `xwininfo`, `scrot`, `setsid`, Xvfb unless an X server is already running, and `fluxbox`, `tint2` and `xterm` for the desktop. When the image's user is root, [the first use installs](computer-use.md#what-the-display-needs) any that are missing with `apt-get`, which needs the sandbox to reach the package repositories. Passwordless `sudo` works only where the server allows it: the Docker runtime's default `no_new_privileges = true` blocks it. Otherwise build them into the image: without the screen's programs the first use raises `WorkspaceUnavailableError` naming what is missing, and without the desktop's the screen works but stays black. To give the agent a browser or other programs, install them the agent should use in the image or before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run) with `OpenSandboxBackend(..., desktop=True)`, or let the agent install them with `Shell`. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another.
+The agent sees [a desktop](computer-use.md#what-the-display-needs): a panel along the bottom with a button that opens a terminal, and no web browser. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another.
+
+The image needs `xdotool`, `xwininfo`, `scrot`, `setsid`, Xvfb unless an X server is already running, and `fluxbox`, `tint2` and `xterm` for the desktop. When the image's user is root, [the first use installs](computer-use.md#what-the-display-needs) any that are missing with `apt-get`, which needs the sandbox to reach the package repositories. Passwordless `sudo` works only where the server allows it: the Docker runtime's default `no_new_privileges = true` blocks it. Otherwise build them into the image: without the screen's programs the first use raises `WorkspaceUnavailableError` naming what is missing, and without the desktop's the screen works but stays black.
+
+To give the agent a browser or other programs, install them in the image or before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run) with `OpenSandboxBackend(..., desktop=True)`, or let the agent install them with `Shell`.
 
 Every screen action is a command, so use execd 1.2 or later: older versions take about a second per command.
 
