@@ -196,9 +196,9 @@ async def main():
     print(result.output)
 ```
 
-Without an `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, a window manager, Firefox and a terminal), and later runs reuse it. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. An existing container whose screen is already running keeps its size. The agent also gets the container's shell and files, so `Coder` and `ComputerUse` can share it.
+Without an `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, a window manager, Firefox and a terminal), and later runs reuse it. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. An existing container whose screen is already running keeps its size. Add `Coder` to give the agent the container's shell and files too.
 
-That image is kept and reused, so it doesn't get security updates. For an image you control, build your own from `DESKTOP_DOCKERFILE` under a tag of your choice, and pass it as `image`. Rebuild it the same way to update it; `--no-cache` keeps Docker from reusing its cached layers. Under [durable execution](../durable_execution/overview.md), build it before the first run, so the build doesn't count against a step's timeout.
+The built image is reused, so it doesn't get security updates. To update it, or to keep it under your own tag, build it from `DESKTOP_DOCKERFILE` and pass it as `image`; `--no-cache` skips Docker's cached layers. Under [durable execution](../durable_execution/overview.md), build it before the first run, so the build doesn't count against a step's timeout.
 
 ```bash
 python -c "from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE; print(DESKTOP_DOCKERFILE)" | docker build --pull --no-cache --tag my-desktop -
