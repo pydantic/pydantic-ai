@@ -28,7 +28,7 @@ KEYS_ON = '\x1b[?2004h\x1b[>4;1m\x1b[>5u'
 
 The inline panel leaves the mouse to the terminal, so its own selection and scrollback keep working.
 """
-MODES_ON = KEYS_ON + '\x1b[?1000h\x1b[?1002h\x1b[?1006h'
+MODES_ON = '\x1b[?2004h\x1b[>4;1m\x1b[>5u\x1b[?1000h\x1b[?1002h\x1b[?1006h'
 """`KEYS_ON` plus SGR mouse buttons and drags.
 
 Kitty keeps a flag stack per screen, so these are pushed after `ENTER` and popped before `LEAVE`.
