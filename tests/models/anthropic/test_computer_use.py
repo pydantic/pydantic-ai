@@ -460,7 +460,7 @@ async def test_the_computer_tool_stays_a_function_on_a_model_without_one_or_when
     [
         pytest.param(
             AnthropicModelProfile(
-                anthropic_default_computer_tool_version='computer_20251124',
+                anthropic_computer_tool_version='computer_20251124',
                 supported_native_tools=frozenset({ComputerTool}),
             ),
             'computer_20251124',
@@ -656,7 +656,7 @@ def test_the_newest_models_get_the_computer_toolset(model_name: str) -> None:
     """The earlier tools, and models without one, are pinned by `tests/profiles/test_resolution_matrix.py`."""
     profile = anthropic_model_profile(model_name)
     assert profile is not None
-    assert profile.get('anthropic_default_computer_tool_version') == 'computer_toolset_20260801'
+    assert profile.get('anthropic_computer_tool_version') == 'computer_toolset_20260801'
 
 
 def _stream(*blocks: BetaContentBlock) -> list[BetaRawMessageStreamEvent]:
