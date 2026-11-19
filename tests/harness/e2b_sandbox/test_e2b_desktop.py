@@ -131,7 +131,7 @@ async def _start_script(fake_e2b: FakeE2B) -> str:
     return start
 
 
-_TOOLS = ('cat', 'rm', 'sleep', 'tail', 'touch', 'tr')
+_TOOLS = ('cat', 'grep', 'rm', 'sleep', 'tail', 'touch', 'tr')
 """The host programs the script and the stubs use; every other program is a stub or missing, never the host's."""
 
 
@@ -192,4 +192,20 @@ class TestStartScript:
         result = _run(start, stubs, '1280x800')
 
         assert result.returncode == 0, result.stderr
+        assert not (stubs / 'xfce-starts').exists()
+
+    async def test_an_x_server_outside_the_sandbox_on_its_display_stops_the_start(
+        self, fake_e2b: FakeE2B, stubs: Path
+    ) -> None:
+        """In a network namespace shared with the host, the host's X server listens on the abstract socket."""
+        start = await _start_script(fake_e2b)
+        (stubs.parent / 'proc' / 'net').mkdir(parents=True)
+        (stubs.parent / 'proc' / 'net' / 'unix').write_text(
+            f'0000000000000000: 00000002 00000000 00010000 0001 01 12345 @{stubs.parent}/.X11-unix/X1\n'
+        )
+
+        result = _run(start, stubs, '1280x800')
+
+        assert result.returncode == 1
+        assert 'another X server, outside this sandbox, already uses display :1' in result.stderr
         assert not (stubs / 'xfce-starts').exists()
