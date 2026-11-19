@@ -1,10 +1,10 @@
 """Report whether Pyright got much slower on `main`.
 
-CI type-checks every `main` push with Pyright, in the `Type-check with Pyright` step of its `quality checks` job,
-and no run fails on how long that step took: one shared runner can take twice as long as another on the same
-commit. This compares the step's median duration over the newest `WINDOW` `main` push runs that ran it with its
-median over the `WINDOW` runs before those, and reports a slowdown when the newer median is at least
-`SLOWDOWN_FACTOR` times the older one.
+CI type-checks a `main` push that changes a file Pyright checks, in the `Type-check with Pyright` step of its
+`quality checks` job, and no run fails on how long that step took: one shared runner can take twice as long as
+another on the same commit. This compares the step's median duration over the newest `WINDOW` `main` push runs
+that ran it with its median over the `WINDOW` runs before those, and reports a slowdown when the newer median is at
+least `SLOWDOWN_FACTOR` times the older one.
 
 A median only moves once most of its runs are slow, so one slow runner never trips this. A slowdown is reported
 from the run that makes it most of the newer window until it is also most of the older one: about `WINDOW`

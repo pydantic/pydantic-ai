@@ -285,9 +285,14 @@ def _identity(leg: Leg) -> str:
 
 def _lane_values(job_name: str, leg: Leg, route: str) -> dict[str, str]:
     env = _mapping(_job(job_name).get('env', {}))
-    # Rendered as a pull request sees them, so a check only pull requests enforce still needs a leg they keep.
-    context = {**_context('pull_request', route), 'matrix': leg}
-    return {name: _text(_render(env[name], context)) for name in LANE_VARS if name in env}
+    values: dict[str, str] = {}
+    # A check either event enforces needs a leg the pull request keeps.
+    for event_name in ('pull_request', 'merge_group'):
+        context = {**_context(event_name, route), 'matrix': leg}
+        for name in LANE_VARS:
+            if name in env and (value := _text(_render(env[name], context))) not in ('', 'false'):
+                values[name] = value
+    return values
 
 
 # --- Tests ------------------------------------------------------------------------------------------------------------
@@ -318,10 +323,7 @@ def test_pull_requests_run_a_subset_of_the_full_matrix(job_name: str, route: str
 def test_pull_requests_keep_every_leg_that_carries_a_check(job_name: str, route: str):
     reduced = {_identity(leg) for leg in _expand(job_name, 'pull_request', route)}
     for leg in _expand(job_name, 'merge_group', route):
-        lanes = {
-            name: value for name, value in _lane_values(job_name, leg, route).items() if value not in ('', 'false')
-        }
-        if lanes:
+        if lanes := _lane_values(job_name, leg, route):
             assert _identity(leg) in reduced, f'{job_name} {leg} sets {lanes} but a pull request skips it'
 
 
