@@ -407,6 +407,9 @@ return `False` or the toolset's options.
 - **JSON inputs and results:** Dependencies, messages, model settings, metadata, tool arguments, events, and
   results must be JSON serializable. `deps_type` defaults to the agent's dependency type. Pass resource IDs
   across the boundary and construct live clients inside workers.
+  A function tool's task also carries the arguments the model sent when their JSON form wouldn't
+  validate back to the run's values, as for a `SecretStr` or a `TypedDict` field read by its alias, and
+  validates those instead. Arguments a hook changed cross as their JSON form.
 - **Task size:** Render limits the total arguments of a task run to [4 MB](https://render.com/docs/workflows-limits#additional-limits),
   including the integration's metadata. An oversized call fails before submission. Store large documents
   externally and pass their IDs or URLs.

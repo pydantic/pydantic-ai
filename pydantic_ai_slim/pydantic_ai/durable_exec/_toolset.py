@@ -5,7 +5,7 @@ import functools
 import inspect
 import math
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
-from contextlib import AbstractContextManager, asynccontextmanager, contextmanager, nullcontext, suppress
+from contextlib import AbstractContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import (
     TYPE_CHECKING,
@@ -565,11 +565,14 @@ def raw_tool_args_for_unit(
     They are returned only when the unit needs them and they still reproduce `params.tool_args`:
     - `loaded_tool_args` is `params.tool_args` as the unit will load them after the transport's
       JSON round trip. When validating those already gives arguments equal to `params.tool_args`,
-      this returns `None`, so the call crosses as it did before.
+      this returns `None`, and the call crosses as its dump alone.
     - Otherwise this returns the model's arguments when validating them now, as the unit will,
       gives arguments equal to `params.tool_args`. A hook, a wrapper toolset or an `args_validator`
       that changed the arguments makes them unequal, and so does a validator whose output isn't
       stable (a `default_factory`, a type without `__eq__`).
+
+    Both checks run the tool's validators, once more than the run itself does, on copies of their
+    input. A check that raises returns `None`.
 
     Call this workflow-side in a function-call transport's `dump`, and set the loaded value on
     [`ToolsetCallToolParams.raw_tool_args`][pydantic_ai.durable_exec.ToolsetCallToolParams.raw_tool_args]
@@ -586,15 +589,21 @@ def raw_tool_args_for_unit(
     ):
         return None
     context = params.ctx.validation_context
-    # A dump the unit can't validate at all is one it doesn't reproduce.
-    with suppress(ValidationError):
-        if source.function_schema.revalidate(loaded_tool_args, context=context) == params.tool_args:
-            return None
+    # Both checks run the tool's validators on copies: a validator that mutates its input would
+    # otherwise change the wire `loaded_tool_args` shares objects with, or the model's message.
+    # A check that raises leaves the call on today's path, where the unit fails the same way.
     try:
-        reproduced = _validate_raw_tool_args(source.function_schema.validator, raw_args, context=context)
+        if source.function_schema.revalidate(copy.deepcopy(loaded_tool_args), context=context) == params.tool_args:
+            return None
     except ValidationError:
+        pass  # The unit can't validate the dump at all: the case the model's arguments are for.
+    except Exception:
         return None
-    return raw_args if reproduced == params.tool_args else None
+    try:
+        reproduced = _validate_raw_tool_args(source.function_schema.validator, copy.deepcopy(raw_args), context=context)
+        return raw_args if reproduced == params.tool_args else None
+    except Exception:
+        return None
 
 
 def _validate_raw_tool_args(

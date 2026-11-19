@@ -7,7 +7,7 @@ from datetime import date
 from typing import Annotated, Any
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field, Json, SecretStr, computed_field
+from pydantic import BaseModel, ConfigDict, Field, Json, SecretStr, computed_field, model_validator
 from render.workflows import TaskContext, Workflows
 from typing_extensions import TypedDict
 
@@ -257,6 +257,22 @@ async def test_function_arguments_are_validated_from_the_model_arguments_in_the_
 
     assert await run_agent_in_task(agent, runtime, RecordingTaskContext()) == 'done'
     assert seen == [({'room': 'A1'}, Place(city='Paris'), 'hunter2', [1, 2], SerializedAs(room='A1'), Counted(qty=2))]
+
+
+class Folded(BaseModel):
+    price: int
+    qty: int = 1
+
+    @model_validator(mode='before')
+    @classmethod
+    def fold_quantity(cls, data: dict[str, int]) -> dict[str, int]:
+        # Mutates its input: run twice on one dict, the second run finds no `qty`.
+        data['price'] = data.pop('price') * data.pop('qty')
+        return data
+
+
+class PriceOptions(TypedDict, total=False):
+    max_price: Annotated[float, Field(alias='maxPrice')]
 
 
 class Order(BaseModel):
@@ -572,3 +588,44 @@ async def test_worker_context_names_tools_by_kind_on_copies() -> None:
 
     context = RecordingTaskContext()
     assert 'kinds checked' in await run_agent_in_task(agent, runtime, context)
+
+
+def folding_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(
+        parts=[
+            ToolCallPart('fold', {'filters': {'price': 3, 'qty': 2}}, tool_call_id='fold'),
+            ToolCallPart(
+                'fold_with_options', {'filters': {'price': 3, 'qty': 2}, 'opts': {'maxPrice': 10}}, tool_call_id='both'
+            ),
+        ]
+    )
+
+
+async def test_validator_that_mutates_its_input_reaches_the_task_as_without_durability() -> None:
+    """Checking which arguments to send must not run a validator on the payload or the model's arguments themselves.
+
+    `fold` crosses as its dump, which the task validates once. The run has already folded `fold_with_options`'s own
+    arguments in place, so validating them again raises in the run; that call keeps the dump too, whose
+    `PriceOptions` field arrives without its aliased key.
+    """
+    seen: list[object] = []
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(folding_model), name='folding-arguments', deps_type=type(None), capabilities=[runtime]
+    )
+
+    @agent.tool_plain
+    async def fold(filters: Folded) -> str:
+        seen.append(filters)
+        return 'ok'
+
+    @agent.tool_plain
+    async def fold_with_options(filters: Folded, opts: PriceOptions) -> str:
+        seen.append((filters, opts))
+        return 'ok'
+
+    assert await run_agent_in_task(agent, runtime, RecordingTaskContext()) == 'done'
+    assert seen == [Folded(price=6, qty=1), (Folded(price=6, qty=1), {})]

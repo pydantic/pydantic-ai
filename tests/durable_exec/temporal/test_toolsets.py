@@ -14,7 +14,7 @@ from typing import Annotated, Any, cast
 from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field, Json, SecretStr, computed_field
+from pydantic import BaseModel, ConfigDict, Field, Json, SecretStr, computed_field, model_validator
 from pydantic_core import PydanticSerializationError
 from typing_extensions import TypedDict
 
@@ -1467,7 +1467,7 @@ async def test_tool_arguments_are_validated_from_the_model_arguments_in_the_acti
     )
     assert _call_tool_activity_raw_args(await handle.fetch_history()) == {
         'c1': _RESERVE_ARGS,
-        # The converter's dump already validates back to `(1.5, 'x')`, so this call crosses as before.
+        # The converter's dump already validates back to `(1.5, 'x')`, so this call carries only `tool_args`.
         'c2': None,
         # No arguments to send: the call's `args` is `None`.
         'c3': None,
@@ -1483,6 +1483,22 @@ def _call_tool_activity_raw_args(history: WorkflowHistory) -> dict[str, object]:
             params = json.loads(attributes.input.payloads[0].data)
             raw_args[params['serialized_run_context']['tool_call_id']] = params['raw_tool_args']
     return raw_args
+
+
+class Folded(BaseModel):
+    price: int
+    qty: int = 1
+
+    @model_validator(mode='before')
+    @classmethod
+    def fold_quantity(cls, data: dict[str, int]) -> dict[str, int]:
+        # Mutates its input: run twice on one dict, the second run finds no `qty`.
+        data['price'] = data.pop('price') * data.pop('qty')
+        return data
+
+
+class PriceOptions(TypedDict, total=False):
+    max_price: Annotated[float, Field(alias='maxPrice')]
 
 
 class Order(BaseModel):
@@ -1572,15 +1588,78 @@ async def test_arguments_changed_by_hooks_reach_the_activity_as_changed(client: 
     assert sorted(_received_hook_args, key=repr) == sorted([(Order(qty=99), 'hook'), 2], key=repr)
 
 
-class PriceFilters(TypedDict, total=False):
-    max_price: Annotated[float, Field(alias='maxPrice')]
+_received_folds: list[object] = []
+"""The arguments the tools below ran with, recorded in the activity."""
 
 
-_received_filters: list[PriceFilters] = []
+def fold(filters: Folded) -> str:
+    """Fold a quantity into the price."""
+    _received_folds.append(filters)
+    return 'Folded.'
+
+
+def fold_with_options(filters: Folded, opts: PriceOptions) -> str:
+    """Fold a quantity into the price, with options."""
+    _received_folds.append((filters, opts))
+    return 'Folded.'
+
+
+def _folding_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('Done.')])
+    return ModelResponse(
+        parts=[
+            ToolCallPart('fold', {'filters': {'price': 3, 'qty': 2}}, tool_call_id='c1'),
+            ToolCallPart(
+                'fold_with_options', {'filters': {'price': 3, 'qty': 2}, 'opts': {'maxPrice': 10}}, tool_call_id='c2'
+            ),
+        ]
+    )
+
+
+_folding_agent = Agent(
+    FunctionModel(_folding_model),
+    name='folding_durable',
+    tools=[fold, fold_with_options],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class FoldingWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _folding_agent.run('Fold three by two.')
+        return result.output
+
+
+async def test_validator_that_mutates_its_input_reaches_the_activity_as_without_durability(client: Client):
+    """Checking which arguments to send must not run a validator on the model's arguments themselves.
+
+    `fold` crosses as its dump, which the activity validates once. The workflow has already folded
+    `fold_with_options`'s own arguments in place, so validating them again raises there; that call keeps the dump
+    too, whose `PriceOptions` field arrives without its aliased key.
+    """
+    _received_folds.clear()
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[FoldingWorkflow], plugins=[AgentPlugin(_folding_agent)]
+    ):
+        output = await client.execute_workflow(
+            FoldingWorkflow.run, id=f'{FoldingWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+
+    assert output == 'Done.'
+    without_options: PriceOptions = {}
+    assert sorted(_received_folds, key=repr) == sorted(
+        [Folded(price=6, qty=1), (Folded(price=6, qty=1), without_options)], key=repr
+    )
+
+
+_received_filters: list[PriceOptions] = []
 """The arguments `search` ran with, recorded in the activity."""
 
 
-def search(filters: PriceFilters) -> str:
+def search(filters: PriceOptions) -> str:
     """Search with filters."""
     _received_filters.append(filters)
     return 'Found.'

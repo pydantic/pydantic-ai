@@ -121,6 +121,10 @@ completed results from history. This shapes how you write agents for it:
   on every replay, so one run shows its agent run and model request spans several times.
 - **Activity errors change type.** An exception raised in a model request or tool reaches the
   orchestrator as `durabletask.task.TaskFailedError`. [`UserError`][pydantic_ai.exceptions.UserError] keeps its type.
+- **Tool arguments cross as JSON.** An activity validates a function tool's arguments again from their
+  JSON form. When that form wouldn't give back the orchestrator's values, as for a `SecretStr` or a
+  `TypedDict` field read by its alias, the activity input also carries the arguments the model sent,
+  and the activity validates those instead. Arguments a hook changed cross as their JSON form.
 - **Activities on a worker share one event loop.** A blocking call in an async tool or event handler
   stalls every other activity on that worker.
 

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-from pydantic import TypeAdapter
+from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.durable_exec import ToolsetCallToolParams, raw_tool_args_for_unit
@@ -74,3 +74,33 @@ async def test_raw_tool_args_for_unit(case: Case):
     assert raw_tool_args_for_unit(toolset, params, loaded_tool_args=loaded_tool_args) == (
         case.args if case.sent else None
     )
+
+
+class Filters(BaseModel):
+    max_price: float
+
+
+async def test_check_that_raises_keeps_the_dump():
+    """A hook that drops a single model argument's key makes validating the dump raise `KeyError`, not `ValidationError`.
+
+    The check leaves the call on today's path, so the unit raises it there instead of the workflow.
+    """
+    calls: list[RunContext[None]] = []
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool
+    def lookup(ctx: RunContext[None], filters: Filters) -> str:
+        calls.append(ctx)
+        return 'found'
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('lookup', {'max_price': 10})])
+
+    await Agent(FunctionModel(model), deps_type=type(None), toolsets=[toolset]).run('go')
+    [ctx] = calls
+    tool = (await toolset.get_tools(ctx))['lookup']
+
+    params = ToolsetCallToolParams('lookup', tool_args={}, ctx=ctx, tool=tool)
+    assert raw_tool_args_for_unit(toolset, params, loaded_tool_args={}) is None

@@ -10,7 +10,7 @@ from typing import Annotated, Any, Self
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field, Json, JsonValue, SecretStr, computed_field
+from pydantic import BaseModel, ConfigDict, Field, Json, JsonValue, SecretStr, computed_field, model_validator
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -222,6 +222,22 @@ def test_tool_arguments_are_validated_from_the_model_arguments_in_the_activity(
     ]
 
 
+class Folded(BaseModel):
+    price: int
+    qty: int = 1
+
+    @model_validator(mode='before')
+    @classmethod
+    def fold_quantity(cls, data: dict[str, int]) -> dict[str, int]:
+        # Mutates its input: run twice on one dict, the second run finds no `qty`.
+        data['price'] = data.pop('price') * data.pop('qty')
+        return data
+
+
+class PriceOptions(TypedDict, total=False):
+    max_price: Annotated[float, Field(alias='maxPrice')]
+
+
 class Order(BaseModel):
     qty: int
 
@@ -277,6 +293,44 @@ def test_arguments_changed_by_hooks_reach_the_activity_as_changed(durable_worker
     with registered_agent(durable_worker, agent):
         assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
     assert observed == [(Order(qty=99), 'hook'), 2]
+
+
+def test_validator_that_mutates_its_input_reaches_the_activity_as_without_durability(
+    durable_worker: 'InMemoryWorker',
+) -> None:
+    """Checking which arguments to send must not run a validator on the payload or the model's arguments themselves.
+
+    `fold` crosses as its dump, which the activity validates once. The orchestrator has already folded
+    `fold_with_options`'s own arguments in place, so validating them again raises there; that call keeps the dump
+    too, whose `PriceOptions` field arrives without its aliased key.
+    """
+    observed: list[object] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(
+            parts=[
+                ToolCallPart('fold', {'filters': {'price': 3, 'qty': 2}}),
+                ToolCallPart('fold_with_options', {'filters': {'price': 3, 'qty': 2}, 'opts': {'maxPrice': 10}}),
+            ]
+        )
+
+    agent = Agent(FunctionModel(model), name='folding-args', capabilities=[AzureDurableTaskDurability()])
+
+    @agent.tool_plain
+    def fold(filters: Folded) -> str:
+        observed.append(filters)
+        return 'folded'
+
+    @agent.tool_plain
+    def fold_with_options(filters: Folded, opts: PriceOptions) -> str:
+        observed.append((filters, opts))
+        return 'folded'
+
+    with registered_agent(durable_worker, agent):
+        assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
+    assert observed == [Folded(price=6, qty=1), (Folded(price=6, qty=1), {})]
 
 
 def test_choice_action_output_and_partial_output(durable_worker: 'InMemoryWorker') -> None:
