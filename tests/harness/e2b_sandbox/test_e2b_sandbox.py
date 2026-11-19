@@ -129,7 +129,7 @@ async def test_a_capability_can_use_each_users_client_from_deps(fake_e2b: FakeE2
 
 
 def test_agent_spec_schema_publishes_every_field_but_the_client_and_network() -> None:
-    """`from_spec` lists its fields by hand, so a new field must be added there too; `network` is code-only."""
+    """`from_spec` lists its fields by hand, so each new field must be added there too. `network` is code-only."""
     definitions = AgentSpec.model_json_schema_with_capabilities([E2BSandbox])['$defs']
     published = set(definitions['spec_params_E2BSandbox']['properties'])
     # Fields set outside `__init__`, such as the `_authority_ceiling` every capability has, aren't spec fields.

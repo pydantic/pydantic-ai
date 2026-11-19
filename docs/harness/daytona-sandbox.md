@@ -120,11 +120,11 @@ async def main():
     print(result.output)
 ```
 
-Daytona's default snapshot has an XFCE desktop and a terminal. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. The size is set when the sandbox is created. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/). Add `Coder` to give the agent the sandbox's shell and files too.
+Daytona's default snapshot has an XFCE desktop and a terminal. The screen is 1280x800. For another size, pass it, such as `desktop=(1440, 900)`. The size is set when the sandbox is created. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/). Add `Coder` to give the agent the sandbox's shell and files too.
 
-Daytona's desktop can't press F13 to F24, keypad Enter, the keypad operators, print screen, pause, scroll lock, the menu key or media keys, use the side mouse buttons, or type characters beyond U+FFFF, such as most emoji; the agent is told when it asks. On Daytona's Tier 1 and 2, a sandbox can only reach package registries, GitHub and AI APIs, even with `allow_internet_access=True`, so its browser can't open other sites; see [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
+Daytona's desktop can't press F13 to F24, keypad Enter, the keypad's `+`, `-`, `*`, `/` and `.` keys, print screen, pause, scroll lock, the menu key or media keys. It can't use the side mouse buttons. It can't type characters beyond U+FFFF, such as most emoji. When the agent asks for one of these, it is told the desktop can't do it. On Daytona's Tier 1 and Tier 2, a sandbox can reach only package registries, GitHub and AI APIs, even with `allow_internet_access=True`. Its browser can't open other sites. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
 
-There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](computer-use.md#watching-a-run). Anyone with the sandbox's preview link can see and control its desktop, so a public sandbox, whose preview needs no token, gets no desktop: the run fails with `UserError`.
+There's no live viewer. To watch a run, save each screenshot as it arrives, as shown in [Watching a run](computer-use.md#watching-a-run). Anyone with the sandbox's preview link can see and control its desktop. A public sandbox's preview link needs no token, so a public sandbox gets no desktop: the run fails with `UserError`.
 
 ## Reattach later
 

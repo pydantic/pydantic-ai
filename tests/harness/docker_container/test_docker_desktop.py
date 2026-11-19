@@ -90,7 +90,7 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(
     await workspace.act(Click(x=3, y=4))
 
     assert docker.xvfb_starts == 1
-    # Kept up when its last client exits, and listening on neither TCP nor the host-shared abstract socket.
+    # Stays up when its last client exits, and listens on neither TCP nor the abstract socket the host shares.
     xvfb_args = (docker.bin_dir / 'xvfb-starts').read_text()
     assert '-nolisten tcp -nolisten local' in xvfb_args and '-noreset' in xvfb_args
     assert docker.xdotool_calls[-1] == ':1 mousemove 3 4 click --repeat 1 1'
@@ -249,7 +249,7 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
 
 
 async def test_a_desktop_refuses_the_host_network(docker: FakeDocker, container_dir: Path) -> None:
-    """Its X clients could reach an X server on the host through Linux's shared abstract socket."""
+    """On the host's network, programs in the container could connect to the host's X server and control its screen."""
     created = screen(
         DockerContainerBackend(
             image='my-desktop', working_dir=str(container_dir), desktop=True, docker_args=['--network', 'host']

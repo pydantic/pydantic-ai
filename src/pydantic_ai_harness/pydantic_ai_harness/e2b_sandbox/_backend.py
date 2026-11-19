@@ -18,8 +18,9 @@ which is not. envd types only a missing path; its other path failures arrive as 
 (`InvalidArgumentException`) or a 500 (`SandboxException`) whose message carries envd's wording
 or Go's errno text, which `_path_error` reads.
 
-The `desktop` template has Xvfb, XFCE (`startxfce4`), `xdotool`, `xwininfo`, `scrot`, `setsid` and
-`google-chrome`, but runs no X server at boot: the `e2b-desktop` package starts its own.
+E2B's `desktop` template has Xvfb, XFCE (`startxfce4`), `xdotool`, `xwininfo`, `scrot`, `setsid` and
+`google-chrome` installed. It starts no X server when the sandbox boots: E2B's `e2b-desktop` package starts its
+own, and this backend starts its own with Xvfb.
 """
 
 from __future__ import annotations
@@ -128,7 +129,7 @@ _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_CHARS = 64 * 1024
 
 _DESKTOP_TEMPLATE = 'desktop'
-"""E2B's desktop template, which a new sandbox with `desktop` and no `template` runs."""
+"""E2B's desktop template. A new sandbox uses it when `desktop` is set and no `template` is given."""
 
 
 _XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
@@ -136,7 +137,7 @@ _XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
 _XFCE_LOG = '/tmp/pydantic-ai-xfce.log'
 
 _XFCE_SHOWS = 'xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1'
-"""Exits 0 when XFCE's desktop window shows on `DISPLAY`."""
+"""A command that succeeds when XFCE's desktop window is visible on `DISPLAY`."""
 
 _START_DESKTOP = start_x_server(_XVFB_LOG) + (
     f'if command -v startxfce4 >/dev/null && ! {_XFCE_SHOWS}; then '
@@ -144,12 +145,12 @@ _START_DESKTOP = start_x_server(_XVFB_LOG) + (
     + wait_until_ready(_XFCE_SHOWS, '$!', 'the XFCE desktop', _XFCE_LOG)
     + 'fi'
 )
-"""Starts an X display of the size `$1` names, such as `1280x800`, unless one runs, and the XFCE desktop.
+"""Start an X display of the size `$1`, such as `1280x800`, unless one runs, then start the XFCE desktop.
 
-XFCE starts unless its desktop window shows on the display, which recovers one that died. The script then waits up to
-10 seconds for that window, so the first screenshot isn't black, and fails if XFCE exits first or the window never
-shows. A template without XFCE gets a display with no window manager. Output goes to files, since E2B keeps a command
-open while a background child holds its output.
+XFCE starts whenever its desktop window isn't visible, so an XFCE that crashed comes back. The script then waits up to
+10 seconds for that window, so the first screenshot isn't black. It fails if XFCE exits first or the window never
+appears. A template without XFCE gets a display with no window manager. Output goes to log files, because E2B keeps a
+command open while a program it started in the background still holds the command's output.
 """
 
 
@@ -260,8 +261,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
     The E2B SDK runs every request on asyncio, so under Trio every operation raises
     `UserError` before it reaches E2B.
 
-    With `desktop`, the sandbox gets a display on first use. A custom template then needs Xvfb,
-    `xdotool`, `xwininfo` (`x11-utils`), `scrot` and `setsid`.
+    With `desktop`, the sandbox's display starts the first time it is used. A custom template
+    must then include Xvfb, `xdotool`, `xwininfo` (`x11-utils`), `scrot` and `setsid`.
 
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.
@@ -286,9 +287,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
             unchanged: egress allow and deny lists, and `rules` that set headers on requests to a
             host, from E2B's proxy outside the sandbox. An attached sandbox keeps the options it
             was created with.
-        desktop: Whether the sandbox has a display for
+        desktop: Give the sandbox a screen for
             [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or
-            its `(width, height)`. Without a `template`, a new sandbox runs E2B's `desktop` template.
+            a `(width, height)`. Without a `template`, a new sandbox uses E2B's `desktop` template.
     """
 
     def __init__(
@@ -334,7 +335,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
             self._template = _DESKTOP_TEMPLATE
         self._desktop_size = desktop_size(desktop)
         if self._desktop_size:
-            # Commands see the desktop too, so a program the agent starts from the shell opens on it.
+            # Commands get `DISPLAY` too, so a program the agent starts from the shell opens on the desktop.
             self._env = {'DISPLAY': DISPLAY, **(self._env or {})}
         self._display = (
             None
@@ -663,12 +664,12 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         argv = command_argv(command, shell)
         check_timeout(timeout)
         if self._display is not None:
-            # Started first, so a program the command opens shows on the screen.
+            # Start the display first, so a program the command opens appears on the screen.
             await self._display.start()
         return await self._run_argv(argv, env=env or {}, timeout=timeout)
 
     async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
-        """Run `argv` without starting the display, as the display's own commands do."""
+        """Run `argv` without starting the display first. The display's own commands run this way."""
         # `commands.run` takes only a string, which E2B hands to `/bin/bash -l -c`; `shlex.join`
         # keeps each argv element one word, and a `shell=True` string runs under `/bin/sh -c`.
         line = shlex.join(argv)
@@ -771,7 +772,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
 
     @property
     def display(self) -> Display | None:
-        """The sandbox's desktop, when created with `desktop=True`."""
+        """The sandbox's desktop, or `None` when the sandbox was created without `desktop`."""
         return self._display
 
     async def _stop_command(

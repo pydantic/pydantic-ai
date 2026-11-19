@@ -1,4 +1,7 @@
-"""`X11Computer`: display control for a Linux environment with an X server, through its commands."""
+"""`X11Computer` controls the screen of a Linux environment by running commands in it.
+
+The environment runs an X server, the program that draws the screen.
+"""
 
 from __future__ import annotations as _annotations
 
@@ -33,17 +36,17 @@ DISPLAY = ':1'
 DISPLAY_NUMBER = DISPLAY[1:]
 
 START_LOCK = f'exec 9>/tmp/.pydantic-ai-display-{DISPLAY_NUMBER}.lock; ! command -v flock >/dev/null || flock 9; '
-"""The first line of a start script: waits for any other start of this display to finish, so two don't both start
-one. A program the script starts in the background must close the lock with `9>&-`, or it holds the lock while it
-runs."""
+"""The first line of a start script. It waits for any other start of this display to finish, so two scripts don't
+both start a display. A program the script starts in the background must close the lock with `9>&-`. Otherwise the
+program holds the lock for as long as it runs."""
 
 
 def wait_until_ready(ready: str, pid: str, what: str, log: str) -> str:
-    """A shell fragment that waits for a program just started in the background, until the command `ready` succeeds.
+    """Shell code that waits until the command `ready` succeeds for a program just started in the background.
 
-    It fails once process `pid` exits, or after 10 seconds, saying `what` didn't start and printing the end of `log`.
-    `ready` must answer for the new process only: empty any log it reads before starting the program, or the check can
-    read the last run's log before the program's redirect replaces it.
+    It fails when process `pid` exits, or after 10 seconds. It then says `what` didn't start and prints the end of
+    `log`. `ready` must succeed only for the new process. If it reads a log, empty that log before starting the
+    program. Otherwise the check can read the previous run's log before the program's output replaces it.
     """
     return (
         f'i=0; until {ready}; do '
@@ -117,11 +120,11 @@ _KEYSYMS = {
     '[': 'bracketleft',
     ']': 'bracketright',
 }
-"""Key names whose X keysym is spelled differently; the other names, such as `ctrl`, and ASCII letters and digits are
-keysyms already."""
+"""Key names that X spells differently. X calls a key's name its keysym. The other names, such as `ctrl`, and ASCII
+letters and digits are already keysyms."""
 
 _COMMAND_TIMEOUT = 150
-"""Seconds one display command may take, on top of the pauses it asks for, such as a `hold_keys`'s seconds."""
+"""Seconds one display command may take, plus the pauses it asks for, such as the seconds of a `hold_keys`."""
 
 _TYPING_DELAY_MS = '12'
 """Milliseconds between typed characters, `xdotool type`'s default, and between the presses of a repeated key."""
@@ -142,16 +145,18 @@ _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
 
 _DISPLAY_SIZE = ['xwininfo', '-root']
-"""Prints the root window's size, which spans every monitor as a screenshot does. `xdotool getdisplaygeometry` gives
-only the first monitor's, which would scale a click on a second monitor onto the first."""
+"""Prints the size of the root window, X's name for the whole screen. It spans every monitor, as a screenshot does.
+`xdotool getdisplaygeometry` gives only the first monitor's size, so a click on a second monitor would be scaled onto
+the first."""
 
 _CAPTURE = (
     'f=/tmp/pydantic-ai-capture-$$.png; scrot --overwrite "$@" "$f" && base64 < "$f"; status=$?; rm -f "$f"; '
     'exit $status'
 )
-"""Captures to a file of its own (scrot picks the format from the `.png` name) and prints it as base64; arguments
-go to scrot, such as `-a x,y,width,height` for a region. `--overwrite` replaces a file a cancel left at a reused
-process id; without it scrot saves under another name and the old file would be printed."""
+"""Takes a screenshot into a file of its own and prints it as base64. scrot picks the PNG format from the `.png`
+name. Arguments go to scrot, such as `-a x,y,width,height` for a region. A cancelled capture can leave its file
+behind, and a later capture can get the same process id and so the same file name. `--overwrite` replaces that file.
+Without it, scrot saves under another name and the old file would be printed."""
 
 _INPUT_PID = f'/tmp/.pydantic-ai-input-{DISPLAY_NUMBER}'
 """Holds the process id of the input command running on the display; `ComputerUse` runs one at a time."""
@@ -197,13 +202,16 @@ def _move(x: int | None, y: int | None) -> list[str]:
 
 
 _MAX_CHAIN_BYTES = 100_000
-"""The most bytes of `xdotool` arguments sent in one command. E2B runs a command as one `bash -l -c` argument, which
-Linux caps at 131,072 bytes: a live probe started a 130,630-byte line and refused 130,664 bytes with "argument list
-too long", and typing 25,000 characters in one command failed. The rest is room for the backend's own wrapping."""
+"""The most bytes of `xdotool` arguments sent in one command. Longer input is split across several commands.
+
+E2B runs a command as a single `bash -l -c` argument, and Linux limits one argument to 131,072 bytes. In a live
+probe, a 130,630-byte line ran and a 130,664-byte line failed with "argument list too long". Typing 25,000
+characters in one command also failed. The gap between 100,000 and the limit leaves room for the text the backend
+wraps around each command."""
 
 
 def _chains(steps: list[list[str]], prefix: tuple[str, ...] = ()) -> list[list[str]]:
-    """`steps` in order, grouped into `xdotool` chains that each start with `prefix` and fit `_MAX_CHAIN_BYTES`."""
+    """Group `steps`, in order, into `xdotool` commands that each start with `prefix` and fit in `_MAX_CHAIN_BYTES`."""
     chains: list[list[str]] = []
     size = _MAX_CHAIN_BYTES
     for step in steps:
@@ -219,8 +227,8 @@ def _chains(steps: list[list[str]], prefix: tuple[str, ...] = ()) -> list[list[s
 _ENV = {'DISPLAY': DISPLAY}
 
 _START_TIMEOUT = 70
-"""Seconds a start script may take: up to three 10-second waits of its own, after up to as long behind `START_LOCK`
-for another start, plus 10 seconds for its commands."""
+"""Seconds a start script may take. It waits up to 10 seconds three times. Before that, it can wait as long again
+behind `START_LOCK` for another start. Its commands get 10 more seconds."""
 
 
 _X_LOCK = f'/tmp/.X{DISPLAY_NUMBER}-lock'
@@ -228,27 +236,29 @@ _X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY_NUMBER}'
 
 
 def start_x_server(log: str) -> str:
-    """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one runs.
+    """Return a shell fragment that starts Xvfb on `DISPLAY` unless an X server already runs there.
 
-    Whether one runs is read from the display's X lock, not from an X server answering.
+    `$1` is the screen size, such as `1280x800`. The fragment checks the display's X lock file to see whether an X
+    server runs. It does not ask the X server itself.
 
-    It fails once the X server exits, or after 10 seconds, printing the end of `log`.
+    The fragment fails if the X server exits, or if it isn't ready after 10 seconds. It then prints the end of `log`.
 
-    It takes `START_LOCK`, so a second start waits and finds the first one's X server. The lock is held until the
-    script exits, so the rest of the script runs under it too; anything started in the background must close it with
-    `9>&-`.
+    The fragment takes `START_LOCK`, so a second start waits for the first and then finds its X server. The lock stays
+    held until the whole script exits, so the rest of the script runs under it too. Anything the script starts in the
+    background must close the lock with `9>&-`.
     """
     return (
-        # Decided from the X lock, not from an X server answering: in a shared network namespace, such as Docker's
-        # `--network host`, another X server on the same display answers through Linux's shared abstract socket.
-        # A stale lock, such as one left by `docker stop`, names a PID that is gone or belongs to another process.
-        # A running X server's lock names it, whichever server it is, such as `Xvnc`.
+        # Read the X lock instead of asking for an X server. With a shared network, such as Docker's `--network host`,
+        # another X server on the same display number answers through Linux's shared abstract socket.
+        # A stale lock, such as one `docker stop` leaves, holds a process ID that is gone or now belongs to another
+        # program. A running X server's lock holds that server's process ID, whichever server it is, such as `Xvnc`.
         f'{START_LOCK}case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
         f'*) rm -f {_X_LOCK} {_X_SOCKET}; '
-        # Without `-noreset`, X resets when its last client exits, such as an `xdotool` command with no window manager
-        # running: the pointer goes back to the middle and held buttons are let go.
-        # `-nolisten local` closes Linux's abstract socket, which a shared network namespace such as Docker's
-        # `--network host` shares with every host user; the socket file in /tmp/.X11-unix stays for local commands.
+        # Without `-noreset`, X resets whenever its last program disconnects, such as an `xdotool` command when no
+        # window manager runs. A reset moves the pointer back to the middle and lets go of held buttons.
+        # `-nolisten local` turns off Linux's abstract socket. With a shared network, such as Docker's `--network host`,
+        # every user on the host could reach that socket. Commands in the container or sandbox still use the socket
+        # file in /tmp/.X11-unix.
         f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset >/dev/null 2>{log} 9>&- & '
         + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', log)
         + ';; esac; '
@@ -267,14 +277,14 @@ def x11_display(
     script: str,
     where: Callable[[], str],
 ) -> LazyDisplay:
-    """A backend's display on an X server that `script` starts at the size `$1` names, unless one runs.
+    """Make a backend's display. `script` starts an X server at the size given as `$1`, unless one already runs.
 
-    `where` names the environment in errors.
+    `where` names the environment in error messages.
     """
 
     async def start() -> None:
         width, height = size
-        # On `DISPLAY` whatever the backend's own env says, so it checks the X server the actions go to.
+        # Always on `DISPLAY`, whatever the backend's own env sets, so it checks the X server the actions go to.
         result = await run(['sh', '-c', script, 'sh', f'{width}x{height}'], env=_ENV, timeout=_START_TIMEOUT)
         if result.exit_code != 0:
             raise WorkspaceUnavailableError(
@@ -286,10 +296,10 @@ def x11_display(
 
 
 class X11Computer:
-    """Controls an X display with `xdotool` and captures it with `scrot`, through a backend's commands.
+    """Controls an X display with `xdotool` and takes screenshots with `scrot`, by running a backend's commands.
 
-    The X server must already be running on `DISPLAY`. Needs `xdotool`, `xwininfo` (in Debian's `x11-utils`), `scrot`
-    and `base64` in the environment.
+    The X server must already be running on `DISPLAY`. The environment needs `xdotool`, `xwininfo` (in Debian's
+    `x11-utils`), `scrot` and `base64`.
     """
 
     def __init__(self, run: RunCommand):
@@ -313,17 +323,17 @@ class X11Computer:
     async def _xdotool(
         self, *chains: list[str], hold: tuple[str, ...] = (), release: tuple[str, ...] = (), pauses: float = 0
     ) -> None:
-        """Run `xdotool` command chains in turn with `hold` held down; if one fails or is cancelled, let go of everything.
+        """Run `xdotool` command chains one after another, with the `hold` keys held down the whole time.
 
-        `release` is an `xdotool` chain that lets go of what the chains press; each command may take `pauses` on top of
-        the usual time limit.
+        If a chain fails or is cancelled, everything is let go. `release` is an `xdotool` chain that lets go of what
+        the chains press. Each command gets `pauses` extra seconds on top of the usual time limit.
         """
         keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
         keydown = ['keydown', *keysyms] if keysyms else []
         try:
             for index, chain in enumerate(chains):
-                # Held keys stay down from the first command to the last.
+                # The held keys go down in the first command and come up in the last one.
                 first = keydown if index == 0 else []
                 last = keyup if index == len(chains) - 1 else []
                 await self._run(['sh', '-c', _INPUT, 'sh', 'xdotool', *first, *chain, *last], pauses=pauses)
@@ -338,7 +348,7 @@ class X11Computer:
             raise
 
     async def _release(self, releases: list[list[str]]) -> list[str]:
-        """Stop the input command, then run each of `releases`; return what failed or didn't get to run in time."""
+        """Stop the input command, then run each of `releases`. Return what failed or didn't run in time."""
         failures: list[str] = []
         with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True) as releasing:
             # Stopping comes before letting go, or the command could press again what was just released.
@@ -359,14 +369,15 @@ class X11Computer:
 
     async def display_size(self) -> tuple[int, int]:
         output = (await self._run(_DISPLAY_SIZE)).stdout
-        # `[ \t]*` stays on one line; `\s*` would take time growing with the square of the output's length.
+        # `[ \t]*` matches within one line. `\s*` would make the search time grow with the square of the output's
+        # length.
         width, height = (
             re.search(rf'^[ \t]*{name}: (\d{{1,5}})$', output, re.MULTILINE) for name in ('Width', 'Height')
         )
         if width is None or height is None:
             raise WorkspaceError(f'Unexpected display size output: {output.strip()!r}')
         size = int(width[1]), int(height[1])
-        # X11 sizes are 16-bit; a bigger one would make a drag plan that many points.
+        # X11 sizes fit in 16 bits. A bigger size would make a drag plan that many points.
         if not all(1 <= side <= 65535 for side in size):
             raise WorkspaceError(f'The display reported an impossible size: {size[0]}x{size[1]}')
         return size
@@ -421,7 +432,7 @@ class X11Computer:
                 )
             case TypeText(text=text):
                 keysyms = [_character(character) for character in text]
-                # A cancel can land between a key's press and release, and X then repeats the key without end.
+                # If a cancel lands between a key's press and its release, X repeats the key forever.
                 # `xdotool` holds Shift_L for a shifted character such as `!`.
                 await self._xdotool(
                     *_chains([[keysym] for keysym in keysyms], prefix=('key', '--delay', _TYPING_DELAY_MS, '--')),
