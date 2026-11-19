@@ -94,3 +94,8 @@ async def test_a_desktop_vm_reattaches_with_its_display(
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')
     assert SmolSandbox().backend(owner.ref).display is None
+
+
+def test_a_desktop_size_is_checked_when_the_capability_is_created() -> None:
+    with pytest.raises(UserError, match=r'`desktop` must be a `\(width, height\)` of at least 1 pixel each'):
+        SmolSandbox(desktop=(0, 800))
