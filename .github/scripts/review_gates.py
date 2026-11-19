@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -16,14 +17,40 @@ from publish_douwebot_review import APPROVAL_BODY, DOUWEBOT_MARKER, REVIEW_BODIE
 from publish_pr_review_checks import MARKER as PR_REVIEW_CHECKS_MARKER
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
-ReviewGate = Literal['douwebot']
+ReviewGate = Literal['douwebot', 'dispositions']
 Size = Literal['size: S', 'size: M', 'size: L', 'size: XL']
 CommitStatus = Literal['pending', 'success', 'failure']
 REVIEW_CONTEXTS: dict[ReviewGate, str] = {
     'douwebot': 'Gate: clean douwebot approval',
+    'dispositions': 'Gate: review findings dispositioned',
 }
 # The douwebot prompt in `bots.yml` asks for this prefix on every optional finding.
 OPTIONAL_FINDING_PREFIX = 'Optional:'
+# Review bots by REST login. `github-actions[bot]` posts for several reviewers, so `finding_reviewer` reads its receipts.
+REVIEWER_LOGINS: dict[str, str] = {
+    'chatgpt-codex-connector[bot]': 'Codex',
+    'coderabbitai[bot]': 'CodeRabbit',
+    'Copilot': 'Copilot',
+    'cursor[bot]': 'Cursor',
+    'devin-ai-integration[bot]': 'Devin',
+    'github-advanced-security[bot]': 'CodeQL',
+    'macroscopeapp[bot]': 'Macroscope',
+    'pydanty[bot]': 'pydanty',
+    'veria-ai[bot]': 'Veria',
+}
+# gh-aw reviews share `github-actions[bot]`; each run's receipt names its workflow.
+GH_AW_REVIEWERS: dict[str, str] = {
+    'pydantic/pydantic-ai/pydantic-ai-pr-review': 'CI Review',
+    # Retired, but an open PR's head can still carry its comments.
+    'pydantic/pydantic-ai/pydantic-ai-ui-security-review': 'UI security review',
+}
+# Resolving a thread settled a finding started before this time. GitHub records no resolution time.
+DISPOSITIONS_FROM = datetime(2026, 11, 19, tzinfo=UTC)
+# A reply line that answers a finding; reply bodies can open with an attribution line.
+DISPOSITION = re.compile(
+    r'^(?:Fixed in (?P<sha>[0-9a-f]{7,40})\b|Tracked in #(?P<number>[1-9][0-9]*)\b|(?P<declined>Declined: \S))',
+    re.MULTILINE,
+)
 
 
 class ReviewUser(BaseModel):
@@ -46,6 +73,8 @@ class ReviewPullRequest(BaseModel):
     """The live head, base, and labels that determine the review bar."""
 
     state: Literal['open', 'closed']
+    number: int
+    html_url: str
     head: _Head
     base: Commit
     labels: list[Label]
@@ -68,8 +97,11 @@ class ReviewComment(BaseModel):
 
     id: int
     pull_request_review_id: int
+    # REST omits it on a thread's first comment and points every reply at that comment.
+    in_reply_to_id: int | None = None
     user: ReviewUser
     original_commit_id: str
+    created_at: datetime
     body: str
 
 
@@ -146,6 +178,9 @@ class ReviewGitHub(Protocol):
     def review_comments(self) -> list[ReviewComment]: ...
     def resolved_comment_ids(self) -> set[int]: ...
     def verified_review_run(self, run_id: int, head: str) -> bool: ...
+    def contained_commits(self, head: str, shas: set[str]) -> set[str]: ...
+    def issue_exists(self, number: int) -> bool: ...
+    def permission(self, login: str) -> str: ...
     def status(self, head: str, gate: ReviewGate, state: CommitStatus, description: str, url: str) -> None: ...
 
 
@@ -156,19 +191,22 @@ def review_verdicts(
     comments: list[ReviewComment],
     resolved: set[int],
 ) -> dict[ReviewGate, Verdict]:
-    """Apply the size-dependent review bar to a live metadata snapshot."""
-    verdicts: dict[ReviewGate, Verdict] = {'douwebot': Verdict()}
+    """Apply the finding dispositions and the size-dependent review bar to a live metadata snapshot."""
+    verdicts: dict[ReviewGate, Verdict] = {
+        'douwebot': Verdict(),
+        'dispositions': finding_dispositions(github, pull, reviews, comments, resolved),
+    }
     size = github.size(pull)
     size_labels = {label.name for label in pull.labels if label.name.startswith('size:')}
     if size_labels != {size}:
-        for verdict in verdicts.values():
-            verdict.failures.append(f'Expected exactly the recomputed `{size}` label; found {sorted(size_labels)!r}.')
+        verdicts['douwebot'].failures.append(
+            f'Expected exactly the recomputed `{size}` label; found {sorted(size_labels)!r}.'
+        )
         return verdicts
     if size == 'size: S':
-        for verdict in verdicts.values():
-            verdict.summary.append(
-                'Size S: automated review enforcement is skipped; the manual merge bar still applies.'
-            )
+        verdicts['douwebot'].summary.append(
+            'Size S: automated review enforcement is skipped; the manual merge bar still applies.'
+        )
         return verdicts
 
     verdicts['douwebot'] = douwebot_approval(github, pull, reviews, comments, resolved)
@@ -243,16 +281,88 @@ def other_review_receipt(comment: ReviewComment, parent: Review | None) -> bool:
     """gh-aw and PR Review Checks give their reviews separate receipts despite sharing the account."""
     if parent and PR_REVIEW_CHECKS_MARKER.search(parent.body):
         return True
+    return gh_aw_reviewer(comment, parent) is not None
+
+
+def gh_aw_reviewer(comment: ReviewComment, parent: Review | None) -> str | None:
+    """Name the gh-aw workflow whose receipt the comment or its parent review carries."""
     receipt = f'{parent.body if parent else ""}\n{comment.body}'
-    return any(
-        f'<!-- gh-aw-workflow-call-id: {workflow} -->' in receipt
-        or f'[gh-aw-workflow-call-id]: # "{workflow.replace("/", "%2F")}"' in receipt
-        for workflow in (
-            'pydantic/pydantic-ai/pydantic-ai-pr-review',
-            # Retired, but an open PR's head can still carry its comments.
-            'pydantic/pydantic-ai/pydantic-ai-ui-security-review',
-        )
+    return next(
+        (
+            reviewer
+            for workflow, reviewer in GH_AW_REVIEWERS.items()
+            if f'<!-- gh-aw-workflow-call-id: {workflow} -->' in receipt
+            or f'[gh-aw-workflow-call-id]: # "{workflow.replace("/", "%2F")}"' in receipt
+        ),
+        None,
     )
+
+
+def finding_reviewer(comment: ReviewComment, parent: Review | None) -> str | None:
+    """Name the registered reviewer that started a thread, or `None` for a bot nobody registered."""
+    if comment.user.login != 'github-actions[bot]':
+        return REVIEWER_LOGINS.get(comment.user.login)
+    if parent and DOUWEBOT_MARKER.search(parent.body):
+        return 'douwebot'
+    if parent and PR_REVIEW_CHECKS_MARKER.search(parent.body):
+        return 'PR Review Checks'
+    return gh_aw_reviewer(comment, parent)
+
+
+def finding_dispositions(
+    github: ReviewGitHub,
+    pull: ReviewPullRequest,
+    reviews: list[Review],
+    comments: list[ReviewComment],
+    resolved: set[int],
+) -> Verdict:
+    """Every inline thread a review bot started, on any head, needs a person's recorded answer.
+
+    A reply line `Fixed in <sha>` names a commit the head contains, and `Tracked in #N` another issue or PR; either
+    counts from anyone. `Declined: <reason>` counts from write access, and from anyone on a douwebot `Optional:`
+    finding. A thread started before `DISPOSITIONS_FROM` and resolved is settled, whichever bot started it.
+    """
+    parents = {review.id: review for review in reviews}
+    findings = [comment for comment in comments if comment.in_reply_to_id is None and comment.user.type == 'Bot']
+    answers: dict[int, list[tuple[str, re.Match[str]]]] = {}
+    for comment in comments:
+        if comment.in_reply_to_id is not None and comment.user.type == 'User':
+            for line in DISPOSITION.finditer(comment.body):
+                answers.setdefault(comment.in_reply_to_id, []).append((comment.user.login, line))
+    lines = [line for replies in answers.values() for _, line in replies]
+    contained = github.contained_commits(pull.head.sha, {line['sha'] for line in lines if line['sha']})
+    tracked = {number for line in lines if (number := line['number']) and int(number) != pull.number}
+    existing = {number for number in tracked if github.issue_exists(int(number))}
+    writers = {
+        login
+        for login in {login for replies in answers.values() for login, line in replies if line['declined']}
+        if github.permission(login) in {'write', 'admin'}
+    }
+    failures: list[str] = []
+    for finding in findings:
+        if finding.created_at < DISPOSITIONS_FROM and finding.id in resolved:
+            continue
+        url = f'{pull.html_url}#discussion_r{finding.id}'
+        reviewer = finding_reviewer(finding, parents.get(finding.pull_request_review_id))
+        if reviewer is None:
+            failures.append(f'{url}: no registered reviewer started this `{finding.user.login}` thread.')
+            continue
+        optional = reviewer == 'douwebot' and finding.body.startswith(OPTIONAL_FINDING_PREFIX)
+        if any(
+            line['sha'] in contained
+            or line['number'] in existing
+            or (line['declined'] and (optional or login in writers))
+            for login, line in answers.get(finding.id, [])
+        ):
+            continue
+        failures.append(f'{url}: the {reviewer} finding has no disposition reply.')
+    if failures:
+        failures.insert(
+            0,
+            f'{len(failures)} of {len(findings)} review bot findings need a reply: '
+            '`Fixed in <sha>`, `Tracked in #N` or `Declined: <reason>`.',
+        )
+    return Verdict(summary=[f'{len(findings)} review bot findings.'], failures=failures)
 
 
 def settled_optional_finding(comment: ReviewComment, parent: Review | None, resolved: set[int]) -> bool:
@@ -323,6 +433,16 @@ def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
     return int(failed)
 
 
+class _Permission(BaseModel):
+    permission: str
+
+
+class _CommitComparison(BaseModel):
+    status: str
+
+
+_PERMISSION = TypeAdapter(_Permission)
+_COMMIT_PAGES = TypeAdapter(list[list[Commit]])
 _SIZED_FILE_PAGES = TypeAdapter(list[list[_SizedFile]])
 _SIZED_FILES = TypeAdapter(list[_SizedFile])
 _REVIEW_PAGES = TypeAdapter(list[list[Review]])
@@ -429,6 +549,45 @@ class ReviewGhCli(GhCli):
         )
         jobs: dict[str, str | None] = {job.name: job.conclusion for page in pages for job in page.jobs}
         return jobs.get('douwebot') == 'success' and jobs.get('Publish douwebot review') == 'success'
+
+    def contained_commits(self, head: str, shas: set[str]) -> set[str]:
+        """Match the PR's own commits first; the endpoint lists at most 250, so compare any other SHA with the head."""
+        if not shas:
+            return set()
+        pages = _COMMIT_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/commits?per_page=100'))
+        own = [commit.sha for page in pages for commit in page]
+        contained = {sha for sha in shas if any(commit.startswith(sha) for commit in own)}
+        for sha in shas - contained:
+            try:
+                # The compare endpoint finds a fork's commit only by its full SHA.
+                full = Commit.model_validate_json(self._api(f'{self._repo}/commits/{sha}')).sha
+                comparison = self._api(f'{self._repo}/compare/{full}...{head}?per_page=1')
+            except GateError as error:
+                if 'HTTP 404' in str(error) or 'HTTP 422' in str(error):
+                    continue
+                raise
+            if _CommitComparison.model_validate_json(comparison).status in {'ahead', 'identical'}:
+                contained.add(sha)
+        return contained
+
+    def issue_exists(self, number: int) -> bool:
+        """The issues endpoint also serves pull requests."""
+        try:
+            self._api(f'{self._repo}/issues/{number}')
+        except GateError as error:
+            if 'HTTP 404' in str(error) or 'HTTP 410' in str(error):
+                return False
+            raise
+        return True
+
+    def permission(self, login: str) -> str:
+        """Fail closed: an account the endpoint cannot resolve has no write access."""
+        try:
+            permission = _PERMISSION.validate_json(self._api(f'{self._repo}/collaborators/{login}/permission'))
+        except GateError as error:
+            print(f'No repository permission for @{login}: {error}')
+            return 'none'
+        return permission.permission
 
     def status(self, head: str, gate: ReviewGate, state: CommitStatus, description: str, url: str) -> None:
         """Latest-per-context commit statuses replace a previous failing verdict."""
