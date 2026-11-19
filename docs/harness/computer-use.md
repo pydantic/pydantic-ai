@@ -69,8 +69,9 @@ the tool. The description decides when the model loads it, so pass your own `des
 
 ## What the display needs
 
-The agent sees a desktop: a panel along the bottom with a button that opens a terminal. Each new window fills the
-screen above the panel. There's no web browser unless the image has one, or the agent installs one with
+The agent sees a desktop: a panel along the bottom with a button that opens a terminal. The terminal uses a large
+monospace font, so its text is easier to read in screenshots. Each new window fills the screen above the panel.
+There's no web browser unless the image has one, or the agent installs one with
 [`Coder`](coder.md).
 
 Eight programs inside the sandbox make this desktop:
