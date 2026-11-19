@@ -166,7 +166,7 @@ class SettingsStore:
 
     def load(self) -> Settings:
         """Resolve persisted overrides against built-in defaults."""
-        return resolve_settings(self.overrides())
+        return resolve_settings(self.overrides(), stored=True)
 
     def kept_worktree(self, path: Path) -> str | None:
         """The checkout identity whose exit cleanup was declined permanently, if saved."""

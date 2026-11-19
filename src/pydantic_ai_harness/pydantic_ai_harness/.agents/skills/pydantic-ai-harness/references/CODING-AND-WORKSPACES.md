@@ -212,7 +212,7 @@ binary files the first 64 bytes in hex) for any other binary file; text files co
 A file over 64 MiB is described by its size instead of read: find the lines with `search_files` or `grep`.
 
 `read_file` has the tool kind `READ_FILE_KIND` (`file_system.read_file`). `ToolOutputLimits`'
-`read_tool_result`, `Memory`'s `read_memory` and `RepoContext`'s inventory tool step aside for it when
+`read_tool_result` and `grep_tool_result`, `Memory`'s `read_memory` and `RepoContext`'s inventory tool step aside for it when
 the files they read are in the run's workspace, also when `FileSystem` is renamed (`FileSystem().prefix_tools('wiki')`).
 
 Parameters: `root_dir` (default the working directory; must be the working directory or an **ancestor**
@@ -297,7 +297,9 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
 `halt`, `poweroff`, `init`), `denied_operators`, `default_timeout=30.0`, `max_output_chars=50_000`
 (keeps the **tail**; `shell` already returns at most the last 16,000 bytes), `max_file_bytes=None`
 (per-file `ulimit -f`), `max_log_bytes=100_000_000` (see below), `persist_cwd=False` (sticky `cd`),
-`allow_interactive=False`, `env`, `denied_env_patterns`.
+`allow_interactive=False`, `env`, `denied_env_patterns`, `secret_env` (added like `env`; exact occurrences
+masked as `[REDACTED:<name>]` in tool results, so not a value a command encodes or slices, nor logs the
+model reads with file tools; short values are masked everywhere).
 
 - `max_log_bytes` bounds `start_command` and `shell` logs, including with `tools=['shell']`: a log past
   it is emptied and gets a `[Log exceeded max_log_bytes=...]` notice while the command keeps running.
@@ -307,6 +309,8 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
   `persist_cwd=True` or `tools=['shell']`; `tools=['shell']` with `default_timeout` outside (0, 270].
 - Only the first token is checked: `python`, `git`, `make`, `uv` can spawn anything.
 - `denied_env_patterns` does **not** filter `LocalWorkspace(env=)`.
+- For output pushed to the model when a command ends, add `BackgroundTools(tools=['run_command'])`.
+  Commands get stdin at EOF; there is no tool to send input.
 - Background commands **outlive the run**; a later run on the same workspace can check or stop them.
   Clean up with `stop_command` or your own code. They need `mv` and `base64` in the workspace, and
   `setsid` for process-group stops.
@@ -672,6 +676,26 @@ To pin files a user accepted (instruction files, `SKILL.md`, sub-agent definitio
 `await pin_accepted_files(workspace, accepted, changed='none')` (both from `pydantic_ai_harness.repo_context`)
 before each run: a changed file is capped at `changed` in `authority_of` until its new digest is recorded.
 
+## ReportStaleFiles
+
+Tells the model when a file a `FileSystem` tool read or wrote has since changed or been deleted in the
+workspace, by someone else (a user, another agent, a build step). It records each file's content hash from
+`FileReadEvent` / `FileWrittenEvent` and, before each model request, reads the recorded files through
+`ctx.workspace`; a mismatch is named in a request-scoped `StaleFilesPart` (`.report_stale_files`, with the
+workspace's authority), on every request until the model reads the file again (a deleted file once). The model's
+own writes and edits refresh the record. Records are per conversation and workspace, in memory on the instance, so
+a continued run hears about changes made between runs.
+
+```python
+from pydantic_ai_harness import FileSystem, ReportStaleFiles
+
+capabilities = [FileSystem(), ReportStaleFiles(max_tracked_files=100, max_reported_files=20, max_checked_bytes=8 << 20)]
+```
+
+Before every request, each recorded file costs a sequential `realpath`, `stat` and read, most recent first, up to
+`max_checked_bytes`; lower `max_tracked_files` on a slow remote workspace. A file whose real path changed since it
+was read is skipped. Not supported under durable execution: the run fails at its start.
+
 ## Macroscope
 
 `run_macroscope_review(base=None)` runs `macroscope codereview --raw` in the workspace and returns a
@@ -711,6 +735,7 @@ and write host files (`file://`, `s3 cp`), but gets its own empty AWS config and
 - https://pydantic.dev/docs/ai/harness/boxlite-sandbox/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/harness/repo-context/
+- https://pydantic.dev/docs/ai/harness/report-stale-files/
 - https://pydantic.dev/docs/ai/harness/macroscope/
 - https://pydantic.dev/docs/ai/harness/localstack/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/
