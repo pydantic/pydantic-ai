@@ -9,7 +9,7 @@ A **hosted** review runs on GitHub against the pushed head. A **local** review r
 
 | Review | What it is | Rule |
 |---|---|---|
-| pre-push review | Local. A fresh subagent runs the `pre-push-review` skill on the candidate before a push. | [Before you push](../.agents/skills/pushing-commits-to-the-repo/SKILL.md#before-you-push--independent-review-gate) |
+| pre-push review | Local. A fresh session of the current harness runs the `pre-push-review` skill on the candidate before a push. | [Before you push](../.agents/skills/pushing-commits-to-the-repo/SKILL.md#before-you-push--independent-review-gate) |
 | `/review-branch` | Local. A multi-agent review suite that some environments provide. It is not `pydanty:review-branch`. | not in this repo |
 | `PR Review Checks` | Hosted. Runs on every push, and posts its verdict as a commit status, not a check run. | [`PR Review Checks`](../.github/workflows/AGENTS.md#pr-review-checks-reviews-every-pull-request-head) |
 | douwebot | Hosted. Runs when the `douwebot` label is applied. The merge bar needs its clean approval on every PR but a trivial-S one. | [Naming](../.github/workflows/AGENTS.md#naming) |
