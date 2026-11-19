@@ -351,7 +351,7 @@ def set_completions(args: list[str], *, plugin_models: Iterable[str] = ()) -> It
         names = (*plugin_models, *known_model_names())
         providers = sorted({name.partition(':')[0] + ':' for name in names} | {'openai-codex:'})
         return tuple(dict.fromkeys((*providers, *CODEX_MODELS, *names)))
-    if len(args) == 2 and args[0] in ('display.thinking', 'display.splash'):
+    if len(args) == 2 and args[0] in ('display.thinking', 'display.splash', 'display.full_screen'):
         return ('true', 'false')
     if len(args) == 2 and args[0] == 'display.tool_calls':
         return TOOL_CALL_DISPLAYS

@@ -75,6 +75,7 @@ class LivePrompt:
         panel: Callable[[str], Sequence[str]] = lambda _: (),
         queue_changed: Callable[[], None] = lambda: None,
         queue_in_toolbar: Callable[[], bool] | None = None,
+        full_screen: bool = False,
     ) -> None:
         """Bind editing state, terminal ownership and per-session services.
 
@@ -87,6 +88,7 @@ class LivePrompt:
         `queue_changed` is told whenever a prompt joins, leaves, or is rewritten in the queue.
         `queue_in_toolbar=None` appends the queue count here; a callback leaves it to the toolbar,
         except over a notice when the callback returns `True`.
+        `full_screen` takes the whole terminal from the start; otherwise the panel starts compact and grows.
         """
         self.console = console
         self.commands = commands
@@ -113,6 +115,7 @@ class LivePrompt:
         self._last_escape: float | None = None
         self.buffer = PromptBuffer(history=list(reversed(list(history.load_history_strings()))))
         self.output = PromptSurface(output=console.file, size=lambda: console.size, transcript=transcript)
+        self.output.full_screen = full_screen
         self.keys = PromptKeys(
             source=get_app_session().input,
             feed=self.feed,
@@ -686,7 +689,7 @@ class LivePrompt:
         try:
             async with self._completion_owner:
                 await self.output.drain()
-                self.output.release()
+                self.output.release(turn_running=self.interrupts.active)
                 yield
         finally:
             self._suspended = False

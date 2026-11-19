@@ -97,6 +97,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `display.spinner` | `working` | Working animation; /spinner previews the choices. An unknown name shows working. |
 | `display.footer_fields` | `["model", "workspace", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]` | Visible main-footer fields in display order, as a JSON list. An empty list hides the footer figures. Use /set to configure the layout or reset it. assistant_age is off by default. |
 | `display.splash` | `true` | Animate the startup splash. Takes effect next start. |
+| `display.full_screen` | `false` | Take the whole terminal height from the start, instead of starting compact below the shell and growing as the session needs room. Takes effect next start. |
 | `display.tool_calls` | `detailed` | How tool calls print: detailed gives each call its own line with arguments; grouped counts consecutive calls by tool on one live line. Grouped ignores display.tool_output and display.tool_arg_chars; file diffs still print. |
 | `display.tool_output` | `false` | Show shell and grep output below tool summaries. File diffs are always shown. |
 | `display.shell_lines` | `20` | Shell preview lines when display.tool_output is enabled. |
@@ -429,7 +430,7 @@ ignored, so a newer file still works with an older CLAI. Precedence, lowest
 first: defaults, your user settings, the project file, `CLAI_MODEL`, CLI flags.
 
 Display settings (the `display.*` keys: `thinking`, `task_models`, `theme`, `spinner`,
-`footer_fields`, `splash`, `tool_calls`, `tool_output`, `shell_lines`, `grep_lines`, `tool_arg_chars`,
+`footer_fields`, `splash`, `full_screen`, `tool_calls`, `tool_output`, `shell_lines`, `grep_lines`, `tool_arg_chars`,
 `smooth_seconds`) apply as soon as CLAI finds the file. Every other key asks you
 first, as project plugins do: `model`, `request_limit`, `tool_retries`, `code_mode`,
 `speculative_code_mode`, `permissions`, `instructions`, `pool_accounts`,
@@ -1223,7 +1224,16 @@ streamed output while CLAI works, and remains editable. A `Working` label and
 animated spinner, in the same pink accent as tool names, appear in the box's top border while a turn or its lifecycle
 hooks are active, without adding a row to the input area. The animation uses the editor's existing refresh
 cycle and disappears when work finishes, fails, or is cancelled. It is not part
-of your draft or submitted message. The editor sits below a Termflow live transcript panel on the alternate screen.
+of your draft or submitted message. CLAI starts compact, below what your shell already
+printed, and grows with the session as output arrives. Until then the terminal keeps its
+own scrolling and text selection, and Ctrl+L forgets the transcript but leaves your
+shell's output above it. A slash command or `!` command run between turns prints the
+conversation so far into the terminal's scrollback, where it stays even after `/clear` or
+`/resume`, and the compact editor comes back below the command's output. Once the
+session fills the terminal, you change the terminal's width or make it shorter, or a
+command, menu, or question takes over the editor during a turn, the editor sits below
+a Termflow live transcript panel on the alternate screen, for the rest of the session. `/set display.full_screen true` starts
+there instead, from the next start. The rest of this section describes that panel.
 Both partial and completed output paint above it without repainting unchanged
 input cells. PageUp/PageDown and the mouse wheel scroll the transcript without
 changing the draft. New output leaves a scrolled view in place; returning to the
@@ -1604,6 +1614,9 @@ URLs longer than 2,048 characters are shown without clickable metadata to limit
 streaming output size.
 Links survive viewport resizing; following one uses your terminal's usual click
 modifier (often Cmd-click or Ctrl-click).
+Sign-in links are clickable too: the URL `/login openai-codex` prints, and URLs on
+a sign-in waiting screen, where a URL too long for the pane is folded over several
+rows that each link to all of it.
 
 ### Code highlighting
 

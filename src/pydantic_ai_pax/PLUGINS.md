@@ -1450,7 +1450,7 @@ to submit at least one choice. The title says `question 2 of 3` when there are
 several. Esc or Ctrl-C declines the whole request and lets the model continue.
 The plugin's `render` replaces the tool's argument dump with a header that lists
 the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
-the editor's input reader. It keeps the live panel's alternate screen. The draft
+the editor's input reader. It keeps the live panel on screen. The draft
 is restored on exit, and the question and your picks are printed to the transcript afterwards.
 Drag over the question, its header, or an option to select text; releasing copies it
 to the clipboard without choosing an answer. Transcript text remains selectable too.
@@ -3519,7 +3519,10 @@ menu or a command, and runs use only what is already stored.
   what `sign_in` passes to `show` (a link, a code). Esc cancels it. It returns the
   message to show: signed in, cancelled, or why it failed. Pass the `Dialogs` your
   settings menu action receives, so the screen shows wherever the menu was opened;
-  without one, it shows in the terminal.
+  without one, it shows in the terminal. In the terminal, each URL in that text is a
+  clickable link, and a line that holds one is folded at the pane's width, so put the
+  URL on its own line. URLs over 2,048 characters, or with control characters, stay
+  plain text.
 - `sign_in_command('NAME', method)` is `/NAME [login | logout | status]`.
   `run_subcommand(method, args)` handles the same words inside a command that has
   more of its own.
