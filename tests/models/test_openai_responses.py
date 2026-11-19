@@ -6613,6 +6613,103 @@ async def test_openai_conversation_id_streaming_provider_details(allow_model_req
         assert response.provider_details['conversation_id'] == conversation_id
 
 
+class _StreamCutAfterToolCall(httpx2.AsyncByteStream):
+    """A Responses stream that delivers a complete function call, then drops before `response.completed`."""
+
+    async def __aiter__(self) -> AsyncGenerator[bytes]:
+        item = {
+            'type': 'function_call',
+            'id': 'fc_1',
+            'call_id': 'call_1',
+            'name': 'lookup',
+            'arguments': '',
+            'status': 'in_progress',
+        }
+        yield _sse(
+            {
+                'type': 'response.created',
+                'response': {
+                    **_failed_response_json(None),
+                    'status': 'in_progress',
+                    'conversation': {'id': 'conv_1'},
+                },
+                'sequence_number': 0,
+            },
+            {'type': 'response.output_item.added', 'output_index': 0, 'item': item, 'sequence_number': 1},
+            {
+                'type': 'response.output_item.done',
+                'output_index': 0,
+                'item': {**item, 'arguments': '{}', 'status': 'completed'},
+                'sequence_number': 2,
+            },
+        )
+        raise httpx2.ReadError('connection dropped before `response.completed`')
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+async def test_openai_conversation_id_continues_after_interrupted_stream(allow_model_requests: None):
+    """A response whose stream dropped before `response.completed` may not be in the conversation, so the
+    continuation sends its function call along with the synthesized result.
+
+    A mock transport stands in for a cassette because no real provider drops a stream on demand.
+    """
+    bodies: list[dict[str, Any]] = []
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        if len(bodies) == 1:
+            return httpx2.Response(200, stream=_StreamCutAfterToolCall(), headers={'content-type': 'text/event-stream'})
+        return httpx2.Response(
+            200,
+            json={
+                **_failed_response_json(None),
+                'id': 'resp_002',
+                'status': 'completed',
+                'conversation': {'id': 'conv_1'},
+                'output': [
+                    {
+                        'type': 'message',
+                        'id': 'msg_1',
+                        'role': 'assistant',
+                        'status': 'completed',
+                        'content': [{'type': 'output_text', 'text': 'done', 'annotations': []}],
+                    }
+                ],
+            },
+        )
+
+    executed: list[str] = []
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(model, model_settings=OpenAIResponsesModelSettings(openai_conversation_id='conv_1'))
+
+        @agent.tool_plain
+        def lookup() -> str:
+            executed.append('lookup')  # pragma: no cover
+            return 'known value'  # pragma: no cover
+
+        with capture_run_messages() as history, pytest.raises(ModelAPIError):
+            async with agent.run_stream('Look up a value') as result:
+                await result.get_output()  # pragma: no cover
+
+        interrupted = message(history, ModelResponse, index=-1)
+        assert interrupted.state == 'interrupted'
+        assert interrupted.provider_details is not None
+        assert interrupted.provider_details['conversation_id'] == 'conv_1'
+
+        await agent.run('Continue', message_history=history)
+
+    assert executed == []
+    continuation = bodies[1]
+    call_ids = {item['call_id'] for item in continuation['input'] if item.get('type') == 'function_call'}
+    output_ids = {item['call_id'] for item in continuation['input'] if item.get('type') == 'function_call_output'}
+    assert output_ids <= call_ids
+
+
 async def test_openai_responses_usage_without_tokens_details(allow_model_requests: None):
     c = response_message(
         [
