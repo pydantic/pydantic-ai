@@ -40,11 +40,11 @@ from pydantic_clai2.plugins import (
 )
 from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 # AoE only starts CLAI in a tmux pane on a POSIX system; the fakes and hook-file checks assume one too.
 pytestmark = pytest.mark.skipif(sys.platform == 'win32', reason='AoE and its hook files are POSIX-only')
 
-READINESS_WAIT_TIMEOUT = 10
 INSTANCE = 'abcd1234ef567890'
 FAKE_PID = 1 << 22
 """Above every process ID Linux (under `2**22`) and macOS assign, so no fake process is this one."""
