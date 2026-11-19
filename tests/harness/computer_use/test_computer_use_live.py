@@ -464,16 +464,14 @@ async def test_claude_sonnet_4_6_drags_with_a_button_held_across_calls(
         pytest.param(
             'hold the shift key for 1 second, then type "b"',
             [],
-            # Nothing ran before the key hold, so the hold gets the whole result. It isn't marked as an error,
-            # because an error result can hold only text.
+            # Nothing ran before the key hold. Its error result holds only text, so the screenshot isn't sent.
             [
                 (
-                    False,
+                    True,
                     [
                         'Failed.',
                         "Action 1 of 2 (hold_keys) failed: the fake display cannot perform 'hold_keys'. The 1 action after"
                         ' it did not run. Screenshot attached (1280x800).',
-                        'image',
                     ],
                 ),
                 (True, ['Not executed: an earlier computer action in this turn failed.']),

@@ -2588,7 +2588,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         raw_finish_reason = response.stop_reason
         finish_reason = FINISH_REASON_MAP.get(raw_finish_reason) if raw_finish_reason else None
         model_response = ModelResponse(
-            parts=items,
+            parts=_computer.stop_computer_calls_unless_finished(items, model_request_parameters, finish_reason),
             usage=map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
             model_name=response.model,
             provider_response_id=response.id,
@@ -4217,9 +4217,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Return one result per toolset call, as the toolset requires.
 
         The calls that ran get `OK`, except the last of them, which gets the whole result unchanged. The failed call
-        gets `Failed.`, and the calls after it get Anthropic's not-executed text. When no call ran, the first call gets
-        the whole result. Some results don't say which calls ran: a failed, denied or changed result, or one rebuilt
-        by a UI. Then the last call gets the whole result, and the others say it is on the last call.
+        gets `Failed.`, and the calls after it get Anthropic's not-executed text. When the first call failed, it gets
+        `Failed.` and the result's text as an error, without the result's images. When no call ran and none failed, the
+        first call gets the whole result. Some results don't say which calls ran: a failed, denied or changed result,
+        or one rebuilt by a UI. Then the last call gets the whole result, and the others say it is on the last call.
         """
         blocks = replay['computer_blocks']
         if part.outcome != 'success':
@@ -4269,11 +4270,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 results.append(_computer_result(block, False, BetaTextBlockParam(text='OK', type='text')))
             elif index == ran - 1:
                 results.append(_computer_result(block, False, *whole))
+            elif index == ran == 0 and failure:
+                # Anthropic asks for an error result on the failed call, and an error result can hold only text. So
+                # the result's text goes with `Failed.`, and its images are dropped.
+                text = [item for item in whole if item['type'] == 'text']
+                failed = BetaTextBlockParam(text=_computer.COMPUTER_FAILED, type='text')
+                results.append(_computer_result(block, True, failed, *text))
             elif index == ran == 0:
-                # An error result can hold only text. So when the first call fails, its result is sent as a success
-                # that starts with `Failed.`.
-                failed = [BetaTextBlockParam(text=_computer.COMPUTER_FAILED, type='text')] if failure else []
-                results.append(_computer_result(block, False, *failed, *whole))
+                results.append(_computer_result(block, False, *whole))
             elif index == ran and failure:
                 # The error itself is only in the content, which a hook may have redacted.
                 results.append(
