@@ -411,8 +411,8 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   `setsid`, which the first use installs with `apt-get` as root or with passwordless `sudo`, and `startxfce4`.
 - `OpenSandbox(image=..., desktop=True)` gives the sandbox a 1280x800 screen for `ComputerUse()`, or pass
   `desktop=(w, h)`. The first use installs Xvfb, `xdotool`, `x11-utils` and `scrot` with `apt-get` when the image's
-  user is root or has passwordless `sudo`; otherwise build them into the image. Needs execd 1.2 or later. No port or
-  endpoint is opened for the screen.
+  user is root or has passwordless `sudo`; otherwise build them into the image. Use execd 1.2 or later: older versions
+  take about a second per command. No port or endpoint is opened for the screen.
 - Idempotent per-turn setup goes in a `@hooks.on.before_run` hook: `await ctx.workspace.run('test -d
   repo/.git || git clone <url> repo', shell=True, timeout=300)`. Clone into a subdirectory: `shell`,
   background commands, and output spills create `.pydantic-ai-harness/` in the working directory, so

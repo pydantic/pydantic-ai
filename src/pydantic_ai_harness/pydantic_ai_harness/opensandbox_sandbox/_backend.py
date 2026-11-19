@@ -498,6 +498,8 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         argv = command_argv(command, shell)
         check_env(env)
         if self._display is not None:
+            # Checked before the display's lock is taken, which would bind it to this event loop.
+            require_asyncio(_ASYNCIO_ONLY)
             # Started first, so a program the command opens shows on the screen.
             await self._display.start()
         return await self._run_argv(argv, env=env or {}, timeout=timeout)
