@@ -123,7 +123,9 @@ from ...profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ...profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ...providers import Provider, infer_provider
 from ...providers._oauth_provider import OAuthCredentialsProvider
+from ...providers.bedrock_mantle import BedrockMantleProvider
 from ...providers.gateway import is_gateway_provider
+from ...providers.openai import OpenAIProvider
 from ...settings import CacheSetting, ModelSettings, merge_model_settings
 from ...tools import ToolDefinition
 from .. import (
@@ -747,11 +749,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # Responses WebSockets aren't verified on the Azure client, and the gateway's handshake fails with a 503
             # while HTTP succeeds (live, 2026-10-22).
             profile = merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
-        # `profile` already has `DEFAULT_PROFILE`'s full list, so ask the provider whether it set one itself.
-        if azure_or_gateway or 'supported_native_tools' not in self._provider_model_profile():
-            # The native computer tool has been checked live only on OpenAI and Bedrock Mantle, whose providers list
-            # it. Azure, the gateway and servers whose profile sets no list (Ollama, vLLM, ...) get `ComputerUse`'s
-            # function tool, which works on any server. Their other native tools stay as on main.
+        if azure_or_gateway or not isinstance(self._provider, OpenAIProvider | BedrockMantleProvider):
+            # OpenAI's computer tool has been checked live only on OpenAI's API and Bedrock Mantle. Every other server
+            # gets `ComputerUse`'s function tool, which works anywhere, even when the model's profile lists
+            # `ComputerTool` for its own provider's API (Claude's does). Other native tools stay as they were.
             profile = merge_profile(
                 profile,
                 OpenAIModelProfile(
