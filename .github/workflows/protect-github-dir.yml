@@ -164,7 +164,7 @@ jobs:
               "Files under \`.github/\` changed by this PR:" \
               "$PROTECTED_LIST" \
               "$MARKER")
-            # A fork PR's run has a read-only token; the failing check still blocks it.
+            # A fork PR's run has a read-only token; `Gate: .github changes by a maintainer` still judges it.
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT" \
               || echo "::warning::Could not post the explanation; a fork pull request's token is read-only."
           else
