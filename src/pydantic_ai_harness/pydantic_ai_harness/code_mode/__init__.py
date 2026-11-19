@@ -17,6 +17,7 @@ from pydantic_ai_harness.code_mode._speculation import SpeculationStats
 from pydantic_ai_harness.code_mode._toolset import (
     CodeModeMount,
     CodeModeOS,
+    CodeModeOSCallback,
     CodeModeOSPolicy,
     CodeModeResourceLimits,
     CodeModeReturnSchemaWarning,
@@ -29,6 +30,7 @@ __all__ = [
     'CodeMode',
     'CodeModeMount',
     'CodeModeOS',
+    'CodeModeOSCallback',
     'CodeModeOSPolicy',
     'CodeModeReplStore',
     'CodeModeResourceLimits',

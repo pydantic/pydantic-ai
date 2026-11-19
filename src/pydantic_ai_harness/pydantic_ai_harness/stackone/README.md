@@ -114,7 +114,7 @@ agent = Agent(
 )
 ```
 
-`auth` replaces the earlier `api_key` argument, which is removed.
+`auth` replaces `api_key`, which still works but emits a `HarnessDeprecationWarning`. Passing both raises an error.
 
 ## Control available actions
 
@@ -235,7 +235,7 @@ Handle the resulting deferred approval requests as described in the linked guide
 
 The capability also works with Pydantic AI's
 [agent spec](https://pydantic.dev/docs/ai/core-concepts/agent-spec/) format for YAML or JSON. Keep the API key in
-`STACKONE_API_KEY` rather than storing it in the file. Specs take no `auth` or `api_key`:
+`STACKONE_API_KEY` rather than storing it in the file. Specs take no `auth`, and a spec's `api_key` is deprecated:
 
 ```yaml
 # agent.yaml
