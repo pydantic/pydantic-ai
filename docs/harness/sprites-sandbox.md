@@ -174,13 +174,13 @@ agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(desktop=True
 
 
 async def main():
-    result = await agent.run('Install and start xterm, run `uname -a` in it, and tell me what it printed.')
+    result = await agent.run('Open a terminal from the panel, run `uname -a` in it, and tell me what it printed.')
     print(result.output)
 ```
 
-The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use, with no window manager, so apps the agent starts from the shell open on it without title bars. Commands get `DISPLAY` set for it.
+The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use, which installs [the desktop's programs](computer-use.md#what-the-display-needs) with `apt-get`: the agent sees a panel along the bottom with a button that opens a terminal, and no web browser. Each window it opens fills the screen. Commands get `DISPLAY` set for it, so apps the agent starts from the shell open there too.
 
-A cold wake stops the display and the apps on it (see [Sprite lifecycle](https://docs.fly.io/sprites/concepts/lifecycle.md)): the display starts again empty, and the agent has to open its apps again. Files on disk are kept.
+A cold wake stops the display and the apps on it (see [Sprite lifecycle](https://docs.fly.io/sprites/concepts/lifecycle.md)): the agent's open windows are lost, the desktop and its panel come back on the next use, and the agent has to open its apps again. Files on disk are kept.
 
 The first start installs [the programs the display needs](computer-use.md#what-the-display-needs), which can take a minute.
 

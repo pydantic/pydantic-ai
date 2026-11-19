@@ -222,13 +222,13 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(desktop=Tr
 
 
 async def main():
-    result = await agent.run('Install and start xterm, run `uname -a` in it, and tell me what it printed.')
+    result = await agent.run('Open a terminal from the panel, run `uname -a` in it, and tell me what it printed.')
     print(result.output)
 ```
 
-The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use, with no window manager, so apps the agent starts from the shell open on it without title bars. Commands get `DISPLAY` set for it.
+The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use with [a desktop](../computer_use/#what-the-display-needs): a panel along the bottom with a button that opens a terminal. Commands get `DISPLAY` set for it, so a program the agent starts from the shell opens on the screen.
 
-The default image has everything the display needs. A custom `image` gets [the programs it needs](../computer_use/#what-the-display-needs) on first use, if it can. Install the apps the agent should use, such as `xterm` or a browser, in your own `image`.
+The default image has everything the desktop needs, and no web browser. A custom `image` gets [the programs it needs](../computer_use/#what-the-display-needs) on first use, if it can; add a browser to your `image` if the agent needs one.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 

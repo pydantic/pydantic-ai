@@ -407,8 +407,9 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   Daytona or boxd backend you build needs `await backend.aclose()`.
 - `E2BSandbox(desktop=True)` gives a new sandbox E2B's `desktop` template (Ubuntu, XFCE, a terminal, Chrome) at
   1280x800 for `ComputerUse()`, or pass `desktop=(w, h)`. XFCE takes `printscreen` and the media and volume keys
-  itself. The agent can type only ASCII. A custom `template` needs Xvfb, `xdotool`, `xwininfo`, `scrot` and
-  `setsid`, which the first use installs with `apt-get` as root or with passwordless `sudo`, and `startxfce4`.
+  itself. The agent can type only ASCII. A custom `template` needs `xdotool`, `xwininfo`, `scrot`, `setsid`, and
+  Xvfb unless an X server runs, which the first use installs with `apt-get` as root or with passwordless `sudo`,
+  and `startxfce4`.
 - Idempotent per-turn setup goes in a `@hooks.on.before_run` hook: `await ctx.workspace.run('test -d
   repo/.git || git clone <url> repo', shell=True, timeout=300)`. Clone into a subdirectory: `shell`,
   background commands, and output spills create `.pydantic-ai-harness/` in the working directory, so
@@ -425,11 +426,11 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   sandbox gets no desktop: its first desktop use or shell command raises `UserError`.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
-- `ModalSandbox(desktop=True)` gives the sandbox a plain 1280x800 Xvfb (no window manager) for `ComputerUse()`,
-  or pass `desktop=(w, h)`. The default image has the display programs; a custom `image` gets them installed on
-  first use. The agent can type only ASCII.
-- `SpritesSandbox(desktop=True)` gives the Sprite the same plain Xvfb, whose programs the first use installs (about
-  a minute). A cold wake stops the display and its apps; it starts again empty.
+- `ModalSandbox(desktop=True)` gives the sandbox a 1280x800 desktop (fluxbox, a panel with a terminal button, no
+  browser) for `ComputerUse()`, or pass `desktop=(w, h)`. The default image has the desktop's programs; a custom
+  `image` gets them installed on first use. The agent can type only ASCII.
+- `SpritesSandbox(desktop=True)` gives the Sprite the same desktop, whose programs the first use installs. A cold
+  wake closes the agent's windows; the desktop starts again on the next use.
 
 ### KubernetesSandbox
 
@@ -497,10 +498,10 @@ Python up to 3.14.
   `WorkspaceUnavailableError`.
 - Output is read while the command runs and for at most 2 s after it exits, so a background job never holds
   a command open; output past 10 MiB stops the command with `WorkspaceOutputLimitError`.
-- `desktop=True` gives the box a plain 1280x800 Xvfb (no window manager) for `ComputerUse()`, or pass
-  `desktop=(w, h)`. The first start installs the display programs with `apt-get`, which needs
+- `desktop=True` gives the box a 1280x800 desktop (fluxbox, a panel with a terminal button, no browser) for
+  `ComputerUse()`, or pass `desktop=(w, h)`. The first start installs its programs with `apt-get`, which needs
   `allow_internet_access=True` (and the Debian mirrors in any `allowed_hosts`), or an `image` that has them;
-  without either, `UserError`. For a browser, pass `box_options={'disk_size_gb': 4}`.
+  creating a new box without either raises `UserError`, attaching to one doesn't. For a browser, pass `box_options={'disk_size_gb': 4}`.
 
 ### DockerContainer
 
@@ -526,8 +527,9 @@ Python up to 3.14.
   With Podman, `run()` returns when the command exits.
 - `desktop=True` gives the container a 1280x800 X display for `ComputerUse()`; commands and files stay available.
   Without `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, xterm, Firefox) and later runs reuse
-  it; a custom `image` needs Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid`, which the first use installs with
-  `apt-get` as root or with passwordless `sudo`. Under durable execution, build the image first and pass it as `image`.
+  it; a custom `image` needs `xdotool`, `xwininfo`, `scrot`, `setsid`, Xvfb unless an X server runs, and `fluxbox`,
+  `tint2` and `xterm` for the desktop, which the first use installs with `apt-get` as root or with passwordless
+  `sudo`. Under durable execution, build the image first and pass it as `image`.
 
 ### OpenSandbox
 

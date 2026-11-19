@@ -222,13 +222,13 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[box, Coder(), ComputerU
 
 
 async def main():
-    result = await agent.run('Install and start xterm, run `uname -a` in it, and tell me what it printed.')
+    result = await agent.run('Open a terminal from the panel, run `uname -a` in it, and tell me what it printed.')
     print(result.output)
 ```
 
-The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use, with no window manager, so apps the agent starts from the shell open on it without title bars. Commands get `DISPLAY` set for it.
+The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use as a desktop: a panel along the bottom with a button that opens a terminal, and no web browser. Each window the agent opens fills the screen. Commands get `DISPLAY` set for it, so apps the agent starts from the shell open there too.
 
-Without an `image`, a new box runs `debian:bookworm-slim`, since BoxLite's default Alpine image has no `apt-get`. The first start installs [the programs the display needs](../computer_use/#what-the-display-needs), which needs `allow_internet_access=True` ([what that lets the box reach](#network-access)), with any `allowed_hosts` including the Debian mirrors; without it, `UserError` is raised. For a box without network access, pass an `image` that already has them. A new box's disk is too small for a browser: pass `box_options={'disk_size_gb': 4}` to install one.
+Without an `image`, a new box runs `debian:bookworm-slim`, since BoxLite's default Alpine image has no `apt-get`. The first start installs [the desktop's programs](../computer_use/#what-the-display-needs), which needs `allow_internet_access=True` ([what that lets the box reach](#network-access)), with any `allowed_hosts` including the Debian mirrors; creating a new box without it raises `UserError`, while attaching to an existing box works. For a box without network access, pass an `image` that already has them. A new box's disk is too small for a browser: pass `box_options={'disk_size_gb': 4}` to install one.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
