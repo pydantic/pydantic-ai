@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import inspect
+import itertools
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, cast, overload
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
-from pydantic_core import core_schema
+from pydantic_core import PydanticCustomError, core_schema
 from typing_extensions import TypeAliasType, TypeForm, TypeVar
 
 from . import _utils, exceptions
@@ -399,7 +400,11 @@ class TextOutput(Generic[OutputDataT]):
 
 
 def StructuredDict(
-    json_schema: JsonSchemaValue, name: str | None = None, description: str | None = None
+    json_schema: JsonSchemaValue,
+    name: str | None = None,
+    description: str | None = None,
+    *,
+    validate: bool = False,
 ) -> type[JsonSchemaValue]:
     """Returns a `dict[str, Any]` subclass with a JSON schema attached that will be used for structured output.
 
@@ -407,6 +412,8 @@ def StructuredDict(
         json_schema: A JSON schema of type `object` defining the structure of the dictionary content.
         name: Optional name of the structured output. If not provided, the `title` field of the JSON schema will be used if it's present.
         description: Optional description of the structured output. If not provided, the `description` field of the JSON schema will be used if it's present.
+        validate: Validate the output against `json_schema`, so that output that doesn't match it is sent back
+            to the model to retry. Requires the `jsonschema` package, installed with `pydantic-ai-slim[jsonschema]`.
 
     Example:
     ```python {title="structured_dict.py"}
@@ -427,6 +434,8 @@ def StructuredDict(
     #> {'name': 'John Doe', 'age': 30}
     ```
     """
+    # Validate against the schema as given: for a root `$ref`, the object schema sent to the model drops its siblings.
+    validator = _json_schema_validator(json_schema) if validate else None
     json_schema = _utils.check_object_json_schema(json_schema)
 
     # Pydantic `TypeAdapter` fails when `object.__get_pydantic_json_schema__` has `$defs`, so we inline them
@@ -451,10 +460,13 @@ def StructuredDict(
         def __get_pydantic_core_schema__(
             cls, source_type: Any, handler: GetCoreSchemaHandler
         ) -> core_schema.CoreSchema:
-            return core_schema.dict_schema(
+            schema = core_schema.dict_schema(
                 keys_schema=core_schema.str_schema(),
                 values_schema=core_schema.any_schema(),
             )
+            if validator is None:
+                return schema
+            return core_schema.no_info_after_validator_function(validator, schema)
 
         @classmethod
         def __get_pydantic_json_schema__(
@@ -463,6 +475,77 @@ def StructuredDict(
             return json_schema
 
     return _StructuredDict
+
+
+_MAX_JSON_SCHEMA_ERRORS = 10
+
+
+def _schema_refs(schema: object) -> list[str]:
+    """The `$ref` and `$dynamicRef` of one (sub)schema."""
+    if not _utils.is_str_dict(schema):
+        return []
+    return [ref for key in ('$ref', '$dynamicRef') if isinstance(ref := schema.get(key), str)]
+
+
+def _check_refs_resolve(json_schema: JsonSchemaValue) -> None:
+    """Raise `UserError` for a `$ref` or `$dynamicRef` that doesn't resolve within `json_schema`.
+
+    Done when the `StructuredDict` is built, so such a reference doesn't fail every run instead. Walking
+    subresources visits schema positions only, each from the resource (`$id`) it is in.
+    """
+    from referencing import Registry, Resource
+    from referencing.exceptions import Unresolvable
+    from referencing.jsonschema import DRAFT202012
+
+    registry: Registry[Any] = Registry()
+    root = Resource.from_contents(json_schema, default_specification=DRAFT202012)
+    pending = [(registry.resolver_with_root(root), root)]
+    while pending:
+        resolver, resource = pending.pop()
+        for ref in _schema_refs(resource.contents):
+            try:
+                resolver.lookup(ref)
+            except Unresolvable as e:
+                raise exceptions.UserError(
+                    f'`StructuredDict(validate=True)` only resolves references within the schema, and {ref!r} is not one.'
+                ) from e
+        pending.extend((resolver.in_subresource(subresource), subresource) for subresource in resource.subresources())
+
+
+def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    """A function that returns a value matching `json_schema` unchanged, and raises a validation error listing why one doesn't.
+
+    The schema is checked and validated against using the JSON Schema draft its `$schema` names, or 2020-12 without one.
+    """
+    try:
+        from jsonschema import Draft202012Validator
+        from jsonschema.exceptions import SchemaError
+        from jsonschema.validators import validator_for
+        from referencing import Registry
+    except ImportError as e:
+        raise exceptions.UserError(
+            '`StructuredDict(validate=True)` requires the `jsonschema` package. '
+            'Install it with `pip install "pydantic-ai-slim[jsonschema]"`.'
+        ) from e
+    validator_class = validator_for(json_schema, default=Draft202012Validator)
+    try:
+        validator_class.check_schema(json_schema)
+    except SchemaError as e:
+        raise exceptions.UserError(f'`StructuredDict` got an invalid JSON schema: {e.message}') from e
+    _check_refs_resolve(json_schema)
+    # An empty registry resolves references within the schema only, so a remote `$ref` is never fetched.
+    schema_validator = validator_class(json_schema, registry=Registry())
+
+    def validate(value: dict[str, Any]) -> dict[str, Any]:
+        errors = itertools.islice(
+            schema_validator.iter_errors(value),
+            _MAX_JSON_SCHEMA_ERRORS,
+        )
+        if messages := [f'{error.json_path}: {error.message}' for error in errors]:
+            raise PydanticCustomError('json_schema', '{errors}', {'errors': '\n'.join(messages)})
+        return value
+
+    return validate
 
 
 @dataclass(init=False)

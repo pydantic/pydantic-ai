@@ -77,6 +77,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `tavily` - installs [Tavily Search Tool](common-tools.md#tavily-search-tool) dependency `tavily-python` [PyPI ↗](https://pypi.org/project/tavily-python){:target="_blank"}
 * `exa` - installs [Exa Search Tool](common-tools.md#exa-search-tool) dependency `exa-py` [PyPI ↗](https://pypi.org/project/exa-py){:target="_blank"}
 * `web-fetch` - installs [Web Fetch Tool](common-tools.md#web-fetch-tool) dependency `markdownify` [PyPI ↗](https://pypi.org/project/markdownify){:target="_blank"}
+* `jsonschema` - installs the dependency `jsonschema` [PyPI ↗](https://pypi.org/project/jsonschema){:target="_blank"} for [`StructuredDict(validate=True)`](output.md#structured-dict)
 * `cli` - installs [CLI](cli.md) dependencies `rich` [PyPI ↗](https://pypi.org/project/rich){:target="_blank"}, `prompt-toolkit` [PyPI ↗](https://pypi.org/project/prompt-toolkit){:target="_blank"}, and `argcomplete` [PyPI ↗](https://pypi.org/project/argcomplete){:target="_blank"}
 * `mcp` - installs [MCP](mcp/client.md) dependency `fastmcp-slim[client]` [PyPI ↗](https://pypi.org/project/fastmcp-slim){:target="_blank"}
 * `mcp-tasks` - installs the [MCP](mcp/client.md) FastMCP 4 tasks extension (`use_task=True`) dependency `fastmcp-tasks` [PyPI ↗](https://pypi.org/project/fastmcp-tasks){:target="_blank"}

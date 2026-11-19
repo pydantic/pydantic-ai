@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import importlib.util
 import re
+from importlib.machinery import ModuleSpec
 from typing import Any
 
 import pytest
@@ -37,6 +39,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ObjectJsonSchema
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness._monty_exec import MontyExecutor
@@ -53,6 +56,10 @@ from pydantic_ai_harness.dynamic_workflow import (
 
 from .._deferred_tools import asking_agent, deferring_agent, pending_agent
 from ._concurrent_sub_agents import DeferredStarts
+
+requires_jsonschema = pytest.mark.skipif(
+    importlib.util.find_spec('jsonschema') is None, reason='jsonschema not installed'
+)
 
 
 def _sub_agent(text: str = 'ok', name: str | None = 'sub', description: str | None = None) -> Agent[object, str]:
@@ -545,6 +552,322 @@ async def test_structured_output_arrives_as_dict() -> None:
     ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=reviewer)])
     out = await _run_script(ts, "r = await reviewer(task='x')\nr['score']")
     assert out == 9
+
+
+_FINDING_SCHEMA_CODE = """\
+finding = await researcher(task='x', output_schema={
+    'type': 'object',
+    'properties': {
+        'claim': {'type': 'string', 'title': 'Claim', 'description': 'One finding.', 'default': '', 'examples': ['x']},
+        'confidence': {'type': 'number'},
+    },
+    'required': ['claim', 'confidence'],
+})
+[finding['claim'], finding['confidence']]"""
+
+
+def test_allow_output_schema_requires_jsonschema(monkeypatch: pytest.MonkeyPatch) -> None:
+    find_spec = importlib.util.find_spec
+
+    def find_spec_without_jsonschema(name: str, package: str | None = None) -> ModuleSpec | None:
+        return None if name == 'jsonschema' else find_spec(name, package)
+
+    monkeypatch.setattr(importlib.util, 'find_spec', find_spec_without_jsonschema)
+    with pytest.raises(
+        UserError,
+        match=re.escape('`WorkflowAgent(allow_output_schema=True)` validates outputs with the `jsonschema` package'),
+    ):
+        WorkflowAgent(_sub_agent(), allow_output_schema=True)
+
+
+@requires_jsonschema
+async def test_output_schema_sets_the_call_output_type() -> None:
+    seen_schemas: list[ObjectJsonSchema] = []
+
+    def researcher_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        (output_tool,) = info.output_tools
+        seen_schemas.append(output_tool.parameters_json_schema)
+        return ModelResponse(
+            parts=[ToolCallPart(output_tool.name, {'claim': 'water is wet', 'confidence': 0.9})],
+        )
+
+    researcher: Agent[object, str] = Agent(FunctionModel(researcher_fn), name='researcher')
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=researcher, allow_output_schema=True)])
+    assert await _run_script(ts, _FINDING_SCHEMA_CODE) == ['water is wet', 0.9]
+    assert seen_schemas == snapshot(
+        [
+            {
+                'type': 'object',
+                'properties': {
+                    'claim': {
+                        'default': '',
+                        'description': 'One finding.',
+                        'examples': ['x'],
+                        'title': 'Claim',
+                        'type': 'string',
+                    },
+                    'confidence': {'type': 'number'},
+                },
+                'required': ['claim', 'confidence'],
+            }
+        ]
+    )
+
+
+@requires_jsonschema
+async def test_output_schema_replaces_a_structured_output_type() -> None:
+    reviewer = _review_agent({'claim': 'c', 'confidence': 1}, name='researcher')
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=reviewer, allow_output_schema=True)])
+    assert await _run_script(ts, _FINDING_SCHEMA_CODE) == ['c', 1]
+
+
+@requires_jsonschema
+async def test_output_schema_is_type_checked_per_call() -> None:
+    # Without `output_schema`, the call still returns the agent's own `str`, which takes no string key.
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(_sub_agent(name='researcher'), allow_output_schema=True)])
+    with pytest.raises(ModelRetry, match='Type error in workflow'):
+        await _run_script(ts, "r = await researcher(task='x')\nr['claim']")
+    with pytest.raises(ModelRetry, match='Type error in workflow'):
+        await _run_script(ts, "await researcher(task='x', output_schema='object')")
+
+
+@requires_jsonschema
+async def test_output_schema_is_shown_only_for_agents_that_allow_it() -> None:
+    ts = DynamicWorkflowToolset[object](
+        agents=[WorkflowAgent(_sub_agent(name='researcher'), allow_output_schema=True), _wf_agent(name='plain')]
+    )
+    desc = (await ts.get_tools(_ctx()))['run_workflow'].tool_def.description
+    assert desc is not None
+    assert 'A sub-agent with an `output_schema` overload can return a result in a shape you choose' in desc
+    assert desc.split('Available sub-agents:\n\n')[1] == snapshot("""\
+```python
+@overload
+async def researcher(*, task: str) -> str:
+    ...
+
+@overload
+async def researcher(*, task: str, output_schema: dict[str, Any]) -> dict[str, Any]:
+    ...
+
+async def researcher(*, task: str, output_schema: dict[str, Any] | None = None) -> Any:
+    ...
+
+async def plain(*, task: str) -> str:
+    ...
+```\
+""")
+    with pytest.raises(ModelRetry, match='Type error in workflow'):
+        await _run_script(ts, "await plain(task='x', output_schema={'type': 'object'})")
+    # Smuggled through `json.loads` (typed `Any`), so only the runtime guard can catch it.
+    with pytest.raises(ModelRetry, match=r'plain\(\) got unexpected keyword argument\(s\): output_schema; only task'):
+        await _run_script(ts, 'import json\nawait plain(task="x", **json.loads(\'{"output_schema": {}}\'))')
+
+
+async def test_tool_description_is_unchanged_without_output_schema() -> None:
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()])
+    desc = (await ts.get_tools(_ctx()))['run_workflow'].tool_def.description
+    assert desc is not None
+    assert 'output_schema' not in desc
+
+
+@requires_jsonschema
+async def test_output_schema_fails_the_call_on_an_agent_with_output_validators() -> None:
+    validated = _sub_agent(name='validated')
+    validated.output_validator(lambda output: output)
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=validated, allow_output_schema=True)])
+    code = """\
+plain = await validated(task='x')
+try:
+    await validated(task='x', output_schema={'type': 'object'})
+except RuntimeError as e:
+    error = str(e)
+[plain, error]"""
+    assert await _run_script(ts, code) == snapshot(
+        [
+            'ok',
+            "sub-agent 'validated' raised UserError; if it has output validators, it cannot take output_schema, "
+            'so call it without one',
+        ]
+    )
+
+
+_DEFS_SCHEMA = '{"type": "object", "$defs": {"A": {"type": "string"}}, "properties": {"a": {"$ref": "#/$defs/A"}}}'
+_POINTER_SCHEMA = '{"type": "object", "properties": {"a": {"type": "string"}, "b": {"$ref": "#/properties/a"}}}'
+
+
+@pytest.mark.parametrize(
+    ('schema', 'error'),
+    [
+        ('"object"', 'schema: Input should be a valid dictionary'),
+        ('{"type": "string"}', 'type: must be "object"'),
+        (_DEFS_SCHEMA, 'properties.a.$ref: Extra inputs are not permitted; $defs: Extra inputs are not permitted'),
+        (_POINTER_SCHEMA, 'properties.b.$ref: Extra inputs are not permitted'),
+        ('{"$ref": "#"}', '$ref: Extra inputs are not permitted'),
+        (
+            '{"type": "object", "required": ["a", "a"]}',
+            "`StructuredDict` got an invalid JSON schema: ['a', 'a'] has non-unique elements",
+        ),
+        (
+            '{"type": "object", "properties": {"a": {"pattern": "a"}}}',
+            'properties.a.pattern: Extra inputs are not permitted',
+        ),
+    ],
+    ids=[
+        'not-a-dict',
+        'not-an-object',
+        'defs',
+        'pointer',
+        'top-level-ref',
+        'invalid-for-metaschema',
+        'unsupported-keyword',
+    ],
+)
+@requires_jsonschema
+async def test_unusable_output_schema_rejected_before_budget_is_spent(schema: str, error: str) -> None:
+    # Smuggled through `json.loads` (typed `Any`), so only the runtime guard can catch it.
+    ts = DynamicWorkflowToolset[object](
+        agents=[WorkflowAgent(_sub_agent(), allow_output_schema=True)], max_agent_calls=1
+    )
+    with pytest.raises(ModelRetry) as exc_info:
+        await _run_script(ts, f'import json\nawait sub(task="x", output_schema=json.loads({schema!r}))')
+    assert f'TypeError: sub() output_schema is not usable: {error}' in str(exc_info.value)
+    assert await _run_script(ts, "await sub(task='x')") == 'ok'
+
+
+_KITCHEN_SINK_SCHEMA = {
+    'type': 'object',
+    'properties': {
+        'name': {'type': 'string'},
+        'count': {'type': 'integer'},
+        'score': {'type': 'number'},
+        'ok': {'type': 'boolean'},
+        'note': {'type': ['string', 'null']},
+        'tags': {'type': 'array', 'items': {'type': 'string'}},
+        'kind': {'enum': ['a', 'b']},
+        'version': {'const': 1},
+        'flag': {'const': True},
+        'pair': {'const': [1, {'k': True}]},
+        'ref': {'anyOf': [{'type': 'string'}, {'type': 'integer'}]},
+        'meta': {'type': 'object', 'additionalProperties': {'type': 'string'}},
+        'open': {'type': 'object'},
+        'anything': {},
+    },
+    'required': ['name', 'count'],
+    'additionalProperties': False,
+}
+
+
+@requires_jsonschema
+async def test_output_schema_reusing_a_dict_is_rejected_before_it_expands() -> None:
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(_sub_agent(), allow_output_schema=True)])
+    # 40 levels that each reuse the level below twice: tiny in the sandbox, 2**40 values once expanded.
+    code = """\
+s = {'type': 'string'}
+for _ in range(40):
+    s = {'type': 'object', 'properties': {'a': s, 'b': s}}
+await sub(task='x', output_schema=s)"""
+    with pytest.raises(ModelRetry, match='output_schema is not usable: it has more than 1000 values'):
+        await _run_script(ts, code)
+
+
+@requires_jsonschema
+async def test_output_schema_with_too_many_options_is_rejected() -> None:
+    # Every option is checked against the same output value, so their total bounds the work per value.
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(_sub_agent(), allow_output_schema=True)])
+    code = """\
+options = [{'type': 'object'} for _ in range(9)]
+await sub(task='x', output_schema={'type': 'object', 'anyOf': options, 'properties': {'a': {'oneOf': options}}})"""
+    with pytest.raises(
+        ModelRetry, match='output_schema is not usable: it has more than 16 anyOf, allOf and oneOf options'
+    ):
+        await _run_script(ts, code)
+
+
+@requires_jsonschema
+async def test_output_not_matching_the_schema_is_retried() -> None:
+    bad = {
+        'extra': 1,
+        'flag': 1,
+        'pair': [1, {'k': 1}],
+        'count': True,
+        'score': 'x',
+        'ok': 1,
+        'note': 3,
+        'tags': ['a', 2],
+        'kind': 'c',
+        'version': 2,
+        'ref': 1.5,
+        'meta': {'k': 1},
+    }
+    good = {
+        'name': 'n',
+        'count': 1.0,
+        'flag': True,
+        'pair': [1.0, {'k': True}],
+        'score': 0.5,
+        'ok': True,
+        'note': None,
+        'tags': ['a'],
+        'kind': 'a',
+        'version': 1.0,
+        'ref': 'r',
+        'meta': {'k': 'v'},
+        'open': {'x': 1},
+        'anything': [1],
+    }
+    retry_prompts: list[object] = []
+
+    def researcher_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        retry_prompts.extend(
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        )
+        (output_tool,) = info.output_tools
+        return ModelResponse(parts=[ToolCallPart(output_tool.name, good if retry_prompts else bad)])
+
+    researcher: Agent[object, str] = Agent(FunctionModel(researcher_fn), name='researcher')
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(researcher, allow_output_schema=True)])
+    code = f'await researcher(task="x", output_schema={_KITCHEN_SINK_SCHEMA!r})'
+    assert await _run_script(ts, code) == good
+    assert retry_prompts == snapshot(
+        [
+            [
+                {
+                    'type': 'json_schema',
+                    'loc': [],
+                    'msg': """\
+$.count: True is not of type 'integer'
+$.score: 'x' is not of type 'number'
+$.ok: 1 is not of type 'boolean'
+$.note: 3 is not of type 'string', 'null'
+$.tags[1]: 2 is not of type 'string'
+$.kind: 'c' is not one of ['a', 'b']
+$.version: 1 was expected
+$.flag: True was expected
+$.pair: [1, {'k': True}] was expected
+$.ref: 1.5 is not valid under any of the given schemas\
+""",
+                    'input': {
+                        'extra': 1,
+                        'flag': 1,
+                        'pair': [1, {'k': 1}],
+                        'count': True,
+                        'score': 'x',
+                        'ok': 1,
+                        'note': 3,
+                        'tags': ['a', 2],
+                        'kind': 'c',
+                        'version': 2,
+                        'ref': 1.5,
+                        'meta': {'k': 1},
+                    },
+                }
+            ]
+        ]
+    )
 
 
 async def test_via_agent_run_end_to_end() -> None:
@@ -1597,6 +1920,26 @@ async def test_runtime_reveal_announces_and_makes_callable() -> None:
 
     out = await _run_script(ts, "r = await extra(task='x')\nr['score']", ctx)
     assert out == 4
+
+
+@requires_jsonschema
+@pytest.mark.parametrize('baseline_allows', [False, True])
+async def test_reveal_of_an_agent_allowing_output_schema(baseline_allows: bool) -> None:
+    workflow = DynamicWorkflow[object](
+        agents=[WorkflowAgent(_sub_agent(name='base'), allow_output_schema=baseline_allows)]
+    )
+    ts = workflow.get_toolset()
+    ctx = _ctx_with_queue()
+    await ts.get_tools(ctx)
+    workflow.reveal(WorkflowAgent(_review_agent({'claim': 'c'}, name='extra'), allow_output_schema=True))
+    await ts.get_tools(ctx)
+    announced = _enqueued_text(ctx)
+    assert 'async def extra(*, task: str, output_schema: dict[str, Any]) -> dict[str, Any]:' in announced
+    # The frozen tool description explains `output_schema` only when a baseline agent allows it.
+    explained = 'A sub-agent with an `output_schema` overload can return a result in a shape you choose'
+    assert (explained in announced) is not baseline_allows
+    code = "r = await extra(task='x', output_schema={'type': 'object'})\nr['claim']"
+    assert await _run_script(ts, code, ctx) == 'c'
 
 
 async def test_runtime_reveal_disambiguates_type_name_conflicts_against_catalog() -> None:

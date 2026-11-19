@@ -185,6 +185,13 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # Imported inside `logfire._internal.json_schema` when running `logfire.info` inside an activity with attributes to serialize
             'numpy',
             'pandas',
+            # `StructuredDict(validate=True)` imports `jsonschema` and its dependencies lazily, which happens in
+            # workflow code when an agent's output type is built there; `jsonschema_specifications` also reads
+            # its bundled metaschemas from disk at import.
+            'jsonschema',
+            'jsonschema_specifications',
+            'referencing',
+            'rpds',
             # `response.cost()` lazily imports `genai_prices` (and its httpx2 dependencies) on first call.
             # When cost is calculated or an httpx2-backed model is constructed inside a workflow, the sandbox
             # re-imports that chain and touches restricted request/lock types unless these modules are passed

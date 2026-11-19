@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import copy
+import importlib.util
 import json
 import sys
 import warnings
@@ -19,6 +20,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, cast
 
 from pydantic import Field, TypeAdapter
+from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict
 
@@ -72,6 +74,7 @@ from pydantic_ai_harness._sub_agent_output import (
     without_resumable_outputs,
 )
 from pydantic_ai_harness._warn import renamed_duration_limit
+from pydantic_ai_harness.dynamic_workflow._output_schema import OutputSchema, output_schema_type
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.aws_lambda._bridge import StepBridge
@@ -214,13 +217,28 @@ bounded previews of up to the 20 most recent results are reported so a retry can
 values.\
 """
 
+_OUTPUT_SCHEMA_DESCRIPTION = """\
+A sub-agent with an `output_schema` overload can return a result in a shape you choose: pass a JSON
+schema with `"type": "object"`, and the call returns a dict validated against it instead of the
+agent's own output. Write nested objects inline. The schema can use only these keywords:
+{keywords}.
+
+```python
+finding = await researcher(task="...", output_schema={
+    "type": "object",
+    "properties": {"claim": {"type": "string"}, "confidence": {"type": "number"}},
+    "required": ["claim", "confidence"],
+})
+```\
+""".replace('{keywords}', ', '.join(f'`{keyword}`' for keyword in OutputSchema.__annotations__))
+
 
 # Every sub-agent is exposed with the same fixed parameters -- `(*, task: str)` -- and a per-agent
-# return schema. Render each catalog entry through core's `FunctionSignature` (the renderer
-# code_mode and Pydantic AI already use). This keeps the catalog format consistent across
-# capabilities, forces keyword-only `task` to match `dispatch` (which reads `kwargs['task']`), and
-# renders docstrings safely -- a hand-rolled f-string breaks on a newline or a quote inside a
-# description.
+# return schema, plus an `output_schema` overload for an entry that allows it. Render each catalog
+# entry through core's `FunctionSignature` (the renderer code_mode and Pydantic AI already use).
+# This keeps the catalog format consistent across capabilities, forces keyword-only `task` to
+# match `dispatch` (which reads `kwargs['task']`), and renders docstrings safely -- a hand-rolled
+# f-string breaks on a newline or a quote inside a description.
 _SUB_AGENT_PARAMS_SCHEMA: dict[str, Any] = {
     'type': 'object',
     'properties': {'task': {'type': 'string'}},
@@ -394,6 +412,16 @@ def _agent_signature(name: str, agent: AbstractAgent[AgentDepsT, object]) -> Fun
     )
 
 
+def _with_output_schema_overload(name: str, rendered: str, body: str) -> str:
+    """Overload a function so a call passing `output_schema` returns a dict."""
+    return (
+        f'@overload\n{rendered}\n\n'
+        f'@overload\nasync def {name}(*, task: str, output_schema: dict[str, Any]) -> dict[str, Any]:\n'
+        f'    {body}\n\n'
+        f'async def {name}(*, task: str, output_schema: dict[str, Any] | None = None) -> Any:\n    {body}'
+    )
+
+
 def _signature_blocks(
     catalog: Mapping[str, WorkflowAgent[AgentDepsT]], shown: Sequence[str], *, body: str
 ) -> list[str]:
@@ -406,15 +434,16 @@ def _signature_blocks(
     conflicting = FunctionSignature.get_conflicting_type_names(list(signatures.values()))
     shown_signatures = [signatures[name] for name in shown]
     blocks = FunctionSignature.render_type_definitions(shown_signatures, conflicting)
-    blocks.extend(
-        signature.render(
+    for signature in shown_signatures:
+        rendered = signature.render(
             body,
             description=catalog[signature.name].resolved_description,
             is_async=True,
             conflicting_type_names=conflicting,
         )
-        for signature in shown_signatures
-    )
+        if catalog[signature.name].allow_output_schema:
+            rendered = _with_output_schema_overload(signature.name, rendered, body)
+        blocks.append(rendered)
     return blocks
 
 
@@ -425,7 +454,10 @@ def _render_catalog(catalog: Mapping[str, WorkflowAgent[AgentDepsT]], *, max_age
         f'This run can make at most {max_agent_calls} sub-agent calls in total -- one budget shared across '
         'every `run_workflow` call in the run, not per script; plan fan-out width accordingly.'
     )
-    return f'{_WORKFLOW_BASE_DESCRIPTION}\n\n{budget}\n\nAvailable sub-agents:\n\n{listing}'
+    description = _WORKFLOW_BASE_DESCRIPTION
+    if any(entry.allow_output_schema for entry in catalog.values()):
+        description = f'{description}\n\n{_OUTPUT_SCHEMA_DESCRIPTION}'
+    return f'{description}\n\n{budget}\n\nAvailable sub-agents:\n\n{listing}'
 
 
 @dataclass(kw_only=True)
@@ -447,18 +479,24 @@ def _reveal_announcement(
     name: str,
     catalog: Mapping[str, WorkflowAgent[AgentDepsT]],
     tool_name: str,
+    *,
+    explain_output_schema: bool,
 ) -> AgentRevealPart:
     """Announcement enqueued when a sub-agent is revealed mid-run.
 
     Delivered in the application's voice mid-conversation (not folded into the cached tool description), so the
     prompt-cache prefix stays stable while the model still learns the agent is now callable. `catalog` holds the agents
-    up to and including `name`, in reveal order.
+    up to and including `name`, in reveal order. `explain_output_schema` adds the `output_schema` instructions the
+    frozen tool description lacks.
     """
     block = '\n\n'.join(_signature_blocks(catalog, [name], body='...'))
+    content = (
+        f'A new sub-agent is now available to call from inside the `{tool_name}` script:\n\n```python\n{block}\n```'
+    )
+    if explain_output_schema:
+        content = f'{content}\n\n{_OUTPUT_SCHEMA_DESCRIPTION}'
     return AgentRevealPart(
-        content=OperatorText(
-            f'A new sub-agent is now available to call from inside the `{tool_name}` script:\n\n```python\n{block}\n```'
-        ),
+        content=OperatorText(content),
         source=OperatorSource(),
         tool_name=tool_name,
         agent_name=name,
@@ -603,22 +641,40 @@ def _completed_workflow_result(
     return _workflow_result(completed_output, printed)
 
 
-def _dispatched_task(agent_name: str, kwargs: Mapping[str, object]) -> str:
-    """The `task` a sandbox call to sub-agent `agent_name` passed, its only keyword argument."""
-    # The sandbox signature is `(*, task: str)`, but Monty does not validate kwargs against
-    # it at runtime, and the static check can be evaded through `Any` (e.g. `json.loads`
-    # results) -- so check here: a dropped extra kwarg or a non-string `task` would
-    # otherwise run the sub-agent on silently-wrong input. Each raises before the budget
-    # is touched.
+def _dispatched_call(
+    agent_name: str, kwargs: Mapping[str, object], *, allow_output_schema: bool
+) -> tuple[str, type[JsonSchemaValue] | None]:
+    """The `task` a sandbox call to sub-agent `agent_name` passed, and the output type its `output_schema` asks for."""
+    # Monty does not validate kwargs against the sandbox signature at runtime, and the static
+    # check can be evaded through `Any` (e.g. `json.loads` results) -- so check here: a dropped
+    # extra kwarg or a wrong-typed argument would otherwise run the sub-agent on silently-wrong
+    # input. Each raises before the budget is touched.
     if 'task' not in kwargs:
         raise TypeError(f'{agent_name}() missing required keyword argument: task')
-    extra = sorted(set(kwargs) - {'task'})
+    accepted = ['task', 'output_schema'] if allow_output_schema else ['task']
+    extra = sorted(set(kwargs) - set(accepted))
     if extra:
-        raise TypeError(f'{agent_name}() got unexpected keyword argument(s): {", ".join(extra)}; only task')
+        raise TypeError(
+            f'{agent_name}() got unexpected keyword argument(s): {", ".join(extra)}; only {" and ".join(accepted)}'
+        )
     task = kwargs['task']
     if not isinstance(task, str):
         raise TypeError(f'{agent_name}() task must be a string, got {type(task).__name__}')
-    return task
+    schema = kwargs.get('output_schema')
+    if schema is None:
+        return task, None
+    try:
+        return task, output_schema_type(schema)
+    except ValueError as exc:
+        raise TypeError(f'{agent_name}() output_schema is not usable: {exc}') from exc
+
+
+async def _run_recorded(run: Callable[[], Awaitable[object]]) -> dict[str, Any]:
+    """Run one sub-agent with its failure carried as data, so its branch records it rather than failing."""
+    try:
+        return {'output': await run()}
+    except RuntimeError as exc:
+        return {'error': str(exc)}
 
 
 @dataclass(frozen=True)
@@ -642,6 +698,18 @@ class WorkflowAgent(Generic[AgentDepsT]):
     """Description shown to the model in the sub-agent catalog, rendered as the sandbox
     function's docstring. An explicit value, including `''`, overrides the agent's own
     `description`. When neither is set, the model sees only the bare signature."""
+
+    allow_output_schema: bool = False
+    """Let the script pass `output_schema`, an object JSON schema that replaces the agent's
+    `output_type` for that call. The returned dict is validated against the schema, and the agent's
+    own output type, including any validation it does, is bypassed for the call."""
+
+    def __post_init__(self) -> None:
+        if self.allow_output_schema and importlib.util.find_spec('jsonschema') is None:
+            raise UserError(
+                '`WorkflowAgent(allow_output_schema=True)` validates outputs with the `jsonschema` package. '
+                'Install it with `pip install "pydantic-ai-harness[dynamic-workflow]"`.'
+            )
 
     @property
     def resolved_name(self) -> str | None:
@@ -843,7 +911,15 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 self._by_name[name] = entry
             self._in_flight_announcements.add(name)
             try:
-                ctx.enqueue(_reveal_announcement(name, self._catalog_through(name), self.tool_name))
+                ctx.enqueue(
+                    _reveal_announcement(
+                        name,
+                        self._catalog_through(name),
+                        self.tool_name,
+                        explain_output_schema=entry.allow_output_schema
+                        and not any(self._by_name[known].allow_output_schema for known in self._baseline_names),
+                    )
+                )
             except UserError as exc:
                 warnings.warn(
                     f'DynamicWorkflow revealed sub-agent {name!r}, but could not enqueue its announcement: '
@@ -904,7 +980,12 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         }
 
     async def _run_one(
-        self, agent_name: str, task: str, ctx: RunContext[AgentDepsT], branches: _LambdaBranches | None = None
+        self,
+        agent_name: str,
+        task: str,
+        ctx: RunContext[AgentDepsT],
+        branches: _LambdaBranches | None = None,
+        output_type: type[JsonSchemaValue] | None = None,
     ) -> Any:
         """Run one sub-agent against the shared per-run budget.
 
@@ -926,23 +1007,23 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         self._call_count += 1
         agent = self._by_name[agent_name].agent
         # Also suspension-free: concurrent dispatches join the batch in dispatch order.
-        branch = branches.submit(agent, partial(self._run_recorded, agent_name, task, ctx)) if branches else None
+        run = partial(self._run_sub_agent, agent_name, task, ctx, output_type)
+        branch = branches.submit(agent, partial(_run_recorded, run)) if branches else None
         if branch is not None:
             recorded = await branch
             if 'error' in recorded:
                 raise RuntimeError(recorded['error'])
             return recorded['output']
-        return await self._run_sub_agent(agent_name, task, ctx)
+        return await run()
 
-    async def _run_recorded(self, agent_name: str, task: str, ctx: RunContext[AgentDepsT]) -> dict[str, Any]:
-        """Run one sub-agent with its failure carried as data, so its branch records it rather than failing."""
-        try:
-            return {'output': await self._run_sub_agent(agent_name, task, ctx)}
-        except RuntimeError as exc:
-            return {'error': str(exc)}
-
-    async def _run_sub_agent(self, agent_name: str, task: str, ctx: RunContext[AgentDepsT]) -> Any:
-        """Run one sub-agent and return its output as JSON-compatible data."""
+    async def _run_sub_agent(
+        self,
+        agent_name: str,
+        task: str,
+        ctx: RunContext[AgentDepsT],
+        output_type: type[JsonSchemaValue] | None,
+    ) -> Any:
+        """Run one sub-agent, with `output_type` replacing its own, and return its output as JSON-compatible data."""
         # `ctx.model` is an `AbstractModel`; only a request-response `Model` can drive a sub-agent
         # run. A realtime run's model isn't one, so fall back to the sub-agent's own default rather
         # than forwarding a model it cannot run with. Bind to a local, then `cast` to recover
@@ -957,15 +1038,18 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             usage_limits = ctx.usage_limits
         # Interim: a general hook for capabilities to pass themselves on to child runs (#13135) replaces this.
         deny = find_deny_unanswered(ctx)
+        run = partial(
+            self._by_name[agent_name].agent.run,
+            task,
+            deps=ctx.deps,
+            model=inherited_model,
+            usage=ctx.usage if self.forward_usage else None,
+            usage_limits=usage_limits,
+            capabilities=[serving_model, *([deny] if deny is not None else [])],
+        )
         try:
-            result = await self._by_name[agent_name].agent.run(
-                task,
-                deps=ctx.deps,
-                model=inherited_model,
-                usage=ctx.usage if self.forward_usage else None,
-                usage_limits=usage_limits,
-                capabilities=[serving_model, *([deny] if deny is not None else [])],
-            )
+            # Without a schema, `output_type` is left out: core rejects it on an agent with output validators.
+            result = await (run() if output_type is None else run(output_type=output_type))
             reason = resumable_output_reason(result.output)
             if reason is None:
                 return to_jsonable_python(result.output)
@@ -977,6 +1061,10 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             message = f'sub-agent {agent_name!r} raised {type(exc).__name__}'
             if isinstance(exc, _MODEL_SAFE_EXCEPTION_MESSAGE_TYPES):
                 message = f'{message}: {exc}'
+            elif output_type is not None and isinstance(exc, UserError):
+                message = (
+                    f'{message}; if it has output validators, it cannot take output_schema, so call it without one'
+                )
             raise RuntimeError(message) from exc
         raise RuntimeError(
             f'sub-agent {agent_name!r} {reason}; a workflow script cannot resume it, '
@@ -997,7 +1085,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         is the one the checker knows.
         """
         baseline = {name: entry for name, entry in self._by_name.items() if name in self._baseline_names}
-        parts = ['import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal']
+        parts = ['import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal, overload']
         parts.extend(_signature_blocks(baseline, list(baseline), body=_STUB_BODY))
         for name in self._by_name:
             if name not in self._baseline_names:
@@ -1036,9 +1124,11 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
 
         async def dispatch(agent_name: str, kwargs: dict[str, Any]) -> Any:
             nonlocal budget_exhausted
-            task = _dispatched_task(agent_name, kwargs)
+            task, output_type = _dispatched_call(
+                agent_name, kwargs, allow_output_schema=self._by_name[agent_name].allow_output_schema
+            )
             try:
-                output = await self._run_one(agent_name, task, ctx, branches)
+                output = await self._run_one(agent_name, task, ctx, branches, output_type)
             except _BudgetExhaustedError:
                 budget_exhausted = True
                 raise

@@ -36,7 +36,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
+from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow, WorkflowAgent
 from tests.harness._temporal import ignore_source_reads_left_open
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
@@ -142,5 +142,84 @@ async def test_dynamic_workflow_runs_in_temporal_workflow(client: Client) -> Non
         workflows=[DynamicWorkflowWorkflow],
         plugins=[PydanticAIPlugin()],
         workflow_runner=_workflow_runner(),
+    ).replay_workflow(history)
+    assert replay_result.replay_failure is None
+
+
+_FINDING_SCRIPT = """\
+finding = await finder(task='x', output_schema={
+    'type': 'object',
+    'properties': {'claim': {'type': 'string'}},
+    'required': ['claim'],
+    'additionalProperties': False,
+})
+finding['claim']"""
+
+
+def _finder_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    retried = any(
+        isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+    args = {'claim': 'checked'} if retried else {'claims': 'misspelled'}
+    return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
+
+
+def _schema_orchestrator_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    returns = [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    if not returns:
+        return ModelResponse(parts=[ToolCallPart('run_workflow', {'code': _FINDING_SCRIPT})])
+    return ModelResponse(parts=[TextPart(f'done: {returns[0].content}')])
+
+
+finder_agent = Agent(
+    FunctionModel(_finder_model),
+    name='finder',
+    capabilities=[TemporalDurability(activity_config=ACTIVITY_CONFIG)],
+)
+schema_orchestrator_agent = Agent(
+    FunctionModel(_schema_orchestrator_model),
+    name='dynamic_workflow_output_schema_temporal_agent',
+    capabilities=[
+        DynamicWorkflow(agents=[WorkflowAgent(finder_agent, allow_output_schema=True)]),
+        TemporalDurability(activity_config=ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class OutputSchemaWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await schema_orchestrator_agent.run(prompt)
+        return str(result.output)
+
+
+async def test_output_schema_is_validated_in_temporal_workflow(client: Client) -> None:
+    """A per-call `output_schema` validates workflow-side, retries a mismatching output, and the history replays."""
+    workflow_id = 'test_dynamic_workflow_temporal_output_schema'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[OutputSchemaWorkflow],
+        plugins=[AgentPlugin(schema_orchestrator_agent), AgentPlugin(finder_agent)],
+        workflow_runner=_workflow_runner(),
+    ):
+        output = await client.execute_workflow(
+            OutputSchemaWorkflow.run, args=['Find a claim'], id=workflow_id, task_queue=TASK_QUEUE
+        )
+    assert output == 'done: checked'
+
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    replay_result = await Replayer(
+        workflows=[OutputSchemaWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=_workflow_runner()
     ).replay_workflow(history)
     assert replay_result.replay_failure is None

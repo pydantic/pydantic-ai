@@ -184,6 +184,42 @@ it left pending is cancelled, best effort: a
 [batch](https://pydantic.dev/docs/ai/core-concepts/batch/) is only cancelled once no other request in
 it is still waiting.
 
+### Choosing the shape per call
+
+A sub-agent wrapped in `WorkflowAgent(agent, allow_output_schema=True)` lets the script choose the
+shape of a single call's result: pass `output_schema`, a JSON schema with `"type": "object"`, and
+that call returns a `dict` in that shape instead of the sub-agent's own output. This lets the
+orchestrating model define the format a later step consumes:
+
+```python
+finding = await researcher(task="Who first described the effect?", output_schema={
+    "type": "object",
+    "properties": {"claim": {"type": "string"}, "source_url": {"type": "string"}},
+    "required": ["claim", "source_url"],
+})
+finding["source_url"]
+```
+
+The schema replaces the sub-agent's `output_type` for that run, as
+[`StructuredDict(schema, validate=True)`](https://pydantic.dev/docs/ai/core-concepts/output/#structured-dict):
+it is sent to the model as the output tool's schema, and an output that does not match it goes back
+to the sub-agent's model as a retry, within the sub-agent's output retry budget. The sub-agent's own
+output type, and any validation it does, is bypassed for that call, which is why it is opt-in per
+sub-agent. The `dynamic-workflow` extra installs `jsonschema`, which the validation uses.
+
+The schema is model output that is processed on the host, so nested objects are written inline and
+it can use only the keywords `type`, `properties`, `required`, `additionalProperties`, `items`,
+`enum`, `const`, `anyOf`, `allOf`, `oneOf`, the numeric, length, item and property bounds
+(`minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `minLength`,
+`maxLength`, `minItems`, `maxItems`, `minProperties`, `maxProperties`), and the annotations
+`format`, `title`, `description`, `default` and `examples`. A schema that is not an object schema,
+that uses any other keyword (such as `$ref`, `$defs`, `pattern` or `uniqueItems`), that holds more
+than 1,000 values, or that has more than 16 `anyOf`, `allOf` and `oneOf` options in total, fails the
+call before it counts against `max_agent_calls`. A sub-agent with
+[output validators](https://pydantic.dev/docs/ai/core-concepts/output/#output-validator-functions)
+cannot take a per-run output type, so a call to it with `output_schema` raises a `RuntimeError` in
+the script.
+
 ## A complete, runnable example
 
 This orchestrator drafts three candidate answers in parallel, scores each one, picks the winner,
@@ -601,6 +637,7 @@ WorkflowAgent(
     agent,                        # AbstractAgent, required, positional
     name=None,                    # sandbox function name; falls back to agent.name
     description=None,             # function docstring; None falls back to agent.description, '' hides it
+    allow_output_schema=False,    # let the script pass output_schema to replace the output type per call
 )
 ```
 
