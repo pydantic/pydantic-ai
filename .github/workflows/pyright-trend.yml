@@ -63,9 +63,9 @@ jobs:
           fi
 
           cat > "${RUNNER_TEMP}/pyright-trend.md" <<EOF
-          The \`Type-check with Pyright\` step on \`main\` now takes at least 1.5 times as long as before: ${RUN_URL}
+          The \`Type-check with Pyright\` step on \`main\` got much slower: ${RUN_URL}
 
-          The run's summary has both medians and the runs each one spans. A jump like this usually comes from a new generic signature Pyright cannot solve cheaply, as in #8177; #8182 has the profile of where the time goes.
+          The run's summary has both medians, the runs each one spans, and the ratio that reports a slowdown. A jump like this usually comes from a new generic signature Pyright cannot solve cheaply, as in #8177; #8182 has the profile of where the time goes.
 
           Close this issue once the change that slowed Pyright is fixed, or once its new duration is accepted. The check stops reporting on its own once the slower runs fill both of its windows.
           EOF

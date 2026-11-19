@@ -11,8 +11,9 @@ from the run that makes it most of the newer window until it is also most of the
 consecutive `main` runs, which `pyright-trend.yml` covers by running this hourly. A slowdown fixed within about
 half a window of `main` runs is never reported.
 
-Only a run whose newest `main` run finished within `FRESH_FOR` is judged, so an hour without pushes does not report
-the same window again.
+A check judges only when the newest `main` run finished within `FRESH_FOR`, so a window stops being judged `FRESH_FOR`
+after its newest run. `FRESH_FOR` is longer than the hourly schedule because GitHub delays scheduled runs, so more than
+one check can judge the same window.
 
 Usage:
     python .github/scripts/pyright_trend.py
