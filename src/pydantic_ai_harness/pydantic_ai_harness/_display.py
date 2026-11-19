@@ -49,7 +49,8 @@ class LazyDisplay:
     """The display a backend hands out for its lifetime: started on first use, and again after a failure.
 
     Building it does nothing. `start` brings the display up and leaves a running one alone; `driver` then drives it.
-    `scope` wraps every call, start included, such as to map a provider's errors. The backend also starts it before
+    `scope` wraps every call, including the start. A backend uses it, for example, to turn a provider's errors
+    into workspace errors. The backend also starts it before
     each shell command, so a program the command opens shows on the screen.
 
     A call that only looks, such as a screenshot, is retried once after a failure, which restarts a lost display. An
@@ -73,7 +74,10 @@ class LazyDisplay:
         self._lock = anyio.Lock()
 
     def reset(self) -> None:
-        """Forget that the display runs, such as when the environment may restart: the next call starts it."""
+        """Forget that the display is running, such as when the environment may have restarted.
+
+        The next call starts it.
+        """
         self._running = False
 
     async def start(self) -> None:

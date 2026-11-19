@@ -297,7 +297,10 @@ HOLDING_CTRL = MouseMove(x=1, y=1, modifiers=('ctrl',))
 async def test_a_failed_release_after_a_failed_action_says_what_may_still_be_held(
     fake_daytona: FakeDaytona, no_pauses: None, action: DisplayAction, held: str, release: str
 ) -> None:
-    """The model must not go on with a key or button held; a lost sandbox or a release that may still run ends the run."""
+    """The model must not go on with a key or button held.
+
+    A lost sandbox, or a release that may still run, ends the run.
+    """
     backend, sandbox = await _started(fake_daytona)
 
     async def failing(*args: object, **kwargs: object) -> None:
@@ -354,7 +357,10 @@ async def test_rejected_credentials_end_the_run_without_their_text_when_a_releas
 async def test_input_daytona_did_not_confirm_ends_the_run(
     fake_daytona: FakeDaytona, error: DaytonaError, ends_run: bool
 ) -> None:
-    """Daytona may still be carrying out input it didn't confirm, so later input must not race it; a refusal didn't run."""
+    """Daytona may still be carrying out input it didn't confirm, so later input must not run alongside it.
+
+    Input that Daytona refused never ran.
+    """
     backend, sandbox = await _started(fake_daytona)
 
     async def unconfirmed(*args: object, **kwargs: object) -> None:
@@ -468,7 +474,7 @@ async def test_a_desktop_that_stopped_answering_ends_the_run(fake_daytona: FakeD
     backend, sandbox = await _started(fake_daytona)
     sandbox.computer_use.broken = True
 
-    with pytest.raises(WorkspaceUnavailableError, match='stopping and starting the sandbox brings it back'):
+    with pytest.raises(WorkspaceUnavailableError, match='Stop and start the sandbox to bring it back'):
         await screen(backend).screenshot()
 
 
