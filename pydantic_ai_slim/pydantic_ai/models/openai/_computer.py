@@ -234,9 +234,9 @@ def map_computer_call(
     `None` when the request has no `computer` tool to run it.
     """
     # A request always has it, but recorded streams are replayed without tools by the stream parity test.
-    if not (tool_names := model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)):
+    tool_name = next(iter(model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)), None)
+    if tool_name is None:
         return None
-    tool_name = tool_names[0]
     # The SDK doesn't validate a response, so the item can hold anything; it is kept as sent, without a warning.
     dumped = item.model_dump(mode='json', exclude_none=True, warnings=False)
     return ComputerCallPart(
