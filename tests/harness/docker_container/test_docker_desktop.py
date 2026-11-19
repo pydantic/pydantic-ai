@@ -248,7 +248,7 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
     assert 'Fatal server error' in str(error.value)
 
 
-_INSTALL = 'install -y -qq --no-install-recommends xvfb xdotool x11-utils scrot util-linux'
+_INSTALL = 'install -y -qq --no-install-recommends xvfb xdotool x11-utils scrot util-linux fluxbox tint2 xterm'
 
 # The fake docker hides a program only from its own bin directory, so a host that has it would skip the install.
 _host_without_display_programs = pytest.mark.skipif(
@@ -310,15 +310,67 @@ async def test_missing_display_programs_without_apt_get_say_what_is_missing(
         await screen(backend).screenshot()
 
 
+_HOST_TOOLS = ('base64', 'cat', 'cp', 'dirname', 'env', 'grep', 'mkdir', 'mv', 'rm', 'sleep', 'tail', 'touch', 'tr')
+"""The host programs the start script and the fakes use, for `hide_host_programs`."""
+
+
+def _hide_host_programs(docker: FakeDocker) -> None:
+    docker.hide_host_programs(*_HOST_TOOLS, *(['flock'] if shutil.which('flock') else []))
+
+
 async def test_a_running_x_server_needs_no_xvfb(docker: FakeDocker, container_dir: Path) -> None:
     backend = _desktop(container_dir, image='my-desktop')
     await backend.working_dir()
     assert backend.ref is not None
     docker.leave_x_lock(backend.ref.id, owner='Xvnc')
     docker.uninstall('Xvfb')
+    _hide_host_programs(docker)
 
     assert await screen(backend).display_size() == (1280, 800)
     assert docker.apt_get_calls == []
+
+
+async def test_an_x_server_that_starts_during_the_install_is_kept(docker: FakeDocker, container_dir: Path) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    docker.remove_display()
+    docker.uninstall('xdotool')
+    _hide_host_programs(docker)
+    docker.run_as(0)
+    docker.start_x_during_install()
+
+    assert await screen(backend).display_size() == (1280, 800)
+    assert docker.apt_get_calls == ['update -qq', _INSTALL]
+    assert docker.xvfb_starts == 0
+    assert docker.x_lock_exists(backend.ref.id)
+
+
+async def test_without_root_a_missing_desktop_is_skipped(docker: FakeDocker, container_dir: Path) -> None:
+    # An image with the display programs but no window manager, panel or terminal, and no way to install them.
+    docker.uninstall('fluxbox', 'tint2', 'xterm')
+    _hide_host_programs(docker)
+
+    assert await screen(_desktop(container_dir, image='my-desktop')).screenshot() == FAKE_SCREENSHOT
+    assert docker.apt_get_calls == []
+    assert docker.panel_starts == 0
+
+
+async def test_the_desktop_settings_are_written_for_the_user_unless_present(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    home = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'home'
+    (home / '.config' / 'tint2').mkdir(parents=True)
+    (home / '.config' / 'tint2' / 'tint2rc').write_text('panel_position = top\n')
+
+    await screen(backend).display_size()
+
+    # New windows fill the screen, the panel aside.
+    assert (home / '.fluxbox' / 'apps').read_text() == '[app] (class!=Tint2)\n  [Maximized] {yes}\n[end]\n'
+    assert (home / '.config' / 'tint2' / 'tint2rc').read_text() == 'panel_position = top\n'
 
 
 @_host_without_display_programs

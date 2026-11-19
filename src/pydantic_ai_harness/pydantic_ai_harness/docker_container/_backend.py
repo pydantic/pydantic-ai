@@ -244,32 +244,15 @@ _DESKTOP_DOCKERFILE_FILE = files('pydantic_ai_harness.docker_container').joinpat
 
 DESKTOP_DOCKERFILE = _DESKTOP_DOCKERFILE_FILE.read_text()
 """The image `DockerContainer(desktop=True)` builds on first use: an X server, a window manager, a panel that launches
-Firefox and a terminal, and fonts for most scripts and emoji. Firefox starts without first-run pages, and new
-windows fill the screen."""
+Firefox and a terminal, and fonts for most scripts and emoji. Firefox starts without first-run pages. The window
+manager's and panel's settings, such as new windows filling the screen, are written when the display starts."""
 
 _DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
 
 
-_PANEL_SHOWS = 'xdotool search --onlyvisible --class tint2 >/dev/null 2>&1'
-
-_START_DESKTOP = (
-    start_x_server(f'{_PID_DIR}/xvfb.log') + 'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
-    'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
-    '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; '
-    # tint2 shows only once a window manager answers, so it starts after one.
-    f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then setsid tint2 >{_PID_DIR}/panel.log 2>&1 9>&- & '
-    f'panel=$!; i=0; until {_PANEL_SHOWS} || [ $i -ge 100 ]; do if ! kill -0 $panel 2>/dev/null; then '
-    f"echo 'the panel did not start:' >&2; tail -n 5 {_PID_DIR}/panel.log >&2; exit 1; fi; "
-    'sleep 0.1; i=$((i+1)); done; fi'
-)
-"""Starts an X display of the size `$1` names unless this container's X lock names a running X server, then a
-window manager, then the panel unless it shows. A second start waits for the first, then finds its X server.
-
-A second `fluxbox` exits when one runs, so starting it every time recovers one that died. It then waits up to 10
-seconds for the window manager to answer `xprop`, so the first click focuses and raises the window it lands on, and
-up to 10 seconds for the panel window, so the first screenshot isn't black. It fails if the panel exits first, and
-goes on without it after 10 seconds.
-"""
+_START_DESKTOP = start_x_server(f'{_PID_DIR}/xvfb.log')
+"""Starts an X display of the size `$1` names unless this container's X lock names a running X server, then the desktop
+on it. A second start waits for the first, then finds its X server."""
 
 
 async def _build_desktop_image(runner: LocalWorkspaceBackend, executable: str) -> None:
@@ -295,8 +278,9 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
     if it is gone. The backend never removes the container: call
     [`DockerContainer.destroy`][pydantic_ai_harness.docker_container.DockerContainer.destroy] with its ref.
 
-    With `desktop`, the container gets a display on first use. The image then needs Xvfb, `xdotool`, `xwininfo`
-    (Debian's `x11-utils`), `scrot` and `setsid`, which the first use installs with `apt-get` if it can.
+    With `desktop`, the container gets a desktop on first use. The image then needs `xdotool`, `xwininfo` (Debian's
+    `x11-utils`), `scrot`, `setsid`, Xvfb unless an X server runs, and `fluxbox`, `tint2` and `xterm` for the desktop,
+    which the first use installs with `apt-get` if it can.
 
     Args:
         image: The image for a new container. Pass it or `ref`, not both; with `desktop=True`, leave both out to
