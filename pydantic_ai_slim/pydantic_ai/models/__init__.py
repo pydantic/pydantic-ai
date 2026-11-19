@@ -543,13 +543,10 @@ class ModelRequestParameters:
         return 'withheld' if tool_def is not None and tool_def.defer_loading else 'visible'
 
     def available_tool_names_for_kind(self, kind: ToolKindLike) -> list[str]:
-        """The names of the function tools with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that the model can call on this request.
+        """The names of the function tools with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that the model can call on this request: those not deferred, and those history has revealed.
 
-        A tool counts when it isn't deferred, or when history has revealed it. That is the difference from
-        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind], which also counts a
-        still-deferred tool so that instructions naming it stay the same when it is revealed. A model adapter uses
-        this to find the tool that runs the calls of a provider's native tool. The names are in the order of
-        `function_tools`.
+        That is the difference from [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind],
+        which also counts a still-deferred tool so that instructions naming it stay the same when it is revealed.
 
         Args:
             kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.

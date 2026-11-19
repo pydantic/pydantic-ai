@@ -972,10 +972,9 @@ The response's usage, and so its cost, stays the sum of the passes either way.
 
 ## Computer use
 
-Computer use comes from the Pydantic AI Harness [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]
-capability, which adds a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool]. On the Claude API and Amazon Bedrock
-(`AsyncAnthropicBedrock` and `AsyncAnthropicBedrockMantle`), each Claude model gets the computer use tool it was trained
-on:
+Computer use comes from the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. On the Claude
+API and Amazon Bedrock (`AsyncAnthropicBedrock` and `AsyncAnthropicBedrockMantle`), it sends each Claude model the
+computer use tool it was trained on, as a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool]:
 
 | Models | Tool |
 |---|---|
@@ -984,14 +983,14 @@ on:
 | Claude Haiku 4.5 | `computer_20250124` |
 
 Other models get a function tool, as does every model on Google Vertex AI, Microsoft Foundry and Claude Platform on AWS,
-and any model when `ComputerUse(native=False)` is set. Each model's largest screenshot is listed under
+and any model with `ComputerUse(native=False)`. Each model's largest screenshot is listed under
 [Screen size](../harness/computer-use.md#screen-size).
 
-To send the native tool for a model or client you've checked yourself, set two keys in the model's `profile`: add
-`ComputerTool` to [`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools], which replaces
-the model's own set, so list every native tool you use, and pick the tool with
-[`anthropic_computer_tool_version`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_computer_tool_version].
-Without that key, `computer_20250124` is sent.
+To send the native tool on a model or client you've checked yourself, add `ComputerTool` to the profile's
+[`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools]. That replaces the model's own
+set, so list every native tool you use. Pick the tool with
+[`anthropic_computer_tool_version`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_computer_tool_version];
+without it, `computer_20250124` is sent.
 
 ## Web Tool Callers
 
