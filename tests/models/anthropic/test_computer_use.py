@@ -681,6 +681,8 @@ def test_the_newest_models_get_the_computer_toolset(model_name: str) -> None:
     profile = AnthropicProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('anthropic_computer_tool_version') == 'computer_toolset_20260801'
+    assert profile.get('computer_use_screenshot_max_side') == 2576
+    assert profile.get('computer_use_screenshot_max_pixels') == 2576 * 1456
 
 
 def _stream(*blocks: BetaContentBlock) -> list[BetaRawMessageStreamEvent]:
