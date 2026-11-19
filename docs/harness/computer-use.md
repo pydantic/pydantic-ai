@@ -84,9 +84,10 @@ The first use of the display installs any of them that's missing with `apt-get`,
 That takes 20 to 60 seconds; add them to your image to skip it.
 
 If the first five can't be installed, because the image has no `apt-get` or no root, the run ends with a
-`WorkspaceUnavailableError` that names what's missing. If only `fluxbox`, `tint2` or `xterm` can't be installed, the
-display starts without them: the screen stays black until a program opens a window, and windows have no title bars.
-To get the desktop, add them to your image.
+`WorkspaceUnavailableError` that names what's missing. If `fluxbox`, `tint2` or `xterm` can't be installed or
+don't start, the display still works without them: the screen stays black until a program opens a window, and windows
+have no title bars. The reason is in `/tmp/pydantic-ai-desktop.log` in the sandbox, and the next start tries again.
+To get the desktop for sure, add them to your image.
 
 [E2B](e2b-sandbox.md#give-the-agent-a-desktop) and Daytona start their own desktop, XFCE, and don't get this one.
 
