@@ -333,7 +333,7 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   Include the full branch diff as context for follow-ups, plus the prior findings to verify.
   Disable external diff and text conversion while gathering diffs.
 - Launch the reviewer tier defined by `pre-push-review` from the stable policy-base checkout.
-  Start it as a fresh session of the current harness, with no prior history and only native read and search tools. A subagent of your own session does not qualify when it inherits your working directory or loaded instructions.
+  Start it as a fresh session of the current harness, with no prior history. A subagent of your own session does not qualify when it inherits your working directory or loaded instructions.
   Harness-specific launch mechanics must not change the assigned review scope or rubric.
 - The reviewer may work the review rubric, or decompose this diff and fan out to subagents of its
   own where the diff's risk is specific enough that the rubric would not name it. That
@@ -359,7 +359,7 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   review material.
 - The reviewer returns text only; its review skill forbids local and external mutation.
 
-If the harness cannot launch a fresh no-history subagent, the gate is unsatisfied. Do not pass it
+If the harness cannot launch a fresh no-history session, the gate is unsatisfied. Do not pass it
 silently. Tell the author the gate cannot be met in this harness and offer the one substitute there
 is: clear the session and review the diff from a fresh read. Say plainly what it costs — you are
 still the agent that wrote the diff, now without the memory of writing it, and a cleared session
@@ -471,7 +471,7 @@ To claim an exemption the table does not name, write down the rubric rung the de
 why it cannot, in `pr-decisions.md`.
 
 Never use the implementing agent as the reviewer. The one exception is the substitute the contract
-names for a harness that cannot launch a fresh no-history subagent at all — the author accepts it,
+names for a harness that cannot launch a fresh no-history session at all — the author accepts it,
 and it leaves this gate unsatisfied. Never treat this gate as test execution.
 
 Never force-push an open PR branch. Push follow-up commits so previous reviews remain valid;
