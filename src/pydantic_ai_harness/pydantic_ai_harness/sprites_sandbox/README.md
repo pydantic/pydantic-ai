@@ -183,7 +183,7 @@ async def main():
 
 The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use, which installs [the desktop's programs](../computer_use/#what-the-display-needs) with `apt-get` and can take a minute: the agent sees a panel along the bottom with a button that opens a terminal, and no web browser. Each window it opens fills the screen. Commands get `DISPLAY` set for it, so apps the agent starts from the shell open there too.
 
-A cold wake stops the display and the apps on it (see [Sprite lifecycle](https://docs.fly.io/sprites/concepts/lifecycle.md)): the agent's open windows are lost, and the agent has to open its apps again. Files on disk are kept. The display restarts on the agent's next screenshot or action; a program started from the shell before then can't open a window.
+A cold wake stops the display and the apps on it (see [Sprite lifecycle](https://docs.fly.io/sprites/concepts/lifecycle.md)): the agent's open windows are lost, and the agent has to open its apps again. Files on disk are kept. Within the same run, the display restarts on the agent's next screenshot or action, and a program started from the shell before then can't open a window. A later run attaches with a new backend, so its first command starts the display.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 

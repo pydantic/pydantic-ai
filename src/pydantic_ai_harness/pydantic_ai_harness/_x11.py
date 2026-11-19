@@ -303,19 +303,20 @@ _DESKTOP_CONFIG = (
 already there alone. A home that can't be written leaves their own defaults."""
 
 _START_WINDOW_MANAGER = (
-    # Under an open-file limit as high as a Kubernetes pod's 1,073,741,816, tint2's launcher spins and its terminal
-    # button opens nothing. With soft and hard limits of 1,048,576 it opens in under a second, so the desktop programs
-    # get that at most. The soft limit is lowered first, so it never ends above the hard one. The X server keeps its own.
-    'for l in S H; do n=$(ulimit -$l -n); { [ "$n" = unlimited ] || [ "$n" -gt 1048576 ]; } 2>/dev/null && '
-    'ulimit -$l -n 1048576 2>/dev/null; done; '
     f'if command -v fluxbox >/dev/null; then {{ {_DESKTOP_CONFIG}}} 2>/dev/null; '
     # A second fluxbox exits when one runs, so starting it every time recovers one that died. The wait lets the first
     # click focus and raise the window it lands on.
     'setsid fluxbox >>"$desktop_log" 2>&1 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
     '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; fi; '
-    # tint2 shows only once a window manager answers, so it starts after one.
-    f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then setsid tint2 >>"$desktop_log" 2>&1 9>&- & '
+    # tint2 shows only once a window manager answers, so it starts after one. Before running a launcher's program,
+    # tint2 closes every file handle up to its soft open-file limit. Under a Kubernetes pod's 1,073,741,816, its
+    # terminal button opened nothing; with the soft limit at 1,048,576 it opened xterm in under a second. So tint2
+    # alone starts with its soft limit capped there, and the hard limit, which programs it opens can raise theirs to,
+    # stays as it was.
+    f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then '
+    '( n=$(ulimit -S -n); { [ "$n" = unlimited ] || [ "$n" -gt 1048576 ]; } 2>/dev/null && '
+    'ulimit -S -n 1048576 2>/dev/null; exec setsid tint2 ) >>"$desktop_log" 2>&1 9>&- & '
     f'panel=$!; i=0; until {_PANEL_SHOWS} || ! kill -0 $panel 2>/dev/null || [ $i -ge 100 ]; do '
     'sleep 0.1; i=$((i+1)); done; fi; '
 )
