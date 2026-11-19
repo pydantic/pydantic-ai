@@ -469,9 +469,10 @@ Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`
   not flush a VM's disk when the process exits, so stop it first:
   `await (await SmolSandbox().backend(ref).get_sandbox()).stop()`.
 - File operations go through the VM's shell, 64 KiB per command; multi-MiB files take seconds.
-- `desktop=True` gives the VM a plain 1280x800 Xvfb (no window manager) for `ComputerUse()`, or pass
-  `desktop=(w, h)`. The first start installs the display programs with `apt-get`, which needs
-  `allow_internet_access=True`, or an `image` that has them; without either, `UserError`.
+- `desktop=True` gives the VM a 1280x800 desktop (fluxbox, a panel with a terminal button, no browser) for
+  `ComputerUse()`, or pass `desktop=(w, h)`. The first start installs its programs with `apt-get`, which needs
+  `allow_internet_access=True`, or an `image` that has them; creating a new VM without either raises `UserError`,
+  attaching to one doesn't.
 
 ### BoxLiteSandbox
 

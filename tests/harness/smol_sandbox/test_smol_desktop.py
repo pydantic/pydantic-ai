@@ -48,6 +48,8 @@ async def test_a_desktop_vm_runs_debian_and_the_computer_tool(
     assert any(command.endswith('mousemove 3 4 click --repeat 1 1') for command in display.xdotool)
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')
+    # The desktop: its programs installed when missing, and the window manager started.
+    assert 'fluxbox tint2 xterm' in start and 'setsid fluxbox' in start
     # The default Alpine image has no `apt-get` to install the display programs with.
     (vm,) = fake_smol.vms.values()
     assert vm.config.image == 'debian:bookworm-slim'
@@ -57,7 +59,7 @@ async def test_a_desktop_vm_without_network_needs_an_image_with_the_display_prog
     fake_smol: FakeSmol, display: FakeDisplay, tmp_path: Path
 ) -> None:
     with pytest.raises(UserError, match='needs `allow_internet_access=True`'):
-        SmolSandbox(desktop=True)
+        SmolSandboxBackend(desktop=True)
 
     await SmolSandboxBackend(working_dir=str(tmp_path.resolve()), image='my-desktop', desktop=True).get_sandbox()
     (vm,) = fake_smol.vms.values()
@@ -84,7 +86,8 @@ async def test_a_desktop_vm_reattaches_with_its_display(
     await owner.get_sandbox()
     assert owner.ref is not None
 
-    sandbox = SmolSandbox(working_dir=str(tmp_path.resolve()), desktop=(1440, 900), allow_internet_access=True)
+    # Attaching installs nothing it can't, so the network setting for new VMs doesn't stop it.
+    sandbox = SmolSandbox(working_dir=str(tmp_path.resolve()), desktop=(1440, 900))
     attached = sandbox.backend(owner.ref)
     await screen(attached).display_size()
 

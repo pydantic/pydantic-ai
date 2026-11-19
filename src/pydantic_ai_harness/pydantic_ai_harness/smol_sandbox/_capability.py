@@ -75,7 +75,6 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
         check_integer('memory_mb', self.memory_mb, optional=True)
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
-        _backend.check_desktop(self.desktop, self.image, self.allow_internet_access)
 
     def backend(self, ref: WorkspaceRef) -> SmolSandboxBackend:
         """Attach lazily to an existing VM, one `SmolSandbox` created."""
