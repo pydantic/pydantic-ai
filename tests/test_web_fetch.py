@@ -1076,6 +1076,7 @@ class _RecordedBudget(int):
     """A budget that records every amount a check finds over it.
 
     A check `amount > budget` calls the budget's reflected `__lt__`, because the budget's type subclasses `int`.
+    A check that rejects the document as soon as it finds it over budget leaves exactly one amount.
     """
 
     amounts_over: list[int]
@@ -1092,8 +1093,8 @@ class _RecordedBudget(int):
         return False
 
 
-_COST = '_MAX_HTML_CONVERSION_COST'
-_TEXT = '_MAX_HTML_TEXT_SCAN_COST'
+_COST_BUDGET = '_MAX_HTML_CONVERSION_COST'
+_TEXT_BUDGET = '_MAX_HTML_TEXT_SCAN_COST'
 # Content after these 16 `<div>`s sits at depth 18 (the document itself is depth 1), two levels past the 16 where
 # deep scans start. The deepest `<div>` charges 8 conversion cost for its own scan.
 _DEEP = '<div>' * 16
@@ -1103,66 +1104,82 @@ _BUDGET_TOTAL_CASES = [
     pytest.param('<p>a&amp;b</p>', '_MAX_HTML_MARKUP_DELIMITERS', 3, id='markup-delimiters'),
     # Tag and attribute, self-closing tag, entity, character reference, end tag.
     pytest.param('<p a=1>a<br/>&amp;&#65;</p>', '_MAX_HTML_MARKUP_EVENTS', 6, id='markup-events'),
+    pytest.param(
+        '<!DOCTYPE html><!--x--><?pi x?><![CDATA[x]]>', '_MAX_HTML_MARKUP_EVENTS', 4, id='markup-special-sections'
+    ),
     pytest.param('<p a b=1 c>x</p>', '_MAX_HTML_TAG_ATTRIBUTES', 3, id='tag-attributes'),
     # An indent of depth 1 and width 4: 5 for the tag and 5 for its one line break.
-    pytest.param('<ul><li>a\nb</li></ul>', _COST, 10, id='list-item'),
-    pytest.param('<blockquote>a\nb</blockquote>', _COST, 10, id='blockquote'),
+    pytest.param('<ul><li>a\nb</li></ul>', _COST_BUDGET, 10, id='list-item'),
+    pytest.param('<blockquote>a\nb</blockquote>', _COST_BUDGET, 10, id='blockquote'),
     # A cell's 8 per column and its row's 8 per node; the quote inside the cell doesn't indent.
-    pytest.param('<table><tr><td><blockquote>a\nb</blockquote></td></tr></table>', _COST, 40, id='blockquote-in-cell'),
-    pytest.param('<table><tr><th><dd>a\nb</dd></th></tr></table>', _COST, 40, id='definition-in-header-cell'),
-    # Line breaks inside `<pre>` are not indented.
-    pytest.param('<blockquote><pre>a\nb</pre></blockquote>', _COST, 10, id='pre-in-blockquote'),
-    # Ordered-list markers are as wide as the start number without leading zeros, or the item count, plus 3.
-    pytest.param('<ol start="0012"><li>a\nb</li></ol>', _COST, 12, id='ordered-list-start'),
-    pytest.param('<ol start="12²"><li>a\nb</li></ol>', _COST, 10, id='ordered-list-non-decimal-start'),
-    pytest.param('<ol><li>a\nb</li>' + '<li></li>' * 9 + '</ol>', _COST, 66, id='ordered-list-item-count'),
-    # Past depth 16, each tag charges 8 per level, times its indent depth plus one.
-    pytest.param(_DEEP + '<p><br></p>', _COST, 48, id='deep-tags'),
-    pytest.param(_DEEP + '<ul><li>x</li></ul>', _COST, 77, id='deep-list-item'),
-    pytest.param('<table><tr><td colspan="00005">x</td></tr></table>', _COST, 64, id='colspan-with-leading-zeros'),
-    pytest.param('<table><tr><td colspan="2000">x</td></tr></table>', _COST, 8024, id='colspan-capped-at-1000'),
-    pytest.param('<table><tr><td colspan="x">x</td></tr></table>', _COST, 32, id='colspan-not-a-number'),
-    pytest.param(_DEEP + '<table><tr><td colspan="3">x</td></tr></table>', _COST, 224, id='deep-colspan'),
-    # A header row with a data cell also charges the whole `<thead>`; the first body row, the whole table.
     pytest.param(
-        '<table><thead><tr><td>x</td></tr><tr><td>y</td></tr></thead></table>', _COST, 176, id='table-head-rows'
+        '<table><tr><td><blockquote>a\nb</blockquote></td></tr></table>', _COST_BUDGET, 40, id='blockquote-in-cell'
     ),
-    pytest.param('<table><thead><tr><th>x</th></tr></thead></table>', _COST, 32, id='table-head-header-cells'),
+    pytest.param('<table><tr><th><dd>a\nb</dd></th></tr></table>', _COST_BUDGET, 40, id='definition-in-header-cell'),
+    # Line breaks inside `<pre>` are not indented.
+    pytest.param('<blockquote><pre>a\nb</pre></blockquote>', _COST_BUDGET, 10, id='pre-in-blockquote'),
+    # Ordered-list markers are as wide as the start number without leading zeros, or the item count, plus 3.
+    pytest.param('<ol start="0012"><li>a\nb</li></ol>', _COST_BUDGET, 12, id='ordered-list-start'),
+    pytest.param('<ol start="12²"><li>a\nb</li></ol>', _COST_BUDGET, 10, id='ordered-list-non-decimal-start'),
+    pytest.param('<ol><li>a\nb</li>' + '<li></li>' * 9 + '</ol>', _COST_BUDGET, 66, id='ordered-list-item-count'),
+    # Past depth 16, each tag charges 8 per level, times its indent depth plus one.
+    pytest.param(_DEEP + '<p><br></p>', _COST_BUDGET, 48, id='deep-tags'),
+    pytest.param(_DEEP + '<ul><li>x</li></ul>', _COST_BUDGET, 77, id='deep-list-item'),
     pytest.param(
-        '<table><tbody><tr><td>x</td></tr><tr><td>y</td></tr></tbody></table>', _COST, 128, id='table-body-rows'
+        '<table><tr><td colspan="00005">x</td></tr></table>', _COST_BUDGET, 64, id='colspan-with-leading-zeros'
+    ),
+    pytest.param('<table><tr><td colspan="2000">x</td></tr></table>', _COST_BUDGET, 8024, id='colspan-capped-at-1000'),
+    pytest.param('<table><tr><td colspan="x">x</td></tr></table>', _COST_BUDGET, 32, id='colspan-not-a-number'),
+    pytest.param(_DEEP + '<table><tr><td colspan="3">x</td></tr></table>', _COST_BUDGET, 224, id='deep-colspan'),
+    # Each `<thead>` row that holds a data cell also charges the whole `<thead>`; the first `<tbody>` row, the whole
+    # table.
+    pytest.param(
+        '<table><thead><tr><td>x</td></tr><tr><td>y</td></tr></thead></table>', _COST_BUDGET, 176, id='table-head-rows'
+    ),
+    pytest.param('<table><thead><tr><th>x</th></tr></thead></table>', _COST_BUDGET, 32, id='table-head-header-cells'),
+    pytest.param(
+        '<table><tbody><tr><td>x</td></tr><tr><td>y</td></tr></tbody></table>', _COST_BUDGET, 128, id='table-body-rows'
     ),
     # A video without `src` charges 8 per node it searches for a source.
-    pytest.param('<video>' + '<!---->' * 100 + '</video>', _COST, 808, id='video-source-search'),
-    pytest.param('<video>' * 3 + '<!---->' * 100 + '</video>' * 3, _COST, 2448, id='nested-video-source-search'),
-    pytest.param(_DEEP + '<video src="s"><!----></video>', _COST, 24, id='video-with-src'),
+    pytest.param('<video>' + '<!---->' * 100 + '</video>', _COST_BUDGET, 808, id='video-source-search'),
+    pytest.param('<video>' * 3 + '<!---->' * 100 + '</video>' * 3, _COST_BUDGET, 2448, id='nested-video-source-search'),
+    pytest.param(_DEEP + '<video src="s"><!----></video>', _COST_BUDGET, 24, id='video-with-src'),
     # A deep link's autolink probe charges 8 per descendant, even when it renders as one autolink.
     pytest.param(
         '<div>' * 17 + f'<a href="{"x" * 200}">' + 'x<!--ignored-->' * 200 + '</a>' + '</div>' * 17,
-        _COST,
+        _COST_BUDGET,
         1648,
         id='link-probe-descendants',
     ),
     # A link at depth 16 is not probed; the `<br>` inside it, at depth 17, charges 8.
-    pytest.param('<div>' * 14 + '<a href="u">x<br></a>', _COST, 8, id='link-at-depth-16'),
+    pytest.param('<div>' * 14 + '<a href="u">x<br></a>', _COST_BUDGET, 8, id='link-at-depth-16'),
     # Past depth 16, text charges its converted length per level, unless an inline or `<pre>` container drops it.
-    pytest.param(_DEEP + '<p>abc</p>', _TEXT, 6, id='deep-text'),
-    pytest.param(_DEEP + '<p>*</p>', _TEXT, 4, id='deep-escaped-text'),
-    pytest.param(_DEEP + '<h3>abc</h3><p>x</p>', _TEXT, 2, id='text-in-heading'),
+    pytest.param(_DEEP + '<p>abc</p>', _TEXT_BUDGET, 6, id='deep-text'),
+    pytest.param(_DEEP + '<p>*</p>', _TEXT_BUDGET, 4, id='deep-escaped-text'),
+    pytest.param(_DEEP + '<h3>abc</h3><p>x</p>', _TEXT_BUDGET, 2, id='text-in-heading'),
     # Underlined headings repeat their text, and code delimiters repeat each backtick twice.
-    *(pytest.param(_DEEP + f'<{tag}>abc</{tag}>', _TEXT, 6, id=f'deep-{tag}') for tag in ('h1', 'h2')),
-    pytest.param(_DEEP + '<table><tr><td><h1>abc</h1></td></tr></table><p>x</p>', _TEXT, 2, id='heading-in-cell'),
-    *(pytest.param(_DEEP + f'<{tag}>a`b</{tag}>', _TEXT, 10, id=f'deep-{tag}') for tag in ('code', 'kbd', 'samp')),
-    pytest.param(_DEEP + '<pre><code>`</code></pre><p>x</p>', _TEXT, 2, id='code-in-pre'),
-    *(pytest.param(_DEEP + f'<{tag}><code>`</code></{tag}>', _TEXT, 7, id=f'code-in-{tag}') for tag in ('kbd', 'samp')),
-    # A deep link that isn't an autolink charges its URL and title per level, plus one per escaped quote.
-    pytest.param(_DEEP + '<a href="uv">t</a>', _TEXT, 6, id='deep-link'),
-    pytest.param(_DEEP + '<a href="uv"><span>t</span></a>', _TEXT, 7, id='deep-link-with-wrapped-text'),
-    pytest.param(_DEEP + '<a href="u" title=\'a"b\'>u</a>', _TEXT, 12, id='deep-link-with-title'),
-    pytest.param(_DEEP + '<a href="u"><em>u</em></a>', _TEXT, 5, id='deep-link-with-formatted-text'),
-    # A link with only blank text renders nothing for its URL; these elements render even when empty.
-    pytest.param(_DEEP + '<a href="u"> </a>', _TEXT, 2, id='deep-link-with-blank-text'),
+    *(pytest.param(_DEEP + f'<{tag}>abc</{tag}>', _TEXT_BUDGET, 6, id=f'deep-{tag}') for tag in ('h1', 'h2')),
+    pytest.param(
+        _DEEP + '<table><tr><td><h1>abc</h1></td></tr></table><p>x</p>', _TEXT_BUDGET, 2, id='heading-in-cell'
+    ),
     *(
-        pytest.param(_DEEP + f'<a href="u">{content}</a>', _TEXT, total, id=f'deep-link-around-{name}')
+        pytest.param(_DEEP + f'<{tag}>a`b</{tag}>', _TEXT_BUDGET, 10, id=f'deep-{tag}')
+        for tag in ('code', 'kbd', 'samp')
+    ),
+    pytest.param(_DEEP + '<pre><code>`</code></pre><p>x</p>', _TEXT_BUDGET, 2, id='code-in-pre'),
+    *(
+        pytest.param(_DEEP + f'<{tag}><code>`</code></{tag}>', _TEXT_BUDGET, 7, id=f'code-in-{tag}')
+        for tag in ('kbd', 'samp')
+    ),
+    # A deep link that isn't an autolink charges its URL and title per level, plus one per escaped quote.
+    pytest.param(_DEEP + '<a href="uv">t</a>', _TEXT_BUDGET, 6, id='deep-link'),
+    pytest.param(_DEEP + '<a href="uv"><span>t</span></a>', _TEXT_BUDGET, 7, id='deep-link-with-wrapped-text'),
+    pytest.param(_DEEP + '<a href="u" title=\'a"b\'>u</a>', _TEXT_BUDGET, 12, id='deep-link-with-title'),
+    pytest.param(_DEEP + '<a href="u"><em>u</em></a>', _TEXT_BUDGET, 5, id='deep-link-with-formatted-text'),
+    # A link with only blank text renders nothing for its URL; these elements render even when empty.
+    pytest.param(_DEEP + '<a href="u"> </a>', _TEXT_BUDGET, 2, id='deep-link-with-blank-text'),
+    *(
+        pytest.param(_DEEP + f'<a href="u">{content}</a>', _TEXT_BUDGET, total, id=f'deep-link-around-{name}')
         for name, content, total in (
             ('hr', '<hr>', 2),
             ('q', '<q></q>', 2),
@@ -1176,50 +1193,62 @@ _BUDGET_TOTAL_CASES = [
     ),
     pytest.param(
         _DEEP + '<table><tr><td><a href="u"><video src="s"></video></a></td></tr></table><p>x</p>',
-        _TEXT,
+        _TEXT_BUDGET,
         2,
         id='deep-link-around-inline-video',
     ),
-    pytest.param(_DEEP + '<a href="a_b">a_b</a>', _TEXT, 8, id='deep-autolink-with-underscore'),
+    pytest.param(_DEEP + '<a href="a_b">a_b</a>', _TEXT_BUDGET, 8, id='deep-autolink-with-underscore'),
     pytest.param(
         '<div>' * 17 + '<a href="x\ny"><span>x<!--ignored-->\n\n<!--ignored-->y</span></a>',
-        _TEXT,
+        _TEXT_BUDGET,
         12,
         id='deep-autolink-with-newline-only-text',
     ),
-    # A block video past depth 16 charges its URL and poster per level.
-    pytest.param(_DEEP + '<video src="ab"></video>', _TEXT, 4, id='deep-video-src'),
-    pytest.param(_DEEP + '<video poster="ab"></video>', _TEXT, 4, id='deep-video-poster'),
-    pytest.param(_DEEP + '<video><source src="ab"></video>', _TEXT, 4, id='deep-video-source'),
-    pytest.param(_DEEP + '<video><source src="a"><source src="bcd"></video>', _TEXT, 2, id='deep-video-first-source'),
-    pytest.param(_DEEP + '<video><source><source src="ab"></video>', _TEXT, 4, id='deep-video-source-without-src'),
+    # Code, headings and videos no deeper than 16 charge nothing, ahead of the deep ones that are charged.
     pytest.param(
-        _DEEP + '<video><source src=""><source src="ab"></video><p>x</p>', _TEXT, 2, id='deep-video-empty-source'
+        '<code>`</code><h1>abc</h1>' + _DEEP + '<code>`</code><h1>abc</h1>',
+        _TEXT_BUDGET,
+        12,
+        id='shallow-code-and-heading',
+    ),
+    pytest.param('<video src="ab"></video>' + _DEEP + '<video src="abc"></video>', _TEXT_BUDGET, 6, id='shallow-video'),
+    # A block video past depth 16 charges its URL and poster per level.
+    pytest.param(_DEEP + '<video src="ab"></video>', _TEXT_BUDGET, 4, id='deep-video-src'),
+    pytest.param(_DEEP + '<video poster="ab"></video>', _TEXT_BUDGET, 4, id='deep-video-poster'),
+    pytest.param(_DEEP + '<video><source src="ab"></video>', _TEXT_BUDGET, 4, id='deep-video-source'),
+    pytest.param(
+        _DEEP + '<video><source src="a"><source src="bcd"></video>', _TEXT_BUDGET, 2, id='deep-video-first-source'
+    ),
+    pytest.param(
+        _DEEP + '<video><source><source src="ab"></video>', _TEXT_BUDGET, 4, id='deep-video-source-without-src'
+    ),
+    pytest.param(
+        _DEEP + '<video><source src=""><source src="ab"></video><p>x</p>', _TEXT_BUDGET, 2, id='deep-video-empty-source'
     ),
 ]
 
 # Each case is a document, a budget, the amount at which a check first finds the document over a budget one below
 # that amount, and the amount at which the next check does.
 _BUDGET_CHECK_CASES = [
-    pytest.param(_DEEP + '<p></p><p></p>', _COST, 24, 40, id='per-node-cost'),
-    pytest.param(_DEEP + '<p>a</p><p>b</p>', _TEXT, 2, 4, id='per-node-text'),
-    pytest.param(_DEEP + '<a href="u">x<!---->y</a>', _COST, 32, 40, id='link-probe-descendant'),
+    pytest.param(_DEEP + '<p></p><p></p>', _COST_BUDGET, 24, 40, id='per-node-cost'),
+    pytest.param(_DEEP + '<p>a</p><p>b</p>', _TEXT_BUDGET, 2, 4, id='per-node-text'),
+    pytest.param(_DEEP + '<a href="u">x<!---->y</a>', _COST_BUDGET, 32, 40, id='link-probe-descendant'),
     # Link text in a heading isn't scanned, so the probe's rendering is the only text charge. The first link
     # renders 100 fragments, joins them for its one tag, and compares the result with its URL.
     *(
         pytest.param(
             '<div>' * 16 + f'<h3><a href="{"x" * 100}">' + 'x<!---->' * 100 + '</a><a href="z">z</a></h3>',
-            _TEXT,
+            _TEXT_BUDGET,
             first,
             then,
             id=f'link-probe-{name}',
         )
         for name, first, then in (('fragment', 51, 52), ('tag', 200, 300), ('link', 300, 301))
     ),
-    pytest.param(_DEEP + '<a href="uv">t</a><a href="w">s</a>', _TEXT, 8, 10, id='per-link-text'),
-    pytest.param('<table><tr><td>x</td></tr><tr><td>y</td></tr></table>', _COST, 40, 64, id='per-row-cost'),
-    pytest.param('<video><!----></video><video><!----></video>', _COST, 16, 32, id='per-video-cost'),
-    pytest.param(_DEEP + '<video src="ab"></video><video src="c"></video>', _TEXT, 4, 6, id='per-video-text'),
+    pytest.param(_DEEP + '<a href="uv">t</a><a href="w">s</a>', _TEXT_BUDGET, 8, 10, id='per-link-text'),
+    pytest.param('<table><tr><td>x</td></tr><tr><td>y</td></tr></table>', _COST_BUDGET, 40, 64, id='per-row-cost'),
+    pytest.param('<video><!----></video><video><!----></video>', _COST_BUDGET, 16, 32, id='per-video-cost'),
+    pytest.param(_DEEP + '<video src="ab"></video><video src="c"></video>', _TEXT_BUDGET, 4, 6, id='per-video-text'),
 ]
 
 
