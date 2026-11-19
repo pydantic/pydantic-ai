@@ -1222,7 +1222,10 @@ streamed output while CLAI works, and remains editable. A `Working` label and
 animated spinner, in the same pink accent as tool names, appear in the box's top border while a turn or its lifecycle
 hooks are active, without adding a row to the input area. The animation uses the editor's existing refresh
 cycle and disappears when work finishes, fails, or is cancelled. It is not part
-of your draft or submitted message. The editor sits below a Termflow live transcript panel on the alternate screen.
+of your draft or submitted message. CLAI starts compact, below what your shell already
+printed, and grows with the session as output arrives. Until then the terminal keeps its
+own scrolling and text selection. Once the session fills the terminal, the editor sits
+below a Termflow live transcript panel on the alternate screen.
 Both partial and completed output paint above it without repainting unchanged
 input cells. PageUp/PageDown and the mouse wheel scroll the transcript without
 changing the draft. New output leaves a scrolled view in place; returning to the

@@ -16,7 +16,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
 from pydantic_clai2.cli.self_update import installed
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import INLINE_OFF, PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from tests.clai2.surface_terminal import SurfaceTerminal
 
@@ -88,6 +88,6 @@ async def test_clear_returns_to_the_start_screen(tmp_path: Path, monkeypatch: py
     assert text.count('/new starts a session') == 1
     assert '> hello' not in text
     # The exit printout forgets the cleared conversation too, so it never reappears on screen.
-    printed = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
+    printed = Text.from_ansi(output.getvalue().rsplit(INLINE_OFF, 1)[1]).plain
     assert '> hello' not in printed
     assert printed.index('/new starts a session') < printed.index('Goodbye.')

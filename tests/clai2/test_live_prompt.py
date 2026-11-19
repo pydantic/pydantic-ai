@@ -30,7 +30,7 @@ from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.live_prompt import IDLE_REPAINT, LivePrompt, PromptWakeup
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
-from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, MODES_ON, WHEEL_ROWS
+from pydantic_clai2.ui.prompt.prompt_surface import ENTER, KEYS_ON, LEAVE, MODES_OFF, WHEEL_ROWS, PromptSurface
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
 from tests.conftest import no_leaked_tasks
@@ -44,8 +44,11 @@ async def editor(
     clock: Callable[[], float] = lambda: 0,
     panel: Callable[[str], Sequence[str]] = lambda _: (),
     key_wait_limit: float = 5,
+    inline: bool = False,
 ) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
     """An opened editor on a pipe; `key_wait_limit` fails a test left waiting for keys that never come.
+
+    The panel is full screen unless `inline`, so frames have fixed rows; production starts inline.
 
     A test that feeds no keys and writes to a real store passes a limit no stall reaches: a slow disk is no hang.
     """
@@ -68,12 +71,16 @@ async def editor(
             clock=clock,
             panel=panel,
         )
+        live.output = PromptSurface(
+            output=output, size=lambda: console.size, transcript=live.output.transcript, inline=inline
+        )
         async with live.opened():
             yield live, pipe, output
         assert console.file is output
         value = output.getvalue()
-        assert value.rindex(LEAVE) > value.rindex(ENTER), 'the editor returns the main screen'
-        assert value.rindex(MODES_OFF) > value.rindex(MODES_ON)
+        if not inline:
+            assert value.rindex(LEAVE) > value.rindex(ENTER), 'the editor returns the main screen'
+        assert value.rindex(MODES_OFF) > value.rindex(KEYS_ON)
 
 
 async def test_long_paste_submission_and_history() -> None:
@@ -1054,3 +1061,16 @@ async def test_reading_shows_the_status_the_shell_set_before_it() -> None:
         with pytest.raises(PromptWakeup):
             await live.read()
         assert terminal.lines()[-1].strip() == 'new-model'
+
+
+async def test_the_editor_opens_compact_below_the_shell() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    terminal.write('$ clai2\r\n')
+    async with editor(output=terminal, inline=True) as (live, _, _):
+        live.buffer.replace('draft')
+        live.paint()
+        assert not terminal.alternate
+        lines = terminal.lines()
+        assert lines[0] == '$ clai2' and lines[1] == ''
+        assert any(line.startswith('draft') for line in lines[2:6])
+        assert lines[-1] == '', 'the panel takes only the rows it needs'

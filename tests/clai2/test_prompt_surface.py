@@ -42,7 +42,7 @@ def test_terminal_fixture_returns_on_main_screen_newlines_only() -> None:
 
 
 class Screen:
-    def __init__(self, *, width: int = 80, height: int = 24) -> None:
+    def __init__(self, *, width: int = 80, height: int = 24, inline: bool = False) -> None:
         self.now = 0.0
         self.terminal = SurfaceTerminal(width=width, height=height)
         self.opened: list[str] = []
@@ -51,6 +51,7 @@ class Screen:
             size=lambda: (self.terminal.width, self.terminal.height),
             clock=lambda: self.now,
             open_url=self.opened.append,
+            inline=inline,
         )
 
     def write(self, text: str) -> None:
@@ -64,7 +65,7 @@ class Screen:
 
 def test_modified_key_and_mouse_reporting_are_scoped_to_editor_ownership() -> None:
     output = io.StringIO()
-    surface = PromptSurface(output=output, size=lambda: (80, 24))
+    surface = PromptSurface(output=output, size=lambda: (80, 24), inline=False)
     for activation in range(1, 3):
         surface.paint(ROWS)
         surface.paint((*ROWS, 'EXTRA ROW'))
@@ -386,7 +387,11 @@ def test_short_transcripts_do_not_scroll() -> None:
 def test_scroll_anchor_survives_eviction_by_following_again() -> None:
     terminal = SurfaceTerminal(width=40, height=8)
     surface = PromptSurface(
-        output=terminal, size=lambda: (40, 8), transcript=TranscriptBuffer(max_lines=10), clock=lambda: 1.0
+        output=terminal,
+        size=lambda: (40, 8),
+        transcript=TranscriptBuffer(max_lines=10),
+        clock=lambda: 1.0,
+        inline=False,
     )
     surface.paint(('EDITOR',))
     for index in range(10):
@@ -870,3 +875,42 @@ def test_the_wheel_scrolls_both_ways_with_or_without_modifiers() -> None:
     assert screen.lines()[0] == f'line {int(newest.split()[1]) - WHEEL_ROWS}'
     screen.surface.transcript_key('mouse', '\x1b[<65;1;1M')
     assert screen.surface.view.anchor is None
+
+
+def test_the_panel_starts_compact_below_earlier_output_and_grows_to_full_screen() -> None:
+    """Like Claude Code: a short session leaves the shell above it, and only a full panel takes the screen."""
+    terminal = SurfaceTerminal(width=40, height=10)
+    ticks = iter(range(1000))
+    surface = PromptSurface(output=terminal, size=lambda: (40, 10), clock=lambda: float(next(ticks)))
+    terminal.write('$ clai2\r\n')
+    console = Console(file=terminal, force_terminal=True)
+    with surface.transcript.capture(console):
+        console.print('banner')
+    terminal.write('\r')  # Startup runs in cooked mode, where the newline also returned the carriage.
+    surface.paint(ROWS)
+    assert not terminal.alternate, 'the panel starts on the main screen'
+    assert terminal.lines() == ['$ clai2', 'banner', '', *ROWS, '', '', '']
+    surface.write('answer\n')
+    assert terminal.lines() == ['$ clai2', 'banner', 'answer', '', *ROWS, '', '']
+    surface.paint(('TOP', 'DRAFT', 'BOTTOM'))
+    assert terminal.lines() == ['$ clai2', 'banner', 'answer', '', 'TOP', 'DRAFT', 'BOTTOM', '', '', '']
+    surface.paint(ROWS)
+    start = len(terminal.getvalue())
+    surface.paint(ROWS)
+    assert terminal.getvalue()[start:] == '', 'an unchanged panel is not painted again'
+    with surface.held():
+        assert terminal.lines() == ['$ clai2', 'banner', *[''] * 8], 'a full-screen menu finds the panel erased'
+    surface.paint(ROWS)
+    assert terminal.lines() == ['$ clai2', 'banner', 'answer', '', *ROWS, '', '']
+    for index in range(3):
+        surface.write(f'line {index}\n')
+    assert not terminal.alternate
+    assert terminal.lines() == ['banner', 'answer', 'line 0', 'line 1', 'line 2', '', *ROWS], 'it grows into scrollback'
+    assert terminal.history == ['$ clai2']
+    surface.write('line 3\n')
+    assert terminal.alternate, 'output that fills the terminal takes it over'
+    assert terminal.lines() == ['answer', *(f'line {index}' for index in range(4)), '', *ROWS]
+    surface.restore()
+    assert not terminal.alternate
+    assert terminal.history == ['$ clai2']
+    assert terminal.lines()[:7] == ['banner', 'answer', *(f'line {index}' for index in range(4)), '']

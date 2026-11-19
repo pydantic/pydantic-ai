@@ -13,7 +13,7 @@ from rich.text import Text
 
 from pydantic_clai2.ui.menus.menu_worker import holding_output, without_terminal
 from pydantic_clai2.ui.prompt.line_input import LineInput, read_line
-from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import INLINE_OFF, PromptSurface
 from pydantic_clai2.ui.prompt.question_input import Paste, TranscriptKey
 from tests.clai2.surface_terminal import SurfaceTerminal
 
@@ -44,8 +44,7 @@ async def test_output_printed_before_the_prompt_stays_on_screen(key_pipe: PipeIn
     with holding_output(surface.held):
         console.print(URL)
         assert await read_line(PROMPT, console=console) == 'the-code'
-    assert terminal.alternate
-    assert LEAVE not in terminal.getvalue(), 'the panel stays on screen'
+    assert INLINE_OFF not in terminal.getvalue(), 'the panel stays on screen'
     screen = [line for line in terminal.lines() if line]
     assert screen[-3:] == [URL, PROMPT.rstrip(), 'the-code']
 

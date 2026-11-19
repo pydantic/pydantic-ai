@@ -1445,7 +1445,7 @@ to submit at least one choice. The title says `question 2 of 3` when there are
 several. Esc or Ctrl-C declines the whole request and lets the model continue.
 The plugin's `render` replaces the tool's argument dump with a header that lists
 the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
-the editor's input reader. It keeps the live panel's alternate screen. The draft
+the editor's input reader. It keeps the live panel on screen. The draft
 is restored on exit, and the question and your picks are printed to the transcript afterwards.
 Drag over the question, its header, or an option to select text; releasing copies it
 to the clipboard without choosing an answer. Transcript text remains selectable too.

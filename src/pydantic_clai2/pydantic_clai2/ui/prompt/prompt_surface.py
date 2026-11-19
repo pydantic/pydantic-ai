@@ -1,4 +1,4 @@
-"""The live panel: transcript and pinned editor painted as termflow.live frames on the alternate screen."""
+"""The live panel: transcript and pinned editor, inline until they fill the terminal, then on the alternate screen."""
 
 import asyncio
 import io
@@ -23,12 +23,20 @@ from pydantic_clai2.ui.rendering import theme
 ENTER = '\x1b[?1049h\x1b[?25l\x1b[?7l'
 """Alternate screen, hidden cursor, and no autowrap, which `render_diff` assumes."""
 LEAVE = '\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l'
-MODES_ON = '\x1b[?2004h\x1b[>4;1m\x1b[>5u\x1b[?1000h\x1b[?1002h\x1b[?1006h'
-"""Bracketed paste, xterm modified keys, Kitty disambiguation with alternate keys, and SGR mouse buttons and drags.
+KEYS_ON = '\x1b[?2004h\x1b[>4;1m\x1b[>5u'
+"""Bracketed paste, xterm modified keys, and Kitty disambiguation with alternate keys.
+
+The inline panel leaves the mouse to the terminal, so its own selection and scrollback keep working.
+"""
+MODES_ON = KEYS_ON + '\x1b[?1000h\x1b[?1002h\x1b[?1006h'
+"""`KEYS_ON` plus SGR mouse buttons and drags.
 
 Kitty keeps a flag stack per screen, so these are pushed after `ENTER` and popped before `LEAVE`.
 """
 MODES_OFF = '\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[<u\x1b[>4;0m\x1b[?2004l'
+INLINE_ON = '\x1b[?25l\x1b[?7l'
+"""Hidden cursor and no autowrap for the inline panel, so each row takes exactly one terminal row."""
+INLINE_OFF = '\x1b[0m\x1b[?7h\x1b[?25h'
 FRAME_INTERVAL = 1 / 60
 """Writes repaint at most this often; the editor's refresh loop paints what is left."""
 # Palette and other non-hyperlink OSC commands are meant for the terminal, not the transcript.
@@ -50,7 +58,9 @@ def open_in_browser(url: str) -> None:
 class PromptSurface(io.StringIO):
     """Own the terminal: every write lands in the transcript, and frames show it.
 
-    Frames are a termflow.live `ScreenBuffer`: the transcript view fills the rows above the editor's,
+    The panel starts inline, below the output already in the terminal's scrollback, and grows
+    with the transcript. Once it would fill the terminal it moves to the alternate screen for good.
+    There, frames are a termflow.live `ScreenBuffer`: the transcript view fills the rows above the editor's,
     and `render_diff` sends only changed cells. Nothing scrolls the terminal, so a resize, a theme
     change, or a closed menu repaints from the transcript. `restore` prints what the terminal's own
     scrollback has not seen yet.
@@ -64,6 +74,7 @@ class PromptSurface(io.StringIO):
         clock: Callable[[], float] = time.monotonic,
         transcript: TranscriptBuffer | None = None,
         open_url: Callable[[str], object] = open_in_browser,
+        inline: bool = True,
     ) -> None:
         """Bind terminal IO and injectable geometry/time sources."""
         super().__init__()
@@ -79,6 +90,12 @@ class PromptSurface(io.StringIO):
         self._live = False
         """Painted since opening, so writes repaint."""
         self._screen = False
+        self._full = not inline
+        """Painting on the alternate screen; an inline panel switches once it fills the terminal."""
+        self._inline_rows = 0
+        """How many main-screen rows the inline panel occupies, ending at the cursor's row."""
+        self._inline_text = ''
+        """What the inline panel last painted, so an unchanged one is not painted again."""
         self._modes = False
         self._holds = 0
         self._dirty = False
@@ -113,8 +130,9 @@ class PromptSurface(io.StringIO):
         """Stop painting while another widget owns the terminal; writes still reach the transcript.
 
         Full-screen widgets enter the alternate screen themselves and leave it for the main one,
-        so the panel steps out first and enters again on its next frame. An inline widget that
-        paints through this surface keeps it on screen with `leave_screen=False`. Holds nest.
+        so the panel steps out first (erasing its inline rows) and paints again on its next frame.
+        An inline widget that paints through this surface keeps it on screen with `leave_screen=False`.
+        Holds nest.
         """
         with self._lock:
             self._holds += 1
@@ -316,9 +334,19 @@ class PromptSurface(io.StringIO):
 
     def _paint(self, *, modes: bool = False) -> None:
         width, height = self._geometry()
+        if not self._full:
+            pinned = self._rows[-(height - 2) :] if height > 2 else ()
+            if (shown := self._unprinted(width=width, limit=height - len(pinned))) is not None:
+                self._paint_inline([*shown, *pinned], modes=modes)
+                return
+            self._full = True
         parts: list[str] = []
         if not self._screen:
-            parts.append(ENTER)
+            if self._modes:
+                # The inline panel pushed its modes on the main screen; Kitty keeps a flag stack per screen.
+                parts.append(MODES_OFF)
+                self._modes, modes = False, True
+            parts.append(self._erase_inline() + ENTER)
             self._screen = True
             self._previous = None
         if modes and not self._modes:
@@ -341,6 +369,39 @@ class PromptSurface(io.StringIO):
             self.output.write('\x1b[?2026h' + text + '\x1b[?2026l')
             self.output.flush()
 
+    def _unprinted(self, *, width: int, limit: int) -> list[str] | None:
+        """The transcript rows not yet in the terminal's scrollback, or `None` once there are `limit` of them."""
+        shown: list[str] = []
+        for item in self.transcript.unprinted():
+            shown += self.transcript.rows(item, width=width)
+            if len(shown) >= limit:
+                return None
+        return shown
+
+    def _paint_inline(self, lines: list[str], *, modes: bool) -> None:
+        """Paint `lines` over the inline panel's rows on the main screen, scrolling earlier output up as it grows."""
+        self.view.follow()  # Every unprinted row shows, so there is nothing to scroll back to.
+        parts: list[str] = []
+        if modes and not self._modes:
+            parts.append(KEYS_ON)
+            self._modes = True
+        text = '\r\n'.join(f'{line}\x1b[0m' for line in lines)
+        if parts or text != self._inline_text:
+            parts += [INLINE_ON, self._erase_inline() or '\r', text]
+            self.output.write('\x1b[?2026h' + ''.join(parts) + '\x1b[?2026l')
+            self.output.flush()
+        self._inline_rows, self._inline_text = len(lines), text
+        self._dirty = False
+        self._painted_at = self.clock()
+        self._painted_as = (*self._geometry(), theme.name())
+
+    def _erase_inline(self) -> str:
+        """Return to the inline panel's first row and clear it and everything below, or nothing without one."""
+        rows, self._inline_rows, self._inline_text = self._inline_rows, 0, ''
+        if not rows:
+            return ''
+        return '\x1b[0m\r' + (f'\x1b[{rows - 1}A' if rows > 1 else '') + '\x1b[J'
+
     def _leave(self) -> None:
         parts: list[str] = []
         if self._modes:
@@ -350,6 +411,8 @@ class PromptSurface(io.StringIO):
             parts.append(LEAVE)
             self._screen = False
             self._previous = None
+        elif self._inline_rows:
+            parts.append(self._erase_inline() + INLINE_OFF)
         if parts:
             self.output.write(''.join(parts))
             self.output.flush()
@@ -375,7 +438,7 @@ class PromptSurface(io.StringIO):
             self.refresh()
 
     def restore(self) -> None:
-        """Leave the alternate screen and print the session into the terminal's own scrollback.
+        """Leave the alternate screen or erase the inline panel, then print the session into the terminal's scrollback.
 
         Not `close`: `io.IOBase` calls that when the object is collected.
         """

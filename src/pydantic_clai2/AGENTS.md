@@ -530,7 +530,10 @@ History-changing plugins use `await conversation.commit_messages`, not the legac
 in-memory `replace_messages`, so exiting immediately after `/compact` is durable.
 
 The interactive editor owns its layout explicitly. Do not reintroduce a
-PromptSession renderer. `PromptSurface` composes a termflow.live `ScreenBuffer`,
+PromptSession renderer. `PromptSurface` starts inline on the main screen, repainting
+only the rows the terminal's scrollback lacks plus the editor, and switches to the
+alternate screen for good once they would fill the terminal; tests that need fixed
+frame rows pass `inline=False`. On the alternate screen it composes a termflow.live `ScreenBuffer`,
 `TranscriptView` draws its transcript region, and `render_diff` paints changed
 cells. Do not invent a parallel canvas. The hardware cursor stays hidden;
 the input cursor is a painted reverse-video cell. Keep terminal mutations in

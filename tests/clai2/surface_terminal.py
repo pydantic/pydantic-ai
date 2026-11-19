@@ -94,7 +94,13 @@ class SurfaceTerminal(io.StringIO):
             row, col = (int(part) for part in params.split(';'))
             self.row = min(max(0, row - 1), self.height - 1)
             self.column = min(max(0, col - 1), self.width - 1)
+        elif code == 'A':
+            self.row = max(0, self.row - int(params or 1))
         elif code == 'J' and params == '2':
             self.cells = [[' '] * self.width for _ in range(self.height)]
+        elif code == 'J':
+            self.cells[self.row][self.column :] = [' '] * (self.width - self.column)
+            for row in self.cells[self.row + 1 :]:
+                row[:] = [' '] * self.width
         elif token in ('\x1b[?7h', '\x1b[?7l'):
             self.wrap = code == 'h'

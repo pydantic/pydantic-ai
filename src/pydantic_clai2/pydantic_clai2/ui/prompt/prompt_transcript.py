@@ -500,6 +500,10 @@ class TranscriptBuffer:
         """Ids the panel may show, ending with the unfinished line."""
         return range(self._first, self.end + 1)
 
+    def unprinted(self) -> range:
+        """Ids not yet in the terminal's own scrollback, ending with the unfinished line."""
+        return range(max(self._first, self._printed), self.end + 1)
+
     def rows(self, item: int, *, width: int) -> tuple[str, ...]:
         """One item's rows; the unfinished line always has one, the writer's position."""
         if item == self.end:
