@@ -144,6 +144,9 @@ class AnthropicStreamedResponse(StreamedResponse):
             try:
                 async for event in MapStreamDecodeErrors(self._response, self._model_name):
                     for event_ in self._map_event(event):
+                        # The computer call's start event must come first, and the call is complete only when the
+                        # response ends. So every event after a toolset computer call, including text, is held until
+                        # then and arrives at once.
                         if self._computer_batch.blocks:
                             self._after_computer_batch.append(event_)
                         else:
