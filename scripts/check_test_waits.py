@@ -205,21 +205,23 @@ class _Finder:
         """Whether the port leaves the `with` block, which closes the socket, while it is still needed.
 
         A `yield` inside the block keeps the socket open for as long as the port is used, as a fixture does. A
-        `return` hands the port out as the socket closes. A name read from `getsockname()` that a call takes after
-        the block uses it too late; an `assert` that only reads it does not.
+        `return` that reads the port hands it out as the socket closes. A name read from `getsockname()` that a call
+        takes after the block uses it too late; an `assert` that only reads it does not.
         """
         body = list(_own_nodes(node.body, _SCOPES))
         if any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in body):
             return False
-        if any(isinstance(n, ast.Return) for n in body):
-            return True
-        ports = {
-            target.id
-            for n in body
-            if isinstance(n, ast.Assign) and _reads_port(n.value, sock)
-            for target in n.targets
-            if isinstance(target, ast.Name)
-        }
+        ports: set[str] = set()
+        for n in body:
+            if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None and _reads_port(n.value, sock):
+                targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+                stored = (t for target in targets for t in ast.walk(target) if isinstance(t, ast.Name))
+                ports.update(t.id for t in stored if isinstance(t.ctx, ast.Store))
+        for n in body:
+            if isinstance(n, ast.Return) and n.value is not None:
+                read = {r.id for r in ast.walk(n.value) if isinstance(r, ast.Name)}
+                if _reads_port(n.value, sock) or read & ports:
+                    return True
         end = node.end_lineno or node.lineno
         scope = _enclosing_scope(self.tree, node)
         rebinds = _rebinds(scope, node, ports)

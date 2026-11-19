@@ -331,7 +331,52 @@ def test_server(start):
 """
 
 
-@pytest.mark.parametrize('source', [_RETURNED, _READ_AFTER, _READ_BEFORE_REBIND, _READ_IN_A_REBIND])
+_RETURNED_BY_NAME = """\
+import socket
+
+
+def free_url():
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        port = sock.getsockname()[1]
+        return f'http://127.0.0.1:{port}'
+"""
+
+_ANNOTATED_READ_AFTER = """\
+import socket
+
+
+def test_server(start):
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port: int = probe.getsockname()[1]
+    start(port=port)
+"""
+
+_UNPACKED_READ_AFTER = """\
+import socket
+
+
+def test_server(start):
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        _, port = probe.getsockname()
+    start(port=port)
+"""
+
+
+@pytest.mark.parametrize(
+    'source',
+    [
+        _RETURNED,
+        _RETURNED_BY_NAME,
+        _READ_AFTER,
+        _ANNOTATED_READ_AFTER,
+        _UNPACKED_READ_AFTER,
+        _READ_BEFORE_REBIND,
+        _READ_IN_A_REBIND,
+    ],
+)
 def test_a_port_used_after_its_socket_closes_fails(repo: Path, capsys: pytest.CaptureFixture[str], source: str):
     code, out = _staged(repo, capsys, 'tests/test_new.py', source)
 
@@ -364,6 +409,14 @@ def handed_over(serve):
     sock = socket.socket()
     sock.bind(('127.0.0.1', 0))
     serve(sock)
+
+
+def served_before_return(serve, done):
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        if done:
+            return
+        return serve(sock)
 
 
 def rebound(run):
