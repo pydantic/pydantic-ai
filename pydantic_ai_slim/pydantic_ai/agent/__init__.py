@@ -5743,6 +5743,8 @@ def _capabilities_from_spec(
 
 @dataclasses.dataclass(init=False)
 class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
+    _telemetry_internal = True
+
     output_schema: _output.OutputSchema[Any]
 
     def __init__(

@@ -164,6 +164,8 @@ class RequireWorkspace(AbstractCapability[AgentDepsT]):
     the harness the developer added.
     """
 
+    _telemetry_internal = True
+
     owner: str
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:

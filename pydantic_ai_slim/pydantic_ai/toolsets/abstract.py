@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, Self
 
 from pydantic_core import SchemaValidator
 
@@ -92,6 +92,13 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     - Calling the tools
 
     See [toolset docs](../toolsets.md) for more information.
+    """
+
+    _telemetry_internal: ClassVar[bool] = False
+    """Whether this is framework plumbing that the agent run span's `pydantic_ai.toolsets` leaves out.
+
+    Internal, in-tree only. A private class that doesn't set it is recorded under the public class it
+    extends, so only set it on a toolset the framework owns, like the one holding the agent's own tools.
     """
 
     @property

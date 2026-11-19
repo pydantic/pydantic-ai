@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 import json
 import sys
-from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence, Set
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -18,6 +18,7 @@ from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode
 from opentelemetry.util.types import AttributeValue
 from pydantic import ConfigDict, PydanticUserError, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
+from typing_extensions import TypedDict
 
 from pydantic_graph._utils import get_traceparent
 
@@ -504,6 +505,170 @@ def model_request_parameters_attributes(
         if serialized is None:
             return {}
     return {'model_request_parameters': safe_to_json(serialized).decode()}
+
+
+_PUBLIC_PACKAGES = frozenset({'pydantic_ai', 'pydantic_ai_harness'})
+
+
+# Bounded, as user classes can be created dynamically (per request or tenant) and a cache entry keeps its class alive.
+@lru_cache(maxsize=1024)
+def public_class_path(cls: type[AbstractCapability[Any]] | type[AbstractToolset[Any]]) -> str:
+    """The import path of the nearest Pydantic AI or Harness class in `cls`'s MRO, for run composition attributes.
+
+    A user-defined class records as the framework class it extends, so a trace says what kind of
+    capability or toolset ran without exporting the name of the user's own class. The path is the
+    one the class is exported under rather than its defining module, so moving a class between
+    private modules doesn't change it: `pydantic_ai.capabilities.ToolSearch`, not
+    `pydantic_ai.capabilities._tool_search.ToolSearch`. A subpackage export is preferred over a
+    top-level one so core classes read consistently, falling back to the top-level package.
+    """
+    for base in cls.__mro__:
+        name = base.__name__
+        parts = base.__module__.split('.')
+        if parts[0] not in _PUBLIC_PACKAGES or name.startswith('_'):
+            continue
+        prefixes = ['.'.join(parts[:depth]) for depth in range(2, len(parts) + 1)]
+        # Read the module's namespace directly: `getattr` would run a deprecation shim's `__getattr__`.
+        for prefix in [*itertools.takewhile(lambda p: not p.rpartition('.')[2].startswith('_'), prefixes), parts[0]]:
+            if (module := sys.modules.get(prefix)) is not None and vars(module).get(name) is base:
+                return f'{prefix}.{name}'
+    raise AssertionError(f'{cls!r} does not extend a public Pydantic AI class')  # pragma: no cover
+
+
+class _ComponentRecord(TypedDict, total=False):
+    """What a toolset or capability record holds: its id, and its class when that isn't a public one."""
+
+    id: str
+    user_class: str
+
+
+class ToolsetRecord(_ComponentRecord, total=False):
+    """A toolset in the `pydantic_ai.toolsets` agent run span attribute, listed under its class."""
+
+
+class CapabilityRecord(_ComponentRecord, total=False):
+    """A capability in the `pydantic_ai.capabilities` agent run span attribute, listed under its class."""
+
+    defer_loading: bool
+    active: bool
+
+
+def _component_record(
+    cls: type[AbstractCapability[Any]] | type[AbstractToolset[Any]], component_id: str | None, *, include_content: bool
+) -> _ComponentRecord:
+    record: _ComponentRecord = {}
+    if component_id is not None:
+        record['id'] = component_id
+    if include_content and cls.__module__.partition('.')[0] not in _PUBLIC_PACKAGES:
+        record['user_class'] = f'{cls.__module__}.{cls.__qualname__}'
+    return record
+
+
+def _is_framework_internal(cls: type[AbstractCapability[Any]] | type[AbstractToolset[Any]]) -> bool:
+    """Whether `cls` is Pydantic AI or Harness plumbing, like the agent's own function and output toolsets, so isn't worth recording.
+
+    Recording it under the public class it extends would put it alongside the user's own instances of that class.
+    A private class without the marker, like the one Harness `Skills` registers per skill, is recorded under the
+    public class it extends instead.
+    """
+    return cls._telemetry_internal  # pyright: ignore[reportPrivateUsage]
+
+
+def _recorded_classes(
+    capabilities: Mapping[str, AbstractCapability[Any]],
+) -> dict[str, type[AbstractCapability[Any]]]:
+    """The class each of a run's recorded capabilities is recorded as, by the id it's registered under.
+
+    A capability a factory resolved to is registered as the wrapper that stands in for it, so it's
+    recorded as the class the factory returned. When that capability registers its own members, the
+    members are recorded instead of the wrapper.
+    """
+    from pydantic_ai.capabilities._dynamic import ResolvedDynamicCapability
+
+    registered = {id(capability) for capability in capabilities.values()}
+    classes: dict[str, type[AbstractCapability[Any]]] = {}
+    for capability_id, capability in capabilities.items():
+        if isinstance(capability, ResolvedDynamicCapability):
+            members: list[AbstractCapability[Any]] = []
+            capability.wrapped.apply(members.append)
+            if any(id(member) in registered for member in members):
+                continue
+            cls: type[AbstractCapability[Any]] = type(capability.wrapped)
+        else:
+            cls = type(capability)
+        if not _is_framework_internal(cls):
+            classes[capability_id] = cls
+    return classes
+
+
+def recorded_capability_ids(
+    capabilities: Mapping[str, AbstractCapability[Any]], url_ids: Set[str], *, include_content: bool
+) -> list[str]:
+    """The ids of a run's capabilities that a trace may record, in registration order.
+
+    An id derived from an MCP server URL is never recorded. One the framework assigned is recorded
+    only with `include_content`, as it is built from the class name, which may be the user's own.
+    """
+    return [
+        capability_id
+        for capability_id in _recorded_classes(capabilities)
+        if capability_id not in url_ids and (include_content or capabilities[capability_id].id is not None)
+    ]
+
+
+def capability_records(
+    capabilities: Mapping[str, AbstractCapability[Any]],
+    active_ids: Set[str],
+    url_ids: Set[str],
+    *,
+    include_content: bool,
+) -> dict[str, list[CapabilityRecord]]:
+    """The capabilities registered for a run, by class, for the agent run span.
+
+    Keyed by class so that a backend can index which classes a run used by key alone.
+    """
+    recorded = set(recorded_capability_ids(capabilities, url_ids, include_content=include_content))
+    records: dict[str, list[CapabilityRecord]] = {}
+    for capability_id, cls in _recorded_classes(capabilities).items():
+        record = _component_record(
+            cls, capability_id if capability_id in recorded else None, include_content=include_content
+        )
+        records.setdefault(public_class_path(cls), []).append(
+            {
+                **record,
+                'defer_loading': capabilities[capability_id].defer_loading is True,
+                'active': capability_id in active_ids,
+            }
+        )
+    return records
+
+
+def add_toolset_records(
+    records: dict[str, list[ToolsetRecord]],
+    toolset: AbstractToolset[Any],
+    url_ids: Set[str],
+    *,
+    include_content: bool,
+) -> None:
+    """Add the leaf toolsets of a resolved toolset tree not yet in `records`, by class, for the agent run span.
+
+    Records are distinct rather than one per instance, so a factory that builds an equal toolset on
+    every step adds it once. Ids follow the same rules as capability ids: never one derived from an
+    MCP server URL, and one the toolset derived for itself only with `include_content`.
+    """
+
+    def add(leaf: AbstractToolset[Any]) -> None:
+        if _is_framework_internal(type(leaf)):
+            return
+        toolset_id = leaf.id
+        if toolset_id in url_ids or not (include_content or leaf._explicit_id is not None):  # pyright: ignore[reportPrivateUsage]
+            toolset_id = None
+        record = _component_record(type(leaf), toolset_id, include_content=include_content)
+        class_records = records.setdefault(public_class_path(type(leaf)), [])
+        if record not in class_records:
+            class_records.append(record)
+
+    toolset.apply(add)
 
 
 def mcp_telemetry_url_ids(

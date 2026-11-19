@@ -331,6 +331,8 @@ def test_logfire(
                     ]
                 )
             ),
+            'pydantic_ai.capabilities': '{"pydantic_ai.capabilities.Instrumentation":[{"id":"instrumentation","defer_loading":false,"active":true}],"pydantic_ai.capabilities.ToolSearch":[{"id":"tool_search","defer_loading":false,"active":true}]}',
+            'pydantic_ai.toolsets': '{"pydantic_ai.toolsets.FunctionToolset":[{}]}',
             'metadata': '{"env":"test"}',
             'logfire.json_schema': IsJson(
                 snapshot(
@@ -338,6 +340,8 @@ def test_logfire(
                         'type': 'object',
                         'properties': {
                             'pydantic_ai.all_messages': {'type': 'array'},
+                            'pydantic_ai.capabilities': {'type': 'object'},
+                            'pydantic_ai.toolsets': {'type': 'object'},
                             'metadata': {'type': 'array'},
                             'final_result': {'type': 'object'},
                         },
@@ -507,6 +511,7 @@ def test_logfire(
             'logfire.span_type': 'span',
             'gen_ai.agent.name': 'my_agent',
             'gen_ai.agent.call.id': IsStr(),
+            'pydantic_ai.active_capabilities': ('instrumentation', 'tool_search'),
             'logfire.msg': 'chat test',
             'gen_ai.response.model': 'test',
             'gen_ai.usage.input_tokens': 51,
@@ -695,6 +700,8 @@ def test_instructions_with_structured_output(
                 )
             ),
             'gen_ai.system_instructions': '[{"type":"text","content":"Here are some instructions"}]',
+            'pydantic_ai.capabilities': '{"pydantic_ai.capabilities.Instrumentation":[{"id":"instrumentation","defer_loading":false,"active":true}],"pydantic_ai.capabilities.ToolSearch":[{"id":"tool_search","defer_loading":false,"active":true}]}',
+            'pydantic_ai.toolsets': '{}',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
@@ -702,6 +709,8 @@ def test_instructions_with_structured_output(
                         'properties': {
                             'pydantic_ai.all_messages': {'type': 'array'},
                             'gen_ai.system_instructions': {'type': 'array'},
+                            'pydantic_ai.capabilities': {'type': 'object'},
+                            'pydantic_ai.toolsets': {'type': 'object'},
                             'final_result': {'type': 'object'},
                         },
                     }
@@ -787,12 +796,16 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
                     ]
                 )
             ),
+            'pydantic_ai.capabilities': '{"pydantic_ai.capabilities.Instrumentation":[{"id":"instrumentation","defer_loading":false,"active":true}],"pydantic_ai.capabilities.ToolSearch":[{"id":"tool_search","defer_loading":false,"active":true}]}',
+            'pydantic_ai.toolsets': '{}',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
                         'type': 'object',
                         'properties': {
                             'pydantic_ai.all_messages': {'type': 'array'},
+                            'pydantic_ai.capabilities': {'type': 'object'},
+                            'pydantic_ai.toolsets': {'type': 'object'},
                             'final_result': {'type': 'object'},
                         },
                     }
@@ -1255,12 +1268,16 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     ]
                 )
             ),
+            'pydantic_ai.capabilities': '{"pydantic_ai.capabilities.Instrumentation":[{"id":"instrumentation","defer_loading":false,"active":true}],"pydantic_ai.capabilities.ToolSearch":[{"id":"tool_search","defer_loading":false,"active":true}]}',
+            'pydantic_ai.toolsets': '{}',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
                         'type': 'object',
                         'properties': {
                             'pydantic_ai.all_messages': {'type': 'array'},
+                            'pydantic_ai.capabilities': {'type': 'object'},
+                            'pydantic_ai.toolsets': {'type': 'object'},
                             'final_result': {'type': 'object'},
                         },
                     }
@@ -1339,6 +1356,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
             'logfire.msg': 'chat test',
             'gen_ai.agent.name': 'my_agent',
             'gen_ai.agent.call.id': IsStr(),
+            'pydantic_ai.active_capabilities': ('instrumentation', 'tool_search'),
             'gen_ai.input.messages': IsJson(snapshot([{'role': 'user', 'parts': [{'type': 'text'}]}])),
             'gen_ai.output.messages': IsJson(
                 snapshot(
@@ -1437,9 +1455,21 @@ async def test_aggregated_usage_attribute_names_default(capfire: CaptureLogfire)
                 {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
                 {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Hello!'}]},
             ],
+            'pydantic_ai.capabilities': {
+                'pydantic_ai.capabilities.Instrumentation': [
+                    {'id': 'instrumentation', 'defer_loading': False, 'active': True}
+                ],
+                'pydantic_ai.capabilities.ToolSearch': [{'id': 'tool_search', 'defer_loading': False, 'active': True}],
+            },
+            'pydantic_ai.toolsets': {},
             'logfire.json_schema': {
                 'type': 'object',
-                'properties': {'pydantic_ai.all_messages': {'type': 'array'}, 'final_result': {'type': 'object'}},
+                'properties': {
+                    'pydantic_ai.all_messages': {'type': 'array'},
+                    'pydantic_ai.capabilities': {'type': 'object'},
+                    'pydantic_ai.toolsets': {'type': 'object'},
+                    'final_result': {'type': 'object'},
+                },
             },
         }
     )
@@ -1617,6 +1647,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'gen_ai.conversation.id': IsStr(),
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'pydantic_ai.active_capabilities': ('instrumentation', 'tool_search'),
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 4,
                     'gen_ai.response.model': 'test',
@@ -1669,10 +1700,21 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success (no tool calls)'}]},
                     ],
+                    'pydantic_ai.capabilities': {
+                        'pydantic_ai.capabilities.Instrumentation': [
+                            {'id': 'instrumentation', 'defer_loading': False, 'active': True}
+                        ],
+                        'pydantic_ai.capabilities.ToolSearch': [
+                            {'id': 'tool_search', 'defer_loading': False, 'active': True}
+                        ],
+                    },
+                    'pydantic_ai.toolsets': {},
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
                             'pydantic_ai.all_messages': {'type': 'array'},
+                            'pydantic_ai.capabilities': {'type': 'object'},
+                            'pydantic_ai.toolsets': {'type': 'object'},
                             'final_result': {'type': 'object'},
                         },
                     },
@@ -3167,6 +3209,8 @@ def test_static_function_instructions_in_agent_run_span(
                 )
             ),
             'gen_ai.system_instructions': '[{"type":"text","content":"Here are some instructions"}]',
+            'pydantic_ai.capabilities': '{"pydantic_ai.capabilities.Instrumentation":[{"id":"instrumentation","defer_loading":false,"active":true}],"pydantic_ai.capabilities.ToolSearch":[{"id":"tool_search","defer_loading":false,"active":true}]}',
+            'pydantic_ai.toolsets': '{}',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
@@ -3174,6 +3218,8 @@ def test_static_function_instructions_in_agent_run_span(
                         'properties': {
                             'pydantic_ai.all_messages': {'type': 'array'},
                             'gen_ai.system_instructions': {'type': 'array'},
+                            'pydantic_ai.capabilities': {'type': 'object'},
+                            'pydantic_ai.toolsets': {'type': 'object'},
                             'final_result': {'type': 'object'},
                         },
                     }
@@ -3361,6 +3407,8 @@ def test_dynamic_function_instructions_in_agent_run_span(
                 )
             ),
             'gen_ai.system_instructions': '[{"type":"text","content":"This is step 2"}]',
+            'pydantic_ai.capabilities': '{"pydantic_ai.capabilities.Instrumentation":[{"id":"instrumentation","defer_loading":false,"active":true}],"pydantic_ai.capabilities.ToolSearch":[{"id":"tool_search","defer_loading":false,"active":true}]}',
+            'pydantic_ai.toolsets': '{}',
             'pydantic_ai.variable_instructions': True,
             'logfire.json_schema': IsJson(
                 snapshot(
@@ -3369,6 +3417,8 @@ def test_dynamic_function_instructions_in_agent_run_span(
                         'properties': {
                             'pydantic_ai.all_messages': {'type': 'array'},
                             'gen_ai.system_instructions': {'type': 'array'},
+                            'pydantic_ai.capabilities': {'type': 'object'},
+                            'pydantic_ai.toolsets': {'type': 'object'},
                             'pydantic_ai.variable_instructions': {},
                             'final_result': {'type': 'object'},
                         },
@@ -3502,6 +3552,8 @@ def test_function_instructions_with_history_in_agent_run_span(
                 )
             ),
             'pydantic_ai.new_message_index': 2,
+            'pydantic_ai.capabilities': '{"pydantic_ai.capabilities.Instrumentation":[{"id":"instrumentation","defer_loading":false,"active":true}],"pydantic_ai.capabilities.ToolSearch":[{"id":"tool_search","defer_loading":false,"active":true}]}',
+            'pydantic_ai.toolsets': '{}',
             'gen_ai.system_instructions': '[{"type":"text","content":"Instructions for the current agent run"}]',
             'logfire.json_schema': IsJson(
                 snapshot(
@@ -3510,6 +3562,8 @@ def test_function_instructions_with_history_in_agent_run_span(
                         'properties': {
                             'pydantic_ai.all_messages': {'type': 'array'},
                             'pydantic_ai.new_message_index': {},
+                            'pydantic_ai.capabilities': {'type': 'object'},
+                            'pydantic_ai.toolsets': {'type': 'object'},
                             'gen_ai.system_instructions': {'type': 'array'},
                             'final_result': {'type': 'object'},
                         },
@@ -3612,6 +3666,8 @@ async def test_run_stream(
                 )
             ),
             'gen_ai.system_instructions': '[{"type":"text","content":"Instructions for the current agent run"}]',
+            'pydantic_ai.capabilities': '{"pydantic_ai.capabilities.Instrumentation":[{"id":"instrumentation","defer_loading":false,"active":true}],"pydantic_ai.capabilities.ToolSearch":[{"id":"tool_search","defer_loading":false,"active":true}]}',
+            'pydantic_ai.toolsets': '{}',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
@@ -3619,6 +3675,8 @@ async def test_run_stream(
                         'properties': {
                             'pydantic_ai.all_messages': {'type': 'array'},
                             'gen_ai.system_instructions': {'type': 'array'},
+                            'pydantic_ai.capabilities': {'type': 'object'},
+                            'pydantic_ai.toolsets': {'type': 'object'},
                             'final_result': {'type': 'object'},
                         },
                     }
@@ -3689,6 +3747,8 @@ def test_run_stream_sync(get_logfire_summary: Callable[[], LogfireSummary]) -> N
                 )
             ),
             'gen_ai.system_instructions': '[{"type":"text","content":"Instructions for the current agent run"}]',
+            'pydantic_ai.capabilities': '{"pydantic_ai.capabilities.Instrumentation":[{"id":"instrumentation","defer_loading":false,"active":true}],"pydantic_ai.capabilities.ToolSearch":[{"id":"tool_search","defer_loading":false,"active":true}]}',
+            'pydantic_ai.toolsets': '{}',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
@@ -3696,6 +3756,8 @@ def test_run_stream_sync(get_logfire_summary: Callable[[], LogfireSummary]) -> N
                         'properties': {
                             'pydantic_ai.all_messages': {'type': 'array'},
                             'gen_ai.system_instructions': {'type': 'array'},
+                            'pydantic_ai.capabilities': {'type': 'object'},
+                            'pydantic_ai.toolsets': {'type': 'object'},
                             'final_result': {'type': 'object'},
                         },
                     }

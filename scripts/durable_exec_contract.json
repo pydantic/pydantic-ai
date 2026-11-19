@@ -2561,6 +2561,20 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::RejectWorkspaceInContainer._safe_at_runtime"
       ]
     },
+    "AbstractCapability._telemetry_internal": {
+      "engines": [
+        "durable_exec",
+        "temporal"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::RejectWorkspaceInContainer._telemetry_internal",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceEnsurer._telemetry_internal",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::_TerminalEventPublisher._telemetry_internal"
+      ]
+    },
     "AbstractCapability._validate_runtime_capabilities": {
       "engines": [
         "durable_exec"
