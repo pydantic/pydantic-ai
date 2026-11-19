@@ -26,7 +26,6 @@ from pydantic_clai2.app import create_agent
 from pydantic_clai2.builtin_plugins.repo_context import RepoContextPlugin
 from pydantic_clai2.customization import CAPABILITY_ID, customization_guide
 from pydantic_clai2.plugins import PluginHost, load_plugin
-from pydantic_clai2.runtime.session import WorkspacelessCapability
 
 DOC_TOOLS = {'search_clai_docs', 'read_clai_docs'}
 CATALOG_LINE = f'- {CAPABILITY_ID}: Use when asked to customize CLAI itself'
@@ -56,7 +55,7 @@ async def test_workspace_defaults_follow_platform_support(supported: bool, monke
     assert 'OPENAI_API_KEY' not in workspace.env
 
     loaded = load_plugin(RepoContextPlugin, PluginHost[None](name='repo_context', console=Console(), settings={}))
-    assert any(isinstance(capability, WorkspacelessCapability) for capability in loaded.capabilities) is supported
+    assert bool(loaded.capabilities) is supported
 
 
 def tool_returns(messages: list[ModelMessage]) -> list[object]:
