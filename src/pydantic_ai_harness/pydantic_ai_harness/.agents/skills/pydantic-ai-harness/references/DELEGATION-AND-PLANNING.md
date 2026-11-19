@@ -2,7 +2,7 @@
 
 Capabilities that structure long or multi-part work: `Planning` (a model-owned task list),
 `SubAgents` (one `delegate_task` tool over named child agents), `Peers` (messages between
-independently run sessions), `DynamicWorkflow` (the model scripts sub-agent calls in a sandbox), `Advisor` (consult a second model mid-run), and
+independently run sessions), `DynamicWorkflow` (the model scripts sub-agent calls in a sandbox), `Advisor` (consult a second model mid-run), `AdaptiveReasoning` (thinking effort per model request), and
 `BackgroundTools` (slow tools run while the agent keeps going). All import from
 `pydantic_ai_harness`; only `DynamicWorkflow` needs an extra.
 
@@ -15,6 +15,7 @@ independently run sessions), `DynamicWorkflow` (the model scripts sub-agent call
 | Independently run sessions discover or message each other without controlling each other's runs | `Peers` |
 | Fan-out, chaining, voting, or retry loops over sub-agents, where intermediate results should not enter the parent context | `DynamicWorkflow` |
 | A second opinion from another (often stronger) model, not a task hand-off | `Advisor` |
+| High thinking effort when a turn starts or a tool fails, lower effort on routine steps | `AdaptiveReasoning` |
 | Keep a checklist across a long run, or hand a plan from a planner run to an executor run | `Planning` |
 | A slow tool should not block the agent | `BackgroundTools` |
 
@@ -444,6 +445,39 @@ Gotchas:
   deployed). Under Temporal and Prefect use `local=False`: their activity- or task-local usage doesn't merge
   back into the run, so local execution is unsupported there.
 
+## AdaptiveReasoning
+
+Sets the unified `thinking` setting per model request. By default a request that only returns
+successful tool results gets `routine` effort (`'medium'`), and any other request (a user prompt, a
+tool result that isn't successful, output retry feedback) gets `deliberate` effort (`'high'`).
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.settings import ThinkingLevel
+
+from pydantic_ai_harness import AdaptiveReasoning
+
+agent = Agent('test', capabilities=[AdaptiveReasoning(deliberate='high', routine='low')])
+
+
+def by_step(ctx: RunContext[object]) -> ThinkingLevel | None:
+    return 'high' if ctx.run_step <= 2 else 'low'
+
+
+custom = Agent('test', capabilities=[AdaptiveReasoning(select=by_step)])
+```
+
+Gotchas:
+
+- `select` replaces the default policy (`deliberate` and `routine` then don't apply); the last `ModelRequest` in `ctx.messages` is the one the step
+  answers (a resumed paused turn ends in a suspended `ModelResponse`), and returning `None` leaves `thinking` as other layers set it. Keep it deterministic for durable replay.
+- It overrides model-, agent- and earlier-capability `thinking`; a run's `model_settings` and
+  provider-specific settings (`anthropic_thinking`, `openai_reasoning_effort`) override it.
+- Each change is recorded as a `ModelSettingsDeltaPart`. Models with `supports_mid_conversation_effort`
+  send it in place and keep the prompt cache; on others a change can invalidate the cache.
+- Only OpenAI Responses (GPT-6) applies an in-place change within a run. Anthropic and OpenRouter Claude
+  apply it from the next user turn, so routine steps inside a turn keep the turn's opening effort.
+
 ## BackgroundTools
 
 Selected tools start, return a "running in background (task id)" message immediately, and deliver the
@@ -501,6 +535,7 @@ Gotchas:
 - https://pydantic.dev/docs/ai/harness/peers/
 - https://pydantic.dev/docs/ai/harness/dynamic-workflow/
 - https://pydantic.dev/docs/ai/harness/advisor/
+- https://pydantic.dev/docs/ai/harness/adaptive-reasoning/
 - https://pydantic.dev/docs/ai/harness/background-tools/
 - https://pydantic.dev/docs/ai/guides/multi-agent-applications/
 - https://pydantic.dev/docs/ai/capabilities/on-demand/

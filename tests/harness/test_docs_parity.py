@@ -145,6 +145,7 @@ _CAPABILITY_DOC_PAGES = _capability_doc_pages()
 # checks page-specific: a page that links the wrong module, or carries a generic
 # or empty heading, fails instead of passing on a substring match.
 _CAPABILITY_PAGE_META = {
+    'adaptive-reasoning.md': ('adaptive_reasoning', 'Adaptive Reasoning'),
     'advisor.md': ('advisor', 'Advisor'),
     'ask-user.md': ('ask_user', 'Ask User'),
     'deny-unanswered.md': ('deny_unanswered', 'Deny Unanswered'),

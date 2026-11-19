@@ -523,6 +523,9 @@ navigation:
             aliases:
               - "thinking"
               - "advanced-features/thinking"
+          - page: "Adaptive Reasoning"
+            path: "harness/adaptive-reasoning.md"
+            slug: "harness/adaptive-reasoning"
           - page: "Planning"
             path: "harness/planning.md"
             slug: "harness/planning"

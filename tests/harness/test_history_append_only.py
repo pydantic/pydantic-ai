@@ -515,6 +515,9 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
 """Non-default configurations worth their own case, keyed by a case name."""
 
 SCENARIOS: dict[str, Scenario] = {
+    # As core's `agent:effort_change`: the Responses model has a mid-conversation effort channel; Chat Completions
+    # uses gpt-5.2, which accepts function tools at each effort.
+    'AdaptiveReasoning': Scenario(model_names={'openai-responses': 'gpt-6.1-sol', 'openai-chat': 'gpt-5.2'}),
     'CodeMode': Scenario(look_up=_run_look_up),
     'ToolBridge': Scenario(look_up=_bridge_look_up),
     'CompactOnRequest': Scenario(state_calls=(('compact_context', {'focus': 'the forecast'}),)),
@@ -596,6 +599,13 @@ _HISTORY = (('messages', 'user-prompt'), ('messages', 'model-response'), ('messa
 """Every kind of history part, for compaction, which may rewrite any of them (but not the system prompt or tools)."""
 
 ALLOWED: dict[str, Allowed] = {
+    'AdaptiveReasoning': Allowed(
+        'docs/harness/adaptive-reasoning.md: an API without a mid-conversation effort channel gets each change as the '
+        'request-level effort, which is part of the cache key',
+        (('settings', 'setting:reasoning_effort'),),
+        max_moves=3,
+        providers=('openai-chat',),
+    ),
     'ClearToolResults': Allowed(_COMPACTION, _HISTORY),
     'CompactOnRequest': Allowed(
         'Compaction rewrites history by design, once per accepted `compact_context` request from the model',

@@ -56,6 +56,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import (
+    AdaptiveReasoning,
     Advisor,
     BackgroundTools,
     BenchmarkInstructions,
@@ -215,6 +216,10 @@ def _check_tool_output_limits(merged: Any) -> None:
     assert merged.strip_ansi is True
 
 
+def _check_adaptive_reasoning(merged: AdaptiveReasoning[None]) -> None:
+    assert (merged.deliberate, merged.routine) == ('high', 'low')
+
+
 def _check_tool_bridge(merged: ToolBridge[None]) -> None:
     assert merged.max_results == 5
 
@@ -343,6 +348,11 @@ COMBINE_POLICY: dict[str, Policy] = {
             SubAgents[Any](agents=[SubAgent(Agent(TestModel(), name='beta'))]),
         ),
         _check_sub_agents,
+    ),
+    'AdaptiveReasoning': Combines(
+        'one effort policy per agent; each sets the same `thinking` setting',
+        lambda: (AdaptiveReasoning[None](deliberate='xhigh'), AdaptiveReasoning[None](routine='low')),
+        _check_adaptive_reasoning,
     ),
     'Advisor': Combines(
         'one advisor per agent; its tool name is fixed',
