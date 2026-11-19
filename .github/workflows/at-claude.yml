@@ -62,9 +62,12 @@ jobs:
       # `at-claude` runs only on a thread a maintainer opened, and the context the action
       # builds for Claude holds only maintainers' comments, reviews and inline review
       # comments. Bot accounts, this repository's review bots included, are not
-      # maintainers, so their comments stay out of that context too. The job's tools are
-      # unchanged. A maintainer is a user with `write` or `admin` permission, resolved one
-      # user at a time: the collaborator list endpoint omits private org members (see
+      # maintainers, so their comments stay out of that context too. That includes
+      # `claude[bot]`, so a follow-up `@claude` does not see the replies of earlier runs
+      # in that context. The job's tools are unchanged.
+      #
+      # A maintainer is a user with `write` or `admin` permission, resolved one user at a
+      # time: the collaborator list endpoint omits private org members (see
       # `maintainer_login` in `.github/scripts/issue_pr_attention_monitor.py`). The
       # endpoint answers `read` for a non-collaborator, so a failed lookup fails the job
       # rather than guessing. Only `User` accounts are looked up: the endpoint answers 404
@@ -72,7 +75,8 @@ jobs:
       #
       # The action reads an empty `include_comments_by_actor` as "everyone", so the list
       # always starts with the triggering actor, whom the action itself requires to have
-      # write access. The action also drops comments created or edited after the trigger.
+      # write access, and `at-claude` does not run on an empty list. The action also drops
+      # comments created or edited after the trigger.
       - name: Resolve the thread's maintainers
         if: steps.pr-info.outputs.is_fork != 'true'
         id: thread
@@ -129,7 +133,8 @@ jobs:
     needs: get-pr-info
     if: |
       needs.get-pr-info.outputs.is_fork != 'true' &&
-      contains(fromJSON('["write","admin"]'), needs.get-pr-info.outputs.thread_author_permission)
+      contains(fromJSON('["write","admin"]'), needs.get-pr-info.outputs.thread_author_permission) &&
+      needs.get-pr-info.outputs.included_comment_authors != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:

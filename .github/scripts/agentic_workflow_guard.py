@@ -1750,7 +1750,7 @@ def check_assigned_alert_metadata_gate(workflows_dir: Path = WORKFLOWS_DIR) -> l
 
 
 def check_at_claude_maintainer_threads(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
-    """The same-repo @claude job must run only on maintainers' threads, with context from maintainers' comments only."""
+    """Same-repo @claude must run only on maintainers' threads, with the action's context from their comments only."""
     source = workflows_dir / 'at-claude.yml'
     if not source.is_file():
         return [Violation(str(source), 'at-claude-maintainer-threads', '@claude workflow is missing.')]
@@ -1775,8 +1775,10 @@ def check_at_claude_maintainer_threads(workflows_dir: Path = WORKFLOWS_DIR) -> l
         if str(step.get('uses', '')).startswith('anthropics/claude-code-action@')
     ]
     authors = '${{ needs.get-pr-info.outputs.included_comment_authors }}'
+    non_empty = "needs.get-pr-info.outputs.included_comment_authors != ''"
     if (
         not outputs.get('included_comment_authors')
+        or not _condition_is_required(str(job.get('if', '')), non_empty)
         or not actions
         or any(action.get('include_comments_by_actor') != authors for action in actions)
     ):
@@ -1784,8 +1786,8 @@ def check_at_claude_maintainer_threads(workflows_dir: Path = WORKFLOWS_DIR) -> l
             Violation(
                 str(source),
                 'at-claude-maintainer-threads',
-                '`at-claude` must pass `include_comments_by_actor` from `get-pr-info`; an empty value includes every '
-                'commenter.',
+                '`at-claude` must pass `include_comments_by_actor` from `get-pr-info` and skip when it is empty; '
+                'an empty value includes every commenter.',
             )
         )
     return violations
