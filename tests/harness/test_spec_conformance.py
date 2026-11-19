@@ -119,6 +119,7 @@ def test_schema_publishes_spec_parameters(name: str):
     check_capability_parameters(cls, _schema(cls), {**OPT_OUT.get(name, {}), **KNOWN.get(name, {})})
 
 
+# The schema still publishes deprecated parameters, and loading one warns.
 @pytest.mark.filterwarnings('ignore::pydantic_ai.PydanticAIDeprecationWarning')
 @pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning')
 @pytest.mark.parametrize('name', CHECKED)

@@ -58,6 +58,7 @@ def test_schema_publishes_spec_parameters(name: str, schema: JsonSchema):
     check_capability_parameters(REGISTRY[name], schema, {**OPT_OUT.get(name, {}), **KNOWN.get(name, {})})
 
 
+# The schema still publishes deprecated parameters, and loading one warns.
 @pytest.mark.filterwarnings('ignore::pydantic_ai.PydanticAIDeprecationWarning')
 @pytest.mark.parametrize('name', sorted(REGISTRY))
 def test_spec_forms_load(name: str, schema: JsonSchema, tmp_path: Path):
