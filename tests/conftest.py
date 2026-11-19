@@ -63,7 +63,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from . import cassette_hooks, cost_guards, gc_isolation
+from . import cassette_hooks, cost_guards, gc_isolation, span_schema
 from ._inline_snapshot import Builder, Custom, customize
 from ._timeouts import READINESS_WAIT_TIMEOUT
 from .cassette_utils import check_cache_prefix_stability
@@ -132,6 +132,7 @@ os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 def pytest_configure(config: pytest.Config) -> None:
     config.pluginmanager.register(cost_guards, cost_guards.PLUGIN_NAME)
     config.pluginmanager.register(gc_isolation, gc_isolation.PLUGIN_NAME)
+    config.pluginmanager.register(span_schema, span_schema.PLUGIN_NAME)
     config.addinivalue_line(
         'markers',
         'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
