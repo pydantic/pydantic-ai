@@ -365,7 +365,12 @@ class PixeltableMemoryStore:
                 _insert_rows(t, [{'path': path, **values, 'fingerprint': None}])
             return
         where = (t.path == path) & (t.kind == row['kind']) & (t.version == row['version'])
-        if t.update(values, where=where).row_count_stats.upd_rows != 1:
+        stats = t.update(values, where=where).row_count_stats
+        # Pixeltable 0.7.25 renamed `upd_rows` to `updated_rows`; the declared floor, 0.7.21, has only `upd_rows`.
+        updated = getattr(stats, 'updated_rows', None)
+        if not isinstance(updated, int):
+            updated = stats.upd_rows
+        if updated != 1:
             action = 'deleted' if deleting else 'written'
             raise MemoryConflictError(f'memory path {path!r} changed before it could be {action}')
 

@@ -18,7 +18,8 @@ from ...messages import ModelMessage, ModelResponse
 from .._history_digest import Hasher, continuation_digest, history_hasher
 
 if TYPE_CHECKING:
-    from . import AnthropicModel, AnthropicModelSettings, _MessageCreateParams  # pyright: ignore[reportPrivateUsage]
+    from . import AnthropicModel, AnthropicModelSettings
+    from ._request_params import MessagesCreateArgs
 
 MESSAGE_THREADS_BETA = 'message-threads-2026-08-12'
 _THREAD_FINGERPRINT_KEY = 'thread_fingerprint'
@@ -40,7 +41,7 @@ _THREAD_FIXED_PARAMS = (
 )
 
 
-def thread_fingerprint(params: _MessageCreateParams, betas: set[str], key: bytes | None) -> str:
+def thread_fingerprint(params: MessagesCreateArgs, betas: set[str], key: bytes | None) -> str:
     """A digest of the fields a request must share with the thread's create request to continue it.
 
     It's an HMAC with `key`, the model's `history_digest_key`, when there is one, like each response's
@@ -82,7 +83,7 @@ class Thread:
     cache_breakpoints: tuple[list[str], list[str]] | None = None
     """The cache breakpoints of the request, which for a continue request are only those of the new messages."""
 
-    def apply(self, params: _MessageCreateParams) -> _MessageCreateParams:
+    def apply(self, params: MessagesCreateArgs) -> MessagesCreateArgs:
         extra_body = params['extra_body']
         body: dict[str, object] = {**extra_body} if is_str_mapping(extra_body) else {}
         thread: dict[str, str] = {'type': 'create'}
@@ -125,8 +126,8 @@ def may_use_thread(
 
 
 def with_thread(
-    params: _MessageCreateParams, betas: set[str], thread: Thread | None
-) -> tuple[_MessageCreateParams, set[str]]:
+    params: MessagesCreateArgs, betas: set[str], thread: Thread | None
+) -> tuple[MessagesCreateArgs, set[str]]:
     """`params` and `betas` for a request sent in `thread`, or unchanged when it's sent without one."""
     if thread is None:
         return params, betas

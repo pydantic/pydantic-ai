@@ -16,7 +16,7 @@ from contextlib import suppress
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, Literal, NoReturn
 from unittest.mock import patch
 
 import anyio
@@ -2714,3 +2714,74 @@ at its timeout, or truncated long output, read the log or status file (e.g.
 `Get-Content -Tail` in a later shell call) and stop the process tree with the
 stop command the result names. Commands run in PowerShell, not `sh`. No notification arrives when a background job finishes.\
 """)
+
+
+class _RefusedReads(_WindowsCommandsBackend):
+    """A workspace that refuses its first `refusals` reads with `error`, as Windows refuses an open that does not
+    share delete while a publish holds `status.json` open for `DELETE`."""
+
+    def __init__(self, error: OSError, refusals: int, platform: Literal['posix', 'windows'] = 'windows') -> None:
+        self.error = error
+        self.refusals = refusals
+        self.workspace_platform = platform
+        self.reads = 0
+
+    async def read_bytes(self, path: str) -> bytes:
+        self.reads += 1
+        if self.reads <= self.refusals:
+            raise self.error
+        return b'{"pid": 1, "exit_code": 0}'
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        raise NotImplementedError
+
+    async def stat(self, path: str) -> FileEntry:
+        raise NotImplementedError
+
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
+        raise NotImplementedError
+
+    async def make_dir(self, path: str) -> None:
+        raise NotImplementedError
+
+    async def remove(self, path: str) -> None:
+        raise NotImplementedError
+
+    async def exists(self, path: str) -> bool:
+        raise NotImplementedError
+
+
+class TestJobStatusReads:
+    @pytest.fixture(autouse=True)
+    def few_attempts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr('pydantic_ai_harness.shell._jobs._STATUS_READ_ATTEMPTS', 3)
+        monkeypatch.setattr('pydantic_ai_harness.shell._jobs._STATUS_READ_DELAY', 0)
+
+    @staticmethod
+    def _job_on(backend: _RefusedReads) -> Job:
+        directory = 'C:\\project\\job' if backend.workspace_platform == 'windows' else '/project/job'
+        return Job(workspace=Workspace(backend), directory=directory, pid=1, pgid=None, combined=True)
+
+    async def test_a_windows_refusal_is_read_again(self) -> None:
+        backend = _RefusedReads(PermissionError(errno.EACCES, 'Permission denied'), refusals=2)
+        assert await self._job_on(backend).status() == (False, 0)
+        assert backend.reads == 3
+
+    @pytest.mark.parametrize(
+        ('error', 'refusals', 'platform', 'reads'),
+        [
+            pytest.param(
+                PermissionError(errno.EACCES, 'Permission denied'), 3, 'windows', 3, id='windows-past-attempts'
+            ),
+            pytest.param(PermissionError(errno.EACCES, 'Permission denied'), 1, 'posix', 1, id='posix'),
+            pytest.param(WorkspaceReadOnlyError('read-only'), 1, 'windows', 1, id='workspace-error'),
+        ],
+    )
+    async def test_a_refusal_is_raised(
+        self, error: OSError, refusals: int, platform: Literal['posix', 'windows'], reads: int
+    ) -> None:
+        """A refusal that outlasts the attempts is raised, as is one on POSIX, where `mv` replaces the file at once."""
+        backend = _RefusedReads(error, refusals, platform)
+        with pytest.raises(type(error)) as exc_info:
+            await self._job_on(backend).status()
+        assert (exc_info.value, backend.reads) == (error, reads)
