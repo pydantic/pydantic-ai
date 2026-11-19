@@ -1335,6 +1335,7 @@ TEST_MODEL_SCHEMAS: dict[str, JsonSchema] = {
         'maximum': 4,
     },
     'multipleOf-integer-too-large-for-a-float': {'type': 'integer', 'multipleOf': 3, 'minimum': 10**400},
+    'multipleOf-fractional-number': {'type': 'number', 'multipleOf': 0.5, 'minimum': 0.3},
     'format-longer-than-maxLength': {'type': 'string', 'format': 'uri', 'maxLength': 3},
     'not': {'type': 'string', 'not': {'const': 'a'}},
 }
