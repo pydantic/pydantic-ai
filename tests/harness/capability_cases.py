@@ -361,7 +361,11 @@ CASES: dict[str, CapabilityCase] = {
     'Skills': CapabilityCase(
         Combines(
             'one catalog; every library either names stays reachable',
-            lambda: (Skills[None]('first'), Skills[None]('second')),
+            # `skip`: the contracts run the pair, in a workspace that holds neither library.
+            lambda: (
+                Skills[None]('first', missing_directories='skip'),
+                Skills[None]('second', missing_directories='skip'),
+            ),
             _check_skills,
         ),
         build=_skills,

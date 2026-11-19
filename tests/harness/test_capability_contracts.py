@@ -281,10 +281,16 @@ def _unset_id_breaks(capability: AbstractCapability[DepsT]) -> list[str]:
     return breaks
 
 
+def _assert_not_exempt(contract: Contract, name: str, why: str) -> None:
+    """`contract` has nothing to check on the case of `name`, so an exemption for it would never be found stale."""
+    assert name not in contract.exempt, f'{name} {why}: remove its `{contract.name}` exemption'
+
+
 @pytest.mark.parametrize('name', _cases(UNSET_ID))
 def test_an_unset_id_is_every_toolset_id(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     capability = _built(name, tmp_path, monkeypatch)
     if _toolset_ids(capability) is None:
+        _assert_not_exempt(UNSET_ID, name, 'builds no toolset of its own')
         return
     _assert_holds(UNSET_ID, name, _unset_id_breaks(capability))
 
@@ -293,6 +299,7 @@ def test_an_unset_id_is_every_toolset_id(name: str, tmp_path: Path, monkeypatch:
 def test_a_custom_id_reaches_every_toolset(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     capability = _built(name, tmp_path, monkeypatch)
     if _toolset_ids(capability) is None:
+        _assert_not_exempt(CUSTOM_ID, name, 'builds no toolset of its own')
         return
     ids = _toolset_ids(replace(capability, id='custom'))
     reached = ids is None or all(toolset_id == 'custom' for toolset_id in ids)
@@ -357,11 +364,13 @@ async def test_stating_a_configuration_twice_states_it_once(
     # Built off the event loop, as an app builds them: a capability may read files when constructed.
     first, second = await anyio.to_thread.run_sync(case.combine.make)
     merged = await anyio.to_thread.run_sync(type(first).combine, [first, second])
-    breaks = [
-        label
-        for label, capability in (('one of the pair', first), ('the pair combined', merged))
-        if await _first_request([capability, capability], tmp_path) != await _first_request([capability], tmp_path)
-    ]
+    breaks: list[str] = []
+    for label, capability in (('one of the pair', first), ('the pair combined', merged)):
+        once = await _first_request([capability], tmp_path)
+        # Stated once it must reach the model: two runs that fail alike would compare equal and check nothing.
+        assert not isinstance(once, str), f'{name}: {label} alone does not run: {once}'
+        if await _first_request([capability, capability], tmp_path) != once:
+            breaks.append(label)
     _assert_holds(
         COMBINE_FIXED_POINT, name, [f'stated twice, {label} reaches the model differently' for label in breaks]
     )
@@ -375,12 +384,15 @@ async def test_a_workspace_from_a_function_works_like_a_static_one(
         (tmp_path / directory).mkdir()
     static = _build(name, tmp_path / 'static', monkeypatch)
     if not any(isinstance(capability, LocalWorkspace) for capability in static):
+        _assert_not_exempt(WORKSPACE_FROM_FUNCTION, name, 'builds no `LocalWorkspace`')
         return
     supplied: list[AgentCapability[None]] = [
         (lambda ctx, workspace=capability: workspace) if isinstance(capability, LocalWorkspace) else capability
         for capability in _build(name, tmp_path / 'function', monkeypatch)
     ]
-    expected = _comparable(repr(await _first_request(static, tmp_path / 'static')), tmp_path / 'static')
+    static_request = await _first_request(static, tmp_path / 'static')
+    assert not isinstance(static_request, str), f'{name} does not run with a static workspace: {static_request}'
+    expected = _comparable(repr(static_request), tmp_path / 'static')
     actual = _comparable(repr(await _first_request(supplied, tmp_path / 'function')), tmp_path / 'function')
     _assert_holds(
         WORKSPACE_FROM_FUNCTION,
