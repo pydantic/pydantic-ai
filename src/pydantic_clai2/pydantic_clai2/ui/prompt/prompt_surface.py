@@ -59,7 +59,7 @@ class PromptSurface(io.StringIO):
     """Own the terminal: every write lands in the transcript, and frames show it.
 
     The panel starts inline, below the output already in the terminal's scrollback, and grows
-    with the transcript. Once it would fill the terminal, or the terminal's width changes, it moves
+    with the transcript. Once it would fill the terminal, or the terminal narrows, widens or shrinks, it moves
     to the alternate screen for good; setting `full_screen` first starts there.
     There, frames are a termflow.live `ScreenBuffer`: the transcript view fills the rows above the editor's,
     and `render_diff` sends only changed cells. Nothing scrolls the terminal, so a resize, a theme
@@ -337,9 +337,7 @@ class PromptSurface(io.StringIO):
 
     def _paint(self, *, modes: bool = False) -> None:
         width, height = self._geometry()
-        # A terminal that reflows text on a width change moves the inline rows, so only a full-screen frame repaints.
-        reflowed = self._inline_rows > 0 and self._painted_as is not None and self._painted_as[0] != width
-        if not self.full_screen and not reflowed:
+        if not self.full_screen and not self._inline_moved(width=width, height=height):
             pinned = self._rows[-(height - 2) :] if height > 2 else ()
             if (shown := self._unprinted(width=width, limit=height - len(pinned))) is not None:
                 self._paint_inline([*shown, *pinned], modes=modes, width=width, height=height)
@@ -373,6 +371,14 @@ class PromptSurface(io.StringIO):
         if text := ''.join(parts):
             self.output.write('\x1b[?2026h' + text + '\x1b[?2026l')
             self.output.flush()
+
+    def _inline_moved(self, *, width: int, height: int) -> bool:
+        """Whether a resize may have moved the inline rows, so erasing them by count would guess.
+
+        A narrower or wider terminal reflows them, and a shorter one can push some into scrollback.
+        """
+        painted = self._painted_as
+        return self._inline_rows > 0 and painted is not None and (painted[0] != width or painted[1] > height)
 
     def _unprinted(self, *, width: int, limit: int) -> list[str] | None:
         """The transcript rows not yet in the terminal's scrollback, or `None` once there are `limit` of them."""

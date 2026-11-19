@@ -932,10 +932,15 @@ def test_a_width_change_moves_the_inline_panel_to_full_screen() -> None:
     assert screen.terminal.alternate, 'full screen is for good'
 
 
-def test_a_height_change_keeps_the_panel_inline() -> None:
+def test_a_taller_terminal_keeps_the_panel_inline_and_a_shorter_one_moves_it_to_full_screen() -> None:
     screen = Screen(width=40, height=10, inline=True)
     screen.surface.paint(ROWS)
     screen.terminal.resize(width=40, height=12)
     screen.surface.paint(ROWS)
     assert not screen.terminal.alternate
     assert screen.lines()[:5] == ['', *ROWS]
+    # A shorter terminal may have pushed the panel's top rows into scrollback, out of reach of an erase.
+    screen.terminal.resize(width=40, height=11)
+    screen.surface.paint(ROWS)
+    assert screen.terminal.alternate
+    assert screen.lines()[-4:] == list(ROWS)
