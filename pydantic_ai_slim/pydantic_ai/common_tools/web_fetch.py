@@ -392,8 +392,8 @@ class _HTMLConversionEstimate:
                 case _:
                     assert isinstance(node, NavigableString)
                     self._visit_text(node, context)
-            self._check_limit(self.cost, _MAX_HTML_CONVERSION_COST)
-            self._check_limit(self.text_scan_cost, _MAX_HTML_TEXT_SCAN_COST)
+            if self.cost > _MAX_HTML_CONVERSION_COST or self.text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
+                raise ModelRetry('the document is too complex')
 
     def _visit_tag(
         self, tag: Tag, context: _HTMLWalkContext, pending: list[tuple[PageElement, _HTMLWalkContext]]
