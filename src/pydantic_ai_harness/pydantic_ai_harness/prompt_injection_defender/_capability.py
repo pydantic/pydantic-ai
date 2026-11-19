@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import anyio.to_thread
 from pydantic_core import to_jsonable_python
@@ -15,6 +15,7 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, dur
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import TextContent, ToolCallPart, ToolReturn
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
+from pydantic_ai_harness._from_spec import use_default_from_spec
 
 try:
     from stackone_defender import DefenseResult, PromptDefense
@@ -194,6 +195,41 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     """
 
     _defense: PromptDefense = field(init=False, repr=False)
+
+    @classmethod
+    def from_spec(
+        cls,
+        defense: None = None,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        block_high_risk: bool | None = None,
+        semantic_detection: bool = False,
+        tool_filter: Literal['all'] | Sequence[str] | dict[str, Any] = 'all',
+        on_detection: None = None,
+        blocked_message: str = _DEFAULT_BLOCKED_MESSAGE,
+    ) -> PromptInjectionDefender[Any]:
+        """Build from an agent spec, where `defense` and `on_detection` can only be `None`.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, core reads `__init__`, and
+        `defense`'s `PromptDefense` has no JSON schema, so only the bare `'PromptInjectionDefender'` is published.
+        """
+        return cls(
+            defense,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+            block_high_risk=block_high_risk,
+            semantic_detection=semantic_detection,
+            tool_filter=tool_filter,
+            on_detection=on_detection,
+            blocked_message=blocked_message,
+        )
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        use_default_from_spec(cls, PromptInjectionDefender)
 
     def __post_init__(self) -> None:
         try:
