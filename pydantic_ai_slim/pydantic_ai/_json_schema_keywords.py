@@ -1,16 +1,16 @@
 """Where a JSON Schema keeps its subschemas: each keyword whose value holds them, and the shape of that value.
 
-`SUBSCHEMA_KEYWORDS` is the one record of those keywords and shapes, and `iter_subschemas` and `map_subschemas` read
-it. `merge_json_schema_defs` reaches every keyword through them; `JsonSchemaTransformer` reads the shapes but picks
-which keywords it enters, and on which schema types. `tests/test_json_schema_conformance.py` fails when a walker
-misses a keyword added here.
+`SUBSCHEMA_KEYWORDS` is the one record of those keywords and shapes, and `iter_subschemas` reads it.
+`merge_json_schema_defs` reaches every keyword through it; `JsonSchemaTransformer` reads the shapes but picks which
+keywords it enters, and on which schema types. `tests/test_json_schema_conformance.py` fails when a walker misses a
+keyword added here.
 
 This module imports nothing from Pydantic AI, so `_utils` and `_json_schema` can both import it.
 """
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import Literal, TypeAlias, TypeGuard
 
 Subschema: TypeAlias = 'dict[str, object] | bool'
@@ -79,26 +79,3 @@ def iter_subschemas(node: Mapping[str, object], keywords: Iterable[str] = SUBSCH
     for keyword in keywords:
         if (value := node.get(keyword)) is not None:
             yield from (member for member in _members(SUBSCHEMA_KEYWORDS[keyword], value) if is_subschema(member))
-
-
-def map_subschemas(node: dict[str, object], fn: Callable[[Subschema], Subschema], keywords: Iterable[str]) -> None:
-    """Replace each subschema directly under `node`, through `keywords`, with what `fn` returns for it.
-
-    A member that isn't a schema is kept as it is, and so is a value whose shape doesn't match its keyword's.
-    """
-    for keyword in keywords:
-        if (value := node.get(keyword)) is not None:
-            node[keyword] = _map_members(SUBSCHEMA_KEYWORDS[keyword], value, fn)
-
-
-def _map_members(shape: SubschemaShape, value: object, fn: Callable[[Subschema], Subschema]) -> object:
-    """`value`, a keyword's value of the given shape, with `fn` applied to each member that is a subschema."""
-    if shape == 'schema_map' and _is_schema_map(value):
-        return {name: _mapped(member, fn) for name, member in value.items()}
-    if shape in ('schema_list', 'schema_or_list') and _is_schema_list(value):
-        return [_mapped(member, fn) for member in value]
-    return _mapped(value, fn) if shape in ('schema', 'schema_or_list') else value
-
-
-def _mapped(member: object, fn: Callable[[Subschema], Subschema]) -> object:
-    return fn(member) if is_subschema(member) else member
