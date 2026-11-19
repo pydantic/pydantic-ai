@@ -113,8 +113,8 @@ from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, Sandb
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.rendering.status import Status
 from pydantic_clai2.ui.rendering.usage_report import session_usage
+from tests._ports import reserve_loopback_port
 from tests.clai2.test_web import WIRE
-from tests.conftest import _reserve_loopback_port  # pyright: ignore[reportPrivateUsage]
 
 REQUEST = AskUserRequest(
     questions=(
@@ -859,7 +859,7 @@ async def test_run_web_on_a_launchers_port_and_token(
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.web.open_browser', opened.append)
     # A port bound and closed again stays free until `run_web` binds it, so another worker's port-0 server can be
     # handed it and listen first, and the request below would reach that server.
-    port = _reserve_loopback_port()
+    port = reserve_loopback_port()
     token = 'b' * 43 if launcher_token else None
     output = io.StringIO()
     with anyio.fail_after(30):
