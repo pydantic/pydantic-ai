@@ -106,7 +106,7 @@ Both weather lookups run in parallel and the conversions run inside Monty, all w
 
 ## Selective tool sandboxing
 
-By default, `CodeMode(tools='all')` sandboxes every eligible regular tool. Framework control tools, undiscovered deferred tools, native fallbacks, and other code-execution tools remain native. Shell surfaces count as code-execution tools: `Shell`'s `run_command` and `start_command` sit beside `run_code` rather than inside it, so the model never has to quote a shell command inside a generated Python string. `CapabilityCreation`'s `author_capability` stays native for the same reason: its argument is a complete Python module. Their non-command tools (`read_file`, `check_command`, and so on) are folded into `run_code` like any other tool. A host that wants a code-execution tool folded anyway sets `FOLD_INTO_CODE_MODE` (`'fold_into_code_mode'`, from `pydantic_ai_harness.code_mode`) to `True` in its metadata, for example from `prepare_tools`; the tool keeps its `code_arg_name`, so instrumentation and other capabilities still see it as code. The `tools` field is a Pydantic AI `ToolSelector`, so you can control which eligible tools go through the sandbox. Tools that match the selector become callables inside `run_code`; non-matching tools stay visible to the model as regular tool calls.
+By default, `CodeMode(tools='all')` sandboxes every eligible regular tool. Framework control tools, undiscovered deferred tools, `requires_approval=True` and external tools, native fallbacks, and other code-execution tools remain native. Shell surfaces count as code-execution tools: `Shell`'s `run_command` and `start_command` sit beside `run_code` rather than inside it, so the model never has to quote a shell command inside a generated Python string. `CapabilityCreation`'s `author_capability` stays native for the same reason: its argument is a complete Python module. Their non-command tools (`read_file`, `check_command`, and so on) are folded into `run_code` like any other tool. A host that wants a code-execution tool folded anyway sets `FOLD_INTO_CODE_MODE` (`'fold_into_code_mode'`, from `pydantic_ai_harness.code_mode`) to `True` in its metadata, for example from `prepare_tools`; the tool keeps its `code_arg_name`, so instrumentation and other capabilities still see it as code. The `tools` field is a Pydantic AI `ToolSelector`, so you can control which eligible tools go through the sandbox. Tools that match the selector become callables inside `run_code`; non-matching tools stay visible to the model as regular tool calls.
 
 ```python
 from pydantic_ai_harness import CodeMode
@@ -158,7 +158,7 @@ Here `search` and `fetch` are removed from the model-facing tool list and become
 
 ## Tool Search interaction
 
-When you mark tools or whole toolsets `defer_loading=True` ([Tool Search](../tools-advanced.md#tool-search)), `CodeMode` keeps them out of `run_code` while they're undiscovered and leaves their discovery to Tool Search; how they're offered until then depends on `dynamic_catalog`, below. `CodeMode` uses `RunContext.is_tool_available` to follow that reveal state. Once the model discovers a tool -- or loads the deferred capability that owns it -- `CodeMode` folds it into `run_code` like any other tool from then on, so it's callable from generated code. (The tool keeps `defer_loading=True`, which records what its author asked for; what changes is its availability for the run.)
+When you mark tools or whole toolsets `defer_loading=True` ([Tool Search](../tools-advanced.md#tool-search)), `CodeMode` keeps them out of `run_code` while they're undiscovered and leaves their discovery to Tool Search; how they're offered until then depends on `dynamic_catalog`, below. `CodeMode` uses `RunContext.is_tool_available` to follow that reveal state. Once the model discovers a tool -- or loads the deferred capability that owns it -- `CodeMode` folds it into `run_code` like any other tool the `tools` selector sandboxes, so it's callable from generated code; under `tools='all'`, a discovered `requires_approval=True` or external tool stays native instead. (The tool keeps `defer_loading=True`, which records what its author asked for; what changes is its availability for the run.)
 
 By default (`dynamic_catalog=True`), a discovery appends to the conversation instead of rewriting it, so the prompt cache survives it. The catalog of sandboxed-tool signatures goes into the agent instructions rather than `run_code`'s description, as a dynamic [`InstructionPart`][pydantic_ai.messages.InstructionPart] with the id `toolset:code_mode:catalog` and [`on_change='append'`](../agent.md#appending-instruction-changes): when a discovery adds a function, the updated catalog is appended to the message history. When Tool Search found the tool, a short `DiscoveryAnnouncementPart` (a [capability part](../capabilities/custom.md#capability-parts) in the application's voice, whose `tools` field lists the tools it announces) sent through [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue] also names the new functions; loading a capability appends only the catalog update. Deferred tools that `run_code` will take over are kept off the wire until they're found: the model finds them with the local `search_tools` tool, or by loading the capability that owns them, and from then on calls them from `run_code` only. The tool definitions and the instructions of earlier requests stay as they were sent.
 
@@ -261,10 +261,11 @@ still pending, and one that would exceed the limit ends the run with
 [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], as a top-level tool call does. Catching
 the error inside the snippet does not prevent this.
 
-When `CodeMode` runs inside a Temporal workflow, it disables `max_duration_seconds`, including an
-explicit override. `run_code` is replayed in workflow code, so measuring elapsed time there could
-make replay choose a different path from the recorded workflow. The memory and suspension caps still apply. Put
-time-bounded work behind a Temporal activity instead.
+When `CodeMode` runs snippets in Temporal workflow code, it disables `max_duration_seconds`, including an
+explicit override; turns that run as activities keep it (see [Remote turns as
+activities](#remote-turns-as-activities)). `run_code` is replayed in workflow code, so measuring elapsed time
+there could make replay choose a different path from the recorded workflow. The memory and suspension caps
+still apply. Put time-bounded work behind a Temporal activity instead.
 
 ## Concurrent tool calls
 
@@ -615,8 +616,10 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(monty_sandbox=san
 ```
 
 That pool's `request_timeout`, 10 seconds by default, adds a per-turn transport deadline.
-The configured `max_duration_seconds` still applies outside Temporal. Inside a Temporal workflow,
+The configured `max_duration_seconds` still applies outside Temporal. In Temporal workflow code,
 Code Mode disables that execution timer for deterministic replay; the transport deadline still applies.
+When turns run as activities (see [Remote turns as activities](#remote-turns-as-activities)), the timer
+applies again and the factory is called once per turn, so return a new pool from each call.
 
 Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's
 instructions or tool arguments.
@@ -624,8 +627,9 @@ instructions or tool arguments.
 Use `https://` unless the server is on a network you trust: the connection carries your agent's tool
 calls and their results.
 
-Only code execution moves to the worker. Your tools, `mount` directories, `os_access`, and `print`
-output stay in your process, and REPL state persists across `run_code` calls as it does locally.
+Only code execution moves to the worker. Your tools, `os_access`, and `print` output stay in your
+process, and REPL state persists across `run_code` calls as it does locally. `mount` directories are
+read in your process too, except when turns run as activities, where the activity worker reads them.
 
 Run the Monty server on `pydantic-monty>=1.5.0`. Earlier servers speak WebSockets, which this
 client no longer uses. The `run_code` description lists the modules Monty 1.5 can import.
@@ -689,8 +693,10 @@ plain agent from a workflow and register its activities with `PydanticAIPlugin` 
 
 `PydanticAIPlugin` passes `pydantic_monty` through Temporal's workflow sandbox. This makes Monty
 runnable there, but `run_code` still executes in workflow code and is re-executed during replay.
-This works with local workers and with `monty_sandbox`. With a remote worker, replay connects
-to the worker again, so it must be reachable whenever the workflow replays.
+This works with local workers and with `monty_sandbox`. With a remote worker whose snippets run in
+workflow code, replay connects to the worker again, so it must be reachable whenever the workflow
+replays; turns that run as activities replay from history instead (see
+[Remote turns as activities](#remote-turns-as-activities)).
 Model requests and, by default, nested tool calls cross Temporal activity boundaries;
 `asyncio.gather` can schedule nested tool activities concurrently. The REPL is process-local state
 for one agent run, not durable storage. Replay reconstructs it by running the recorded snippets
@@ -709,12 +715,77 @@ host-clock calls happen again during replay; changing their results can change w
 workflow schedules and cause a `NondeterminismError`. Put external reads, writes, clock access, and
 other side effects in wrapped tools so Temporal records them as activities. Replay may not flag
 changed arguments when the same activity remains at the same history position, so replay validation
-is not a substitute for this boundary. Temporal activity timeouts apply to nested tools, not pure
-computation inside `run_code`. The workflow waits while the sandbox computes, and Temporal fails a
-workflow task that does not yield within 2 seconds, so move heavier computation into a tool.
+is not a substitute for this boundary. When `run_code` runs in workflow code, the workflow waits
+while the sandbox computes, and Temporal fails a workflow task that does not yield within 2 seconds.
+Move heavier computation into a tool, or run turns as activities on a remote worker as described below.
 Clock, environment, and randomness calls reach `os_access` on the workflow's own thread, so a
 handler can answer `datetime.now()` with `workflow.now()` and stay replay-safe. File calls are
 answered by Monty from the mounts first and reach the handler on another thread.
+
+### Remote turns as activities
+
+With a remote `monty_sandbox`, Code Mode runs each turn as its own activity. A turn is the part of a
+snippet between two points where it waits on the host: a nested tool call, a sleep, or deferred
+calls. The server saves the session after each turn and returns an ID, and the next turn starts from
+that ID in whichever worker runs it. Computation in the sandbox then no longer counts against the
+workflow task's 2-second limit, and replay reads each turn's result from history instead of
+connecting to the server.
+
+Turns run as activities only on a Monty server that stores sessions, as Logfire Agent Sandboxes
+does. On a server that stores none, the first turn finds this before running any code, and the run's
+snippets then run in workflow code as described above. If a storing server cannot store a session's
+state, the turn raises `UserError` and the workflow fails without retrying the turn.
+
+The turn activity is named after the capability's `id`, `'code_mode'` by default. Two identical
+`CodeMode` on one agent merge into one. To keep two that differ, give each its own `id` and wrap
+them in `PrefixTools`, since both add a `run_code` tool.
+
+Code Mode keeps running `run_code` in workflow code, as described above, when any of these holds:
+
+- `CodeMode` is given `id=None`.
+- The agent is wrapped in the deprecated `TemporalAgent`, which runs no capability operations as
+  activities.
+- `os_access` is set: the handler may call `temporalio.workflow` APIs, which work only in workflow
+  code.
+- A `mount` uses `'overlay'` mode, the default, or sets `write_bytes_limit`. Monty does not keep
+  overlay writes, or the count of bytes written, in a stored session. Use `'read-only'` or
+  `'read-write'` mounts to run turns as activities. The activity worker reads them, so their
+  directories must exist wherever turn activities run.
+- The workflow started before this version of Code Mode, so its history replays as it was recorded.
+
+A `CodeMode` that a `DynamicCapability` returns keeps its turns in workflow code, because Temporal
+binds activities only for capabilities on the agent when it is built. Put it on the agent to run its
+turns as activities.
+
+Each turn uses the `activity_config` you pass to `TemporalDurability`. Its `start_to_close_timeout`
+bounds one turn, and its retry policy retries a turn that failed to reach the server. A retry starts
+from the same stored ID, so it runs the turn again from the same state. Writes the turn made to a
+`'read-write'` mount are not undone, so a retried turn makes them again. The recorded failure keeps
+the original error's type name but not its text, which can carry the pool's URL or credentials, so
+`non_retryable_error_types` such as `'ConnectionRefusedError'` still apply. When the retries run
+out, the workflow fails with Temporal's `ActivityError`. Errors in the snippet itself, such as
+syntax errors, exceptions, and time limits, are returned to the model as model retries, as they are
+outside Temporal.
+
+`max_memory` and `max_duration_seconds` apply to each turn; workflow code turns
+`max_duration_seconds` off. `max_suspensions` counts across a session's turns and the 10 MiB print
+cap across one snippet's turns, as in workflow code. Keep `start_to_close_timeout` above
+`max_duration_seconds`: Temporal's timeout does not stop a running turn, it retries the turn while
+the first attempt keeps running, whereas `max_duration_seconds` stops the turn and Code Mode reports
+the time limit to the model. With `'unlimited'`, only a pool factory's own `request_timeout` stops a
+long turn.
+
+Tool results and nested call arguments keep their types and shared values, since they cross as one
+string, and the model sees the same snippet result as in workflow code. Each turn takes and returns
+at most 1 MiB, half Temporal's default payload limit. Longer prints, results and error text are cut
+with a note that the rest is not shown and the 1 MiB limit, and tool results that would make a
+turn's input longer fail the snippet with a `ValueError` that gives the size and resets the session.
+If the server will not store the session a snippet error left, Code Mode also resets the session. A
+nested call whose arguments are of a type Monty does not hand the host, or that take more than 512
+KiB, such as an instance of a class the snippet defined, raises `TypeError` in the snippet: its
+arguments cannot reach the tool. If the server no longer has a run's stored state, for example
+because it expired, Code Mode resets the session and tells the model the connection was lost, as for
+a dropped connection outside Temporal.
 
 ## Observability
 
@@ -902,7 +973,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` fail. They become available when an `os_access` handler implements them (the built-in `OSAccess` does), or, for the clock, when `os_policy` sets one. `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer.
 - No `import *`.
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv` / `os.environ` need an `os_access` handler.
-- Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability on the agent to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry.
+- Approval-required (`requires_approval=True`) and external (`kind='external'`) tools stay native under `tools='all'`, so their deferred calls pause the run as usual. An explicit selector can still sandbox them. A sandboxed call that needs approval or is deferred, including one from a toolset wrapped with `.approval_required()` or a tool that raises `ApprovalRequired` or `CallDeferred` from its body (both keep `kind='function'`), needs a `HandleDeferredToolCalls` (or equivalent) capability on the agent to resolve it inline; without one, it raises an error that surfaces to the model as a retry.
 - Tool results reach the sandbox in the JSON shape their generated stub declares, since the stub is derived from the tool's JSON schema. `Decimal`, `UUID` and `datetime` arrive as strings, and mapping keys are stringified, so a `dict[int, str]` of `{1: 'a'}` arrives as `{'1': 'a'}`. `bytes` and `bytearray` are the exception: Monty carries binary natively, so they cross unchanged even though the stub declares `str` for them.
 - A sandboxed tool can't take the name of a Python builtin such as `list`, `open` or `print`: code would call the builtin instead. `CodeMode` raises `UserError` for such a name. Rename the tool, or give a toolset whose names you don't control a prefix with `toolset.prefixed(...)`.
 - A tool without a return schema is still callable, but its generated signature shows `-> Any`, so the model has to guess the result's shape. `CodeMode` names such tools in one `CodeModeReturnSchemaWarning` (a `UserWarning` subclass) per run. Give a function tool a return annotation, or have your MCP server declare an `outputSchema`; when the server is not yours, silence just this category with `warnings.filterwarnings('ignore', category=CodeModeReturnSchemaWarning)`.

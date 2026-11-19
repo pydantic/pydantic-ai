@@ -120,6 +120,7 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         paths=re.compile(
             r'src/pydantic_ai_harness/pydantic_ai_harness/'
             r'([^/]*_sandbox|docker_container|code_mode|ipython_code_mode|ssh_workspace|shell|computer_use)/.*'
+            r'|src/pydantic_ai_harness/pydantic_ai_harness/_monty_(exec|turns)\.py'
             r'|pydantic_ai_slim/pydantic_ai/(workspaces/windows|computer_use)\.py'
         ),
     ),
