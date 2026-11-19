@@ -366,6 +366,25 @@ async def test_queue_labels_and_small_terminal() -> None:
         assert len(live.frame()) == 1
 
 
+async def test_draft_rows_follow_a_prompt_marker() -> None:
+    async with editor() as (live, _, _):
+        live.buffer.replace('a' * 79 + '\nxy')
+        frame = live.frame()
+        # The title rule, three draft rows, the bottom rule, and the footer.
+        draft = frame[1:-2]
+        assert [Text.from_ansi(row).plain for row in draft] == ['❯ ' + 'a' * 78, '  a', '  xy ']
+        # The cursor paints after the indent, not at the left edge.
+        assert draft[-1].endswith('  xy\x1b[7m \x1b[27m')
+        live.buffer.cursor = 0
+        first = live.frame()[1]
+        assert Text.from_ansi(first).plain == '❯ ' + 'a' * 78
+        assert first.index('❯') < first.index('\x1b[7ma\x1b[27m')
+        # A draft taller than its rows scrolls to the cursor, and the marker stays on the top row shown.
+        live.buffer.replace('\n'.join(f'line {index}' for index in range(20)))
+        plain = [Text.from_ansi(row).plain for row in live.frame()[1:-2]]
+        assert plain == ['❯ line 12', *(f'  line {index}' for index in range(13, 19)), '  line 19 ']
+
+
 async def test_completion_acceptance_and_cycling() -> None:
     ready = anyio.Event()
 
@@ -514,7 +533,7 @@ async def test_suggestions_expand_the_prompt_box() -> None:
         dashes = [index for index, row in enumerate(plain) if row and set(row) == {'─'}]
         top, bottom = dashes[0], dashes[-1]
         inside = plain[top + 1 : bottom]
-        assert inside[0].startswith('/he')
+        assert inside[0].startswith('❯ /he')
         assert inside[1].startswith('/help Help')
         assert inside[2].startswith('/hello Hello command')
         assert all('│' not in row and not row.startswith('>') for row in inside)
@@ -1070,7 +1089,7 @@ async def test_the_editor_opens_compact_below_the_shell() -> None:
         assert not terminal.alternate
         lines = terminal.lines()
         assert lines[0] == '$ clai2' and lines[1] == ''
-        assert any(line.startswith('draft') for line in lines[2:6])
+        assert any(line.startswith('❯ draft') for line in lines[2:6])
         assert lines[-1] == '', 'the panel takes only the rows it needs'
 
 

@@ -306,7 +306,7 @@ async def test_prompt_frame_stays_visible_during_tools(
             await working.wait()
             pipe.send_text('next message')
             await drafted.wait()
-            assert any(line.startswith('next message') for line in frame)
+            assert any(line.startswith('❯ next message') for line in frame)
             pipe.send_text('\r/set display.thinking false\rretained draft')
             await queued.wait()
             follow_up = next(row for row, line in enumerate(frame) if 'Follow-up: next message' in line)
