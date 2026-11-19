@@ -55,14 +55,15 @@ async def test_a_desktop_size_sets_the_display_it_starts(fake_e2b: FakeE2B, disp
 
 async def test_a_display_that_does_not_start_names_the_sandbox_and_what_it_needs(fake_e2b: FakeE2B) -> None:
     def responder(command: str, timeout: float | None) -> tuple[str, str, int]:
-        return ('', 'Xvfb: not found', 1) if 'Xvfb' in command else ('', '', 0)
+        needs = "the display needs Xvfb, and there's no apt-get to install them with"
+        return ('', needs, 1) if 'Xvfb' in command else ('', '', 0)
 
     fake_e2b.responder = responder
 
     with pytest.raises(
         WorkspaceUnavailableError,
-        match=r'^Could not start the display in E2B sandbox sbx-1: it needs Xvfb, xdotool, xwininfo, scrot and setsid '
-        r'\(Xvfb: not found\)$',
+        match=r"^Could not start the display in E2B sandbox sbx-1: the display needs Xvfb, and there's no apt-get to "
+        r'install them with$',
     ):
         await screen(E2BSandboxBackend(desktop=True)).display_size()
 
