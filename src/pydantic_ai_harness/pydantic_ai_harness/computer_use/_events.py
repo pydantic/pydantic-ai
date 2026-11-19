@@ -1,7 +1,8 @@
-"""Events the `computer` tool emits, so an application can follow the screen without parsing results.
+"""Events the `computer` tool sends, so an application can follow the screen without reading tool results.
 
-Each is emitted once per call that finishes and returns a screenshot, outside its durable unit, so durable execution
-doesn't repeat it. They add no telemetry spans, since core already traces the tool call.
+One event is sent for each call that finishes with a screenshot. It's sent from workflow code, not from the call's
+durable step, so a retried step doesn't send it twice. The events add no tracing spans, because the tool call is
+already traced.
 """
 
 from dataclasses import dataclass
@@ -14,7 +15,7 @@ COMPUTER_USE_EVENTS = 'computer_use'
 
 @dataclass(kw_only=True)
 class ActionsPerformedEvent(CapabilityEvent, namespace=COMPUTER_USE_EVENTS):
-    """A `computer` call finished and returned a screenshot; `tool_call_id` names the call."""
+    """A `computer` call finished and returned a screenshot. `tool_call_id` says which call."""
 
     result: ComputerResult
-    """What the call did, the same record the result's `metadata` keeps in the history."""
+    """What the call did. The tool result's `metadata` keeps the same record in the message history."""

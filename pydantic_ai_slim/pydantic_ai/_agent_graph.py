@@ -2552,7 +2552,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
 
         _handler_response: _messages.ModelResponse | None = None
-        # The context the stream is requested with: the one `wrap_model_request` passes the handler, once it does.
+        # The context the stream is requested with. Once `wrap_model_request` calls the handler, it is the one passed.
         _handler_request_context = request_context
         _handler_called = False
         _handler_usage_recorded = False
@@ -2857,7 +2857,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         `streamed` is the stream's response so far, and `recorded` is it as `_interrupted_stream_response` recorded it.
         `request_context` is the context the stream was requested with, whose messages end in the suspended response
-        it resumed, if any. Its computer calls get the labels a completed stream's get, as a resumed run executes them.
+        it resumed, if any. Its `computer` calls get the same labels as a completed stream's calls, because a resumed
+        run executes them.
         """
         _computer_labels.label_calls(request_context.model, request_context.model_request_parameters, recorded)
         recorded.run_id = ctx.state.run_id
@@ -3630,7 +3631,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _keep_default_output_mode(ctx.state, model, model_settings, request_context.model_request_parameters),
             model_settings,
         )
-        # Per attempt, since the grid depends on the model serving it.
+        # Done on every attempt, because the grid depends on the model that serves it.
         model_request_parameters = _computer_labels.add_grid_hint(model, model_request_parameters)
         request_context.model_request_parameters = model_request_parameters
 

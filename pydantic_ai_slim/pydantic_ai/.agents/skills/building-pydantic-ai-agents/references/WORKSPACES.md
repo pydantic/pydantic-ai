@@ -60,9 +60,9 @@ for a run on purpose, pass `workspace=UnavailableWorkspace(reason=...)`: its ope
 `run(..., cwd=path)` starts one command in another existing directory (relative to the working directory)
 on any backend, by changing into it through `sh`; a missing one raises `FileNotFoundError`.
 
-Pydantic AI Harness's `ComputerUse` gives the model a `computer` tool over a workspace whose backend has a
-screen, as its sandbox desktops do. The display protocols it drives live in `pydantic_ai_harness.computer_use`;
-`LocalWorkspace` has none.
+Pydantic AI Harness's `ComputerUse` gives the model a `computer` tool that drives the screen of the run's workspace.
+The workspace's backend must have a screen, as the harness's sandbox desktops do. The protocols a screen implements
+are in `pydantic_ai_harness.computer_use`. `LocalWorkspace` has no screen.
 
 `resolve()` is textual; `realpath()` asks the environment to resolve symlinks in the existing
 components (native through `SupportsRealpath`, `readlink` in the shell otherwise). With neither, it

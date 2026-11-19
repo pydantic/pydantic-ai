@@ -166,8 +166,9 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: DisplayA
 
 
 async def test_x11_computer_splits_long_typing_and_drags_into_commands_under_the_size_limit() -> None:
-    """E2B runs a command as one argument, which Linux caps at 131,072 bytes, so each command's `xdotool` arguments stay
-    under 100,000 bytes."""
+    """Each command's `xdotool` arguments stay under 100,000 bytes.
+
+    E2B runs a command as a single argument, and Linux limits one argument to 131,072 bytes."""
     desktop = ScriptedDesktop()
 
     await desktop.screen.act(TypeText(text='a' * 17_000))
@@ -177,7 +178,7 @@ async def test_x11_computer_splits_long_typing_and_drags_into_commands_under_the
     assert [argv[4:9] for argv in typed] == [['xdotool', 'key', '--delay', '12', '--']] * 2
     assert sum(argv.count('U0061') for argv in typed) == 17_000
 
-    # Held keys go down in the first command and up in the last, so they stay held between them.
+    # Held keys go down in the first command and come up in the last, so they stay held in between.
     await desktop.screen.act(Drag(path=tuple(Point(x=n % 2, y=0) for n in range(2_500)), modifiers=('alt',)))
     dragged = desktop.argvs[2:]
     assert len(dragged) == 2

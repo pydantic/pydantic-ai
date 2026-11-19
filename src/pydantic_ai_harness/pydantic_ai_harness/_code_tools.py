@@ -34,7 +34,8 @@ the sandbox anyway, keeping its `code_arg_name` for whatever else reads it."""
 
 _UNSANDBOXED_TOOL_KINDS = frozenset({'tool-search', 'capability-load', COMPUTER_KIND.id})
 """Kinds of tools that stay native: the framework's control tools, which drive tool search and capability loading, and
-`ComputerUse`'s `computer` tool, whose screenshot the model has to see, which code calling it would hide."""
+`ComputerUse`'s `computer` tool. The model has to see the `computer` tool's screenshot, and code calling it would hide
+the screenshot."""
 
 BUILTIN_NAMES = frozenset(dir(builtins))
 """Every CPython builtin, which no sandboxed tool may be named after.
@@ -52,8 +53,8 @@ def can_be_sandboxed(tool_def: ToolDefinition) -> bool:
 
     Framework control tools (tool search, capability loading) and the `computer` tool stay native (see
     `_UNSANDBOXED_TOOL_KINDS`); a local fallback (`unless_native`) has to stay native so `Model.prepare_request`
-    can drop it when the provider supports the native tool; and a tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
-    `run_workflow`) is a peer of `run_code`, not something to fold inside it, unless its metadata sets
+    can drop it when the provider supports the native tool; and a tool that is itself a code-execution sandbox (e.g.
+    DynamicWorkflow's `run_workflow`) is a peer of `run_code`, not something to fold inside it, unless its metadata sets
     `FOLD_INTO_CODE_MODE`.
     """
     folds = bool(tool_def.metadata and tool_def.metadata.get(FOLD_INTO_CODE_MODE) is True)

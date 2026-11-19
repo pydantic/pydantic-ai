@@ -1,7 +1,7 @@
 """`ComputerUse` against real provider APIs, sent as each provider's native computer tool.
 
-The model adapter tests in `tests/models/` use a minimal `computer` tool so the core suite doesn't need the Harness;
-these recordings run the real capability, with its instructions, scaling and results, end to end.
+The model adapter tests in `tests/models/` use a minimal `computer` tool, so the core test suite doesn't need the
+Harness. These recordings run the real capability end to end, with its instructions, screenshot scaling and results.
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ with try_import() as anthropic_installed:
 with try_import() as bedrock_installed:
     from anthropic import AsyncAnthropicBedrock
 
-    # `AsyncAnthropicBedrock` imports this as a stream starts, and the test's event loop refuses an import there.
+    # `AsyncAnthropicBedrock` imports this when a stream starts, and the test's event loop refuses imports there.
     importlib.import_module('botocore.parsers')
 
 needs_openai = pytest.mark.skipif(not openai_installed(), reason='openai not installed')
@@ -76,9 +76,9 @@ needs_bedrock = pytest.mark.skipif(not bedrock_installed(), reason='anthropic or
 
 @pytest.fixture(scope='module')
 def vcr_config(vcr_config: dict[str, object], pytestconfig: pytest.Config) -> dict[str, object]:
-    """Replay matches each request's body too, so a request the code no longer sends fails instead of replaying.
+    """On replay, match each request's body too, so a test fails if the code stops sending the recorded request.
 
-    Recording keeps the default match: recorded with the body matcher, cassetter writes the interactions out of order.
+    Recording keeps the default matching. With the body matcher, cassetter writes the interactions out of order.
     """
     if pytestconfig.getoption('--record-mode', default=None) not in (None, 'none'):
         return vcr_config
@@ -106,7 +106,7 @@ def _kinds(body: dict[str, JsonValue]) -> list[JsonValue]:
 
 
 def _computer_request(*extra_tools: str) -> ModelRequestParameters:
-    """A request with a `computer` tool sent as the native one, beside function tools with these names."""
+    """A request with a `computer` tool sent as the native tool, plus function tools with these names."""
     computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
     others = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in extra_tools]
     return ModelRequestParameters(
@@ -134,10 +134,10 @@ async def test_gpt_drives_the_screen_through_the_native_computer_tool(
     assert result.response.model_name == 'gpt-5.5-2026-04-23'
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     first, *_, last = request_capture.bodies('/responses')
-    # The capability's `computer` tool went out as OpenAI's own, not as a function.
+    # The capability's `computer` tool was sent as OpenAI's native computer tool, not as a function.
     assert {'type': 'computer'} in json_objects(first['tools'])
     assert not any(tool.get('name') == 'computer' for tool in json_objects(first['tools']))
-    # And its results came back as screenshots in `computer_call_output`s, at full detail.
+    # Its results went back as full-size screenshots in `computer_call_output` items.
     outputs = _items(last, 'computer_call_output')
     assert outputs and all(
         isinstance(screenshot := output['output'], dict) and screenshot['detail'] == 'original' for output in outputs
@@ -156,8 +156,8 @@ async def test_gpt_drives_the_screen_after_loading_a_deferred_computer(
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     first, second, *_ = bodies = request_capture.bodies('/responses')
-    # Before loading, the model has only `load_capability`; after it, the native computer tool. The API refuses a
-    # function named `computer`, in `tools` or in an `additional_tools` item.
+    # Before loading, the model has only `load_capability`. After loading, it has the native computer tool. The API
+    # refuses a function named `computer`, in `tools` or in an `additional_tools` item.
     assert {'type': 'computer'} not in json_objects(first['tools'])
     assert {'type': 'computer'} in json_objects(second['tools'])
     for body in bodies:
@@ -177,14 +177,14 @@ async def test_gpt_computer_calls_go_back_to_a_request_without_the_computer_tool
     result = await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(TASK)
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
 
-    # An agent without the computer tool, such as an advisor that is forwarded the history, sends the calls back.
+    # An agent without the computer tool sends the calls back, for example an advisor agent given the history.
     answer = await Agent(model).run(
         'Where did you click? Reply with just the coordinates.', message_history=result.all_messages()
     )
     assert '100' in answer.output and '200' in answer.output
 
-    # As function calls without their `cu_` ids, which the API refuses on a function call, answered by function
-    # call outputs.
+    # They go as function calls, without their `cu_` item IDs, which the API refuses on a function call. Their
+    # results go as function call outputs.
     last = request_capture.bodies('/responses')[-1]
     kinds = [item.get('type') for item in json_objects(last['input'])]
     assert 'computer_call' not in kinds and 'computer_call_output' not in kinds
@@ -198,7 +198,7 @@ async def test_gpt_computer_calls_go_back_to_a_request_without_the_computer_tool
 async def test_gpt_continues_a_native_history_after_the_tool_opts_out(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ) -> None:
-    """A run recorded with the native tool goes on with `ComputerUse(native=False)`, and the API accepts it."""
+    """A run recorded with the native tool continues with `ComputerUse(native=False)`, and the API accepts it."""
     provider = ScreenProvider()
     model = _gpt(openai_api_key, request_capture)
     capabilities = [provider.capability(), ComputerUse()]
@@ -212,8 +212,8 @@ async def test_gpt_continues_a_native_history_after_the_tool_opts_out(
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello'), PressKeys(keys=('enter',))]
     first_native, *_, last = request_capture.bodies('/responses')
     assert {'type': 'computer'} in json_objects(first_native['tools'])
-    # The opted-out agent declares a function, and the earlier native calls go back as function calls without
-    # their `cu_` ids, after the reasoning that made them.
+    # The agent with `native=False` declares a function tool. The earlier native calls go back as function calls,
+    # without their `cu_` item IDs, after the reasoning items that made them.
     assert [tool['name'] for tool in json_objects(last['tools'])] == ['computer']
     kinds = [item.get('type') for item in json_objects(last['input'])]
     assert 'computer_call' not in kinds and 'computer_call_output' not in kinds
@@ -233,7 +233,7 @@ def _tools(body: dict[str, JsonValue]) -> list[dict[str, JsonValue]]:
 
 
 def _results(body: dict[str, JsonValue]) -> list[tuple[JsonValue, list[JsonValue]]]:
-    """Each tool result's error flag and its blocks: a text block's text, any other block's type."""
+    """Each tool result's error flag and its blocks: the text of a text block, and the type of any other block."""
     return [
         (result['is_error'], [block['text'] if block['type'] == 'text' else block['type'] for block in blocks])
         for result in content_blocks(body, 'tool_result')
@@ -252,12 +252,12 @@ async def test_claude_drives_the_screen_through_the_computer_toolset(
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     first, *_, last = request_capture.bodies('/v1/messages')
-    # The capability's `computer` tool went out as Claude's toolset, which has no name or schema of ours.
+    # The capability's `computer` tool was sent as Claude's toolset, which has no name or schema from us.
     assert _tools(first) == [{'type': 'computer_toolset_20260801'}]
-    # Claude put a screenshot before its click and typing, and the batch ran in one go: one request after the first.
+    # Claude took a screenshot before its click and typing, and the batch ran at once: one request after the first.
     assert len(request_capture.bodies('/v1/messages')) == 2
-    # Every member call got its own result, in order and in the toolset: `OK`, with the screen as the screenshot call
-    # found it, and the last call the screen after the batch.
+    # Every toolset call got its own result, in order, marked with the toolset. The screenshot call got `OK` and the
+    # screen it saw. The last call got the screen after the batch.
     calls = content_blocks(last, 'tool_use')
     results = content_blocks(last, 'tool_result')
     assert [result['tool_use_id'] for result in results] == [call['id'] for call in calls]
@@ -304,7 +304,7 @@ async def test_claude_sees_an_image_a_result_holds_beside_its_screenshot(
 
     assert 'red' in result.output.lower()
     last = request_capture.bodies('/v1/messages')[-1]
-    # The last call that ran carries the whole result as it is: the image, the summary and the screen.
+    # The last call that ran gets the whole result unchanged: the image, the summary and the screen.
     *_, last_result = _results(last)
     assert last_result == (False, ['image', 'Ran 1 action. Screenshot attached (1280x800).', 'image'])
 
@@ -321,7 +321,8 @@ async def test_claude_drives_the_screen_after_loading_a_deferred_computer(
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     first, second, *_ = bodies = request_capture.bodies('/v1/messages')
-    # Before loading, `computer` is a deferred function; after it, Claude's toolset, which history can't reference.
+    # Before it is loaded, `computer` is a deferred function tool. After, it is Claude's toolset, which the history
+    # can't name.
     assert {'name': 'computer', 'defer_loading': True}.items() <= _tools(first)[-1].items()
     assert {'type': 'computer_toolset_20260801'} in _tools(second)
     for body in bodies:
@@ -338,7 +339,7 @@ async def test_claude_sonnet_4_6_gets_computer_20251124_sized_to_the_display(
     await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(TASK)
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
-    # The capability gave the display size the earlier tool must declare, and the beta it needs went out.
+    # The capability sent the display size the earlier tool requires, and the beta it needs.
     assert _tools(request_capture.bodies('/v1/messages')[0]) == [
         {
             'type': 'computer_20251124',
@@ -383,7 +384,7 @@ async def test_claude_drives_the_screen_through_the_streamed_computer_toolset(
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     last = request_capture.bodies('/v1/messages')[-1]
-    # The streamed member calls went back as they came, each answered in order.
+    # The streamed toolset calls went back unchanged, each with its result, in order.
     calls = content_blocks(last, 'tool_use')
     results = content_blocks(last, 'tool_result')
     assert calls and all(call['toolset_name'] == 'computer' for call in calls)
@@ -400,7 +401,7 @@ async def test_claude_shift_clicks_through_computer_20251124(
     task = 'Take a screenshot, then shift+click at x=100 y=200, then reply "done". Do nothing else.'
     await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(task)
 
-    # Claude holds the modifier in the click's `text`, as the toolset does.
+    # Claude puts the held key in the click's `text` field, as the toolset does.
     assert provider.actions == [Click(x=100, y=200, modifiers=('shift',))]
     calls = content_blocks(request_capture.bodies('/v1/messages')[-1], 'tool_use')
     assert {'action': 'left_click', 'coordinate': [100, 200], 'text': 'shift'} in [call['input'] for call in calls]
@@ -420,7 +421,7 @@ async def test_claude_sonnet_4_6_drags_with_a_button_held_across_calls(
     )
     await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(task)
 
-    # Claude presses and releases at a point, in calls of their own: the button stays pressed between them.
+    # Claude presses and releases the button at a point, in separate calls. The button stays pressed between them.
     assert provider.actions == [
         MouseMove(x=100, y=200),
         MouseDown(),
@@ -445,7 +446,7 @@ async def test_claude_sonnet_4_6_drags_with_a_button_held_across_calls(
         pytest.param(
             'click at x=100 y=200, hold the shift key for 1 second, then type "b"',
             [Click(x=100, y=200)],
-            # The click ran and carries the whole result, the hold failed, and the typing never ran.
+            # The click ran and gets the whole result. The key hold failed, and the typing never ran.
             [
                 (
                     False,
@@ -463,7 +464,8 @@ async def test_claude_sonnet_4_6_drags_with_a_button_held_across_calls(
         pytest.param(
             'hold the shift key for 1 second, then type "b"',
             [],
-            # Nothing ran before the hold, so it carries the whole result, which an error result can't hold.
+            # Nothing ran before the key hold, so the hold gets the whole result. It isn't marked as an error,
+            # because an error result can hold only text.
             [
                 (
                     False,
@@ -502,7 +504,7 @@ async def test_claude_toolset_batch_stops_at_the_failed_call(
 async def test_claude_reads_a_zoom_and_the_pointer_position_from_the_last_calls_result(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ) -> None:
-    """The last call that ran gets the whole result, the zoom's image and the pointer position included."""
+    """The last call that ran gets the whole result, including the zoom's image and the pointer position."""
     provider = ScreenProvider()
     model = _claude('claude-haiku-5-5', anthropic_api_key, request_capture)
     task = (
@@ -541,7 +543,7 @@ def note(text: str) -> str:
 @pytest.mark.parametrize(
     'model_name, native_tools, task, tools, tool_choice',
     [
-        # The toolset has no name to force it by, so it's offered alone and a call required.
+        # The toolset has no name to force it with, so it is offered alone and a tool call is required.
         pytest.param(
             'claude-haiku-5-5', [], 'Reply "done".', ['computer_toolset_20260801'], {'type': 'any'}, id='toolset'
         ),
@@ -553,7 +555,7 @@ def note(text: str) -> str:
             {'type': 'tool', 'name': 'computer'},
             id='computer_20251124',
         ),
-        # Web search is left out too: requiring a tool would let Claude search instead.
+        # Web search is left out too. Otherwise Claude could meet the requirement by searching.
         pytest.param(
             'claude-haiku-5-5',
             [WebSearchTool(max_uses=1)],
@@ -582,7 +584,7 @@ async def test_claude_is_forced_to_call_the_computer(
     )
 
     first = request_capture.bodies('/v1/messages')[0]
-    # A function tool by its name, any other by its type.
+    # A function tool is listed by its name, and any other tool by its type.
     sent = [tool.get('type', tool.get('name')) for tool in _tools(first)]
     assert (sent, first['tool_choice']) == (tools, tool_choice)
     # Claude's first response called the computer.
@@ -606,7 +608,7 @@ async def test_claude_toolset_calls_go_back_to_a_request_without_the_computer_to
     )
     assert '100' in answer.output and '200' in answer.output
 
-    # As plain `computer` calls and results, outside the toolset, which isn't in the request.
+    # They go back as plain `computer` calls and results, outside the toolset, which isn't in the request.
     last = request_capture.bodies('/v1/messages')[-1]
     assert 'tools' not in last
     calls = content_blocks(last, 'tool_use')
@@ -633,7 +635,7 @@ async def test_claude_toolset_calls_go_back_to_a_computer_20251124_model(
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello'), Click(x=10, y=10)]
     last = request_capture.bodies('/v1/messages')[-1]
     assert [tool['type'] for tool in _tools(last)] == ['computer_20251124']
-    # The toolset's calls went back as plain `computer` calls, and the new one as `computer_20251124`'s own.
+    # The toolset's calls went back as plain `computer` calls, and the new call as a `computer_20251124` call.
     inputs = json_objects([call['input'] for call in content_blocks(last, 'tool_use')])
     assert 'actions' in inputs[0] and inputs[-1] == {'action': 'left_click', 'coordinate': [10, 10]}
     assert 'toolset_name' not in str(last['messages'])
@@ -658,7 +660,7 @@ async def test_claude_computer_20251124_calls_go_back_to_a_toolset_model(
     assert provider.actions == [*DONE, Click(x=10, y=10)]
     last = request_capture.bodies('/v1/messages')[-1]
     assert _tools(last) == [{'type': 'computer_toolset_20260801'}]
-    # `computer_20251124`'s calls went back as plain `computer` calls, and the new one as a toolset member's.
+    # The `computer_20251124` calls went back as plain `computer` calls, and the new call as a toolset call.
     calls = content_blocks(last, 'tool_use')
     assert 'actions' in json_objects([calls[0]['input']])[0] and 'toolset_name' not in calls[0]
     assert calls[-1]['toolset_name'] == 'computer'
@@ -680,7 +682,7 @@ async def test_claude_on_bedrock_drives_the_screen_through_the_computer_toolset(
     await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(TASK)
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
-    # Bedrock takes the toolset, as the Claude API does.
+    # Bedrock accepts the toolset, as the Claude API does.
     assert _tools(request_capture.bodies()[0]) == [{'type': 'computer_toolset_20260801'}]
 
 
@@ -708,11 +710,11 @@ async def test_claude_on_the_bedrock_messages_api_drives_the_screen_through_the_
 async def test_gpt_resumes_an_approved_stored_native_call_after_the_tool_opts_out(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ) -> None:
-    """A native call held in a stored response is approved and answered by an agent with `ComputerUse(native=False)`.
+    """An agent with `ComputerUse(native=False)` approves and answers a native call held in a stored response.
 
-    Continuing the stored response would send its output as a `computer_call_output`, which the API refuses with a
-    400 when the request has no native computer tool, after the approved click already ran. So the whole history goes
-    back instead, the native calls as function calls.
+    Continuing the stored response would send the call's result as a `computer_call_output`. The API refuses that with
+    a 400 error when the request has no native computer tool, and by then the approved click has already run. So the
+    whole history is sent instead, with the native calls as function calls.
     """
     provider = ScreenProvider()
     hooks = Hooks[object]()
@@ -792,7 +794,7 @@ async def test_gpt_gets_the_whole_history_back_with_store_off(
 
     assert provider.actions == DONE
     last = request_capture.bodies('/responses')[-1]
-    # Nothing is stored, so every call goes back with its output.
+    # Nothing is stored on the server, so every call is sent again with its output.
     assert last['store'] is False and 'previous_response_id' not in last
     assert _kinds(last) == ['user', 'computer_call', 'computer_call_output', 'computer_call', 'computer_call_output']
 
@@ -821,8 +823,8 @@ async def test_gpt_compacts_a_history_of_computer_calls_through_the_compact_endp
     provider = ScreenProvider()
     model = _gpt(openai_api_key, request_capture, 'gpt-5.4-mini')
     result = await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(TASK)
-    # `OpenAICompaction` compacts all but the newest request, which leaves a call without its output mid-run, and the
-    # endpoint refuses that for any tool, so this compacts the finished run.
+    # `OpenAICompaction` compacts all but the newest request. During a run, that leaves a call without its output,
+    # and the compact endpoint refuses that for any tool. So this test compacts the finished run.
     context = ModelRequestContext(
         model=model, messages=result.all_messages(), model_settings=None, model_request_parameters=_computer_request()
     )
@@ -830,7 +832,7 @@ async def test_gpt_compacts_a_history_of_computer_calls_through_the_compact_endp
 
     assert isinstance(compacted.parts[0], CompactionPart)
     compact = request_capture.body('/responses/compact')
-    # The endpoint refuses a `computer_call_output` unless the computer tool is enabled.
+    # The compact endpoint refuses a `computer_call_output` unless the request enables the computer tool.
     assert compact['tools'] == [{'type': 'computer'}]
     assert 'computer_call_output' in _kinds(compact)
 
@@ -862,7 +864,7 @@ async def test_gpt_compacts_computer_and_function_calls_through_the_compact_endp
 
     assert isinstance(compacted.parts[0], CompactionPart)
     compact = request_capture.body('/responses/compact')
-    # The endpoint takes the function calls with only the computer tool declared.
+    # The compact endpoint accepts the function calls when only the computer tool is declared.
     assert compact['tools'] == [{'type': 'computer'}]
     kinds = _kinds(compact)
     assert 'computer_call_output' in kinds and 'function_call' in kinds and 'function_call_output' in kinds
@@ -900,7 +902,7 @@ async def test_gpt_compacts_computer_calls_the_server_holds_through_the_compact_
     capabilities = [provider.capability(), ComputerUse()]
     result = await Agent(model, capabilities=capabilities, model_settings=settings).run(TASK)
     assert provider.actions == DONE
-    # Up to the last screenshot, so the window ends with a result of a call the server holds.
+    # Compact up to the last screenshot, so the compacted part ends with the result of a call the server holds.
     *messages, final = result.all_messages()
     assert isinstance(final, ModelResponse) and not final.tool_calls
     context = ModelRequestContext(
@@ -910,7 +912,7 @@ async def test_gpt_compacts_computer_calls_the_server_holds_through_the_compact_
 
     assert isinstance(compacted.parts[0], CompactionPart)
     compact = request_capture.body('/responses/compact')
-    # Only the result goes, as a `computer_call_output` beside the computer tool, after the stored response.
+    # Only the result is sent, as a `computer_call_output` with the computer tool, after the stored response.
     assert 'previous_response_id' in compact
     assert compact['tools'] == [{'type': 'computer'}]
     assert _kinds(compact) == ['computer_call_output']
@@ -929,7 +931,7 @@ async def test_gpt_compacts_a_history_of_computer_calls_on_the_server(
 
     assert provider.actions == DONE
     assert any(isinstance(part, CompactionPart) for message in result.all_messages() for part in message.parts)
-    # A later request starts from the compaction and goes on with the computer calls after it.
+    # A later request starts from the compacted history and continues with the computer calls after it.
     last = request_capture.bodies('/responses')[-1]
     assert _kinds(last)[0] == 'compaction' and 'computer_call_output' in _kinds(last)
 
@@ -1026,7 +1028,7 @@ async def test_gpt_is_told_why_a_denied_call_has_a_blank_screenshot(
     last = request_capture.bodies('/responses')[-1]
     (output,) = [item for item in _items(last, 'computer_call_output') if item['call_id'] == approval.tool_call_id]
     note = json_objects(last['input'])[json_objects(last['input']).index(output) + 1]
-    # The API needs an image, so a 1x1 one stands in, and the note says why.
+    # The API needs an image, so a 1x1 image is sent instead, and the message says why.
     assert isinstance(screenshot := output['output'], dict)
     assert str(screenshot['image_url']).startswith('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB')
     assert note['role'] == 'user' and 'The user said no.' in str(note['content'])
@@ -1050,7 +1052,7 @@ async def test_gpt_sees_an_image_a_result_holds_beside_its_screenshot(
         args: ValidatedToolArgs,
         result: ToolReturn,
     ) -> ToolReturn:
-        # As an app might add an image of its own to the result, before the screenshot.
+        # As if an app added its own image to the result, before the screenshot.
         assert _is_object_list(result.return_value)
         return ToolReturn([picture, *result.return_value], metadata=result.metadata)
 
@@ -1065,8 +1067,8 @@ async def test_gpt_sees_an_image_a_result_holds_beside_its_screenshot(
     assert 'red' in result.output.lower()
     last = request_capture.bodies('/responses')[-1]
     message = json_objects(last['input'])[-1]
-    # The output can carry only the screenshot, so the image goes in a message after it: a note naming the file,
-    # then the image between the provenance tags core puts around a tool's files.
+    # The output can hold only the screenshot, so the image goes in a message after it. The message has a note naming
+    # the file, then the image inside the tags Pydantic AI puts around a tool's files.
     assert isinstance(content := message['content'], list)
     assert [part['type'] for part in content if isinstance(part, dict)] == [
         'input_text',
@@ -1104,14 +1106,15 @@ async def test_gpt_computer_call_cut_off_by_the_token_limit_has_no_actions(
 
     assert response.finish_reason == 'length'
     (call,) = [part for part in response.parts if isinstance(part, ComputerCallPart)]
-    # OpenAI sends the cut-off call with no actions.
+    # OpenAI sends the call that was cut off with no actions.
     assert call.actions is None
     stored = (call.provider_details or {})['computer_call']
     assert stored['status'] == 'incomplete'
     assert 'actions' not in stored
 
 
-# Each step and the action it should reach the display as, run in this order in one test to keep the recording small.
+# Each prompt and the display action it should become. They run in this order in one test, to keep the recording
+# small.
 ACTION_STEPS: list[tuple[str, DisplayAction]] = [
     ('Double-click at x=100 y=200.', Click(x=100, y=200, count=2)),
     ('Right-click at x=100 y=200.', Click(x=100, y=200, button='right')),
