@@ -508,16 +508,22 @@ async def test_thought_summary_replays_from_thinking_part(
     )
 
 
+@pytest.mark.parametrize('stream', [False, True])
 @pytest.mark.parametrize('billed_per_prompt,expected', [(False, 3), (True, 1)])
 async def test_web_search_usage_follows_billing(
-    mock_google: MockGoogle, billed_per_prompt: bool, expected: int, allow_model_requests: None
+    mock_google: MockGoogle, billed_per_prompt: bool, expected: int, stream: bool, allow_model_requests: None
 ):
-    """Pin the billed search count genai-prices reads, on both sides of the per-prompt profile flag."""
-    mock_google.body['usage'] = {
+    """Pin the billed search count genai-prices reads, on both sides of the per-prompt profile flag and both paths."""
+    usage: dict[str, JsonValue] = {
         'total_input_tokens': 10,
         'total_output_tokens': 5,
         'grounding_tool_count': [{'type': 'google_search', 'count': 3}],
     }
+    mock_google.body['usage'] = usage
+    if stream:
+        mock_google.sse = [
+            {'event_type': 'interaction.completed', 'interaction': {'status': 'completed', 'usage': usage}}
+        ]
     model = GoogleInteractionsModel(
         'gemini-3.8-flash',
         provider=GoogleProvider(
@@ -525,7 +531,14 @@ async def test_web_search_usage_follows_billing(
         ),
         profile=GoogleModelProfile(google_web_search_billed_per_prompt=billed_per_prompt),
     )
-    response = await model_request(model, [ModelRequest.user_text_prompt('hello')])
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('hello')]
+    if stream:
+        async with model_request_stream(model, messages) as streamed:
+            async for _ in streamed:
+                pass
+        response = streamed.get()
+    else:
+        response = await model_request(model, messages)
     assert response.usage.details['google_search_count'] == 3
     assert getattr(response.usage, 'web_searches') == expected
 

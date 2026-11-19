@@ -210,10 +210,12 @@ class GoogleInteractionsModel(Model[Client]):
 
     @property
     def model_name(self) -> GoogleInteractionsModelName:
+        """The model name."""
         return self._model_name
 
     @property
     def system(self) -> str:
+        """The model provider."""
         return self._provider.name
 
     @property
@@ -229,6 +231,12 @@ class GoogleInteractionsModel(Model[Client]):
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
+        """The model profile.
+
+        On the Gemini API, `gemini-3.1-flash-image` and `gemini-4-neon` get the thinking levels that API enforces for
+        them, as on `GoogleModel`, unless the provider or the `profile=` argument sets `google_thinking_levels`.
+        `ImageGenerationTool` is only supported when `supports_image_output` is true.
+        """
         profile = GoogleModelProfile(**super().profile)
         if not self.client.vertexai:
             profile = _google_common.with_gemini_api_thinking_levels(self.model_name.rsplit('/', 1)[-1], profile)
@@ -262,11 +270,13 @@ class GoogleInteractionsModel(Model[Client]):
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        """Return the set of native tool types this model can handle."""
         return frozenset(
             {WebSearchTool, WebFetchTool, CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool}
         )
 
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return all of `native_tool`'s restricting settings, as Interactions' native tools apply none of them."""
         return native_tool.restricting_settings
 
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:

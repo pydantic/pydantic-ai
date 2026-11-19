@@ -21,10 +21,8 @@ from ...messages import (
     ThinkingPart,
     ToolCallPart,
 )
-from ._response import NATIVE_TOOL_NAMES, media_kind
+from ._response import CONTENT_OBJECTS, JSON_OBJECT, NATIVE_TOOL_NAMES, media_kind
 
-_JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
-_OBJECT_LIST = TypeAdapter(list[dict[str, JsonValue]])
 _JSON_VALUE = TypeAdapter(JsonValue)
 _CONTENT_LIST = TypeAdapter(list[object])
 _STEP = TypeAdapter(gi.Step)
@@ -37,14 +35,14 @@ def step_index(part: ModelResponsePart) -> int | None:
 
 def replay_step(original: dict[str, JsonValue], parts: list[ModelResponsePart]) -> dict[str, JsonValue]:
     """Keep opaque fields and boundaries, updating only the represented parts the caller changed."""
-    raw = _JSON_OBJECT.validate_python(original)
+    raw = JSON_OBJECT.validate_python(original)
     part = parts[0]
     step_type = raw.get('type')
     if isinstance(part, ThinkingPart) and step_type == 'thought':
         replay_thought(raw, part)
     elif isinstance(part, ToolCallPart) and step_type == 'function_call':
         raw.update(
-            id=part.tool_call_id, name=part.tool_name, arguments=_JSON_OBJECT.validate_python(part.args_as_dict())
+            id=part.tool_call_id, name=part.tool_name, arguments=JSON_OBJECT.validate_python(part.args_as_dict())
         )
     elif isinstance(part, (TextPart, FilePart)) and step_type == 'model_output':
         raw['content'] = replay_content(raw, parts)
@@ -53,7 +51,7 @@ def replay_step(original: dict[str, JsonValue], parts: list[ModelResponsePart]) 
         args = part.args_as_dict()
         if part.tool_name.partition(':')[0] == 'mcp_server':
             args = args.get('tool_args', {})
-        raw.update(id=part.tool_call_id, arguments=_JSON_OBJECT.validate_python(args))
+        raw.update(id=part.tool_call_id, arguments=JSON_OBJECT.validate_python(args))
     elif isinstance(part, NativeToolReturnPart):
         validate_native_step(raw, part)
         raw.update(call_id=part.tool_call_id)
@@ -92,7 +90,7 @@ def replay_mcp_media(value: object) -> JsonValue:
 
 
 def _replay_mcp_binary(value: BinaryContent) -> dict[str, JsonValue]:
-    metadata = _JSON_OBJECT.validate_python((value.vendor_metadata or {}).get('google_interactions_mcp_content', {}))
+    metadata = JSON_OBJECT.validate_python((value.vendor_metadata or {}).get('google_interactions_mcp_content', {}))
     if 'uri' in metadata and 'type' not in metadata:
         metadata['blob'] = value.base64
     else:
@@ -127,7 +125,7 @@ def replay_thought(raw: dict[str, JsonValue], part: ThinkingPart) -> None:
 
 
 def replay_content(raw: dict[str, JsonValue], parts: list[ModelResponsePart]) -> list[JsonValue]:
-    original = _OBJECT_LIST.validate_python(raw.get('content', []))
+    original = CONTENT_OBJECTS.validate_python(raw.get('content', []))
     content: list[JsonValue] = []
     for part in parts:
         index = (part.provider_details or {}).get('google_interactions_content_index')

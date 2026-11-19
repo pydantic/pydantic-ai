@@ -36,7 +36,7 @@ from .. import _google_common
 
 STEP_PARAMS = TypeAdapter(list[dict[str, JsonValue]])
 JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
-_CONTENT_OBJECTS = TypeAdapter(list[dict[str, JsonValue]])
+CONTENT_OBJECTS = TypeAdapter(list[dict[str, JsonValue]])
 
 NATIVE_TOOL_NAMES: dict[str, str] = {
     'google_search': 'web_search',
@@ -87,7 +87,7 @@ def step_metadata(raw: dict[str, JsonValue]) -> dict[str, JsonValue]:
     elif step_type == 'thought':
         metadata.pop('summary', None)
     if raw.get('type') == 'model_output':
-        content = _CONTENT_OBJECTS.validate_python(raw.get('content', []))
+        content = CONTENT_OBJECTS.validate_python(raw.get('content', []))
         for value in content:
             value.pop('text' if value.get('type') == 'text' else 'data', None)
         metadata['content'] = [value for value in content]
