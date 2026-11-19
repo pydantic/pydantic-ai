@@ -518,6 +518,9 @@ if the head changes, capture the new SHA and restart the loop.
      A `failure` leaves the gate unsatisfied until a later head passes or a maintainer applies `pr-review-checks:accepted`.
      A `failure` whose description names `Incomplete`, `No result` or a rerun, and not `Blocking findings`, has no finding to triage. Rerun that `PR Review Checks` run once, then escalate.
      When the run posted findings, its `target_url` links that review. Triage the findings in step 4.
+   - **`Gate: review findings dispositioned`:** required for every PR. Read it like `PR Review Checks`: it is a commit status on the PR head.
+     It reads `failure` until every inline thread a review bot started has a reply that counts. Step 4 posts those replies.
+     Its `target_url` links the `PR Review Gates` run, whose summary lists each unanswered thread and why each reply does not count.
    - **`CI Review`:** do not wait for it unless explicitly requested. On same-repository PRs, it runs
      when a user with write access approves the current head, when someone adds the `final-review`
      label, or on dispatch
@@ -558,13 +561,14 @@ if the head changes, capture the new SHA and restart the loop.
    - **Valid** → fix it, run targeted verification, commit, apply the pre-push gate and its scope/exemptions, push, and
      complete the current-HEAD gates in steps 2 and 3. Then reply with what changed, react 👍,
      and resolve the thread.
-     On an inline finding from a review bot, start the reply with `Fixed in <sha>`, naming the fixing commit.
+     On an inline finding from a review bot, reply as soon as you push the fixing commit, before the gates in steps 2 and 3.
+     Open that reply, after any required attribution line, with `Fixed in <sha>`, naming the fixing commit.
    - **Valid but out of scope** → file the follow-up issue the root `AGENTS.md` scope rule calls for, or find an
      existing one. Reply with its link, react 👍, and resolve the thread.
-     On an inline finding from a review bot, start the reply with `Tracked in #<n>`.
+     On an inline finding from a review bot, open the reply, after any required attribution line, with `Tracked in #<n>`.
      Without write access, cite an issue opened at or after the finding.
    - **Invalid** → verify the claim, reply with concrete evidence, and react 👎.
-     On an inline finding from a review bot, start the reply with `Declined: <reason>`.
+     On an inline finding from a review bot, open the reply, after any required attribution line, with `Declined: <reason>`.
      `Declined:` counts only from a user with write access, or from the PR author on a douwebot `Optional:` finding.
      When your `Declined:` cannot count, ask a maintainer to post one, and leave the thread open until they do.
      Otherwise resolve the thread.
