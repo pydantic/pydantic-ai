@@ -265,8 +265,9 @@ COMBINE_ROOT_B = Path(tempfile.mkdtemp(prefix='combine-b-'))
 mattered -- and still collides."""
 
 
-def _check_skills(merged: Any) -> None:
-    assert [source.directories for source in merged._sources] == [('first',), ('second',)]
+def _check_skills(merged: Skills[None]) -> None:
+    sources = merged._sources  # pyright: ignore[reportPrivateUsage]
+    assert [source.directories for source in sources] == [('first',), ('second',)]
 
 
 def _check_model_router(merged: ModelRouter[object]) -> None:

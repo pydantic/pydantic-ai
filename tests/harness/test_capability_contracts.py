@@ -17,6 +17,7 @@ from typing import Any
 
 import anyio
 import pytest
+from _pytest.mark import ParameterSet
 
 from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, LocalWorkspace
@@ -57,12 +58,12 @@ PUBLIC = {**discover_capabilities(CORE_CAPABILITY_PACKAGES), **discover_capabili
 """The public capabilities, which the suites build; a private class only has to say what two of it mean."""
 
 
-def _cases(contract: Contract) -> list[Any]:
+def _cases(contract: Contract) -> list[ParameterSet]:
     """The cases `contract` applies to, each whose calls rewrite history marked `moves_cache_prefix`."""
     return [
         pytest.param(name, marks=pytest.mark.moves_cache_prefix(reason=reason))
         if case.calls is not None and (reason := case.calls.moves_cache_prefix)
-        else name
+        else pytest.param(name)
         for name, case in sorted(CASES.items())
         if name in PUBLIC and contract.applies(name, case)
     ]
