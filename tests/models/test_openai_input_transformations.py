@@ -3,8 +3,7 @@
 On GPT-6.2 and later, the API drops a replayed reasoning item whose earlier conversation changed, and
 lists it in `input_transformations`. Changing the output format between runs is such a change:
 https://developers.openai.com/api/docs/guides/keep-prefix-unchanged lists `text.format`. The
-recordings use `openai_store=False`, under which the API reports each drop; with the default `store`
-it dropped the same item without listing it.
+recordings use `openai_store=False`.
 """
 
 from __future__ import annotations as _annotations
