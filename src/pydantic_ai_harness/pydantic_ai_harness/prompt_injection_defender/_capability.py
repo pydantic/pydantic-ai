@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 import anyio.to_thread
 from pydantic_core import to_jsonable_python
@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import TextContent, ToolCallPart, ToolReturn
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
 from pydantic_ai_harness._from_spec import use_default_from_spec
+from pydantic_ai_harness._judge import SerializableToolSelector
 
 try:
     from stackone_defender import DefenseResult, PromptDefense
@@ -206,7 +207,7 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
         defer_loading: bool = False,
         block_high_risk: bool | None = None,
         semantic_detection: bool = False,
-        tool_filter: Literal['all'] | Sequence[str] | dict[str, Any] = 'all',
+        tool_filter: SerializableToolSelector = 'all',
         on_detection: None = None,
         blocked_message: str = _DEFAULT_BLOCKED_MESSAGE,
     ) -> PromptInjectionDefender[Any]:

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 from pydantic_ai import AbstractToolset
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, ToolSearch
 from pydantic_ai.tools import AgentDepsT, ToolSelector
 from pydantic_ai_harness._from_spec import use_default_from_spec
+from pydantic_ai_harness._judge import SerializableToolSelector
 from pydantic_ai_harness.ipython_code_mode._kernel import IPythonKernel
 from pydantic_ai_harness.ipython_code_mode._toolset import IPythonCodeModeToolset
 from pydantic_ai_harness.tool_bridge import ToolBridge
@@ -77,7 +77,7 @@ class IPythonCodeMode(AbstractCapability[AgentDepsT]):
     @classmethod
     def from_spec(
         cls,
-        tools: Literal['all'] | Sequence[str] | dict[str, Any] = 'all',
+        tools: SerializableToolSelector = 'all',
         max_retries: int = 3,
         *,
         id: str | None = None,

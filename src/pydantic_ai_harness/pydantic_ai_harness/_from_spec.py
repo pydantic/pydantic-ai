@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any
 
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.tools import AgentDepsT
 
 
-def use_default_from_spec(cls: type[AbstractCapability[Any]], narrowed: type[AbstractCapability[Any]]) -> None:
+def use_default_from_spec(
+    cls: type[AbstractCapability[AgentDepsT]], narrowed: type[AbstractCapability[AgentDepsT]]
+) -> None:
     """Load `cls`, a subclass of `narrowed`, through the default `from_spec`, unless it inherits another override.
 
     `narrowed.from_spec` restates `narrowed.__init__`'s parameters and defaults, so a subclass loading through it

@@ -9,13 +9,13 @@ from __future__ import annotations
 import importlib
 import pkgutil
 import warnings
-from typing import Any, TypeGuard
+from typing import TypeGuard
 
 import pydantic_ai_harness
 from pydantic_ai.capabilities import AbstractCapability
 
 
-def is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]]:
+def is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[object]]]:
     """Whether `obj` is a capability class, and not something that merely looks like one."""
     if not isinstance(obj, type):
         return False
@@ -44,14 +44,14 @@ def caused_by_missing_dependency(exc: BaseException) -> bool:
     return False
 
 
-def shipped_capability_types() -> tuple[dict[str, type[AbstractCapability[Any]]], list[str]]:
+def shipped_capability_types() -> tuple[dict[str, type[AbstractCapability[object]]], list[str]]:
     """Every capability class in `pydantic_ai_harness`, public or not.
 
     Walks the package rather than reading an export list, so a capability that is never re-exported
     is still covered. Modules whose optional dependency group is not installed are skipped -- the
     import error means the capability could not have been used either.
     """
-    found: dict[str, type[AbstractCapability[Any]]] = {}
+    found: dict[str, type[AbstractCapability[object]]] = {}
     skipped: list[str] = []
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')

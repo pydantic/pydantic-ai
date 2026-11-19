@@ -59,7 +59,7 @@ def _hinted(target: Callable[..., object]) -> Callable[..., object]:
     return target.__init__ if isinstance(target, type) else target
 
 
-def capability_loader_target(cls: type[AbstractCapability[Any]]) -> Callable[..., object]:
+def capability_loader_target(cls: type[AbstractCapability[object]]) -> Callable[..., object]:
     """What the loader calls with a capability spec's arguments: an overriding `from_spec`, or the class itself."""
     owner = next(klass for klass in cls.__mro__ if 'from_spec' in vars(klass))
     return cls if owner is AbstractCapability else cls.from_spec
@@ -281,7 +281,7 @@ def capability_forms(schema: JsonSchema, name: str) -> list[JsonSchema]:
     return name_forms(items, name)
 
 
-def check_capability_parameters(cls: type[AbstractCapability[Any]], schema: JsonSchema, left_out: Mapping[str, str]):
+def check_capability_parameters(cls: type[AbstractCapability[object]], schema: JsonSchema, left_out: Mapping[str, str]):
     """Fail unless `schema` publishes every parameter of `cls` a spec can set, except those in `left_out`.
 
     Every parameter in `left_out` must be one a spec can set, so an entry has to go when its parameter does.
@@ -308,10 +308,10 @@ def check_capability_parameters(cls: type[AbstractCapability[Any]], schema: Json
 
 
 def check_capability_forms_load(
-    cls: type[AbstractCapability[Any]],
+    cls: type[AbstractCapability[object]],
     schema: JsonSchema,
     directory: Path,
-    custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+    custom_capability_types: Sequence[type[AbstractCapability[object]]] = (),
     known_unloadable: Collection[str] = (),
     known_rejected: bool = False,
 ):
