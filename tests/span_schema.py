@@ -13,8 +13,8 @@ A property a span leaves out on purpose has an entry in `SPAN_SCHEMA_EXEMPTIONS`
 `gen_ai.operation.name` and the property. A span that lost the attributes it started with, as one does under a sampler
 that returns none, is keyed by the first word of its name, which is its operation. An `Exempt` entry covers every
 span; a `SetOnSuccess` entry covers only spans that end in an error, so the check still sees the property go missing
-from a span that succeeded. An entry no span used fails as stale, but only on a session that selected every test: a CI
-shard or a targeted run doesn't produce every span.
+from a span that succeeded. An entry no span used fails as stale, but only on a session that selected every test and
+passed: a CI shard or a targeted run doesn't produce every span, and a failed test may not have exported its span.
 """
 
 from __future__ import annotations
@@ -172,10 +172,10 @@ def pytest_runtest_teardown() -> Generator[None, None, None]:
             entry = SPAN_SCHEMA_EXEMPTIONS.get(key := (operation, name))
             if entry is not None and (isinstance(entry, Exempt) or not span.status.is_ok):
                 _used.add(key)
-            else:  # pragma: no cover
+            else:
                 missing[key] = span.name
     _exported.clear()
-    if missing:  # pragma: no cover
+    if missing:
         lines = [
             f'span `{span_name}` declares `{name}` in its `logfire.json_schema` but has no such attribute'
             for (_, name), span_name in sorted(missing.items())
@@ -196,7 +196,8 @@ def pytest_runtest_teardown() -> Generator[None, None, None]:
 
 
 def pytest_deselected(items: Sequence[pytest.Item]) -> None:
-    _walks.append(not items)
+    # pytest calls this only when it deselected something, so the walk is incomplete.
+    _walks.append(False)
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:
@@ -222,10 +223,8 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         workeroutput: dict[str, object] = getattr(config, 'workeroutput')  # set by `pytest-xdist` on workers
         workeroutput[_WORKER_OUTPUT_KEY] = (all(_walks), sorted(_used))
         return
-    ran_every_test = not (session.shouldstop or session.shouldfail) and exitstatus in (
-        pytest.ExitCode.OK,
-        pytest.ExitCode.TESTS_FAILED,
-    )
+    # A failed test may have stopped before exporting the span an entry covers, which would report the entry stale.
+    ran_every_test = exitstatus == pytest.ExitCode.OK and not (session.shouldstop or session.shouldfail)
     try:
         assert_classified(
             _used,
@@ -233,13 +232,13 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             complete_walk=ran_every_test and bool(_walks) and all(_walks),
             table_name=_TABLE_NAME,
         )
-    except AssertionError as error:  # pragma: no cover
+    except AssertionError as error:
         _session_problems.append(str(error))
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
-    if _session_problems:  # pragma: no cover
+    if _session_problems:
         terminalreporter.section('span schema exemptions', red=True)
         for problem in _session_problems:
             terminalreporter.write_line(problem)
