@@ -20,6 +20,7 @@ import warnings
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from datetime import timedelta
+from hashlib import sha256
 from io import BufferedReader
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -71,9 +72,12 @@ def _safe_segment(segment: str) -> str:
     Empty or dot-only segments are replaced so a handle can never escape the root via
     `.`/`..`; the resolve-within-root check in `read` and `write` is the second line of defense.
     """
-    cleaned = quote(segment, safe='._-')
+    cleaned = quote(segment, safe='._-', errors='surrogatepass')
     if cleaned in ('', '.', '..'):
         return '_'
+    if len(cleaned) > 255 and _UNSAFE_SEGMENT.search(segment):
+        # `%h` cannot occur in a percent-encoded segment, so digest names cannot alias encoded keys.
+        return f'%h{sha256(segment.encode(errors="surrogatepass")).hexdigest()}'
     return cleaned
 
 

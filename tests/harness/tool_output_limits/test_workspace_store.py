@@ -247,13 +247,26 @@ class TestWorkspaceOverflowStore:
     async def test_distinct_keys_do_not_overwrite_each_other(self, tmp_path: Path):
         workspace = Workspace(LocalWorkspaceBackend(tmp_path))
         store = WorkspaceOverflowStore()
-        keys = ['run/call:one.0', 'run/call?one.0', 'run/call_one.0', 'run/call%3Aone.0', 'run/call一one.0']
-        handles = [await store.write(workspace, key, key.encode()) for key in keys]
+        keys = [
+            'run/call:one.0',
+            'run/call?one.0',
+            'run/call_one.0',
+            'run/call%3Aone.0',
+            'run/call一one.0',
+            f'run/{"?" * 86}.0',
+            f'run/{"!" * 86}.0',
+            'run/call\udcff.0',
+            'run/' + '\udcff' * 30 + '.0',
+            f'run/{"~" * 256}.0',
+            'run/%hcb76e21c325406766f834fd91c4ec468f14b5dadeec2f07a6c0fac29300808c3',
+        ]
+        payloads = [f'payload {i}'.encode() for i in range(len(keys))]
+        handles = [await store.write(workspace, key, payload) for key, payload in zip(keys, payloads)]
         assert len(set(handles)) == len(keys)
-        assert [await store.read(workspace, handle) for handle in handles] == [key.encode() for key in keys]
+        assert [await store.read(workspace, handle) for handle in handles] == payloads
         assert await store.write(workspace, keys[0], b'replaced') == handles[0]
         assert await store.read(workspace, handles[0]) == b'replaced'
-        assert [await store.read(workspace, handle) for handle in handles[1:]] == [key.encode() for key in keys[1:]]
+        assert [await store.read(workspace, handle) for handle in handles[1:]] == payloads[1:]
 
     async def test_legacy_handle_still_reads_the_old_file(self, tmp_path: Path):
         directory = tmp_path / '.pydantic-ai-harness' / 'tool-output' / 'run'

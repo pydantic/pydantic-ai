@@ -307,13 +307,42 @@ class TestStore:
 
     async def test_distinct_keys_do_not_overwrite_each_other(self, tmp_path: Path):
         store = LocalFileOverflowStore(base_dir=tmp_path)
-        keys = ['run/call:one.0', 'run/call?one.0', 'run/call_one.0', 'run/call%3Aone.0', 'run/call一one.0']
-        handles = [await store.write(key, key.encode()) for key in keys]
+        keys = [
+            'run/call:one.0',
+            'run/call?one.0',
+            'run/call_one.0',
+            'run/call%3Aone.0',
+            'run/call一one.0',
+            f'run/{"?" * 86}.0',
+            f'run/{"!" * 86}.0',
+            'run/call\udcff.0',
+            'run/' + '\udcff' * 30 + '.0',
+            f'run/{"~" * 256}.0',
+            'run/%hcb76e21c325406766f834fd91c4ec468f14b5dadeec2f07a6c0fac29300808c3',
+        ]
+        payloads = [f'payload {i}'.encode() for i in range(len(keys))]
+        handles = [await store.write(key, payload) for key, payload in zip(keys, payloads)]
         assert handles == keys
-        assert [await store.read(handle) for handle in handles] == [key.encode() for key in keys]
+        assert [await store.read(handle) for handle in handles] == payloads
         assert await store.write(keys[0], b'replaced') == handles[0]
         assert await store.read(handles[0]) == b'replaced'
-        assert [await store.read(handle) for handle in handles[1:]] == [key.encode() for key in keys[1:]]
+        assert [await store.read(handle) for handle in handles[1:]] == payloads[1:]
+
+    @pytest.mark.parametrize(('key', 'filename'), [(f'run/{"?" * 86}.0', '_.0'), ('run/call\udcff.0', 'call_.0')])
+    async def test_legacy_handle_with_long_or_surrogate_segment(self, tmp_path: Path, key: str, filename: str):
+        (tmp_path / 'run').mkdir()
+        legacy = tmp_path / 'run' / filename
+        legacy.write_bytes(b'legacy')
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        assert await store.read(key) == b'legacy'
+        handle = await store.write(key, b'new')
+        assert await store.read(handle) == b'new'
+        assert legacy.read_bytes() == b'legacy'
+
+    async def test_oversized_ordinary_key_keeps_its_existing_path(self, tmp_path: Path):
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        with pytest.raises(OSError):
+            await store.write('x' * 256, b'payload')
 
     async def test_legacy_handle_reads_and_streams_the_old_file(self, tmp_path: Path):
         (tmp_path / 'run').mkdir()
