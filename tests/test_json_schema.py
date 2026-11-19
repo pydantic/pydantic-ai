@@ -1616,6 +1616,31 @@ def test_inline_defs_writes_out_only_the_definitions_the_walk_reaches(monkeypatc
     )
 
 
+def test_inline_defs_counts_a_ref_written_out_in_a_definition_once(monkeypatch: pytest.MonkeyPatch):
+    """A definition written out inside one the walk inlines counts once toward the value limit, not twice.
+
+    `Reserved` alone is over half the limit, so counting it again inside `User` would pass the limit and leave the
+    `$ref` pointing at nothing. Unit test: the limit is reached while the schema is prepared, before any provider is
+    involved.
+    """
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
+    reserved = list(range(_VALUE_LIMIT * 3 // 5))
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'user': {'$ref': '#/$defs/User'}},
+        '$defs': {
+            'User': {'type': 'object', 'properties': {'name': {'type': 'string', 'not': {'$ref': '#/$defs/Reserved'}}}},
+            'Reserved': {'enum': reserved},
+        },
+    }
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == {
+        'type': 'object',
+        'properties': {
+            'user': {'type': 'object', 'properties': {'name': {'type': 'string', 'not': {'enum': reserved}}}}
+        },
+    }
+
+
 def test_inline_defs_leaves_a_ref_under_not_when_writing_it_out_recurses_too_deep():
     """A chain of definitions under `not` too deep to write out stays as the walk left it, rather than raising.
 

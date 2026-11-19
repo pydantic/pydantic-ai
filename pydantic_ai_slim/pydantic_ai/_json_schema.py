@@ -551,19 +551,23 @@ class JsonSchemaTransformer(ABC):
         walk copies into it.
         """
         def_schema = self.defs.get(key)
+        written_out = None
         if def_schema is None:
             def_schema = resolve_json_pointer(self.schema, key)
             # A pointer can reach nodes the up-front check doesn't visit, like draft-07 `definitions`.
             if def_schema is not None:
                 _check_schema_shape(def_schema, _json_pointer_path(key))
         elif self._unwalked_ref_writer is not None and isinstance(def_schema, dict):
-            def_schema = self._unwalked_ref_writer.write_out(def_schema, unwalked=False, stack=(key,))
+            written_out = self._unwalked_ref_writer.write_out(def_schema, unwalked=False, stack=(key,))
         if def_schema is None:
             raise UserError(f'Could not find $ref definition for {key}')
 
         self.refs_stack.append(key)
         schema = merge_definition(def_schema, siblings)
+        # Counted as written: writing it out already counted each copy that added.
         self._inlined.add_copy(schema)
+        if written_out is not None:
+            schema = merge_definition(written_out, siblings)
         walked = self._handle(schema)
         self.refs_stack.pop()
 
@@ -678,9 +682,10 @@ class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
     If the schema is only meant to accept objects (or arrays), set `type` to `'object'` (or `'array'`) to have
     it inlined; for a nullable one, put it in an `anyOf` with `{'type': 'null'}` instead of using a `type` list.
 
-    Keywords that apply to every type but aren't walked, such as `not`, `if`/`then`/`else`, `dependentSchemas` and
-    `unevaluatedProperties`, are left as written too, so a `$ref` under them is replaced by its definition as written,
-    without `transform()`. One that leads back into its own definition stays, and the definition is kept under `$defs`.
+    Keywords that apply to every type, such as `not`, `if`/`then`/`else`, `dependentSchemas` and
+    `unevaluatedProperties`, aren't walked, so `transform()` doesn't run under them. A `$ref` there is replaced by its
+    definition as written, and one that leads back into its own definition stays, with the definition kept under
+    `$defs`.
     """
 
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
