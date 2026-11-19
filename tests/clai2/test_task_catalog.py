@@ -41,6 +41,7 @@ from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.task_prompts import TaskPrompt
 from pydantic_clai2.runtime.tasks import Tasks, resume_prompt
 from pydantic_clai2.ui.rendering.status import Status
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.clai2.test_tasks import task
 
 
@@ -241,9 +242,6 @@ async def test_resume_keeps_the_task_stopped_when_the_prompt_refuses() -> None:
     with pytest.raises(RuntimeError, match='line by line'):
         await ui.resume(record.id)
     assert record.user_stopped, "the user's stop holds when the request cannot be entered"
-
-
-READINESS_WAIT_TIMEOUT = 10
 
 
 def this_run(runs: list[asyncio.Task[object]]) -> None:

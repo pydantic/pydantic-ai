@@ -286,7 +286,7 @@ def _apply_scheduler(
 
     async def flush_scheduler() -> None:
         # Let a call dispatched in the last loop iteration reach `scheduler.run`.
-        await asyncio.sleep(0)
+        await asyncio.sleep(0)  # noqa: TID251  (not converted to anyio yet)
         await scheduler.flush()
         if flush is not None:
             await flush()
@@ -342,7 +342,7 @@ class _LambdaBranches:
     async def flush(self) -> None:
         """Run the runs collected so far. `MontyExecutor` calls this before it resolves futures."""
         # Let a call dispatched in the last loop iteration reach `submit`.
-        await asyncio.sleep(0)
+        await asyncio.sleep(0)  # noqa: TID251  (not converted to anyio yet)
         pending, self._pending = self._pending, []
         # One `parallel` operation per serializer, so each run's result is checkpointed with its agent's.
         groups: dict[int, list[_Branch]] = {}

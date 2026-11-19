@@ -3,7 +3,6 @@
 import io
 import logging
 import os
-import socket
 import stat
 import subprocess
 import sys
@@ -38,6 +37,7 @@ from pydantic_clai2.mcp import (
 )
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, collect
 from pydantic_clai2.plugins.loader import PluginLoader
+from tests._ports import reserve_loopback_port
 
 
 def make_plugin(settings: dict[str, JsonValue], store: MCPStore | None = None) -> LoadedPlugin[None]:
@@ -381,9 +381,7 @@ async def test_reconfiguring_or_removing_releases_the_connection(tmp_path: Path)
 @pytest.mark.subprocess(reason='serves a real HTTP/SSE MCP server from a separate process')
 @pytest.mark.parametrize(('kind', 'path'), [('http', 'mcp'), ('sse', 'sse')])
 async def test_real_remote_server(tmp_path: Path, kind: str, path: str) -> None:
-    with socket.socket() as probe:
-        probe.bind(('127.0.0.1', 0))
-        port = probe.getsockname()[1]
+    port = reserve_loopback_port()
     script = tmp_path / 'remote_server.py'
     script.write_text(
         # SDK v2 renamed the server to `MCPServer` and takes the address when it runs, not when it is built.
