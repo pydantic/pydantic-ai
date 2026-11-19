@@ -1119,6 +1119,17 @@ def test_unregistered_bot_fails_even_with_an_answer():
     assert not verdicts(github)['dispositions'].failures
 
 
+def test_at_claude_threads_need_a_disposition():
+    """The `@claude` workflow can start inline threads as `claude[bot]`."""
+    claude = review_gates.ReviewUser(id=8, login='claude[bot]', type='Bot')
+    github = ReviewGitHub(comments=[finding(claude)])
+    assert verdicts(github)['dispositions'].failures[1:] == [
+        'https://github.com/o/r/pull/7#discussion_r40: the Claude finding has no disposition reply.'
+    ]
+    github.comments.append(reply('Declined: outside this change.', MAINTAINER))
+    assert not verdicts(github)['dispositions'].failures
+
+
 def test_threads_a_person_starts_are_not_findings():
     assert not verdicts(ReviewGitHub(comments=[finding(MAINTAINER)]))['dispositions'].failures
 

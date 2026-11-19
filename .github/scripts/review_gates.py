@@ -29,6 +29,7 @@ OPTIONAL_FINDING_PREFIX = 'Optional:'
 # Review bots by REST login. `finding_reviewer` tells the `github-actions[bot]` reviewers apart by receipt.
 REVIEWER_LOGINS: dict[str, str] = {
     'chatgpt-codex-connector[bot]': 'Codex',
+    'claude[bot]': 'Claude',
     'coderabbitai[bot]': 'CodeRabbit',
     'Copilot': 'Copilot',
     'cursor[bot]': 'Cursor',
