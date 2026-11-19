@@ -1206,6 +1206,16 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
             [(True, ['Failed.', 'Action 1 of 2 (click) failed: no mouse.']), (True, [NOT_EXECUTED])],
             id='failed-first',
         ),
+        # The outcome says no action ran, yet none failed. The first call still gets the content, so none of it is
+        # lost, and the others say they didn't run.
+        pytest.param(
+            _MEMBERS[:2],
+            [1, 1],
+            ['Ran 0 actions.', _PNG],
+            {'performed': 0},
+            [(False, ['Ran 0 actions.', 'image']), (True, [NOT_EXECUTED])],
+            id='none-ran-without-an-error',
+        ),
     ],
 )
 async def test_a_result_answers_each_member_call(
