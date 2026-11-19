@@ -212,6 +212,15 @@ class Node(BaseModel):
     children: list[Node] = []
 
 
+class Lodging(BaseModel):
+    city: str = Field(serialization_alias='cityOut')
+
+
+class Room(BaseModel):
+    room: str = Field(serialization_alias='roomOut', validation_alias=AliasChoices('room', 'roomOut'))
+    floor: int = Field(validation_alias=AliasChoices('floorIn', 'floorOut'), serialization_alias='floorOut')
+
+
 def alias(city: Annotated[str, Field(alias='cityName')]) -> None:
     pass
 
@@ -268,20 +277,29 @@ def alias_recursive_model(tree: Node, depth: Annotated[int, Field(alias='maxDept
     pass
 
 
+def serialization_alias(lodging: Lodging, guests: int) -> None:
+    pass
+
+
+def serialization_alias_choices(room: Room, guests: int) -> None:
+    pass
+
+
 @dataclass(frozen=True)
 class RevalidationCase:
     id: str
     function: Callable[..., None]
     model_args: dict[str, Any]
     wire: Literal['by_name', 'by_alias']
-    """How the engine writes nested models: Render and Azure Durable Task by Python name, Temporal by alias."""
+    """How nested models are written: by Python name through `JSON_CODEC`, by alias in built-in engine tool calls."""
     shipped: dict[str, Any]
     rejected: str | None = None
-    """Why revalidation rejects the shipped arguments: a nested value arrives keyed by Python name, read only by alias."""
+    """Why revalidation rejects the shipped arguments: a nested value ships under a key its validation doesn't read."""
 
 
-NESTED_BY_NAME = 'nested models shipped by Python name: https://github.com/pydantic/pydantic-ai/issues/13431'
+NESTED_BY_NAME = 'nested models shipped by Python name: https://github.com/pydantic/pydantic-ai/issues/13568'
 NO_ALIASES = 'TypedDict and dataclass values ship by Python name: https://github.com/pydantic/pydantic-ai/issues/13440'
+SERIALIZATION_ONLY = 'serialization alias not read by validation: https://github.com/pydantic/pydantic-ai/issues/13567'
 
 REVALIDATION_CASES = [
     RevalidationCase('alias', alias, {'cityName': 'Paris'}, 'by_name', {'city': 'Paris'}),
@@ -372,6 +390,21 @@ REVALIDATION_CASES = [
         {'tree': {'name': 'root', 'children': [{'name': 'leaf'}]}, 'maxDepth': 2},
         'by_alias',
         {'tree': {'name': 'root', 'children': [{'name': 'leaf', 'children': []}]}, 'depth': 2},
+    ),
+    RevalidationCase(
+        'serialization-alias',
+        serialization_alias,
+        {'lodging': {'city': 'Paris'}, 'guests': 2},
+        'by_alias',
+        {'lodging': {'cityOut': 'Paris'}, 'guests': 2},
+        rejected=SERIALIZATION_ONLY,
+    ),
+    RevalidationCase(
+        'serialization-alias-choices',
+        serialization_alias_choices,
+        {'room': {'room': 'A1', 'floorIn': 3}, 'guests': 2},
+        'by_alias',
+        {'room': {'roomOut': 'A1', 'floorOut': 3}, 'guests': 2},
     ),
 ]
 
