@@ -196,6 +196,7 @@ async def test_wait_links_each_url_and_folds_one_too_long_for_the_pane(monkeypat
     monkeypatch.setattr(dialogs, 'terminal_size', lambda: (81, 24))  # An 80-column frame: a 37-column preview.
     short = 'https://example.test/device?code=ABCD'
     long = 'https://example.test/authorize?' + 'x' * 60
+    huge = 'https://example.test/' + 'y' * 2048  # Too long to repeat on every row, so left as it was.
     shown = threading.Event()
     previews: list[str] = []
 
@@ -205,7 +206,7 @@ async def test_wait_links_each_url_and_folds_one_too_long_for_the_pane(monkeypat
         return CLOSED
 
     async def task(show: Callable[[str], None]) -> None:
-        show(f'{short}\n\nOpen {long} now\nIf no browser opened, enter the code {short}')
+        show(f'{short}\n\nOpen {long} now\nIf no browser opened, enter the code {short}\n{huge}')
         shown.set()
         await anyio.sleep_forever()
 
@@ -223,6 +224,7 @@ async def test_wait_links_each_url_and_folds_one_too_long_for_the_pane(monkeypat
         f'{make_link(long, long[69:])} now',
         'If no browser opened, enter the code ',
         make_link(short, short),
+        huge,
     ]
 
 

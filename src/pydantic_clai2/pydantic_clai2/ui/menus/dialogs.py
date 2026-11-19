@@ -21,6 +21,8 @@ from pydantic_clai2.ui.rendering.tool_output import terminal_text
 _REDRAW = 'dialogs:changed'
 """A key no keyboard sends and no handler takes: termflow repaints after it, showing the new text."""
 _URL = re.compile(r'https?://[^\s\x00-\x1f\x7f]+')
+_MAX_LINK = 2048
+"""The longest URL the waiting screen links, as `LinkOutput` caps a streamed link: each folded row repeats it."""
 
 
 class TerminalDialogs:
@@ -188,7 +190,7 @@ def _linked(text: str, *, width: int) -> str:
     """
     lines: list[str] = []
     for line in text.split('\n'):
-        urls = [(match.start(), match.end(), match[0]) for match in _URL.finditer(line)]
+        urls = [(match.start(), match.end(), match[0]) for match in _URL.finditer(line) if len(match[0]) <= _MAX_LINK]
         if not urls:
             lines.append(line)
             continue
