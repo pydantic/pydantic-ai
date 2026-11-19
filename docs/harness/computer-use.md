@@ -63,8 +63,8 @@ The model must accept images.
   through `OpenAIResponsesModel` with `OpenAIProvider` or `BedrockMantleProvider`. See [OpenAI](../models/openai.md#native-tools).
 - Every other model gets `computer` as a regular function tool.
 
-By default, OpenAI's computer tool is sent only through `OpenAIProvider` and `BedrockMantleProvider`, except with an Azure client
-or through the Pydantic AI Gateway. Pydantic AI checks the provider class, not the server it calls. If you point
+By default, OpenAI's computer tool is sent only through `OpenAIProvider` and `BedrockMantleProvider`, except with an Azure client.
+The Pydantic AI Gateway's OpenAI route uses `OpenAIProvider`, so it gets the tool too. Pydantic AI checks the provider class, not the server it calls. If you point
 `OpenAIProvider(base_url=...)` at another server, such as Ollama or vLLM, that doesn't support the computer tool,
 remove `ComputerTool` from `supported_native_tools` in the model's `profile=` argument. Every other provider gets the
 function tool. If its server supports OpenAI's computer tool, add `ComputerTool` to `supported_native_tools` in the

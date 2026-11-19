@@ -22,15 +22,13 @@ NOTICE_CHARS = 200
 """Room reserved for the longest continuation or oversized-line notice `format_lines` appends."""
 
 
-def format_lines(lines: Sequence[str], offset: int, limit: int, max_chars: int | None = None) -> str:
-    """Format pre-split lines with line numbers and continuation hint.
+def format_lines(window: Sequence[str], offset: int, total: int, max_chars: int | None = None) -> str:
+    """Number `window`, the lines from `offset` on of a file with `total` lines, and add a continuation hint.
 
     With `max_chars`, the numbered lines end on the last complete one that
     fits, so the continuation offset always names the first line not shown.
     The notice appended after them is not counted; callers reserve `NOTICE_CHARS`.
     """
-    total = len(lines)
-
     if total == 0:
         return '(empty file)\n'
 
@@ -39,7 +37,7 @@ def format_lines(lines: Sequence[str], offset: int, limit: int, max_chars: int |
 
     numbered: list[str] = []
     budget = max_chars
-    for number, line in enumerate(lines[offset : offset + limit], start=offset + 1):
+    for number, line in enumerate(window, start=offset + 1):
         rendered = f'{number:>6}\t{line}'
         if budget is not None and len(rendered) > budget:
             if not numbered:
@@ -130,11 +128,6 @@ def bytes_hash(data: bytes) -> str:
     the `expected_hash` handshake holds whatever the line endings or encoding.
     """
     return hashlib.sha256(data).hexdigest()[:12]
-
-
-def text_hash(content: str) -> str:
-    """The hash of `content` as the tools write it: its UTF-8 bytes."""
-    return bytes_hash(content.encode('utf-8'))
 
 
 def check_expected_hash(path: str, current_hash: str, expected_hash: str) -> None:
