@@ -212,7 +212,7 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
         tool_filter: SerializableToolSelector = 'all',
         on_detection: None = None,
         blocked_message: str = _DEFAULT_BLOCKED_MESSAGE,
-    ) -> PromptInjectionDefender[Any]:
+    ) -> PromptInjectionDefender[AgentDepsT]:
         """Build from an agent spec, where `defense` and `on_detection` can only be `None`."""
         return cls(
             defense,

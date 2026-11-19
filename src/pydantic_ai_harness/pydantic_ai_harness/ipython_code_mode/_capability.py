@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any
 
 from pydantic_ai import AbstractToolset
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, ToolSearch
@@ -90,7 +89,7 @@ class IPythonCodeMode(AbstractCapability[AgentDepsT]):
         max_tool_calls: int = 100,
         timeout: float | None = 60.0,
         kernel: None = None,
-    ) -> IPythonCodeMode[Any]:
+    ) -> IPythonCodeMode[AgentDepsT]:
         """Build from an agent spec, where `tools` takes names or metadata and `kernel` can only be `None`."""
         return cls(
             tools,

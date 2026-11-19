@@ -162,7 +162,7 @@ class AskUser(AbstractCapability[AgentDepsT]):
         id: str | None = 'ask_user',
         description: str | None = None,
         defer_loading: bool = False,
-    ) -> AskUser[Any]:
+    ) -> AskUser[AgentDepsT]:
         """Build from an agent spec, where `answerer` and `timeout` can only be `None`, which defers every call."""
         return cls(answerer=answerer, timeout=timeout, id=id, description=description, defer_loading=defer_loading)
 
