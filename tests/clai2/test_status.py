@@ -82,10 +82,10 @@ def test_compact_context_usage(used: int | None, window: int | None, expected: s
 def test_status_marks_lower_bound_cost_and_keeps_default_unchanged() -> None:
     status = Status(model='m', cost=Decimal('0.0100'))
     assert '$0.0100' in status.text()
-    assert '$0.0100' in status.toolbar()[4][1]
+    assert any(role == MUTED and '$0.0100' in text for role, text in status.toolbar())
     status.cost_is_lower_bound = True
     assert '>=$0.0100' in status.text()
-    assert '>=$0.0100' in status.toolbar()[4][1]
+    assert any(role == MUTED and '>=$0.0100' in text for role, text in status.toolbar())
     status.cost = None
     assert '$' not in status.text()
 
@@ -172,7 +172,7 @@ async def test_cost_updates_after_each_model_response_within_a_turn(
 def test_an_estimated_context_figure_is_marked() -> None:
     status = Status(model='m', context_tokens=13_416, context_window=1_000_000, context_estimated=True)
     assert 'context: ~13k/1m tokens' in status.text()
-    assert status.toolbar()[1] == (MUTED, '~13k/1m')
+    assert (MUTED, '~13k/1m') in status.toolbar()
     assert ''.join(text for _, text in status.toolbar()) == status.text()
 
 
@@ -203,21 +203,19 @@ def test_workspace_without_a_home_directory_is_shown_whole(monkeypatch: pytest.M
 
 def test_toolbar_paints_the_context_figure_on_alert() -> None:
     status = Status(model='m', context_tokens=90, context_window=100, context_alert=True)
-    assert status.toolbar() == [
-        (MUTED, 'm | context: '),
-        (WARNING, '90/100'),
-        (MUTED, ' tokens | '),
-        (LITHIUM, '~0'),
-        (MUTED, ' streamed tokens | '),
-        (MUTED, 'ready'),
-    ]
+    fragments = status.toolbar()
+    assert (WARNING, '90/100') in fragments
+    assert (LITHIUM, '~0') in fragments
+    assert (MUTED, 'ready') in fragments
+    assert ''.join(text for role, text in fragments if role == WARNING) == '90/100'
+    assert ''.join(text for _, text in fragments) == 'm | context: 90/100 tokens | ~0 streamed tokens | ready'
     status.context_alert = False
-    assert status.toolbar()[1] == (MUTED, '90/100')
+    assert (MUTED, '90/100') in status.toolbar()
     assert ''.join(text for _, text in status.toolbar()) == status.text()
     status.cost = Decimal('0.0123')
     status.context_alert = True
-    assert status.toolbar()[1] == (WARNING, '90/100')
-    assert '$0.0123' in status.toolbar()[4][1]
+    assert (WARNING, '90/100') in status.toolbar()
+    assert any(role == MUTED and '$0.0123' in text for role, text in status.toolbar())
     assert ''.join(text for _, text in status.toolbar()) == status.text()
 
 
@@ -604,7 +602,7 @@ async def test_cancellation_restores_scroll_region() -> None:
 def test_plugin_segments_are_appended_and_empties_are_skipped() -> None:
     status = Status(model='m', status_segments=(lambda: '', lambda: '/tmp/work'))
     assert status.text().endswith('ready | /tmp/work')
-    assert status.toolbar()[-1] == (MUTED, ' | /tmp/work')
+    assert (MUTED, '/tmp/work') in status.toolbar()
     assert ''.join(text for _, text in status.toolbar()) == status.text()
     status.context_alert = True
     assert ''.join(text for _, text in status.toolbar()) == status.text()

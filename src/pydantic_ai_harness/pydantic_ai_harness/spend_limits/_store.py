@@ -12,6 +12,7 @@ than really happened.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -19,6 +20,7 @@ from decimal import Decimal
 from threading import Lock
 from typing import Protocol, runtime_checkable
 
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.spend_limits._snapshot import Spent, money_precision
 
 _Entries = dict[str, tuple[Spent, 'datetime | None']]
@@ -80,6 +82,40 @@ class SpendEntry:
 
 
 @runtime_checkable
+class SpendStore(Protocol):
+    """Reads and accumulates the counter behind one budget window at a time.
+
+    Deprecated. Implement
+    [`BatchSpendStore`][pydantic_ai_harness.spend_limits.BatchSpendStore] instead: it takes
+    every window of a response in one call, which is what lets a backend apply them
+    together, and it carries the replay token that keeps a re-executed accrual from
+    counting twice. `SpendLimits` still accepts a store of this shape and drives it
+    through an adapter, one window per call, warning once about what that costs.
+
+    The two protocols are separate names rather than two versions of one, because
+    `runtime_checkable` tests method presence and not signatures: reusing `add` and
+    `get` would leave nothing able to tell a store that batches from one that cannot.
+    """
+
+    async def get(self, key: str) -> Spent:
+        """What `key` has accumulated. A key that was never written reads as zero."""
+        ...  # pragma: no cover
+
+    async def add(
+        self,
+        key: str,
+        *,
+        usd: Decimal,
+        tokens: int,
+        requests: int,
+        unpriced: int,
+        ttl: timedelta | None,
+    ) -> Spent:
+        """Add to `key` and return the result. `ttl` is how long the key may be kept."""
+        ...  # pragma: no cover
+
+
+@runtime_checkable
 class BatchSpendStore(Protocol):
     """Reads and accumulates the counters behind every window of one response.
 
@@ -99,6 +135,82 @@ class BatchSpendStore(Protocol):
     async def add_many(self, entries: Sequence[SpendEntry]) -> Mapping[str, Spent]:
         """Apply every entry and return each key's new total."""
         ...  # pragma: no cover
+
+
+@dataclass
+class _LegacyStoreAdapter:
+    """Drives a `SpendStore` one window per call, because that is all it can do."""
+
+    store: SpendStore
+
+    async def get_many(self, keys: Sequence[str]) -> Mapping[str, Spent]:
+        """Read each key on its own."""
+        return {key: await self.store.get(key) for key in keys}
+
+    async def add_many(self, entries: Sequence[SpendEntry]) -> Mapping[str, Spent]:
+        """Apply each entry on its own, dropping `SpendEntry.token` the store cannot use."""
+        return {
+            entry.key: await self.store.add(
+                entry.key,
+                usd=entry.usd,
+                tokens=entry.tokens,
+                requests=entry.requests,
+                unpriced=entry.unpriced,
+                ttl=entry.ttl,
+            )
+            for entry in entries
+        }
+
+
+_SINGLE_KEY = frozenset({'get', 'add'})
+_BATCH = frozenset({'get_many', 'add_many'})
+
+
+def warn_unreachable_overrides(store: object, base: type[object]) -> None:
+    """Warn when a subclass overrode the single-key pair that no longer drives anything.
+
+    `SpendLimits` calls `get_many` and `add_many`. A subclass of a concrete store that
+    overrode only `get` and `add` still satisfies `BatchSpendStore` through what it
+    inherited, so `as_batch_store` hands it back unwrapped and the override never runs.
+    Before the batch pair existed that override was the only path, which makes this a
+    change of behavior with nothing to show for it -- an audit or a mirrored write bolted
+    onto `add` simply stops happening.
+
+    Checked against the class dictionaries between `type(store)` and `base` rather than by
+    comparing attributes, so a subclass that redefines the batch pair as well is silent:
+    it has already moved.
+    """
+    mro = type(store).__mro__
+    redefined = {name for klass in mro[: mro.index(base)] for name in klass.__dict__}
+    if redefined & _SINGLE_KEY and not redefined & _BATCH:
+        warnings.warn(
+            f'{type(store).__name__} overrides {sorted(redefined & _SINGLE_KEY)} but not `get_many` or '
+            '`add_many`. `SpendLimits` drives the batch pair, so those overrides are never called and '
+            'whatever they add -- an audit, a mirrored write -- stops happening. Move them onto '
+            '`get_many` and `add_many`.',
+            HarnessDeprecationWarning,
+            stacklevel=4,
+        )
+
+
+def as_batch_store(store: SpendStore | BatchSpendStore) -> BatchSpendStore:
+    """The store as a batch store, wrapping a legacy one and saying what that costs.
+
+    Warned about here rather than on every request: this runs once per `SpendLimits`,
+    at construction, so the message lands next to the line that chose the store.
+    """
+    if isinstance(store, BatchSpendStore):
+        return store
+    warnings.warn(
+        f'{type(store).__name__} implements the deprecated `SpendStore` protocol, so each response is applied '
+        'one window at a time: a response counting against a day and a month budget is two writes, and a failure '
+        'between them leaves the day counted and the month not. `SpendEntry.token` is dropped too, so recovery '
+        'that cannot consult the durable journal has no store-side protection against applying a response twice. '
+        'Implement `get_many` and `add_many` (`BatchSpendStore`) to get both.',
+        HarnessDeprecationWarning,
+        stacklevel=4,
+    )
+    return _LegacyStoreAdapter(store)
 
 
 @dataclass
@@ -139,6 +251,10 @@ class InMemorySpendStore:
     _lock: Lock = field(default_factory=Lock, init=False, repr=False)
     _writes_since_sweep: int = field(default=0, init=False, repr=False)
 
+    def __post_init__(self) -> None:
+        """Report a subclass whose single-key overrides the batch pair has left unreachable."""
+        warn_unreachable_overrides(self, InMemorySpendStore)
+
     def __len__(self) -> int:
         """How many windows are still live.
 
@@ -153,6 +269,36 @@ class InMemorySpendStore:
         now = self.clock()
         with self._lock:
             return sum(1 for _, expires_at in self._entries.values() if expires_at is None or now < expires_at)
+
+    async def get(self, key: str) -> Spent:
+        """What `key` has accumulated. Deprecated in favour of `get_many`; call it with a sequence of keys."""
+        warnings.warn(
+            '`InMemorySpendStore.get` is deprecated in favour of `get_many`. Use the batched `get_many` to read '
+            'several keys in one call. This method will be removed in a future release.',
+            HarnessDeprecationWarning,
+            stacklevel=2,
+        )
+        return (await self.get_many([key]))[key]
+
+    async def add(
+        self,
+        key: str,
+        *,
+        usd: Decimal,
+        tokens: int,
+        requests: int,
+        unpriced: int,
+        ttl: timedelta | None,
+    ) -> Spent:
+        """Add to `key` and return the result. Deprecated in favour of `add_many`; call it with a sequence of entries."""
+        warnings.warn(
+            '`InMemorySpendStore.add` is deprecated in favour of `add_many`. Use the batched `add_many` to apply '
+            'several entries in one call. This method will be removed in a future release.',
+            HarnessDeprecationWarning,
+            stacklevel=2,
+        )
+        entry = SpendEntry(key=key, usd=usd, tokens=tokens, requests=requests, unpriced=unpriced, ttl=ttl)
+        return (await self.add_many([entry]))[key]
 
     async def get_many(self, keys: Sequence[str]) -> Mapping[str, Spent]:
         """What each key has accumulated, treating an expired key as absent.
