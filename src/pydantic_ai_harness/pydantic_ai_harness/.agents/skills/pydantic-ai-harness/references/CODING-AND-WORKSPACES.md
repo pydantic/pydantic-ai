@@ -405,11 +405,12 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   `ModalSandboxBackend(working_dir=...)` (or E2B/Render/Sprites/Daytona/boxd), use `Workspace(backend)` (`write_text`,
   `run([...], timeout=300)`), pass `workspace=backend`, destroy `backend.ref` in `finally`; a Sprites,
   Daytona or boxd backend you build needs `await backend.aclose()`.
-- `E2BSandbox(desktop=True)` gives a new sandbox E2B's `desktop` template (Ubuntu, XFCE, a terminal, Chrome) at
-  1280x800 for `ComputerUse()`, or pass `desktop=(w, h)`. XFCE takes `printscreen` and the media and volume keys
-  itself. The agent can type only ASCII. A custom `template` needs `xdotool`, `xwininfo`, `scrot`, `setsid`, and
-  Xvfb unless an X server runs, which the first use installs with `apt-get` as root or with passwordless `sudo`,
-  and `startxfce4`.
+- `E2BSandbox(desktop=True)` gives a new sandbox a 1280x800 screen for `ComputerUse()`, from E2B's `desktop`
+  template (Ubuntu, XFCE, a terminal, Chrome). `desktop=(w, h)` sets another size. XFCE keeps `printscreen` and the
+  media and volume keys, so apps never receive them. The agent can type only ASCII. A custom `template` needs
+  `xdotool`, `xwininfo`, `scrot`, `setsid`, and Xvfb unless an X server runs, which the first use installs with
+  `apt-get` as root or with passwordless `sudo`, plus `startxfce4` for the XFCE desktop. Windows of a sandbox made
+  with E2B's Desktop SDK are on another display, so the agent can't see them.
 - Idempotent per-turn setup goes in a `@hooks.on.before_run` hook: `await ctx.workspace.run('test -d
   repo/.git || git clone <url> repo', shell=True, timeout=300)`. Clone into a subdirectory: `shell`,
   background commands, and output spills create `.pydantic-ai-harness/` in the working directory, so
@@ -419,11 +420,12 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 - On E2B and Sprites, a background child that inherits stdout/stderr keeps `run()` waiting: redirect
   its output (`start_command` already does). On Daytona and boxd, `run()` returns when the command exits, without
   what the child prints later.
-- `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`, or pass
-  `desktop=(w, h)`; the size is fixed at creation. It can't press F13 to F24, keypad Enter, the keypad operators,
-  print screen, pause, scroll lock, the menu key or media keys, use side mouse buttons, or type characters beyond
-  U+FFFF (most emoji). Anyone with the sandbox's preview link can see and control its desktop, so a public
-  sandbox gets no desktop: its first desktop use or shell command raises `UserError`.
+- `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`. Pass
+  `desktop=(w, h)` for another size. The size is fixed when the sandbox is created. The desktop can't press F13 to
+  F24, keypad Enter, the keypad's `+ - * / .` keys, print screen, pause, scroll lock, the menu key or media keys. It
+  can't use side mouse buttons or type characters beyond U+FFFF (most emoji). Anyone with the sandbox's preview link
+  can see and control its desktop. So a public sandbox gets no desktop: its first desktop use or shell command
+  raises `UserError`.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
 - `ModalSandbox(desktop=True)` gives the sandbox a 1280x800 desktop (fluxbox, a panel with a terminal button, no
@@ -502,7 +504,7 @@ Python up to 3.14.
 - The first operation creates the container; the image needs a POSIX `sh`, and its own entrypoint and
   command don't run. Creating the container (and pulling) is not bounded by a command's `timeout`. Without `image` the
   capability only attaches and removes by ref, and leaves a run without a ref to other workspace capabilities,
-  unless `desktop=True`, which builds the desktop image (below).
+  unless `desktop=True`: then it builds the desktop image (below).
   `working_dir=None` uses the image's `WORKDIR`; a missing `working_dir` is created on first use, in an attached container too.
 - The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`; attaching starts a stopped container,
   so it comes back. The container outlives the run: `await DockerContainer().destroy(ref)`.
@@ -515,11 +517,11 @@ Python up to 3.14.
 - New containers get `--pids-limit 2048`; a `--pids-limit` in `docker_args` replaces it (`-1` removes it).
 - With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
   With Podman, `run()` returns when the command exits.
-- `desktop=True` gives the container a 1280x800 X display for `ComputerUse()`; commands and files stay available.
-  Without `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, xterm, Firefox) and later runs reuse
-  it; a custom `image` needs `xdotool`, `xwininfo`, `scrot`, `setsid`, Xvfb unless an X server runs, and `fluxbox`,
+- `desktop=True` gives the container a 1280x800 screen for `ComputerUse()`. Commands and files still work.
+  Without `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, xterm, Firefox), and later runs reuse
+  it. A custom `image` needs `xdotool`, `xwininfo`, `scrot`, `setsid`, Xvfb unless an X server runs, and `fluxbox`,
   `tint2` and `xterm` for the desktop, which the first use installs with `apt-get` as root or with passwordless
-  `sudo`. Under durable execution, build the image first and pass it as `image`.
+  `sudo`. Under durable execution, build the image before the first run and pass it as `image`.
 
 ### OpenSandbox
 
