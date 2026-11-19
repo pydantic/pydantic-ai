@@ -6,12 +6,14 @@ import ctypes
 import json
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import anyio
 import pytest
 
 from pydantic_ai.capabilities import WindowsWorkspace
+from pydantic_ai.workspaces.windows import WindowsWorkspaceBackend
 from pydantic_ai_harness import Coder
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
@@ -19,6 +21,23 @@ from pydantic_ai_harness.shell import Shell
 from .._tool_calls import call_tool, call_tools
 
 windows_only = pytest.mark.skipif(sys.platform != 'win32', reason='runs PowerShell')
+
+
+class _CountsRefusals(WindowsWorkspaceBackend):
+    """Counts the reads Windows refuses, and calls `on_refusal` after each, as a publish ends its replace."""
+
+    def __init__(self, working_dir: Path, on_refusal: Callable[[], None]) -> None:
+        super().__init__(working_dir)
+        self.on_refusal = on_refusal
+        self.refusals = 0
+
+    async def read_bytes(self, path: str) -> bytes:
+        try:
+            return await super().read_bytes(path)
+        except PermissionError:
+            self.refusals += 1
+            self.on_refusal()
+            raise
 
 
 @windows_only
@@ -129,12 +148,18 @@ class TestShellOnWindows:
         finally:
             await anyio.run_process(['taskkill', '/T', '/F', '/PID', str(pid)], check=False)
 
-    async def test_a_status_held_open_for_delete_reads_as_running(self, project: Path) -> None:
-        """A handle with `DELETE` access, as `Move-Item -Force` holds while it replaces `status.json`, refuses an open
-        that does not share delete until it closes."""
+    @pytest.mark.parametrize(('released', 'refusals'), [(True, 1), (False, 3)], ids=['released', 'held'])
+    async def test_a_status_held_open_for_delete_is_read_again(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch, released: bool, refusals: int
+    ) -> None:
+        """`Move-Item -Force` holds `status.json` open for `DELETE` while it replaces it, and Windows refuses an open
+        that does not share delete meanwhile: the read is tried again, and the refusal raised once it outlasts them."""
+        monkeypatch.setattr('pydantic_ai_harness.shell._jobs._STATUS_READ_ATTEMPTS', 3)
+        monkeypatch.setattr('pydantic_ai_harness.shell._jobs._STATUS_READ_DELAY', 0)
         shell = Shell[None](tools=['start_command', 'check_command', 'stop_command'])
-        workspace = WindowsWorkspace[None](project)
-        started = await call_tool([shell, workspace], 'start_command', {'command': 'Start-Sleep 600'})
+        started = await call_tool(
+            [shell, WindowsWorkspace[None](project)], 'start_command', {'command': 'Start-Sleep 600'}
+        )
         assert 'ID: ' in started, started
         command_id = started.rsplit('ID: ', 1)[1].strip()
         check: dict[str, object] = {'command_id': command_id}
@@ -156,13 +181,22 @@ class TestShellOnWindows:
         # `DELETE`, `FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE`, `OPEN_EXISTING` and `INVALID_HANDLE_VALUE`.
         delete, share_all, open_existing, invalid_handle = 0x10000, 0x7, 3, ctypes.c_void_p(-1).value
         handle = kernel32.CreateFileW(str(status), delete, share_all, None, open_existing, 0, None)
+        held = [handle]
+
+        def release() -> None:
+            if released:
+                kernel32.CloseHandle(held.pop())
+
+        backend = _CountsRefusals(project, release)
         try:
-            checked = await call_tool([shell, workspace], 'check_command', check)
+            checked = await call_tool([shell], 'check_command', check, workspace=backend)
         finally:
-            kernel32.CloseHandle(handle)
-            stopped = await call_tool([shell, workspace], 'stop_command', check)
+            for open_handle in held:
+                kernel32.CloseHandle(open_handle)
+            stopped = await call_tool([shell], 'stop_command', check, workspace=backend)
         assert handle not in (None, invalid_handle)
-        assert '[status: running]' in checked, checked
+        assert backend.refusals == refusals
+        assert ('[status: running]' if released else '[Errno 13] Permission denied') in checked, checked
         assert '[stopped]' in stopped
 
     async def test_stopping_a_background_command_ends_its_tree(self, project: Path) -> None:
