@@ -434,6 +434,7 @@ banned-module-level-imports = [
 "asyncio.Lock".msg = "Use anyio.Lock instead."
 # Backend-neutral code runs on Trio too. `.github/scripts/test_lint_exemptions.py` checks the `TID251`
 # `per-file-ignores` below: the bans above still hold in those files, and each one still uses an `asyncio` primitive.
+# `tests/test_examples.py` lints docs examples without the bans below.
 "asyncio.sleep".msg = "Use anyio.sleep instead."
 "asyncio.Event".msg = "Use anyio.Event instead."
 "asyncio.to_thread".msg = "Use anyio.to_thread.run_sync instead."
