@@ -16,6 +16,8 @@ from opentelemetry import trace
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelResponse, NativeOutput, ThinkingPart
+from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.models.instrumented import InstrumentationSettings
 
 from ..conftest import message, try_import
 
@@ -45,7 +47,7 @@ def _agent(openai_api_key: str, *, instrument: bool) -> Agent[None, str]:
     return Agent(
         OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(api_key=openai_api_key)),
         model_settings=OpenAIResponsesModelSettings(thinking='medium', openai_store=False),
-        instrument=instrument,
+        capabilities=[Instrumentation(settings=InstrumentationSettings())] if instrument else [],
     )
 
 
