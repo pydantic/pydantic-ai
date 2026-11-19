@@ -1417,7 +1417,19 @@ def test_test_model_generates_for_schemas_it_cant_satisfy(schema: JsonSchema):
     assert 'field' in _JsonSchemaTestData(schema).generate()
 
 
-def test_test_model_generates_a_uuid_for_a_negative_seed():
-    """A UUID holds 128 bits, so a seed outside them still gets one, as it got an ordinary string before."""
-    schema = _arguments_schema({'type': 'string', 'format': 'uuid'}, {})
-    assert _JsonSchemaTestData(schema, seed=-1).generate() == {'field': 'ffffffff-ffff-ffff-ffff-ffffffffffff'}
+@pytest.mark.parametrize(
+    ('fmt', 'seed', 'expected'),
+    [
+        pytest.param('uuid', -1, 'ffffffff-ffff-ffff-ffff-ffffffffffff', id='uuid-negative'),
+        pytest.param('duration', -1, 'PT1S', id='duration-negative'),
+        pytest.param('date', 10**7, '9405-01-28', id='date-past-9999'),
+        pytest.param('date-time', -(10**7), '4641-12-04T00:00:00Z', id='date-time-before-year-1'),
+    ],
+)
+def test_test_model_generates_a_format_for_any_seed(fmt: str, seed: int, expected: str):
+    """A seed outside what a format holds, like a negative UUID or a date past 9999, still gets a value of it.
+
+    `jsonschema` checks neither `duration` nor `date-time` without extra packages, so the values are pinned here.
+    """
+    schema = _arguments_schema({'type': 'string', 'format': fmt}, {})
+    assert _JsonSchemaTestData(schema, seed=seed).generate() == {'field': expected}

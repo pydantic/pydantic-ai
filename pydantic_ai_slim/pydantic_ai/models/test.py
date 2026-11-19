@@ -6,7 +6,7 @@ import string
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any, Literal, TypeVar, assert_never, cast
 from uuid import UUID
 
@@ -496,11 +496,19 @@ _NUMBER_BOUNDS: tuple[tuple[str, Callable[[float, float], bool]], ...] = (
     ('exclusiveMaximum', lambda value, bound: value < bound),
 )
 """Each JSON Schema numeric bound, and whether a value is within it."""
+_SEED_DATE = date(2024, 1, 1).toordinal()
+
+
+def _seed_date(seed: int) -> str:
+    """The date `seed` days after 2024-01-01, wrapping around the range a `date` holds instead of overflowing it."""
+    return date.fromordinal((_SEED_DATE + seed - 1) % date.max.toordinal() + 1).isoformat()
+
+
 _FORMATS: dict[str, Callable[[int], str]] = {
-    'date': lambda seed: (date(2024, 1, 1) + timedelta(days=seed)).isoformat(),
-    'date-time': lambda seed: f'{(date(2024, 1, 1) + timedelta(days=seed)).isoformat()}T00:00:00Z',
+    'date': _seed_date,
+    'date-time': lambda seed: f'{_seed_date(seed)}T00:00:00Z',
     'time': lambda seed: f'00:00:{seed % 60:02}Z',
-    'duration': lambda seed: f'PT{seed}S',
+    'duration': lambda seed: f'PT{abs(seed)}S',
     'email': lambda seed: f'user{seed}@example.com',
     'uri': lambda seed: f'https://example.com/{seed}',
     'uuid': lambda seed: str(UUID(int=seed % (1 << 128))),

@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import json
 import re
+from collections.abc import Iterable, Iterator, Mapping
 from copy import deepcopy
 from typing import Any
 
@@ -13,6 +14,7 @@ from typing_extensions import TypeAliasType
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, PromptedOutput, TextPart, Tool, UserError
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
+from pydantic_ai._json_schema_keywords import SUBSCHEMA_KEYWORDS, Subschema, iter_subschemas
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, GoogleOpenAPISchemaTransformer
@@ -1426,3 +1428,29 @@ def test_inline_defs_skips_an_unreferenced_malformed_definition():
         'type': 'object',
         'properties': {'field': {'type': 'string'}},
     }
+
+
+def test_inline_defs_searches_each_nested_ref_subschema_once(monkeypatch: pytest.MonkeyPatch):
+    """Each level of a nested `not` asks whether a `$ref` into `$defs` is under it, and each subschema is searched once.
+
+    Searching afresh at every level would take time quadratic in the depth: seconds for a large tool schema of chains.
+    """
+    searched: list[Mapping[str, object]] = []
+
+    def counting_iter_subschemas(
+        node: Mapping[str, object], keywords: Iterable[str] = SUBSCHEMA_KEYWORDS
+    ) -> Iterator[Subschema]:
+        searched.append(node)
+        return iter_subschemas(node, keywords)
+
+    monkeypatch.setattr('pydantic_ai._json_schema.iter_subschemas', counting_iter_subschemas)
+    depth = 100
+    field: JsonSchema = {'$ref': '#/$defs/Leaf'}
+    expected: JsonSchema = {'type': 'string'}
+    for _ in range(depth):
+        field, expected = {'not': field}, {'not': expected}
+    schema: JsonSchema = {'type': 'object', 'properties': {'field': field}, '$defs': {'Leaf': {'type': 'string'}}}
+
+    assert InlineDefsJsonSchemaTransformer(schema).walk()['properties']['field'] == expected
+    # Each `not` below the field's own is searched once by the up-front check and once by the walk, which walks a copy.
+    assert len(searched) == 2 * (depth - 1)

@@ -14,6 +14,7 @@ Provider transformers strip keywords their APIs reject, so only the lossless wal
 
 from __future__ import annotations
 
+import ast
 import importlib
 import inspect
 import json
@@ -43,19 +44,23 @@ _TRANSFORMER_MODULES = (
     'pydantic_ai.profiles.google',
     'pydantic_ai.profiles.openai',
     'pydantic_ai.providers.anthropic',
+    'pydantic_ai.providers.azure',
     'pydantic_ai.providers.bedrock',
     'pydantic_ai.providers.groq',
     'pydantic_ai.providers.openrouter',
     'pydantic_ai.realtime.elevenlabs_agents',
 )
-"""The modules that define a `JsonSchemaTransformer` subclass, imported so `__subclasses__()` finds them."""
+"""The modules that define a `JsonSchemaTransformer` subclass, imported so `__subclasses__()` finds them.
+
+`test_transformer_modules_lists_every_defining_module` keeps this in step with the source.
+"""
 
 
 def _transformer_classes() -> dict[str, type[JsonSchemaTransformer]]:
     for module in _TRANSFORMER_MODULES:
         try:
             importlib.import_module(module)
-        except ImportError:  # pragma: no cover - the provider's SDK isn't installed
+        except ImportError:  # the provider's SDK isn't installed, as in the slim test lane
             pass
 
     found: dict[str, type[JsonSchemaTransformer]] = {}
@@ -222,6 +227,26 @@ def _dangling_refs(cls: type[JsonSchemaTransformer]) -> dict[str, list[str]]:
         if refs := [ref for _, ref in _refs(output) if _pointer_target(output, ref) is _MISSING]:
             dangling[case] = refs
     return dangling
+
+
+def test_transformer_modules_lists_every_defining_module():
+    """`_TRANSFORMER_MODULES` names each module whose source defines a `*SchemaTransformer` subclass.
+
+    The source is read rather than imported, so the check needs no provider SDK.
+    """
+    package = Path(inspect.getfile(JsonSchemaTransformer)).parent
+    defining: set[str] = set()
+    for path in package.rglob('*.py'):
+        if 'SchemaTransformer' not in (source := path.read_text(encoding='utf-8')):
+            continue
+        if any(
+            isinstance(node, ast.ClassDef)
+            and any(ast.unparse(base).endswith('SchemaTransformer') for base in node.bases)
+            for node in ast.walk(ast.parse(source))
+        ):
+            defining.add('.'.join(('pydantic_ai', *path.relative_to(package).with_suffix('').parts)))
+    # `pydantic_ai._json_schema` defines the base class, which this module imports.
+    assert defining - {'pydantic_ai._json_schema'} == set(_TRANSFORMER_MODULES)
 
 
 @pytest.mark.parametrize('name', sorted(TRANSFORMERS))
