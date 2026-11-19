@@ -99,8 +99,6 @@ def test_a_spec_gives_the_sandbox_its_desktop() -> None:
 
 def test_a_new_desktop_sandbox_needs_internet_access_to_install_the_display_programs() -> None:
     with pytest.raises(UserError, match='needs `allow_internet_access=True`'):
-        RenderSandbox(desktop=True, allow_internet_access=False)
-    with pytest.raises(UserError, match='needs `allow_internet_access=True`'):
         RenderSandboxBackend(desktop=True, allow_internet_access=False)
 
 
@@ -113,7 +111,10 @@ async def test_a_desktop_sandbox_reattaches_with_its_display(
     assert ref is not None
     client, working_dir = workspace_harness.client, str(workspace_harness.root)
 
-    desktop = RenderSandbox(client=client, working_dir=working_dir, desktop=(1440, 900)).backend(ref)
+    # Attaching installs nothing it can't, so the network setting for new sandboxes doesn't stop it.
+    desktop = RenderSandbox(
+        client=client, working_dir=working_dir, desktop=(1440, 900), allow_internet_access=False
+    ).backend(ref)
     await screen(desktop).display_size()
 
     (start,) = display.starts
@@ -141,5 +142,7 @@ async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(
     assert clicked.result == {'performed': 1}
     assert clicked.screenshot is not None and clicked.screenshot.data == FAKE_SCREENSHOT
     assert workspace_harness.created == ['sb-1']
-    assert len(display.starts) == 1
+    (start,) = display.starts
+    # The desktop: its programs installed when missing, and the window manager started.
+    assert 'apt-get install' in start and 'fluxbox tint2 xterm' in start and 'setsid fluxbox' in start
     assert any(command.endswith('mousemove 3 4 click --repeat 1 1') for command in display.xdotool)

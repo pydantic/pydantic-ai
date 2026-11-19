@@ -23,7 +23,6 @@ from pydantic_ai_harness._workspace_provider import (
 from ._backend import (
     DEFAULT_SANDBOX_TIMEOUT,
     RenderSandboxBackend,
-    check_desktop,
     check_sandbox_timeout,
     terminate_sandbox,
 )
@@ -74,13 +73,12 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
 
     desktop: bool | tuple[int, int] = False
     """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
-    for 1280x800, or its `(width, height)`. The first use installs the display's programs with `apt-get`, which
-    needs `allow_internet_access`."""
+    for 1280x800, or its `(width, height)`. The first use installs the desktop's programs with `apt-get`, so creating
+    a new sandbox without `allow_internet_access` raises `UserError`; attaching to one doesn't."""
 
     def __post_init__(self) -> None:
         reject_defer_loading('RenderSandbox', self.defer_loading)
         check_sandbox_timeout(self.sandbox_timeout)
-        check_desktop(self.desktop, self.allow_internet_access)
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
 

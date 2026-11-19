@@ -129,7 +129,7 @@ result = agent.run_sync(
 print(result.output)
 ```
 
-Render's default image has none of the screen's programs, so [the first use of the screen installs them](computer-use.md#what-the-display-needs) with `apt-get`, which needs `allow_internet_access`; without it, `UserError` is raised. The screen starts empty, with no window manager or browser: install the programs the agent should use before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run) with `RenderSandboxBackend(desktop=True)`, or let the agent install them with `Shell`. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another.
+The agent sees [a desktop](computer-use.md#what-the-display-needs): a panel along the bottom with a button that opens a terminal, and no web browser. Render's default image has none of the desktop's programs, so the first use of the screen installs them with `apt-get`, which takes about 20 seconds. That needs `allow_internet_access`: creating a new sandbox without it raises `UserError`, while attaching to an existing one works. To give the agent a browser or other programs, install them before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run) with `RenderSandboxBackend(desktop=True)`, or let the agent install them with `Shell`. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
@@ -193,7 +193,7 @@ To keep results, read them through `ctx.workspace` in `after_run` before calling
 | `sandbox_timeout` | Seconds a new sandbox lives before Render terminates it, at most `86_400`. Default: `3_600`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve from, created on a new sandbox. Default: `None`, the sandbox's home directory. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment is passed. |
-| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. The first use installs the screen's programs with `apt-get`. The size applies when the display first starts, and a reattached sandbox keeps its display's size. Default: `False`. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. The first use installs the desktop's programs with `apt-get`, so a new sandbox needs `allow_internet_access`. The size applies when the display first starts, and a reattached sandbox keeps its display's size. Default: `False`. |
 | `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
 | `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
