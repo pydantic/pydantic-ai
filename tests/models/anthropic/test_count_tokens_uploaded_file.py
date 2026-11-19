@@ -29,6 +29,9 @@ async def test_count_tokens_rejects_uploaded_file_in_prompt(allow_model_requests
     This is left unfixed on purpose: leaving the document out of the count would undercount the request by the
     whole document, and a `count_tokens_before_request` usage limit relies on the count to stop an oversized
     request before it's sent.
+
+    If a re-recording returns a count instead, the endpoint accepts file sources now: remove this test along with the
+    uploaded-file caveat under Token counting in `docs/models/anthropic.md`.
     """
     client = anthropic.AsyncAnthropic(api_key=anthropic_api_key)
     uploaded = await client.beta.files.upload(
