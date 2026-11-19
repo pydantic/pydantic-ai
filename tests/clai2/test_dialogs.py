@@ -22,6 +22,7 @@ from pydantic_clai2.ui.menus import dialogs
 from pydantic_clai2.ui.menus.dialogs import TerminalDialogs, build_pager, run_settings_menu, wrap
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.menu_worker import holding_output
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.clai2.dialog_script import Back, Pick, ScriptedDialogs, Type
 from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick, typed
 
@@ -199,7 +200,7 @@ async def test_wait_links_each_url_and_folds_one_too_long_for_the_pane(monkeypat
     previews: list[str] = []
 
     def run_choice(menu: Menu) -> MenuResult:
-        assert shown.wait(timeout=5)
+        assert shown.wait(timeout=READINESS_WAIT_TIMEOUT)
         previews.append(preview(menu, menu._items[0]))  # pyright: ignore[reportPrivateUsage]
         return CLOSED
 
@@ -208,7 +209,7 @@ async def test_wait_links_each_url_and_folds_one_too_long_for_the_pane(monkeypat
         shown.set()
         await anyio.sleep_forever()
 
-    with anyio.fail_after(5):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         assert not await TerminalDialogs(Runners(run_choice=run_choice)).wait(
             title='Signing in', description='Finish it.', task=task
         )

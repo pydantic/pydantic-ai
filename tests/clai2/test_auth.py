@@ -40,6 +40,7 @@ from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.clai2.dialog_script import Back, ScriptedDialogs
 from tests.clai2.surface_terminal import SurfaceTerminal
 
@@ -477,7 +478,7 @@ async def test_terminal_sign_in_links_the_url_and_opens_it_with_webbrowser(monke
     monkeypatch.setattr(webbrowser, 'open', open_url)
     output = io.StringIO()
     console = Console(file=output, force_terminal=True, color_system='truecolor', width=80)
-    with anyio.fail_after(5):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         assert 'connected' in await CodexAuth(console, read_line=never_pasted).login([])
     assert opened == urls
     assert set(hyperlinks(output.getvalue())) == set(urls), 'every wrapped line of the URL links to all of it'
@@ -491,7 +492,7 @@ async def test_terminal_waiting_screen_links_the_url(monkeypatch: pytest.MonkeyP
 
     def run_choice(menu: Menu) -> MenuResult:
         render = menu._preview  # pyright: ignore[reportPrivateUsage]
-        assert render is not None and shown.wait(timeout=5)
+        assert render is not None and shown.wait(timeout=READINESS_WAIT_TIMEOUT)
         previews.append(render(menu._items[0]))  # pyright: ignore[reportPrivateUsage]
         return MenuResult(cancelled=True)
 
@@ -502,7 +503,7 @@ async def test_terminal_waiting_screen_links_the_url(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
     dialogs = TerminalDialogs(Runners(run_choice=run_choice))
-    with anyio.fail_after(5):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         assert await CodexAuth(Console(file=io.StringIO())).login([], dialogs=dialogs) == (
             'ChatGPT/Codex sign-in cancelled.'
         )
