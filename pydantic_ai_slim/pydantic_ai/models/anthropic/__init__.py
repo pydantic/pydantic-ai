@@ -4205,8 +4205,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         counting) sees the tools actually sent.
         """
         native_computer = self._native_computer(model_request_parameters)
+        if native_computer is None:
+            return model_request_parameters
         tool_defs, tool_choice = self._tool_choice_declarations(model_settings, model_request_parameters)
-        if native_computer is None or tool_choice['type'] != 'any' or tool_defs.keys() != {native_computer.name}:
+        if tool_choice['type'] != 'any' or tool_defs.keys() != {native_computer.name}:
             return model_request_parameters
         native_tools = [tool for tool in model_request_parameters.native_tools if isinstance(tool, ComputerTool)]
         return replace(model_request_parameters, native_tools=native_tools)
