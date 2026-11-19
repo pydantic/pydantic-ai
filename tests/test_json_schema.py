@@ -1688,6 +1688,36 @@ def test_strict_bedrock_inlining_keeps_what_a_ref_under_not_rejects(model_name: 
     assert not validator.is_valid({'quantity': 500})
 
 
+@pytest.mark.skipif(not provider_imports_successful(), reason='provider packages not installed')
+@pytest.mark.parametrize('model_name', ['us.zai.glm-5.3', 'minimax.minimax-m2'])
+def test_strict_bedrock_inlining_keeps_the_root_definition_a_ref_under_not_leads_back_to(model_name: str):
+    """A root `$ref` to a definition that a `$ref` under `not` leads back to keeps that definition as written.
+
+    The walked root goes under a name of its own, so the `$ref` under `not` doesn't reach the copy whose `minimum`
+    moved into `description`. Unit test: Bedrock validates the arguments the model produces, not the schema, so a
+    recording wouldn't show the constraint changing.
+    """
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    transformer_cls = profile.get('json_schema_transformer')
+    assert transformer_cls is not None
+    schema: JsonSchema = {
+        '$ref': '#/$defs/Node',
+        '$defs': {
+            'Node': {
+                'type': 'object',
+                'properties': {'n': {'type': 'integer', 'minimum': 0}, 'child': {'not': {'$ref': '#/$defs/Node'}}},
+                'required': ['n'],
+            }
+        },
+    }
+
+    walked = transformer_cls(schema, strict=True).walk()
+    validator = validator_for(walked)(walked)
+    assert validator.is_valid({'n': 1, 'child': {'n': -1}})
+    assert not validator.is_valid({'n': 1, 'child': {'n': 1}})
+
+
 @pytest.mark.parametrize(('type_', 'keyword'), [('object', 'propertyNames'), ('array', 'contains')])
 @pytest.mark.parametrize('value', [True, False])
 def test_boolean_extra_subschemas_round_trip(type_: str, keyword: str, value: bool):

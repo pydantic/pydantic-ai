@@ -414,18 +414,28 @@ class JsonSchemaTransformer(ABC):
             return handled
 
         # If we are preferring inlined defs and there are recursive refs, we _have_ to use a $defs+$ref structure
-        # We try to use whatever the original root key was, but if it is already in use,
-        # we modify it to avoid collisions.
+        root_ref, root_key = self._root_ref_and_key(defs)
+        defs[root_key] = handled
+        return {'$defs': defs, '$ref': root_ref or f'#/$defs/{root_key}'}
+
+    def _root_ref_and_key(self, defs: Mapping[str, JsonSchema]) -> tuple[str | None, str]:
+        """The root `$ref` the output keeps, if any, and the `$defs` key the walked root goes under.
+
+        We try to use whatever the original root key was, but if it is already in use, we modify it to avoid
+        collisions.
+        """
         root_ref = self.schema.get('$ref')
         root_key = None if root_ref is None else definition_name(root_ref)
-        if root_key is None:
-            root_key = self.schema.get('title', 'root')
+        if root_key is not None and root_key in defs and root_key not in self.recursive_refs:
+            # The root `$ref`s a definition kept as written, which a `$ref` under a keyword the walk doesn't enter
+            # points at, so the walked root goes under a name of its own.
+            root_ref = None
+        if root_key is None or root_ref is None:
+            root_key = self.schema.get('title', 'root') if root_key is None else root_key
             while root_key in defs:
                 # Modify the root key until it is not already in use
                 root_key = f'{root_key}_root'
-
-        defs[root_key] = handled
-        return {'$defs': defs, '$ref': root_ref or f'#/$defs/{root_key}'}
+        return root_ref, root_key
 
     def _walk_with_unwalked_refs_written_out(self, walked: JsonSchema) -> JsonSchema:
         """`walk()`'s second pass, for a schema whose first pass, `walked`, leaves a `$ref` into `$defs` dangling.
