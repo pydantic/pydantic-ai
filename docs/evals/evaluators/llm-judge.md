@@ -60,12 +60,14 @@ LLMJudge(rubric='Check quality')  # What aspect of quality?
 ```python
 from pydantic_evals.evaluators import LLMJudge
 
-LLMJudge(rubric='Response directly answers the user question without hallucination')
+LLMJudge(rubric='Response directly answers the user question without hallucination', include_input=True)
 LLMJudge(rubric='Response uses formal, professional language appropriate for business communication')
 LLMJudge(rubric='All factual claims in the response are supported by the provided context')
 ```
 
-### Including Context
+A rubric that refers to the question or anything else in the input needs `include_input=True`: by default the judge sees only the output, so it cannot tell an answer to a different question from a correct one. See [Including Context](#including-context).
+
+### Including Context {#including-context}
 
 Control what information the judge sees:
 
