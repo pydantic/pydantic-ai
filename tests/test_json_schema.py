@@ -1570,22 +1570,28 @@ def test_inline_defs_leaves_a_ref_under_not_it_cannot_write_out():
 def test_inline_defs_leaves_a_ref_under_not_when_writing_it_out_passes_the_value_limit(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """A `$ref` under `not` whose definition passes the value limit once written out stays, pointing at nothing.
+    """When writing out the `$ref`s under `not` would pass the value limit, none is written out, small ones included.
 
     The walk doesn't inline a `$ref` there, so such a schema didn't raise before, and doesn't now: it goes out as the
-    walk left it, without its `$defs`. Unit test: the limit is reached while the schema is prepared, before any
-    provider is involved.
+    walk left it, without its `$defs`, so each `$ref` points at nothing. Unit test: the limit is reached while the
+    schema is prepared, before any provider is involved.
     """
     monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
     levels = _VALUE_LIMIT.bit_length()
     schema: JsonSchema = {
         'type': 'object',
-        'properties': {'x': {'not': {'$ref': f'#/$defs/D{levels}'}}},
-        '$defs': _doubling_chain(levels)['$defs'],
+        'properties': {
+            'x': {'not': {'$ref': f'#/$defs/D{levels}'}},
+            'code': {'type': 'string', 'not': {'$ref': '#/$defs/Short'}},
+        },
+        '$defs': {**_doubling_chain(levels)['$defs'], 'Short': {'type': 'string', 'maxLength': 2}},
     }
     assert InlineDefsJsonSchemaTransformer(schema).walk() == {
         'type': 'object',
-        'properties': {'x': {'not': {'$ref': f'#/$defs/D{levels}'}}},
+        'properties': {
+            'x': {'not': {'$ref': f'#/$defs/D{levels}'}},
+            'code': {'type': 'string', 'not': {'$ref': '#/$defs/Short'}},
+        },
     }
 
 
