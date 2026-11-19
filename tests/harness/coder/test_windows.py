@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import json
 import re
 import sys
@@ -127,6 +128,40 @@ class TestShellOnWindows:
             assert '"exit_code": 0}' in alive
         finally:
             await anyio.run_process(['taskkill', '/T', '/F', '/PID', str(pid)], check=False)
+
+    async def test_a_status_being_replaced_reads_as_running(self, project: Path) -> None:
+        """A publish replaces `status.json` holding it open for `DELETE`, which refuses a read that does not share it."""
+        shell = Shell[None](tools=['start_command', 'check_command', 'stop_command'])
+        workspace = WindowsWorkspace[None](project)
+        started = await call_tool([shell, workspace], 'start_command', {'command': 'Start-Sleep 600'})
+        assert 'ID: ' in started, started
+        command_id = started.rsplit('ID: ', 1)[1].strip()
+        check: dict[str, object] = {'command_id': command_id}
+        status = project / '.pydantic-ai-harness' / 'shell' / command_id / 'status.json'
+        # Read with `getattr` because `WinDLL` exists only on Windows; it is a `CDLL` subclass.
+        win_dll: type[ctypes.CDLL] = getattr(ctypes, 'WinDLL')
+        kernel32 = win_dll('kernel32')
+        kernel32.CreateFileW.restype = ctypes.c_void_p
+        kernel32.CreateFileW.argtypes = (
+            ctypes.c_wchar_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+        )
+        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+        delete, share_all, open_existing = 0x10000, 0x7, 3
+        handle = kernel32.CreateFileW(str(status), delete, share_all, None, open_existing, 0, None)
+        assert handle not in (None, ctypes.c_void_p(-1).value)
+        try:
+            checked = await call_tool([shell, workspace], 'check_command', check)
+        finally:
+            kernel32.CloseHandle(handle)
+        stopped = await call_tool([shell, workspace], 'stop_command', check)
+        assert '[status: running]' in checked, checked
+        assert '[stopped]' in stopped
 
     async def test_stopping_a_background_command_ends_its_tree(self, project: Path) -> None:
         shell = Shell[None](tools=['start_command', 'check_command', 'stop_command'])
