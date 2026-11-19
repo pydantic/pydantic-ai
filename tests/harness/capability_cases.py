@@ -1096,7 +1096,10 @@ def _hosted_mcp_capabilities() -> frozenset[str]:
     for name, ref in discover_capabilities(HARNESS_CAPABILITY_PACKAGES).items():
         path = root.joinpath(*ref.module.split('.')[1:])
         source = (path / '__init__.py' if path.is_dir() else path.with_suffix('.py')).read_text(encoding='utf-8')
-        if any(isinstance(node, ast.Name) and node.id == 'hosted_toolset' for node in ast.walk(ast.parse(source))):
+        # Only a module that mentions it is parsed, to keep collection cheap.
+        if 'hosted_toolset' in source and any(
+            isinstance(node, ast.Name) and node.id == 'hosted_toolset' for node in ast.walk(ast.parse(source))
+        ):
             found.add(name)
     return frozenset(found)
 
