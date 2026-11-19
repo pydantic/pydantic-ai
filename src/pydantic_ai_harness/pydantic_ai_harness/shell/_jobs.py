@@ -395,7 +395,7 @@ class Job:
                 break
             except FileNotFoundError:
                 return None
-            # Before `PermissionError`: a read-only workspace's `WorkspaceReadOnlyError` is one too.
+            # Before `PermissionError`: a `WorkspaceError` subclassing it is a backend failure, not a sharing violation.
             except WorkspaceError:
                 raise
             except PermissionError:
