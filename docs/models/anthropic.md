@@ -990,7 +990,8 @@ and any model when `ComputerUse(native=False)` is set. Each model's largest scre
 To send the native tool for a model or client you've checked yourself, set two keys in the model's `profile`: add
 `ComputerTool` to [`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools], which replaces
 the model's own set, so list every native tool you use, and pick the tool with
-[`anthropic_default_computer_tool_version`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_default_computer_tool_version].
+[`anthropic_computer_tool_version`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_computer_tool_version].
+Without that key, `computer_20250124` is sent.
 
 ## Web Tool Callers
 
