@@ -361,6 +361,21 @@ async def test_queue_labels_and_small_terminal() -> None:
         assert len(live.frame()) == 1
 
 
+async def test_draft_rows_follow_a_prompt_marker() -> None:
+    async with editor() as (live, _, _):
+        live.buffer.replace('a' * 79 + '\nxy')
+        frame = live.frame()
+        # The title rule, three draft rows, the bottom rule, and the footer.
+        draft = frame[1:-2]
+        assert [Text.from_ansi(row).plain for row in draft] == ['❯ ' + 'a' * 78, '  a', '  xy ']
+        # The cursor paints after the indent, not at the left edge.
+        assert draft[-1].endswith('  xy\x1b[7m \x1b[27m')
+        live.buffer.cursor = 0
+        first = live.frame()[1]
+        assert Text.from_ansi(first).plain == '❯ ' + 'a' * 78
+        assert first.index('❯') < first.index('\x1b[7ma\x1b[27m')
+
+
 async def test_completion_acceptance_and_cycling() -> None:
     ready = anyio.Event()
 
@@ -509,7 +524,7 @@ async def test_suggestions_expand_the_prompt_box() -> None:
         dashes = [index for index, row in enumerate(plain) if row and set(row) == {'─'}]
         top, bottom = dashes[0], dashes[-1]
         inside = plain[top + 1 : bottom]
-        assert inside[0].startswith('/he')
+        assert inside[0].startswith('❯ /he')
         assert inside[1].startswith('/help Help')
         assert inside[2].startswith('/hello Hello command')
         assert all('│' not in row and not row.startswith('>') for row in inside)

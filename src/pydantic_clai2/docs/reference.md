@@ -1205,7 +1205,8 @@ Command: /usage
 model | context: ... | running: shell
 ```
 
-The prompt sits above the footer with one editable line when empty. It grows
+The prompt sits above the footer with one editable line when empty, after a `❯ `
+marker in the theme's accent colour; wrapped and multiline text is indented to match. It grows
 for wrapped or pasted text, not to fill the terminal. Text pastes of five or more
 lines, or at least 1,000 characters, display as `[paste N lines]`. The full text
 is still submitted and saved in input history. Move the cursor inside a folded
@@ -1216,7 +1217,7 @@ answers. Steering messages, commands entered during a turn, and prompts restored
 `/resume` look the same.
 Completion suggestions
 appear below the draft, between the top and bottom rules. The rows carry no
-side borders and no prompt marker, so they cannot drift out of alignment.
+side borders, so they cannot drift out of alignment.
 History search stays compact too. The bordered prompt area stays visible below
 streamed output while CLAI works, and remains editable. A `Working` label and
 animated spinner, in the same pink accent as tool names, appear in the box's top border while a turn or its lifecycle

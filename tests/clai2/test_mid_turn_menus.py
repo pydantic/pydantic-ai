@@ -343,9 +343,9 @@ async def test_live_command_keeps_the_editor_working_and_cancellable(
             busy = any(row.startswith('─ Working ') for row in plain)
             if started.is_set() and busy:
                 working.set()
-                if 'keep me' in plain:
+                if '❯ keep me' in plain:
                     drafted.set()
-            elif drafted.is_set() and 'keep me' in plain:
+            elif drafted.is_set() and '❯ keep me' in plain:
                 kept.set()
             super().paint(rows, select_pinned=select_pinned)
 
