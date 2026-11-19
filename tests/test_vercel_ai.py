@@ -118,7 +118,6 @@ from .conftest import (
     IsList,
     IsSameStr,
     IsStr,
-    call_on_fixed_stack,
     conversation_view,
     iter_message_parts,
     legacy_retry_prompt_part,
@@ -8934,7 +8933,7 @@ def test_adapter_load_messages_deeply_nested_json_args():
             )
         ],
     )
-    messages = call_on_fixed_stack(lambda: VercelAIAdapter.load_messages([ui_message]))
+    messages = VercelAIAdapter.load_messages([ui_message])
 
     tool_call = message(messages, ModelResponse).parts[0]
     assert isinstance(tool_call, ToolCallPart)
