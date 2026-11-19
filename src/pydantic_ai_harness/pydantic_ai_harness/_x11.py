@@ -306,7 +306,7 @@ _START_WINDOW_MANAGER = (
     f'if command -v fluxbox >/dev/null; then {{ {_DESKTOP_CONFIG}}} 2>/dev/null; '
     # A second fluxbox exits when one runs, so starting it every time recovers one that died. The wait lets the first
     # click focus and raise the window it lands on.
-    'setsid fluxbox >>"$desktop_log" 2>&1 9>&- & wm=$!; i=0; '
+    'setsid fluxbox >&8 2>&1 8>&- 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
     '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; fi; '
     # tint2 shows only once a window manager answers, so it starts after one. Before running a launcher's program,
@@ -316,14 +316,14 @@ _START_WINDOW_MANAGER = (
     # stays as it was.
     f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then '
     '( n=$(ulimit -S -n); { [ "$n" = unlimited ] || [ "$n" -gt 1048576 ]; } 2>/dev/null && '
-    'ulimit -S -n 1048576 2>/dev/null; exec setsid tint2 ) >>"$desktop_log" 2>&1 9>&- & '
+    'ulimit -S -n 1048576 2>/dev/null; exec setsid tint2 ) >&8 2>&1 8>&- 9>&- & '
     f'panel=$!; i=0; until {_PANEL_SHOWS} || ! kill -0 $panel 2>/dev/null || [ $i -ge 100 ]; do '
     'sleep 0.1; i=$((i+1)); done; fi; '
 )
 """Starts the window manager, unless it's missing, and waits up to 10 seconds for it to answer `xprop`. Then starts
 the panel unless it shows or is missing, and waits up to 10 seconds for its window, so the first screenshot isn't
 black. Either one exiting, or not answering in time, leaves the display working without it. Their output goes to
-`$desktop_log`, which `start_x_server` sets: `_DESKTOP_LOG`, or `/dev/null` when that can't be opened."""
+file descriptor 8, which `start_x_server` opens on `_DESKTOP_LOG`, or on `/dev/null` when that can't be opened."""
 
 
 def start_x_server(log: str, *, desktop: bool = True) -> str:
@@ -358,13 +358,15 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         # `wanted` names the desktop's missing programs, which are installed when they can be and skipped otherwise.
         + (
             f'wanted=; for p in {_DESKTOP_PROGRAMS}; do command -v $p >/dev/null 2>&1 || wanted="$wanted $p"; done; '
-            # The desktop writes to `_DESKTOP_LOG` when it's missing or a file that can be written, and to nowhere
-            # otherwise, so the log never stops it. Anything else there isn't opened: a named pipe would wait for a
-            # reader, and a symlink would let a start as root truncate the file it points to. The write is tried in a
-            # subshell, since a failed redirection would end the script itself in dash.
-            f'desktop_log={_DESKTOP_LOG}; [ ! -L "$desktop_log" ] && '
-            '{ [ ! -e "$desktop_log" ] || [ -f "$desktop_log" ]; } && '
-            '( : >>"$desktop_log" ) 2>/dev/null || desktop_log=/dev/null; '
+            # The desktop writes to file descriptor 8 (9 is the lock). It points at `_DESKTOP_LOG` when that's missing
+            # or a file that can be written, and at `/dev/null` otherwise, so the log never stops the display. Anything
+            # else there isn't opened: a named pipe would wait for a reader, and a symlink would let a start as root
+            # write to the file it points to. The log is opened once, right after the check, and everything after
+            # writes to the descriptor, so a symlink put there after the open isn't followed. The write is first tried
+            # in a subshell, since a failed redirection on `exec` would end the script itself in dash. Not
+            # `command exec`, which would keep dash going: after it, macOS's bash 3.2 hangs at the next `exit`.
+            f'exec 8>/dev/null; [ ! -L {_DESKTOP_LOG} ] && {{ [ ! -e {_DESKTOP_LOG} ] || [ -f {_DESKTOP_LOG} ]; }} && '
+            f'( : >>{_DESKTOP_LOG} ) 2>/dev/null && exec 8>>{_DESKTOP_LOG}; '
             if desktop
             else 'wanted=; '
         )
@@ -386,7 +388,7 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         f'{{ [ -z "$missing" ] || $install $xvfb_package {_PACKAGES}; }}; }} >{log} 2>&1 || [ -z "$missing" ] || '
         f'{{ echo "could not install$missing:" >&2; tail -n 5 {log} >&2; exit 1; }}; '
         # Then the desktop's, alone, so a package the lists lack only leaves the desktop out. The next start tries again.
-        f'[ -z "$wanted" ] || $install $wanted >"$desktop_log" 2>&1 || true; '
+        f'[ -z "$wanted" ] || $install $wanted >&8 2>&1 || true; '
         'fi; fi; '
         # Asked again, since the image's own X server may have started during the install: its lock and socket stay.
         'if ! x_runs; then '
@@ -405,7 +407,7 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         # `-nolisten local` turns off Linux's abstract socket. With a shared network, such as Docker's `--network host`,
         # every user on the host could reach that socket. Commands in the container or sandbox still use the socket
         # file in /tmp/.X11-unix.
-        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset >/dev/null 2>{log} 9>&- & '
+        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset >/dev/null 2>{log} 8>&- 9>&- & '
         + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', log)
         + 'fi; '
         + (_START_WINDOW_MANAGER if desktop else '')
