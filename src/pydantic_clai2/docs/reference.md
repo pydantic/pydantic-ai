@@ -160,9 +160,9 @@ Python 3.11+ is required.
 
 Launch `clai2`. The default model is `openai-codex:gpt-6-astra`.
 Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
-Without one, skip Codex: `/login github-copilot` (or bare `/login` for every sign-in) uses another
-subscription, and `/model add` picks another provider, with its API key from `/keys` or its
-environment variable. A prompt sent before signing in fails with the same pointers; nothing signs in on its own.
+No ChatGPT subscription? Run `/login` to see every other sign-in (such as `/login github-copilot`),
+or `/model add` to pick another provider and use its API key from `/keys` or its environment variable.
+Until you do, a prompt fails with an error that lists these options.
 Type `/set model ` and press Tab to pick another provider-qualified model name.
 The choice is saved in SQLite and used for the next prompt without restarting.
 Until you choose one, the default is the agent's own model, so a plugin

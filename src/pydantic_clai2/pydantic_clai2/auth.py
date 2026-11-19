@@ -45,9 +45,9 @@ _PASTE_PROMPT = 'Paste the URL the browser lands on (or finish there): '
 _CANCELLED = 'sign-in cancelled.'
 """How a cancelled Codex sign-in's message ends; `login_command` adds no models after one."""
 _NOT_CONNECTED = (
-    f'Codex is not connected. Run /login {CODEX} to sign in with ChatGPT, or skip Codex: '
-    '/login github-copilot (or bare /login for every sign-in) uses another subscription, '
-    'and /model add picks another provider, with its API key from /keys or its environment variable.'
+    f'Codex is not connected. Run /login {CODEX} to sign in with ChatGPT, /login to see every other sign-in '
+    f'(such as {github_copilot.ACCOUNT}), or /model add to use another provider with an API key '
+    '(saved with /keys or set in its environment variable).'
 )
 """Where a first run lands on the default Codex model: every way in, so none is forced."""
 
