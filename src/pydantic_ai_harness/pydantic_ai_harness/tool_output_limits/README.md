@@ -318,7 +318,7 @@ on the agent ([Reading spills with `FileSystem`](#reading-spills-with-filesystem
 Both filesystem stores percent-encode special characters in keys, so `call:one.0` and
 `call?one.0` use separate files. Letters, digits, `.`, `_`, `-`, and directory separators
 keep their existing paths.
-Encoded segments longer than 255 bytes use a bounded digest filename instead.
+Keys whose encoded path would exceed 255 bytes use a bounded digest filename instead.
 
 To keep spills in a different workspace than the run's, pass a backend:
 

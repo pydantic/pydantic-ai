@@ -318,7 +318,9 @@ class TestStore:
             'run/call\udcff.0',
             'run/' + '\udcff' * 30 + '.0',
             f'run/{"~" * 256}.0',
-            'run/%hcb76e21c325406766f834fd91c4ec468f14b5dadeec2f07a6c0fac29300808c3',
+            '%hd0b5bb29766f52583f0c34b87952fcd73ccac686669cc4fe0da622695f710379',
+            '/'.join(['?' * 80] * 18),
+            '/'.join(['!' * 80] * 18),
         ]
         payloads = [f'payload {i}'.encode() for i in range(len(keys))]
         handles = [await store.write(key, payload) for key, payload in zip(keys, payloads)]
@@ -343,6 +345,24 @@ class TestStore:
         store = LocalFileOverflowStore(base_dir=tmp_path)
         with pytest.raises(OSError):
             await store.write('x' * 256, b'payload')
+
+    async def test_long_ordinary_path_is_not_renamed(self, tmp_path: Path):
+        key = '/'.join(['ordinary-0123456789'] * 18)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        handle = await store.write(key, b'ordinary')
+        assert (tmp_path / key).read_bytes() == b'ordinary'
+        assert await store.read(handle) == b'ordinary'
+
+    async def test_legacy_handle_with_expanded_nested_path(self, tmp_path: Path):
+        key = '/'.join(['?' * 80] * 18)
+        legacy = tmp_path.joinpath(*(['_'] * 18))
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(b'legacy')
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        assert await store.read(key) == b'legacy'
+        handle = await store.write(key, b'new')
+        assert await store.read(handle) == b'new'
+        assert legacy.read_bytes() == b'legacy'
 
     async def test_legacy_handle_reads_and_streams_the_old_file(self, tmp_path: Path):
         (tmp_path / 'run').mkdir()

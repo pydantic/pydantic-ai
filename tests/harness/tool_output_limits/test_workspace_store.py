@@ -258,7 +258,9 @@ class TestWorkspaceOverflowStore:
             'run/call\udcff.0',
             'run/' + '\udcff' * 30 + '.0',
             f'run/{"~" * 256}.0',
-            'run/%hcb76e21c325406766f834fd91c4ec468f14b5dadeec2f07a6c0fac29300808c3',
+            '%hd0b5bb29766f52583f0c34b87952fcd73ccac686669cc4fe0da622695f710379',
+            '/'.join(['?' * 80] * 18),
+            '/'.join(['!' * 80] * 18),
         ]
         payloads = [f'payload {i}'.encode() for i in range(len(keys))]
         handles = [await store.write(workspace, key, payload) for key, payload in zip(keys, payloads)]
@@ -279,6 +281,14 @@ class TestWorkspaceOverflowStore:
         handle = await store.write(workspace, 'run/call:one.0', b'new')
         assert await store.read(workspace, handle) == b'new'
         assert await store.read(workspace, str(legacy)) == b'legacy'
+
+    async def test_long_ordinary_path_is_not_renamed(self, tmp_path: Path):
+        key = '/'.join(['ordinary-0123456789'] * 18)
+        workspace = Workspace(LocalWorkspaceBackend(tmp_path))
+        store = WorkspaceOverflowStore()
+        handle = await store.write(workspace, key, b'ordinary')
+        assert handle.endswith(f'/tool-output/{key}')
+        assert await store.read(workspace, handle) == b'ordinary'
 
     @pytest.mark.parametrize('handle', ['../secret.txt', '/etc/passwd', '.'])
     async def test_read_outside_directory_is_refused(self, tmp_path: Path, handle: str):

@@ -75,14 +75,15 @@ def _safe_segment(segment: str) -> str:
     cleaned = quote(segment, safe='._-', errors='surrogatepass')
     if cleaned in ('', '.', '..'):
         return '_'
-    if len(cleaned) > 255 and _UNSAFE_SEGMENT.search(segment):
-        # `%h` cannot occur in a percent-encoded segment, so digest names cannot alias encoded keys.
-        return f'%h{sha256(segment.encode(errors="surrogatepass")).hexdigest()}'
     return cleaned
 
 
 def _segments(key: str) -> list[str]:
-    return [_safe_segment(part) for part in key.split('/') if part] or ['_']
+    segments = [_safe_segment(part) for part in key.split('/') if part] or ['_']
+    if len('/'.join(segments)) > 255 and _UNSAFE_SEGMENT.search(key.replace('/', '')):
+        # `%h` cannot occur in a percent-encoded segment; bound expanded keys to a single filename.
+        return [f'%h{sha256(key.encode(errors="surrogatepass")).hexdigest()}']
+    return segments
 
 
 @dataclass
