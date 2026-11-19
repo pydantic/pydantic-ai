@@ -241,7 +241,7 @@ async def main():
     print(result.output)
 ```
 
-Machines on boxd's current default image have a desktop, and the agent drives it through boxd's computer API, so nothing is installed first. A fork or snapshot of an older image doesn't have it; use a fresh machine. It starts on the first action, in a few seconds, with no window manager, so apps the agent starts from the shell open at the top left without title bars. Commands get `DISPLAY` set for it, and boxd's default image has `xterm`. The desktop starts empty, with no taskbar or launcher: run `agent-browser open <url>` to open a browser on it.
+Machines on boxd's current default image have a desktop, driven through boxd's computer API, so nothing is installed first. A fork or snapshot of an older image doesn't have one; use a fresh machine. The desktop starts on the first action, in a few seconds, with no window manager, taskbar or launcher, so apps the agent starts from the shell open at the top left without title bars. Commands get `DISPLAY` set, and boxd's default image has `xterm`; run `agent-browser open <url>` to open a browser.
 
 The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. The agent can type any text, including accented letters and emoji.
 
@@ -308,7 +308,7 @@ Machines `BoxdSandbox` creates, and copies `fork` makes, are isolated: code the 
 | `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
 | `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 | `secrets` | Names of existing boxd secrets a new machine gets, applied as `boxd.spec.secrets(*secrets)` in its spec. Default: `None`. An attached machine keeps the ones it was created with. See [Keep a token out of the machine](#keep-a-token-out-of-the-machine). |
-| `desktop` | Give the agent the machine's desktop for [`ComputerUse`](computer-use.md): `True` for 1280x800, or pass its `(width, height)`. Default: `False`. |
+| `desktop` | Give the agent the machine's desktop for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. Default: `False`. |
 
 boxd runs on the asyncio event loop only; under Trio the backend raises `UserError`.
 

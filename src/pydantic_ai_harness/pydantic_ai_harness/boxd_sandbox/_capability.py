@@ -109,7 +109,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
 
     desktop: bool | tuple[int, int] = False
     """Give the agent the machine's desktop, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
-    `True` for 1280x800, or pass its `(width, height)`."""
+    `True` for 1280x800, or its `(width, height)`."""
 
     def __post_init__(self) -> None:
         reject_defer_loading('BoxdSandbox', self.defer_loading)
