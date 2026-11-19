@@ -6,6 +6,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.computer_use import ComputerReturnPart
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_ai_harness import KubernetesSandbox, KubernetesSandboxBackend
@@ -58,6 +59,11 @@ async def test_an_image_without_the_display_programs_is_refused_with_what_it_nee
     ):
         await screen(backend).display_size()
     await backend.aclose()
+
+
+def test_a_bad_desktop_size_fails_where_it_is_written() -> None:
+    with pytest.raises(UserError, match=r'`desktop` must be a `\(width, height\)` of at least 1 pixel each'):
+        KubernetesSandbox(warm_pool='desktop-pool', desktop=(0, 800))
 
 
 async def test_a_desktop_sandbox_reattaches_with_its_display(cluster: FakeCluster, display: FakeDisplay) -> None:
