@@ -162,7 +162,11 @@ def test_aliased_tool_arguments_are_restored_from_json(durable_worker: 'InMemory
 
 
 def test_nested_aliased_tool_arguments_cross_the_activity_input_by_alias(durable_worker: 'InMemoryWorker') -> None:
-    """By Python name, the required `roomName` would fail revalidation and `maxPrice` would revalidate to its default."""
+    """By Python name, the required `roomName` would fail revalidation and `maxPrice` would revalidate to its default.
+
+    Not a VCR test: the claim is about the arguments crossing into the activity input, and no provider request is
+    involved.
+    """
 
     class Room(BaseModel):
         name: str = Field(alias='roomName')

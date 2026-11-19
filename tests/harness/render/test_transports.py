@@ -216,7 +216,11 @@ def nested_aliased_argument_model(messages: list[ModelMessage], info: AgentInfo)
 
 
 async def test_nested_aliased_function_arguments_cross_the_json_boundary_by_alias() -> None:
-    """By Python name, the required `roomName` would fail revalidation and `maxPrice` would revalidate to its default."""
+    """By Python name, the required `roomName` would fail revalidation and `maxPrice` would revalidate to its default.
+
+    Not a VCR test: the claim is about the arguments crossing into the chained task run, and no provider request
+    is involved.
+    """
     seen: list[tuple[str, float | None, str]] = []
     runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
     agent = Agent[None, str](
@@ -272,6 +276,9 @@ async def test_typed_dict_aliased_fields_need_validate_by_name_to_cross_the_json
     The serializer for the arguments sees no field types, so it can't write the `TypedDict`'s aliases. After the
     boundary, the tool's schema reads `roomName`, so the argument revalidates only when the `TypedDict` also
     validates by name.
+
+    Not a VCR test: the claim is about the arguments crossing into the chained task run, and no provider request
+    is involved.
     """
     seen: list[str] = []
     runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
