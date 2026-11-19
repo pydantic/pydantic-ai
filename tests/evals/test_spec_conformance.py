@@ -39,7 +39,6 @@ EVALUATORS: dict[str, tuple[Kind, type[object]]] = {
     **{cls.__name__: ('evaluators', cls) for cls in DEFAULT_EVALUATORS},
     **{cls.__name__: ('report_evaluators', cls) for cls in DEFAULT_REPORT_EVALUATORS},
 }
-assert len(EVALUATORS) == len(DEFAULT_EVALUATORS) + len(DEFAULT_REPORT_EVALUATORS), 'Two evaluators share a name'
 
 
 KNOWN_UNWRITABLE: dict[str, str] = {
@@ -93,6 +92,10 @@ def test_spec_forms_load(name: str, schema: JsonSchema, tmp_path: Path):
     assert bool(written) is (name in KNOWN_UNWRITABLE), written
     loaded = Dataset[str, str, str].from_file(path)
     assert (loaded.evaluators, loaded.report_evaluators) == (dataset.evaluators, dataset.report_evaluators)
+
+
+def test_evaluator_names_are_unique():
+    assert len(EVALUATORS) == len(DEFAULT_EVALUATORS) + len(DEFAULT_REPORT_EVALUATORS)
 
 
 def test_unwritable_entries_name_evaluators():

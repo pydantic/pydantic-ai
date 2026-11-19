@@ -11,13 +11,19 @@ its schema publishes.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from pydantic_ai.agent.spec import AgentSpec, get_capability_registry
 
-from .spec_conformance import JsonSchema, check_capability_forms_load, check_capability_parameters
+from .spec_conformance import JsonSchema, argument_errors, check_capability_forms_load, check_capability_parameters
+
+if TYPE_CHECKING:
+    # Imported for type checking only, so a hint naming it doesn't resolve at runtime.
+    from decimal import Decimal as TypeCheckingOnly
 
 REGISTRY = get_capability_registry()
 
@@ -52,6 +58,7 @@ def test_schema_publishes_spec_parameters(name: str, schema: JsonSchema):
     check_capability_parameters(REGISTRY[name], schema, {**OPT_OUT.get(name, {}), **KNOWN.get(name, {})})
 
 
+@pytest.mark.filterwarnings('ignore::pydantic_ai.PydanticAIDeprecationWarning')
 @pytest.mark.parametrize('name', sorted(REGISTRY))
 def test_spec_forms_load(name: str, schema: JsonSchema, tmp_path: Path):
     check_capability_forms_load(REGISTRY[name], schema, tmp_path, known_rejected=name in KNOWN_REJECTED)
@@ -62,3 +69,14 @@ def test_tables_name_registered_classes():
     assert tables <= REGISTRY.keys(), (
         f'Remove the entries for classes that are gone: {sorted(tables - REGISTRY.keys())}'
     )
+
+
+def test_argument_errors_says_why_arguments_do_not_load():
+    def target(count: int, *, hook: Callable[[], None] = print, later: TypeCheckingOnly | None = None) -> None:
+        pass
+
+    assert argument_errors(target, (1,), {}) == {}
+    assert argument_errors(target, (), {'other': 1}) == {'': "missing a required argument: 'count'"}
+    assert set(argument_errors(target, ('a',), {})) == {'count'}
+    assert argument_errors(target, (1,), {'hook': None}) == {'hook': 'its type has no JSON form'}
+    assert argument_errors(target, (1,), {'later': None})['later'].startswith('its type can not be checked (NameError')

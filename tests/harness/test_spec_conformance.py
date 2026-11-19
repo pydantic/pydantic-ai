@@ -28,6 +28,7 @@ from pydantic_core import SchemaError
 
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai_harness.ask_user import AskUser
 
 from ..spec_conformance import JsonSchema, check_capability_forms_load, check_capability_parameters
 from ._shipped_capabilities import shipped_capability_types
@@ -89,6 +90,10 @@ KNOWN_REJECTED: dict[str, str] = {
 
 _SCHEMA_FAILURE = 'https://github.com/pydantic/pydantic-ai/issues/13978'
 _HOSTED_MCP = 'The spec surface for `client` and `auth` is pending a decision.'
+_SCHEMA_ERRORS: dict[str, tuple[type[Exception], str]] = {
+    _SCHEMA_FAILURE: (PydanticUserError, 'is not fully defined'),
+    _HOSTED_MCP: (SchemaError, "'cls' must be valid as the first argument to 'isinstance'"),
+}
 KNOWN_SCHEMA_FAILURES: dict[str, str] = {
     'Coder': _SCHEMA_FAILURE,
     'ToolOutputLimits': _SCHEMA_FAILURE,
@@ -114,6 +119,8 @@ def test_schema_publishes_spec_parameters(name: str):
     check_capability_parameters(cls, _schema(cls), {**OPT_OUT.get(name, {}), **KNOWN.get(name, {})})
 
 
+@pytest.mark.filterwarnings('ignore::pydantic_ai.PydanticAIDeprecationWarning')
+@pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning')
 @pytest.mark.parametrize('name', CHECKED)
 def test_spec_forms_load(name: str, tmp_path: Path):
     cls = CLASSES[name]
@@ -124,7 +131,8 @@ def test_spec_forms_load(name: str, tmp_path: Path):
 
 @pytest.mark.parametrize('name', sorted(KNOWN_SCHEMA_FAILURES))
 def test_known_schema_failures(name: str):
-    with pytest.raises((PydanticUserError, SchemaError)):
+    error, match = _SCHEMA_ERRORS[KNOWN_SCHEMA_FAILURES[name]]
+    with pytest.raises(error, match=match):
         AgentSpec.model_json_schema_with_capabilities([CLASSES[name]])
 
 
@@ -147,3 +155,20 @@ def test_subclass_loads_its_own_fields_and_defaults(name: str):
     loaded = Custom.from_spec(**required, extra='set')
     assert isinstance(loaded, Custom)
     assert (loaded.extra, loaded.description) == ('set', 'custom')
+
+
+def test_subclass_keeps_the_from_spec_it_defines():
+    """A subclass that defines its own `from_spec`, and a subclass of that, load through it."""
+
+    @dataclass(kw_only=True)
+    class Custom(AskUser[None]):
+        @classmethod
+        def from_spec(cls, *args: Any, **kwargs: Any) -> AskUser[Any]:
+            return cls(answerer=None, description='own')
+
+    class Grandchild(Custom):
+        pass
+
+    loaded = Grandchild.from_spec()
+    assert isinstance(loaded, Grandchild)
+    assert loaded.description == 'own'

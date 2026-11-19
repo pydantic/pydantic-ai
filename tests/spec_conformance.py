@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import inspect
 import json
-import warnings
 from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -53,6 +52,11 @@ _VARIADIC = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
 _NO_SCHEMA = (PydanticSchemaGenerationError, PydanticInvalidForJsonSchema, PydanticUserError, SchemaError)
 _ARBITRARY_TYPES = ConfigDict(arbitrary_types_allowed=True)
 _VALUES_OR_ENVIRONMENT = (UserError, ValueError, LookupError, NotImplementedError)
+
+
+def _hinted(target: Callable[..., object]) -> Callable[..., object]:
+    """The function whose type hints describe `target`'s parameters: a class's `__init__`, or `target` itself."""
+    return target.__init__ if isinstance(target, type) else target
 
 
 def capability_loader_target(cls: type[AbstractCapability[Any]]) -> Callable[..., object]:
@@ -152,8 +156,7 @@ class _Instances:
     def _candidates(self, node: JsonValue, vary: int, refs: frozenset[str]) -> list[JsonValue]:
         if node is True:
             return ['a']
-        if not is_str_dict(node):
-            return []
+        assert is_str_dict(node), f'No instances for the subschema {node!r}'
         if isinstance(ref := node.get('$ref'), str):
             if ref in refs:
                 return []
@@ -204,7 +207,7 @@ class _Instances:
             case None:
                 return ['a']
             case _:
-                return []
+                assert False, f'No instances for the JSON type {type_!r}'
 
     def _objects(self, node: JsonSchema, vary: int, refs: frozenset[str]) -> list[JsonValue]:
         properties = node.get('properties', {})
@@ -238,7 +241,7 @@ def argument_errors(target: Callable[..., object], args: Sequence[object], kwarg
     class in it that has no core schema matches only its instances, as when `arbitrary_types_allowed` is set.
     """
     signature = inspect.signature(target)
-    hinted = target.__init__ if isinstance(target, type) else target
+    hinted = _hinted(target)
     try:
         bound = signature.bind(*args, **kwargs)
     except TypeError as error:
@@ -290,7 +293,7 @@ def check_capability_parameters(cls: type[AbstractCapability[Any]], schema: Json
     target = capability_loader_target(cls)
     forms = capability_forms(schema, name)
     if not forms:
-        target_settable = spec_parameters(target.__init__ if isinstance(target, type) else target)
+        target_settable = spec_parameters(_hinted(target))
         unspecifiable = [
             p.name
             for p in inspect.signature(target).parameters.values()
@@ -337,10 +340,7 @@ def check_capability_forms_load(
         errors = {parameter: error for parameter, error in errors.items() if parameter not in known_unloadable}
         assert not errors, f'The published `{name}` form instance {instance!r} does not load: {errors}'
         try:
-            with warnings.catch_warnings():
-                # The schema still publishes deprecated parameters, which load with a warning.
-                warnings.simplefilter('ignore')
-                cls.from_spec(*spec.args, **spec.kwargs)
+            cls.from_spec(*spec.args, **spec.kwargs)
         except TypeError as error:
             rejected[repr(instance)] = str(error)
         except _VALUES_OR_ENVIRONMENT:
