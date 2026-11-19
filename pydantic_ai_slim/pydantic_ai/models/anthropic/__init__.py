@@ -4270,19 +4270,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 results.append(_computer_result(block, False, BetaTextBlockParam(text='OK', type='text')))
             elif index == ran - 1:
                 results.append(_computer_result(block, False, *whole))
-            elif index == ran == 0 and failure:
-                # Anthropic asks for an error result on the failed call, and an error result can hold only text. So
-                # the result's text goes with `Failed.`, and its images are dropped.
-                text = [item for item in whole if item['type'] == 'text']
+            elif index == ran and failure:
+                # Anthropic asks for an error result on the failed call, and an error result can hold only text. The
+                # error itself is only in the content, which a hook may have redacted. When the first call failed, the
+                # content is its own, so the content's text goes with `Failed.`, and its images are dropped.
+                text = [item for item in whole if item['type'] == 'text' and ran == 0]
                 failed = BetaTextBlockParam(text=_computer.COMPUTER_FAILED, type='text')
                 results.append(_computer_result(block, True, failed, *text))
             elif index == ran == 0:
                 results.append(_computer_result(block, False, *whole))
-            elif index == ran and failure:
-                # The error itself is only in the content, which a hook may have redacted.
-                results.append(
-                    _computer_result(block, True, BetaTextBlockParam(text=_computer.COMPUTER_FAILED, type='text'))
-                )
             else:
                 results.append(
                     _computer_result(block, True, BetaTextBlockParam(text=_computer.COMPUTER_NOT_EXECUTED, type='text'))
