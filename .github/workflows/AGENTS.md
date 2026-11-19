@@ -224,12 +224,13 @@ Maintainer-authorized protected-configuration reviews satisfy the same rule.
 A clean OpenCode fallback approval satisfies the same gate as a Claude approval. The review body and receipt identify the engine that served the review: `engine=claude`, `engine=opencode` for OpenCode Go, or `engine=opencode-zai` for OpenCode on the GLM Coding Plan. Reviews from before the Coding Plan replaced DeepInfra carry `engine=opencode-deepinfra`, which the gate still reads.
 
 `Gate: review findings dispositioned` applies at every size and counts findings on every head. Each inline
-thread a review bot starts needs a reply from a `User`. The reply's first line that starts with one of these
-forms answers the finding:
+thread a review bot starts needs a reply from a `User`: the pull request's author or a user with write access.
+The reply's first line that starts with one of these forms answers the finding:
 
 - `Fixed in <sha>`: a commit of this pull request.
-- `Tracked in #<n>`: another issue or pull request in this repository.
-- `Declined: <reason>`: counts from a user with write access, and from anyone on a douwebot `Optional:` finding.
+- `Tracked in #<n>`: another issue or pull request in this repository. Without write access, the replier must cite
+  one opened at or after the finding.
+- `Declined: <reason>`: counts from a user with write access, and from the author on a douwebot `Optional:` finding.
 
 Resolving a thread does not answer it, except that a thread started before 2026-11-19 needs no reply once
 resolved. `REVIEWER_LOGINS` in `review_gates.py` names the review bots, and receipts tell douwebot,

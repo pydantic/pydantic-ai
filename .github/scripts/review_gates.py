@@ -76,6 +76,7 @@ class ReviewPullRequest(BaseModel):
     state: Literal['open', 'closed']
     number: int
     html_url: str
+    user: ReviewUser
     head: _Head
     base: Commit
     labels: list[Label]
@@ -180,7 +181,7 @@ class ReviewGitHub(Protocol):
     def resolved_comment_ids(self) -> set[int]: ...
     def verified_review_run(self, run_id: int, head: str) -> bool: ...
     def own_commits(self, base: str, head: str, shas: set[str]) -> set[str]: ...
-    def issue_exists(self, number: int) -> bool: ...
+    def issue_created_at(self, number: int) -> datetime | None: ...
     def permission(self, login: str) -> str: ...
     def status(self, head: str, gate: ReviewGate, state: CommitStatus, description: str, url: str) -> None: ...
 
@@ -319,9 +320,10 @@ def finding_dispositions(
 ) -> Verdict:
     """Every inline thread a review bot started, on any head, needs a person's recorded answer.
 
-    A reply line `Fixed in <sha>` names a commit of this PR, and `Tracked in #N` another issue or PR; either
-    counts from anyone. `Declined: <reason>` counts from write access, and from anyone on a douwebot `Optional:`
-    finding. A resolved thread started before `RESOLVED_THREADS_STARTED_BEFORE` is settled, whatever bot started it.
+    A reply counts from the PR author or from write access. A reply line `Fixed in <sha>` names a commit of this PR,
+    and `Tracked in #N` another issue or PR, opened at or after the finding unless the replier has write access.
+    `Declined: <reason>` counts from write access, and from the author on a douwebot `Optional:` finding.
+    A resolved thread started before `RESOLVED_THREADS_STARTED_BEFORE` is settled, whatever bot started it.
     """
     parents = {review.id: review for review in reviews}
     findings = [comment for comment in comments if comment.in_reply_to_id is None and comment.user.type == 'Bot']
@@ -337,12 +339,9 @@ def finding_dispositions(
     lines = [line for replies in answers.values() for _, line in replies]
     own = github.own_commits(pull.base.sha, pull.head.sha, {line['sha'] for line in lines if line['sha']})
     tracked = {number for line in lines if (number := line['number']) and int(number) != pull.number}
-    existing = {number for number in tracked if github.issue_exists(int(number))}
-    writers = {
-        login
-        for login in {login for replies in answers.values() for login, line in replies if line['declined']}
-        if github.permission(login) in {'write', 'admin'}
-    }
+    opened = {number: at for number in tracked if (at := github.issue_created_at(int(number)))}
+    repliers = {login for replies in answers.values() for login, _ in replies}
+    writers = {login for login in repliers if github.permission(login) in {'write', 'admin'}}
     unanswered: list[str] = []
     unregistered: list[str] = []
     for finding in findings:
@@ -355,7 +354,12 @@ def finding_dispositions(
             continue
         optional = reviewer == 'douwebot' and finding.body.startswith(OPTIONAL_FINDING_PREFIX)
         if any(
-            line['sha'] in own or line['number'] in existing or (line['declined'] and (optional or login in writers))
+            (login in writers or login == pull.user.login)
+            and (
+                line['sha'] in own
+                or ((at := opened.get(line['number'])) is not None and (login in writers or at >= finding.created_at))
+                or (line['declined'] and (optional or login in writers))
+            )
             for login, line in answers.get(finding.id, [])
         ):
             continue
@@ -451,7 +455,12 @@ class _CommitComparison(BaseModel):
     status: str
 
 
+class _Issue(BaseModel):
+    created_at: datetime
+
+
 _PERMISSION = TypeAdapter(_Permission)
+_ISSUE = TypeAdapter(_Issue)
 _COMMIT_PAGES = TypeAdapter(list[list[Commit]])
 _SIZED_FILE_PAGES = TypeAdapter(list[list[_SizedFile]])
 _SIZED_FILES = TypeAdapter(list[_SizedFile])
@@ -586,15 +595,15 @@ class ReviewGhCli(GhCli):
                 own.add(sha)
         return own
 
-    def issue_exists(self, number: int) -> bool:
-        """The issues endpoint also serves pull requests."""
+    def issue_created_at(self, number: int) -> datetime | None:
+        """The issues endpoint also serves pull requests; `None` when the number names neither."""
         try:
-            self._api(f'{self._repo}/issues/{number}')
+            issue = _ISSUE.validate_json(self._api(f'{self._repo}/issues/{number}'))
         except GateError as error:
             if 'HTTP 404' in str(error) or 'HTTP 410' in str(error):
-                return False
+                return None
             raise
-        return True
+        return issue.created_at
 
     def permission(self, login: str) -> str:
         """An account the endpoint does not know has no permission; any other error fails the run closed."""

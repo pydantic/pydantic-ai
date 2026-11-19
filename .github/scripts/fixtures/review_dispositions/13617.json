@@ -11,6 +11,11 @@
       "sha": "bb9501c6ef6b06e1075aacd61163cd1680fe7189"
     },
     "html_url": "https://github.com/pydantic/pydantic-ai/pull/13617",
+    "user": {
+      "id": 5629756,
+      "login": "mpfaffenberger",
+      "type": "User"
+    },
     "labels": [
       {
         "name": "feature"

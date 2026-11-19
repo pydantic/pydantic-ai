@@ -519,6 +519,8 @@ HEAD = 'a' * 40
 OLD_HEAD = 'b' * 40
 BOT = review_gates.ReviewUser(id=1, login='github-actions[bot]', type='Bot')
 MAINTAINER = review_gates.ReviewUser(id=3, login='maintainer', type='User')
+CONTRIBUTOR = review_gates.ReviewUser(id=5, login='contributor', type='User')
+STRANGER = review_gates.ReviewUser(id=7, login='stranger', type='User')
 POSTED = datetime(2026, 12, 1, tzinfo=UTC)
 
 
@@ -552,7 +554,7 @@ class ReviewGitHub:
     resolved: set[int] = field(default_factory=set[int])
     verified: bool = True
     commits: set[str] = field(default_factory=set[str])
-    issues: set[int] = field(default_factory=set[int])
+    issues: dict[int, datetime] = field(default_factory=dict[int, datetime])
     writers: set[str] = field(default_factory=lambda: {MAINTAINER.login})
     head: str = HEAD
     repository: int = 888
@@ -567,6 +569,7 @@ class ReviewGitHub:
                 'state': 'closed' if self.closed else 'open',
                 'number': 7,
                 'html_url': 'https://github.com/o/r/pull/7',
+                'user': CONTRIBUTOR,
                 'head': {'sha': self.head, 'repo': {'id': self.repository}},
                 'base': {'sha': OLD_HEAD},
                 'changed_files': 1,
@@ -595,8 +598,8 @@ class ReviewGitHub:
     def own_commits(self, base: str, head: str, shas: set[str]) -> set[str]:
         return {sha for sha in shas if any(commit.startswith(sha) for commit in self.commits)}
 
-    def issue_exists(self, number: int) -> bool:
-        return number in self.issues
+    def issue_created_at(self, number: int) -> datetime | None:
+        return self.issues.get(number)
 
     def permission(self, login: str) -> str:
         return 'write' if login in self.writers else 'read'
@@ -917,7 +920,6 @@ def test_merge_group_skips_metadata_and_reports_every_context():
 
 
 VERIA = review_gates.ReviewUser(id=4, login='veria-ai[bot]', type='Bot')
-CONTRIBUTOR = review_gates.ReviewUser(id=5, login='contributor', type='User')
 RECORDINGS = Path(__file__).parent / 'fixtures' / 'review_dispositions'
 
 
@@ -955,17 +957,20 @@ def reply(body: str, user: review_gates.ReviewUser = CONTRIBUTOR, id: int = 41) 
 
 
 @pytest.mark.parametrize(
-    ('number', 'reviewers', 'stacked'),
-    [(13615, ['Veria', 'PR Review Checks'], 13630), (13617, ['PR Review Checks'], 13659)],
+    ('number', 'reviewers', 'stacked', 'opened'),
+    [
+        (13615, ['Veria', 'PR Review Checks'], 13630, datetime(2026, 11, 16, 20, 29, 41, tzinfo=UTC)),
+        (13617, ['PR Review Checks'], 13659, datetime(2026, 11, 16, 21, 3, 5, tzinfo=UTC)),
+    ],
 )
-def test_merged_prs_with_unanswered_findings_fail(number: int, reviewers: list[str], stacked: int):
+def test_merged_prs_with_unanswered_findings_fail(number: int, reviewers: list[str], stacked: int, opened: datetime):
     """Both PRs merged at size S with bot findings answered only by a pointer to a later stacked PR."""
     recording = _Recording.model_validate_json((RECORDINGS / f'{number}.json').read_text(encoding='utf-8'))
     github = ReviewGitHub(
         size_label='size: S',
         head=recording.pull.head.sha,
         commits=set(recording.commits),
-        issues={stacked},
+        issues={stacked: opened},
         writers={'mpfaffenberger'},
     )
 
@@ -1007,6 +1012,10 @@ def test_merged_prs_with_unanswered_findings_fail(number: int, reviewers: list[s
         pytest.param('Tracked in #7', CONTRIBUTOR, False, id='tracked-this-pr'),
         pytest.param('Tracked in #13\nTracked in #12', CONTRIBUTOR, False, id='first-line-decides'),
         pytest.param('Tracked in #' + '9' * 5000, CONTRIBUTOR, False, id='tracked-number-too-long'),
+        pytest.param('Tracked in #11', CONTRIBUTOR, False, id='tracked-older-issue'),
+        pytest.param('Tracked in #11', MAINTAINER, True, id='tracked-older-issue-writer'),
+        pytest.param('Fixed in 1234abc', STRANGER, False, id='fixed-third-party'),
+        pytest.param('Tracked in #12', STRANGER, False, id='tracked-third-party'),
         pytest.param('Declined: only reachable from a test double.', MAINTAINER, True, id='declined-writer'),
         pytest.param('Declined: only reachable from a test double.', CONTRIBUTOR, False, id='declined-reader'),
         pytest.param('Declined:', MAINTAINER, False, id='declined-without-reason'),
@@ -1014,7 +1023,11 @@ def test_merged_prs_with_unanswered_findings_fail(number: int, reviewers: list[s
     ],
 )
 def test_a_finding_needs_a_disposition_reply(body: str, user: review_gates.ReviewUser, passes: bool):
-    github = ReviewGitHub(comments=[finding(), reply(body, user)], commits={'1234abc' + 'f' * 33}, issues={12, 7})
+    github = ReviewGitHub(
+        comments=[finding(), reply(body, user)],
+        commits={'1234abc' + 'f' * 33},
+        issues={12: POSTED, 7: POSTED, 11: POSTED.replace(day=1, month=11)},
+    )
     assert not verdicts(github)['douwebot'].failures
     assert bool(verdicts(github)['dispositions'].failures) is not passes
 
@@ -1067,10 +1080,19 @@ def _douwebot_finding(body: str) -> tuple[review_gates.Review, review_gates.Revi
     return review(9, body=payload['body']), finding(BOT, payload['comments'][0]['body'], parent=9)
 
 
-@pytest.mark.parametrize(('body', 'passes'), [('Optional: rename this', True), ('Fix this', False)])
-def test_anyone_may_decline_an_optional_douwebot_finding(body: str, passes: bool):
+@pytest.mark.parametrize(
+    ('body', 'user', 'passes'),
+    [
+        ('Optional: rename this', CONTRIBUTOR, True),
+        ('Fix this', CONTRIBUTOR, False),
+        ('Optional: rename', STRANGER, False),
+    ],
+)
+def test_the_author_may_decline_an_optional_douwebot_finding(body: str, user: review_gates.ReviewUser, passes: bool):
     parent, comment = _douwebot_finding(body)
-    github = ReviewGitHub(current_reviews=[parent], comments=[comment, reply('Declined: the name matches the API.')])
+    github = ReviewGitHub(
+        current_reviews=[parent], comments=[comment, reply('Declined: the name matches the API.', user)]
+    )
     assert bool(verdicts(github)['dispositions'].failures) is not passes
 
 
@@ -1119,7 +1141,7 @@ def test_gh_cli_answers_disposition_lookups(listed: int):
                 case path if path == f'repos/o/r/compare/baseba5{"0" * 33}...{HEAD}?per_page=1':
                     return '{"status": "ahead"}'
                 case 'repos/o/r/issues/12':
-                    return '{}'
+                    return '{"created_at": "2026-11-19T04:57:52Z"}'
                 case 'repos/o/r/issues/13' | 'repos/o/r/collaborators/stranger/permission':
                     raise GateError('Not Found (HTTP 404)')
                 case 'repos/o/r/collaborators/maintainer/permission':
@@ -1133,10 +1155,10 @@ def test_gh_cli_answers_disposition_lookups(listed: int):
     found = github.own_commits(OLD_HEAD, HEAD, {'1234abc', 'abcdef0', 'baseba5', '7777777'})
     assert found == ({'1234abc', 'abcdef0'} if listed == 250 else {'1234abc'})
     assert len(calls) == (1 if listed == 1 else 8)
-    assert github.issue_exists(12)
-    assert not github.issue_exists(13)
+    assert github.issue_created_at(12) == datetime(2026, 11, 19, 4, 57, 52, tzinfo=UTC)
+    assert github.issue_created_at(13) is None
     with pytest.raises(GateError):
-        github.issue_exists(14)
+        github.issue_created_at(14)
     assert github.permission('maintainer') == 'write'
     assert github.permission('stranger') == 'none'
     with pytest.raises(GateError):
