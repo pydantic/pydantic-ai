@@ -1603,6 +1603,9 @@ URLs longer than 2,048 characters are shown without clickable metadata to limit
 streaming output size.
 Links survive viewport resizing; following one uses your terminal's usual click
 modifier (often Cmd-click or Ctrl-click).
+Sign-in links are clickable too: the URL `/login openai-codex` prints, and URLs on
+a sign-in waiting screen, where a URL too long for the pane is folded over several
+rows that each link to all of it.
 
 ### Code highlighting
 

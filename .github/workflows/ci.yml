@@ -844,10 +844,6 @@ jobs:
       # extra themselves: `tests/pax` gates tests on `typesafe` and on each `/sandbox` SDK, and only
       # those tests run their fakes.
       CLAI2_ALL_EXTRAS: ${{ matrix.clai2_only == 'true' }}
-      # The cells that install the `pydantic-clai2` shim are skipped on a `pydantic-ai-pax`-only change,
-      # so its 3.11 leg runs over the shim, which brings `pydantic-ai-pax` with it, and covers the shim's
-      # tests in `tests/pax/test_rename.py`. Its 3.14 leg keeps testing `pydantic-ai-pax` without it.
-      INSTALL_COMMAND: ${{ matrix.clai2_only == 'true' && matrix.python-version == '3.11' && '--package pydantic-clai2' || matrix.install.command }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -916,8 +912,7 @@ jobs:
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
-          read -ra install <<<"$INSTALL_COMMAND"
-          uv run "${install[@]}" "${extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+          uv run ${{ matrix.install.command }} "${extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec -m "not temporal" ${{ matrix.install.paths }}
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
@@ -933,8 +928,7 @@ jobs:
           if [[ "$CLAI2_ALL_EXTRAS" == "true" ]]; then
             extra=(--all-extras)
           fi
-          read -ra install <<<"$INSTALL_COMMAND"
-          uv run "${install[@]}" "${extra[@]}" coverage combine
+          uv run ${{ matrix.install.command }} "${extra[@]}" coverage combine
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 

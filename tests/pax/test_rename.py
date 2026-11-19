@@ -16,10 +16,10 @@ from tests.conftest import try_import
 
 with try_import() as shim_installed:
     import pydantic_clai2
-    from pydantic_clai2 import __main__ as clai2_main
+    from pydantic_clai2 import __main__ as clai2_main  # pragma: lax no cover
 
-# The `pydantic-ai-pax` test cell installs no `pydantic-clai2`, except on its 3.11 leg for a
-# `pydantic-ai-pax`-only change; the cells with every workspace package do.
+# The `pydantic-ai-pax` test cell installs no `pydantic-clai2`; the cells with every workspace package do.
+# A pull request confined to `pydantic-ai-pax` runs only that cell, so its tests are `lax no cover`.
 requires_shim = pytest.mark.skipif(not shim_installed(), reason='pydantic-clai2 not installed')
 SOURCES = Path(__file__).parents[2] / 'src'
 
@@ -47,7 +47,9 @@ def test_pax_is_the_command_and_clai2_its_deprecated_name() -> None:
 
 
 @requires_shim
-def test_clai2_points_at_pax_then_runs_it(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_clai2_points_at_pax_then_runs_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:  # pragma: lax no cover
     ran: list[bool] = []
     monkeypatch.setattr(clai2_main, 'pax_main', lambda: ran.append(True))
     clai2_main.main()
@@ -63,14 +65,16 @@ def test_clai2_points_at_pax_then_runs_it(monkeypatch: pytest.MonkeyPatch, capsy
     ('old', 'new'),
     [('pydantic_clai2.plugins', pydantic_ai_pax.plugins), ('pydantic_clai2.commands', pydantic_ai_pax.commands)],
 )
-def test_old_import_paths_are_the_new_modules(monkeypatch: pytest.MonkeyPatch, old: str, new: ModuleType) -> None:
+def test_old_import_paths_are_the_new_modules(
+    monkeypatch: pytest.MonkeyPatch, old: str, new: ModuleType
+) -> None:  # pragma: lax no cover
     monkeypatch.delitem(sys.modules, old, raising=False)
     with pytest.warns(DeprecationWarning, match=rf'^`{old}` is deprecated, import `{new.__name__}` instead\.$'):
         assert importlib.import_module(old) is new
 
 
 @requires_shim
-def test_a_missing_old_module_is_missing() -> None:
+def test_a_missing_old_module_is_missing() -> None:  # pragma: lax no cover
     """Probing for an optional submodule must not find one `pydantic_ai_pax` lacks, nor warn about it."""
     assert importlib.util.find_spec('pydantic_clai2.missing') is None
     with pytest.raises(ModuleNotFoundError, match=r"^No module named 'pydantic_clai2\.missing'$"):
@@ -78,7 +82,7 @@ def test_a_missing_old_module_is_missing() -> None:
 
 
 @requires_shim
-def test_old_top_level_names_are_the_new_ones() -> None:
+def test_old_top_level_names_are_the_new_ones() -> None:  # pragma: lax no cover
     with pytest.warns(
         DeprecationWarning, match=r'^`pydantic_clai2.create_agent` is deprecated, import `pydantic_ai_pax.create_agent`'
     ):
@@ -90,7 +94,7 @@ def test_old_top_level_names_are_the_new_ones() -> None:
 
 
 @requires_shim
-def test_the_old_entry_point_stays_its_own_module() -> None:
+def test_the_old_entry_point_stays_its_own_module() -> None:  # pragma: lax no cover
     """`pydantic_ai_pax.__main__`, once imported, is an attribute of that package but not an export to forward."""
     assert importlib.import_module('pydantic_ai_pax.__main__') is not clai2_main
     assert importlib.import_module('pydantic_clai2.__main__') is clai2_main
