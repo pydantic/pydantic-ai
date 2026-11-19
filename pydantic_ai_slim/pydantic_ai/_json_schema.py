@@ -1,14 +1,14 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal, NoReturn, TypeAlias, assert_never, cast
 
 from pydantic import JsonValue
 
-from ._json_schema_keywords import SUBSCHEMA_KEYWORDS
+from ._json_schema_keywords import SUBSCHEMA_KEYWORDS, Subschema, iter_subschemas, map_subschemas
 from ._utils import contains_ref
 from .exceptions import UserError
 
@@ -203,6 +203,118 @@ def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
     return node if isinstance(node, dict) else None
 
 
+def definition_name(ref: str) -> str:
+    """The `$defs` name a `$ref` like `#/$defs/Model` points at, with its `~1` and `~0` escapes decoded."""
+    return ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~')
+
+
+def definition_refs(schema: Subschema) -> Iterator[str]:
+    """Each `$ref` into `$defs` in `schema` or a subschema under it, skipping a `$ref` in data like `examples`."""
+    pending: list[Subschema] = [schema]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, dict):
+            if isinstance(ref := node.get('$ref'), str) and ref.startswith('#/$defs/'):
+                yield ref
+            pending.extend(iter_subschemas(node))
+
+
+def merge_definition(definition: _JsonSchemaNode, siblings: JsonSchema) -> JsonSchema:
+    """A copy of `definition` with the other keywords of a `$ref` to it merged over it, as inlining the `$ref` does."""
+    if isinstance(definition, bool):
+        # A false definition must reject even when a sibling supplies its own `not`.
+        schema = deepcopy(siblings)
+        if not definition:
+            schema['not'] = {}
+        return schema
+    return {**deepcopy(definition), **siblings}
+
+
+@dataclass
+class UnwalkedRefWriter:
+    """Writes each `$defs` `$ref` under a keyword `JsonSchemaTransformer` doesn't walk out in place, as written.
+
+    The walk leaves `not`, `if`/`then`/`else`, `dependentSchemas` and every other keyword outside `WALKED_KEYWORDS` as
+    written, so inlining drops `$defs` without reaching a `$ref` there. Each one gets the definition it points at, with
+    its own other keywords merged over it, as inlining merges them; `transform()` doesn't run on it, as it doesn't on
+    anything else written there. A `$ref` that leads back into a definition it is already inside stays, as a recursive
+    one does where the walk inlines, and `kept` names the definition.
+    """
+
+    WALKED_KEYWORDS: ClassVar[frozenset[str]] = frozenset(
+        (
+            'properties',
+            'additionalProperties',
+            'patternProperties',
+            'propertyNames',
+            'prefixItems',
+            'items',
+            'contains',
+            'allOf',
+            'anyOf',
+            'oneOf',
+        )
+    )
+    """The `SUBSCHEMA_KEYWORDS` the walk enters, on a schema of the type they apply to; the root `$defs` aside."""
+
+    schema: JsonSchema
+    """The schema as given, which a JSON pointer `$ref` into `$defs` resolves against."""
+    defs: Mapping[str, _JsonSchemaNode]
+    inlined: InlinedValues
+    """The count each written-out definition adds to, like a definition the walk inlines."""
+    kept: list[str] = field(default_factory=list[str])
+    """The definitions a `$ref` that stays points at, in the order they're found."""
+    wrote_out: bool = False
+
+    def write_out(self, node: JsonSchema, *, unwalked: bool, stack: tuple[str, ...] = ()) -> JsonSchema:
+        """`node` with each `$defs` `$ref` under a keyword the walk doesn't enter written out.
+
+        `unwalked` says whether `node` itself is under one, and `stack` holds the definitions it is inside.
+        """
+        if unwalked and (written := self._write_out_ref(node, stack)) is not None:
+            return written
+        return map_subschemas(
+            node,
+            lambda keyword, member: (
+                member
+                if isinstance(member, bool)
+                else self.write_out(member, unwalked=unwalked or keyword not in self.WALKED_KEYWORDS, stack=stack)
+            ),
+        )
+
+    def _write_out_ref(self, node: JsonSchema, stack: tuple[str, ...]) -> JsonSchema | None:
+        """`node` with its `$ref` replaced by what it points at in `$defs`, or `None` when the `$ref` stays."""
+        ref = node.get('$ref')
+        if not isinstance(ref, str) or not ref.startswith('#/$defs/'):
+            return None
+        name = definition_name(ref)
+        if name in self.defs:
+            key, target = name, self.defs[name]
+        elif (pointed := resolve_json_pointer(self.schema, ref)) is not None:
+            key, target = ref, pointed
+        else:
+            return None
+        if key in stack:
+            # A JSON pointer that closes a cycle stays pointing at nothing: only a whole definition can be kept.
+            if key == name and name not in self.kept:
+                self.kept.append(name)
+            return None
+        merged = merge_definition(target, {k: v for k, v in node.items() if k != '$ref'})
+        self.inlined.add_copy(merged)
+        self.wrote_out = True
+        return self.write_out(merged, unwalked=True, stack=(*stack, key))
+
+    def kept_definitions(self) -> dict[str, JsonSchema]:
+        """Each definition in `kept`, written out the same way, keeping the `$ref`s that lead back into it."""
+        written: dict[str, JsonSchema] = {}
+        # `write_out` adds each definition it keeps to `kept`, and the loop reaches those too.
+        for name in self.kept:
+            definition = merge_definition(self.defs[name], {})
+            self.inlined.add_copy(definition)
+            written[name] = self.write_out(definition, unwalked=True, stack=(name,))
+        return written
+
+
 class UseEnumMemberDocstrings:
     """Mix into an `Enum` to describe each of its members by the docstring written under it.
 
@@ -269,11 +381,20 @@ class JsonSchemaTransformer(ABC):
         return schema
 
     def walk(self) -> JsonSchema:
+        self._inlined.count = 0
+        walked = self._walk_schema()
+        if self.prefer_inlined_defs and any(
+            resolve_json_pointer(walked, ref) is None for ref in definition_refs(walked)
+        ):
+            return self._walk_with_unwalked_refs_written_out(walked)
+        return walked
+
+    def _walk_schema(self, kept: Mapping[str, JsonSchema] | None = None) -> JsonSchema:
+        """One pass of `walk()` over `self.schema`, with `kept` definitions to emit under `$defs` where referenced."""
         schema = deepcopy(self.schema)
 
         self.recursive_refs.clear()
         self._walked_defs.clear()
-        self._inlined.count = 0
 
         # First, handle everything but $defs:
         schema.pop('$defs', None)
@@ -282,26 +403,68 @@ class JsonSchemaTransformer(ABC):
 
         if not self.prefer_inlined_defs and self.defs:
             handled['$defs'] = {k: self._handle(v) for k, v in self.defs.items()}
+            return handled
 
-        elif self.recursive_refs:
-            # If we are preferring inlined defs and there are recursive refs, we _have_ to use a $defs+$ref structure
-            # We try to use whatever the original root key was, but if it is already in use,
-            # we modify it to avoid collisions.
-            defs = {key: self._copy_walked_def(key) for key in self.recursive_refs}
-            root_ref = self.schema.get('$ref')
-            root_key = (
-                None if root_ref is None else root_ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~')
-            )
-            if root_key is None:
-                root_key = self.schema.get('title', 'root')
-                while root_key in defs:
-                    # Modify the root key until it is not already in use
-                    root_key = f'{root_key}_root'
+        defs = {key: self._copy_walked_def(key) for key in self.recursive_refs}
+        if kept:
+            self._add_referenced_definitions(defs, handled, kept)
+        if not defs:
+            return handled
 
-            defs[root_key] = handled
-            return {'$defs': defs, '$ref': root_ref or f'#/$defs/{root_key}'}
+        # If we are preferring inlined defs and there are recursive refs, we _have_ to use a $defs+$ref structure
+        # We try to use whatever the original root key was, but if it is already in use,
+        # we modify it to avoid collisions.
+        root_ref = self.schema.get('$ref')
+        root_key = None if root_ref is None else definition_name(root_ref)
+        if root_key is None:
+            root_key = self.schema.get('title', 'root')
+            while root_key in defs:
+                # Modify the root key until it is not already in use
+                root_key = f'{root_key}_root'
 
-        return handled
+        defs[root_key] = handled
+        return {'$defs': defs, '$ref': root_ref or f'#/$defs/{root_key}'}
+
+    def _walk_with_unwalked_refs_written_out(self, walked: JsonSchema) -> JsonSchema:
+        """`walk()`'s second pass, for a schema whose first pass, `walked`, leaves a `$ref` into `$defs` dangling.
+
+        Each `$defs` `$ref` under a keyword the walk doesn't enter is written out in place by `UnwalkedRefWriter`, and
+        the schema is walked again; a recursive one stays, and the definition it points at goes under `$defs`.
+        Writing out counts toward `MAX_INLINED_SCHEMA_VALUES` like inlining does, but a schema that passes it there
+        keeps `walked`, as a `$ref` the walk doesn't inline never raised.
+        """
+        schema, defs = self.schema, self.defs
+        recursive_refs, is_strict_compatible = set(self.recursive_refs), self.is_strict_compatible
+        writer = UnwalkedRefWriter(schema, defs, self._inlined)
+        self._inlined.count = 0
+        try:
+            self.defs = {
+                name: definition
+                if isinstance(definition, bool)
+                else writer.write_out(definition, unwalked=False, stack=(name,))
+                for name, definition in defs.items()
+            }
+            self.schema = writer.write_out({k: v for k, v in schema.items() if k != '$defs'}, unwalked=False)
+            if not (writer.wrote_out or writer.kept):
+                return walked
+            return self._walk_schema(writer.kept_definitions())
+        except UserError:
+            self.recursive_refs, self.is_strict_compatible = recursive_refs, is_strict_compatible
+            self.refs_stack.clear()
+            return walked
+        finally:
+            self.schema, self.defs = schema, defs
+
+    def _add_referenced_definitions(
+        self, defs: dict[str, JsonSchema], handled: JsonSchema, kept: Mapping[str, JsonSchema]
+    ) -> None:
+        """Add to `defs` each `kept` definition the walked schema `handled` or another added definition refers to."""
+        pending: list[JsonSchema] = [handled, *defs.values()]
+        while pending:
+            for ref in definition_refs(pending.pop()):
+                if (name := definition_name(ref)) in kept and name not in defs:
+                    defs[name] = kept[name]
+                    pending.append(kept[name])
 
     def _handle(self, schema: _JsonSchemaNode) -> _JsonSchemaNode:
         if isinstance(schema, bool):
@@ -345,7 +508,7 @@ class JsonSchemaTransformer(ABC):
         `None` when the `$ref` stays, as a recursive one does.
         """
         # Decode only a definition name; other pointers are decoded by `resolve_json_pointer()`.
-        key = ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~') if ref.startswith('#/$defs/') else ref
+        key = definition_name(ref) if ref.startswith('#/$defs/') else ref
         if key in self.refs_stack:
             if key not in self.defs:
                 # Only a `$defs` name can stay a `$ref` once the schema around it is inlined.
@@ -399,13 +562,7 @@ class JsonSchemaTransformer(ABC):
             raise UserError(f'Could not find $ref definition for {key}')
 
         self.refs_stack.append(key)
-        if isinstance(def_schema, bool):
-            # A false definition must reject even when a sibling supplies its own `not`.
-            schema = deepcopy(siblings)
-            if not def_schema:
-                schema['not'] = {}
-        else:
-            schema = {**deepcopy(def_schema), **siblings}
+        schema = merge_definition(def_schema, siblings)
         self._inlined.add_copy(schema)
         walked = self._handle(schema)
         self.refs_stack.pop()

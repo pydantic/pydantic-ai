@@ -4,7 +4,8 @@
 `$ref`, a recursive `$ref`, a JSON pointer `$ref`, boolean schemas and plain schemas at each of those positions, and:
 
 - every `JsonSchemaTransformer` subclass the package defines walks each corpus schema, and every `$ref` left in its
-  output resolves, except in the cases `KNOWN_DANGLING` lists;
+  output resolves;
+- `InlineDefsJsonSchemaTransformer`'s output of each corpus schema accepts what the schema accepts, among a few values;
 - `merge_json_schema_defs` points every `$ref` at the definition it pointed at before the merge;
 - the lossless walkers, `InlineDefsJsonSchemaTransformer` and `merge_json_schema_defs`, keep the verdict of every test
   in a pinned copy of the official JSON-Schema-Test-Suite (see `json_schema_test_suite/README.md`).
@@ -36,6 +37,7 @@ from pydantic_ai._json_schema_keywords import (
     Subschema,
     SubschemaShape,
     iter_subschemas,
+    map_subschemas,
 )
 from pydantic_ai._utils import is_str_dict, merge_json_schema_defs
 from pydantic_ai.exceptions import UserError
@@ -262,45 +264,11 @@ def test_transformer_modules_lists_every_defining_module():
     assert defining - {'pydantic_ai._json_schema'} == set(_TRANSFORMER_MODULES)
 
 
-_NOT_INLINED = (
-    'An inlining transformer drops `$defs` without walking this keyword, so its `$ref` points at nothing: '
-    'https://github.com/pydantic/pydantic-ai/issues/13953'
-)
-_NOT_INLINED_KEYWORDS = (
-    'not',
-    'if',
-    'then',
-    'else',
-    'contentSchema',
-    'dependentSchemas',
-    'dependencies',
-    'unevaluatedProperties',
-    'additionalItems',
-    'unevaluatedItems',
-)
-KNOWN_DANGLING: dict[str, str] = {
-    **{
-        f'{keyword}-{filler}{host}': _NOT_INLINED
-        for keyword in _NOT_INLINED_KEYWORDS
-        for filler in ('ref', 'recursive_ref')
-        for host in ('', '-untyped')
-        if not host or keyword in _UNTYPED_HOST_KEYWORDS
-    },
-    'definitions-ref': _NOT_INLINED,
-}
-"""Corpus cases whose output keeps a `$ref` pointing at nothing, with why; `InlineDefsJsonSchemaTransformer` fails all."""
-
-
 @pytest.mark.parametrize('name', sorted(TRANSFORMERS))
 def test_walk_resolves_every_ref(name: str):
-    """Every `$ref` a transformer leaves in its output points at something in that output, outside `KNOWN_DANGLING`."""
-    dangling = {case: refs for case, refs in _dangling_refs(TRANSFORMERS[name]).items() if case not in KNOWN_DANGLING}
+    """Every `$ref` a transformer leaves in its output points at something in that output."""
+    dangling = _dangling_refs(TRANSFORMERS[name])
     assert not dangling, f'`{name}` leaves `$ref`s pointing at nothing: {dangling}'
-
-
-def test_known_dangling_refs_still_dangle():
-    """Each `KNOWN_DANGLING` case still leaves a `$ref` pointing at nothing, so a fix shows up as an entry to remove."""
-    assert set(_dangling_refs(InlineDefsJsonSchemaTransformer)) == set(KNOWN_DANGLING)
 
 
 def test_gate_finds_dangling_refs():
@@ -427,6 +395,41 @@ def _verdict(schema: JsonSchema, data: JsonValue) -> bool | None:
         return None
 
 
+_INSTANCES: list[JsonValue] = [
+    None,
+    1,
+    '',
+    'x',
+    [],
+    [''],
+    ['x'],
+    {},
+    {'name': ''},
+    {'name': 'x'},
+    {'next': 1},
+    {'next': {'next': {}}},
+]
+"""Values for a corpus schema's `field`, which tell the fillers apart: `Leaf` needs a non-empty string, `Node` an object
+whose `next` is a `Node`, and the map shape puts a filler under the name `name`."""
+
+
+@pytest.mark.parametrize('case', sorted(CORPUS.keys() - _UNRESOLVED_POINTERS.keys()))
+def test_inline_defs_keeps_corpus_verdicts(case: str):
+    """`InlineDefsJsonSchemaTransformer`'s output accepts each `_INSTANCES` value of `field` its schema accepts.
+
+    This holds the `$ref`s the walk inlines, the ones it writes out where it doesn't enter, and the recursive ones it
+    keeps, to the definitions they point at.
+    """
+    schema = CORPUS[case]
+    output = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+    changed = [
+        value
+        for value in _INSTANCES
+        if _verdict(output, {'field': value, 'target': 1}) != _verdict(schema, {'field': value, 'target': 1})
+    ]
+    assert not changed
+
+
 @pytest.mark.parametrize('suite_file', sorted(path.stem for path in _SUITE.glob('*.json')))
 def test_lossless_walkers_keep_suite_verdicts(suite_file: str):
     """Each test in the pinned suite gets the same verdict from a lossless walker's output as from its schema.
@@ -458,3 +461,29 @@ def test_iter_subschemas_reads_each_shape():
         'dependentSchemas': [{}],
     }
     assert list(iter_subschemas(node, list(node))) == [{'type': 'string'}, {}, True, {}, {}]
+
+
+def test_map_subschemas_maps_each_shape():
+    """`map_subschemas` replaces every subschema of every shape, and keeps a member or a value that isn't one."""
+    node: dict[str, object] = {
+        'title': 'kept',
+        'not': {'type': 'string'},
+        'properties': {'a': {}, 'b': True},
+        'allOf': [{}, 'not a schema'],
+        'items': [{}],
+        'contains': 'not a schema',
+        'dependencies': {'a': ['b']},
+        'anyOf': 'not a list',
+        'dependentSchemas': [{}],
+    }
+    assert map_subschemas(node, lambda keyword, _: keyword) == {
+        'title': 'kept',
+        'not': 'not',
+        'properties': {'a': 'properties', 'b': 'properties'},
+        'allOf': ['allOf', 'not a schema'],
+        'items': ['items'],
+        'contains': 'not a schema',
+        'dependencies': {'a': ['b']},
+        'anyOf': 'not a list',
+        'dependentSchemas': [{}],
+    }
