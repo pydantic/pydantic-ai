@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import re
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -83,6 +84,7 @@ from ...providers._bedrock_model_names import (
     bedrock_claude_supports_mid_conversation_effort,
     bedrock_lacks_claude_structured_output,
 )
+from ...providers._model_deprecations import ANTHROPIC_MODEL_DEPRECATIONS
 from ...providers.anthropic import AsyncAnthropicClient
 from ...providers.gateway import is_gateway_provider
 from ...settings import CacheConfig, CacheRetention, CacheSetting, ModelSettings, merge_model_settings
@@ -346,6 +348,18 @@ except ImportError as _import_error:
 if TYPE_CHECKING:
     from ..batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 
+# The `anthropic` SDK warns on each request for a model in its own deprecation table, with a `DeprecationWarning`
+# Python hides by default. For a model in `ANTHROPIC_MODEL_DEPRECATIONS`, `Model.prepare_request` has already emitted
+# a `DeprecatedModelWarning`, so the SDK's copy is ignored where this package sends the request. pytest restores the
+# warnings filters after collecting a module and puts its own ahead of the rest for each test, so a test run still
+# shows the SDK's copy.
+warnings.filterwarnings(
+    'ignore',
+    message=f"The model '(?:{'|'.join(map(re.escape, ANTHROPIC_MODEL_DEPRECATIONS))})' is deprecated",
+    category=DeprecationWarning,
+    module=r'pydantic_ai\.models\.anthropic',
+)
+
 __all__ = (
     'AnthropicCompaction',
     'AnthropicModel',
@@ -384,6 +398,10 @@ _BATCH_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
+# Anthropic's deprecation dates apply to the platforms it operates, Microsoft Foundry and Claude Platform on AWS
+# included. Amazon Bedrock and Google Cloud's Vertex AI set their own:
+# https://platform.claude.com/docs/en/about-claude/model-deprecations#overview
+_OWN_DEPRECATION_SCHEDULE_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
 # `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
 # the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
@@ -1093,8 +1111,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         `rejects_unpaired_tool_calls` is on for `AsyncAnthropic` clients and off for the Bedrock, Bedrock Mantle,
         Vertex AI and Foundry clients, which aren't verified to reject an unpaired tool call, unless the provider's
         profile already sets it.
+
+        `deprecation` is dropped for the Bedrock, Bedrock Mantle and Vertex AI clients, whose platforms retire Claude
+        models on their own schedules.
         """
         client = self._provider.client
+        if 'deprecation' in profile and isinstance(client, _OWN_DEPRECATION_SCHEDULE_CLIENTS):
+            profile = merge_profile(profile, AnthropicModelProfile(deprecation=None))
         profile = merge_profile(
             profile,
             AnthropicModelProfile(

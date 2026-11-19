@@ -17,6 +17,7 @@ from pydantic_ai.profiles.anthropic import (
 )
 from pydantic_ai.providers import Provider, missing_api_key_error
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
+from pydantic_ai.providers._model_deprecations import ANTHROPIC_MODEL_DEPRECATIONS
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 
@@ -151,6 +152,8 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         # `-v<n>(:<m>)?` version suffix and optional cross-region geo prefix), e.g.
         # `us.anthropic.claude-haiku-4-5-20251001-v1:0`. Strip it so `anthropic_model_profile`'s
         # `claude-...` prefix checks match; the full model name still goes on the wire via `AnthropicModel._model_name`.
+        # The Claude API's deprecations are looked up by the unstripped name, so a Bedrock id never matches one.
+        deprecation = ANTHROPIC_MODEL_DEPRECATIONS.get(model_name)
         bedrock_provider, base_model_name = split_bedrock_model_id(model_name)
         if bedrock_provider == 'anthropic':
             model_name = base_model_name
@@ -200,6 +203,8 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
                 # https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching#cache-lifetime
                 default_cache_retention=timedelta(minutes=5)
             ),
+            # `AnthropicModel` drops it for the clients of platforms that retire Claude models on their own schedule.
+            AnthropicModelProfile() if deprecation is None else AnthropicModelProfile(deprecation=deprecation),
         )
 
     @overload

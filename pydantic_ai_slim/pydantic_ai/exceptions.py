@@ -68,6 +68,7 @@ __all__ = (
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
     'UnsupportedSettingWarning',
+    'DeprecatedModelWarning',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
     'UsageExtractionFailedWarning',
@@ -1409,5 +1410,29 @@ class UnsupportedSettingWarning(UserWarning):
     from pydantic_ai import UnsupportedSettingWarning
 
     warnings.filterwarnings('error', category=UnsupportedSettingWarning)
+    ```
+    """
+
+
+class DeprecatedModelWarning(UserWarning):
+    """Warning emitted when a request targets a model that its provider has deprecated or retired.
+
+    It's emitted each time a model prepares a request it sends, streamed or not, for a model whose profile has a
+    [`deprecation`][pydantic_ai.profiles.ModelProfile.deprecation]. The message names the model, its retirement
+    date and the replacement the provider recommends, and links the provider's announcement. Creating the model
+    doesn't warn. With Python's default warning filters, each model is warned about once per process.
+
+    The profile is set for models on the Anthropic and OpenAI APIs, including through the Pydantic AI Gateway, and
+    not where another platform, such as Amazon Bedrock, Google Cloud's Vertex AI or Azure, serves the same model on a
+    schedule of its own. See [Deprecated models](../models/overview.md#deprecated-models).
+
+    To turn it into an error, use a warnings filter:
+
+    ```python {test="skip"}
+    import warnings
+
+    from pydantic_ai import DeprecatedModelWarning
+
+    warnings.filterwarnings('error', category=DeprecatedModelWarning)
     ```
     """

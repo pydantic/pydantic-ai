@@ -25,12 +25,13 @@ To regenerate after an intentional change: `pytest tests/profiles/test_resolutio
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 from textwrap import dedent
 from typing import Any, Literal
 
 import pytest
 
+from pydantic_ai import ModelDeprecation
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
@@ -390,6 +391,11 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'anthropic_enforces_strict_schema_limits': True,
             'anthropic_supports_on_demand_compaction': False,
             'supports_auto_cache': True,
+            'deprecation': ModelDeprecation(
+                source_url='https://platform.claude.com/docs/en/about-claude/model-deprecations#deprecation-history',
+                retirement_date=date(2025, 10, 28),
+                replacement='claude-sonnet-5-5',
+            ),
         }
     )
 
@@ -431,10 +437,18 @@ def test_openai_gpt_5_4():
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-5.4-nano', 'gpt-5.4-nano-2026-03-17'])
 def test_openai_gpt_5_4_nano(model_name: str):
-    """gpt-5.4-nano resolves gpt-5.4's profile minus native `tool_search`, which OpenAI rejects on it with a 400."""
+    """gpt-5.4-nano resolves gpt-5.4's profile minus native `tool_search`, which OpenAI rejects on it with a 400.
+
+    OpenAI has deprecated gpt-5.4-nano, and not gpt-5.4, so only gpt-5.4-nano's profile carries a `deprecation`.
+    """
     expected = _normalize(OpenAIProvider.model_profile('gpt-5.4'))
     assert expected is not None
     expected['supported_native_tools'] -= {ToolSearchTool}
+    expected['deprecation'] = ModelDeprecation(
+        source_url='https://developers.openai.com/api/docs/deprecations#2026-10-01-gpt-53-codex-gpt-51-gpt-54-nano',
+        retirement_date=date(2027, 4, 1),
+        replacement='gpt-6-luna',
+    )
     assert _normalize(OpenAIProvider.model_profile(model_name)) == expected
 
 
@@ -721,6 +735,11 @@ def test_openai_gpt_4o():
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
             'rejects_unpaired_tool_calls': True,
+            'deprecation': ModelDeprecation(
+                source_url='https://developers.openai.com/api/docs/deprecations#2026-10-14-gpt-4-series-model-deprecations',
+                retirement_date=date(2027, 1, 14),
+                replacement='gpt-6-luna',
+            ),
         }
     )
 
@@ -756,6 +775,11 @@ def test_openai_o3_mini():
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
             'rejects_unpaired_tool_calls': True,
+            'deprecation': ModelDeprecation(
+                source_url='https://developers.openai.com/api/docs/deprecations#2026-04-22-legacy-gpt-model-snapshots',
+                retirement_date=date(2026, 10, 23),
+                replacement='gpt-5.6-sol',
+            ),
         }
     )
 

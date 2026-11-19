@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, Never, assert_never, cast, overload
 
-from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit as OMIT
+from openai import NOT_GIVEN, APIStatusError, AsyncAzureOpenAI, AsyncOpenAI, AsyncStream, Omit, omit as OMIT
 from openai.types import chat
 from openai.types.chat import (
     ChatCompletionChunk,
@@ -340,7 +340,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         Chat Completions rejects `prompt_cache_options.ttl='12h'` with a 400 (verified live on every GPT-5.6, GPT-6,
         GPT-6.1 and GPT-6.2 model), while the Responses API on the same models accepts it, and the providers declare their
         tiers per model rather than per API.
+
+        `deprecation` is dropped for an Azure OpenAI client, as Azure retires models on its own schedule.
         """
+        if 'deprecation' in profile and isinstance(self._provider.client, AsyncAzureOpenAI):
+            profile = merge_profile(profile, ModelProfile(deprecation=None))
         retentions = profile.get('supported_cache_retentions', ())
         if '12h' not in retentions:
             return profile
