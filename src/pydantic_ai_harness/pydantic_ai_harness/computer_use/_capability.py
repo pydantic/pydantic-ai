@@ -706,7 +706,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         tool_return, held = outcome
         result: ComputerResult = tool_return.metadata
         run.held, run.stray = held, stray
-        # Sent here, not inside the durable step, which can't send events. So each event is sent once.
+        # Sent here, not inside the durable step, which can't send events. So a retried step doesn't send it twice.
         await ctx.emit(ActionsPerformedEvent(result=result))
         return tool_return
 
