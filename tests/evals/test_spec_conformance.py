@@ -35,10 +35,14 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')
 
 Kind = Literal['evaluators', 'report_evaluators']
-EVALUATORS: dict[str, tuple[Kind, type[object]]] = {
-    **{cls.__name__: ('evaluators', cls) for cls in DEFAULT_EVALUATORS},
-    **{cls.__name__: ('report_evaluators', cls) for cls in DEFAULT_REPORT_EVALUATORS},
-}
+EVALUATORS: dict[str, tuple[Kind, type[object]]] = (
+    {
+        **{cls.__name__: ('evaluators', cls) for cls in DEFAULT_EVALUATORS},
+        **{cls.__name__: ('report_evaluators', cls) for cls in DEFAULT_REPORT_EVALUATORS},
+    }
+    if imports_successful()
+    else {}
+)
 
 
 KNOWN_UNWRITABLE: dict[str, str] = {
