@@ -1536,6 +1536,36 @@ def test_inline_defs_writes_out_a_json_pointer_into_defs_under_not():
     )
 
 
+def test_inline_defs_leaves_a_ref_under_not_it_cannot_write_out():
+    """A `$ref` under `not` to a missing definition, or a JSON pointer that leads back to itself, stays a `$ref`.
+
+    A pointer that closes a cycle names no definition the output could keep, so it stays after one level is written
+    out, as does a `$ref` to a definition that doesn't exist. A recursive definition nothing refers to isn't added to
+    the output. Unit test: a cassette matches on method and URI, not on the request body.
+    """
+    loop = '#/$defs/Loop/properties/next'
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {
+            'missing': {'type': 'string', 'not': {'$ref': '#/$defs/Missing'}},
+            'loop': {'type': 'object', 'not': {'$ref': loop}},
+        },
+        '$defs': {
+            'Loop': {'type': 'object', 'properties': {'next': {'not': {'$ref': loop}}}},
+            'Unused': {'not': {'$ref': '#/$defs/Unused'}},
+        },
+    }
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'missing': {'type': 'string', 'not': {'$ref': '#/$defs/Missing'}},
+                'loop': {'type': 'object', 'not': {'not': {'$ref': '#/$defs/Loop/properties/next'}}},
+            },
+        }
+    )
+
+
 def test_inline_defs_leaves_a_ref_under_not_when_writing_it_out_passes_the_value_limit(
     monkeypatch: pytest.MonkeyPatch,
 ):

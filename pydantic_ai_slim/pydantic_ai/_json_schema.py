@@ -677,6 +677,10 @@ class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
     so a `$ref` inside them is not inlined and can point at a definition the output no longer contains.
     If the schema is only meant to accept objects (or arrays), set `type` to `'object'` (or `'array'`) to have
     it inlined; for a nullable one, put it in an `anyOf` with `{'type': 'null'}` instead of using a `type` list.
+
+    Keywords that apply to every type but aren't walked, such as `not`, `if`/`then`/`else`, `dependentSchemas` and
+    `unevaluatedProperties`, are left as written too, so a `$ref` under them is replaced by its definition as written,
+    without `transform()`. One that leads back into its own definition stays, and the definition is kept under `$defs`.
     """
 
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):

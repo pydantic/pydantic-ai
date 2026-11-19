@@ -247,7 +247,11 @@ def _classify(base: Record, head: Record, written_out_base: Record | None) -> st
         return 'changed, still dangling'
     if written_out_base is None:
         return 'fixed, no written-out form'
-    return 'fixed as written' if head['output'] == written_out_base.get('output') else 'FIXED OTHERWISE'
+    if head['output'] != written_out_base.get('output'):
+        return 'FIXED OTHERWISE'
+    if head['strict_compatible'] != written_out_base.get('strict_compatible'):
+        return 'STRICT FLAG CHANGED'
+    return 'fixed as written'
 
 
 def compare(base: Mapping[str, Record], head: Mapping[str, Record]) -> int:
@@ -265,7 +269,7 @@ def compare(base: Mapping[str, Record], head: Mapping[str, Record]) -> int:
     failed = {outcome: keys for outcome, keys in outcomes.items() if outcome.isupper()}
     for outcome, keys in failed.items():
         print(f'\n{outcome}:', *keys[:40], *([f'... {len(keys) - 40} more'] if len(keys) > 40 else []), sep='\n  ')
-    for outcome in ('still dangling', 'changed, still dangling'):
+    for outcome in ('still dangling', 'changed, still dangling', 'fixed, no written-out form'):
         # transformer|strict|case|form: one line per case, with how many transformer and `strict` walks it covers
         by_case = Counter(key.split('|')[2] for key in outcomes.get(outcome, []))
         print(f'\n{outcome}, walks by case:', *(f'{case}: {n}' for case, n in sorted(by_case.items())), sep='\n  ')

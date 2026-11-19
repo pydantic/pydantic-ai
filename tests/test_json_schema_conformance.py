@@ -27,7 +27,8 @@ from typing import assert_never
 from urllib.parse import unquote
 
 import pytest
-from jsonschema.validators import validator_for
+from jsonschema.protocols import Validator
+from jsonschema.validators import Draft201909Validator, Draft202012Validator, validator_for
 from pydantic import JsonValue
 from referencing.exceptions import Unresolvable
 
@@ -386,11 +387,11 @@ def _lossless_walks(schema: JsonSchema) -> dict[str, JsonSchema | UserError]:
     return walks
 
 
-def _verdict(schema: JsonSchema, data: JsonValue) -> bool | None:
+def _verdict(schema: JsonSchema, data: JsonValue, draft: type[Validator] = Draft202012Validator) -> bool | None:
     """Whether `schema` accepts `data`, or `None` when `jsonschema` can't tell: a `$ref` resolves nowhere, or a
     `pattern` is ECMA-262 syntax Python's `re` doesn't support."""
     try:
-        return validator_for(schema)(schema).is_valid(data)
+        return validator_for(schema, default=draft)(schema).is_valid(data)
     except (Unresolvable, re.error):
         return None
 
@@ -422,10 +423,13 @@ def test_inline_defs_keeps_corpus_verdicts(case: str):
     """
     schema = CORPUS[case]
     output = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+    # Drafts before 2020-12 spell a tuple as an `items` list, which a 2020-12 validator can't evaluate.
+    draft = Draft201909Validator if case.endswith('-list') else Draft202012Validator
     changed = [
         value
         for value in _INSTANCES
-        if _verdict(output, {'field': value, 'target': 1}) != _verdict(schema, {'field': value, 'target': 1})
+        if _verdict(output, {'field': value, 'target': 1}, draft)
+        != _verdict(schema, {'field': value, 'target': 1}, draft)
     ]
     assert not changed
 
