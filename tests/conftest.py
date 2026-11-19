@@ -1098,7 +1098,7 @@ def ignore_deprecated_models_in_recordings(record_mode: str | None) -> None:
 
     Replaying an existing recording against one of these models is fine, but recording a new one must fail, so a test
     moves to a current model before it's re-recorded. That covers Pydantic AI's `DeprecatedModelWarning` and the
-    `anthropic` SDK's own `DeprecationWarning`, which pytest shows despite the filter Pydantic AI installs for it.
+    `anthropic` SDK's own `DeprecationWarning` for the models in its table, which pytest shows.
     """
     if record_mode not in (None, 'none'):
         return

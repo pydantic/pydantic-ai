@@ -133,8 +133,6 @@ When a provider has deprecated or retired a model, each request to it emits a [`
 
 The deprecation comes from the model's profile, whose [`deprecation`][pydantic_ai.profiles.ModelProfile.deprecation] holds a [`ModelDeprecation`][pydantic_ai.profiles.ModelDeprecation]. Pydantic AI sets it for models on the [Anthropic](anthropic.md) and [OpenAI](openai.md) APIs, from those providers' deprecation pages, including when you reach them through the [Pydantic AI Gateway](../gateway.md). Anthropic's dates also apply to the platforms it operates: Microsoft Foundry, Claude Platform on AWS and Claude Models on Google Cloud (Anthropic managed). The deprecation isn't set where another platform serves the same model on a schedule of its own: Amazon Bedrock, Google Cloud's Vertex AI, Azure, OpenRouter and the Codex backend. A Gateway [endpoint](../gateway.md#gateway-endpoints) that fails over to one of those platforms still gets the Anthropic or OpenAI date.
 
-The `anthropic` SDK emits a `DeprecationWarning` of its own for the models in its table. Python hides that category by default, and Pydantic AI ignores the SDK's copy for the requests it sends, even under `-W error::DeprecationWarning`, so a deprecated model warns once with `DeprecatedModelWarning` instead. pytest shows deprecation warnings through filters that take precedence, so a test run can show both.
-
 To turn the warning into an error, use a [warnings filter](https://docs.python.org/3/library/warnings.html#the-warnings-filter). To stop it for one model, set the profile's `deprecation` to `None`; to warn about a model you serve elsewhere, set it to a `ModelDeprecation` of your own:
 
 ```python {test="skip"}

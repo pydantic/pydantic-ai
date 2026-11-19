@@ -8,9 +8,6 @@ test, so no test depends on a real model's schedule.
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 import warnings
 from collections.abc import Callable
 from datetime import date
@@ -25,7 +22,7 @@ from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 
-from ..conftest import IsStr, ignore_deprecated_models_in_recordings, try_import
+from ..conftest import ignore_deprecated_models_in_recordings, try_import
 
 with try_import() as imports_successful:
     from anthropic import (
@@ -238,44 +235,6 @@ def test_suppression_with_settings_keeps_the_warning():
         warnings.simplefilter('error', DeprecatedModelWarning)
         with suppress_warnings(), suppress_warnings(['stop_sequences']):
             model.prepare_request(None, ModelRequestParameters())
-
-
-SDK_COPY_SCRIPT = """
-import asyncio
-
-import httpx2
-from anthropic import AsyncAnthropic
-
-from pydantic_ai import Agent, ModelAPIError
-from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.providers.anthropic import AnthropicProvider
-
-transport = httpx2.MockTransport(lambda _: httpx2.Response(404, json={'error': {'message': 'model not found'}}))
-client = AsyncAnthropic(api_key='mock-api-key', max_retries=0, http_client=httpx2.AsyncClient(transport=transport))
-agent = Agent(AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client)))
-try:
-    asyncio.run(agent.run('hello'))
-except ModelAPIError:
-    pass
-"""
-
-
-@pytest.mark.subprocess(
-    reason='pytest drops the warnings filters a module installs while it is collected, so only a fresh interpreter has it'
-)
-def test_anthropic_sdk_copy_is_ignored():
-    """The `anthropic` SDK's own `DeprecationWarning` for a model it lists is ignored where Pydantic AI sends the request.
-
-    `claude-sonnet-4-5` is in both the SDK's table and Anthropic's. `-W default` shows every warning once, deprecation
-    warnings included, so the SDK's copy would appear next to Pydantic AI's without the filter that
-    `pydantic_ai.models.anthropic` installs on import.
-    """
-    env = {k: v for k, v in os.environ.items() if not k.startswith('COVERAGE_')} | {'PYDANTIC_AI_NO_BANNER': '1'}
-    result = subprocess.run(
-        [sys.executable, '-W', 'default', '-c', SDK_COPY_SCRIPT], capture_output=True, text=True, env=env, check=True
-    )
-    shown = [line for line in result.stderr.splitlines() if 'Warning: ' in line]
-    assert shown == [IsStr(regex=r".*DeprecatedModelWarning: Model 'anthropic:claude-sonnet-4-5' is deprecated .*")]
 
 
 def test_recording_a_deprecated_model_fails():

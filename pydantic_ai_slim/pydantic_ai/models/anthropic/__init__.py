@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import base64
-import re
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -84,7 +83,6 @@ from ...providers._bedrock_model_names import (
     bedrock_claude_supports_mid_conversation_effort,
     bedrock_lacks_claude_structured_output,
 )
-from ...providers._model_deprecations import ANTHROPIC_MODEL_DEPRECATIONS
 from ...providers.anthropic import AsyncAnthropicClient
 from ...providers.gateway import is_gateway_provider
 from ...settings import CacheConfig, CacheRetention, CacheSetting, ModelSettings, merge_model_settings
@@ -347,18 +345,6 @@ except ImportError as _import_error:
 
 if TYPE_CHECKING:
     from ..batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
-
-# The `anthropic` SDK warns on each request for a model in its own deprecation table, with a `DeprecationWarning`
-# Python hides by default. For a model in `ANTHROPIC_MODEL_DEPRECATIONS`, `Model.prepare_request` has already emitted
-# a `DeprecatedModelWarning`, so the SDK's copy is ignored where this package sends the request. pytest restores the
-# warnings filters after collecting a module and puts its own ahead of the rest for each test, so a test run still
-# shows the SDK's copy.
-warnings.filterwarnings(
-    'ignore',
-    message=f"The model '(?:{'|'.join(map(re.escape, ANTHROPIC_MODEL_DEPRECATIONS))})' is deprecated",
-    category=DeprecationWarning,
-    module=r'pydantic_ai\.models\.anthropic',
-)
 
 __all__ = (
     'AnthropicCompaction',
