@@ -303,6 +303,10 @@ _DESKTOP_CONFIG = (
 already there alone. A home that can't be written leaves their own defaults."""
 
 _START_WINDOW_MANAGER = (
+    # Under an open-file limit as high as a Kubernetes pod's 1,073,741,816, tint2's launcher spins and its terminal
+    # button opens nothing; with Docker's default of 1,048,576 it works. So the desktop programs get that at most.
+    # The X server already runs, so it keeps its own limit.
+    'n=$(ulimit -S -n); { [ "$n" = unlimited ] || [ "$n" -gt 1048576 ]; } 2>/dev/null && ulimit -S -n 1048576 2>/dev/null; '
     f'if command -v fluxbox >/dev/null; then {{ {_DESKTOP_CONFIG}}} 2>/dev/null; '
     # A second fluxbox exits when one runs, so starting it every time recovers one that died. The wait lets the first
     # click focus and raise the window it lands on.
