@@ -233,13 +233,13 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             complete_walk=ran_every_test and bool(_walks) and all(_walks),
             table_name=_TABLE_NAME,
         )
-    except AssertionError as error:  # pragma: no cover
+    except AssertionError as error:
         _session_problems.append(str(error))
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
-    if _session_problems:  # pragma: no cover
+    if _session_problems:
         terminalreporter.section('span schema exemptions', red=True)
         for problem in _session_problems:
             terminalreporter.write_line(problem)
