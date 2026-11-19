@@ -1286,5 +1286,6 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         'working_dir': '/work',
         'env': {'FOO': 'bar'},
         'runtime': 'python',
+        'desktop': (1440, 900),
     }
     assert SpritesSandbox[None].from_spec(**spec_fields) == SpritesSandbox[None](**spec_fields)
