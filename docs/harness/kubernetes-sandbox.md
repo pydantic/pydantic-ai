@@ -245,16 +245,16 @@ result = agent.run_sync('Open python.org in Firefox and tell me the latest relea
 print(result.output)
 ```
 
-The screen needs [Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid`](computer-use.md#what-the-display-needs) in the sandbox image. The template above runs as a non-root user, so nothing is installed for you: without them, the first use of the screen raises `WorkspaceUnavailableError` naming what is missing. Build them into an image along with the programs the agent should use. Then copy the template and its pool under new names, `desktop` and `desktop-pool`, with that image in place of `python:3.12`:
+The screen needs [`xdotool`, `xwininfo`, `scrot`, `setsid`, and Xvfb unless an X server is already running](computer-use.md#what-the-display-needs) in the sandbox image, plus `fluxbox`, `tint2` and `xterm` for a desktop with a panel and a terminal; without those three the screen works but stays black. The template above runs as a non-root user, so nothing is installed for you: without them, the first use of the screen raises `WorkspaceUnavailableError` naming what is missing. Build them into an image along with the programs the agent should use. Then copy the template and its pool under new names, `desktop` and `desktop-pool`, with that image in place of `python:3.12`:
 
 ```dockerfile
 FROM python:3.12
 RUN apt-get update \
- && apt-get install -y --no-install-recommends xvfb xdotool x11-utils scrot util-linux firefox-esr \
+ && apt-get install -y --no-install-recommends xvfb xdotool x11-utils scrot util-linux fluxbox tint2 xterm firefox-esr \
  && rm -rf /var/lib/apt/lists/*
 ```
 
-The screen starts empty, with no window manager. It is 1280x800; pass a size such as `desktop=(1440, 900)` for another.
+The agent sees a desktop with a panel along the bottom, whose buttons open a terminal and Firefox, and each window it opens fills the screen. It is 1280x800; pass a size such as `desktop=(1440, 900)` for another.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
