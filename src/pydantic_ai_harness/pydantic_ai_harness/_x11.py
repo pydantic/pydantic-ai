@@ -360,8 +360,10 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
             f'wanted=; for p in {_DESKTOP_PROGRAMS}; do command -v $p >/dev/null 2>&1 || wanted="$wanted $p"; done; '
             # The desktop writes to `_DESKTOP_LOG` when it's missing or a file that can be written, and to nowhere
             # otherwise, so the log never stops it. Anything else there isn't opened: a named pipe would wait for a
-            # reader. The write is tried in a subshell, since a failed redirection would end the script itself in dash.
-            f'desktop_log={_DESKTOP_LOG}; {{ [ ! -e "$desktop_log" ] || [ -f "$desktop_log" ]; }} && '
+            # reader, and a symlink would let a start as root truncate the file it points to. The write is tried in a
+            # subshell, since a failed redirection would end the script itself in dash.
+            f'desktop_log={_DESKTOP_LOG}; [ ! -L "$desktop_log" ] && '
+            '{ [ ! -e "$desktop_log" ] || [ -f "$desktop_log" ]; } && '
             '( : >>"$desktop_log" ) 2>/dev/null || desktop_log=/dev/null; '
             if desktop
             else 'wanted=; '
