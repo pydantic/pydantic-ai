@@ -243,9 +243,8 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
     docker.remove_display(can_start=False)
     workspace = screen(_desktop(container_dir, image='my-desktop'))
 
-    with pytest.raises(WorkspaceUnavailableError, match='it needs Xvfb, xdotool, xwininfo, scrot and setsid') as error:
+    with pytest.raises(WorkspaceUnavailableError, match='the X server did not start') as error:
         await workspace.screenshot()
-    assert 'the X server did not start' in str(error.value)
     assert 'Fatal server error' in str(error.value)
 
 
@@ -258,17 +257,17 @@ _host_without_display_programs = pytest.mark.skipif(
 
 
 @_host_without_display_programs
-@pytest.mark.parametrize('uid', [0, 1000])
+@pytest.mark.parametrize(('uid', 'sudo'), [(0, ''), (1000, 'sudo ')])
 async def test_missing_display_programs_are_installed_on_first_use(
-    docker: FakeDocker, container_dir: Path, uid: int
+    docker: FakeDocker, container_dir: Path, uid: int, sudo: str
 ) -> None:
-    # A user other than root installs with passwordless sudo.
+    # A user other than root installs with passwordless sudo; root installs without it.
     docker.remove_display()
     docker.uninstall('xdotool', 'scrot')
-    docker.run_as(uid, sudo=True)
+    docker.run_as(uid, sudo=uid != 0)
 
     assert await screen(_desktop(container_dir, image='my-desktop')).display_size() == (1280, 800)
-    assert docker.apt_get_calls == ['update -qq', _INSTALL]
+    assert docker.apt_get_calls == [f'{sudo}update -qq', f'{sudo}{_INSTALL}']
 
 
 @_host_without_display_programs
@@ -287,9 +286,38 @@ async def test_missing_display_programs_without_root_say_what_is_missing(
     docker.remove_display()
     docker.uninstall('xdotool', 'scrot')
 
-    with pytest.raises(WorkspaceUnavailableError, match='it needs Xvfb, xdotool, xwininfo, scrot and setsid') as error:
+    with pytest.raises(
+        WorkspaceUnavailableError, match="the display needs xdotool scrot, and there's no root or passwordless sudo"
+    ):
         await screen(_desktop(container_dir, image='my-desktop')).screenshot()
-    assert "missing xdotool scrot, and there's no root or passwordless sudo" in str(error.value)
+    assert docker.apt_get_calls == []
+
+
+async def test_missing_display_programs_without_apt_get_say_what_is_missing(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    # As in an image that isn't Debian's, such as Alpine.
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    docker.remove_display()
+    docker.uninstall('xdotool', 'apt-get')
+    docker.hide_host_programs('cat', 'tr', 'dirname', *(['flock'] if shutil.which('flock') else []))
+    docker.run_as(0)
+
+    with pytest.raises(
+        WorkspaceUnavailableError, match="the display needs xdotool, and there's no apt-get to install them with"
+    ):
+        await screen(backend).screenshot()
+
+
+async def test_a_running_x_server_needs_no_xvfb(docker: FakeDocker, container_dir: Path) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    docker.leave_x_lock(backend.ref.id, owner='Xvnc')
+    docker.uninstall('Xvfb')
+
+    assert await screen(backend).display_size() == (1280, 800)
     assert docker.apt_get_calls == []
 
 
@@ -303,6 +331,7 @@ async def test_a_failed_install_says_why(docker: FakeDocker, container_dir: Path
     with pytest.raises(WorkspaceUnavailableError, match='could not install xdotool:') as error:
         await screen(_desktop(container_dir, image='my-desktop')).screenshot()
     assert 'Unable to locate package' in str(error.value)
+    assert docker.apt_get_calls == ['update -qq', _INSTALL]
 
 
 async def test_the_socket_directory_is_made_for_a_user_without_root(docker: FakeDocker, container_dir: Path) -> None:

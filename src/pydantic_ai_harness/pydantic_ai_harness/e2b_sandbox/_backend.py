@@ -637,8 +637,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
 
     async def _has_setsid(self, sandbox: e2b.AsyncSandbox) -> bool:
         async with self._setsid_lock:
-            # Starting the display installs `setsid` when it's missing, so a "no" is kept only without a display.
-            if self._setsid is None or (not self._setsid and self._display is not None):
+            if self._setsid is None:
                 async with self._sdk_errors(sandbox.sandbox_id, 'Could not probe E2B command launcher'):
                     probe = await sandbox.commands.run(
                         'command -v setsid >/dev/null 2>&1',
@@ -667,6 +666,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         if self._display is not None:
             # Started first, so a program the command opens shows on the screen.
             await self._display.start()
+            # A display that started has `setsid`, which its start installs when missing, so a "no" is asked again.
+            if self._setsid is False:
+                self._setsid = None
         return await self._run_argv(argv, env=env or {}, timeout=timeout)
 
     async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
