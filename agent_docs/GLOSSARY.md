@@ -30,14 +30,13 @@ A **hosted** review runs on GitHub against the pushed head. A **local** review r
   have nothing to do with durable execution.
 - **guard** — a capability that validates inputs or outputs, or controls tool access, such as `InputGuard` or
   `OutputGuard`.
-- **harness** — the coding-agent program that runs you and loads these files, such as Claude Code, Codex or Pi.
-  **Harness**, capitalized, is Pydantic AI Harness, the `pydantic-ai-harness` package in
-  `src/pydantic_ai_harness/`. Write "Harness" for the package, also before a capability name: Harness
-  `SubAgents`.
-  - In the files under `src/pydantic_ai_harness/`, `src/pydantic_ai_pax/`, `docs/harness/` and `tests/harness/`,
-    lowercase *harness* also means the package.
-  - There, *a harness* can also be a packaged composition of capabilities that acts as a ready-made agent, such
-    as `Coder` or `Researcher`.
+- **harness** — a program with an interface that runs an agent, such as pax, Claude Code or Codex. The harness
+  that runs you loads these files. A capability composition such as `Coder` is a harness once it has an
+  interface. Until then, it is a harness in development.
+- **harness SDK** — the `pydantic-ai-harness` package in `src/pydantic_ai_harness/`, released as Pydantic AI
+  Harness. In agent instructions, write "the harness SDK" for the package, such as the harness SDK's `SubAgents`.
+  Keep product names and user docs as they are. In the files under `src/pydantic_ai_harness/`,
+  `src/pydantic_ai_pax/`, `docs/harness/` and `tests/harness/`, *harness* and *Harness* also name the package.
 - **hook** — a lifecycle method on `AbstractCapability` that intercepts agent graph execution, such as
   `before_model_request`, `wrap_run` or `after_tool_execute`.
 - **lane** — one agent's line of handoffs in a worktree that several agents share. See
@@ -72,3 +71,6 @@ rejected spelling in backticks.
 | policy base | `policy-base` |
 | second opinion | `second-opinion` |
 | trivial-S | `trivial S` |
+
+Older agent instructions call the harness SDK *Harness* or *harness*. The table does not list those spellings:
+the check would then reject the product name Pydantic AI Harness and the package's own files.
