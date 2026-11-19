@@ -141,7 +141,7 @@ class CommandContext:
         starting = (
             self.settings_for(project)
             if self.settings_for is not None
-            else resolve_settings(self.store.overrides() | project.overrides)
+            else resolve_settings(self.store.overrides() | project.overrides, stored=True)
         )
         for key in changed:
             field = SETTING_FIELDS[key]
