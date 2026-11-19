@@ -23,6 +23,7 @@ from pydantic_ai.computer_use import (
     Scroll,
     TypeText,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
@@ -276,6 +277,11 @@ async def test_a_shell_command_finds_the_desktop_running(host: FakeBoxd) -> None
 
 def test_a_machine_without_a_desktop_has_no_display() -> None:
     assert BoxdSandboxBackend().display is None
+
+
+def test_a_desktop_size_is_checked_when_the_capability_is_created() -> None:
+    with pytest.raises(UserError, match=r'`desktop` must be a `\(width, height\)` of at least 1 pixel each'):
+        BoxdSandbox(desktop=(0, 800))
 
 
 async def test_a_desktop_machine_runs_computer_use(host: FakeBoxd) -> None:

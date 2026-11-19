@@ -11,6 +11,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace import innermost_backend, with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_env,
@@ -117,6 +118,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
         check_integer('auto_suspend_timeout', self.auto_suspend_timeout, minimum=0, optional=True)
+        desktop_size(self.desktop)
         if self.vcpu is not None and (type(self.vcpu) is not int or self.vcpu not in _VCPUS):
             raise UserError(f'vcpu must be 1, 2, 4, 8 or None, got {self.vcpu!r}.')
         if self.snapshot is not None and self.vcpu is not None:
