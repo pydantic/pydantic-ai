@@ -1067,7 +1067,7 @@ def _load_reasoning_message(reasoning_msg: ReasoningMessage, builder: MessagesBu
         metadata: dict[str, Any] = json.loads(reasoning_msg.encrypted_value) if reasoning_msg.encrypted_value else {}
         if not isinstance(metadata, dict):
             metadata = {}
-    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
+    except (ValueError, RecursionError):  # also integers past the digit limit, and deeply nested JSON
         metadata = {}
     builder.add(
         ThinkingPart(
