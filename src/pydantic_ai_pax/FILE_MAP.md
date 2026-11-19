@@ -103,7 +103,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue (told to `queue_changed`), Alt+Enter (Ctrl+Enter on Windows) steering, timed double-Esc gesture, and menu handoff |
 | `ui/prompt/prompt_queue.py` | `QueuedPrompt`, one queued prompt with the ID the browser edits it by; `PromptInbox`, the queue of a session no editor reads for; `input_kind` and `can_steer`, the one rule for which input steers |
 | `ui/prompt/terminal.py` | `Terminal`, the terminal driver: console, `LivePrompt`, line prompt, transcript, input history, and pasted images, attached to the one live session shown (`attach`, `show`); `drive` runs the session CLAI started with until the session shown ends; `session_console` for sessions opened beside it |
-| `ui/prompt/prompt_surface.py` | scroll-region ownership, serialized transcript writes and changed-row painting |
+| `ui/prompt/prompt_surface.py` | scroll-region ownership, serialized transcript writes, the compact inline start, and changed-row painting once full screen |
 | `ui/prompt/prompt_transcript.py` | bounded styled transcript tail for viewport replay |
 | `ui/prompt/prompt_resize.py` | scoped resize notifications, without terminal IO in signal handlers |
 | `ui/prompt/image_input.py` | the editor's image attachments: clipboard and pasted-path reading, `ImageInput`'s `[image:...]` markers, pending bytes, paste key bindings, Linux clipboard guidance, and the 30-second paste-error lifetime |

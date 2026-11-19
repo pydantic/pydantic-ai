@@ -46,6 +46,12 @@ _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)
 _PASTE_PROMPT = 'Paste the URL the browser lands on (or finish there): '
 _CANCELLED = 'sign-in cancelled.'
 """How a cancelled Codex sign-in's message ends; `login_command` adds no models after one."""
+_NOT_CONNECTED = (
+    f'Codex is not connected. Run /login {CODEX} to sign in with ChatGPT, /login to see every other sign-in '
+    f'(such as {github_copilot.ACCOUNT}), or /model add to use another provider with an API key '
+    '(saved with /keys or set in its environment variable).'
+)
+"""Where a first run lands on the default Codex model: every way in, so none is forced."""
 
 ReadLine = Callable[[str], Awaitable[str | None]]
 """Read one line after showing a prompt; `None` when the user cancels."""
@@ -236,7 +242,9 @@ class CodexCredentials(OpenAICodexCredentialSource):
             partial(load_codex_credentials, account=self.account), abandon_on_cancel=True
         )
         if value is None:
-            raise UserError(f'Codex is not connected. Run /login {self.account}.')
+            if self.account != CODEX:
+                raise UserError(f'Codex is not connected. Run /login {self.account}.')
+            raise UserError(_NOT_CONNECTED)
         try:
             return _CREDENTIALS.validate_json(value)
         except ValidationError:

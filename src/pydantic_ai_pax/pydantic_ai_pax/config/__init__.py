@@ -162,6 +162,13 @@ class Settings(BaseModel):
         ),
     )
     splash: bool = Field(default=True, description='Animate the startup splash. Takes effect next start.')
+    full_screen: bool = Field(
+        default=False,
+        description=(
+            'Take the whole terminal height from the start, instead of starting compact below the shell '
+            'and growing as the session needs room. Takes effect next start.'
+        ),
+    )
     tool_calls: ToolCallDisplay = Field(
         default='detailed',
         description=(
@@ -251,6 +258,7 @@ SETTING_FIELDS = {
     'display.spinner': 'spinner',
     'display.footer_fields': 'footer_fields',
     'display.splash': 'splash',
+    'display.full_screen': 'full_screen',
     'display.tool_calls': 'tool_calls',
     'display.tool_output': 'tool_output',
     'display.shell_lines': 'shell_lines',

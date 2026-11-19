@@ -267,7 +267,7 @@ class CommandContext:
         self.saved(key)
 
     def _when(self, key: str) -> str:
-        when = 'Applies at next startup.' if key == 'display.splash' else 'Applied.'
+        when = 'Applies at next startup.' if key in ('display.splash', 'display.full_screen') else 'Applied.'
         if self.from_project(key):
             when += ' The project file sets it again at next start.'
         return when
