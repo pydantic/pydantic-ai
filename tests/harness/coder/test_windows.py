@@ -129,8 +129,9 @@ class TestShellOnWindows:
         finally:
             await anyio.run_process(['taskkill', '/T', '/F', '/PID', str(pid)], check=False)
 
-    async def test_a_status_being_replaced_reads_as_running(self, project: Path) -> None:
-        """A publish replaces `status.json` holding it open for `DELETE`, which refuses a read that does not share it."""
+    async def test_a_status_held_open_for_delete_reads_as_running(self, project: Path) -> None:
+        """A handle with `DELETE` access, as `Move-Item -Force` holds while it replaces `status.json`, refuses an open
+        that does not share delete until it closes."""
         shell = Shell[None](tools=['start_command', 'check_command', 'stop_command'])
         workspace = WindowsWorkspace[None](project)
         started = await call_tool([shell, workspace], 'start_command', {'command': 'Start-Sleep 600'})
@@ -152,14 +153,15 @@ class TestShellOnWindows:
             ctypes.c_void_p,
         )
         kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
-        delete, share_all, open_existing = 0x10000, 0x7, 3
+        # `DELETE`, `FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE`, `OPEN_EXISTING` and `INVALID_HANDLE_VALUE`.
+        delete, share_all, open_existing, invalid_handle = 0x10000, 0x7, 3, ctypes.c_void_p(-1).value
         handle = kernel32.CreateFileW(str(status), delete, share_all, None, open_existing, 0, None)
-        assert handle not in (None, ctypes.c_void_p(-1).value)
         try:
             checked = await call_tool([shell, workspace], 'check_command', check)
         finally:
             kernel32.CloseHandle(handle)
-        stopped = await call_tool([shell, workspace], 'stop_command', check)
+            stopped = await call_tool([shell, workspace], 'stop_command', check)
+        assert handle not in (None, invalid_handle)
         assert '[status: running]' in checked, checked
         assert '[stopped]' in stopped
 
