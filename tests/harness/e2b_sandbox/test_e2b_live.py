@@ -441,13 +441,13 @@ class TestEnvironment:
 
 
 class TestDesktop:
-    """The display of a sandbox created with `desktop=True`, which runs E2B's `desktop` template."""
+    """The display of a real sandbox created with `desktop=True`, which uses E2B's `desktop` template."""
 
     async def test_the_template_runs_no_x_server_until_the_display_starts(self) -> None:
-        """Validates that the start script finds no X server or XFCE session of the template's own to share."""
+        """Check that the template starts no X server or XFCE session of its own for the start script to share."""
         async with _owned(desktop=True, sandbox_timeout=300) as backend:
-            # Through the native handle, since `backend.run` starts the display first. E2B raises on a nonzero exit,
-            # which `pgrep` finding nothing is.
+            # Use the E2B sandbox directly, because `backend.run` starts the display first. `pgrep` exits nonzero when
+            # it finds nothing, and E2B raises on a nonzero exit.
             native = await backend.get_sandbox()
             running = await native.commands.run(
                 'pgrep -l "^(Xvfb|Xvnc|Xorg|xfce4-session)$"; ls -A /tmp/.X11-unix 2>/dev/null; true'
@@ -455,19 +455,19 @@ class TestDesktop:
             assert running.stdout == ''
 
     async def test_display_contract(self) -> None:
-        """Validates that the template's `scrot`, `xwininfo` and `xdotool` answer as the fake's scripted output does."""
+        """Check that the template's `scrot`, `xwininfo` and `xdotool` print what the fake's scripted output assumes."""
         async with _owned(desktop=True, sandbox_timeout=300) as backend:
             await check_display_contract(screen(backend))
 
     async def test_the_first_screenshot_shows_the_desktop(self) -> None:
-        """Validates that XFCE's desktop window, which the start waits for, is drawn by the first screenshot."""
+        """Check that the first screenshot shows XFCE's desktop window, which the start waits for."""
         async with _owned(desktop=True, sandbox_timeout=300) as backend:
             assert backend.display is not None
             await backend.display.display_size()  # starts the display
             assert not is_blank(await backend.display.screenshot())
 
     async def test_typed_text_reaches_the_focused_window(self) -> None:
-        """Validates that the keysyms the fake records type their characters, tab and newline included, under XFCE."""
+        """Check that the keys the fake records type the right characters under XFCE, tab and newline included."""
         async with _owned(desktop=True, sandbox_timeout=300) as backend:
             display = backend.display
             assert display is not None

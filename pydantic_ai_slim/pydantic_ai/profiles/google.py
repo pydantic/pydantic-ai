@@ -346,7 +346,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
 
 def _set_computer_use_grid(profile: GoogleModelProfile, *, is_modern_gemini: bool, is_image_model: bool) -> None:
     if is_modern_gemini and not is_image_model:
-        # Gemini 3 points accurately on a 0-999 grid but not in pixels; Gemini 2.5 is no better on the grid.
+        # Gemini 3 points accurately on a 0-999 grid but not in pixels. Gemini 2.5 is no more accurate on the grid.
         profile['computer_use_coordinate_grid'] = 1000
 
 

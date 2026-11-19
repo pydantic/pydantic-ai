@@ -13,9 +13,9 @@ from pydantic_ai.profiles.openai import (
     _GPT_6_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
     OpenAIJsonSchemaTransformer,
     OpenAIModelProfile,
-    _is_computer_use_model,  # pyright: ignore[reportPrivateUsage]
     # Keep the provider-specific specialization private; the provider only selects it.
     _OpenAIJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    is_openai_computer_use_model,
     openai_model_profile,
     openai_realtime_model_profile,
 )
@@ -88,9 +88,9 @@ class OpenAIProvider(_OpenAISDKProvider):
         # necessarily implementing this item — the same reasoning `openai_supports_phase` documents.
         profile = openai_model_profile(model_name)
         supported_native_tools = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-        if _is_computer_use_model(model_name):
-            # Added here, not in `openai_model_profile`, because the native `computer` tool is unverified on the
-            # OpenAI-compatible endpoints that share that profile. `OpenAIChatModel` never sends it.
+        if is_openai_computer_use_model(model_name):
+            # Added here, not in `openai_model_profile`, because the native computer tool is unverified on the other
+            # OpenAI-compatible servers that use that profile. `OpenAIChatModel` never sends it.
             # https://developers.openai.com/api/docs/guides/tools-computer-use
             supported_native_tools = supported_native_tools | {ComputerTool}
         return merge_profile(
