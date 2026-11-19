@@ -44,6 +44,7 @@ from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBa
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from ..display_contract_live import check_display_contract
+from ..display_fakes import screen
 
 pytestmark = [pytest.mark.sprites_live]
 
@@ -279,8 +280,7 @@ async def test_a_desktop_meets_the_display_contract(client: AsyncSpritesClient) 
     """The fakes keep the X server's state between commands: a plain Xvfb resets each time its last client exits, so
     without `-noreset` the pointer went back to the middle after every action."""
     async with _owned(client, desktop=True) as backend:
-        display = backend.display
-        assert display is not None
+        display = screen(backend)
         await display.screenshot()
         await check_display_contract(display)
 
