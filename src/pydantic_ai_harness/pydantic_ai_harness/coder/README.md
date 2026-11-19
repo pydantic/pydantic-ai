@@ -156,7 +156,15 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
 
 Then the plumbing, which the agent never calls directly:
 
-6. [`ClearToolResults`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_fraction=0.7)`.
+6. [`FallbackCompaction`](https://pydantic.dev/docs/ai/harness/compaction/) over `SummarizingCompaction` then `SlidingWindowCompaction`: above 85% of the
+   model's context window, the run's model summarizes older messages, keeping the first user message (the task)
+   and at least the most recent 50,000 tokens or 40% of the window, whichever is less (`keep_tokens=50_000,
+   keep_fraction=0.4` on both strategies). A first message larger than about 40% of the window keeps the history
+   above the threshold. When summarizing fails with a model API error (including an exhausted `FallbackModel`),
+   a usage limit, or `CannotSummarizeError` because the model is realtime or cannot write text, those messages are
+   dropped instead. The summary request uses only the model's own settings, not the agent's or the run's
+   `model_settings` (such as `openai_store=False` or `extra_headers`).
+   Pass `compaction=False` to leave it out when the agent binds its own compaction.
 7. A private [`ToolOutputLimits`](https://pydantic.dev/docs/ai/harness/tool-output-limits/) specialization that truncates any tool result over 64,000 characters
    without adding a spill-retrieval tool. Its stable ID, `coder_tool_output_limits`, lets durability
    capabilities bind its inherited operations without colliding with a separately configured `ToolOutputLimits`.
@@ -332,6 +340,8 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 `Coder` now loads the repository's instruction files from the repository root (the nearest directory with a `.git` entry) down to the working directory at run start, one per directory with `AGENTS.md` ahead of `CLAUDE.md`, and inlines a subdirectory's instruction file the first time the agent reads, lists, writes or edits something under it, up to 32,000 characters per conversation. Its bundled `RepoContext` is now `RepoContext(walk_up='repo_root')`. This adds workspace `exists` and `stat` calls at run start, so Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first. To get close to the old behavior, pass `Coder(repo_context=RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False))`. It only approximates it: a directory holding both files now loads only `CLAUDE.md`, where it used to load both.
 
 `Coder`'s default instructions no longer ask for self-contained deliverables checked from a clean directory, or for a solution that uses every field of the provided data. Bind `BenchmarkInstructions()` next to `Coder` to keep them (see [Benchmarking](#benchmarking)).
+
+`Coder` now compacts the history itself, as described in [Composition](#composition), instead of binding [`ClearToolResults`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_fraction=0.7)`. A summary is a request to the run's model, so it counts toward the run's usage and cost. It uses only the model's own settings, not the agent's or the run's `model_settings`; to give it settings such as `openai_store=False`, pass `Coder(compaction=False)` and bind your own `FallbackCompaction` whose `SummarizingCompaction(model_settings=...)` sets them. To keep the previous behavior, pass `Coder(compaction=False)` and add `ClearToolResults(max_fraction=0.7)` yourself.
 
 `Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
 

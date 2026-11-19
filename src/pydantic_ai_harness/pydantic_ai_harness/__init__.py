@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from .code_mode import CodeMode
     from .coder import BenchmarkInstructions, Coder
     from .compaction import (
+        CannotSummarizeError,
         ClampOversizedMessages,
         ClearToolResults,
         CompactOnRequest,
@@ -128,6 +129,7 @@ __all__ = [
     'BrowserUse',
     'BubblewrappedWorkspace',
     'BubblewrapWorkspace',
+    'CannotSummarizeError',
     'CapabilityCreation',
     'ClampOversizedMessages',
     'ClearToolResults',
@@ -259,6 +261,7 @@ _LAZY_EXPORTS = {
     'BrowserUse': 'browser_use',
     'BubblewrappedWorkspace': 'bubblewrap_sandbox',
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
+    'CannotSummarizeError': 'compaction',
     'CapabilityCreation': 'capability_creation',
     'ClampOversizedMessages': 'compaction',
     'ClearToolResults': 'compaction',
