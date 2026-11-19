@@ -5,7 +5,10 @@ Every capability class a package ships has an entry in its package's `CASES`: th
 Harness. `test_every_capability_has_a_case` fails until a new one gets an entry, so adding a capability is
 one entry that says what two of it mean (`combine`), and, when its defaults can't build it, how to (`build`)
 or why it can't run offline (`Unbuildable`). The suites that run over every capability read their cases from
-here: `tests/test_history_append_only.py` and `tests/test_capability_combine.py`, and their Harness twins.
+here: `tests/test_history_append_only.py` and `tests/test_capability_combine.py`, and their Harness twins. A case
+whose `calls` run its tools is also run by the `CONTRACTS` at the end of this module, which
+`tests/harness/test_capability_contracts.py` checks, and by `tests/harness/test_durable_tool_io.py` when its
+calls name `durable_steps`.
 
 This module imports nothing from Pydantic AI Harness: `tests/conftest.py` leaves `tests/harness` out of a
 lane that doesn't install it, and the core suites import this module on every lane.
@@ -62,8 +65,9 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool, WebFetchTool, WebSearchTool, XSearchTool
 from pydantic_ai.toolsets import FunctionToolset
 
-from .append_only import Fixture, drain_events
+from .append_only import Fixture, ToolCall, drain_events
 from .conftest import try_import
+from .manifests import Exempt
 
 with try_import():
     from fastmcp.server import FastMCP
@@ -158,6 +162,23 @@ class Unbuildable:
 
 
 @dataclass(frozen=True)
+class Calls:
+    """Tool calls that run a capability's tools offline, in order, for the suites that call its tools."""
+
+    made: tuple[ToolCall, ...]
+    build: Fixture
+    """What the calls run against, offline: stand-ins for any client its tools send requests through. It must
+    not need a test's state beyond the directory it is given: the durable suite builds it at import, as DBOS
+    registers a workflow before launch."""
+    durable_steps: tuple[str, ...] = ()
+    """The DBOS steps the calls record, as `<capability id>.<operation>`, for tools whose requests a recovered
+    run must not make again. `tests/harness/test_durable_tool_io.py` runs every case that names some."""
+    moves_cache_prefix: str | None = None
+    """Why running the calls rewrites earlier history by design, which moves the prompt-cache prefix: a suite
+    that runs them one per response marks the run `moves_cache_prefix` with it."""
+
+
+@dataclass(frozen=True)
 class CapabilityCase:
     """One capability: what two of it on one agent mean, and how the suites build it."""
 
@@ -169,6 +190,8 @@ class CapabilityCase:
     """The module its optional dependency group provides, when its module needs one; a test skips it without."""
     env: Mapping[str, str] = field(default_factory=dict[str, str])
     """Credentials it checks when it's built; nothing is sent, as the scripted model never calls its tools."""
+    calls: Calls | None = None
+    """Calls that run its tools, for the contracts and suites that call them."""
 
     @property
     def reason(self) -> str:
@@ -588,3 +611,32 @@ CASES: dict[str, CapabilityCase] = {
     ),
 }
 """Every core capability, keyed by class name."""
+
+
+@dataclass(frozen=True)
+class Contract:
+    """A property every case it applies to must have, checked by a test of its own over those cases.
+
+    A case it applies to is checked unless `exempt` names it with a reason, which is where a capability that
+    breaks the property on main is recorded, linked to the issue that tracks it.
+    """
+
+    name: str
+    applies: Callable[[CapabilityCase], bool]
+    exempt: Mapping[str, Exempt] = field(default_factory=dict[str, Exempt])
+
+
+RENAMED = Contract(
+    'renamed',
+    applies=lambda case: case.calls is not None,
+    exempt={
+        'DeduplicateFileReads': Exempt(
+            'its documented `file_key` example matches `read_file` by name, so under a prefix it never '
+            'deduplicates: https://github.com/pydantic/pydantic-ai/issues/13967'
+        ),
+    },
+)
+"""A capability's tools behave the same under `prefix_tools()`: a tool, hook or event found by name breaks it."""
+
+CONTRACTS = (RENAMED,)
+"""Every contract, so a meta-test can check each one's exemptions."""

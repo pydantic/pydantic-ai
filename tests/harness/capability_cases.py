@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, RawToolArgs
-from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import (
@@ -52,9 +52,12 @@ from pydantic_ai_harness import (
     Goal,
     Grain,
     InputGuardrail,
+    KeenableSearch,
     LabelCrossModelHistory,
+    LocalStack,
     Macroscope,
     ManagedPrompt,
+    Memory,
     ModelChoice,
     ModelRouter,
     Ordinal,
@@ -91,8 +94,10 @@ from pydantic_ai_harness.conversation_search import ConversationSearch, Snapshot
 from pydantic_ai_harness.github import GitHub
 from pydantic_ai_harness.linear import Linear
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
+from pydantic_ai_harness.memory import InMemoryMemoryStore
 from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.peers import InMemoryPeerNetwork
+from pydantic_ai_harness.planning import SqlitePlanStore
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
@@ -101,12 +106,23 @@ from pydantic_ai_harness.system_reminders import Reminder
 from ..append_only import CLOCK, Fixture
 from ..capability_cases import (
     Anonymous,
+    Calls,
     CapabilityCase,
     Collides,
     Combines,
     Narrows,
     Rejected,
     Unbuildable,
+)
+from ..function_model_prefix import COMPACTION_REWRITES_HISTORY
+from ._counting_clients import (
+    ExaAgentRuns,
+    ExaClient,
+    KeenableClient,
+    YouClient,
+    counting_aws_cli,
+    counting_model,
+    judge_relevant,
 )
 from ._mcp_server import MCPServer
 
@@ -159,6 +175,26 @@ def _read_file_key(call: ToolCallPart) -> str | None:
 def _deduplicate_file_reads(tmp_path: Path) -> list[AbstractCapability[Any]]:
     (tmp_path / 'notes.md').write_text('Sunny.\n')
     return [DeduplicateFileReads(file_key=_read_file_key), FileSystem(), LocalWorkspace(tmp_path)]
+
+
+def _capability_creation(tmp_path: Path) -> list[AbstractCapability[Any]]:
+    return [CapabilityCreation(tmp_path / 'capabilities'), LocalWorkspace(tmp_path)]
+
+
+_AUTHORED = """
+from pydantic_ai.capabilities import AbstractCapability
+
+
+class Marker(AbstractCapability):
+    def get_instructions(self):
+        return 'marker'
+"""
+"""A capability for `CapabilityCreation` to author."""
+
+
+def _smart_search(tmp_path: Path) -> list[AbstractCapability[Any]]:
+    (tmp_path / 'config.py').write_text('def load(path):\n    # parse the config file\n    return path\n')
+    return [SmartSearch(counting_model('smart_search.judge', judge_relevant), guidance=''), LocalWorkspace(tmp_path)]
 
 
 class _PruneLatestReturn(AbstractCapability[None]):
@@ -317,7 +353,18 @@ CASES: dict[str, CapabilityCase] = {
         Narrows(
             'one notebook per id, and its store and namespace are a tenant boundary; two that differ need their own ids',
             lambda cls: (cls(namespace='first'), cls(namespace='second')),
-        )
+        ),
+        calls=Calls(
+            (
+                ('write_memory', {'content': 'The user prefers tabs.', 'file': 'style.md'}),
+                # A missing file asks the model to retry, which the operation records as data.
+                ('read_memory', {'file': 'missing.md'}),
+                ('search_memory', {'query': 'tabs'}),
+                ('delete_memory', {'file': 'missing.md'}),
+            ),
+            lambda _: Memory(store=InMemoryMemoryStore()),
+            durable_steps=('memory.write_memory', 'memory.read_memory', 'memory.search_memory', 'memory.delete_memory'),
+        ),
     ),
     'ModelRouter': CapabilityCase(
         Combines(
@@ -346,7 +393,15 @@ CASES: dict[str, CapabilityCase] = {
             'one plan per agent; `PlanningToolset` registers fixed tool names',
             lambda: (Planning[Any](), Planning[Any](inject=False)),
             _check_planning,
-        )
+        ),
+        calls=Calls(
+            (
+                ('write_plan', {'items': [{'id': 'first', 'content': 'Write the migration'}]}),
+                ('add_task', {'content': 'Run the tests'}),
+            ),
+            lambda tmp_path: Planning(store=SqlitePlanStore(database=str(tmp_path / 'plan.db'))),
+            durable_steps=('planning.set_items', 'planning.add_item'),
+        ),
     ),
     'SpendLimits': CapabilityCase(
         Combines(
@@ -413,6 +468,16 @@ CASES: dict[str, CapabilityCase] = {
             _check_prune_tool_results,
         ),
         build=lambda _: [PruneToolResults(), _PruneLatestReturn()],
+        # The first is refused, as no previous step returned `missing`; the second prunes the first's result, which a
+        # contract running one call per response gives the ID `call_0`.
+        calls=Calls(
+            (
+                ('prune_tool_result', {'tool_call_id': 'missing', 'summary': 'Quiet.'}),
+                ('prune_tool_result', {'tool_call_id': 'call_0', 'summary': 'Quiet.'}),
+            ),
+            lambda _: PruneToolResults(),
+            moves_cache_prefix=COMPACTION_REWRITES_HISTORY,
+        ),
     ),
     'ToolOutputLimits': CapabilityCase(
         Combines(
@@ -449,6 +514,13 @@ CASES: dict[str, CapabilityCase] = {
             _check_advisor,
         ),
         build=lambda _: Advisor(TestModel()),
+        calls=Calls(
+            (('advisor', {'prompt': 'q'}),),
+            lambda _: Advisor(
+                counting_model('advisor.model', lambda _: ModelResponse(parts=[TextPart('advice')])), native=False
+            ),
+            durable_steps=('advisor.consult',),
+        ),
     ),
     'SSHWorkspace': CapabilityCase(
         Combines(
@@ -571,6 +643,11 @@ CASES: dict[str, CapabilityCase] = {
     'DeduplicateFileReads': CapabilityCase(
         Anonymous('file-read identification is agent-specific; one per `file_key`'),
         build=_deduplicate_file_reads,
+        calls=Calls(
+            (('read_file', {'path': 'notes.md'}), ('read_file', {'path': 'notes.md'})),
+            _deduplicate_file_reads,
+            moves_cache_prefix=COMPACTION_REWRITES_HISTORY,
+        ),
     ),
     'DynamicWorkflow': CapabilityCase(
         Anonymous('one per workflow definition'),
@@ -703,6 +780,14 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(str(COMBINE_ROOT_A)), cls(str(COMBINE_ROOT_A.parent))),
         ),
         build=_workspace(FileSystem),
+        calls=Calls(
+            (
+                ('write_file', {'path': 'notes.md', 'content': 'Sunny.\n'}),
+                ('edit_file', {'path': 'notes.md', 'old_text': 'Sunny.', 'new_text': 'Rainy.'}),
+                ('read_file', {'path': 'notes.md'}),
+            ),
+            _workspace(FileSystem),
+        ),
     ),
     'Goal': CapabilityCase(
         Narrows(
@@ -739,7 +824,16 @@ CASES: dict[str, CapabilityCase] = {
             'one store directory per id; two that differ need their own ids and PrefixTools',
             lambda cls: (cls(str(COMBINE_ROOT_A)), cls(str(COMBINE_ROOT_B))),
         ),
-        build=lambda tmp_path: [CapabilityCreation(tmp_path / 'capabilities'), LocalWorkspace(tmp_path)],
+        build=_capability_creation,
+        calls=Calls(
+            (
+                ('author_capability', {'name': 'marker', 'code': _AUTHORED}),
+                ('list_authored_capabilities', {}),
+                ('disable_authored_capability', {'name': 'marker'}),
+            ),
+            _capability_creation,
+            durable_steps=('capability_creation.write', 'capability_creation.list_all', 'capability_creation.disable'),
+        ),
     ),
     'PydanticAIDocs': CapabilityCase(
         Narrows(
@@ -771,7 +865,12 @@ CASES: dict[str, CapabilityCase] = {
         Narrows(
             'one LocalStack environment per id, and its service lists are an access boundary',
             lambda cls: (cls(allowed_services=['s3']), cls(allowed_services=['sqs'])),
-        )
+        ),
+        calls=Calls(
+            (('aws_cli', {'command': 's3 ls'}),),
+            lambda tmp_path: LocalStack(aws_cli_path=counting_aws_cli(tmp_path), include_instructions=False),
+            durable_steps=('localstack.aws_cli',),
+        ),
     ),
     'Linear': CapabilityCase(
         Narrows(
@@ -838,6 +937,9 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls('test'), cls('other')),
         ),
         build=_workspace(lambda: SmartSearch(model=TestModel())),
+        calls=Calls(
+            (('smart_search', {'query': 'parse the config'}),), _smart_search, durable_steps=('smart_search.judge',)
+        ),
     ),
     'PlaywrightBrowser': CapabilityCase(
         Narrows(
@@ -855,6 +957,13 @@ CASES: dict[str, CapabilityCase] = {
             ),
         ),
         build=lambda _: ConversationSearch(SnapshotHistorySource(InMemoryStepStore()), scope='conversation'),
+        calls=Calls(
+            (('search_conversation_history', {'query': 'tabs'}),),
+            lambda _: ConversationSearch(
+                SnapshotHistorySource(InMemoryStepStore()), scope='all', add_instructions=False
+            ),
+            durable_steps=('conversation_search.search',),
+        ),
     ),
     'ExaAgent': CapabilityCase(
         Narrows(
@@ -863,6 +972,11 @@ CASES: dict[str, CapabilityCase] = {
         ),
         requires='exa_py',
         env=_EXA_KEY,
+        calls=Calls(
+            (('exa_agent', {'query': 'q'}),),
+            lambda _: pydantic_ai_harness.ExaAgent(runs=ExaAgentRuns()),
+            durable_steps=('exa_agent.create_run', 'exa_agent.resolve_run'),
+        ),
     ),
     'Pixeltable': CapabilityCase(
         Narrows(
@@ -879,6 +993,15 @@ CASES: dict[str, CapabilityCase] = {
         ),
         requires='exa_py',
         env=_EXA_KEY,
+        calls=Calls(
+            (
+                ('web_search', {'query': 'q'}),
+                ('get_page', {'url': 'https://a.dev'}),
+                ('deep_search', {'question': 'q'}),
+            ),
+            lambda _: pydantic_ai_harness.ExaSearch(client=ExaClient(), include_deep_search=True),
+            durable_steps=('exa_search.web_search', 'exa_search.get_page', 'exa_search.deep_search'),
+        ),
     ),
     'GitHub': CapabilityCase(
         Narrows(
@@ -894,6 +1017,11 @@ CASES: dict[str, CapabilityCase] = {
         ),
         requires='youdotcom',
         env=_YOU_KEY,
+        calls=Calls(
+            (('answer', {'query': 'q'}), ('research', {'input': 'q'}), ('finance_research', {'input': 'q'})),
+            lambda _: pydantic_ai_harness.YouResearch(client=YouClient()),
+            durable_steps=('you_research.answer', 'you_research.research', 'you_research.finance_research'),
+        ),
     ),
     'YouSearch': CapabilityCase(
         Narrows(
@@ -902,12 +1030,22 @@ CASES: dict[str, CapabilityCase] = {
         ),
         requires='youdotcom',
         env=_YOU_KEY,
+        calls=Calls(
+            (('web_search', {'query': 'q'}), ('get_page', {'url': 'https://a.dev'})),
+            lambda _: pydantic_ai_harness.YouSearch(client=YouClient()),
+            durable_steps=('you_search.web_search', 'you_search.get_page'),
+        ),
     ),
     'KeenableSearch': CapabilityCase(
         Narrows(
             'one Keenable search configuration per id; two that differ need their own ids and PrefixTools',
             lambda cls: (cls(), cls(num_results=3)),
-        )
+        ),
+        calls=Calls(
+            (('web_search', {'query': 'q'}), ('get_page', {'url': 'https://a.dev'})),
+            lambda _: KeenableSearch(client=KeenableClient()),
+            durable_steps=('keenable_search.web_search', 'keenable_search.get_page'),
+        ),
     ),
     'Slack': CapabilityCase(
         Narrows(
