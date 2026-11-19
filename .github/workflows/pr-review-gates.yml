@@ -100,7 +100,7 @@ jobs:
             core.setOutput('repository', repository);
 
   review-statuses:
-    name: Publish size-dependent review gates
+    name: Publish review gates
     needs: review-target
     runs-on: ubuntu-latest
     timeout-minutes: 10

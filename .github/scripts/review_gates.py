@@ -47,9 +47,9 @@ GH_AW_REVIEWERS: dict[str, str] = {
 # Resolving a thread settled a finding started before this time. GitHub records no resolution time.
 # Delete this baseline once no open PR has a bot thread started before it.
 RESOLVED_THREADS_STARTED_BEFORE = datetime(2026, 11, 19, tzinfo=UTC)
-# A reply line that answers a finding; reply bodies can open with an attribution line.
+# A reply's first line in this form answers its finding; the reply can open with an attribution line.
 DISPOSITION = re.compile(
-    r'^(?:Fixed in (?P<sha>[0-9a-f]{7,40})\b|Tracked in #(?P<number>[1-9][0-9]*)\b|(?P<declined>Declined: \S))',
+    r'^(?:Fixed in (?P<sha>[0-9a-f]{7,40})\b|Tracked in #(?P<number>[1-9][0-9]{0,8})\b|(?P<declined>Declined: \S))',
     re.MULTILINE,
 )
 
@@ -326,10 +326,14 @@ def finding_dispositions(
     parents = {review.id: review for review in reviews}
     findings = [comment for comment in comments if comment.in_reply_to_id is None and comment.user.type == 'Bot']
     answers: dict[int, list[tuple[str, re.Match[str]]]] = {}
+    finding_ids = {finding.id for finding in findings}
     for comment in comments:
-        if comment.in_reply_to_id is not None and comment.user.type == 'User':
-            for line in DISPOSITION.finditer(comment.body):
-                answers.setdefault(comment.in_reply_to_id, []).append((comment.user.login, line))
+        if (
+            comment.in_reply_to_id in finding_ids
+            and comment.user.type == 'User'
+            and (line := DISPOSITION.search(comment.body))
+        ):
+            answers.setdefault(comment.in_reply_to_id, []).append((comment.user.login, line))
     lines = [line for replies in answers.values() for _, line in replies]
     own = github.own_commits(pull.base.sha, pull.head.sha, {line['sha'] for line in lines if line['sha']})
     tracked = {number for line in lines if (number := line['number']) and int(number) != pull.number}

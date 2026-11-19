@@ -1005,6 +1005,8 @@ def test_merged_prs_with_unanswered_findings_fail(number: int, reviewers: list[s
         pytest.param('Tracked in #12', CONTRIBUTOR, True, id='tracked'),
         pytest.param('Tracked in #13', CONTRIBUTOR, False, id='tracked-missing'),
         pytest.param('Tracked in #7', CONTRIBUTOR, False, id='tracked-this-pr'),
+        pytest.param('Tracked in #13\nTracked in #12', CONTRIBUTOR, False, id='first-line-decides'),
+        pytest.param('Tracked in #' + '9' * 5000, CONTRIBUTOR, False, id='tracked-number-too-long'),
         pytest.param('Declined: only reachable from a test double.', MAINTAINER, True, id='declined-writer'),
         pytest.param('Declined: only reachable from a test double.', CONTRIBUTOR, False, id='declined-reader'),
         pytest.param('Declined:', MAINTAINER, False, id='declined-without-reason'),
