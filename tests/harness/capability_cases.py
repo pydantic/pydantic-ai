@@ -3,20 +3,23 @@
 See `tests/capability_cases.py` for the case types and the core capabilities. Every capability class in
 `pydantic_ai_harness`, public or not, has an entry in `CASES`, and `test_every_capability_has_a_case` fails
 when one is missing. Adding a capability is therefore one entry, and a decision about what two of it mean,
-taken once, here. The three answers, and what picks between them:
+taken once, here, as the case's `combine`. The answers, and what picks between them:
 
 - `Combines` -- the class declares a default `id`, so two are one configuration stated twice and
   Pydantic AI merges them field by field. This is what lets two packaged harnesses that each carry
   a `ToolOutputLimits` compose instead of colliding.
+- `Narrows` -- a default `id` and a `combine` method that narrows rather than unions, so two that
+  disagree raise: the configuration is an access boundary.
 - `Anonymous` -- no default `id`, and two really do coexist.
 - `Collides` -- no default `id`, and two never coexist anyway, because the toolset registers fixed
   tool names. A fact rather than a preference, and pinned by
   `test_two_of_a_colliding_capability_still_raise` so it cannot drift back into an `Anonymous`
   reason describing a configuration ("one per rooted directory") that is unreachable.
+- `Rejected` -- no default `id`, and something else rejects a second one, as a durable engine does.
 
-Declaring a default `id` is the whole policy: there is no `combine` to write unless the merge needs
-something the field-by-field default cannot express, such as a budget that should take the *smaller*
-value.
+Declaring a default `id` is the whole policy: there is no `combine` method to override unless the
+merge needs something the field-by-field default cannot express, such as a budget that should take the
+*smaller* value.
 """
 
 from __future__ import annotations
