@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, Never, assert_never, cast, overload
 
-from openai import NOT_GIVEN, APIStatusError, AsyncAzureOpenAI, AsyncOpenAI, AsyncStream, Omit, omit as OMIT
+from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit as OMIT
 from openai.types import chat
 from openai.types.chat import (
     ChatCompletionChunk,
@@ -343,7 +343,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         `deprecation` is dropped for an Azure OpenAI client, as Azure retires models on its own schedule.
         """
-        if 'deprecation' in profile and isinstance(self._provider.client, AsyncAzureOpenAI):
+        if 'deprecation' in profile and is_azure(self._provider.client, self._provider.name):
             profile = merge_profile(profile, ModelProfile(deprecation=None))
         retentions = profile.get('supported_cache_retentions', ())
         if '12h' not in retentions:

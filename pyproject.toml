@@ -663,7 +663,6 @@ filterwarnings = [
     # TODO: Drop once starlette moves to `anyio.from_thread.BlockingPortal`.
     # https://github.com/Kludex/starlette/issues/3497
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning:starlette.testclient",
-    # Deprecated models the recordings use are ignored by `replay_deprecated_models` in `tests/conftest.py`, on replay only.
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
