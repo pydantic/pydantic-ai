@@ -76,7 +76,8 @@ logfire = ["logfire[httpx]>=4.39.0", "opentelemetry-instrumentation-httpx>=0.65b
 # Provider SDKs are capped below the next major we haven't tested (#11919); raise a cap once a new major has been
 # tested.
 # `openai>=3.50.0` is the first release that types `Response.input_transformations`, which the Responses model
-# reports in `provider_details`. The other extras built on the OpenAI model classes share this floor.
+# reports in `provider_details`. Every extra below that installs `openai` shares this floor, since importing any
+# OpenAI model class imports that type.
 openai = ["openai>=3.50.0,<4", "tiktoken>=0.12.0"]
 cohere = ["cohere>=5.20.6,<8; platform_system != 'Emscripten'"]
 # `google-genai>=2.30.0` continues a long decode past the per-request output cap itself (`automatic_continuation`)

@@ -247,6 +247,8 @@ result = agent.run_sync([
 
 A `CachePoint` that opens a user message marks the end of the previous message instead, such as the tool result before it, the same as on Anthropic and Bedrock. On the Responses API, assistant output can't carry a breakpoint, so it goes on the closest earlier input instead. One with no earlier content in the conversation raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
+On GPT-6.2 and later, the Responses API [appends the top-level `instructions` after the input and bills them at the uncached rate](https://developers.openai.com/api/docs/guides/prompt-caching). Pydantic AI sends an agent's instructions in that field unless `openai_cache_instructions` moves them into the input, where they can be cached, so on those models set it, or `cache=True`, to cache them.
+
 To cache the instructions without the unified setting, set [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions]:
 
 ```python {test="skip"}
@@ -362,8 +364,6 @@ What happened to earlier reasoning in testing:
 - **History edits:** [history processors](../message-history.md#processing-message-history) and [Pydantic AI Harness compaction](../harness/compaction.md) strategies that edit or drop earlier messages, such as clearing old tool results or dropping the oldest messages, dropped the reasoning after the edit. [OpenAI's own compaction](#message-compaction) [keeps it](https://developers.openai.com/api/docs/guides/keep-prefix-unchanged). To shorten a large tool result, shorten it before it's first sent.
 - **Tool changes:** removing a tool between requests, or changing [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] between requests, including narrowing it to a subset of the tools, dropped the reasoning after the change. Tools added partway through a run kept it.
 - **Model switches:** switching from `gpt-6.2-astra` to `gpt-6.2-sol`, or from `gpt-6.2-sol` to `gpt-6.1-sol`, dropped every earlier reasoning item, with `'reason': 'model_mismatch'`. Switching from `gpt-6.2-sol` to `gpt-6.2-astra` kept it. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or a run-level `model=` that makes such a switch continues without that reasoning.
-
-GPT-6.2 also [appends the top-level `instructions` after the input and bills them at the uncached rate](https://developers.openai.com/api/docs/guides/prompt-caching). Pydantic AI sends an agent's instructions in that field unless [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions] moves them into the input, where they can be cached. The unified `cache=True` setting turns it on, as [prompt caching](#prompt-caching) describes.
 
 ### Native tools
 
