@@ -275,7 +275,7 @@ Specs saved before the rename use the `DockerSandbox` block name. To keep loadin
 | `executable` | The container CLI to run, such as `'podman'`, looked up on `PATH` when the capability is created. Default: `'docker'`. |
 | `authority` | The [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority) of the container's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
 | `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are container paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
-| `desktop` | Give the container a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. Without an `image`, builds the desktop image on first use. Default: `False`. |
+| `desktop` | Give the container a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. Without an `image`, builds the desktop image from `DESKTOP_DOCKERFILE` on first use. Default: `False`. |
 
 ## Platforms
 
@@ -290,3 +290,5 @@ The machine running the agent must be POSIX (Linux or macOS), like [`LocalWorksp
 ::: pydantic_ai_harness.docker_container.DockerContainer
 
 ::: pydantic_ai_harness.docker_container.DockerContainerBackend
+
+::: pydantic_ai_harness.docker_container.DESKTOP_DOCKERFILE
