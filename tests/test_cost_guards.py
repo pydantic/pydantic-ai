@@ -308,6 +308,18 @@ def test_guards_work_under_xdist(run: RunPytest, pytester: pytest.Pytester, monk
         cost_guards.SHARED_DEPENDENCIES = ('shared_dependency',)
         """
     )
+    # Over the collection budget in one worker only, so its fastest reading is within it.
+    pytester.makepyfile(
+        test_one_slow_worker="""
+        import os, time
+
+        if os.environ['PYTEST_XDIST_WORKER'] == 'gw0':
+            time.sleep(0.1)
+
+        def test_nothing():
+            pass
+        """
+    )
     result = run(
         f"""
         PRELOADED = 'shared_dependency' in sys.modules
@@ -328,16 +340,17 @@ def test_guards_work_under_xdist(run: RunPytest, pytester: pytest.Pytester, monk
         '-n',
         '2',
     )
-    result.assert_outcomes(passed=2, failed=1)
+    result.assert_outcomes(passed=3, failed=1)
     result.stdout.fnmatch_lines(
         [
             '*`test_guarded.py::test_unmarked` launched a Python interpreter during call:*',
             '*test_guarded.py::test_stale: no test covered by its `@pytest.mark.subprocess`*',
             '*slow test module collection*',
             'test_guarded.py took *s to collect, over the 0.05s per-module budget (PYTEST_COLLECT_BUDGET_SECONDS).',
-            '*worker startup and collection of 3 tests took *s (slowest worker collected in *s)',
+            '*worker startup and collection of 4 tests took *s (slowest worker collected in *s)',
         ]
     )
+    result.stdout.no_fnmatch_line('test_one_slow_worker.py took *')
 
 
 def test_the_time_budget_fails_slow_tests_unless_marked(run: RunPytest, monkeypatch: pytest.MonkeyPatch):

@@ -285,7 +285,8 @@ def _identity(leg: Leg) -> str:
 
 def _lane_values(job_name: str, leg: Leg, route: str) -> dict[str, str]:
     env = _mapping(_job(job_name).get('env', {}))
-    context = {**_context('merge_group', route), 'matrix': leg}
+    # Rendered as a pull request sees them, so a check only pull requests enforce still needs a leg they keep.
+    context = {**_context('pull_request', route), 'matrix': leg}
     return {name: _text(_render(env[name], context)) for name in LANE_VARS if name in env}
 
 
