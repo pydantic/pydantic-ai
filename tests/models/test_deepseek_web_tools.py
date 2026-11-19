@@ -110,6 +110,15 @@ async def test_deepseek_web_fetch_history(
                 full_history = json.dumps(requests[1]['messages'])
                 assert 'Thinking before reading' in full_history
                 assert 'Thinking after reading' in full_history
+                response.finish_reason = 'content_filter'
+                await Agent(model, model_settings={'thinking': False}).run(
+                    'What was the UUID?', message_history=history
+                )
+                content_filtered_history = json.dumps(requests[-1]['messages'])
+                assert 'Thinking before reading' not in content_filtered_history
+                assert 'Thinking after reading' not in content_filtered_history
+                assert 'recorded-page-signature' in content_filtered_history
+                response.finish_reason = 'stop'
                 response.parts = [part for part in response.parts if not isinstance(part, ThinkingPart)]
                 await Agent(model, model_settings={'thinking': False}).run(
                     'What was the UUID?', message_history=history

@@ -1327,9 +1327,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             if isinstance(part, NativeToolCallPart | NativeToolReturnPart):
                 keys = calls if isinstance(part, NativeToolCallPart) else returns
                 keys.add((part.tool_call_id, part.tool_name))
-            elif isinstance(part, ThinkingPart) and isinstance(
-                index := (part.provider_details or {}).get(CHAT_STEP_KEY), int
+            elif (
+                message.finish_reason != 'content_filter'
+                and isinstance(part, ThinkingPart)
+                and isinstance(index := (part.provider_details or {}).get(CHAT_STEP_KEY), int)
             ):
+                # DeepSeek clears step reasoning from the terminal content-filter response.
                 thinking_by_step.setdefault(index, []).append(part.content)
         retained = calls & returns
         steps: list[ChatWebStep] = []
