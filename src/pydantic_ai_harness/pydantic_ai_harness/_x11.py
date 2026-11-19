@@ -232,15 +232,88 @@ _CLIENTS = 'xdotool xwininfo scrot setsid'
 _PACKAGES = 'xvfb xdotool x11-utils scrot util-linux'
 """The Debian and Ubuntu packages that have Xvfb and `_CLIENTS`."""
 
+_DESKTOP_PROGRAMS = 'fluxbox tint2 xterm'
+"""The desktop's window manager, panel and terminal, each in the Debian and Ubuntu package of the same name. `xprop`,
+which tells when the window manager is up, is in `x11-utils`."""
 
-def start_x_server(log: str) -> str:
-    """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one runs.
+_PANEL_LOG = '/tmp/pydantic-ai-panel.log'
 
-    Whether one runs is read from the display's X lock, not from an X server answering.
+_PANEL_SHOWS = 'xdotool search --onlyvisible --class tint2 >/dev/null 2>&1'
+
+
+def _write_unless_present(path: str, *lines: str) -> str:
+    """A shell fragment that writes `lines` to `path` in the home directory, unless the file is there already."""
+    return f'[ -e "$HOME/{path}" ] || printf \'%s\\n\' {shlex.join(lines)} >"$HOME/{path}"; '
+
+
+_DESKTOP_CONFIG = (
+    'mkdir -p "$HOME/.fluxbox" "$HOME/.config/tint2"; '
+    + _write_unless_present('.fluxbox/init', 'session.screen0.toolbar.visible: false')
+    # Every new window fills the screen above the panel, so nothing opens small in a corner.
+    + _write_unless_present('.fluxbox/apps', '[app] (class!=Tint2)', '  [Maximized] {yes}', '[end]')
+    # fluxbox asks `fbsetbg` to restore this display's last wallpaper on start. Without one recorded, and without a
+    # program that sets a picture as the wallpaper, `fbsetbg` opens a window saying so. This records a plain color, which
+    # fluxbox's own `fbsetroot` paints. fluxbox runs it with `DISPLAY` set to `:1.0`.
+    + _write_unless_present('.fluxbox/lastwallpaper', f'fbsetroot|-solid #3b4252||{DISPLAY}.0')
+    # A panel along the bottom with a button for each launcher whose program is installed, and a button per window.
+    + _write_unless_present(
+        '.config/tint2/tint2rc',
+        'rounded = 0',
+        'border_width = 0',
+        'background_color = #2b2b2b 100',
+        'border_color = #2b2b2b 0',
+        'panel_items = LT',
+        'panel_position = bottom left horizontal',
+        'panel_size = 100% 40',
+        'panel_padding = 4 4 6',
+        'panel_background_id = 1',
+        'panel_layer = top',
+        'strut_policy = follow_size',
+        'launcher_icon_size = 32',
+        'launcher_padding = 2 4 8',
+        'launcher_item_app = /usr/share/applications/firefox-esr.desktop',
+        'launcher_item_app = /usr/share/applications/debian-xterm.desktop',
+        'taskbar_padding = 2 2 4',
+        'task_text = 1',
+        'task_icon = 1',
+        'task_font_color = #ffffff 100',
+        'task_maximum_size = 220 34',
+    )
+)
+"""Writes the desktop's settings for the user the commands run as, leaving any file already there alone. A home that
+can't be written leaves fluxbox's and tint2's own defaults."""
+
+_START_WINDOW_MANAGER = (
+    f'if command -v fluxbox >/dev/null; then {{ {_DESKTOP_CONFIG}}} 2>/dev/null; '
+    # A second fluxbox exits when one runs, so starting it every time recovers one that died. The wait lets the first
+    # click focus and raise the window it lands on.
+    'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
+    'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
+    '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; fi; '
+    # tint2 shows only once a window manager answers, so it starts after one.
+    f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then setsid tint2 >{_PANEL_LOG} 2>&1 9>&- & '
+    f'panel=$!; i=0; until {_PANEL_SHOWS} || [ $i -ge 100 ]; do if ! kill -0 $panel 2>/dev/null; then '
+    f"echo 'the panel did not start:' >&2; tail -n 5 {_PANEL_LOG} >&2; exit 1; fi; "
+    'sleep 0.1; i=$((i+1)); done; fi; '
+)
+"""Starts the window manager, unless it's missing, and waits up to 10 seconds for it to answer `xprop`. Then starts
+the panel unless it shows or is missing, and waits up to 10 seconds for its window, so the first screenshot isn't
+black. It fails if the panel exits first, and goes on without it after 10 seconds."""
+
+
+def start_x_server(log: str, *, desktop: bool = True) -> str:
+    """A shell fragment that starts Xvfb on `DISPLAY` unless an X server runs, and with `desktop` a desktop on it.
+
+    The screen's size is the one `$1` names, such as `1280x800`. The desktop is a window manager, and a panel with a
+    button that opens a terminal.
+
+    Whether an X server runs is read from the display's X lock, not from an X server answering. Pass `desktop=False`
+    when the environment starts its own desktop, such as E2B's XFCE.
 
     It first installs any of the programs it needs that's missing with `apt-get`, as root or through `sudo -n`, and
-    fails naming them when it can't: `_CLIENTS`, and Xvfb unless an X server runs. It fails once the X server exits, or
-    after 10 seconds, printing the end of `log`.
+    fails naming them when it can't: `_CLIENTS`, and Xvfb unless an X server runs. With `desktop`, it also installs the
+    desktop's programs, `_DESKTOP_PROGRAMS`, when it can, and goes on without them when it can't. It fails once the X
+    server exits, or after 10 seconds, printing the end of `log`.
 
     It takes `START_LOCK`, so a second start waits and finds the first one's install and X server. The lock is held
     until the script exits, so the rest of the script runs under it too; anything started in the background must close
@@ -250,25 +323,36 @@ def start_x_server(log: str) -> str:
         # Decided from the X lock, not from an X server answering: in a shared network namespace, such as Docker's
         # `--network host`, another X server on the same display answers through Linux's shared abstract socket.
         # A stale lock, such as one left by `docker stop`, names a PID that is gone or belongs to another process.
-        # A running X server's lock names it, whichever server it is, such as `Xvnc`. `xvfb` is `Xvfb` when the script
-        # starts one, and empty when one runs.
-        f'{START_LOCK}case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) xvfb=;; '
-        '*) xvfb=Xvfb;; esac; '
+        # A running X server's lock names it, whichever server it is, such as `Xvnc`.
+        f'{START_LOCK}x_runs() {{ case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in '
+        'X*) return 0;; esac; return 1; }; '
+        # `xvfb` is `Xvfb` when the script will start one, and empty when an X server runs.
+        'if x_runs; then xvfb=; else xvfb=Xvfb; fi; '
         f'missing=; for p in $xvfb {_CLIENTS}; do command -v $p >/dev/null 2>&1 || missing="$missing $p"; done; '
+        # `wanted` names the desktop's missing programs, which are installed when they can be and skipped otherwise.
+        + (
+            f'wanted=; for p in {_DESKTOP_PROGRAMS}; do command -v $p >/dev/null 2>&1 || wanted="$wanted $p"; done; '
+            if desktop
+            else 'wanted=; '
+        )
         # `elevate` prefixes a command that needs root: empty as root, `sudo -n` with passwordless sudo, and `none`
         # when neither works.
-        'if [ "$(id -u)" = 0 ]; then elevate=; elif sudo -n true >/dev/null 2>&1; then elevate="sudo -n"; '
+        + 'if [ "$(id -u)" = 0 ]; then elevate=; elif sudo -n true >/dev/null 2>&1; then elevate="sudo -n"; '
         'else elevate=none; fi; '
-        'if [ -n "$missing" ]; then '
+        'if [ -n "$missing$wanted" ]; then '
         'if ! command -v apt-get >/dev/null 2>&1; then '
-        """echo "the display needs$missing, and there's no apt-get to install them with" >&2; exit 1; fi; """
-        'if [ "$elevate" = none ]; then '
-        """echo "the display needs$missing, and there's no root or passwordless sudo to install them with" >&2; """
-        'exit 1; fi; '
-        '{ $elevate apt-get update -qq && $elevate env DEBIAN_FRONTEND=noninteractive '
-        f'apt-get install -y -qq --no-install-recommends {_PACKAGES}; }} >{log} 2>&1 '
-        f'|| {{ echo "could not install$missing:" >&2; tail -n 5 {log} >&2; exit 1; }}; fi; '
-        'if [ -n "$xvfb" ]; then '
+        """[ -z "$missing" ] || { echo "the display needs$missing, and there's no apt-get to install them with" >&2; """
+        'exit 1; }; '
+        'elif [ "$elevate" = none ]; then '
+        '[ -z "$missing" ] || '
+        """{ echo "the display needs$missing, and there's no root or passwordless sudo to install them with" >&2; """
+        'exit 1; }; '
+        'else { $elevate apt-get update -qq && $elevate env DEBIAN_FRONTEND=noninteractive '
+        f'apt-get install -y -qq --no-install-recommends {_PACKAGES}{" " + _DESKTOP_PROGRAMS if desktop else ""}; }} '
+        f'>{log} 2>&1 || [ -z "$missing" ] || {{ echo "could not install$missing:" >&2; tail -n 5 {log} >&2; exit 1; }}; '
+        'fi; fi; '
+        # Asked again, since the image's own X server may have started during the install: its lock and socket stay.
+        'if ! x_runs; then '
         # No X server here holds the lock, and ours doesn't listen on the abstract socket, so one listening there is
         # another namespace's, such as the host's under `--network host`: `xdotool` would reach it before ours.
         f'if grep -q " @{_X_SOCKET}$" /proc/net/unix 2>/dev/null; then echo "another X server, outside this sandbox, '
@@ -286,6 +370,7 @@ def start_x_server(log: str) -> str:
         f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset >/dev/null 2>{log} 9>&- & '
         + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', log)
         + 'fi; '
+        + (_START_WINDOW_MANAGER if desktop else '')
     )
 
 
@@ -300,10 +385,13 @@ def x11_display(
     size: tuple[int, int],
     script: str,
     where: Callable[[], str],
+    *,
+    started: Callable[[], None] = lambda: None,
 ) -> LazyDisplay:
     """A backend's display on an X server that `script` starts at the size `$1` names, unless one runs.
 
-    `where` names the environment in errors.
+    `where` names the environment in errors. `started` is called after each start that succeeds, such as to forget
+    that a program the start installs was missing.
     """
 
     async def start() -> None:
@@ -314,6 +402,7 @@ def x11_display(
             raise WorkspaceUnavailableError(
                 f'Could not start the display in {where()}: {(result.stderr or result.stdout).strip()}'
             )
+        started()
 
     return LazyDisplay(X11Computer(run), start)
 
@@ -321,14 +410,21 @@ def x11_display(
 _START_DESKTOP = start_x_server('/tmp/pydantic-ai-xvfb.log')
 
 
-def desktop_display(run: RunCommand, size: tuple[int, int] | None, where: Callable[[], str]) -> LazyDisplay | None:
-    """A sandbox's display on a plain Xvfb at `size`, with no window manager, or `None` without a desktop.
+def desktop_display(
+    run: RunCommand,
+    size: tuple[int, int] | None,
+    where: Callable[[], str],
+    *,
+    started: Callable[[], None] = lambda: None,
+) -> LazyDisplay | None:
+    """A sandbox's desktop on Xvfb at `size`, or `None` without one.
 
-    For a sandbox with no desktop of its own: `start_x_server` installs what's missing on first use.
+    For a sandbox with no desktop of its own: `start_x_server` installs what's missing on first use. `started` is
+    called after each start that succeeds, as for `x11_display`.
     """
     if size is None:
         return None
-    return x11_display(run, size, _START_DESKTOP, where)
+    return x11_display(run, size, _START_DESKTOP, where, started=started)
 
 
 class X11Computer:
