@@ -232,11 +232,11 @@ def merge_definition(definition: _JsonSchemaNode, siblings: JsonSchema) -> JsonS
 
 @dataclass
 class UnwalkedRefWriter:
-    """Writes each `$defs` `$ref` under a keyword `JsonSchemaTransformer` doesn't walk out in place, as written.
+    """Replaces each `$defs` `$ref` under a keyword the walk doesn't enter by the definition it points at, as written.
 
-    The walk leaves `not`, `if`/`then`/`else`, `dependentSchemas` and every other keyword outside `WALKED_KEYWORDS` as
-    written, so inlining drops `$defs` without reaching a `$ref` there. Each one gets the definition it points at, with
-    its own other keywords merged over it, as inlining merges them; `transform()` doesn't run on it, as it doesn't on
+    `JsonSchemaTransformer` leaves `not`, `if`/`then`/`else`, `dependentSchemas` and every other keyword outside
+    `WALKED_KEYWORDS` as written, so inlining drops `$defs` without reaching a `$ref` there. The `$ref`'s other keywords
+    are merged over the definition, as inlining merges them, and `transform()` doesn't run on it, as it doesn't on
     anything else written there. A `$ref` that leads back into a definition it is already inside stays, as a recursive
     one does where the walk inlines, and `kept` names the definition.
     """
