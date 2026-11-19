@@ -102,7 +102,7 @@ pydantic-ai-pax = "pydantic_ai_pax.__main__:main"
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai_pax"]
 
-# The docs `read_clai_docs` serves; `clai_docs._CLAI_DOCS` lists them. An editable install reads them from the checkout.
+# The docs `read_pax_docs` serves; `pax_docs._PAX_DOCS` lists them. An editable install reads them from the checkout.
 [tool.hatch.build.targets.wheel.force-include]
 "README.md" = "pydantic_ai_pax/_docs/README.md"
 "PLUGINS.md" = "pydantic_ai_pax/_docs/PLUGINS.md"

@@ -56,7 +56,7 @@ class WebServer:
         for name in ('uvicorn', 'uvicorn.error', 'uvicorn.access'):
             logging.getLogger(name).disabled = True
         server = _Server(config)
-        task = asyncio.create_task(server.serve(sockets=[sock]), name='clai2-web')
+        task = asyncio.create_task(server.serve(sockets=[sock]), name='pax-web')
         return cls(sock=sock, server=server, task=task)
 
     async def stop(self) -> None:

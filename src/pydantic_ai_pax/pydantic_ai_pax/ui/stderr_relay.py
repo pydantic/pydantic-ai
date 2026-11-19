@@ -79,7 +79,7 @@ def relay_stderr() -> Generator[None]:
     source, sink = os.pipe()
     os.dup2(sink, 2)
     os.close(sink)
-    copier = threading.Thread(target=_copy, args=(source, os.dup(terminal)), name='clai-stderr', daemon=True)
+    copier = threading.Thread(target=_copy, args=(source, os.dup(terminal)), name='pax-stderr', daemon=True)
     copier.start()
     _terminal = terminal
     try:

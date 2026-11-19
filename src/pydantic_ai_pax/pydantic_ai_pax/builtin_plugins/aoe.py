@@ -368,7 +368,7 @@ class _Reporter:
         self.hooks = hooks
         self.mappings = mappings
         self.aoe = aoe
-        self.worker = asyncio.create_task(self.publish(), name='clai2-aoe')
+        self.worker = asyncio.create_task(self.publish(), name='pax-aoe')
 
     async def publish(self) -> None:
         """Write whatever changed, one write at a time, until the plugin unloads."""

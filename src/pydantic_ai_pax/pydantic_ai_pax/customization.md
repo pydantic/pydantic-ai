@@ -667,7 +667,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_pax import chat
-from pydantic_ai_pax.clai_docs import ClaiDocs
+from pydantic_ai_pax.pax_docs import PaxDocs
 
 model = OpenAIChatModel(
     'my-model',
@@ -676,7 +676,7 @@ model = OpenAIChatModel(
         api_key=os.environ['MY_MODEL_API_KEY'],
     ),
 )
-agent = Agent(model, capabilities=[Coder(), ClaiDocs()])
+agent = Agent(model, capabilities=[Coder(), PaxDocs()])
 asyncio.run(chat(agent, deps=None))
 ```
 

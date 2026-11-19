@@ -57,7 +57,7 @@ from pydantic_ai_pax.builtin_plugins.hooks import HooksPlugin
 from pydantic_ai_pax.cli.command_context import CommandContext
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
-from pydantic_ai_pax.customization import customization_guide
+from pydantic_ai_pax.pax_docs import PaxDocs
 from pydantic_ai_pax.plugins import PluginHost, load_plugin
 from pydantic_ai_pax.runtime.eager_timing import EagerExecutionCompletedEvent
 from pydantic_ai_pax.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
@@ -208,11 +208,11 @@ class TestFold:
         agent: Agent[None, str] = Agent(
             FunctionModel(respond),
             deps_type=type(None),
-            capabilities=[Coder[None](repo_context=False), customization_guide(), LocalWorkspace(tmp_path)],
+            capabilities=[Coder[None](repo_context=False), PaxDocs(), LocalWorkspace(tmp_path)],
         )
         await agent.run('hi')
         assert {'list_files', 'read_file', 'grep', *NATIVE_TOOLS} <= set(seen)
-        assert 'search_clai_docs' not in seen and 'read_clai_docs' not in seen
+        assert 'search_pax_docs' not in seen and 'read_pax_docs' not in seen
 
     async def test_shell_folds_in_but_other_code_tools_stay_native(self, tmp_path: Path) -> None:
         seen: list[AgentInfo] = []
@@ -296,8 +296,8 @@ class TestEagerTiming:
     @pytest.mark.parametrize(
         'call',
         [
-            'await read_clai_docs(path="reference#saved-api-keys")',
-            'await search_clai_docs(query="saved api keys")',
+            'await read_pax_docs(path="reference#saved-api-keys")',
+            'await search_pax_docs(query="saved api keys")',
         ],
         ids=['read-docs', 'search-docs'],
     )
@@ -309,7 +309,7 @@ class TestEagerTiming:
 
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
             if len(messages) == 1:
-                yield {0: DeltaToolCall(name='load_capability', json_args='{"id": "clai_customization"}')}
+                yield {0: DeltaToolCall(name='load_capability', json_args='{"id": "pax_customization"}')}
                 return
             if len(messages) > 3:
                 yield 'done'
@@ -324,7 +324,7 @@ class TestEagerTiming:
             yield {0: DeltaToolCall(json_args=args[split:])}
             stream_finished.set()
 
-        docs = customization_guide()
+        docs = PaxDocs()
         sandbox = speculative_capabilities(counters, (docs,))
         agent = Agent(
             FunctionModel(stream_function=stream),
@@ -574,7 +574,7 @@ class TestWorkspaceMount:
             [FileSystem[None](allowed_patterns=['src/*'])],
             [FileSystem[None](read_only_patterns=[], tools=['write_file'])],
             [FileSystem[None](tools=['file_info', 'list_directory'])],
-            [customization_guide()],
+            [PaxDocs()],
             [FileSystem[None](), FileSystem[None](root_dir='/')],
             [FileSystem[None](read_only_patterns=[]), dynamic],
             [FileSystem[None](read_only_patterns=[]), DynamicCapability[None](dynamic)],

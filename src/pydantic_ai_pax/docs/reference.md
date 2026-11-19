@@ -2019,7 +2019,7 @@ While the model writes:
 - **Eager execution** runs each complete statement as soon as it has streamed,
   so a slow `shell` build or test starts before the snippet is finished.
 - **Speculation**, only while its switch is on, starts `list_files`, `read_file`, `grep`,
-  `search_clai_docs`, and `read_clai_docs` calls whose arguments are all literals the
+  `search_pax_docs`, and `read_pax_docs` calls whose arguments are all literals the
   moment their line has streamed. Only these
   read-only tools speculate, because an early call may belong to a branch the
   snippet never takes. They must come from Pax's own file and docs tools: a
@@ -2483,15 +2483,15 @@ machine that the sandbox may not reach.
 ### Ask Pax about itself
 
 Ask, for example, "How do saved API keys work?", "Create a plugin with a custom
-menu", or "Use my model provider". The default agent lists `clai_customization`
+menu", or "Use my model provider". The default agent lists `pax_customization`
 as a deferred capability in its catalog, one line until the model calls
 `load_capability` to reveal two docs tools. The loaded capability gives the model
 a short instruction to use these docs for questions about Pax, and to read the
 customization guide before advising on customizing Pax.
 
-- `search_clai_docs(query)` returns the best matching sections, each with its path
+- `search_pax_docs(query)` returns the best matching sections, each with its path
   and a short snippet.
-- `read_clai_docs(path)` lists the docs when `path` is empty, returns a doc such as
+- `read_pax_docs(path)` lists the docs when `path` is empty, returns a doc such as
   `reference` or `harness/coder`, or one section such as
   `reference#saved-api-keys`, with its subsections. A doc over 50,000 characters
   comes back as an outline of section paths instead, so a long doc like this
@@ -2513,10 +2513,10 @@ distinguishes plugin APIs from UI changes that currently need a Pax source chang
 This is guidance, not an automatic installer or a permission boundary: plugins
 execute trusted Python as your user. Review generated plugins before enabling them.
 
-A custom agent can opt in by adding `ClaiDocs()` from `pydantic_ai_pax.clai_docs`
-to its capabilities. `customization_guide()` from
-`pydantic_ai_pax.customization`, which previously loaded the whole guide as
-instructions, now returns `ClaiDocs()` and uses the same deferred catalog entry.
+A custom agent can opt in by adding `PaxDocs()` from `pydantic_ai_pax.pax_docs`
+to its capabilities. Existing agents using `ClaiDocs` or `customization_guide()`
+keep the `clai_customization` capability and its `read_clai_docs` and
+`search_clai_docs` tools. The default agent also accepts these names for saved sessions.
 See [PLUGINS.md](../PLUGINS.md) for the plugin contract.
 
 ## Sessions

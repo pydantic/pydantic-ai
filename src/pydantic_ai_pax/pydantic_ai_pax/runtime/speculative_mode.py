@@ -60,6 +60,7 @@ from pydantic_ai_harness.permissions import Permissions
 from pydantic_ai_harness.sub_agents import DelegationTasks
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 from pydantic_ai_pax.clai_docs import ClaiDocs
+from pydantic_ai_pax.pax_docs import PaxDocs
 from pydantic_ai_pax.runtime.eager_timing import NESTED_CALL, EagerExecutionCompletedEvent, EagerTiming
 from pydantic_ai_pax.runtime.repl_state import ReplStates
 from pydantic_ai_pax.runtime.sandbox_calls import (
@@ -80,6 +81,8 @@ SPECULATIVE_TOOLS: Mapping[str, type[object]] = {
     'grep': FileSystem,
     'search_clai_docs': ClaiDocs,
     'read_clai_docs': ClaiDocs,
+    'search_pax_docs': PaxDocs,
+    'read_pax_docs': PaxDocs,
 }
 """Tools that are pure with respect to the workspace, so safe to start early, re-run, or discard,
 keyed to the capability that must provide them.
