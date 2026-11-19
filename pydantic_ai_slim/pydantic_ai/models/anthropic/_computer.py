@@ -24,8 +24,10 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from ...computer_use import ComputerCallPart
-from ...messages import ModelResponsePart, ToolCallPart
+from ...messages import FinishReason, ModelResponsePart, ToolCallPart
 from ...profiles.anthropic import AnthropicComputerToolVersion
+from .. import ModelRequestParameters
+from .._computer_calls import UNFINISHED_COMPUTER_ARGS, block_computer_calls
 
 COMPUTER_TOOL_BETAS: dict[AnthropicComputerToolVersion, str] = {
     'computer_20251124': 'computer-use-2025-11-24',
@@ -57,6 +59,21 @@ class ComputerReplay(TypedDict):
 _REPLAY = TypeAdapter(ComputerReplay)
 
 
+def stop_computer_calls_unless_finished(
+    parts: Sequence[ModelResponsePart],
+    model_request_parameters: ModelRequestParameters,
+    finish_reason: FinishReason | None,
+) -> list[ModelResponsePart]:
+    """Keep every `computer` call in a response cut off by the token limit from running.
+
+    Claude can stop at `max_tokens` partway through a batch. The calls it finished would then run without the rest, so
+    none of them runs. Streamed and non-streamed responses are checked on their final parts.
+    """
+    if finish_reason != 'length':
+        return list(parts)
+    return block_computer_calls(parts, model_request_parameters)
+
+
 def computer_replay(part: ToolCallPart, provider_name: str, sent: NativeComputer) -> ComputerReplay | None:
     """Return Claude's original calls behind a `computer` call, or `None` to send it back as a regular tool call.
 
@@ -78,6 +95,9 @@ def computer_replay(part: ToolCallPart, provider_name: str, sent: NativeComputer
         return None
     if replay['computer_tool'] != sent.version:
         return None
+    if part.args == UNFINISHED_COMPUTER_ARGS:
+        # Blocked because the response was cut off. Claude's calls go back unchanged, each answered as not run.
+        return replay
     blocks, counts = replay['computer_blocks'], replay['computer_action_counts']
     match part.args_as_dict():
         case {'actions': [*actions]} if blocks and len(blocks) == len(counts) and sum(counts) == len(actions):
@@ -194,6 +214,8 @@ The text is fixed. It holds nothing from the history, because the history may co
 
 def splits_batch(part: ToolCallPart) -> bool:
     """Whether a `computer` call that `computer_replay` accepted has an action marked as after another tool's call."""
+    if part.args == UNFINISHED_COMPUTER_ARGS:
+        return False
     return any(isinstance(action, dict) and 'after_tool_calls' in action for action in part.args_as_dict()['actions'])
 
 
@@ -258,10 +280,15 @@ def computer_member(block: ComputerBlock, version: AnthropicComputerToolVersion)
     """Return the member a call names, and the rest of its input.
 
     The toolset names the member in the call's tool name. The earlier tools name it in the input's `action` field.
+    An `action` that isn't a string names no member and stays in the input, so the conversion reports it as a field
+    that doesn't map.
     """
     if version == 'computer_toolset_20260801':
         return block['name'], block['input']
-    return block['input'].get('action', ''), {key: value for key, value in block['input'].items() if key != 'action'}
+    action = block['input'].get('action', '')
+    if not isinstance(action, str):
+        return '', block['input']
+    return action, {key: value for key, value in block['input'].items() if key != 'action'}
 
 
 COMPUTER_NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
