@@ -212,7 +212,7 @@ async def test_no_server_timeout_without_a_client_timeout(allow_model_requests: 
         pytest.param(
             'gemini-4-neon',
             False,
-            GoogleModelProfile(google_thinking_levels=frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+            {'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH'))},
             ('low', 'high'),
             id='neon-gemini-api-user-levels-win',
         ),
