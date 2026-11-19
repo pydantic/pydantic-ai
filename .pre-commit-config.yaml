@@ -63,7 +63,7 @@ repos:
       - id: glossary-spellings
         name: Glossary spellings in agent instructions
         entry: uv
-        args: [run, python, scripts/check_glossary_spellings.py]
+        args: [run, --no-sync, python, scripts/check_glossary_spellings.py]
         language: system
         files: (^|/)(AGENTS|CLAUDE|SKILL)\.md$|(^|/)(agent_docs|\.agents|\.claude)/.*\.md$
       - id: clai-help
