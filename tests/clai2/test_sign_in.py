@@ -19,6 +19,7 @@ from fastmcp.server.auth.providers.in_memory import InMemoryOAuthProvider
 from mcp.server.auth.settings import ClientRegistrationOptions
 from mcp.shared.auth import OAuthToken
 from rich.console import Console
+from termflow.ansi import make_link
 from termflow.tui import MenuItem
 from termflow.tui.menu import Menu, MenuResult
 
@@ -156,7 +157,7 @@ async def test_the_waiting_screen_shows_the_latest_text_and_repaints_for_it(monk
         '',
         'Esc cancels; CLAI keeps working without Example.',
         '',
-        'Open https://example.test/two',
+        f'Open {make_link("https://example.test/two", "https://example.test/two")}',
     ]
     assert second.endswith('Esc cancels; CLAI keeps working without Example.\n\nEnter code: ABCD')
 

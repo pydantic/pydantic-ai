@@ -9,6 +9,8 @@ import anyio
 from anyio import fail_after
 from pydantic import TypeAdapter, ValidationError
 from rich.console import Console
+from rich.style import Style
+from rich.text import Text
 from termflow.tui import MenuBuilder, MenuItem
 
 from pydantic_ai.exceptions import UserError
@@ -316,7 +318,8 @@ class CodexAuth:
         self.console.print(
             f'Sign in to {who} in your browser. Waiting up to five minutes.', style=theme.color(theme.INFO)
         )
-        self.console.print(flow.authorization_url(), markup=False, highlight=False)
+        url = flow.authorization_url()
+        self.console.print(Text(url, style=Style(link=url)), highlight=False)
         self.console.print(
             'If the browser cannot reach this machine (for example over SSH), paste the URL it ends up on.',
             style=theme.color(theme.MUTED),
@@ -324,7 +327,7 @@ class CodexAuth:
 
         # Launching in a thread keeps the loop available for core's callback listener.
         async def launch_browser() -> None:
-            await anyio.to_thread.run_sync(open_browser, flow.authorization_url(), abandon_on_cancel=True)
+            await anyio.to_thread.run_sync(open_browser, url, abandon_on_cancel=True)
 
         browser = asyncio.create_task(launch_browser())
         try:

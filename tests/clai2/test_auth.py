@@ -2,9 +2,13 @@
 
 import asyncio
 import io
+import re
+import time
+import webbrowser
 from collections.abc import Callable
 from pathlib import Path
 
+import anyio
 import httpx2
 import keyring
 import pytest
@@ -32,8 +36,9 @@ from pydantic_clai2.models import codex as codex_models
 from pydantic_clai2.models.model_catalog import CODEX_MODELS
 from pydantic_clai2.plugins import PluginLogin
 from pydantic_clai2.plugins.menus import Dialogs
+from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import Runners
-from pydantic_clai2.ui.menus.menu_worker import holding_output
+from pydantic_clai2.ui.menus.menu_worker import holding_output, worker_stopping
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from tests.clai2.dialog_script import Back, ScriptedDialogs
 from tests.clai2.surface_terminal import SurfaceTerminal
@@ -440,3 +445,68 @@ async def test_cancelled_codex_login_adds_no_models(monkeypatch: pytest.MonkeyPa
     assert message == 'ChatGPT/Codex sign-in cancelled.'
     assert requests == []
     assert store.models() == []
+
+
+def hyperlinks(text: str) -> list[str]:
+    """The targets of the OSC 8 hyperlinks in `text`, in order."""
+    return [target for target in re.findall(r'\x1b\]8;[^;\x1b]*;([^\x1b]*)\x1b\\', text) if target]
+
+
+async def test_terminal_sign_in_links_the_url_and_opens_it_with_webbrowser(monkeypatch: pytest.MonkeyPatch) -> None:
+    opened: list[str] = []
+    urls: list[str] = []
+
+    def open_url(url: str, *args: object, **kwargs: object) -> bool:
+        opened.append(url)
+        return True
+
+    def default_browser(using: str | None = None) -> webbrowser.BaseBrowser:
+        return webbrowser.BaseBrowser('fake')  # Not a command-line opener, so `webbrowser.open` opens it.
+
+    async def exchange(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
+        urls.append(self.authorization_url())
+        while not opened:  # The browser opens in a thread.
+            await asyncio.sleep(0.01)
+        return CREDENTIALS
+
+    monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
+    monkeypatch.setattr(webbrowser, 'get', default_browser)
+    monkeypatch.setattr(webbrowser, 'open', open_url)
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='truecolor', width=80)
+    with anyio.fail_after(5):
+        assert 'connected' in await CodexAuth(console, read_line=never_pasted).login([])
+    assert opened == urls
+    assert set(hyperlinks(output.getvalue())) == set(urls), 'every wrapped line of the URL links to all of it'
+
+
+async def test_terminal_waiting_screen_links_the_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The preview pane cuts long lines, so the link carries the whole URL behind a label that fits."""
+    previews: list[str] = []
+    urls: list[str] = []
+    seen = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def run_choice(menu: Menu) -> MenuResult:
+        render = menu._preview  # pyright: ignore[reportPrivateUsage]
+        assert render is not None
+        while 'https://' not in (text := render(menu._items[0])):  # pyright: ignore[reportPrivateUsage]
+            time.sleep(0.01)
+        previews.append(text)
+        loop.call_soon_threadsafe(seen.set)
+        while not worker_stopping():
+            time.sleep(0.01)
+        return MenuResult(cancelled=True)
+
+    async def exchange(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
+        urls.append(self.authorization_url())
+        await seen.wait()
+        return CREDENTIALS
+
+    monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
+    dialogs = TerminalDialogs(Runners(run_choice=run_choice))
+    with anyio.fail_after(5):
+        assert 'connected' in await CodexAuth(Console(file=io.StringIO())).login([], dialogs=dialogs)
+    [preview] = previews
+    assert hyperlinks(preview) == urls
+    assert 'https://auth.openai.com/oauth/authorize?…' in preview

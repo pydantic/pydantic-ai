@@ -1,12 +1,14 @@
 """`Dialogs` and `SettingsMenu` in the terminal: termflow widgets, one `run_worker` each, under one hold."""
 
 import asyncio
+import re
 import textwrap
 import threading
 from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
 
 from anyio import to_thread
+from termflow.ansi import make_link
 from termflow.tui import MenuBuilder, MenuItem, PagerBuilder, TextInputBuilder
 from termflow.tui.pager import Pager
 
@@ -18,6 +20,7 @@ from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 _REDRAW = 'dialogs:changed'
 """A key no keyboard sends and no handler takes: termflow repaints after it, showing the new text."""
+_URL = re.compile(r'https?://[^\s\x00-\x1f\x7f]+')
 
 
 class TerminalDialogs:
@@ -149,7 +152,7 @@ class TerminalDialogs:
             MenuBuilder(title)
             .style(markdown_style())
             .items([MenuItem('Cancel', value=None)])
-            .preview(lambda item: '\n\n'.join([description, *shown]))
+            .preview(lambda item: _URL.sub(_link, '\n\n'.join([description, *shown])))
             .footer_hint('Enter or Esc cancel')
             .key_source(read_key)
             .build()
@@ -169,6 +172,16 @@ class TerminalDialogs:
             return False
         running.result()
         return True
+
+
+def _link(match: re.Match[str]) -> str:
+    """A terminal hyperlink to the whole URL, labelled without its query.
+
+    The preview pane cuts each line at its width, which would also cut off a long label's closing escape.
+    """
+    url = match[0]
+    address, separator, _ = url.partition('?')
+    return make_link(url, f'{address}?…' if separator else url)
 
 
 def wrap(text: str, width: int) -> list[str]:
