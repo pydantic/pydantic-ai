@@ -1,5 +1,7 @@
 """`InstrumentationSettings(include_binary_content=False)` must not leak base64 into any span.
 
+Media in tool results is recorded as the GenAI message parts a user prompt records, with or without the flag.
+
 These run against `FunctionModel` rather than a cassette: the leak is in our own OTel serialization
 of `BinaryContent`, which is provider-independent, so a recording would only add a base64 image
 payload to the repo without exercising anything the fake model doesn't.
@@ -21,6 +23,7 @@ from pydantic_ai import (
     CallDeferred,
     DeferredToolRequests,
     FilePart,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -708,3 +711,48 @@ def test_message_history_round_trip_preserves_binary_content() -> None:
     dumped = ModelMessagesTypeAdapter.dump_json(messages)
     assert IMAGE.base64 in dumped.decode()
     assert ModelMessagesTypeAdapter.validate_json(dumped) == messages
+
+
+async def test_tool_result_media_recorded_as_message_parts(capfire: CaptureLogfire) -> None:
+    """With binary content included, media in a tool result is the same message part a user prompt records.
+
+    The tool span's result, and the tool response in the chat and agent run spans, carry the same parts, wherever
+    the tool put the media in the containers it returned; everything else is recorded as before.
+    """
+    url = ImageUrl('https://example.com/kiwi.png')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('gen_images', {})])
+        return ModelResponse(parts=[TextPart('a kiwi')])
+
+    agent = Agent(
+        FunctionModel(respond), capabilities=[Instrumentation(settings=InstrumentationSettings())], name='agent'
+    )
+
+    @agent.tool_plain
+    def gen_images() -> dict[str, Any]:
+        return {'image': IMAGE, 'images': [url, IMAGE], 'caption': 'a kiwi'}
+
+    await agent.run('make images')
+
+    spans = {
+        span['name']: span['attributes'] for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    }
+    tool_result = spans['execute_tool gen_images']['gen_ai.tool.call.result']
+    [chat_response] = spans['chat function:respond:']['gen_ai.input.messages'][-1]['parts']
+    [run_response] = spans['invoke_agent agent']['pydantic_ai.all_messages'][2]['parts']
+
+    image_part = {**REDACTED_IMAGE_PART, 'content': IMAGE.base64}
+    assert tool_result == snapshot(
+        {
+            'image': image_part,
+            'images': [
+                {'type': 'uri', 'modality': 'image', 'mime_type': 'image/png', 'uri': 'https://example.com/kiwi.png'},
+                image_part,
+            ],
+            'caption': 'a kiwi',
+        }
+    )
+    assert chat_response['result'] == tool_result
+    assert run_response['result'] == tool_result
