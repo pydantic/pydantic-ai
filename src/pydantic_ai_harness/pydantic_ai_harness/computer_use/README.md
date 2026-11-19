@@ -134,6 +134,9 @@ Some models only take screenshots up to a size, set by `computer_use_screenshot_
 `ComputerUse` sends screenshots at the screen's size, so a larger screen stops the run with an error naming the
 largest size that fits. A 1280x800 screen fits every model.
 
+Claude's native toolset also refuses a screenshot over 4784 image tokens of 28x28 pixels each, such as 2549x1457,
+even when it fits those limits, and the run stops with Anthropic's error.
+
 GPT-5.5 clicks accurately up to 1920x1200 and GPT-5.4 up to 2048x1280, and can miss on a larger screen.
 
 ## When something goes wrong
@@ -143,7 +146,7 @@ GPT-5.5 clicks accurately up to 1920x1200 and GPT-5.4 up to 2048x1280, and can m
   counts against the tool's retries.
 - If the environment is gone, the run ends with [`WorkspaceUnavailableError`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.WorkspaceUnavailableError).
 - Agents on one screen and one event loop, such as parallel sub-agents, take turns a whole call at a time, so their clicks never interleave. Agents on separate event loops or in separate processes don't wait for each other.
-- A button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, and each result says which buttons are still pressed. A call that fails or is cancelled releases them, and so does the end of the run, so a drag must finish within one run, including any calls that wait for approval.
+- A button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, and each result says which buttons are still pressed. A call that fails or is cancelled at the display releases them, and so does the end of the run, so a drag must finish within one run, including any calls that wait for approval. A `ComputerUse` loaded mid-run with `defer_loading=True` releases them at the end of every call, so there a drag must happen in one call.
 
 ## Watching a run
 
