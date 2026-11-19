@@ -279,9 +279,12 @@ provider-managed. With `google-genai` earlier than
 [2.34](https://github.com/googleapis/python-genai/releases/tag/v2.34.0), which doesn't continue an Interactions [long
 decode](#long-decode), a request that reaches the model's per-request output cap returns its partial output with finish
 reason `length` and `provider_details['status']` set to `requires_continuation`. From 2.34, the SDK continues it in
-further requests, and the response holds every request's steps and their summed usage. Sampling settings absent from
-this API are ignored; its settings class describes them. Finish reasons are derived from interaction status, which has
-less detail than GenerateContent's finish reasons. Raw status and usage remain available in `provider_details`.
+further requests, and the response holds every request's steps and their summed usage. Unlike on `GoogleModel`, a
+failure after the first request raises the SDK's own error, and a non-streamed response doesn't record the first
+request's input size for context-window checks ([#13938](https://github.com/pydantic/pydantic-ai/issues/13938)).
+Sampling settings absent from this API are ignored; its settings class describes them. Finish reasons are derived from
+interaction status, which has less detail than GenerateContent's finish reasons. Raw status and usage remain available
+in `provider_details`.
 
 The public Interactions contract has no equivalent for `google_logprobs`, `google_top_logprobs`,
 or Google Cloud's `google_model_armor_config`; use `GoogleModel` when you need those features.

@@ -13,6 +13,7 @@ from google.genai import interactions as gi
 from pydantic import JsonValue, TypeAdapter
 
 from ... import _model_errors, _utils
+from ..._context_size import mark_context_input_tokens
 from ...exceptions import UnexpectedModelBehavior
 from ...messages import ModelResponseStreamEvent, TextPart
 from .. import StreamedResponse
@@ -51,6 +52,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
     _arguments: dict[int, list[str]] = field(init=False, default_factory=dict[int, list[str]])
     _completed: bool = False
     _step_offset: int = 0
+    _first_request_input_tokens: int | None = None
     """How many steps earlier requests of this stream produced, when google-genai continues a long decode in it."""
     _server_calls: dict[str, str] = field(default_factory=dict[str, str])
     _content_buffers: dict[int, list[_ContentBuffer]] = field(
@@ -73,10 +75,11 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for event in self._stream:
-            # From 2.34, google-genai continues a long decode in further requests on the same stream: each starts with
-            # `interaction.created` after an `interaction.completed` whose status is `requires_continuation`, and
-            # numbers its steps from 0 again, so they follow the earlier requests' steps here.
-            if isinstance(event, gi.InteractionCreatedEvent) and self._completed:
+            # From 2.34, google-genai continues a long decode in further requests on the same stream, after a
+            # `requires_continuation` completion or from a mid-stream checkpoint when the connection drops. Each
+            # request starts with `interaction.created` and numbers its steps from 0 again, so they follow the
+            # earlier requests' steps here.
+            if isinstance(event, gi.InteractionCreatedEvent):
                 self._completed = False
                 self._step_offset = max(self._steps, default=-1) + 1
             elif isinstance(event, gi.StepStart | gi.StepDelta | gi.StepStop) and self._step_offset:
@@ -234,6 +237,12 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
         self.finish_reason = response.finish_reason
         # Each continued request reports only its own usage, and bills its input again.
         self._usage.incr(response.usage)
+        if self._first_request_input_tokens is None:
+            self._first_request_input_tokens = response.usage.input_tokens
+        else:
+            # A continued request's input re-counts the earlier output, so the first request's measures the context,
+            # as on `GoogleModel`.
+            mark_context_input_tokens(self, self._first_request_input_tokens)
         self._timestamp = response.timestamp
         self._completed = True
         return events

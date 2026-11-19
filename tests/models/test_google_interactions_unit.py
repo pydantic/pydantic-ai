@@ -11,6 +11,7 @@ import httpx2
 import pytest
 from pydantic import JsonValue, TypeAdapter
 
+from pydantic_ai._context_size import context_input_tokens
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.exceptions import (
     ModelAPIError,
@@ -613,6 +614,49 @@ async def test_stream_continued_long_decode():
     assert [part.signature for part in result.parts if isinstance(part, ThinkingPart)] == ['first', 'second']
     assert ''.join(part.content for part in result.parts if isinstance(part, TextPart)) == '1\n2\n3\n4\n'
     assert (result.finish_reason, result.usage.input_tokens, result.usage.output_tokens) == ('stop', 325, 150)
+    assert context_input_tokens(result) == 110
+
+
+async def test_stream_resumed_from_checkpoint():
+    """A request resumed from a mid-stream checkpoint keeps the steps the dropped request streamed.
+
+    Not recorded: from 2.34, google-genai resumes the stream from the last checkpoint's continuation token when the
+    connection drops with no output after it, with no `interaction.completed` in between, and the locked SDK
+    predates that.
+    """
+    values: list[dict[str, JsonValue]] = [
+        {'event_type': 'interaction.created', 'interaction': {'object': 'interaction', 'model': 'gemini-test'}},
+        {'event_type': 'step.start', 'index': 0, 'step': {'type': 'thought'}},
+        {'event_type': 'step.delta', 'index': 0, 'delta': {'type': 'thought_signature', 'signature': 'first'}},
+        {'event_type': 'step.stop', 'index': 0},
+        {'event_type': 'step.start', 'index': 1, 'step': {'type': 'model_output'}},
+        {'event_type': 'step.delta', 'index': 1, 'delta': {'type': 'text', 'text': '1\n2\n'}},
+        {'event_type': 'interaction.status_update', 'status': 'in_progress', 'continuation_token': 'checkpoint'},
+        {'event_type': 'interaction.created', 'interaction': {'object': 'interaction', 'model': 'gemini-test'}},
+        {'event_type': 'step.start', 'index': 0, 'step': {'type': 'model_output'}},
+        {'event_type': 'step.delta', 'index': 0, 'delta': {'type': 'text', 'text': '3\n4\n'}},
+        {'event_type': 'step.stop', 'index': 0},
+        {'event_type': 'interaction.completed', 'interaction': {'status': 'completed'}},
+    ]
+    response = GoogleInteractionsStreamedResponse(
+        ModelRequestParameters(), iter_events(values), 'gemini-test', 'google', 'https://example.com'
+    )
+    async for _ in response:
+        pass
+
+    result = response.get()
+    assert [
+        (part.part_kind, (part.provider_details or {})['google_interactions_step_index']) for part in result.parts
+    ] == [('thinking', 0), ('text', 1), ('text', 2)]
+    assert result.provider_details is not None
+    steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(
+        result.provider_details['google_interactions_steps']
+    )
+    assert [(step['type'], step.get('signature')) for step in steps] == [
+        ('thought', 'first'),
+        ('model_output', None),
+        ('model_output', None),
+    ]
 
 
 @pytest.mark.parametrize(
