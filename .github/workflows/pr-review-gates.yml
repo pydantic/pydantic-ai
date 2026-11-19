@@ -111,6 +111,8 @@ jobs:
     permissions:
       contents: read
       actions: read
+      # `Tracked in #N` reads the issue it names.
+      issues: read
       pull-requests: read
       statuses: write
     steps:

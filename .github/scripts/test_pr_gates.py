@@ -245,7 +245,13 @@ def test_review_workflow_uses_only_trusted_code_and_pinned_status_targets():
         "github.event_name != 'workflow_run' || github.event.workflow_run.event != 'merge_group'"
     )
     publisher = workflow.jobs['review-statuses']
-    assert publisher.permissions['statuses'] == 'write'
+    assert publisher.permissions == {
+        'contents': 'read',
+        'actions': 'read',
+        'issues': 'read',
+        'pull-requests': 'read',
+        'statuses': 'write',
+    }
     assert all(step.condition == "steps.pending.outputs.active == 'true'" for step in publisher.steps[1:])
     for step in (publisher.steps[0], publisher.steps[-1]):
         assert step.env['EXPECTED_HEAD_SHA'] == '${{ needs.review-target.outputs.head }}'
