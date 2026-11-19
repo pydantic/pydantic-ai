@@ -44,6 +44,11 @@ _RUNTIME_ONLY = 'An SDK object, which a spec has no form for.'
 _NO_DEFERRED_WORKSPACE = 'A workspace capability rejects `defer_loading=True`: its workspace is selected first.'
 OPT_OUT: dict[str, dict[str, str]] = {
     'BoxdSandbox': {'client': _RUNTIME_ONLY},
+    'BrowserUse': dict.fromkeys(
+        ('llm', 'browser_profile', 'output_schema'),
+        "Kept out of specs by `from_spec`: a spec-loaded instance uses the host run's model, the default browser and "
+        'prose output.',
+    ),
     'DaytonaSandbox': {'client': _RUNTIME_ONLY},
     'E2BSandbox': {'client': _RUNTIME_ONLY},
     'KubernetesSandbox': {'defer_loading': _NO_DEFERRED_WORKSPACE},
