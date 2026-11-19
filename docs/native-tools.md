@@ -854,21 +854,28 @@ _(This example is complete, it can be run "as is")_
 
 ## Computer Tool
 
-The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends a tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind, such as the one Pydantic AI Harness's `ComputerUse` capability adds, as the provider's native computer use tool, which models are trained to use. Like the [Memory Tool](#memory-tool), the provider doesn't run its calls: the model adapter turns them into calls of the local tool, and the results back into the provider's format.
+The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool as the provider's native computer use tool, which models are trained to use. Like the [Memory Tool](#memory-tool), the provider doesn't run its calls: the model adapter turns them into calls of the local tool, found by its kind rather than its name, and turns the results back into the provider's format.
 
-The local tool is found by its kind, not its name. The native tool is sent when the request has exactly one tool of that kind that the model can call: not deferred, or revealed by history. With none, the native tool is left out when it is `optional`, and the request is refused when it isn't. With more than one, the request is refused.
+Pydantic AI Harness's [`ComputerUse`](harness/computer-use.md) capability adds the `computer` tool and its `ComputerTool` for you, and leaves the native tool out with `native=False`.
 
-`ComputerUse` adds it for you, with the size of the screenshots the model sees, and leaves it out with `native=False`.
+The native tool is sent only when the request has exactly one `computer` tool the model can call. With none, an `optional` one is left out and a required one raises [`UserError`][pydantic_ai.exceptions.UserError]. With more than one, the request raises `UserError`.
 
 ### Provider Support
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | On GPT-5.4 (not nano), GPT-5.5, GPT-5.6 and GPT-6 through OpenAI and Bedrock Mantle. OpenAI's tool can't zoom, triple-click, hold a key, press or release a mouse button, or read the pointer position. |
+| Google | ❌ | |
+| xAI | ❌ | |
+| Groq | ❌ | |
+| Bedrock | ❌ | |
+| Mistral | ❌ | |
+| Cohere | ❌ | |
+| HuggingFace | ❌ | |
 
 ### Usage
 
-Here the desktop comes from a Docker container, and `ComputerUse` adds the `computer` tool and its native tool:
+Here the desktop comes from a Docker container:
 
 ```py {title="computer_tool.py" test="skip" typecheck="skip - a desktop DockerContainer comes with a later PR"}
 from pydantic_ai_harness import ComputerUse, DockerContainer
