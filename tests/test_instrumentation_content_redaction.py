@@ -1461,7 +1461,15 @@ async def _probe_realtime_deps(settings: InstrumentationSettings) -> None:
 EntryPointGroup = Literal['run', 'realtime']
 
 ENTRY_POINTS: dict[EntryPointGroup, tuple[Callable[..., object], ...]] = {
-    'run': (Agent.__init__, Agent.run, Agent.iter, Agent.run_stream, Agent.run_stream_events),
+    'run': (
+        Agent.__init__,
+        Agent.run,
+        Agent.run_sync,
+        Agent.iter,
+        Agent.run_stream,
+        Agent.run_stream_sync,
+        Agent.run_stream_events,
+    ),
     'realtime': (Agent.realtime,),
 }
 """The entry points whose parameters `ENTRY_POINT_PARAMETERS` classifies, by the group that keys them."""
