@@ -571,7 +571,7 @@ def test_problem_to_capability_rows_match_across_surfaces() -> None:
 
 
 _PACKAGES_HEADING = '## Pydantic AI, the Harness, and CLAI'
-_PACKAGES_SURFACES = ('../../docs/harness/index.md', 'README.md', '../pydantic_clai2/README.md')
+_PACKAGES_SURFACES = ('../../docs/harness/index.md', 'README.md', '../pydantic_ai_pax/README.md')
 
 
 @pytest.mark.parametrize('surface', _PACKAGES_SURFACES[1:])
@@ -581,7 +581,7 @@ def test_package_comparison_matches_across_surfaces(surface: str) -> None:
     assert [row.split(' | ', 1)[0] for row in canonical[1:]] == [
         '| [Pydantic AI] (`pydantic-ai`)',
         '| [Pydantic AI Harness] (`pydantic-ai-harness`)',
-        '| [CLAI] (`pydantic-clai2`)',
+        '| [CLAI] (`pydantic-ai-pax`)',
     ]
     assert _without_link_targets(_section_table_rows(surface, _PACKAGES_HEADING)) == canonical
 

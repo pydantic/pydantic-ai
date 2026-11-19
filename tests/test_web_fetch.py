@@ -27,9 +27,7 @@ from pydantic_ai.common_tools.web_fetch import (
     web_fetch_tool,
 )
 from pydantic_ai.exceptions import ModelRetry
-
-READINESS_WAIT_TIMEOUT = 10
-
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 _CPU_SECONDS_BUDGET = 60
 """What a conversion may cost. It's counted in CPU time, which a slow algorithm uses up but a stalled runner doesn't."""
