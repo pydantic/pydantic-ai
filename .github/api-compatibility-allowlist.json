@@ -149,6 +149,10 @@
     {
       "path": "src/pydantic_clai2/pydantic_clai2/models/model_catalog.py",
       "symbol": "CODEX_MODELS"
+    },
+    {
+      "path": "src/pydantic_clai2/pydantic_clai2/models/key_profiles.py",
+      "symbol": "KEY_VARIABLES"
     }
   ]
 }
