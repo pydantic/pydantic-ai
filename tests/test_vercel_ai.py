@@ -8800,11 +8800,15 @@ async def test_load_messages_keeps_text_with_a_malformed_structured_content_payl
                         text='!',
                         provider_metadata={'pydantic_ai': {'structured_content': '[' * 100_000 + ']' * 100_000}},
                     ),
+                    TextUIPart(
+                        text='?',
+                        provider_metadata={'pydantic_ai': {'structured_content': '{"a": ' + '1' * 5_000 + '}'}},
+                    ),
                 ],
             )
         ]
     )
-    assert request.parts == [UserPromptPart(content=['Hi', 'there', 'you', 'all', '!'], timestamp=IsDatetime())]
+    assert request.parts == [UserPromptPart(content=['Hi', 'there', 'you', 'all', '!', '?'], timestamp=IsDatetime())]
 
 
 async def test_enqueued_structured_content_round_trips_through_stream():
@@ -8919,6 +8923,31 @@ async def test_adapter_load_messages_json_list_args():
     assert isinstance(tool_call, ToolCallPart)
     # Args should remain as string since it parses to a list, not a dict
     assert tool_call.args == '[1, 2, 3]'
+
+
+@pytest.mark.parametrize(
+    'args',
+    [
+        pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
+        pytest.param('{"a": ' + '1' * 5_000 + '}', id='oversized-integer'),
+    ],
+)
+def test_adapter_load_messages_unparseable_json_args(args: str):
+    """Args nested past the recursion limit or holding an oversized integer are kept as the string, like non-JSON args."""
+    ui_message = UIMessage(
+        id='msg1',
+        role='assistant',
+        parts=[
+            DynamicToolOutputAvailablePart(
+                tool_name='my_tool', tool_call_id='tc1', input=args, output='result', state='output-available'
+            )
+        ],
+    )
+    messages = VercelAIAdapter.load_messages([ui_message])
+
+    tool_call = message(messages, ModelResponse).parts[0]
+    assert isinstance(tool_call, ToolCallPart)
+    assert tool_call.args == args
 
 
 async def test_adapter_dump_messages_with_cache_point():

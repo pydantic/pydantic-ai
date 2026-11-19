@@ -337,8 +337,8 @@ that emit them inline.
 ## Large tool outputs
 
 `ToolOutputLimits` measures and reduces a tool return after the tool task run returns to its parent run.
-Configure `resolve_tool_options` to return `False` for its `read_tool_result` helper so the helper reads from the
-same task that stored the result.
+Configure `resolve_tool_options` to return `False` for its `read_tool_result` and `grep_tool_result` helpers so they
+read from the same task that stored the result.
 
 In `Spill` mode, the capability stores the full payload and gives the model a handle for a later `read_tool_result`
 call. A store backed by the parent run's local filesystem works within that run, but a retried entry task run or another
@@ -365,7 +365,7 @@ from pydantic_ai_harness import RenderWorkflows
 
 
 def resolve_tool_options(operation_id, _tool, tool_name):
-    if tool_name in {'delegate_task', 'read_tool_result', 'read_local_cache'}:
+    if tool_name in {'delegate_task', 'read_tool_result', 'grep_tool_result', 'read_local_cache'}:
         return False
     if isinstance(operation_id, (ToolsetCallToolId, ToolsetValidateToolArgumentsId)):
         if operation_id.toolset_id == 'research_tools':
