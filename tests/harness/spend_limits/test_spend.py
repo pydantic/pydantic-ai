@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
@@ -62,6 +63,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai_harness import HarnessDeprecationWarning, spend_limits
 from pydantic_ai_harness.spend_limits import (
     Budget,
     InMemorySpendStore,
@@ -70,12 +72,19 @@ from pydantic_ai_harness.spend_limits import (
     SpendLimitExceeded,
     SpendLimits,
     SpendRecordedEvent,
+    SpendSnapshot,
     Spent,
     UnpricedModelError,
     UnpricedModelWarning,
 )
+from pydantic_ai_harness.spend_limits._exceptions import SpendCompositionWarning
 from pydantic_graph import End
 from tests.continuation_utils import ScriptedContinuationModel, StreamSegment
+
+pytestmark = [
+    pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
+]
+
 
 _EPOCH = datetime(2026, 7, 26, 12, 0, tzinfo=UTC)
 
@@ -884,21 +893,81 @@ class TestOrdering:
         assert spent.requests == 2
         assert spent.unpriced_requests == 2
 
-    async def test_unpriced_warning_does_not_hide_an_existing_error(self):
+    async def test_every_committed_response_accrues_before_a_callback_error_is_raised(self):
+        def reject_snapshot(snapshot: SpendSnapshot) -> None:
+            raise RuntimeError('reporting failed')
+
+        guard = SpendLimits(
+            budgets=[Budget(window='total')],
+            price=lambda response: Decimal('1'),
+            on_spend=reject_snapshot,
+        )
+        first = _response(provider_response_id='first')
+        second = _response(provider_response_id='second')
+        request_context: Any = _UsageRequestContext()
+
+        async def handler(request_context: ModelRequestContext) -> ModelResponse:
+            setattr(request_context, '_usage_responses', (first, second))
+            return second
+
+        with pytest.raises(RuntimeError, match='reporting failed'):
+            await guard.wrap_model_request(_guard_ctx(guard), request_context=request_context, handler=handler)
+
+        assert (await guard.status())[0].spent.requests == 2
+
+    @pytest.mark.parametrize('invalid_price', [False, True])
+    async def test_falsy_callback_error_outranks_pricing_error(self, invalid_price: bool):
+        class ReportingError(Exception):
+            def __bool__(self) -> bool:
+                return False
+
+        error = ReportingError('reporting failed')
+        assert not error
+
+        def reject_snapshot(snapshot: SpendSnapshot) -> None:
+            raise error
+
+        guard = SpendLimits(
+            budgets=[Budget(window='total')],
+            price=lambda response: Decimal('-1') if invalid_price else None,
+            on_unpriced='raise',
+            on_spend=reject_snapshot,
+        )
+        with pytest.raises(ReportingError) as caught:
+            await _record(guard, model_name='unknown:model')
+
+        assert caught.value is error
+        assert (await guard.status())[0].spent.requests == 1
+
+    @pytest.mark.parametrize('callback_fails', [False, True])
+    async def test_unpriced_warning_does_not_hide_an_existing_error(self, callback_fails: bool):
+        def record(snapshot: SpendSnapshot) -> None:
+            if callback_fails:
+                raise LookupError('callback failed')
+
         guard = SpendLimits(
             budgets=[Budget(window='total', usd=Decimal('10'))],
             price=lambda response: Decimal('-1'),
+            on_spend=record,
         )
         with warnings.catch_warnings():
             warnings.simplefilter('error', UnpricedModelWarning)
-            with pytest.raises(UserError):
+            with pytest.raises(LookupError if callback_fails else UserError):
                 await Agent(TestModel(), capabilities=[guard]).run('hello')
 
         assert (await guard.status())[0].spent.requests == 1
 
-    async def test_a_failed_request_outranks_a_pricing_error(self):
-        """A retryable rejection keeps propagating; a pricing error must not turn it into a dead run."""
-        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda response: Decimal('-1'))
+    async def test_a_failed_request_outranks_an_accrual_error(self):
+        """A retryable rejection keeps propagating; a reporting error must not turn it into a dead run."""
+
+        def reject_snapshot(snapshot: SpendSnapshot) -> None:
+            raise RuntimeError('reporting failed')
+
+        guard = SpendLimits(
+            budgets=[Budget(window='total')],
+            price=lambda response: Decimal('1'),
+            on_spend=reject_snapshot,
+        )
         billed = _response(provider_response_id='billed')
         request_context: Any = _UsageRequestContext()
 
@@ -912,7 +981,12 @@ class TestOrdering:
         assert (await guard.status())[0].spent.requests == 1
 
     async def test_each_wrapper_invocation_accrues_only_new_provider_responses(self):
-        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda response: Decimal('1'))
+        snapshots: list[SpendSnapshot] = []
+        guard = SpendLimits(
+            budgets=[Budget(window='total')],
+            price=lambda response: Decimal('1'),
+            on_spend=snapshots.append,
+        )
         request_context: Any = _UsageRequestContext()
         responses = iter(
             [
@@ -931,6 +1005,7 @@ class TestOrdering:
         await guard.wrap_model_request(_guard_ctx(guard), request_context=request_context, handler=handler)
 
         assert (await guard.status())[0].spent.requests == 2
+        assert len(snapshots) == 2
 
     async def test_warning_errors_are_deferred_until_every_provider_response_accrues(self):
         guard = SpendLimits(budgets=[Budget(usd=Decimal('10'), window='total')])
@@ -1203,7 +1278,12 @@ class TestPricing:
     @pytest.mark.parametrize(('amount', 'message'), [('-1', 'negative amount'), ('NaN', 'non-finite amount')])
     async def test_a_rejected_price_still_records_the_response(self, amount: str, message: str):
         """The request was billed by the provider whatever the pricing function returned."""
-        guard = SpendLimits(budgets=[Budget(window='total', name='audit')], price=lambda r: Decimal(amount))
+        seen: list[SpendSnapshot] = []
+        guard = SpendLimits(
+            budgets=[Budget(window='total', name='audit')],
+            price=lambda r: Decimal(amount),
+            on_spend=seen.append,
+        )
 
         with pytest.raises(UserError, match=message):
             await _record(guard)
@@ -1213,6 +1293,7 @@ class TestPricing:
         assert spent.tokens > 0
         assert spent.usd == Decimal(0)
         assert spent.unpriced_requests == 1
+        assert len(seen) == 1
 
     async def test_an_unpriced_response_warns_once_per_model_against_a_usd_ceiling(self):
         """A USD ceiling cannot be reached by requests nothing can price, so it says so -- once."""
@@ -1290,6 +1371,18 @@ class TestPricing:
         assert spent.requests == 1
         assert spent.unpriced_requests == 1
 
+    async def test_a_refused_response_still_reaches_on_spend(self):
+        """An audit that skipped exactly the unpriced responses would miss the ones that matter."""
+        seen: list[SpendSnapshot] = []
+        guard = SpendLimits(budgets=[Budget(window='total')], on_unpriced='raise', on_spend=seen.append)
+
+        with pytest.raises(UnpricedModelError):
+            await _record(guard, model_name=None)
+
+        assert len(seen) == 1
+        assert seen[0].priced is False
+        assert seen[0].usage.input_tokens == 1000
+
     async def test_raising_on_an_unpriceable_response(self):
         guard = SpendLimits(budgets=[Budget(window='total')], on_unpriced='raise')
 
@@ -1314,7 +1407,28 @@ class TestConfigurationFromData:
 
 
 class TestObservability:
-    """Pull through `status`."""
+    """Push through `on_spend`, pull through `status`."""
+
+    async def test_on_spend_receives_the_response_usage_verbatim(self):
+        seen: list[SpendSnapshot] = []
+        guard = SpendLimits(budgets=[Budget(window='total')], on_spend=seen.append)
+        await _record(guard)
+
+        assert len(seen) == 1
+        assert seen[0].usage.input_tokens == 1000
+        assert seen[0].priced is True
+        assert seen[0].budgets[0].budget.window == 'total'
+
+    async def test_on_spend_may_be_async(self):
+        seen: list[Decimal] = []
+
+        async def record(snapshot: SpendSnapshot) -> None:
+            seen.append(snapshot.usd)
+
+        guard = SpendLimits[None](price=lambda r: Decimal('3'), on_spend=record)
+        await _record(guard)
+
+        assert seen == [Decimal('3')]
 
     async def test_status_reports_what_is_left(self):
         guard = SpendLimits(
@@ -2039,6 +2153,31 @@ class TestRedisStore:
 
         assert added['k'].usd == Decimal('0.000123457')
         assert read['k'].usd == Decimal('0.000123457')
+
+
+class _LegacyStore:
+    """A store written against the released `SpendStore`: one key per call, and no token."""
+
+    def __init__(self) -> None:
+        self.writes: list[str] = []
+        self._counters = InMemorySpendStore()
+
+    async def get(self, key: str) -> Spent:
+        return (await self._counters.get_many([key]))[key]
+
+    async def add(
+        self,
+        key: str,
+        *,
+        usd: Decimal,
+        tokens: int,
+        requests: int,
+        unpriced: int,
+        ttl: timedelta | None,
+    ) -> Spent:
+        self.writes.append(key)
+        entry = SpendEntry(key=key, usd=usd, tokens=tokens, requests=requests, unpriced=unpriced, ttl=ttl)
+        return (await self._counters.add_many([entry]))[key]
 
 
 class TestBatchAccrual:
@@ -2832,15 +2971,19 @@ class TestContinuationAccrual:
         assert (final.tokens, final.usd, final.requests) == (21, Decimal('0.021'), 1)
         assert len(store.batches) == (2 if journal_capabilities else 4)
 
-    async def test_a_chain_is_counted_once_with_its_combined_usage(self):
-        """Accruing at each boundary changes what reaches the store, not what is counted."""
+    async def test_a_chain_is_reported_once_with_its_combined_usage(self):
+        """Accruing at each boundary changes what reaches the store, not what is reported."""
+        snapshots: list[SpendSnapshot] = []
         store = _CountingStore()
         model = ScriptedContinuationModel(responses=_paused_then_finished())
-        limits = SpendLimits[None](budgets=[Budget(window='total')], store=store, price=_billed_cost)
+        limits = SpendLimits[None](
+            budgets=[Budget(window='total')], store=store, price=_billed_cost, on_spend=snapshots.append
+        )
 
         result = await Agent(model, deps_type=type(None), capabilities=[limits]).run('go')
 
-        assert (await limits.status())[0].spent == Spent(usd=Decimal('0.021'), tokens=21, requests=1)
+        assert [(s.usage.total_tokens, s.usd) for s in snapshots] == [(21, Decimal('0.021'))]
+        assert snapshots[0].budgets[0].spent == Spent(usd=Decimal('0.021'), tokens=21, requests=1)
         assert result.usage.total_tokens == 21
         assert len(store.batches) == 2
 
@@ -3187,6 +3330,187 @@ class TestInterruptedStreams:
         assert (await limits.status())[0].spent == Spent(usd=Decimal('120'), tokens=120, requests=2)
 
 
+class TestDeprecatedStore:
+    """A store written against the released `SpendStore` keeps working, and says what it costs."""
+
+    def test_it_warns_once_naming_what_is_lost(self):
+        """`HarnessDeprecationWarning` rather than `DeprecationWarning`, which is the whole warning.
+
+        Python filters `DeprecationWarning` out by default unless it is triggered from
+        `__main__`, and this one is raised inside the package, so a library caller would
+        see nothing at all. `HarnessDeprecationWarning` derives from `UserWarning`, which
+        is shown by default and which the docs give one recipe for silencing.
+        """
+        with pytest.warns(HarnessDeprecationWarning) as warned:
+            SpendLimits[None](budgets=[Budget(window='total')], store=_LegacyStore())
+
+        assert len(warned) == 1
+        message = str(warned[0].message)
+        assert 'one window at a time' in message
+        assert 'durable journal' in message
+        assert 'removed in' not in message
+        assert 'get_many' in message
+
+    def test_a_batch_store_is_not_warned_about(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            SpendLimits[None](budgets=[Budget(window='total')], store=InMemorySpendStore())
+
+    async def test_it_still_accrues_and_gates(self):
+        with pytest.warns(HarnessDeprecationWarning):
+            guard = SpendLimits(
+                budgets=[Budget(usd=Decimal('0.02'), window='day')],
+                store=_LegacyStore(),
+                price=lambda r: Decimal('0.01'),
+            )
+        agent = _agent(guard)
+
+        await agent.run('hi')
+        await agent.run('hi')
+        with pytest.raises(SpendLimitExceeded):
+            await agent.run('hi')
+
+    async def test_it_is_driven_one_window_per_call(self):
+        """Which is what it is warned about: two windows are two writes, not one."""
+        store = _LegacyStore()
+        with pytest.warns(HarnessDeprecationWarning):
+            guard = SpendLimits(
+                budgets=[Budget(window='day'), Budget(window='month')],
+                store=store,
+                price=lambda r: Decimal('1'),
+            )
+        await _record(guard)
+
+        assert len(store.writes) == 2
+
+    async def test_a_replayed_response_counts_twice(self):
+        """`SpendEntry.token` has nowhere to go on a store that never sees it."""
+        with pytest.warns(HarnessDeprecationWarning):
+            guard = SpendLimits(budgets=[Budget(window='total')], store=_LegacyStore(), price=lambda r: Decimal('1'))
+        response = _response(provider_response_id='resp-1')
+
+        await _record(guard, response=response)
+        await _record(guard, response=response)
+
+        assert (await guard.status())[0].spent.requests == 2
+
+
+class TestUnreachableOverrides:
+    """A subclass that overrode the single-key pair is told it is no longer on the path."""
+
+    def test_a_single_key_override_is_reported(self):
+        """`SpendLimits` drives `add_many`, so an audit bolted onto `add` stops running.
+
+        Before the batch pair existed that override *was* the path, so a subclass upgrading
+        into this loses whatever it added and gets nothing back saying so.
+        """
+
+        class Audited(InMemorySpendStore):
+            async def add(
+                self,
+                key: str,
+                *,
+                usd: Decimal,
+                tokens: int,
+                requests: int,
+                unpriced: int,
+                ttl: timedelta | None,
+            ) -> Spent:
+                raise AssertionError('never reached, which is what the warning is about')  # pragma: no cover
+
+        with pytest.warns(HarnessDeprecationWarning, match='never called'):
+            Audited()
+
+    async def test_a_subclass_that_moved_to_the_batch_pair_is_silent(self):
+        """And its batch override really is driven, which is what makes the move the fix."""
+        applied: list[int] = []
+
+        class Moved(InMemorySpendStore):
+            async def add(
+                self,
+                key: str,
+                *,
+                usd: Decimal,
+                tokens: int,
+                requests: int,
+                unpriced: int,
+                ttl: timedelta | None,
+            ) -> Spent:
+                raise AssertionError('never reached, and no longer claimed to be')  # pragma: no cover
+
+            async def add_many(self, entries: Sequence[SpendEntry]) -> Mapping[str, Spent]:
+                applied.append(len(entries))
+                return await super().add_many(entries)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            store = Moved()
+
+        await store.add_many([SpendEntry(key='k', usd=Decimal('1'), requests=1)])
+
+        assert applied == [1]
+
+    def test_the_stores_themselves_are_silent(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            InMemorySpendStore()
+            RedisSpendStore(FakeRedis())
+
+    def test_the_redis_store_reports_it_too(self):
+        class Mirrored(RedisSpendStore):
+            async def get(self, key: str) -> Spent:
+                raise AssertionError('never reached, which is what the warning is about')  # pragma: no cover
+
+        with pytest.warns(HarnessDeprecationWarning, match='never called'):
+            Mirrored(FakeRedis())
+
+
+class TestDeprecatedSingleKeyMethods:
+    """The concrete stores' single-key pair warns about itself (#688).
+
+    `SpendLimits` drives the batch pair, so the only caller that reaches `get` or `add` is an
+    application holding a concrete store and calling it by hand -- the caller nothing else
+    reaches.
+    """
+
+    async def test_in_memory_get_warns_and_still_reads(self):
+        store = InMemorySpendStore()
+        await store.add_many([SpendEntry(key='k', usd=Decimal('1'), requests=1)])
+
+        with pytest.warns(HarnessDeprecationWarning, match='`InMemorySpendStore.get`'):
+            assert (await store.get('k')).usd == Decimal('1')
+
+    async def test_in_memory_add_warns_and_still_applies(self):
+        store = InMemorySpendStore()
+
+        with pytest.warns(HarnessDeprecationWarning, match='`InMemorySpendStore.add`'):
+            added = await store.add('k', usd=Decimal('1'), tokens=1, requests=1, unpriced=0, ttl=None)
+
+        assert added == Spent(usd=Decimal('1'), tokens=1, requests=1)
+
+    async def test_redis_get_warns_and_still_reads(self):
+        store = RedisSpendStore(FakeRedis())
+        await store.add_many([SpendEntry(key='k', usd=Decimal('1'), requests=1)])
+
+        with pytest.warns(HarnessDeprecationWarning, match='`RedisSpendStore.get`'):
+            assert (await store.get('k')).usd == Decimal('1')
+
+    async def test_redis_add_warns_and_still_applies(self):
+        store = RedisSpendStore(FakeRedis())
+
+        with pytest.warns(HarnessDeprecationWarning, match='`RedisSpendStore.add`'):
+            added = await store.add('k', usd=Decimal('1'), tokens=1, requests=1, unpriced=0, ttl=None)
+
+        assert added == Spent(usd=Decimal('1'), tokens=1, requests=1)
+
+    async def test_the_warning_points_at_the_caller(self):
+        """`stacklevel=2` lands the warning on the line that called the method, not inside the store."""
+        with pytest.warns(HarnessDeprecationWarning) as warned:
+            await InMemorySpendStore().get('k')
+
+        assert warned[0].filename == __file__
+
+
 class TestReportedPrecision:
     """What a caller is told stays exact whatever precision the application set."""
 
@@ -3450,8 +3774,8 @@ class TestSpec:
         assert guard.on_unpriced == 'raise'
 
     def test_a_callable_field_is_refused(self):
-        with pytest.raises(UserError, match=r"\['price'\]"):
-            SpendLimits[None].from_spec(price=_no_price)
+        with pytest.raises(UserError, match=r"\['on_spend', 'price'\]"):
+            SpendLimits[None].from_spec(price=_no_price, on_spend=print)
 
     def test_a_budget_must_be_a_mapping(self):
         with pytest.raises(UserError, match='must be a mapping'):
@@ -3484,7 +3808,7 @@ class TestSpec:
         assert '"on_unpriced"' in schema
         assert '"expose_tools"' in schema
         # The four runtime-only fields take callables or a live store and have no spec form.
-        for runtime_only in ('"store"', '"price"', '"clock"', '"scope"'):
+        for runtime_only in ('"store"', '"price"', '"on_spend"', '"clock"', '"scope"'):
             assert runtime_only not in schema, runtime_only
 
     def test_the_schema_describes_a_budget_rather_than_an_open_object(self):
@@ -3575,3 +3899,19 @@ class TestDurableClock:
 
         with pytest.raises(ZeroDivisionError, match='the clock is broken'):
             await _gate(guard)
+
+
+def test_spend_composition_warning_is_a_deprecated_alias() -> None:
+    """`SpendCompositionWarning` is no longer emitted, but importing it keeps working with a deprecation warning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', HarnessDeprecationWarning)
+        spend = importlib.import_module('pydantic_ai_harness.spend')
+    with pytest.warns(
+        HarnessDeprecationWarning, match='`pydantic_ai_harness.spend.SpendCompositionWarning` is deprecated'
+    ):
+        alias = spend.SpendCompositionWarning
+    assert alias is SpendCompositionWarning
+    assert 'SpendCompositionWarning' not in spend_limits.__all__
+
+    with pytest.raises(AttributeError, match='has no attribute'):
+        _ = spend.NotAnExport

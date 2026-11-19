@@ -172,7 +172,7 @@ async def test_partial_stream_and_lifecycle_routing() -> None:
     await ui.observe(DelegationTaskEvent(task=record, event=PartEndEvent(index=0, part=TextPart('first second'))))
     assert ui.snapshots()[0].messages == []
     assert task_row(start) is None
-    event = DelegationStartedEvent(agent_name='self', task='hello', truncated=False, model=None)
+    event = DelegationStartedEvent(agent_name='self', task='hello', truncated=False, inherits_tools=True, model=None)
     event.task_id = record.id
     await ui.observe(DelegationTaskEvent(task=record, event=event))
     assert 'general-purpose' not in output.getvalue()
@@ -215,7 +215,9 @@ async def test_task_start_row_waits_for_model_unless_hidden(show_model: bool) ->
         show_task_models=lambda: show_model,
     )
     record = task()
-    event = DelegationStartedEvent(agent_name='worker', task='inspect', truncated=False, model=None)
+    event = DelegationStartedEvent(
+        agent_name='worker', task='inspect', truncated=False, inherits_tools=False, model=None
+    )
     event.task_id = record.id
     await ui.observe(DelegationTaskEvent(task=record, event=event))
     assert ('worker [aaaaaaaa] inspect' in output.getvalue()) is not show_model
@@ -237,7 +239,9 @@ async def test_task_ending_or_asking_before_its_model_gets_its_start_row_without
     output = io.StringIO()
     ui = Tasks(console=Console(file=output), conversation_id=lambda: 'root', directory=None)
     record = task()
-    event = DelegationStartedEvent(agent_name='worker', task='inspect', truncated=False, model=None)
+    event = DelegationStartedEvent(
+        agent_name='worker', task='inspect', truncated=False, inherits_tools=False, model=None
+    )
     event.task_id = record.id
     await ui.observe(DelegationTaskEvent(task=record, event=event))
     released: AgentStreamEvent = (
@@ -256,9 +260,7 @@ async def test_task_ending_or_asking_before_its_model_gets_its_start_row_without
     await ui.observe(DelegationTaskEvent(task=record, event=released))
     lines = output.getvalue().splitlines()
     assert lines[0] == '● worker [aaaaaaaa] inspect'
-    assert lines[1] == (
-        '  └ failed · 1.0s · /tasks to inspect' if first == 'end' else '? worker [aaaaaaaa] asks: Which?'
-    )
+    assert lines[1] == ('  └ failed · 1s · /tasks to inspect' if first == 'end' else '? worker [aaaaaaaa] asks: Which?')
     await ui.observe(DelegationTaskEvent(task=record, model_name='too-late'))
     assert output.getvalue().splitlines() == lines
 
@@ -269,7 +271,9 @@ async def test_resumed_task_ending_before_its_model_does_not_show_the_earlier_mo
     record = task()
 
     def start() -> DelegationTaskEvent:
-        event = DelegationStartedEvent(agent_name='worker', task='inspect', truncated=False, model=None)
+        event = DelegationStartedEvent(
+            agent_name='worker', task='inspect', truncated=False, inherits_tools=False, model=None
+        )
         event.task_id = record.id
         return DelegationTaskEvent(task=record, event=event)
 
@@ -925,10 +929,16 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
     monkeypatch.setattr(LivePrompt, 'read', read)
     questions = 0
 
-    def counted(event: AgentStreamEvent, *, model_name: str | None = None, show_model: bool = True) -> Text | None:
+    def counted(
+        event: AgentStreamEvent,
+        *,
+        model_name: str | None = None,
+        show_model: bool = True,
+        started_at: float | None = None,
+    ) -> Text | None:
         nonlocal questions
         questions += isinstance(event, TaskQuestionAskedEvent)
-        return task_row(event, model_name=model_name, show_model=show_model)
+        return task_row(event, model_name=model_name, show_model=show_model, started_at=started_at)
 
     # The task panel's rows and the main run's stream both render through `Tasks.row`, which calls it.
     monkeypatch.setattr('pydantic_clai2.runtime.tasks.task_row', counted)

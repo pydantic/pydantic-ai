@@ -15,7 +15,15 @@ from typing import Protocol, runtime_checkable
 
 import anyio
 
-from pydantic_ai_harness.planning._store import apply_updates, validate_table_name
+from pydantic_ai_harness.planning._events import PlanEventEmitter
+from pydantic_ai_harness.planning._store import (
+    apply_updates,
+    emit_created,
+    emit_deleted,
+    emit_mutation,
+    validate_table_name,
+    warn_event_emitter,
+)
 from pydantic_ai_harness.planning._types import PlanItem, TaskStatus
 
 
@@ -69,11 +77,14 @@ class PostgresPlanStore:
         *,
         session: str = 'default',
         table: str = 'plan_items',
+        event_emitter: PlanEventEmitter | None = None,
     ) -> None:
+        warn_event_emitter(event_emitter)
         validate_table_name(table)
         self._pool = pool
         self._session = session
         self._table = table
+        self._emitter = event_emitter
         self._ready = False
         self._schema_lock = anyio.Lock()
 
@@ -154,6 +165,7 @@ class PostgresPlanStore:
                 self._session,
             )
             await connection.execute(self._insert_sql(), *self._insert_params(int(str(next_seq)), item))
+        await emit_created(self._emitter, item)
         return item
 
     async def update_item(
@@ -171,6 +183,7 @@ class PostgresPlanStore:
         item = await self.get_item(item_id)
         if item is None:
             return None
+        previous = item.model_copy() if self._emitter is not None else None
         apply_updates(
             item,
             content=content,
@@ -191,18 +204,23 @@ class PostgresPlanStore:
                 self._session,
                 item.id,
             )
+        await emit_mutation(self._emitter, item, previous)
         return item
 
     async def remove_item(self, item_id: str) -> bool:
         """Delete `item_id` for this session; return whether it existed."""
         await self._ensure_schema()
+        removed = await self.get_item(item_id) if self._emitter is not None else None
         async with self._pool.acquire() as connection:
             status = await connection.execute(
                 f'DELETE FROM {self._table} WHERE session = $1 AND id = $2',
                 self._session,
                 item_id,
             )
-        return _deleted_count(status) > 0
+        existed = _deleted_count(status) > 0
+        if existed and removed is not None:
+            await emit_deleted(self._emitter, removed)
+        return existed
 
     def _insert_sql(self) -> str:
         return (

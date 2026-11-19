@@ -8,6 +8,7 @@ import json
 import logging
 import posixpath
 import uuid
+import warnings
 from copy import copy
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ import anyio
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import FileEntry, Workspace, WorkspaceBackend, WorkspaceError, WorkspaceUnavailableError
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness._workspace import secondary_workspace, supports_commands, workspace_path
 from pydantic_ai_harness.memory._store import (
     MAX_RECEIPTS,
@@ -126,6 +128,14 @@ class FileMemoryStore:
         """
         self.directory = workspace_path(directory) if isinstance(directory, Path) else directory
         self.workspace = workspace
+        if workspace is None and (posixpath.isabs(self.directory) or Path(directory).is_absolute()):
+            warnings.warn(
+                f"`FileMemoryStore({str(directory)!r})` now keeps memory in the run's workspace, at that path inside it. "
+                f'To keep it in that directory on this machine, pass '
+                f"`FileMemoryStore('.', workspace=LocalWorkspaceBackend({str(directory)!r}))`.",
+                category=HarnessDeprecationWarning,
+                stacklevel=2,
+            )
         self._own = secondary_workspace(workspace, 'FileMemoryStore')
         self._run: Workspace | None = None
         self._real_root: tuple[str, str] | None = None

@@ -2686,7 +2686,7 @@ contributes nothing:
 | `get_capabilities()` | capabilities (or per-run capability functions) added to every agent run |
 | `get_commands()` | `/commands` |
 | `render(event)` | a drawing for a stream event, or `None` for the default |
-| `get_status_segments()` | text appended to the status row |
+| `get_status_segments()` | text in the main footer's configurable `plugins` group |
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
 | `get_side_panels()` | pages the web UI shows beside the conversation |
@@ -3622,7 +3622,27 @@ with `get_status_segments`. `cost` is the retained-history cost; when retained
 responses omitted usage information, the shell sets `cost_is_lower_bound` and the
 row prefixes the value with `>=`. While the main run waits on a subagent, the row
 shows that subagent's figures instead. These fields keep the main conversation's
-values meanwhile and show again when it settles; segments stay on the row.
+values meanwhile and show again when it settles. Plugin fragments stay with the
+main footer's `plugins` field, subject to its visibility and position.
+
+The shell owns `assistant_age`, the optional time since nonempty main-assistant
+text. Thinking, tools, user messages, and descendants do not reset it, even while
+a subagent's figures are focused. `FooterActivity` in `runtime/footer_activity.py`
+persists the locally observed live text time in `ModelResponse.metadata` under
+`clai2_last_text_at` only while `assistant_age` is enabled, without changing the
+response timestamp or provider payload. Disabling the field stops those writes
+without erasing existing metadata.
+Resume, rewind, and conversation switches restore it from the retained textual
+response; older history without that metadata falls back to that response's
+timestamp. No textual response means no age figure. This uses the existing editor
+refresh cycle, not a plugin timer. See the [status-line reference](docs/reference.md#status-line)
+for layout controls and all built-in fields.
+
+Task duration labels in the panel, completion rows, and `/tasks` use at most three
+nonzero units; days omit seconds. Zero and negative durations show `0s`. From 30
+days, a known start shows its local `%b %d` date, such as `Jan 02`. A completed
+task's duration stops at its finish time. `TaskInfo` timestamps, event durations,
+and task expiry retain their machine-readable values and lifecycle semantics.
 
 The double-Esc rewind menu also uses `commit_messages` between turns. It removes
 the selected prompt and later history, but does not undo plugin state, file
@@ -3630,10 +3650,16 @@ changes, or other tool side effects. It never replays tools or fires turn hooks.
 
 ### Add to the status row: `get_status_segments()`
 
-Each segment is a function that takes no arguments and returns a short string. It
-is appended after the built-in figures, painted muted, and dropped when the
-plugin unloads. The built-in row accents output-token counts and tool names using
-the selected theme; plugin fragments stay muted.
+Each segment is a function that takes no arguments and returns a short string.
+All plugin fragments form the `plugins` group in `display.footer_fields`, in
+registration order. The default layout places it after `activity`. Users can
+hide or move the group without unloading plugins; individual fragments do not
+have layout keys. A fragment is dropped when its plugin unloads. The built-in
+row accents output-token counts and tool names using the selected theme;
+reordering preserves those styles, and plugin fragments stay muted.
+
+See the [status-line reference](docs/reference.md#status-line) for layout controls,
+defaults, validation, cross-build compatibility, and direct JSON examples.
 
 ```python
 from collections.abc import Sequence
