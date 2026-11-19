@@ -106,9 +106,9 @@ class AnthropicStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _history_fetched_pages: Sequence[tuple[str, str]] = ()
     _report_inference_geo: bool = False
-    _native_computer: NativeComputer | None = None
     _thread_record: ThreadRecord | None = None
     """Records the message thread the request was sent in, if any, on the response `get()` builds."""
+    _native_computer: NativeComputer | None = None
     _from_fallback_model: bool = field(default=False, init=False)
     _current_block: BetaContentBlock | None = field(default=None, init=False)
     _ignored_block_indices: set[int] = field(default_factory=set[int], init=False)
