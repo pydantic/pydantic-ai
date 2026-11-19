@@ -7,13 +7,15 @@ from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
 
 from anyio import to_thread
-from termflow.tui import MenuBuilder, MenuItem, PagerBuilder, TextInputBuilder
+from termflow.ansi import make_link
+from termflow.tui import MenuBuilder, MenuItem, PagerBuilder, TextInputBuilder, terminal_size
 from termflow.tui.pager import Pager
 
 from pydantic_ai_pax.plugins.menus import Action, Option, SettingsMenu
 from pydantic_ai_pax.ui.menus.field_menu import TERMINAL, FieldMenu, Runners, run_flow_async
 from pydantic_ai_pax.ui.menus.menu_worker import full_terminal, menu_key, run_worker
-from pydantic_ai_pax.ui.rendering.rendering import markdown_style
+from pydantic_ai_pax.ui.prompt.prompt_selection import URL, trim_url
+from pydantic_ai_pax.ui.rendering.rendering import MAX_LINK, markdown_style
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
 _REDRAW = 'dialogs:changed'
@@ -149,7 +151,7 @@ class TerminalDialogs:
             MenuBuilder(title)
             .style(markdown_style())
             .items([MenuItem('Cancel', value=None)])
-            .preview(lambda item: '\n\n'.join([description, *shown]))
+            .preview(lambda item: _linked('\n\n'.join([description, *shown]), width=_preview_width()))
             .footer_hint('Enter or Esc cancel')
             .key_source(read_key)
             .build()
@@ -169,6 +171,46 @@ class TerminalDialogs:
             return False
         running.result()
         return True
+
+
+def _preview_width() -> int:
+    """The width of the preview pane termflow lays out beside a list of its default width.
+
+    This mirrors `Menu._frame` and `layout.two_columns` in termflow-md 1.0.0, which pass the preview no
+    width; `test_wait_folds_urls_to_the_pane_termflow_draws` paints a real frame to catch a change.
+    """
+    columns = max(10, terminal_size()[0] - 1)
+    return max(1, columns - max(20, columns // 2) - 3)
+
+
+def _linked(text: str, *, width: int) -> str:
+    """`text` with each URL a terminal hyperlink to all of it; a line with a URL is folded at `width`.
+
+    The preview pane cuts each line at its width, which would also cut off a link's closing escape, so a
+    URL too long for one line shows on several, each a link to the whole URL, as Rich prints one.
+    """
+    lines: list[str] = []
+    for line in text.split('\n'):
+        urls = [
+            (match.start(), match.start() + len(url), url)
+            for match in URL.finditer(line)
+            if (url := trim_url(match[0])).isprintable() and len(url) <= MAX_LINK
+        ]
+        lines += (
+            [_linked_row(line, start, start + width, urls) for start in range(0, len(line), width)] if urls else [line]
+        )
+    return '\n'.join(lines)
+
+
+def _linked_row(line: str, start: int, end: int, urls: list[tuple[int, int, str]]) -> str:
+    """`line[start:end]`, with the parts of `urls` (start, end, URL) in it linked to their whole URL."""
+    row, done = '', start
+    for first, last, url in urls:
+        label_start, label_end = max(first, start), min(last, end)
+        if label_start < label_end:
+            row += line[done:label_start] + make_link(url, line[label_start:label_end])
+            done = label_end
+    return row + line[done:end]
 
 
 def wrap(text: str, width: int) -> list[str]:

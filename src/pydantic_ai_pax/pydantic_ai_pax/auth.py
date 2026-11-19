@@ -9,6 +9,8 @@ import anyio
 from anyio import fail_after
 from pydantic import TypeAdapter, ValidationError
 from rich.console import Console
+from rich.style import Style
+from rich.text import Text
 from termflow.tui import MenuBuilder, MenuItem
 
 from pydantic_ai.exceptions import UserError
@@ -44,6 +46,12 @@ _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)
 _PASTE_PROMPT = 'Paste the URL the browser lands on (or finish there): '
 _CANCELLED = 'sign-in cancelled.'
 """How a cancelled Codex sign-in's message ends; `login_command` adds no models after one."""
+_NOT_CONNECTED = (
+    f'Codex is not connected. Run /login {CODEX} to sign in with ChatGPT, /login to see every other sign-in '
+    f'(such as {github_copilot.ACCOUNT}), or /model add to use another provider with an API key '
+    '(saved with /keys or set in its environment variable).'
+)
+"""Where a first run lands on the default Codex model: every way in, so none is forced."""
 
 ReadLine = Callable[[str], Awaitable[str | None]]
 """Read one line after showing a prompt; `None` when the user cancels."""
@@ -234,7 +242,9 @@ class CodexCredentials(OpenAICodexCredentialSource):
             partial(load_codex_credentials, account=self.account), abandon_on_cancel=True
         )
         if value is None:
-            raise UserError(f'Codex is not connected. Run /login {self.account}.')
+            if self.account != CODEX:
+                raise UserError(f'Codex is not connected. Run /login {self.account}.')
+            raise UserError(_NOT_CONNECTED)
         try:
             return _CREDENTIALS.validate_json(value)
         except ValidationError:
@@ -316,7 +326,8 @@ class CodexAuth:
         self.console.print(
             f'Sign in to {who} in your browser. Waiting up to five minutes.', style=theme.color(theme.INFO)
         )
-        self.console.print(flow.authorization_url(), markup=False, highlight=False)
+        url = flow.authorization_url()
+        self.console.print(Text(url, style=Style(link=url)), highlight=False)
         self.console.print(
             'If the browser cannot reach this machine (for example over SSH), paste the URL it ends up on.',
             style=theme.color(theme.MUTED),
@@ -324,7 +335,7 @@ class CodexAuth:
 
         # Launching in a thread keeps the loop available for core's callback listener.
         async def launch_browser() -> None:
-            await anyio.to_thread.run_sync(open_browser, flow.authorization_url(), abandon_on_cancel=True)
+            await anyio.to_thread.run_sync(open_browser, url, abandon_on_cancel=True)
 
         browser = asyncio.create_task(launch_browser())
         try:
