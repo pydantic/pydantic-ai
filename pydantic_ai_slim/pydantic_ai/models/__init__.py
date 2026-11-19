@@ -4273,17 +4273,19 @@ def resolve_request_tools(
        into `tool_visibility` exactly once. A caller without a `can_withhold_tool_schemas` answer
        (the realtime session path) can't withhold schemas at all.
 
-    On top of the filter, two narrower drops apply, kept independent:
+    On top of the filter, three narrower drops apply, kept independent. `optional=True` decides
+    the outcome of each one:
 
-    * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
-      optional native tool is silently dropped (no error raised). It does NOT govern the
-      corpus-empty drop.
+    * An optional native tool that this model doesn't support is silently dropped (no error raised).
     * The corpus-empty drop is specific to the framework-managed tool-search native tool's
       corpus-management role: an *optional* `ToolSearchTool` is dropped when nothing is
       searchable, since sending it with no corpus to search would waste a tool slot. A
-      non-optional `ToolSearchTool` stays — the user asked explicitly. Other native tools
-      don't have a corpus and aren't subject to this drop, so making `optional` a base-class
+      non-optional `ToolSearchTool` stays, because the user asked for it explicitly. Other native
+      tools don't have a corpus and aren't subject to this drop, so making `optional` a base-class
       field doesn't accidentally cause e.g. `WebSearchTool(optional=True)` to be dropped here.
+    * An optional `ComputerTool` is dropped when the request has no `computer` tool to run its
+      calls. A required `ComputerTool` in that case raises `UserError`, as does any `ComputerTool`
+      when the request has more than one `computer` tool.
 
     This is a module-level function rather than a `Model` method so both the classic agent-run
     path (via `Model._resolve_request_tools`, which passes its profile-derived
