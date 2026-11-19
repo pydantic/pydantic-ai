@@ -122,6 +122,15 @@ _(This example is complete, it can be run "as is")_
 
 A tool that joins the run after its first model request, however it got there, is recorded in the message history as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], unless no plainly visible tool from before is still present to keep stable. A new tool with `defer_loading=True` joins the [tool search](tools-advanced.md#tool-search) corpus instead. See [Tools that appear mid-run](tools-advanced.md#mid-run-tool-additions) for how each provider delivers it.
 
+!!! note "Sharing a `Tool` between toolsets and agents"
+    A toolset currently writes its defaults onto each [`Tool`][pydantic_ai.tools.Tool] instance it adds, so every other toolset or agent holding the same `Tool` lists it with them too ([#12617](https://github.com/pydantic/pydantic-ai/issues/12617)):
+
+    - `strict`, `include_return_schema`, `max_retries` and `durable`, when the `Tool` leaves them unset.
+    - `sequential`, `defer_loading` and `requires_approval`, when the toolset sets them to `True`.
+    - `metadata`, merged into the `Tool`'s own, whose keys take precedence.
+
+    To keep a toolset's defaults off other holders, give each toolset or agent its own `Tool`.
+
 ### Toolset Instructions
 
 A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] can provide instructions that are automatically included in the model request. This lets each toolset carry its own usage guidance alongside its tools, so you don't need to duplicate instructions on every agent that uses the toolset.
