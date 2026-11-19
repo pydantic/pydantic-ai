@@ -116,7 +116,8 @@ exec)
     # One file per exec, removed when it finishes, so `rm` only ever sees live commands.
     mkdir -p "$state/$name.pids"
     echo $$ > "$state/$name.pids/$$"
-    "$@"
+    # With `container-path`, the command finds only the programs on it, as in an image that lacks the host's.
+    ( [ ! -f "$bin/container-path" ] || PATH=$(cat "$bin/container-path"); "$@" )
     status=$?
     rm -f "$state/$name.pids/$$"
     exit "$status"
@@ -229,19 +230,21 @@ _FAKE_SUDO = """#!/bin/sh
 bin=$(dirname "$0")
 [ -e "$bin/sudo-allowed" ] || { echo 'sudo: a password is required' >&2; exit 1; }
 [ "$1" != -n ] || shift
+export FAKE_SUDO=1
 exec "$@"
 """
-"""Stands in for `sudo -n`: runs the command if `sudo-allowed` exists, so a host's real one never runs."""
+"""Stands in for `sudo -n`: runs the command if `sudo-allowed` exists, so a host's real one never runs, and marks it as
+run through sudo for the fake `apt-get`."""
 
 _FAKE_APT_GET = """#!/bin/sh
 bin=$(dirname "$0")
-echo "$*" >> "$bin/apt-get-calls"
-if [ -e "$bin/apt-get-fails" ]; then echo 'E: Unable to locate package xdotool' >&2; exit 100; fi
+echo "${FAKE_SUDO:+sudo }$*" >> "$bin/apt-get-calls"
+if [ "$1" = install ] && [ -e "$bin/apt-get-fails" ]; then echo 'E: Unable to locate package xdotool' >&2; exit 100; fi
 [ "$1" != install ] || mv "$bin"/uninstalled/* "$bin"/ 2>/dev/null
 exit 0
 """
-"""Stands in for `apt-get`: logs each call and has `install` put back the programs `uninstall` took away, or fails if
-`apt-get-fails` exists."""
+"""Stands in for `apt-get`: logs each call, prefixed `sudo` when run through the fake `sudo`, and has `install` put back
+the programs `uninstall` took away, or fail if `apt-get-fails` exists."""
 
 
 class FakeDocker:
@@ -333,6 +336,17 @@ class FakeDocker:
         (self.bin_dir / 'uid').write_text(f'{uid}\n')
         if sudo:
             (self.bin_dir / 'sudo-allowed').touch()
+
+    def hide_host_programs(self, *keep: str) -> None:
+        """Let container commands find only the fakes and the host's `keep`, so an `uninstall`ed program is missing
+        even where the host has it."""
+        host = self.bin_dir / 'host'
+        host.mkdir()
+        for program in ('sh', *keep):
+            path = shutil.which(program)
+            assert path is not None, f'the host has no {program}'
+            (host / program).symlink_to(path)
+        (self.bin_dir / 'container-path').write_text(f'{self.bin_dir}{os.pathsep}{host}')
 
     def fail_installs(self) -> None:
         (self.bin_dir / 'apt-get-fails').touch()
