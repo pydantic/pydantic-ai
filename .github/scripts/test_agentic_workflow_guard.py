@@ -29,6 +29,7 @@ from agentic_workflow_guard import (
     changed_files,
     check_ai_credits_accounting,
     check_assigned_alert_metadata_gate,
+    check_at_claude_maintainer_threads,
     check_awf_binary_version,
     check_compiled_runner_contract,
     check_compiler_version_compatibility,
@@ -2869,3 +2870,31 @@ jobs:
     violations = check_assigned_alert_metadata_gate(workflows)
 
     assert [violation.check for violation in violations] == ['assigned-alert-metadata-gate']
+
+
+def test_at_claude_maintainer_threads_requires_author_gate_and_comment_filter(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(
+        workflows / 'at-claude.yml',
+        """name: '@claude'
+on: issue_comment
+jobs:
+  get-pr-info:
+    outputs:
+      is_fork: ${{ steps.pr-info.outputs.is_fork }}
+  at-claude:
+    needs: get-pr-info
+    if: needs.get-pr-info.outputs.is_fork != 'true'
+    steps:
+      - uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+""",
+    )
+
+    violations = check_at_claude_maintainer_threads(workflows)
+
+    assert [violation.message for violation in violations] == [
+        '`at-claude` must require `write` or `admin` permission from the thread author.',
+        '`at-claude` must pass `include_comments_by_actor` from `get-pr-info`; an empty value includes every commenter.',
+    ]
