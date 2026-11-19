@@ -65,7 +65,8 @@ The model must accept images.
 - Every other model gets `computer` as a regular function tool.
 
 On any other OpenAI-compatible server, such as Azure, Ollama or vLLM, the model gets the function tool. If the
-server supports OpenAI's computer tool, add `ComputerTool` to `supported_native_tools` in the model's profile.
+server supports OpenAI's computer tool, add `ComputerTool` to `supported_native_tools` in the model's `profile=`
+argument. Setting it in the provider's profile has no effect.
 
 Gemini 3 gives positions on a grid from 0 to 999 instead of in pixels. `ComputerUse` converts them to pixels.
 
