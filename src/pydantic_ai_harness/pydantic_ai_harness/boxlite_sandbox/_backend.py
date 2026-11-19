@@ -445,6 +445,12 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
         check_env(env)
         if reserved := sorted(_RESERVED_OPTIONS.intersection(box_options or {})):
             raise ValueError(f'box_options must not set {", ".join(reserved)}; use the named argument instead')
+        if desktop and image is None and not allow_internet_access and sandbox is None and ref is None:
+            raise UserError(
+                f'A new desktop box without an `image` runs `{DESKTOP_IMAGE}` and installs the display programs on '
+                'first use, which needs `allow_internet_access=True`. Pass that, or an `image` that has Xvfb, '
+                'xdotool, xwininfo, scrot and setsid.'
+            )
         self._options: Any = boxlite.BoxOptions(
             **(box_options or {}),
             image=DESKTOP_IMAGE if image is None and desktop else image,
