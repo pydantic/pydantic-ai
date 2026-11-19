@@ -30,7 +30,7 @@ import tempfile
 from collections.abc import Callable
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext
@@ -153,22 +153,22 @@ def hosted_server() -> MCPServer:
     return server
 
 
-def _hosted(cls: Callable[..., AbstractCapability[Any]]) -> Fixture:
+def _hosted(cls: Callable[..., AbstractCapability[None]]) -> Fixture:
     """A hosted MCP integration, run against an in-process server through its `client` field."""
     return lambda _: cls(client=hosted_server())
 
 
-def _workspace(build: Callable[[], AbstractCapability[Any]]) -> Fixture:
+def _workspace(build: Callable[[], AbstractCapability[None]]) -> Fixture:
     """The capability plus a local workspace in the test's directory, for capabilities that need one."""
     return lambda tmp_path: [build(), LocalWorkspace(tmp_path)]
 
 
-def _repo_context(tmp_path: Path) -> list[AbstractCapability[Any]]:
+def _repo_context(tmp_path: Path) -> list[AbstractCapability[None]]:
     (tmp_path / 'AGENTS.md').write_text('Keep answers short.\n')
     return [RepoContext(), FileSystem(), LocalWorkspace(tmp_path)]
 
 
-def _skills(tmp_path: Path) -> list[AbstractCapability[Any]]:
+def _skills(tmp_path: Path) -> list[AbstractCapability[None]]:
     skill = tmp_path / 'skills' / 'weather'
     skill.mkdir(parents=True)
     (skill / 'SKILL.md').write_text('---\ndescription: Report the weather.\n---\n\nSay sunny.\n')
@@ -180,12 +180,12 @@ def _read_file_key(call: ToolCallPart) -> str | None:
     return str(args['path']) if call.tool_name == 'read_file' else None
 
 
-def _deduplicate_file_reads(tmp_path: Path) -> list[AbstractCapability[Any]]:
+def _deduplicate_file_reads(tmp_path: Path) -> list[AbstractCapability[None]]:
     (tmp_path / 'notes.md').write_text('Sunny.\n')
     return [DeduplicateFileReads(file_key=_read_file_key), FileSystem(), LocalWorkspace(tmp_path)]
 
 
-def _capability_creation(tmp_path: Path) -> list[AbstractCapability[Any]]:
+def _capability_creation(tmp_path: Path) -> list[AbstractCapability[None]]:
     return [CapabilityCreation(tmp_path / 'capabilities'), LocalWorkspace(tmp_path)]
 
 
@@ -200,7 +200,7 @@ class Marker(AbstractCapability):
 """A capability for `CapabilityCreation` to author."""
 
 
-def _smart_search(tmp_path: Path) -> list[AbstractCapability[Any]]:
+def _smart_search(tmp_path: Path) -> list[AbstractCapability[None]]:
     (tmp_path / 'config.py').write_text('def load(path):\n    # parse the config file\n    return path\n')
     return [SmartSearch(counting_model('smart_search.judge', judge_relevant), guidance=''), LocalWorkspace(tmp_path)]
 
@@ -217,7 +217,7 @@ class _PruneLatestReturn(AbstractCapability[None]):
         return {**call.args_as_dict(), 'tool_call_id': latest}
 
 
-def _modal_sandbox() -> AbstractCapability[Any]:
+def _modal_sandbox() -> AbstractCapability[None]:
     # Imported here, not at module level, so collecting the suites never imports the Modal SDK. The test has
     # already skipped when `modal` isn't installed (the case's `requires`).
     from pydantic_ai_harness.modal_sandbox import ModalSandbox
@@ -233,7 +233,7 @@ def _kubernetes_sandbox() -> KubernetesSandbox:
     return KubernetesSandbox(warm_pool='python-pool')
 
 
-def _ipython_code_mode() -> AbstractCapability[Any]:
+def _ipython_code_mode() -> AbstractCapability[None]:
     # Imported here, so collecting the suites never imports `jupyter_client`. The test has already skipped
     # when it isn't installed (the case's `requires`).
     from pydantic_ai_harness.ipython_code_mode import IPythonCodeMode
@@ -241,7 +241,7 @@ def _ipython_code_mode() -> AbstractCapability[Any]:
     return IPythonCodeMode(tools=[])
 
 
-def _browser_use(_: Path) -> AbstractCapability[Any]:
+def _browser_use(_: Path) -> AbstractCapability[None]:
     # Imported here, so collecting the suites never imports browser-use, which only the `harness browser-use` CI job
     # installs. The test has already skipped when it isn't installed (the case's `requires`).
     from .browser_use._offline_browser import offline_browser_use
@@ -249,7 +249,7 @@ def _browser_use(_: Path) -> AbstractCapability[Any]:
     return offline_browser_use()
 
 
-def _time_reminder(ctx: RunContext[Any]) -> str:
+def _time_reminder(ctx: RunContext[None]) -> str:
     return f'It is now {CLOCK.now:%H:%M} UTC.'
 
 
@@ -343,7 +343,7 @@ def _check_sub_agents(merged: SubAgents[None]) -> None:
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
 
 
-def _check_ssh_workspace(merged: SSHWorkspace[Any]) -> None:
+def _check_ssh_workspace(merged: SSHWorkspace[None]) -> None:
     assert (merged.destination, merged.env, merged.read_only) == ('second', None, False)
 
 
@@ -361,7 +361,7 @@ CASES: dict[str, CapabilityCase] = {
     'Skills': CapabilityCase(
         Combines(
             'one catalog; every library either names stays reachable',
-            lambda: (Skills[Any]('first'), Skills[Any]('second')),
+            lambda: (Skills[None]('first'), Skills[None]('second')),
             _check_skills,
         ),
         build=_skills,
@@ -408,7 +408,7 @@ CASES: dict[str, CapabilityCase] = {
     'Planning': CapabilityCase(
         Combines(
             'one plan per agent; `PlanningToolset` registers fixed tool names',
-            lambda: (Planning[Any](), Planning[Any](inject=False)),
+            lambda: (Planning[None](), Planning[None](inject=False)),
             _check_planning,
         ),
         calls=Calls(
@@ -423,14 +423,14 @@ CASES: dict[str, CapabilityCase] = {
     'SpendLimits': CapabilityCase(
         Combines(
             'one spend authority per agent',
-            lambda: (SpendLimits[Any](), SpendLimits[Any](expose_tools=False)),
+            lambda: (SpendLimits[None](), SpendLimits[None](expose_tools=False)),
             _check_spend_limits,
         )
     ),
     'StepPersistence': CapabilityCase(
         Combines(
             'one run identity per agent',
-            lambda: (StepPersistence[Any](agent_name='first'), StepPersistence[Any](agent_name='second')),
+            lambda: (StepPersistence[None](agent_name='first'), StepPersistence[None](agent_name='second')),
             _check_step_persistence,
         )
     ),
@@ -438,8 +438,8 @@ CASES: dict[str, CapabilityCase] = {
         Combines(
             'two would each judge every step, the second judging what the first already compacted',
             lambda: (
-                RelevanceCompaction[Any](TestModel(), max_tokens=50, keep_tokens=3),
-                RelevanceCompaction[Any](TestModel(), max_tokens=50, keep_tokens=7),
+                RelevanceCompaction[None](TestModel(), max_tokens=50, keep_tokens=3),
+                RelevanceCompaction[None](TestModel(), max_tokens=50, keep_tokens=7),
             ),
             _check_relevance,
         ),
@@ -449,8 +449,8 @@ CASES: dict[str, CapabilityCase] = {
         Combines(
             'two would each make a model call, the second summarizing the first summary',
             lambda: (
-                SummarizingCompaction[Any](max_messages=50, keep_messages=3),
-                SummarizingCompaction[Any](max_messages=50, keep_messages=7),
+                SummarizingCompaction[None](max_messages=50, keep_messages=3),
+                SummarizingCompaction[None](max_messages=50, keep_messages=7),
             ),
             _check_summarizing,
         ),
@@ -460,8 +460,8 @@ CASES: dict[str, CapabilityCase] = {
         Combines(
             'reminders are additive, so both sides keep firing',
             lambda: (
-                SystemReminders[Any](reminders=[Reminder('first', tag=None)]),
-                SystemReminders[Any](reminders=[Reminder('second', tag=None)]),
+                SystemReminders[None](reminders=[Reminder('first', tag=None)]),
+                SystemReminders[None](reminders=[Reminder('second', tag=None)]),
             ),
             _check_system_reminders,
         ),
@@ -471,8 +471,8 @@ CASES: dict[str, CapabilityCase] = {
         Combines(
             'one `compact_context` tool per agent, and two strategies for one request would compact twice',
             lambda: (
-                CompactOnRequest[Any](SlidingWindowCompaction[Any](max_messages=1), max_per_run=1),
-                CompactOnRequest[Any](SlidingWindowCompaction[Any](max_messages=1), max_per_run=2),
+                CompactOnRequest[None](SlidingWindowCompaction[None](max_messages=1), max_per_run=1),
+                CompactOnRequest[None](SlidingWindowCompaction[None](max_messages=1), max_per_run=2),
             ),
             _check_compact_on_request,
         ),
@@ -499,7 +499,7 @@ CASES: dict[str, CapabilityCase] = {
     'ToolOutputLimits': CapabilityCase(
         Combines(
             'one output-limit policy; `tool_filter`/`per_tool` are how one instance varies by tool',
-            lambda: (ToolOutputLimits[Any](), ToolOutputLimits[Any](strip_ansi=True)),
+            lambda: (ToolOutputLimits[None](), ToolOutputLimits[None](strip_ansi=True)),
             _check_tool_output_limits,
         ),
         build=_workspace(ToolOutputLimits),
@@ -515,8 +515,8 @@ CASES: dict[str, CapabilityCase] = {
         Combines(
             'one delegate tool per agent, so two rosters become one',
             lambda: (
-                SubAgents[Any](agents=[SubAgent(Agent(TestModel(), name='alpha'))]),
-                SubAgents[Any](agents=[SubAgent(Agent(TestModel(), name='beta'))]),
+                SubAgents[None](agents=[SubAgent(Agent(TestModel(), name='alpha'))]),
+                SubAgents[None](agents=[SubAgent(Agent(TestModel(), name='beta'))]),
             ),
             _check_sub_agents,
         )
@@ -525,8 +525,8 @@ CASES: dict[str, CapabilityCase] = {
         Combines(
             'one advisor per agent; its tool name is fixed',
             lambda: (
-                Advisor[Any]('anthropic:claude-fable-5', max_tokens=2048),
-                Advisor[Any]('anthropic:claude-fable-5', max_tokens=4096),
+                Advisor[None]('anthropic:claude-fable-5', max_tokens=2048),
+                Advisor[None]('anthropic:claude-fable-5', max_tokens=4096),
             ),
             _check_advisor,
         ),
@@ -543,8 +543,8 @@ CASES: dict[str, CapabilityCase] = {
         Combines(
             'the later configuration replaces the earlier one whole, so an `env` (and its secrets) never carries over',
             lambda: (
-                SSHWorkspace[Any]('first', env={'FIRST_SECRET': 'x'}, read_only=True),
-                SSHWorkspace[Any]('second'),
+                SSHWorkspace[None]('first', env={'FIRST_SECRET': 'x'}, read_only=True),
+                SSHWorkspace[None]('second'),
             ),
             _check_ssh_workspace,
         ),
@@ -553,7 +553,7 @@ CASES: dict[str, CapabilityCase] = {
     'BackgroundTools': CapabilityCase(
         Combines(
             'one background scheduler per agent; selectors combine without wrapping a tool twice',
-            lambda: (BackgroundTools[Any](tools=['first']), BackgroundTools[Any](tools=['second'])),
+            lambda: (BackgroundTools[None](tools=['first']), BackgroundTools[None](tools=['second'])),
             _check_background_tools,
         )
     ),

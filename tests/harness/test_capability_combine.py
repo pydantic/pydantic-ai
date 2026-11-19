@@ -157,7 +157,7 @@ async def test_two_of_a_colliding_capability_still_raise(name: str, anyio_backen
     assert isinstance(policy, Collides) and policy.make is not None
 
     first, second = policy.make(shipped[name])
-    agent = Agent(TestModel(), capabilities=[first, second])
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[first, second])
     with pytest.raises(UserError, match='conflicts with existing tool'):
         await agent.run('hello', workspace=LocalWorkspaceBackend(COMBINE_ROOT_A))
 

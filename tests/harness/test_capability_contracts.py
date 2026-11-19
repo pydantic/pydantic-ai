@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import TypeVar
 
 import anyio
 import pytest
@@ -54,6 +54,8 @@ from .capability_cases import (
     HOSTED_MCP_CONNECTION,
     hosted_server,
 )
+
+DepsT = TypeVar('DepsT')
 
 CASES: dict[str, CapabilityCase] = {**core.CASES, **HARNESS_CASES}
 CONTRACTS: tuple[Contract, ...] = (*CORE_CONTRACTS, *HARNESS_CONTRACTS)
@@ -127,7 +129,9 @@ def _comparable(content: object, directory: Path) -> object:
     return _GENERATED_ID.sub('<id>', content.replace(str(directory), '<dir>'))
 
 
-def _capabilities(built: AbstractCapability[Any] | Sequence[AbstractCapability[Any]]) -> list[AbstractCapability[Any]]:
+def _capabilities(
+    built: AbstractCapability[DepsT] | Sequence[AbstractCapability[DepsT]],
+) -> list[AbstractCapability[DepsT]]:
     return [built] if isinstance(built, AbstractCapability) else list(built)
 
 
@@ -232,14 +236,14 @@ def _prepare(name: str, case: CapabilityCase, monkeypatch: pytest.MonkeyPatch) -
         monkeypatch.setenv(key, value)
 
 
-def _build(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[AbstractCapability[Any]]:
+def _build(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[AbstractCapability[None]]:
     """Everything the case of `name` builds: the capability and what it runs with."""
     case = CASES[name]
     _prepare(name, case, monkeypatch)
     return build_capabilities(name, PUBLIC[name].load, case.fixture, tmp_path)
 
 
-def _built(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AbstractCapability[Any]:
+def _built(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AbstractCapability[None]:
     """The capability `name`, as its case builds it."""
     [capability] = [
         capability for capability in _build(name, tmp_path, monkeypatch) if type(capability).__name__ == name
@@ -247,7 +251,7 @@ def _built(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Abstra
     return capability
 
 
-def _toolset_ids(capability: AbstractCapability[Any]) -> list[str | None] | None:
+def _toolset_ids(capability: AbstractCapability[DepsT]) -> list[str | None] | None:
     """The id of every toolset `capability` builds itself, or `None` when it builds none or is made of others."""
     if leaf_capabilities(capability) != [capability]:
         return None
@@ -257,13 +261,13 @@ def _toolset_ids(capability: AbstractCapability[Any]) -> list[str | None] | None
     if not isinstance(toolset, AbstractToolset):
         # The agent wraps a toolset function in one `DynamicToolset`, with no id of its own. No case returns one yet.
         return [None]  # pragma: no cover
-    leaves: list[AbstractToolset[Any]] = []
+    leaves: list[AbstractToolset[DepsT]] = []
     # Pyright can't narrow the toolset function out of `AgentToolset`, as core's `CombinedCapability` notes.
     toolset.apply(leaves.append)  # pyright: ignore[reportUnknownMemberType]
     return [leaf.id for leaf in leaves]
 
 
-def _unset_id_breaks(capability: AbstractCapability[Any]) -> list[str]:
+def _unset_id_breaks(capability: AbstractCapability[DepsT]) -> list[str]:
     breaks: list[str] = []
     for label, built in (('its defaults', capability), ('`id=None`', replace(capability, id=None))):
         ids = _toolset_ids(built)
@@ -290,7 +294,7 @@ def test_a_custom_id_reaches_every_toolset(name: str, tmp_path: Path, monkeypatc
     _assert_holds(CUSTOM_ID, name, [] if reached else [f"with `id='custom'`, its toolset ids are {ids}"])
 
 
-def _through_client(cls: Callable[..., AbstractCapability[Any]], *, auth: str) -> AbstractCapability[Any]:
+def _through_client(cls: Callable[..., AbstractCapability[DepsT]], *, auth: str) -> AbstractCapability[DepsT]:
     return cls(client=hosted_server(), auth=auth)
 
 
@@ -303,7 +307,7 @@ def test_a_hosted_connection_takes_a_client_or_auth(name: str) -> None:
     assert _toolset_ids(capability) == [capability.id]
 
 
-async def _first_request(capabilities: Sequence[AgentCapability[Any]], directory: Path) -> object:
+async def _first_request(capabilities: Sequence[AgentCapability[None]], directory: Path) -> object:
     """What reaches the model in a run's first request, or why the agent refused the capabilities."""
     seen: list[object] = []
 
@@ -321,12 +325,16 @@ async def _first_request(capabilities: Sequence[AgentCapability[Any]], directory
         callable(capability) or type(capability).get_workspace is not AbstractCapability.get_workspace
         for capability in capabilities
     )
-    workspace = [] if supplies_workspace else [LocalWorkspace[Any](directory)]
+    workspace = [] if supplies_workspace else [LocalWorkspace[None](directory)]
     try:
         # Built off the event loop, as an app builds its agent: combining can construct capabilities, which may
         # read files. Streamed when a capability streams the run's requests.
         agent = await anyio.to_thread.run_sync(
-            lambda: Agent(FunctionModel(respond, stream_function=stream), capabilities=[*capabilities, *workspace])
+            lambda: Agent(
+                FunctionModel(respond, stream_function=stream),
+                deps_type=type(None),
+                capabilities=[*capabilities, *workspace],
+            )
         )
         await agent.run('go')
     except (UserError, ValueError) as exc:
@@ -363,7 +371,7 @@ async def test_a_workspace_from_a_function_works_like_a_static_one(
     static = _build(name, tmp_path / 'static', monkeypatch)
     if not any(isinstance(capability, LocalWorkspace) for capability in static):
         return
-    supplied: list[AgentCapability[Any]] = [
+    supplied: list[AgentCapability[None]] = [
         (lambda ctx, workspace=capability: workspace) if isinstance(capability, LocalWorkspace) else capability
         for capability in _build(name, tmp_path / 'function', monkeypatch)
     ]

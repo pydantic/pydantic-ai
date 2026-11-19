@@ -117,7 +117,8 @@ class Collides:
     """
 
     reason: str
-    make: Callable[[type[Any]], tuple[AbstractCapability[Any], AbstractCapability[Any]]] | None = None
+    # `type[Any]`: each class is called with its own keyword arguments, which `type[AbstractCapability[None]]` rejects.
+    make: Callable[[type[Any]], tuple[AbstractCapability[None], AbstractCapability[None]]] | None = None
     """Builds two from the discovered class, when two can be built without credentials or a network.
 
     Takes the class rather than closing over an import: these capabilities live in optional groups,
@@ -130,8 +131,9 @@ class Combines:
     """A default `id`: two of these are one configuration stated twice, and `combine` resolves them."""
 
     reason: str
-    make: Callable[[], tuple[AbstractCapability[Any], AbstractCapability[Any]]]
+    make: Callable[[], tuple[AbstractCapability[None], AbstractCapability[None]]]
     """Builds two instances that state *different* configuration, so a merge is observable."""
+    # `Any`: each check takes its own capability type, which no single parameter type admits.
     check: Callable[[Any], None]
     """Asserts what survived. Reads derived state too, not just the declared fields."""
 
@@ -148,7 +150,8 @@ class Narrows:
     """
 
     reason: str
-    make: Callable[[type[Any]], tuple[AbstractCapability[Any], AbstractCapability[Any]]]
+    # `type[Any]`: each class is called with its own keyword arguments, which `type[AbstractCapability[None]]` rejects.
+    make: Callable[[type[Any]], tuple[AbstractCapability[None], AbstractCapability[None]]]
     """Builds two that differ, from the discovered class, without credentials or a network."""
 
 
@@ -206,7 +209,7 @@ class CapabilityCase:
         return self.build
 
 
-def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]]:
+def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[None]]]:
     """Whether `obj` is a capability class, and not something that merely looks like one."""
     if not isinstance(obj, type):
         return False
@@ -235,15 +238,15 @@ def caused_by_missing_dependency(exc: BaseException) -> bool:
     return False
 
 
-def shipped_capability_types(packages: Sequence[str]) -> tuple[dict[str, type[AbstractCapability[Any]]], list[str]]:
+def shipped_capability_types(packages: Sequence[str]) -> tuple[dict[str, type[AbstractCapability[None]]], list[str]]:
     """Every capability class in `packages`, public or not, and the modules the walk skipped.
 
     Walks the packages rather than reading an export list, so a capability that is never re-exported
     is still covered. Modules whose optional dependency group is not installed are skipped -- the
     import error means the capability could not have been used either.
     """
-    found: dict[str, type[AbstractCapability[Any]]] = {}
-    classes: set[type[AbstractCapability[Any]]] = set()
+    found: dict[str, type[AbstractCapability[None]]] = {}
+    classes: set[type[AbstractCapability[None]]] = set()
     skipped: list[str] = []
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
@@ -294,7 +297,7 @@ def _keep_history(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages
 
 
-def _keep_model(ctx: ModelSelectionContext[Any]) -> Model:
+def _keep_model(ctx: ModelSelectionContext[None]) -> Model:
     assert ctx.model is not None
     return ctx.model
 
@@ -357,12 +360,12 @@ _FIRST_EXECUTOR = ThreadPoolExecutor(1, 'first')
 _SECOND_EXECUTOR = ThreadPoolExecutor(1, 'second')
 
 
-def _check_local_workspace(merged: LocalWorkspace[Any]) -> None:
+def _check_local_workspace(merged: LocalWorkspace[None]) -> None:
     # One environment: the later workspace replaces the earlier whole, so the first one's `env` never leaks.
     assert (merged.working_dir, merged.env, merged.read_only) == ('/second', None, False)
 
 
-def _windows_workspaces() -> tuple[WindowsWorkspace[Any], WindowsWorkspace[Any]]:
+def _windows_workspaces() -> tuple[WindowsWorkspace[None], WindowsWorkspace[None]]:
     # Built as if on Windows, which they need; combining them touches no backend.
     with patch('pydantic_ai.workspaces.windows._on_windows', return_value=True):
         return WindowsWorkspace('/first', env={'FIRST_SECRET': 'x'}, read_only=True), WindowsWorkspace('/second')
