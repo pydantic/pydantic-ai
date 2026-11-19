@@ -13,10 +13,11 @@ from ...conftest import try_import
 with try_import() as imports_successful:
     from pydantic_ai import Agent
     from pydantic_ai.computer_use import ComputerReturnPart
+    from pydantic_ai.exceptions import UserError
     from pydantic_ai.models.function import FunctionModel
     from pydantic_ai.workspaces import CommandResult, WorkspaceCommand, WorkspaceUnavailableError
     from pydantic_ai_harness.computer_use import ComputerUse
-    from pydantic_ai_harness.render_sandbox import RenderSandbox
+    from pydantic_ai_harness.render_sandbox import RenderSandbox, RenderSandboxBackend
 
     from .._fake_x_display import FakeDisplay
     from ..display_fakes import FAKE_SCREENSHOT, look_click_then_finish, screen
@@ -78,17 +79,29 @@ async def test_a_display_that_does_not_start_names_the_sandbox_and_what_it_needs
         sandbox_id: str, command: WorkspaceCommand, *, working_dir: str, env: dict[str, str]
     ) -> CommandResult:
         if 'Xvfb' in str(command):
-            return CommandResult(exit_code=1, stdout='', stderr="missing Xvfb, and there's no apt-get")
+            needs = "the display needs Xvfb, and there's no apt-get to install them with"
+            return CommandResult(exit_code=1, stdout='', stderr=needs)
         return CommandResult(exit_code=0, stdout='/home/render\n', stderr='')
 
     workspace_harness.execute = execute
 
     with pytest.raises(
         WorkspaceUnavailableError,
-        match=r'^Could not start the display in Render sandbox sb-1: it needs Xvfb, xdotool, xwininfo, scrot and '
-        r"setsid \(missing Xvfb, and there's no apt-get\)$",
+        match=r"^Could not start the display in Render sandbox sb-1: the display needs Xvfb, and there's no apt-get "
+        r'to install them with$',
     ):
         await screen(workspace_harness.backend(desktop=True)).display_size()
+
+
+def test_a_spec_gives_the_sandbox_its_desktop() -> None:
+    assert RenderSandbox[None].from_spec(desktop=(1440, 900)) == RenderSandbox[None](desktop=(1440, 900))
+
+
+def test_a_new_desktop_sandbox_needs_internet_access_to_install_the_display_programs() -> None:
+    with pytest.raises(UserError, match='needs `allow_internet_access=True`'):
+        RenderSandbox(desktop=True, allow_internet_access=False)
+    with pytest.raises(UserError, match='needs `allow_internet_access=True`'):
+        RenderSandboxBackend(desktop=True, allow_internet_access=False)
 
 
 async def test_a_desktop_sandbox_reattaches_with_its_display(

@@ -85,6 +85,15 @@ def check_sandbox_timeout(value: int) -> None:
         raise UserError(f'sandbox_timeout must be at most 86400 seconds, got {value!r}.')
 
 
+def check_desktop(desktop: bool | tuple[int, int], allow_internet_access: bool) -> None:
+    """Refuse a new desktop sandbox without internet access, which can't install the display programs."""
+    if desktop and not allow_internet_access:
+        raise UserError(
+            'A new desktop sandbox installs the display programs on first use with `apt-get`, so it needs '
+            '`allow_internet_access=True`.'
+        )
+
+
 _ASYNCIO_ONLY = 'Render sandbox needs the asyncio event loop: the backend runs its calls on asyncio tasks.'
 
 
@@ -110,7 +119,8 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             read from the host environment.
         desktop: Whether the sandbox has a display for
             [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or its
-            `(width, height)`. The first use installs Xvfb, `xdotool`, `x11-utils` and `scrot` with `apt-get`.
+            `(width, height)`. The first use installs the programs it needs with `apt-get`, so a new sandbox needs
+            `allow_internet_access`.
     """
 
     def __init__(
@@ -128,6 +138,8 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             check_provider(ref, 'render')
         check_sandbox_timeout(sandbox_timeout)
         check_env(env)
+        if ref is None:
+            check_desktop(desktop, allow_internet_access)
         self._env = dict(env or {})
         self._client = client
         self._ref = ref

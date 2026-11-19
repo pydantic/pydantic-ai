@@ -410,8 +410,8 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   itself. The agent can type only ASCII. A custom `template` needs Xvfb, `xdotool`, `xwininfo`, `scrot` and
   `setsid`, which the first use installs with `apt-get` as root or with passwordless `sudo`, and `startxfce4`.
 - `RenderSandbox(desktop=True)` gives the sandbox a 1280x800 screen for `ComputerUse()`, or pass `desktop=(w, h)`.
-  The first use installs Xvfb, `xdotool`, `x11-utils`, `scrot` and `util-linux` with `apt-get` (needs internet access). The screen
-  starts empty: install a browser or other programs before the run, or let the agent do it with `Shell`.
+  The first use installs the display programs with `apt-get`, so `allow_internet_access=False` raises `UserError`.
+  The screen starts empty: install a browser or other programs before the run, or let the agent do it with `Shell`.
 - Idempotent per-turn setup goes in a `@hooks.on.before_run` hook: `await ctx.workspace.run('test -d
   repo/.git || git clone <url> repo', shell=True, timeout=300)`. Clone into a subdirectory: `shell`,
   background commands, and output spills create `.pydantic-ai-harness/` in the working directory, so

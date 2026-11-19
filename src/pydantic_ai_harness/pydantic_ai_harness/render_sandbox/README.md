@@ -132,7 +132,7 @@ result = agent.run_sync(
 print(result.output)
 ```
 
-Render's default image has none of the screen's programs, so [the first use of the screen installs](../computer_use/#what-the-display-needs) Xvfb, `xdotool`, `x11-utils`, `scrot` and `util-linux` with `apt-get`, which needs `allow_internet_access`. The screen starts empty, with no window manager or browser: install the programs the agent should use before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run) with `RenderSandboxBackend(desktop=True)`, or let the agent install them with `Shell`. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another.
+Render's default image has none of the screen's programs, so [the first use of the screen installs them](../computer_use/#what-the-display-needs) with `apt-get`, which needs `allow_internet_access`; without it, `UserError` is raised. The screen starts empty, with no window manager or browser: install the programs the agent should use before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run) with `RenderSandboxBackend(desktop=True)`, or let the agent install them with `Shell`. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
