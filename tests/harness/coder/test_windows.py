@@ -24,7 +24,7 @@ windows_only = pytest.mark.skipif(sys.platform != 'win32', reason='runs PowerShe
 
 
 class _CountsRefusals(WindowsWorkspaceBackend):
-    """Counts the reads Windows refuses, and calls `on_refusal` after each, as a publish ends its replace."""
+    """Counts the reads Windows refuses, and calls `on_refusal` after each, so a test can release what refused it."""
 
     def __init__(self, working_dir: Path, on_refusal: Callable[[], None]) -> None:
         super().__init__(working_dir)
@@ -178,7 +178,7 @@ class TestShellOnWindows:
             ctypes.c_void_p,
         )
         kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
-        # `DELETE`, `FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE`, `OPEN_EXISTING` and `INVALID_HANDLE_VALUE`.
+        # `DELETE`, `FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE`, `OPEN_EXISTING`, `INVALID_HANDLE_VALUE`.
         delete, share_all, open_existing, invalid_handle = 0x10000, 0x7, 3, ctypes.c_void_p(-1).value
         handle = kernel32.CreateFileW(str(status), delete, share_all, None, open_existing, 0, None)
         held = [handle]
@@ -189,12 +189,12 @@ class TestShellOnWindows:
 
         backend = _CountsRefusals(project, release)
         try:
+            assert handle not in (None, invalid_handle)
             checked = await call_tool([shell], 'check_command', check, workspace=backend)
         finally:
             for open_handle in held:
                 kernel32.CloseHandle(open_handle)
             stopped = await call_tool([shell], 'stop_command', check, workspace=backend)
-        assert handle not in (None, invalid_handle)
         assert backend.refusals == refusals
         assert ('[status: running]' if released else '[Errno 13] Permission denied') in checked, checked
         assert '[stopped]' in stopped

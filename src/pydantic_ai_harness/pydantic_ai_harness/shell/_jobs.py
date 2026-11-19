@@ -54,9 +54,9 @@ _STATUS_READ_DELAY = 0.02
 """Reads of `status.json` a `'windows'` workspace refuses before the refusal is raised, and the seconds between them.
 
 `Move-Item -Force` replaces the file by deleting it and renaming `status.tmp`, holding it open for `DELETE` at each
-step, and Windows refuses an open that does not share delete, as `os.open` does not, meanwhile. `os.open` reports
-that and an access denial alike, so a refusal that outlasts these attempts is raised. They match the retry
-`_powershell`'s `Publish` gives its replace. Counted rather than timed, so a durable engine replays the same reads.
+step. Windows refuses an open that does not share delete while it does, and `os.open` does not share delete. It
+reports that refusal and an access denial alike, so a refusal that outlasts these attempts is raised. They match the
+retry `_powershell`'s `Publish` gives its replace. Counted rather than timed, so a durable engine replays the reads.
 """
 
 _WRAPPER = f"""{LIMIT_FUNCTION}
