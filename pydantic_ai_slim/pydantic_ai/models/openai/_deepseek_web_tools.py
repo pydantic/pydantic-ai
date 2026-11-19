@@ -7,14 +7,17 @@ from typing import Literal, cast
 from openai.types import chat, responses
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
 
+from ...exceptions import UserError
 from ...messages import NativeToolCallPart, NativeToolReturnPart
 from ...native_tools import WebFetchTool, WebSearchTool
+from .. import ModelRequestParameters
 from .._deepseek_web_tools import DeepSeekWebToolKind, DeepSeekWebToolName, native_web_tool_name, web_tool_name
 from ._errors import response_error
 
 _DETAILS_KEY = 'deepseek_responses_web_tool'
 CHAT_STEPS_KEY = 'deepseek_server_tool_calls'
-CHAT_REASONING_KEY = 'deepseek_final_reasoning'
+CHAT_FINAL_STEP_KEY = 'deepseek_final_reasoning_step'
+CHAT_STEP_KEY = 'deepseek_reasoning_step'
 
 
 class _WebToolItem(BaseModel):
@@ -121,6 +124,22 @@ class ChatWebEvent(BaseModel):
 
 
 chat_web_steps = TypeAdapter(list[ChatWebStep])
+
+
+def chat_web_step_metadata(steps: list[ChatWebStep]) -> list[object]:
+    """Keep wire step boundaries and field presence, with reasoning stored in ThinkingParts."""
+    stripped = [
+        step.model_copy(update={'reasoning_content': ''}) if step.reasoning_content is not None else step
+        for step in steps
+    ]
+    return cast(list[object], chat_web_steps.dump_python(stripped, mode='json', exclude_unset=True))
+
+
+def check_web_output(params: ModelRequestParameters) -> None:
+    if params.output_mode in ('native', 'prompted') and any(
+        isinstance(tool, WebSearchTool | WebFetchTool) for tool in params.native_tools
+    ):
+        raise UserError('DeepSeek web tools require text output. Use text or tool output, or disable the web tools.')
 
 
 def chat_web_tool_param(tool: WebSearchTool | WebFetchTool) -> chat.ChatCompletionToolParam:

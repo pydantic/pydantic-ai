@@ -43,10 +43,12 @@ from ._citations import (
     map_chat_citations,
 )
 from ._deepseek_web_tools import (
-    CHAT_REASONING_KEY,
+    CHAT_FINAL_STEP_KEY,
+    CHAT_STEP_KEY,
     CHAT_STEPS_KEY,
     ChatWebCall,
     ChatWebEvent,
+    chat_web_step_metadata,
     chat_web_steps,
     check_chat_web_error,
 )
@@ -83,7 +85,8 @@ class OpenAIStreamedResponse(StreamedResponse):
     _pending_raw_annotations: list[object] = field(default_factory=list[object], init=False)
     _unmapped_chunks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
 
-    _deepseek_final_reasoning: list[str] = field(default_factory=list[str], init=False)
+    _deepseek_reasoning_step: int = 0
+    _deepseek_has_reasoning: bool = False
     _deepseek_started_calls: dict[str, ChatWebCall] = field(default_factory=dict[str, ChatWebCall], init=False)
 
     async def close_stream(self) -> None:
@@ -157,15 +160,16 @@ class OpenAIStreamedResponse(StreamedResponse):
         if raw_event := (choice.model_extra or {}).get('server_tool_event'):
             yield from self._map_deepseek_web_progress(ChatWebEvent.model_validate(raw_event))
         delta = choice.delta.model_extra or {}
-        if isinstance(reasoning := delta.get('reasoning_content'), str):
-            self._deepseek_final_reasoning.append(reasoning)
+        if isinstance(delta.get('reasoning_content'), str):
+            self._deepseek_has_reasoning = True
         if raw_steps := delta.get('server_tool_calls'):
             steps = chat_web_steps.validate_python(raw_steps)
             self.provider_details = {
                 **(self.provider_details or {}),
-                CHAT_STEPS_KEY: chat_web_steps.dump_python(steps, mode='json', exclude_unset=True),
-                CHAT_REASONING_KEY: ''.join(self._deepseek_final_reasoning),
+                CHAT_STEPS_KEY: chat_web_step_metadata(steps),
             }
+            if self._deepseek_has_reasoning:
+                self.provider_details[CHAT_FINAL_STEP_KEY] = self._deepseek_reasoning_step
             for step in steps:
                 for call in step.calls:
                     call_id = ('deepseek_call', call.id)
@@ -177,7 +181,8 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     def _map_deepseek_web_progress(self, event: ChatWebEvent) -> Iterator[ModelResponseStreamEvent]:
         if event.type == 'step_reasoning_done':
-            self._deepseek_final_reasoning.clear()
+            self._deepseek_has_reasoning = False
+            self._deepseek_reasoning_step = event.step + 1
             self._advance_part_boundary('tool')
         elif event.type == 'call_started':
             call = ChatWebCall.model_validate(event.call)
@@ -354,6 +359,9 @@ class OpenAIStreamedResponse(StreamedResponse):
                 id=field_name,
                 content=reasoning,
                 provider_name=self.provider_name,
+                provider_details={CHAT_STEP_KEY: self._deepseek_reasoning_step}
+                if field_name == 'reasoning_content' and profile.get('openai_deepseek_web_tools', False)
+                else None,
             ):
                 if isinstance(event, PartStartEvent):
                     self._advance_part_boundary('reasoning')

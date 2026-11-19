@@ -130,11 +130,15 @@ from ._chat_completions import (
 from ._chat_streaming import OpenAIStreamedResponse
 from ._citations import map_chat_content
 from ._deepseek_web_tools import (
-    CHAT_REASONING_KEY,
+    CHAT_FINAL_STEP_KEY,
+    CHAT_STEP_KEY,
     CHAT_STEPS_KEY,
+    ChatWebStep,
+    chat_web_step_metadata,
     chat_web_steps,
     chat_web_tool_param,
     check_chat_web_error,
+    check_web_output,
 )
 from ._errors import check_azure_content_filter, is_azure, map_api_errors
 from ._model_names import OpenAIModelName
@@ -431,6 +435,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 f'Please use `OpenAIResponsesModel` instead.'
             )
         model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        if self.profile.get('openai_deepseek_web_tools', False):
+            check_web_output(model_request_parameters)
         return translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
 
     def _unsupported_settings(self) -> frozenset[str]:
@@ -795,8 +801,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         items: list[ModelResponsePart] = []
         if self.profile.get('openai_deepseek_web_tools', False):
             items.extend(self._map_deepseek_web_steps(choice.message, provider_details))
-
-        if thinking_parts := self._process_thinking(choice.message):
+        elif thinking_parts := self._process_thinking(choice.message):
             items.extend(thinking_parts)
 
         items.extend(
@@ -836,16 +841,26 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         message_extras = message.model_extra or {}
         if raw_steps := message_extras.get('server_tool_calls'):
             steps = chat_web_steps.validate_python(raw_steps)
-            provider_details[CHAT_STEPS_KEY] = chat_web_steps.dump_python(steps, mode='json', exclude_unset=True)
-            if isinstance(final_reasoning := message_extras.get('reasoning_content'), str):
-                provider_details[CHAT_REASONING_KEY] = final_reasoning
+            provider_details[CHAT_STEPS_KEY] = chat_web_step_metadata(steps)
+            if isinstance(message_extras.get('reasoning_content'), str):
+                provider_details[CHAT_FINAL_STEP_KEY] = max((step.index for step in steps), default=-1) + 1
             for step in steps:
                 if step.reasoning_content:
                     items.append(
-                        ThinkingPart(id='reasoning_content', content=step.reasoning_content, provider_name=self.system)
+                        ThinkingPart(
+                            id='reasoning_content',
+                            content=step.reasoning_content,
+                            provider_name=self.system,
+                            provider_details={CHAT_STEP_KEY: step.index},
+                        )
                     )
                 items.extend(call.call_part(self.system) for call in step.calls)
                 items.extend(call.return_part(self.system) for call in step.calls)
+        if thinking_parts := self._process_thinking(message):
+            if isinstance(final_step := provider_details.get(CHAT_FINAL_STEP_KEY), int):
+                for part in thinking_parts:
+                    part.provider_details = {CHAT_STEP_KEY: final_step}
+            items.extend(thinking_parts)
         return items
 
     def _fill_missing_finish_reason(self, response: chat.ChatCompletion) -> bool:
@@ -1293,7 +1308,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if self.profile.get('openai_deepseek_web_tools', False) and self.accepts_stateless_artifacts(message):
             details = message.provider_details or {}
             if wire_steps := details.get(CHAT_STEPS_KEY):
-                param = self._replay_deepseek_web_steps(message, param, wire_steps, details.get(CHAT_REASONING_KEY))
+                param = self._replay_deepseek_web_steps(message, param, wire_steps, details.get(CHAT_FINAL_STEP_KEY))
         return param
 
     def _replay_deepseek_web_steps(
@@ -1301,22 +1316,29 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         message: ModelResponse,
         param: chat.ChatCompletionAssistantMessageParam | None,
         wire_steps: object,
-        final_reasoning: object,
+        final_step: object,
     ) -> chat.ChatCompletionAssistantMessageParam | None:
         calls: set[tuple[str, str]] = set()
         returns: set[tuple[str, str]] = set()
+        thinking_by_step: dict[int, list[str]] = {}
         for part in message.parts:
-            if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and self.accepts_stateless_artifacts(
-                message, part
-            ):
+            if not self.accepts_stateless_artifacts(message, part):
+                continue
+            if isinstance(part, NativeToolCallPart | NativeToolReturnPart):
                 keys = calls if isinstance(part, NativeToolCallPart) else returns
                 keys.add((part.tool_call_id, part.tool_name))
+            elif isinstance(part, ThinkingPart) and isinstance(
+                index := (part.provider_details or {}).get(CHAT_STEP_KEY), int
+            ):
+                thinking_by_step.setdefault(index, []).append(part.content)
         retained = calls & returns
-        steps = [
-            step.model_copy(update={'calls': step_calls})
-            for step in chat_web_steps.validate_python(wire_steps)
-            if (step_calls := [call for call in step.calls if (call.id, call.tool_name) in retained])
-        ]
+        steps: list[ChatWebStep] = []
+        for step in chat_web_steps.validate_python(wire_steps):
+            step.calls = [call for call in step.calls if (call.id, call.tool_name) in retained]
+            if step.calls:
+                if step.reasoning_content is not None:
+                    step.reasoning_content = ''.join(thinking_by_step.get(step.index, ()))
+                steps.append(step)
         if steps:
             param = param or chat.ChatCompletionAssistantMessageParam(role='assistant', content=None)
         if param is not None:
@@ -1325,8 +1347,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             if steps:
                 wire['server_tool_calls'] = chat_web_steps.dump_python(steps, mode='json', exclude_unset=True)
             wire.pop('reasoning_content', None)
-            if isinstance(final_reasoning, str):
-                wire['reasoning_content'] = final_reasoning
+            if isinstance(final_step, int):
+                wire['reasoning_content'] = ''.join(thinking_by_step.get(final_step, ()))
         return param
 
     def _map_carried_thinking(self, message: ModelResponse) -> chat.ChatCompletionUserMessageParam | None:

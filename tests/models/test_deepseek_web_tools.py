@@ -7,12 +7,18 @@ from pathlib import Path
 
 import httpx2
 import pytest
-from pydantic import JsonValue, TypeAdapter
+from pydantic import BaseModel, JsonValue, TypeAdapter
 
-from pydantic_ai import Agent, ModelResponse
+from pydantic_ai import Agent, ModelResponse, NativeOutput, PromptedOutput
 from pydantic_ai.capabilities import WebFetch, WebSearch
-from pydantic_ai.exceptions import ModelServerError
-from pydantic_ai.messages import ModelMessagesTypeAdapter, NativeToolCallPart, NativeToolReturnPart, TextPart
+from pydantic_ai.exceptions import ModelServerError, UserError
+from pydantic_ai.messages import (
+    ModelMessagesTypeAdapter,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    TextPart,
+    ThinkingPart,
+)
 from pydantic_ai.models import Model
 from pydantic_ai.native_tools import WebFetchTool, WebSearchTool
 
@@ -40,7 +46,14 @@ def deepseek_model(api: str, client: httpx2.AsyncClient) -> Model:
 
 @pytest.fixture
 def recordings(api: str) -> tuple[bytes, bytes]:
-    return (_FIXTURES / f'{api}.json').read_bytes(), (_FIXTURES / f'{api}.sse').read_bytes() + b'\n'
+    response = (_FIXTURES / f'{api}.json').read_bytes()
+    if api == 'chat':
+        body = json.loads(response)
+        message = body['choices'][0]['message']
+        message['server_tool_calls'][0]['reasoning_content'] = 'Thinking before reading'
+        message['reasoning_content'] = 'Thinking after reading'
+        response = json.dumps(body).encode()
+    return response, (_FIXTURES / f'{api}.sse').read_bytes() + b'\n'
 
 
 @pytest.mark.parametrize('api', ['chat', 'responses', 'messages'])
@@ -89,9 +102,25 @@ async def test_deepseek_web_fetch_history(
 
         await Agent(model, model_settings={'thinking': False}).run('What was the UUID?', message_history=history)
         if api == 'chat':
+            if not stream:
+                assert [part.content for part in response.parts if isinstance(part, ThinkingPart)] == [
+                    'Thinking before reading',
+                    'Thinking after reading',
+                ]
+                full_history = json.dumps(requests[1]['messages'])
+                assert 'Thinking before reading' in full_history
+                assert 'Thinking after reading' in full_history
+                response.parts = [part for part in response.parts if not isinstance(part, ThinkingPart)]
+                await Agent(model, model_settings={'thinking': False}).run(
+                    'What was the UUID?', message_history=history
+                )
+                thinking_filtered_history = json.dumps(requests[-1]['messages'])
+                assert 'Thinking before reading' not in thinking_filtered_history
+                assert 'Thinking after reading' not in thinking_filtered_history
+                assert 'recorded-page-signature' in thinking_filtered_history
             response.parts = [part for part in response.parts if part is not call and part is not result_part]
             await Agent(model, model_settings={'thinking': False}).run('What was the UUID?', message_history=history)
-            filtered_history = json.dumps(requests[2]['messages'])
+            filtered_history = json.dumps(requests[-1]['messages'])
             assert 'server_tool_calls' not in filtered_history
             assert 'recorded-page-signature' not in filtered_history
 
@@ -163,3 +192,22 @@ def test_deepseek_web_tool_profile_scope() -> None:
     assert WebFetchTool in flash.profile.get('supported_native_tools', frozenset())
     assert pro.unsupported_native_tool_settings(native_tool) == frozenset()
     assert flash.unsupported_native_tool_settings(native_tool) == frozenset({'allowed_domains'})
+
+
+class SearchAnswer(BaseModel):
+    summary: str
+
+
+@pytest.mark.parametrize(('api', 'native'), [('chat', False), ('responses', False), ('responses', True)])
+async def test_deepseek_web_tools_reject_non_text_format(api: str, native: bool, allow_model_requests: None) -> None:
+    def handle(_: httpx2.Request) -> httpx2.Response:
+        pytest.fail('Structured format must be rejected before making a provider request.')
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
+        agent = Agent(
+            deepseek_model(api, client),
+            capabilities=[WebSearch()],
+            output_type=NativeOutput(SearchAnswer) if native else PromptedOutput(SearchAnswer),
+        )
+        with pytest.raises(UserError, match='DeepSeek web tools require text output'):
+            await agent.run('Search the web.')
