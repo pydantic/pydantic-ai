@@ -1310,6 +1310,13 @@ TEST_MODEL_SCHEMAS: dict[str, JsonSchema] = {
     'allOf-ref-to-boolean': {'allOf': [{'$ref': '#/$defs/Flag'}, {'type': 'integer'}]},
     'allOf-ref-to-ref': {'type': 'string', 'allOf': [{'$ref': '#/$defs/Alias'}]},
     'allOf-anyOf': {'type': 'string', 'allOf': [{'anyOf': [{'type': 'string'}, {'type': 'integer'}]}]},
+    'allOf-repeated-bound': {'allOf': [{'type': 'integer', 'minimum': -10}, {'type': 'integer', 'minimum': 0}]},
+    'allOf-repeated-property': {
+        'allOf': [
+            {'type': 'object', 'properties': {'a': {'type': 'integer', 'minimum': -10}}, 'required': ['a']},
+            {'properties': {'a': {'type': 'integer', 'minimum': 0}}},
+        ]
+    },
     'minProperties': {'type': 'object', 'minProperties': 1},
     'minProperties-optional': {'type': 'object', 'properties': {'a': _LEAF}, 'minProperties': 1},
     'minProperties-declared-name': {

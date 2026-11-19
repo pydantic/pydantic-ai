@@ -514,6 +514,19 @@ class _JsonSchemaTestData:
         ('exclusiveMaximum', lambda value, bound: value < bound),
     )
     """Each JSON Schema numeric bound, and whether a value is within it."""
+    _TIGHTER_BOUND: ClassVar[dict[str, Callable[[float, float], float]]] = {
+        'minimum': max,
+        'exclusiveMinimum': max,
+        'minLength': max,
+        'minItems': max,
+        'minProperties': max,
+        'maximum': min,
+        'exclusiveMaximum': min,
+        'maxLength': min,
+        'maxItems': min,
+        'maxProperties': min,
+    }
+    """Each JSON Schema bound, and how two `allOf` members' values for it combine into the tighter one."""
     _FORMATS: ClassVar[dict[str, Callable[[int], str]]] = {
         'date': _seed_date,
         'date-time': lambda seed: f'{_seed_date(seed)}T00:00:00Z',
@@ -591,7 +604,8 @@ class _JsonSchemaTestData:
     def _merge_all_of(self, schema: dict[str, Any], all_of: list[object]) -> dict[str, Any]:
         """`schema` without `allOf`, with each member's keywords added.
 
-        `properties` and `required` are combined; any other keyword the schema or an earlier member has keeps its value.
+        `properties` and `required` are combined, a property two of them declare gets both schemas as an `allOf`, and a
+        bound takes the tighter value; any other keyword the schema or an earlier member has keeps its value.
         """
         merged = {key: value for key, value in schema.items() if key != 'allOf'}
         # A member's own `allOf`, `$ref` and the `anyOf` member the seed picks are merged as members too, and each `$ref`
@@ -611,13 +625,20 @@ class _JsonSchemaTestData:
 
     @staticmethod
     def _merge_keywords(merged: dict[str, Any], member: dict[str, Any]) -> None:
-        """Add an `allOf` member's keywords to `merged`, combining `properties` objects and `required` lists."""
+        """Add an `allOf` member's keywords to `merged`, combining `properties`, `required` and bounds."""
         for key, value in member.items():
             existing = merged.get(key)
             if key == 'properties' and _utils.is_str_dict(value) and (existing is None or _utils.is_str_dict(existing)):
-                merged['properties'] = {**value, **(existing or {})}
+                existing = existing or {}
+                both = {name: {'allOf': [existing[name], schema]} for name, schema in value.items() if name in existing}
+                merged['properties'] = {**value, **existing, **both}
             elif key == 'required' and isinstance(value, list) and isinstance(existing, list | None):
                 merged['required'] = [*(existing or []), *value]
+            elif (tighter := _JsonSchemaTestData._TIGHTER_BOUND.get(key)) and (
+                (bound := _JsonSchemaTestData._finite_bound(merged, key)) is not None
+                and (other := _JsonSchemaTestData._finite_bound(member, key)) is not None
+            ):
+                merged[key] = tighter(bound, other)
             elif key not in ('allOf', 'anyOf', '$ref'):
                 merged.setdefault(key, value)
 
