@@ -57,6 +57,7 @@ from pydantic_ai_harness.planning import (
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.smart_search import SmartSearch
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
 try:
@@ -514,9 +515,6 @@ async def test_dbos_recovery_reports_the_same_shell_job(dbos: DBOS) -> None:
     assert (_SHELL_DIRECTORY / 'side-effects.txt').read_text().splitlines() == ['one']
 
 
-_READINESS_WAIT_TIMEOUT = 5.0
-
-
 class _SlowReadPlanStore(InMemoryPlanStore):
     """A plan store whose `get_item` waits, once a plan tool has emitted `last_event`, until it's handled.
 
@@ -537,7 +535,7 @@ class _SlowReadPlanStore(InMemoryPlanStore):
         return isinstance(event, event_type) and event.item.id == task_id
 
     async def get_item(self, item_id: str) -> PlanItem | None:
-        with anyio.fail_after(_READINESS_WAIT_TIMEOUT):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             await self.released.wait()
         return await super().get_item(item_id)
 

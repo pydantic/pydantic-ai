@@ -21,6 +21,7 @@ from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 from pydantic_clai2.ui.rendering.rendering import StreamRenderer
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.clai2.test_live_prompt import editor
 from tests.conftest import no_leaked_tasks
 
@@ -511,9 +512,6 @@ async def test_recalled_queued_prompt_edited_into_immediate_command_leaves_queue
         live.feed('enter')
         assert ran == ['/now', 'changed']
         assert live.queued_messages == ('changed',)
-
-
-READINESS_WAIT_TIMEOUT = 10
 
 
 @pytest.mark.parametrize('route', ['draft', 'queued'])

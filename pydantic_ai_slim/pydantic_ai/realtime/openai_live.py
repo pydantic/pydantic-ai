@@ -868,7 +868,7 @@ class OpenAILiveConnection(RealtimeConnection):
         self._recent_event_ids: deque[str] = deque(maxlen=_REPLAYED_EVENTS_REMEMBERED)
         self._seen_event_ids: set[str] = set()
         # Set when a re-attach replaces the socket or is given up on, for the sends waiting on it (see `_send_event`).
-        self._socket_changed = asyncio.Event()
+        self._socket_changed = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         self._reconnect = reconnect
         self._forks = forks
         self._message_history: Callable[[], Sequence[ModelMessage]] | None = None
@@ -1145,7 +1145,7 @@ class OpenAILiveConnection(RealtimeConnection):
         """
         while (delay := self._idle_frame_due() - _pump_clock()) > 0:
             # In short steps, so a schedule a redial cuts short (see `_forget_session_state`) takes effect.
-            await asyncio.sleep(min(delay, _IDLE_AUDIO_FRAME))
+            await asyncio.sleep(min(delay, _IDLE_AUDIO_FRAME))  # noqa: TID251  (not converted to anyio yet)
         # Booked from now rather than from when it was due, so a stalled loop doesn't catch up with a
         # burst of frames that would run Live's timeline ahead of the clock.
         self._next_idle_frame = max(self._idle_frame_due(), _pump_clock()) + _IDLE_AUDIO_FRAME
@@ -1248,7 +1248,7 @@ class OpenAILiveConnection(RealtimeConnection):
     def _socket_change_settled(self) -> None:
         """Wake the sends waiting for a re-attach: the sideband was replaced, or won't be."""
         self._socket_changed.set()
-        self._socket_changed = asyncio.Event()
+        self._socket_changed = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
 
     async def _end_session(self) -> AsyncIterator[SessionUsage]:
         """Send `session.close`, and read on until `session.closed` reports the session's final usage.
