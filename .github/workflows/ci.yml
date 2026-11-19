@@ -1717,6 +1717,8 @@ jobs:
       # `--no-config`: the project's `exclude-dependencies` would otherwise drop the package too.
       - run: uv pip install --no-config "browser-use>=0.13.6,<0.14"
       - run: uv run --no-sync coverage run -m pytest tests/harness/browser_use
+      # The capability contracts skip `BrowserUse` on every other job.
+      - run: uv run --no-sync coverage run -m pytest tests/harness/test_capability_contracts.py -k BrowserUse
       - run: uv run --no-sync pyright -p tests/harness/browser_use
         env:
           PYRIGHT_PYTHON_IGNORE_WARNINGS: 1
@@ -1908,7 +1910,9 @@ jobs:
       # binaries and data files; each hosted MCP capability's own module runs here. `tests/durable_exec` runs with `BLOCKBUSTER_ENABLED=false`, as in
       # `test-durable-exec`: Prefect writes its result cache from inside the event loop.
       # `tests/test_conftest.py` tests BlockBuster itself, which skips in lanes that turn it off; this
-      # is the only BlockBuster-on lane that uploads coverage.
+      # is the only BlockBuster-on lane that uploads coverage. `tests/test_history_append_only.py`
+      # builds the core `MCP` case, whose FastMCP import lives in `tests/capability_cases.py`, where
+      # the pattern doesn't look.
       # `--no-extra sentence-transformers`: no MCP test module imports it, and its torch and CUDA
       # wheels are about 2.6 GB of the 3.2 GB this step downloads on a uv cache miss. A slow download
       # of them has run this job past `timeout-minutes` (#13931), as in `test-durable-exec`. The
@@ -1927,6 +1931,7 @@ jobs:
             git grep -lE "$pattern" -- 'tests/**/test_*.py' 'tests/test_*.py'
             git grep -lE "$pattern" -- 'tests/**/conftest.py' | sed 's|/conftest\.py$||'
             echo tests/test_conftest.py
+            echo tests/test_history_append_only.py
           } | sort -u)
           durable=() other=()
           for module in "${modules[@]}"; do

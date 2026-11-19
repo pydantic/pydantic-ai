@@ -87,6 +87,8 @@ def markdown_style() -> RenderStyle:
     )
 
 
+MAX_LINK = 2048
+"""The longest URL CLAI makes a terminal hyperlink, since the escape repeats it: per streamed chunk, or per folded row."""
 _URL_RE = re.compile(r'<(https?://[^\s<>]+)>|(?<![\w/])https?://[^\s<>`]+')
 _URL_START, _URL_END = '\ufdd0', '\ufdd1'
 """Marks around a URL while Termflow formats the line.
@@ -154,7 +156,7 @@ class LinkOutput(io.StringIO):
     def _track_link(self, match: re.Match[str]) -> str:
         # Smoothing repeats metadata per chunk. Cap the destination so large
         # model-generated URLs cannot amplify terminal output without bound.
-        self._link = match[0] if 0 < len(match[1]) <= 2048 else ''
+        self._link = match[0] if 0 < len(match[1]) <= MAX_LINK else ''
         return self._link or '\x1b]8;;\x1b\\'
 
     def flush(self) -> None:
