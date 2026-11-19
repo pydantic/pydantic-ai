@@ -94,7 +94,7 @@ async def test_native_output_with_function_tools_unsupported_falls_back(
 
     A unit test: the guard raises before any request, so there is nothing to record, and the capture shows that.
     """
-    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.client)
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
     google = GoogleModel('gemini-2.5-flash', provider=provider)
     assert google.profile.get('google_supports_tool_combination') is False
 
