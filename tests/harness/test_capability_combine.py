@@ -31,19 +31,16 @@ same pull request, so a rename fails this file alongside the change that made it
 from __future__ import annotations
 
 import importlib
-import pkgutil
 import tempfile
-import warnings
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path
-from typing import Any, TypeGuard
+from typing import Any
 
 import pytest
 
-import pydantic_ai_harness
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import CombinedCapability, Thinking
 from pydantic_ai.capabilities.abstract import (
@@ -88,6 +85,8 @@ from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from pydantic_ai_harness.sub_agents import AgentOverride
 from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
+
+from ._shipped_capabilities import shipped_capability_types
 
 
 async def _decline(request: AskUserRequest) -> AskUserResponse:
@@ -602,65 +601,6 @@ COMBINE_POLICY: dict[str, Policy] = {
 }
 
 
-def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]]:
-    """Whether `obj` is a capability class, and not something that merely looks like one."""
-    if not isinstance(obj, type):
-        return False
-    try:
-        return issubclass(obj, AbstractCapability)
-    except TypeError:  # pragma: lax no cover
-        return False
-
-
-def _caused_by_missing_dependency(exc: BaseException) -> bool:
-    """Whether `exc` is an uninstalled optional group rather than a broken capability.
-
-    Follows the chain rather than matching a type, because the same condition reaches this walk in
-    three shapes: `ModuleNotFoundError` from the import itself, a plain `ImportError` from a module
-    that re-raises install guidance, and a `UserError` a capability raises while constructing
-    something at import time. The last two are raised inside an `except ImportError` block, so the
-    original is on `__cause__` or `__context__` either way.
-    """
-    seen: set[int] = set()
-    current: BaseException | None = exc
-    while current is not None and id(current) not in seen:
-        if isinstance(current, ImportError):
-            return True
-        seen.add(id(current))
-        current = current.__cause__ or current.__context__
-    return False
-
-
-def _shipped_capability_types() -> tuple[dict[str, type[AbstractCapability[Any]]], list[str]]:
-    """Every capability class in `pydantic_ai_harness`, public or not.
-
-    Walks the package rather than reading an export list, so a capability that is never re-exported
-    is still covered. Modules whose optional dependency group is not installed are skipped -- the
-    import error means the capability could not have been used either.
-    """
-    found: dict[str, type[AbstractCapability[Any]]] = {}
-    skipped: list[str] = []
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        for module_info in pkgutil.walk_packages(pydantic_ai_harness.__path__, f'{pydantic_ai_harness.__name__}.'):
-            try:
-                module = importlib.import_module(module_info.name)
-            except Exception as exc:
-                if not _caused_by_missing_dependency(exc):
-                    # A real failure -- a broken module, a bad constant -- has to surface.
-                    # Swallowing it drops the capability from `found`, and the exhaustiveness check
-                    # below then passes because the capability it should have caught is invisible
-                    # rather than absent. That is not hypothetical: it is how `AWSLambdaDurability`
-                    # reached this branch with no policy entry while this test was green locally.
-                    raise
-                skipped.append(module_info.name)
-                continue
-            for obj in vars(module).values():
-                if _is_capability_class(obj) and obj.__module__.startswith(pydantic_ai_harness.__name__):
-                    found[obj.__name__] = obj
-    return found, skipped
-
-
 def test_the_capability_walk_hides_a_missing_extra_and_nothing_else(monkeypatch: pytest.MonkeyPatch) -> None:
     """The walk may ignore an uninstalled optional group, and must not ignore anything else.
 
@@ -705,13 +645,13 @@ def test_the_capability_walk_hides_a_missing_extra_and_nothing_else(monkeypatch:
         wrapped_in_user_error(),
     ):
         monkeypatch.setattr(importlib, 'import_module', raise_for(a_capability_module, exc))
-        _, skipped = _shipped_capability_types()
+        _, skipped = shipped_capability_types()
         assert a_capability_module in skipped, f'{type(exc).__name__} should be treated as a missing extra'
 
     # Anything else is a real failure and has to surface rather than shrink the set.
     monkeypatch.setattr(importlib, 'import_module', raise_for(a_capability_module, ValueError('bad constant')))
     with pytest.raises(ValueError, match='bad constant'):
-        _shipped_capability_types()
+        shipped_capability_types()
 
 
 def test_every_capability_declares_a_combine_policy() -> None:
@@ -721,7 +661,7 @@ def test_every_capability_declares_a_combine_policy() -> None:
     outcome nobody chose. Add an entry to `COMBINE_POLICY`: `Anonymous` when several per agent is
     normal, `Combines` when it carries a default `id`.
     """
-    found, skipped = _shipped_capability_types()
+    found, skipped = shipped_capability_types()
     shipped = set(found)
     declared = set(COMBINE_POLICY)
     assert not (shipped - declared), (
@@ -740,7 +680,7 @@ def test_every_capability_declares_a_combine_policy() -> None:
 def test_capability_combine_policy_holds(name: str) -> None:
     """Each capability composes -- or refuses to -- the way its policy says."""
     policy = COMBINE_POLICY[name]
-    shipped, _ = _shipped_capability_types()
+    shipped, _ = shipped_capability_types()
     if name not in shipped:  # pragma: lax no cover
         pytest.skip(f'{name} needs an optional dependency group that is not installed')
     capability_type = shipped[name]
@@ -784,7 +724,7 @@ async def test_two_of_a_colliding_capability_still_raise(name: str, anyio_backen
     because that is exactly the shape the reasons in this table used to claim was supported. It is
     not: the toolset's tool names are fixed, so the second registration conflicts with the first.
     """
-    shipped, _ = _shipped_capability_types()
+    shipped, _ = shipped_capability_types()
     if name not in shipped:  # pragma: no cover
         pytest.skip(f'{name} needs an optional dependency group that is not installed')
     policy = COMBINE_POLICY[name]
