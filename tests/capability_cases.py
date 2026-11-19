@@ -676,6 +676,7 @@ UNSET_ID = Contract(
                 'Memory',
                 'Notion',
                 'Ordinal',
+                'Pixeltable',
                 'PostHog',
                 'PruneToolResults',
                 'Pylon',
