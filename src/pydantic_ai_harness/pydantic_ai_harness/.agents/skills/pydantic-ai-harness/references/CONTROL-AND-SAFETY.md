@@ -16,6 +16,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Stop tool calls failing on trailing commas, single quotes, truncated JSON | `RepairToolArguments()` |
 | Refuse or redact a prompt before it reaches the model | `InputGuardrail(guard=...)` |
 | Block, redact, or retry the final output | `OutputGuardrail(guard=...)` |
+| Keep an unattended run going until a completion check you define accepts the output | `Goal(goal=..., verify=...)` |
 | Screen each streamed text, thinking or tool-call part before the caller sees it | `StreamGuardrail(guard=...)` |
 | Block/rewrite tool arguments, redact tool results, or hide tools | `ToolGuardrail(guard=..., result_guard=..., hidden=[...])` |
 | Mask API keys, tokens, PII in text | `guardrails.detectors.redact_secrets` / `redact_personal_data` in a guard |
@@ -1020,6 +1021,43 @@ print(agent.run_sync('Explain the change').output)
   every answer, the first one included.
 - Several on one agent each count their own rounds and add their instructions to a round. Emits no spans.
 
+## Goal
+
+States the run's goal in the instructions and, when you pass an async `verify(ctx, output)`, calls it
+on every final output. Return `None` to accept or a nonempty string saying
+what remains; a rejection raises `ModelRetry` with the goal and the gap, so the model keeps working
+in the same conversation. No per-run state, not serializable to an agent spec.
+
+```python
+from pydantic_ai import Agent, RunContext
+
+from pydantic_ai_harness import Goal
+
+
+async def verify(ctx: RunContext[None], output: object) -> str | None:
+    return None if output == 'done' else 'Finish the migration before answering.'
+
+
+agent = Agent('test', retries={'output': 3}, capabilities=[Goal(goal='Migrate the config.', verify=verify)])
+```
+
+- Rejections share the `retries={'output': n}` budget with other output validation, and exhaustion
+  raises `UnexpectedModelBehavior`; `UsageLimits` still end the run. For a final tool-less answer at the
+  limit add `WrapUpAtLimits`: its answer still goes through `verify`, and a rejection there raises
+  `UsageLimitExceeded` since no request is left for the retry.
+- Verify real evidence (files, tests, external state), not the model's claim. An LLM judge agent
+  inside `verify` works: pass `usage=ctx.usage` to its `run()` and give it evidence, not just the answer.
+- Output functions run before the check and can run again after a rejection, so keep them idempotent.
+- Without `verify`, `Goal` only adds the goal instructions. `headless=False` drops the
+  nobody-is-available text for interactive runs; a `verify` is still enforced. To let an interactive
+  run stop and ask, set `headless=False` and leave `verify` unset.
+- Pick `OutputGuardrail` instead for block/redact/retry policies that don't depend on a goal.
+- Default `id='goal'`: two that disagree under one `id` raise, so give each extra `Goal` its own `id`.
+  `verify` runs as the durable operation `verify` under Temporal, DBOS, and Prefect: a replay reuses
+  its result; on Temporal a structured output arrives as JSON data (validate it, don't `isinstance`),
+  `ctx.messages` is unavailable, and a verifier exception retries the activity instead of propagating.
+- Emits a `goal.verify` span (`goal.met`; `goal.description`/`goal.gap` with `trace_include_content`).
+
 ## RequireVerification
 
 When a run would end after an edit (a `FileSystem` `write_file`/`edit_file` call, matched by tool kind, or a
@@ -1112,6 +1150,7 @@ print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).outp
 
 - https://pydantic.dev/docs/ai/harness/repair-tool-arguments/
 - https://pydantic.dev/docs/ai/harness/guardrails/
+- https://pydantic.dev/docs/ai/harness/goal/
 - https://pydantic.dev/docs/ai/harness/prompt-injection-defender/
 - https://pydantic.dev/docs/ai/harness/tool-call-judge/
 - https://pydantic.dev/docs/ai/harness/approval-reviewer/

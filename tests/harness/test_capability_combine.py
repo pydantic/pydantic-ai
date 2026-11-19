@@ -478,6 +478,10 @@ COMBINE_POLICY: dict[str, Policy] = {
         'its toolset registers `read_file` and friends under fixed names',
         lambda cls: (cls(str(_TMP_A)), cls(str(_TMP_A.parent))),
     ),
+    'Goal': Narrows(
+        'one goal per id; several goals each need their own id, and every completion check must accept',
+        lambda cls: (cls(goal='Finish'), cls(goal='Also finish')),
+    ),
     'AskUser': Narrows(
         'one `ask_user_question` tool per id, and two answerers is a conflict, not one configuration stated twice',
         lambda cls: (cls(answerer=_decline), cls(answerer=None)),
