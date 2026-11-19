@@ -2091,7 +2091,7 @@ class ToolKind(Generic[ArgsT_co, ContentT_co, MetadataT_co]):
                 [`ToolReturn`][pydantic_ai.messages.ToolReturn], typically a `TypedDict`. It is never sent to the
                 model. Typed return parts read it with
                 [`typed_metadata`][pydantic_ai.messages.BaseToolReturnPart.typed_metadata], which gives `None` for
-                metadata that doesn't fit. It doesn't stop a part from being promoted.
+                metadata that doesn't fit. Metadata that doesn't fit still lets a return part become its typed part.
         """
         if not namespace or not all(namespace.split('.')):
             raise UserError(f"A tool kind needs a namespace, e.g. `ToolKind('my_capability', {name!r})`.")
@@ -2351,7 +2351,8 @@ def _check_declared_shape(
             continue
         declared = get_args(orig_base)
         if origin is not base and len(declared) != 1:
-            # An intermediate generic subclass's arguments are its own; a single one is read as the payload's shape.
+            # A generic subclass between this class and the base has type arguments of its own. When it has exactly
+            # one, that one is read as the payload's shape.
             continue
         for (label, shape), declared_shape in zip(shapes.items(), declared):
             if isinstance(declared_shape, TypeVar) or (
@@ -2514,7 +2515,7 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co, MetadataT_co
     def typed_metadata(self) -> MetadataT_co | None:
         """The `metadata` validated against the shape the part's kind declares, or `None` if it doesn't fit.
 
-        On a base part, or one whose kind declares no metadata shape, it is the metadata as is.
+        On a part with no kind, or one whose kind declares no metadata shape, it returns the metadata unchanged.
         """
         kind = self._kind
         if kind is None:
