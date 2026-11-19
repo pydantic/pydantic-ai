@@ -1570,7 +1570,7 @@ def test_inline_defs_leaves_a_ref_under_not_it_cannot_write_out():
 def test_inline_defs_leaves_every_ref_under_not_when_writing_them_out_passes_the_value_limit(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """When writing out the `$ref`s under `not` would pass the value limit, none is written out, small ones included.
+    """When writing out the `$ref`s under `not` would take the schema past the value limit, none is written out.
 
     The walk doesn't inline a `$ref` there, so such a schema didn't raise before, and doesn't now: it goes out as the
     walk left it, without its `$defs`, so each `$ref` points at nothing. Unit test: the limit is reached while the
