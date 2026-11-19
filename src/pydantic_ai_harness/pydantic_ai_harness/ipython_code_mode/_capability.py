@@ -74,6 +74,10 @@ class IPythonCodeMode(AbstractCapability[AgentDepsT]):
     it and shut it down.
     """
 
+    # Core reads this signature to generate the spec's JSON schema. Inherited, core falls back to the variadic base
+    # `from_spec`, because the `ToolSelector` hint on `tools` refers to `ToolDefinition`, which this module doesn't
+    # import, and publishes only the bare `'IPythonCodeMode'`. Reading `__init__` would not help: generating the
+    # schema fails on `kernel`, whose `IPythonKernel` has no JSON schema.
     @classmethod
     def from_spec(
         cls,
@@ -87,13 +91,7 @@ class IPythonCodeMode(AbstractCapability[AgentDepsT]):
         timeout: float | None = 60.0,
         kernel: None = None,
     ) -> IPythonCodeMode[Any]:
-        """Build from an agent spec, where `tools` takes names or metadata and `kernel` can only be `None`.
-
-        Core reads this signature to generate the spec's JSON schema. Inherited, core falls back to the variadic
-        base `from_spec`, because the `ToolSelector` hint on `tools` refers to `ToolDefinition`, which this module
-        doesn't import, and publishes only the bare `'IPythonCodeMode'`. Reading `__init__` would not help:
-        generating the schema fails on `kernel`, whose `IPythonKernel` has no JSON schema.
-        """
+        """Build from an agent spec, where `tools` takes names or metadata and `kernel` can only be `None`."""
         return cls(
             tools,
             max_retries,

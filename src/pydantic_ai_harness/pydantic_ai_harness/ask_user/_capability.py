@@ -150,21 +150,20 @@ class AskUser(AbstractCapability[AgentDepsT]):
             defer_loading: bool = False,
         ) -> None: ...
 
+    # Core reads this signature to generate the spec's JSON schema. Inherited, core reads `__init__`, and generating
+    # the schema fails on `answerer`, whose answerer protocols have no JSON schema. `timeout` bounds the answerer, so
+    # with `answerer=None` it can only be `None` too.
     @classmethod
     def from_spec(
         cls,
         *,
         answerer: None,
-        timeout: float | None = None,
+        timeout: None = None,
         id: str | None = 'ask_user',
         description: str | None = None,
         defer_loading: bool = False,
     ) -> AskUser[Any]:
-        """Build from an agent spec, where `answerer` can only be `None`, which defers every call.
-
-        Core reads this signature to generate the spec's JSON schema. Inherited, core reads `__init__`, and
-        generating the schema fails on `answerer`, whose answerer protocols have no JSON schema.
-        """
+        """Build from an agent spec, where `answerer` and `timeout` can only be `None`, which defers every call."""
         return cls(answerer=answerer, timeout=timeout, id=id, description=description, defer_loading=defer_loading)
 
     def __init_subclass__(cls, **kwargs: object) -> None:

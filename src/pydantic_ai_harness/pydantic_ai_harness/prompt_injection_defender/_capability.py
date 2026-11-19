@@ -197,6 +197,8 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
 
     _defense: PromptDefense = field(init=False, repr=False)
 
+    # Core reads this signature to generate the spec's JSON schema. Inherited, core reads `__init__`, and `defense`'s
+    # `PromptDefense` has no JSON schema, so only the bare `'PromptInjectionDefender'` is published.
     @classmethod
     def from_spec(
         cls,
@@ -211,11 +213,7 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
         on_detection: None = None,
         blocked_message: str = _DEFAULT_BLOCKED_MESSAGE,
     ) -> PromptInjectionDefender[Any]:
-        """Build from an agent spec, where `defense` and `on_detection` can only be `None`.
-
-        Core reads this signature to generate the spec's JSON schema. Inherited, core reads `__init__`, and
-        `defense`'s `PromptDefense` has no JSON schema, so only the bare `'PromptInjectionDefender'` is published.
-        """
+        """Build from an agent spec, where `defense` and `on_detection` can only be `None`."""
         return cls(
             defense,
             id=id,
