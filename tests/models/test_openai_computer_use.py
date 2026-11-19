@@ -928,18 +928,32 @@ def test_azure_the_gateway_and_openrouter_keep_the_function_tool() -> None:
     assert ComputerTool not in (openrouter.profile.get('supported_native_tools') or ())
 
 
-def test_a_server_whose_profile_sets_no_native_tools_keeps_the_function_tool() -> None:
-    """Ollama's profile for `llava` sets no list of native tools. The native computer tool isn't checked there."""
+@pytest.mark.parametrize(
+    'provider_name, model_name',
+    [
+        # Ollama's profile for `llava` sets no list of native tools, so it would get every native tool by default.
+        pytest.param('ollama', 'llava:13b', id='a-profile-with-no-list'),
+        # Claude's profile lists `ComputerTool` for Anthropic's API, which doesn't make OpenAI's tool work elsewhere.
+        pytest.param('my-server', 'anthropic/claude-sonnet-4-6', id='a-profile-that-lists-another-api-tool'),
+    ],
+)
+def test_other_openai_compatible_servers_keep_the_function_tool(provider_name: str, model_name: str) -> None:
+    """OpenAI's computer tool is checked live only on OpenAI and Bedrock Mantle."""
     from pydantic_ai.native_tools import WebSearchTool
     from pydantic_ai.providers.ollama import OllamaProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
 
-    provider = OllamaProvider(base_url='http://localhost:11434/v1')
-    assert 'supported_native_tools' not in (provider.model_profile('llava:13b') or {})
-    native_tools = OpenAIResponsesModel('llava:13b', provider=provider).profile.get('supported_native_tools') or ()
+    base_url = 'http://localhost:11434/v1'
+    provider = (
+        OllamaProvider(base_url=base_url)
+        if provider_name == 'ollama'
+        else OpenAICompatibleProvider(name=provider_name, base_url=base_url, api_key='test')
+    )
+    native_tools = OpenAIResponsesModel(model_name, provider=provider).profile.get('supported_native_tools') or ()
     assert ComputerTool not in native_tools
     assert WebSearchTool in native_tools
     on = OpenAIResponsesModel(
-        'llava:13b', provider=provider, profile={'supported_native_tools': frozenset({ComputerTool})}
+        model_name, provider=provider, profile={'supported_native_tools': frozenset({ComputerTool})}
     )
     assert ComputerTool in (on.profile.get('supported_native_tools') or ())
 
