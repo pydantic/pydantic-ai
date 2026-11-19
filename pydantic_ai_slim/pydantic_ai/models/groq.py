@@ -17,7 +17,7 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
-from ..exceptions import ModelAPIError, ModelUnavailableError, UserError
+from ..exceptions import ModelAPIError, ModelRequestRejectedError, ModelUnavailableError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -762,10 +762,12 @@ class GroqModel(Model[AsyncGroq]):
     ) -> chat.completion_create_params.ResponseFormat | None:
         """Return the response format the output mode asks for."""
         if model_request_parameters.output_mode == 'native':
-            # Groq returns a 400 for `response_format` combined with function tools.
+            # Groq returns a 400 for `response_format` combined with function tools. Raising that 400's class keeps
+            # `FallbackModel` and `except ModelAPIError` treating the check as they treat the 400.
             if model_request_parameters.function_tools:
-                raise UserError(
-                    'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+                raise ModelRequestRejectedError(
+                    self.model_name,
+                    'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.',
                 )
             output_object = model_request_parameters.output_object
             assert output_object is not None

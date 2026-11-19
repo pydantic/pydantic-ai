@@ -12,6 +12,7 @@ from __future__ import annotations as _annotations
 
 import re
 from collections.abc import Callable
+from datetime import timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -20,9 +21,11 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import ImageGeneration, NativeTool
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelRequestRejectedError, UserError
 from pydantic_ai.messages import (
+    ModelMessage,
     ModelRequest,
+    ModelRequestAttempt,
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -31,12 +34,14 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.usage import RequestUsage
 
 from ..._inline_snapshot import snapshot
-from ...conftest import IsDatetime, IsList, IsStr, RequestCapture, try_import
+from ...conftest import IsDatetime, IsInstance, IsList, IsStr, RequestCapture, try_import
 from ..citation_utils import IsCitationList
 
 with try_import() as imports_successful:
@@ -73,13 +78,51 @@ async def test_native_output_with_function_tools_unsupported(
         return 'Mexico'  # pragma: no cover
 
     with pytest.raises(
-        UserError,
+        ModelRequestRejectedError,
         match=re.escape(
             'This model does not support `NativeOutput` and function tools at the same time. '
             'Use `output_type=ToolOutput(...)` instead.'
         ),
     ):
         await agent.run('What is the largest city in the user country?')
+
+
+async def test_native_output_with_function_tools_unsupported_falls_back(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """`FallbackModel` falls back on the guard's error by default, as it does on an API rejection, and records the attempt.
+
+    A unit test: the guard raises before any request, so there is nothing to record, and the capture shows that.
+    """
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.client)
+    google = GoogleModel('gemini-2.5-flash', provider=provider)
+    assert google.profile.get('google_supports_tool_combination') is False
+
+    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('{"city": "Mexico City", "country": "Mexico"}')])
+
+    agent = Agent(FallbackModel(google, FunctionModel(backup)), output_type=NativeOutput(CityLocation))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'  # pragma: no cover
+
+    result = await agent.run('What is the largest city in the user country?')
+
+    assert result.output == CityLocation(city='Mexico City', country='Mexico')
+    assert request_capture.paths == []
+    assert result.response.failed_attempts == snapshot(
+        [
+            ModelRequestAttempt(
+                model_name='gemini-2.5-flash',
+                provider_name='google',
+                outcome='error',
+                error='ModelRequestRejectedError: This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.',
+                timestamp=IsDatetime(),
+                duration=IsInstance(timedelta),
+            )
+        ]
+    )
 
 
 async def test_function_tools_with_builtin_tools_unsupported(
