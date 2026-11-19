@@ -138,7 +138,8 @@ _XFCE_LOG = '/tmp/pydantic-ai-xfce.log'
 _XFCE_SHOWS = 'xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1'
 """Exits 0 when XFCE's desktop window shows on `DISPLAY`."""
 
-_START_DESKTOP = start_x_server(_XVFB_LOG) + (
+# E2B's template has its own desktop, XFCE, so the shared one isn't started on top of it.
+_START_DESKTOP = start_x_server(_XVFB_LOG, desktop=False) + (
     f'if command -v startxfce4 >/dev/null && ! {_XFCE_SHOWS}; then '
     f'setsid startxfce4 >{_XFCE_LOG} 2>&1 9>&- & '
     + wait_until_ready(_XFCE_SHOWS, '$!', 'the XFCE desktop', _XFCE_LOG)
@@ -260,9 +261,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
     The E2B SDK runs every request on asyncio, so under Trio every operation raises
     `UserError` before it reaches E2B.
 
-    With `desktop`, the sandbox gets a display on first use. A custom template needs Xvfb, `xdotool`,
-    `xwininfo` (`x11-utils`), `scrot` and `setsid`, which the first use installs with `apt-get` if it can,
-    and `startxfce4` for the XFCE desktop, which it doesn't.
+    With `desktop`, the sandbox gets a display on first use. A custom template needs `xdotool`, `xwininfo`
+    (`x11-utils`), `scrot`, `setsid`, and Xvfb unless an X server runs, which the first use installs with `apt-get`
+    if it can, and `startxfce4` for the XFCE desktop, which it doesn't.
 
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.
@@ -345,6 +346,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
                 self._desktop_size,
                 _START_DESKTOP,
                 lambda: f'E2B sandbox {self.ref.id if self.ref else "(not created)"}',
+                started=self._recheck_setsid,
             )
         )
         self._setsid: bool | None = None
@@ -666,10 +668,12 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         if self._display is not None:
             # Started first, so a program the command opens shows on the screen.
             await self._display.start()
-            # A display that started has `setsid`, which its start installs when missing, so a "no" is asked again.
-            if self._setsid is False:
-                self._setsid = None
         return await self._run_argv(argv, env=env or {}, timeout=timeout)
+
+    def _recheck_setsid(self) -> None:
+        """Forget a "no setsid" answer once the display has started, since its start installs `setsid` when missing."""
+        if self._setsid is False:
+            self._setsid = None
 
     async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
         """Run `argv` without starting the display, as the display's own commands do."""
