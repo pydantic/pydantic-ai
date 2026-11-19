@@ -9,7 +9,7 @@ from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import (
     OpenAIModelProfile,
-    _is_computer_use_model,  # pyright: ignore[reportPrivateUsage]
+    is_openai_computer_use_model,
     openai_model_profile,
 )
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
@@ -74,10 +74,10 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
         # represented by Pydantic AI (web search, code interpreter, file search, image generation, ...):
         # https://docs.aws.amazon.com/bedrock/latest/userguide/tool-use-server-side.html
         # Disable the base profile's native tools to fail with a clean UserError rather than an opaque
-        # provider error. OpenAI's native `computer` tool is the exception: it works on the `/openai/v1` endpoint
-        # as on OpenAI's own API, for the models that take it there.
+        # provider error. OpenAI's native computer tool is the exception. It works on the `/openai/v1` endpoint as
+        # it does on OpenAI's own API, for the same models.
         supported_native_tools=frozenset({ComputerTool})
-        if interface == 'openai-responses' and _is_computer_use_model(base_model_name)
+        if interface == 'openai-responses' and is_openai_computer_use_model(base_model_name)
         else frozenset(),
     )
     if interface == 'responses':

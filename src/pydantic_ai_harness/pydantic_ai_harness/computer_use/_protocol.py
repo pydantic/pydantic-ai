@@ -1,11 +1,11 @@
-"""The protocols a screen implements for `ComputerUse`: `Display`, its optional abilities, and `SupportsDisplay`.
+"""The protocols a screen implements for `ComputerUse`: `Display`, its optional extras, and `SupportsDisplay`.
 
-A workspace backend with a screen implements `SupportsDisplay`, and `ComputerUse` drives the `Display` it returns. The
-protocols are structural, so a backend needs no imports from here.
+A workspace backend with a screen implements `SupportsDisplay`, and `ComputerUse` drives the `Display` it returns. A
+backend doesn't have to inherit from these classes or import them: any class with the right methods counts.
 
-They don't change once released, since a new member would break every existing display. A new ability is a new
-optional protocol, like `SupportsZoom`, and a new input is a new action type in `DisplayAction`, which an older display
-refuses with `UnsupportedActionError`.
+These protocols don't change once released, because a new method would break every existing display. A new ability
+gets its own optional protocol, like `SupportsZoom`. A new kind of input gets a new action type in `DisplayAction`,
+and an older display refuses it with `UnsupportedActionError`.
 """
 
 from __future__ import annotations as _annotations
@@ -42,30 +42,33 @@ DisplayAction: TypeAlias = Annotated[
     Click | MouseMove | Drag | MouseDown | MouseUp | Scroll | TypeText | PressKeys | HoldKeys,
     Field(discriminator='type'),
 ]
-"""A mouse or keyboard action a `Display` performs, in its own pixels. New types may be added, so a display refuses
-one it doesn't know with [`UnsupportedActionError`][pydantic_ai_harness.computer_use.UnsupportedActionError]."""
+"""A mouse or keyboard action for a `Display` to run, with positions in the display's own pixels.
+
+Later releases may add action types, so a display raises
+[`UnsupportedActionError`][pydantic_ai_harness.computer_use.UnsupportedActionError] for a type it doesn't know."""
 
 
 class UnsupportedActionError(WorkspaceError):
-    """A [`Display`][pydantic_ai_harness.computer_use.Display] can't perform this action, or this value of it, exactly.
+    """Raised by a [`Display`][pydantic_ai_harness.computer_use.Display] that can't run an action, or this value of it.
 
-    Raise it only before the action has any effect. `ComputerUse` tells the model, and the actions after it don't run.
+    Raise it only before the action has changed anything on the screen. `ComputerUse` tells the model the action
+    failed, and the actions after it in the call don't run.
     """
 
 
 @runtime_checkable
 class Display(Protocol):
-    """A screen: screenshots, mouse and keyboard.
+    """A screen that takes screenshots, mouse input and keyboard input.
 
-    Coordinates are pixels of the screenshot, with the origin at the top left. A display may start on its first call.
-    It can also implement [`SupportsZoom`][pydantic_ai_harness.computer_use.SupportsZoom] and
+    Positions are in screenshot pixels, counted from the top left corner. A display may start its screen on the first
+    method call. It can also implement [`SupportsZoom`][pydantic_ai_harness.computer_use.SupportsZoom] and
     [`SupportsCursorPosition`][pydantic_ai_harness.computer_use.SupportsCursorPosition].
     """
 
     async def display_size(self) -> tuple[int, int]:
-        """The next screenshot's `(width, height)` in pixels: the coordinate space of every action.
+        """The `(width, height)` of the next screenshot, in pixels. Every action's positions are in this space.
 
-        It can change between calls, for example when a phone rotates.
+        The size can change between calls, for example when a phone rotates.
         """
         ...
 
@@ -74,11 +77,11 @@ class Display(Protocol):
         ...
 
     async def act(self, action: DisplayAction) -> None:
-        """Perform one action.
+        """Run one action.
 
         Raise [`UnsupportedActionError`][pydantic_ai_harness.computer_use.UnsupportedActionError] for an action, or a
-        value, the display can't perform exactly, including action types added after it was written. Raise it only
-        before the action has any effect.
+        value of it, that the display can't run exactly. That includes action types added after the display was
+        written. Raise it only before the action has changed anything on the screen.
         """
         ...
 
@@ -89,16 +92,16 @@ class SupportsDisplay(Protocol):
 
     @property
     def display(self) -> Display | None:
-        """This environment's display, or `None` without a screen. No I/O.
+        """This workspace's display, or `None` when it has no screen. Reading it must not do I/O.
 
-        It is the same object for the backend's lifetime, through restarts and reconnects.
+        It returns the same object for as long as the backend exists, even after the screen restarts or reconnects.
         """
         ...
 
 
 @runtime_checkable
 class SupportsZoom(Protocol):
-    """Optional on a [`Display`][pydantic_ai_harness.computer_use.Display]: a closer look at part of the screen."""
+    """An optional extra for a [`Display`][pydantic_ai_harness.computer_use.Display]: capture part of the screen."""
 
     async def zoom(self, region: Region) -> bytes:
         """Capture the region as PNG bytes, at the screen's full resolution.
@@ -110,7 +113,7 @@ class SupportsZoom(Protocol):
 
 @runtime_checkable
 class SupportsCursorPosition(Protocol):
-    """Optional on a [`Display`][pydantic_ai_harness.computer_use.Display]: where the pointer is."""
+    """An optional extra for a [`Display`][pydantic_ai_harness.computer_use.Display]: report where the pointer is."""
 
     async def cursor_position(self) -> Point:
         """The pointer's position in screenshot pixels."""

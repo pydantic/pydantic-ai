@@ -64,14 +64,15 @@ def _takes_two_positional_arguments(cls: type) -> bool | None:
 def _takes_its_bases_constructor(cls: type) -> bool:
     """Whether `cls` takes the same constructor parameters as its nearest dataclass base, and that base is public.
 
-    Such a subclass adds no constructor parameter, so the base's own result in this walk already gates or
-    grandfathers the signature. Typed tool parts, such as a `ToolCallPart[...]` subclass declared with `kind=`, are
-    the case: they may not add fields, and a subclass can't make its parent's fields keyword-only.
+    Such a subclass adds no constructor parameter. The check on its base already covers the signature, by passing it
+    or by listing it as an allowed exception. Typed tool parts are this case, such as a `ToolCallPart[...]` subclass
+    declared with `kind=`. They may not add fields, and a subclass can't make its parent's fields keyword-only.
     """
     base = next((base for base in cls.__mro__[1:] if dataclasses.is_dataclass(base)), None)
     if base is None or any(part.startswith('_') for part in f'{base.__module__}.{base.__qualname__}'.split('.')):
         return False
-    # Only names and kinds: a typed part's kind changes the `tool_kind` default, which a positional caller can't trip on.
+    # Compare only names and parameter kinds. A typed part's kind changes the `tool_kind` default, and a caller
+    # passing arguments by position never sets `tool_kind`.
     return [(p.name, p.kind) for p in _constructor_parameters(cls)] == [
         (p.name, p.kind) for p in _constructor_parameters(base)
     ]

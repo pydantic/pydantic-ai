@@ -1,4 +1,8 @@
-"""OpenAI's native `computer` tool: its `computer_call` items as calls of the `computer` tool, and back."""
+"""OpenAI's native computer tool.
+
+Turns OpenAI's `computer_call` items into calls of the `computer` tool, and the tool's results back into
+`computer_call_output` items.
+"""
 
 from __future__ import annotations as _annotations
 
@@ -25,19 +29,21 @@ from ...messages import (
 from .. import ModelRequestParameters
 
 _SCROLL_PIXELS_PER_CLICK = 114
-"""OpenAI scrolls by pixels and the `computer` tool by wheel clicks; one click scrolls about this far.
+"""How many pixels one mouse-wheel click scrolls.
 
-Measured in Firefox ESR 153 on `DockerContainer(desktop=True)`'s 1280x800 desktop: every click scrolled 114 pixels.
+OpenAI asks for scrolls in pixels, and the `computer` tool scrolls in wheel clicks.
+
+Measured in Firefox ESR 153 on the 1280x800 desktop of `DockerContainer(desktop=True)`: every click scrolled 114 pixels.
 """
 
 _BLANK_SCREENSHOT = (
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGP4DwABAQEAsTj2FAAAAABJRU5ErkJggg=='
 )
-"""A 1x1 PNG for a `computer_call_output` with no screenshot to send, since the API requires one."""
+"""A 1x1 PNG sent in a `computer_call_output` that has no screenshot. The API requires an image in every output."""
 
 
 class _Strict(BaseModel, extra='forbid', strict=True):
-    """OpenAI's own data, checked as is: the SDK builds a response without validating it."""
+    """Checks OpenAI's data strictly, without converting types. The SDK builds a response without validating it."""
 
 
 class _OpenAIPoint(_Strict):
@@ -106,15 +112,17 @@ _OpenAIAction = (
     | _OpenAIWait
     | _OpenAIScreenshot
 )
-"""The OpenAI computer actions the `computer` tool can run, each with only the fields it maps."""
+"""The OpenAI computer actions the `computer` tool can run. Each model has only the fields that are mapped."""
 
 _OPENAI_ACTION: TypeAdapter[_OpenAIAction] = TypeAdapter(Annotated[_OpenAIAction, Field(discriminator='type')])
 
 
 def _map_computer_action(raw: Any) -> list[tuple[dict[str, Any], str | None]]:
-    """One OpenAI computer action as `computer` tool actions, each with a note when it runs differently than asked.
+    """Turn one OpenAI computer action into `computer` tool actions.
 
-    An invalid action becomes one the tool refuses, naming the bad fields, so none of it runs and the model retries.
+    Each tool action comes with a note when it runs differently from what the model asked, and `None` otherwise.
+    An invalid action becomes an action the tool refuses. The refusal names the invalid fields, none of the call runs,
+    and the model can try again.
     """
     try:
         action = _OPENAI_ACTION.validate_python(raw)
@@ -151,22 +159,25 @@ _TOOL_TYPES: dict[object, str] = {
     'keypress': 'press_keys',
     'type': 'type_text',
 }
-"""The `computer` tool's action type for each OpenAI action type spelled differently."""
+"""The `computer` tool's name for each OpenAI action type that has a different name."""
 
 
 def _refused_action(error: ValidationError) -> dict[str, Any]:
-    """An action the tool refuses, naming the fields that didn't validate."""
-    # A field's error location starts with the action type. An error with no location is about the action as a
-    # whole: a type that isn't one comes back as the error's tag, and an action that isn't an object has none.
+    """Build an action the tool refuses. It names the fields that failed validation."""
+    # Each field error's location starts with the action type. An error without a location is about the whole action.
+    # For an unknown type, the type comes back as the error's tag. An action that isn't an object has no tag.
     details = error.errors()
     fields = sorted({str(detail['loc'][1]) for detail in details if len(detail['loc']) > 1})
     kind = details[0]['loc'][0] if details[0]['loc'] else (details[0].get('ctx') or {}).get('tag')
-    # Under the tool's own type, so the retry names the fields rather than refusing the type.
+    # Use the tool's name for the type, so the tool's refusal names the bad fields instead of refusing the type.
     return {'type': _TOOL_TYPES.get(kind, kind), 'unsupported_fields': fields}
 
 
 def _map_scroll(action: _OpenAIScroll) -> list[tuple[dict[str, Any], str | None]]:
-    """OpenAI scrolls by pixels on both axes at once; the tool scrolls one way at a time, in wheel clicks."""
+    """Turn an OpenAI scroll into tool scrolls.
+
+    OpenAI scrolls by pixels on both axes at once. The tool scrolls in one direction at a time, by wheel clicks.
+    """
     scrolls = [
         _scroll(action, axis, pixels, direction)
         for axis, pixels, direction in (
@@ -175,13 +186,13 @@ def _map_scroll(action: _OpenAIScroll) -> list[tuple[dict[str, Any], str | None]
         )
         if pixels
     ]
-    # A scroll by nothing only moves the pointer there.
+    # A scroll of 0 pixels on both axes only moves the pointer to its position.
     return scrolls or [({'type': 'mouse_move', 'x': action.x, 'y': action.y, 'modifiers': action.keys}, None)]
 
 
 def _scroll(action: _OpenAIScroll, axis: str, pixels: int, direction: str) -> tuple[dict[str, Any], str | None]:
-    """A scroll along one axis in wheel clicks, with a note when the clicks don't match the pixels asked for."""
-    # Rounded half up in whole numbers: any JSON integer is valid, and a float can't hold them all.
+    """Build a scroll along one axis in wheel clicks, with a note when the clicks don't match the pixels asked for."""
+    # Round half up with integer math. A JSON integer can be any size, and a float can't hold every integer exactly.
     clicks = max(1, (abs(pixels) + _SCROLL_PIXELS_PER_CLICK // 2) // _SCROLL_PIXELS_PER_CLICK)
     scroll = {
         'type': 'scroll',
@@ -200,24 +211,28 @@ _COMPUTER_CALL_KEYS = (
     responses.ResponseComputerToolCallParam.__required_keys__
     | responses.ResponseComputerToolCallParam.__optional_keys__
 )
-"""The keys a `computer_call` input item has; any other stored key is dropped before the item is sent back."""
+"""The keys of a `computer_call` input item. Any other stored key is dropped before the item is sent back."""
 
 
 _UNFINISHED_ARGS = '{"actions": ['
-"""The arguments of a call that must not run: like a truncated function call's, they don't parse."""
+"""The arguments given to a call that must not run.
+
+They aren't valid JSON, like the arguments of a function call cut off by the token limit, so the call doesn't run.
+"""
 
 
 def stored_computer_call(part: ToolCallPart) -> dict[str, Any] | None:
-    """The `computer_call` item a call came as, to send back, or `None` to send the call back plain.
+    """Return the stored `computer_call` item to send back for a call, or `None` if it must not be sent.
 
-    A history may come from storage or a UI, so an item of another type is not sent, nor is any key a `computer_call`
-    doesn't have: otherwise a forged item could be a message from the developer. The API judges the values. Nor is an
-    item whose actions aren't the call's, such as after a hook changed them: sent back, it would say they ran.
+    A message history can come from storage or a UI, so its items can't be trusted. An item whose type isn't
+    `computer_call` is not sent. Keys that a `computer_call` doesn't have are dropped, because otherwise a forged item
+    could pose as a message from the developer. The API checks the values. An item whose actions no longer match the
+    call's, for example after a hook changed them, is not sent either: it would tell the model its actions ran.
     """
     stored = (part.provider_details or {}).get('computer_call')
     if not is_str_dict(stored) or stored.get('type') != 'computer_call':
         return None
-    # A call that stopped with its response keeps its item, which is replayed as it came.
+    # A call stopped because its response didn't complete keeps its item, which is sent back unchanged.
     if part.args != _UNFINISHED_ARGS and _call_args(stored) not in (part.args, part.args_as_dict()):
         return None
     return {key: value for key, value in stored.items() if key in _COMPUTER_CALL_KEYS}
@@ -229,15 +244,15 @@ def map_computer_call(
     tool_call_id: str,
     provider_name: str,
 ) -> ComputerCallPart | None:
-    """A `computer_call` as a call of the `computer` tool, keeping the item to send back as it was.
+    """Turn a `computer_call` item into a call of the `computer` tool. The call keeps the item, to send back unchanged.
 
-    `None` when the request has no `computer` tool to run it.
+    Returns `None` when the request has no `computer` tool to run it.
     """
-    # A request always has it, but recorded streams are replayed without tools by the stream parity test.
-    if not (tool_names := model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)):
+    # A real request always has the tool. The stream parity test replays recorded streams without tools.
+    tool_name = next(iter(model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)), None)
+    if tool_name is None:
         return None
-    tool_name = tool_names[0]
-    # The SDK doesn't validate a response, so the item can hold anything; it is kept as sent, without a warning.
+    # The SDK doesn't validate a response, so the item can hold any value. Keep it as sent, without warnings.
     dumped = item.model_dump(mode='json', exclude_none=True, warnings=False)
     return ComputerCallPart(
         tool_name,
@@ -256,13 +271,15 @@ def stop_computer_calls_unless_completed(
     status: ResponseStatus | None,
     refused: bool,
 ) -> list[ModelResponsePart]:
-    """The parts of a response, with no `computer` call left to run unless the response completed without a refusal.
+    """Stop every `computer` call in a response, unless the response completed and the model didn't refuse.
 
-    OpenAI says to stop when a response is incomplete, failed or refused, even when a call in it finished. A stream
-    knows that only after it announced its calls, so this is decided on the final parts, for both paths and both the
-    native and the function `computer` call: the call keeps its place, with arguments that don't parse, as a cut-off
-    call's. Other function calls are left as they came. A response without a status, as some compatible APIs send,
-    counts as completed. A deferred `computer` tool counts too: tool search may reveal it in this same response.
+    OpenAI says not to run the actions of a response that is incomplete, failed or refused, even when a call in it
+    finished. A stream learns the final status only after it has sent its calls. So the check runs on the final parts,
+    for streamed and non-streamed responses, and for native and function-tool `computer` calls alike. A stopped call
+    keeps its place, with arguments that aren't valid JSON, like a call cut off by the token limit. Other function
+    calls are left as they came. A response without a status counts as completed, since some OpenAI-compatible APIs
+    send none. Calls to a deferred `computer` tool are stopped too, because tool search can reveal it in the same
+    response.
     """
     if status in (None, 'completed') and not refused:
         return list(parts)
@@ -276,28 +293,28 @@ def stop_computer_calls_unless_completed(
 
 
 def _call_args(dumped: dict[str, Any]) -> dict[str, Any] | str:
-    """The `computer` call's arguments for a `computer_call` item."""
+    """Build the `computer` tool call's arguments from a `computer_call` item."""
     if dumped.get('status') != 'completed':
-        # Cut off or still being generated: like a truncated function call, its arguments don't parse, so none of it
-        # runs. OpenAI says not to run a partially generated action.
+        # The item was cut off or is still being generated. OpenAI says not to run a partly generated action, so give
+        # it arguments that aren't valid JSON, and none of it runs.
         return _UNFINISHED_ARGS
     return {'actions': [action for action, _ in _map_actions(dumped)]}
 
 
 def _map_actions(dumped: dict[str, Any]) -> list[tuple[dict[str, Any], str | None]]:
-    """A `computer_call` item's actions as `computer` tool actions, each with its note on how a pixel scroll runs."""
+    """Turn a `computer_call` item's actions into `computer` tool actions, each with its note on a pixel scroll."""
     actions: list[Any] = dumped.get('actions', [])
     if not isinstance(actions, list):
-        # Not a list, even if it is one action: the call is malformed, so none of it runs.
+        # `actions` must be a list, even for one action. Otherwise the call is malformed, and none of it runs.
         actions = [None]
     return [tool_action for action in actions for tool_action in _map_computer_action(action)]
 
 
 def computer_calls_by_id(messages: Sequence[ModelMessage]) -> dict[str, ToolCallPart]:
-    """The `computer_call`s this API made, by tool call ID, so their outputs can read them.
+    """The calls that came from OpenAI `computer_call` items, by tool call ID.
 
-    A call is found by the item it came as, not by valid arguments: a call whose actions didn't map was still a
-    `computer_call`, and its output must be a `computer_call_output`.
+    Their results must go back as `computer_call_output` items. A call is found by its stored item, not by its
+    arguments: a call whose actions couldn't be mapped was still a `computer_call`.
     """
     return {
         part.tool_call_id: part
@@ -309,11 +326,11 @@ def computer_calls_by_id(messages: Sequence[ModelMessage]) -> dict[str, ToolCall
 
 
 def _scroll_notes(call: ToolCallPart, result: ComputerResult | None) -> list[str]:
-    """The notes on the pixel scrolls that ran, made again from the stored item's validated numbers.
+    """Rebuild the notes on the pixel scrolls that ran, from the stored item's validated numbers.
 
-    Not kept as text on the call, where a history from storage or a UI could put any text. Only the first `performed`
-    actions ran. Nothing is said for a call changed before it ran (its summary covers it) or a result without its
-    outcome.
+    The notes aren't stored as text on the call, because a history from storage or a UI could put any text there.
+    Only the first `performed` actions ran, so only their notes are returned. A call that was changed before it ran
+    gets no notes, since its summary covers it. Neither does a result that doesn't record its outcome.
     """
     if result is None or result.get('changed') or not (stored := stored_computer_call(call)):
         return []
@@ -322,10 +339,10 @@ def _scroll_notes(call: ToolCallPart, result: ComputerResult | None) -> list[str
 
 
 def _needs_summary(result: ComputerResult | None) -> bool:
-    """Whether a `computer` result needs its text beside the screenshot, which alone would say the call ran.
+    """Whether a `computer` result must send its text along with the screenshot.
 
-    A result without its outcome, such as one a UI rebuilt, may describe a failure. A failed or changed call says so
-    in its text.
+    A screenshot alone tells the model the call ran. A failed or changed call says so in its text. A result that
+    doesn't record its outcome, such as one rebuilt by a UI, might describe a failure.
     """
     return result is None or 'error' in result or bool(result.get('changed'))
 
@@ -333,13 +350,13 @@ def _needs_summary(result: ComputerResult | None) -> bool:
 def map_computer_call_output(
     part: ToolReturnPart, call_id: str, call: ToolCallPart, *, changed: bool
 ) -> list[responses.ResponseInputItemParam]:
-    """A `computer` result as a `computer_call_output`, followed by a message when it needs more than an image.
+    """Turn a `computer` result into a `computer_call_output`, plus a user message when an image alone isn't enough.
 
-    The API needs a screenshot in every output, so a result without one sends a blank image instead. A `changed` call,
-    one a hook renamed or gave other actions after the API stored it, is answered by its ID all the same, with a note
-    saying what ran when it ran: the API's item still says what it made.
+    The API needs a screenshot in every output, so a result without one sends a blank image. A `changed` call is one
+    that a hook renamed or gave other actions after the API stored it. Its result still goes back under its call ID.
+    If it ran, a note says what actually ran, because OpenAI's stored item still shows what the model asked for.
     """
-    # A failed or denied call is a base part, without a screenshot.
+    # A failed or denied call returns a plain `ToolReturnPart`, with no screenshot.
     computer_return = part if isinstance(part, ComputerReturnPart) else None
     image = computer_return.screenshot if computer_return else None
     output: responses.response_input_param.ComputerCallOutput = {
@@ -348,19 +365,19 @@ def map_computer_call_output(
         'output': {
             'type': 'computer_screenshot',
             'image_url': image.data_uri if image else _BLANK_SCREENSHOT,
-            # `original` keeps every pixel the model clicks on (OpenAI's advice for computer use); `auto` may
-            # downscale. The SDK's types don't list `detail` yet, though the API accepts it.
+            # `original` sends the image at full size, as OpenAI advises for computer use, so the model clicks on the
+            # pixels it sees. `auto` can shrink it. The SDK's types don't list `detail` yet, but the API accepts it.
             'detail': 'original',  # pyright: ignore[reportAssignmentType]
         },
     }
     items: list[responses.ResponseInputItemParam] = [output]
-    # A successful result is read as validated content, so content stored as a JSON string reads the same as a list.
+    # Read a successful result through its validated content, so content stored as a JSON string reads as a list.
     content = (computer_return.typed_content if computer_return else None) or part.content_items()
-    # Images before the closing screenshot, such as a zoom, can't go in the output.
+    # The output holds one image. Images before the final screenshot, such as a zoom, go in the message after it.
     images = [item for item in content if isinstance(item, BinaryImage)]
     extra_images = images[:-1] if image is not None else images
     notes = _scroll_notes(call, computer_return.result) if computer_return else []
-    # A denied or interrupted call didn't run, so its note would be wrong.
+    # Only a call that ran gets the note. A denied or interrupted call didn't run.
     if changed and part.outcome in ('success', 'failed'):
         notes.append(f'The call ran as {call.tool_name} with the arguments {call.args_as_json_str()}.')
     if computer_return is None or image is None or _needs_summary(computer_return.result) or extra_images or notes:
@@ -371,10 +388,10 @@ def map_computer_call_output(
 def _summary_message(
     part: ToolReturnPart, content: Sequence[object], extra_images: list[BinaryImage], notes: list[str]
 ) -> responses.EasyInputMessageParam:
-    """The output can only carry an image: say what didn't run, or why the image is blank.
+    """Build the user message that follows a `computer_call_output`, which can only hold an image.
 
-    The note is the tool's result, so it is framed as one on the user channel, as for any tool result that can't go
-    natively.
+    It says what didn't run, or why the image is blank, and carries any extra images. It is the tool's result, so it
+    is wrapped in tool-result tags in a user message, as for any tool result the API can't take in its own format.
     """
     texts = [item for item in content if isinstance(item, str)]
     references = [f'See file {image.identifier}.' for image in extra_images]
@@ -389,7 +406,7 @@ def _summary_message(
     message_content: list[responses.ResponseInputContentParam] = [
         responses.ResponseInputTextParam(type='input_text', text=framed)
     ]
-    # Each image is framed on its own, as core frames a tool's files on the user channel.
+    # Wrap each image in its own tags, as Pydantic AI does for any tool's files sent in a user message.
     for image in extra_images:
         open_tag, close_tag = _tool_result_provenance_tags(part.tool_name, part.tool_call_id, image.identifier)
         message_content += [
