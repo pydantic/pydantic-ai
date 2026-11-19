@@ -354,6 +354,19 @@ async def test_an_x_server_that_starts_during_the_install_is_kept(docker: FakeDo
     assert docker.x_lock_exists(backend.ref.id)
 
 
+async def test_a_desktop_log_that_cant_be_opened_still_starts_the_desktop(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    # A directory where the log goes, as a sandbox reused from an older start may have.
+    (docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop.log').mkdir()
+
+    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert docker.panel_starts == 1
+
+
 @_host_without_display_programs
 async def test_a_desktop_program_the_package_lists_lack_leaves_the_display_working(
     docker: FakeDocker, container_dir: Path
@@ -361,6 +374,7 @@ async def test_a_desktop_program_the_package_lists_lack_leaves_the_display_worki
     # The display's own programs are installed on their own, so the missing panel can't stop them.
     docker.remove_display()
     docker.uninstall('xdotool', 'tint2')
+    _hide_host_programs(docker)
     docker.run_as(0)
     docker.lack_packages('tint2')
 
