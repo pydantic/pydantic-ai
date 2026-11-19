@@ -2,7 +2,7 @@
 
 Each table is keyed by every id the API accepts for a model, aliases included, and each entry cites the provider's
 announcement. A platform that serves the same models on a schedule of its own, such as Amazon Bedrock or Azure, is
-not covered. Generated from the providers' deprecation pages as fetched on 2026-11-19.
+not covered. Compiled from the providers' deprecation pages as fetched on 2026-11-19.
 """
 
 from __future__ import annotations as _annotations
@@ -180,7 +180,7 @@ ANTHROPIC_MODEL_DEPRECATIONS: dict[str, ModelDeprecation] = {
         (
             ('claude-mythos-preview',),
             ModelDeprecation(
-                source_url='https://platform.claude.com/docs/en/about-claude/model-deprecations#deprecation-history'
+                source_url='https://platform.claude.com/docs/en/about-claude/model-deprecations#model-status'
             ),
         ),
     )
