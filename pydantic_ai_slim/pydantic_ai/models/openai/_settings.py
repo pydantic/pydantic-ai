@@ -381,7 +381,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     streamed and its stream dropped or was cancelled before it finished, Pydantic AI first lists the conversation's
     items to check whether OpenAI completed it anyway, if the response has output items to look for. If it didn't,
     or the response has none, that response is sent again, with the messages since the last response the
-    conversation holds.
+    conversation holds. Counting tokens for such a request makes the same check, so it counts the same input.
 
     `'auto'` trusts the message history for this ID, which
     [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent. With history from a client, pass a
