@@ -56,13 +56,13 @@ With `defer_loading=True`, the model reads only the capability's `description` u
 
 The model must accept images.
 
-- GPT-5.4 (not nano), GPT-5.5, GPT-5.6 and GPT-6 get OpenAI's own computer tool through `OpenAIResponsesModel` on OpenAI and Bedrock Mantle; see
-  [OpenAI](https://pydantic.dev/docs/ai/models/openai/#native-tools).
+- GPT-5.4 (except GPT-5.4 nano), GPT-5.5, GPT-5.6 and GPT-6 get OpenAI's own computer tool when you use them
+  through `OpenAIResponsesModel`, on OpenAI or on Bedrock Mantle. See [OpenAI](https://pydantic.dev/docs/ai/models/openai/#native-tools).
 - Every other model gets `computer` as a regular function tool.
 
-An `OpenAIResponsesModel` on an OpenAI-compatible server whose profile doesn't list its native tools gets the native
-computer tool too. For a server without it, use `ComputerUse(native=False)`, or leave `ComputerTool` out of the
-profile's `supported_native_tools`.
+An `OpenAIResponsesModel` on another OpenAI-compatible server also gets OpenAI's computer tool when the model's
+profile doesn't set `supported_native_tools`. If the server doesn't support that tool, use `ComputerUse(native=False)`,
+or set `supported_native_tools` in the profile without `ComputerTool`.
 
 Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
 
@@ -114,7 +114,8 @@ Some models only take screenshots up to a size, set by `computer_use_screenshot_
 `computer_use_screenshot_max_pixels` in their profile. `ComputerUse` sends screenshots at the screen's size, so a
 larger screen stops the run with an error naming the largest size that fits. A 1280x800 screen fits every model.
 
-GPT-5.5 clicks accurately up to 1920x1200 and GPT-5.4 up to 2048x1280, and can miss on a larger screen.
+GPT-5.5 clicks accurately on screens up to 1920x1200, and GPT-5.4 on screens up to 2048x1280. On a larger screen,
+they can miss what they click.
 
 ## When something goes wrong
 

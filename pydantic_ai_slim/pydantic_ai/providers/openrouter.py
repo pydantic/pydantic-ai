@@ -394,7 +394,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
                 # work with any underlying model, so the upstream profile's vendor-specific tool
                 # gating (e.g. Anthropic's valid-executor list) doesn't apply. Neutralize it here;
                 # `OpenRouterModel.supported_native_tools()` caps the effective set via the
-                # intersection in `Model.profile`. OpenAI's native computer tool is not one of them: OpenRouter's
+                # intersection in `Model.profile`. OpenAI's native computer tool is left out: OpenRouter's
                 # Responses API answers it with only a reasoning item (live, 2026-11-18).
                 supported_native_tools=SUPPORTED_NATIVE_TOOLS - {ComputerTool},
                 supports_cache=supports_cache_control,
