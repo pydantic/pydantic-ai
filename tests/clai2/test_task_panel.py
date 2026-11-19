@@ -1,7 +1,9 @@
 """The task panel's theme roles and available action hints."""
 
 import io
+import sys
 import time
+from datetime import UTC, datetime
 from typing import Literal
 
 import pytest
@@ -10,6 +12,7 @@ from rich.console import Console
 from pydantic_ai_harness.sub_agents import DelegationTaskEvent
 from pydantic_clai2.runtime.tasks import Tasks
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.duration import format_duration
 from tests.clai2.test_tasks import task
 
 
@@ -95,3 +98,73 @@ async def test_completed_task_hint_has_no_background_action() -> None:
     await ui.observe(DelegationTaskEvent(task=record))
     assert '/tasks' in ui.rows('*')[-1]
     assert 'Ctrl+B' not in ui.rows('*')[-1]
+
+
+@pytest.mark.parametrize(
+    ('seconds', 'expected'),
+    [
+        (-5, '0s'),
+        (0, '0s'),
+        (42, '42s'),
+        (59, '59s'),
+        (60, '1m'),
+        (99, '1m 39s'),
+        (100, '1m 40s'),
+        (192, '3m 12s'),
+        (3599, '59m 59s'),
+        (3600, '1h'),
+        (7448, '2h 4m 8s'),
+        (86399, '23h 59m 59s'),
+        (86400, '1d'),
+        (100000, '1d 3h 46m'),
+        (100201, '1d 3h 50m'),
+        (2591999, '29d 23h 59m'),
+    ],
+)
+def test_humane_duration_boundaries(seconds: float, expected: str) -> None:
+    assert format_duration(seconds, started_at=0) == expected
+    assert len(expected.split()) <= 3
+    if 'd' in expected:
+        assert 's' not in expected
+
+
+@pytest.mark.parametrize('days', [30, 31, 365])
+def test_old_duration_shows_the_actual_local_start_date(days: int) -> None:
+    start = datetime(2026, 1, 2, 12, tzinfo=UTC).timestamp()
+    expected = datetime.fromtimestamp(start).strftime('%b %d')
+    assert format_duration(days * 86400, started_at=start) == expected
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='time.tzset is unavailable on Windows')
+@pytest.mark.parametrize(
+    ('timezone', 'start_hour', 'local_day'),
+    [('UTC0', 12, 2), ('UTC-14', 12, 3), ('UTC12', 0, 1)],
+)
+def test_old_duration_uses_the_local_date_across_day_boundaries(
+    monkeypatch: pytest.MonkeyPatch, timezone: str, start_hour: int, local_day: int
+) -> None:
+    start = datetime(2026, 1, 2, start_hour, tzinfo=UTC).timestamp()
+    expected = datetime(2026, 1, local_day).strftime('%b %d')
+    try:
+        with monkeypatch.context() as environment:
+            environment.setenv('TZ', timezone)
+            time.tzset()
+            assert format_duration(30 * 86400, started_at=start) == expected
+    finally:
+        time.tzset()
+
+
+def test_completed_duration_freezes_but_panel_expiry_does_not(monkeypatch: pytest.MonkeyPatch) -> None:
+    start = datetime(2026, 1, 2, 12, tzinfo=UTC).timestamp()
+    ui = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None)
+    record = task()
+    record.started_at = start
+    record.finished_at = start + 192
+    record.status, record.outcome = 'finished', 'failed'
+    ui.owner.records[record.id] = record
+    monkeypatch.setattr('pydantic_clai2.runtime.tasks.time.time', lambda: start + 200)
+    assert '3m 12s' in ui.rows('*')[0]
+    monkeypatch.setattr('pydantic_clai2.runtime.tasks.time.time', lambda: start + 220)
+    assert '3m 12s' in ui.rows('*')[0]
+    monkeypatch.setattr('pydantic_clai2.runtime.tasks.time.time', lambda: start + 223)
+    assert ui.rows('*') == ()

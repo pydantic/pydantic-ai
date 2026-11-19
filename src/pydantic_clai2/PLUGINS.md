@@ -54,7 +54,8 @@ separately.
  Server Type: http              | Type   http - Streamable HTTP endpoint ...
  URL: https://mcp.example.com   |
  OAuth sign-in: on              |
- On demand: off                 |
+ On demand: on                  |
+ Description: (from the server) |
  JSON Configuration (valid)     | {"type": "http", "url": "https://...", "auth": "oauth", "timeout": 330}
  Load example for http          |
  Save & Install                 | Configuration is valid
@@ -84,13 +85,15 @@ separately.
   or refreshes them instead of signing in again. Tokens belong to the URL they
   were issued for: after changing the URL, sign in again. OAuth needs `https`,
   except for loopback servers.
-- **On demand** sets `"defer_loading": true`, and a **Description** row appears
-  for the line the agent reads about the server; see
+- **On demand** is on by default, with a **Description** row for the line the
+  agent reads about the server. Switching it off sets `"defer_loading": false`
+  and puts the server's tools in every prompt; see
   [Load a server's tools on demand](#load-a-servers-tools-on-demand).
 
 The dashboard shows each server as `running` (connected), `ready` (enabled;
-connects on the next prompt), `stopped`, or `error` (a failed connection, or a
-referenced environment variable that is not set). Saved and enabled servers are
+connects once the agent loads it, or on the next prompt for an eager server),
+`stopped`, or `error` (a failed connection, or a referenced environment variable
+that is not set). Saved and enabled servers are
 available to the agent from the next prompt; `/mcp start` is not required, but
 connects now and lists the tools. Once connected, a server stays connected
 between prompts. A server that cannot connect is marked `error` and left out of
@@ -133,20 +136,18 @@ unset shows as `error` until you set it. Stdio server stderr goes to `mcp_logs/N
 
 Stdio servers also accept `cwd`; `http` and `sse` servers accept `auth: "oauth"`;
 every server accepts `timeout` (seconds for the initialize handshake),
-`enabled: false`, `defer_loading: true`, and `description`. Names start with a letter and contain letters, digits, and
+`enabled: false`, `defer_loading: false`, and `description`. Names start with a letter and contain letters, digits, and
 hyphens. Underscores are reserved for the separator so server/tool name pairs
 cannot produce the same name.
 
 ### Load a server's tools on demand
 
-Every enabled server's tool definitions go into every prompt, which gets
-expensive with a few large servers and makes it harder for the model to pick the
-right tool. Set `defer_loading` to keep a server's tools out until the agent
-needs them:
+Putting every server's tool definitions in every prompt gets expensive with a
+few large servers and makes it harder for the model to pick the right tool, so
+each server keeps its tools out until the agent needs them:
 
 ```json
 {"servers": {"tracker": {"type": "http", "url": "https://mcp.example.com",
-                         "defer_loading": true,
                          "description": "Issue tracker: search, read and update tickets."}}}
 ```
 
@@ -165,8 +166,10 @@ instructions, or its title, once it has connected in this session (after
 before that. A `description` you write is the better choice: the agent decides
 whether to load the server from it. `/mcp tools NAME` lists the tools either way.
 
-Keep a server eager (the default) when most prompts use it: loading it costs
-the agent an extra step.
+Set `"defer_loading": false` (or switch off **On demand** in the form) to keep a
+server eager when most prompts use it: loading it costs the agent an extra step.
+A CLAI build from before on-demand became the default loads a server without the
+key eagerly.
 
 A CLAI build older than these keys rejects a `mcp.json` or project file that uses
 them. When servers given as plugin settings use them, `/plugins add`, `enable`, or
@@ -2683,7 +2686,7 @@ contributes nothing:
 | `get_capabilities()` | capabilities (or per-run capability functions) added to every agent run |
 | `get_commands()` | `/commands` |
 | `render(event)` | a drawing for a stream event, or `None` for the default |
-| `get_status_segments()` | text appended to the status row |
+| `get_status_segments()` | text in the main footer's configurable `plugins` group |
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
 | `get_side_panels()` | pages the web UI shows beside the conversation |
@@ -3026,8 +3029,9 @@ prompt the keyboard does:
   recently created instead of the most recently active, as the web sidebar does. As in `/resume`,
   a fork gets its own copy of the session's Monty state, and a deleted session's state is deleted
   with it. Like opening `/resume`, `listing` queues the newest untitled sessions for background
-  naming, which calls the naming model. Renaming the current conversation fires
-  `on_conversation_changed` at once, even while a turn runs, unlike background naming.
+  naming, which calls the naming model when `sessions.naming` is on. Renaming the current
+  conversation fires `on_conversation_changed` at once, even while a turn runs, unlike background
+  naming.
   `follows_workspace` says whether `/resume ID` moves the session into the directory it was saved
   in (its `host.workspace`; the process's working directory never changes), as under
   `clai2 --web`, rather than refusing a session saved elsewhere.
@@ -3174,7 +3178,8 @@ commands, and exit signals are never steered: such a draft, or any draft the run
 does not accept, is taken as Enter would take it, and such a queued message stays
 queued and is not skipped over. When idle, Enter starts a turn. Shift-Enter inserts
 a newline when the terminal distinguishes it from Enter. Ctrl-J inserts a newline
-on terminals that do not, including GNOME Terminal/VTE on Ubuntu. xterm and Kitty
+on terminals that do not, including GNOME Terminal/VTE on Ubuntu; on Windows it
+steers, since terminals there send Ctrl+Enter as Ctrl-J. xterm and Kitty
 keyboard reporting is enabled only while the editor owns input and released for
 menus and on exit.
 Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
@@ -3617,7 +3622,27 @@ with `get_status_segments`. `cost` is the retained-history cost; when retained
 responses omitted usage information, the shell sets `cost_is_lower_bound` and the
 row prefixes the value with `>=`. While the main run waits on a subagent, the row
 shows that subagent's figures instead. These fields keep the main conversation's
-values meanwhile and show again when it settles; segments stay on the row.
+values meanwhile and show again when it settles. Plugin fragments stay with the
+main footer's `plugins` field, subject to its visibility and position.
+
+The shell owns `assistant_age`, the optional time since nonempty main-assistant
+text. Thinking, tools, user messages, and descendants do not reset it, even while
+a subagent's figures are focused. `FooterActivity` in `runtime/footer_activity.py`
+persists the locally observed live text time in `ModelResponse.metadata` under
+`clai2_last_text_at` only while `assistant_age` is enabled, without changing the
+response timestamp or provider payload. Disabling the field stops those writes
+without erasing existing metadata.
+Resume, rewind, and conversation switches restore it from the retained textual
+response; older history without that metadata falls back to that response's
+timestamp. No textual response means no age figure. This uses the existing editor
+refresh cycle, not a plugin timer. See the [status-line reference](docs/reference.md#status-line)
+for layout controls and all built-in fields.
+
+Task duration labels in the panel, completion rows, and `/tasks` use at most three
+nonzero units; days omit seconds. Zero and negative durations show `0s`. From 30
+days, a known start shows its local `%b %d` date, such as `Jan 02`. A completed
+task's duration stops at its finish time. `TaskInfo` timestamps, event durations,
+and task expiry retain their machine-readable values and lifecycle semantics.
 
 The double-Esc rewind menu also uses `commit_messages` between turns. It removes
 the selected prompt and later history, but does not undo plugin state, file
@@ -3625,10 +3650,16 @@ changes, or other tool side effects. It never replays tools or fires turn hooks.
 
 ### Add to the status row: `get_status_segments()`
 
-Each segment is a function that takes no arguments and returns a short string. It
-is appended after the built-in figures, painted muted, and dropped when the
-plugin unloads. The built-in row accents output-token counts and tool names using
-the selected theme; plugin fragments stay muted.
+Each segment is a function that takes no arguments and returns a short string.
+All plugin fragments form the `plugins` group in `display.footer_fields`, in
+registration order. The default layout places it after `activity`. Users can
+hide or move the group without unloading plugins; individual fragments do not
+have layout keys. A fragment is dropped when its plugin unloads. The built-in
+row accents output-token counts and tool names using the selected theme;
+reordering preserves those styles, and plugin fragments stay muted.
+
+See the [status-line reference](docs/reference.md#status-line) for layout controls,
+defaults, validation, cross-build compatibility, and direct JSON examples.
 
 ```python
 from collections.abc import Sequence
@@ -4316,22 +4347,26 @@ The built-in model catalog and `/set model` completions include
 `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
 For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
-(or your saved Codex model), then **Service Tier / Fast Mode**. Choose
-**Fast (priority)** to request fast processing, or **Standard (default)** to
-turn it off. [Codex fast mode](https://developers.openai.com/codex/speed)
-uses more ChatGPT credits and depends on model and account availability. It does
-not lower reasoning effort. Reset restores the existing model default; it does
-not enable fast mode. The stored values remain `service_tier=priority` and
-`service_tier=default`, so older CLAI versions can read them. A custom
-`service_tier` body parameter still takes precedence.
+(or your saved Codex model), then **Speed**. GPT-6.2 Astra, GPT-6.2 Sol,
+GPT-6.1 Sol, and GPT-6 Astra, the Codex models that offer
+[Ultrafast](https://developers.openai.com/codex/speed), default to
+**ultrafast**. Choose **fast** for priority processing, or **standard** to turn
+both off. Faster speeds use more ChatGPT credits and depend on your plan. They do
+not lower reasoning effort. Reset restores the model's default. Picking a tier in
+the **Service Tier** row replaces the speed, and a custom `service_tier` body
+parameter takes precedence over both. Older CLAI builds see a speed as its nearest
+service tier, `priority` for fast and ultrafast, and a different tier they save picks
+the speed here.
 
 While the active model starts with `openai-codex:`, `/fast` toggles between
-priority and standard processing. `/fast on` and `/fast off` select explicitly.
-It saves the active model's service tier for subsequent prompts and sessions,
-without changing reasoning effort or other preferences. It is absent from help
-and Tab completion on other models, and typing it there reports an unknown command.
-If a custom `service_tier` parameter is set, `/fast` asks you to remove it first
-with `/model settings` rather than saving an ineffective change.
+standard and the model's default speed: ultrafast where it is offered, fast
+elsewhere. `/fast on` selects fast, `/fast off` standard, and
+`/fast ultrafast` ultrafast. It saves the active model's speed for subsequent
+prompts and sessions, without changing reasoning effort or other preferences. It
+is absent from help and Tab completion on other models, and typing it there
+reports an unknown command. If a custom `service_tier` parameter is set, `/fast`
+asks you to remove it first with `/model settings` rather than saving an
+ineffective change.
 
 Model preferences are shared across checkouts. Reading saved preferences ignores
 unknown fields, so newer settings do not break an older reader with this
@@ -4385,12 +4420,17 @@ For native Anthropic models, **Preserved Thinking** controls
 `thinking.block_binding.prefix_mismatch_behavior`: `error` rejects a mismatched
 prefix; `drop_block` continues without the mismatched reasoning block. It appears
 on adaptive-capable Claude models. Fable 5.1 also exposes **Thinking Display**:
-`updates` or `summarized`. Setting either control without a thinking mode selects
-adaptive thinking; neither can be combined with disabled thinking. Resetting the
-mode clears its budget, display, and binding overrides. **Interleaved Thinking**
-adds the beta header on classic Claude 4 models. CLAI adds the display beta when
-requesting updates; core adds the block-binding beta. These native controls do
-not add Anthropic protocol support to third-party Chat Completions endpoints.
+`updates` or `summarized`. Opus 5.5 and Sonnet 5.5 expose it with `summarized`,
+which shows the notes they write between tool calls. Setting either control
+without a thinking mode selects adaptive thinking; neither can be combined with
+disabled or `between_tools` thinking. **Extended Thinking** offers only the
+modes the model accepts: Fable, Mythos, and Opus 5.5 always think, so they offer
+`adaptive` alone, and Sonnet 5.5 offers `between_tools`, its off switch, in place
+of `disabled`. Resetting the mode clears its budget, display, and binding
+overrides. **Interleaved Thinking** adds the beta header on classic Claude 4
+models. CLAI adds the display beta when requesting updates; core adds the
+block-binding beta. These native controls do not add Anthropic protocol support
+to third-party Chat Completions endpoints.
 
 GLM-4.5 and newer expose **Thinking (GLM)** and **Clear Thinking (GLM)**;
 GLM-5.2 and newer also expose **Reasoning Effort (GLM)**. Clear Thinking set to
