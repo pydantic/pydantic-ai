@@ -130,13 +130,14 @@ class RenderFunctionCallTransport(Generic[AgentDepsT], RenderJSONTransport[Tools
         tool = params.tool
         if tool is None:  # pragma: no cover - core resolves tools before dispatch
             raise ValueError(f'Function tool {params.name!r} has no resolved definition.')
+        tool_args = dump_json_object(dict[str, object], params.tool_args)
         payload = _CallToolPayload(
             name=params.name,
-            tool_args=dump_json_object(dict[str, object], params.tool_args),
+            tool_args=tool_args,
             run_context=self._context_codec.dump(params.ctx),
             tool_def=tool.tool_def,
             original_name=function_tool_original_name(tool),
-            raw_tool_args=raw_tool_args_for_unit(self._toolset, params),
+            raw_tool_args=raw_tool_args_for_unit(self._toolset, params, loaded_tool_args=load_json_object(tool_args)),
         )
         return dump_json_object(_CallToolPayload, payload)
 

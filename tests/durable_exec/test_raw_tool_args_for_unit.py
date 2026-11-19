@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.durable_exec import ToolsetCallToolParams, raw_tool_args_for_unit
@@ -27,11 +28,14 @@ class Case:
     sent: bool
     """Whether the call's own arguments are returned for the unit to validate."""
     changed_by_hook: bool = False
+    dump_reproduces: bool = False
+    """Whether the unit's load of the dumped arguments validates back to them."""
 
 
 CASES = [
     Case('json-string', '{"pair": [1.5, "x"], "labels": {"1": 2}}', sent=True),
     Case('json-object', {'pair': [1.5, 'x'], 'labels': {'1': 2}}, sent=True),
+    Case('dump-reproduces', {'pair': [1.5, 'x']}, sent=False, dump_reproduces=True),
     Case('no-arguments', None, sent=False),
     Case('tuple', {'pair': (1.5, 'x')}, sent=False),
     Case('infinite-float', {'pair': [math.inf, 'x']}, sent=False),
@@ -61,5 +65,12 @@ async def test_raw_tool_args_for_unit(case: Case):
         tool_args = {**tool_args, 'pair': (9.0, 'y')}
     tool = (await toolset.get_tools(ctx))['record']
 
+    # A dump the unit reads back as the defaults stands in for one that loses the arguments.
+    loaded_tool_args: dict[str, Any] = {}
+    if case.dump_reproduces:
+        loaded_tool_args = TypeAdapter(dict[str, Any]).dump_python(tool_args, mode='json')
+
     params = ToolsetCallToolParams('record', tool_args=tool_args, ctx=ctx, tool=tool)
-    assert raw_tool_args_for_unit(toolset, params) == (case.args if case.sent else None)
+    assert raw_tool_args_for_unit(toolset, params, loaded_tool_args=loaded_tool_args) == (
+        case.args if case.sent else None
+    )

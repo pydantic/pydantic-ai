@@ -208,6 +208,7 @@
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::raw_tool_args_for_unit",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args"
       ]
     },

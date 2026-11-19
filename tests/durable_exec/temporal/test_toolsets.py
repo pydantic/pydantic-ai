@@ -1467,7 +1467,8 @@ async def test_tool_arguments_are_validated_from_the_model_arguments_in_the_acti
     )
     assert _call_tool_activity_raw_args(await handle.fetch_history()) == {
         'c1': _RESERVE_ARGS,
-        'c2': {'pair': [1.5, 'x']},
+        # The converter's dump already validates back to `(1.5, 'x')`, so this call crosses as before.
+        'c2': None,
         # No arguments to send: the call's `args` is `None`.
         'c3': None,
     }
@@ -1571,37 +1572,85 @@ async def test_arguments_changed_by_hooks_reach_the_activity_as_changed(client: 
     assert sorted(_received_hook_args, key=repr) == sorted([(Order(qty=99), 'hook'), 2], key=repr)
 
 
+class PriceFilters(TypedDict, total=False):
+    max_price: Annotated[float, Field(alias='maxPrice')]
+
+
+_received_filters: list[PriceFilters] = []
+"""The arguments `search` ran with, recorded in the activity."""
+
+
+def search(filters: PriceFilters) -> str:
+    """Search with filters."""
+    _received_filters.append(filters)
+    return 'Found.'
+
+
+def _search_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('Done.')])
+    return ModelResponse(parts=[ToolCallPart('search', {'filters': {'maxPrice': 10}}, tool_call_id='c1')])
+
+
+_search_agent = Agent(
+    FunctionModel(_search_model),
+    name='search_durable',
+    tools=[search],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class SearchWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _search_agent.run('Search under 10.')
+        return result.output
+
+
 async def test_history_recorded_without_model_arguments_replays(client: Client, monkeypatch: pytest.MonkeyPatch):
-    """A workflow whose activity input carries only the validated arguments, as before, still completes and replays.
+    """A history whose `call_tool` input carries only the validated arguments, as before, replays with code that sends both.
 
-    Unsandboxed, so the patch reaches the workflow's transport.
+    The converter's dump writes the `TypedDict` field by name while its schema reads `maxPrice`, so without the model's
+    arguments the optional field arrives missing. Unsandboxed, so the patch reaches the workflow's transport.
     """
-    _received_bookings.clear()
+    _received_filters.clear()
 
-    def without_model_args(toolset: FunctionToolset[Any], params: ToolsetCallToolParams) -> None:
+    def without_model_args(
+        toolset: FunctionToolset[Any], params: ToolsetCallToolParams, *, loaded_tool_args: dict[str, Any]
+    ) -> None:
         return None
 
     monkeypatch.setattr('pydantic_ai.durable_exec.temporal._transports.raw_tool_args_for_unit', without_model_args)
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[BookWorkflow],
-        plugins=[AgentPlugin(_book_durable_agent)],
+        workflows=[SearchWorkflow],
+        plugins=[AgentPlugin(_search_agent)],
         workflow_runner=UnsandboxedWorkflowRunner(),
     ):
         handle = await client.start_workflow(
-            BookWorkflow.run, args=['durability'], id=f'{BookWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+            SearchWorkflow.run, id=f'{SearchWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
         )
         assert await handle.result() == 'Done.'
     monkeypatch.undo()
-    assert _received_bookings == [('Ada', Place(cityName='Paris'), Revision(draftNumber=0, draft=7))]
+    assert _received_filters == [{}]
 
     history = await handle.fetch_history()
     assert _call_tool_activity_raw_args(history) == {'c1': None}
     replay = await Replayer(
-        workflows=[BookWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
+        workflows=[SearchWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
     ).replay_workflow(history)
     assert replay.replay_failure is None
+
+    _received_filters.clear()
+    async with Worker(client, task_queue=TASK_QUEUE, workflows=[SearchWorkflow], plugins=[AgentPlugin(_search_agent)]):
+        handle = await client.start_workflow(
+            SearchWorkflow.run, id=f'{SearchWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+        assert await handle.result() == 'Done.'
+    assert _received_filters == [{'max_price': 10.0}]
+    assert _call_tool_activity_raw_args(await handle.fetch_history()) == {'c1': {'filters': {'maxPrice': 10}}}
 
 
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

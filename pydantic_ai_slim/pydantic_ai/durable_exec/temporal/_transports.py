@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ConfigDict, with_config
+from temporalio import workflow
 
 from pydantic_ai import messages as _messages
 from pydantic_ai._instrumentation import (
@@ -91,6 +92,9 @@ class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, t
     def dump(self, params: ToolsetCallToolParams) -> tuple[CallToolParams, Any]:
         assert params.tool is not None
         tool = params.tool
+        # The activity loads `tool_args` through the same converter.
+        converter = workflow.payload_converter()
+        loaded_tool_args = converter.from_payloads(converter.to_payloads([params.tool_args]), [dict[str, Any]])[0]
         return (
             CallToolParams(
                 name=params.name,
@@ -98,7 +102,7 @@ class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, t
                 serialized_run_context=self._durability.run_context_type.serialize_run_context(params.ctx),
                 tool_def=tool.tool_def,
                 original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,
-                raw_tool_args=raw_tool_args_for_unit(self._toolset, params),
+                raw_tool_args=raw_tool_args_for_unit(self._toolset, params, loaded_tool_args=loaded_tool_args),
             ),
             params.ctx.deps,
         )

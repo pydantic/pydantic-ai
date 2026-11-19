@@ -5,7 +5,7 @@ import functools
 import inspect
 import math
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
-from contextlib import AbstractContextManager, asynccontextmanager, contextmanager, nullcontext
+from contextlib import AbstractContextManager, asynccontextmanager, contextmanager, nullcontext, suppress
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import (
     TYPE_CHECKING,
@@ -552,17 +552,24 @@ async def revalidate_function_call(
     return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
 
 
-def raw_tool_args_for_unit(toolset: FunctionToolset[Any], params: ToolsetCallToolParams) -> str | dict[str, Any] | None:
-    """The function tool call's arguments as the model sent them, for a transport to carry into the durable unit.
+def raw_tool_args_for_unit(
+    toolset: FunctionToolset[Any], params: ToolsetCallToolParams, *, loaded_tool_args: dict[str, Any]
+) -> str | dict[str, Any] | None:
+    """The function tool call's arguments as the model sent them, when the durable unit needs them.
 
-    Validating the arguments again after a JSON dump doesn't always give back the values the
-    workflow validated: the dump writes serialization aliases, masks secrets and runs serializers.
-    The model's own arguments are what the workflow validated, so validating them again in the unit
-    reproduces those values. They are returned only when they still do: when validating them now,
-    as the unit will, gives arguments equal to `params.tool_args`. A hook, a wrapper toolset or an
-    `args_validator` that changed the arguments makes them unequal, and so does a validator whose
-    output isn't stable (a `default_factory`, a type without `__eq__`). The function then returns
-    `None`, and the transport carries only `tool_args`, as before.
+    The unit validates `params.tool_args` again after they crossed the boundary as JSON, which
+    doesn't always give back the values the workflow validated: the dump writes serialization
+    aliases, masks secrets and runs serializers. The model's own arguments are what the workflow
+    validated, so validating them in the unit instead reproduces those values.
+
+    They are returned only when the unit needs them and they still reproduce `params.tool_args`:
+    - `loaded_tool_args` is `params.tool_args` as the unit will load them after the transport's
+      JSON round trip. When validating those already gives arguments equal to `params.tool_args`,
+      this returns `None`, so the call crosses as it did before.
+    - Otherwise this returns the model's arguments when validating them now, as the unit will,
+      gives arguments equal to `params.tool_args`. A hook, a wrapper toolset or an `args_validator`
+      that changed the arguments makes them unequal, and so does a validator whose output isn't
+      stable (a `default_factory`, a type without `__eq__`).
 
     Call this workflow-side in a function-call transport's `dump`, and set the loaded value on
     [`ToolsetCallToolParams.raw_tool_args`][pydantic_ai.durable_exec.ToolsetCallToolParams.raw_tool_args]
@@ -578,10 +585,13 @@ def raw_tool_args_for_unit(toolset: FunctionToolset[Any], params: ToolsetCallToo
         or (source := toolset.tools.get(tool.original_name or tool.tool_def.name)) is None
     ):
         return None
+    context = params.ctx.validation_context
+    # A dump the unit can't validate at all is one it doesn't reproduce.
+    with suppress(ValidationError):
+        if source.function_schema.revalidate(loaded_tool_args, context=context) == params.tool_args:
+            return None
     try:
-        reproduced = _validate_raw_tool_args(
-            source.function_schema.validator, raw_args, context=params.ctx.validation_context
-        )
+        reproduced = _validate_raw_tool_args(source.function_schema.validator, raw_args, context=context)
     except ValidationError:
         return None
     return raw_args if reproduced == params.tool_args else None

@@ -208,12 +208,13 @@ produces. Override `ParameterTransports.prepare_function_call` to return
 looks the tool up again when it wasn't transported and validates the arguments worker-side.
 Validating a JSON dump of the validated arguments doesn't always give back the same values: the dump
 writes serialization aliases, masks secrets and runs serializers. So also carry the arguments the
-model sent: in the function-call transport's `dump`, put
-[`raw_tool_args_for_unit`][pydantic_ai.durable_exec.raw_tool_args_for_unit]'s result on your wire,
-and pass it back as [`ToolsetCallToolParams.raw_tool_args`][pydantic_ai.durable_exec.ToolsetCallToolParams.raw_tool_args]
+model sent when the unit needs them: in the function-call transport's `dump`, call
+[`raw_tool_args_for_unit`][pydantic_ai.durable_exec.raw_tool_args_for_unit] with `tool_args` as
+your `load` will return them, put its result on your wire, and pass it back as
+[`ToolsetCallToolParams.raw_tool_args`][pydantic_ai.durable_exec.ToolsetCallToolParams.raw_tool_args]
 in `load`. `revalidate_function_call` then validates those, as the run did. The helper returns `None`
-when they no longer validate to the dispatched arguments, for example because a hook changed them,
-and the unit validates `tool_args` as before.
+when the dump already validates back to the dispatched arguments, and when the model's arguments no
+longer do, for example because a hook changed them; the unit then validates `tool_args` as before.
 Reading a field that wasn't carried raises a `UserError` instead of returning a default that could
 be mistaken for run state. Override `unavailable_field_message` to word that error for your engine.
 Your users can subclass your context and override `serialize_run_context` to carry more fields.

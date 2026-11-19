@@ -132,6 +132,7 @@ class _Call:
 
 
 _CALL = TypeAdapter(_Call)
+_TOOL_ARGS = TypeAdapter(dict[str, Any])
 
 
 def function_transport(
@@ -140,13 +141,15 @@ def function_transport(
     def dump(params: ToolsetCallToolParams) -> _Call:
         tool = params.tool
         assert tool is not None
+        # What the activity loads: `_Transport.dump` writes this again unchanged, as it is JSON already.
+        tool_args = _TOOL_ARGS.dump_python(params.tool_args, mode='json', round_trip=True)
         return _Call(
             name=params.name,
-            tool_args=params.tool_args,
+            tool_args=tool_args,
             context=ContextSnapshot.capture(params.ctx),
             tool_def=tool.tool_def,
             original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,
-            raw_tool_args=raw_tool_args_for_unit(toolset, params),
+            raw_tool_args=raw_tool_args_for_unit(toolset, params, loaded_tool_args=tool_args),
         )
 
     def load(wire: _Call) -> ToolsetCallToolParams:

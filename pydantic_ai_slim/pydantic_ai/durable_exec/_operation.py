@@ -216,7 +216,7 @@ class ToolsetCallToolParams:
     ctx: RunContext[Any]
     tool: ToolsetTool[Any] | None
     raw_tool_args: str | dict[str, Any] | None = None
-    """The function tool call's arguments as the model sent them, when they validate to `tool_args`.
+    """The function tool call's arguments as the model sent them, when `tool_args` don't survive the boundary.
 
     A transport whose wire carries
     [`raw_tool_args_for_unit`][pydantic_ai.durable_exec.raw_tool_args_for_unit]'s result sets this
