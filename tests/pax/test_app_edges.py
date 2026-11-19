@@ -360,7 +360,7 @@ async def test_lazy_add_model_menu_and_named_selection(tmp_path: Path, monkeypat
     ('width', 'expected'),
     [
         (160, [theme.LITHIUM, theme.LITHIUM, theme.PURPLE, theme.PURPLE, theme.AI_CYAN, theme.AI_CYAN]),
-        (40, [theme.LITHIUM]),
+        (16, [theme.LITHIUM]),
     ],
 )
 async def test_banner_keeps_brand_colours_under_every_theme(

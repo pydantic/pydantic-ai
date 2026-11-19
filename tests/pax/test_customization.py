@@ -145,6 +145,17 @@ async def test_custom_agent_can_opt_in_with_the_former_name() -> None:
     assert len(guide) == 1 and isinstance(guide[0], str)
     assert '## Create and install a plugin' in guide[0]
 
+    def resume(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == len(result.all_messages()) + 1:
+            assert 'read_clai_docs' in {tool.name for tool in info.function_tools}
+            return ModelResponse(parts=[ToolCallPart('read_clai_docs', {'path': 'customization'})])
+        return ModelResponse(parts=[TextPart('resumed')])
+
+    resumed = await create_agent().run(
+        'Read it again', model=FunctionModel(resume), message_history=result.all_messages()
+    )
+    assert tool_returns(resumed.new_messages()) == guide
+
 
 @pytest.mark.parametrize(
     ('tool_name', 'arguments'),

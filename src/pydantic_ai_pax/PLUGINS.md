@@ -253,7 +253,7 @@ built-in model catalog's entries. Those need a custom agent launcher or a source
 change, as explained in the guide.
 
 Custom agents can opt in with `PaxDocs()` from `pydantic_ai_pax.pax_docs`;
-`customization_guide()` from `pydantic_ai_pax.customization` returns the same. The
+`customization_guide()` from `pydantic_ai_pax.customization` keeps the legacy `ClaiDocs` capability. The
 tools only return documentation; they do not write files, activate plugins, or
 grant permission to execute generated code. Keep the customization guide aligned
 with this contract when changing plugin APIs.

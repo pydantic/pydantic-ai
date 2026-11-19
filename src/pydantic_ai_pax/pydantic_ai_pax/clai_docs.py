@@ -2,7 +2,7 @@
 
 from pydantic_ai import Tool
 from pydantic_ai.capabilities import Capability
-from pydantic_ai_pax.pax_docs import _read_pax_docs, _search_pax_docs
+from pydantic_ai_pax.pax_docs import read_pax_docs, search_pax_docs
 
 CAPABILITY_ID = 'clai_customization'
 
@@ -16,5 +16,5 @@ class ClaiDocs(Capability[None]):
             description='Compatibility name for pax_customization. New sessions should load pax_customization.',
             defer_loading=True,
             instructions='Use search_clai_docs and read_clai_docs for Pax documentation.',
-            tools=[Tool(_search_pax_docs, name='search_clai_docs'), Tool(_read_pax_docs, name='read_clai_docs')],
+            tools=[Tool(search_pax_docs, name='search_clai_docs'), Tool(read_pax_docs, name='read_clai_docs')],
         )
