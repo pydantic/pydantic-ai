@@ -604,8 +604,8 @@ def folding_model(messages: list[ModelMessage], info: AgentInfo) -> ModelRespons
     )
 
 
-async def test_validator_that_mutates_its_input_reaches_the_task_as_without_durability() -> None:
-    """Checking which arguments to send must not run a validator on the payload or the model's arguments themselves.
+async def test_validator_that_mutates_its_input_runs_once_in_the_task() -> None:
+    """Checking which arguments to send runs the tool's validators on copies, so the task validates each input once.
 
     `fold` crosses as its dump, which the task validates once. The run has already folded `fold_with_options`'s own
     arguments in place, so validating them again raises in the run; that call keeps the dump too, whose
@@ -628,4 +628,5 @@ async def test_validator_that_mutates_its_input_reaches_the_task_as_without_dura
         return 'ok'
 
     assert await run_agent_in_task(agent, runtime, RecordingTaskContext()) == 'done'
+    # The model's arguments were folded in place, so this call keeps the dump and loses `opts` as on main (#13440).
     assert seen == [Folded(price=6, qty=1), (Folded(price=6, qty=1), {})]

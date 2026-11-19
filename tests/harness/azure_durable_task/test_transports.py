@@ -295,10 +295,10 @@ def test_arguments_changed_by_hooks_reach_the_activity_as_changed(durable_worker
     assert observed == [(Order(qty=99), 'hook'), 2]
 
 
-def test_validator_that_mutates_its_input_reaches_the_activity_as_without_durability(
+def test_validator_that_mutates_its_input_runs_once_in_the_activity(
     durable_worker: 'InMemoryWorker',
 ) -> None:
-    """Checking which arguments to send must not run a validator on the payload or the model's arguments themselves.
+    """Checking which arguments to send runs the tool's validators on copies, so the activity validates each input once.
 
     `fold` crosses as its dump, which the activity validates once. The orchestrator has already folded
     `fold_with_options`'s own arguments in place, so validating them again raises there; that call keeps the dump
@@ -330,6 +330,7 @@ def test_validator_that_mutates_its_input_reaches_the_activity_as_without_durabi
 
     with registered_agent(durable_worker, agent):
         assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
+    # The model's arguments were folded in place, so this call keeps the dump and loses `opts` as on main (#13440).
     assert observed == [Folded(price=6, qty=1), (Folded(price=6, qty=1), {})]
 
 

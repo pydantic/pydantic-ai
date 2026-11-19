@@ -81,7 +81,7 @@ class Filters(BaseModel):
 
 
 async def test_check_that_raises_keeps_the_dump():
-    """A hook that drops a single model argument's key makes validating the dump raise `KeyError`, not `ValidationError`.
+    """Validating a dump without a single model argument's key, as a hook could leave it, raises `KeyError`.
 
     The check leaves the call on today's path, so the unit raises it there instead of the workflow.
     """
