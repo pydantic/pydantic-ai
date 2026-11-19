@@ -196,9 +196,9 @@ async def main():
     print(result.output)
 ```
 
-Without an `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, a window manager, Firefox and a terminal), and later runs reuse it. The screen is 1280x800. For another size, pass it, such as `desktop=(1440, 900)`. An existing container whose screen is already running keeps its size. Add `Coder` to give the agent the container's shell and files too.
+Without an `image`, the first run builds one from [`DESKTOP_DOCKERFILE`][pydantic_ai_harness.docker_container.DESKTOP_DOCKERFILE] (Debian, a window manager, Firefox and a terminal), and later runs reuse it. The screen is 1280x800. For another size, pass it, such as `desktop=(1440, 900)`. An existing container whose screen is already running keeps its size. Add `Coder` to give the agent the container's shell and files too.
 
-The built image is reused, so it doesn't get security updates. To update it, or to keep it under your own tag, build it yourself from `DESKTOP_DOCKERFILE` and pass it as `image`. The `--no-cache` flag below makes Docker rebuild every step instead of reusing earlier results. Under [durable execution](../durable_execution/overview.md), build it before the first run, so the build doesn't count against a step's timeout.
+The built image is reused, so it doesn't get security updates. To update it, or to keep it under your own tag, build it yourself from [`DESKTOP_DOCKERFILE`][pydantic_ai_harness.docker_container.DESKTOP_DOCKERFILE] and pass it as `image`. The `--no-cache` flag below makes Docker rebuild every step instead of reusing earlier results. Under [durable execution](../durable_execution/overview.md), build it before the first run, so the build doesn't count against a step's timeout.
 
 ```bash
 python -c "from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE; print(DESKTOP_DOCKERFILE)" | docker build --pull --no-cache --tag my-desktop -
@@ -206,7 +206,7 @@ python -c "from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE; 
 
 Then pass `DockerContainer(image='my-desktop', desktop=True)`.
 
-A custom `image` needs the programs the desktop runs: Xvfb draws the screen, `xdotool` moves the mouse and types, `xwininfo` (Debian's `x11-utils`) reads the screen size, `scrot` takes screenshots, and `setsid` keeps the screen running after the command that started it ends. It also needs `fluxbox`, the window manager, and `xprop`, which checks that the window manager started. The easiest way is to start from `DESKTOP_DOCKERFILE`.
+A custom `image` needs the programs the desktop runs: Xvfb draws the screen, `xdotool` moves the mouse and types, `xwininfo` (Debian's `x11-utils`) reads the screen size, `scrot` takes screenshots, and `setsid` keeps the screen running after the command that started it ends. It also needs `fluxbox`, the window manager, and `xprop`, which checks that the window manager started. The easiest way is to start from [`DESKTOP_DOCKERFILE`][pydantic_ai_harness.docker_container.DESKTOP_DOCKERFILE].
 
 The agent can type only ASCII characters. An action that types or presses a character such as `é` fails, and the model is told why.
 
@@ -272,7 +272,7 @@ Specs saved before the rename use the `DockerSandbox` block name. To keep loadin
 | `executable` | The container CLI to run, such as `'podman'`, looked up on `PATH` when the capability is created. Default: `'docker'`. |
 | `authority` | The [authority](../workspace.md#workspace-authority) of the container's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
 | `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are container paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
-| `desktop` | Give the container a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. Without an `image`, builds the desktop image on first use. Default: `False`. |
+| `desktop` | Give the container a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. Without an `image`, builds the desktop image from [`DESKTOP_DOCKERFILE`][pydantic_ai_harness.docker_container.DESKTOP_DOCKERFILE] on first use. Default: `False`. |
 
 ## Platforms
 
@@ -287,3 +287,5 @@ The machine running the agent must be POSIX (Linux or macOS), like [`LocalWorksp
 ::: pydantic_ai_harness.docker_container.DockerContainer
 
 ::: pydantic_ai_harness.docker_container.DockerContainerBackend
+
+::: pydantic_ai_harness.docker_container.DESKTOP_DOCKERFILE
