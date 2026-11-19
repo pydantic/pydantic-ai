@@ -16,7 +16,7 @@ Pydantic AI supports the following native tools:
 - **[`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool]**: Enables agents to generate images
 - **[`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool]**: Enables agents to fetch web pages
 - **[`MemoryTool`][pydantic_ai.native_tools.MemoryTool]**: Enables agents to use memory
-- **[`ComputerTool`][pydantic_ai.native_tools.ComputerTool]**: Sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool as the provider's native computer use tool
+- **[`ComputerTool`][pydantic_ai.native_tools.ComputerTool]**: Sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool to the model as the provider's own computer use tool
 - **[`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
 - **[`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]**: Enables agents to search through uploaded files using vector search (RAG)
 - **[`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]**: Lets a faster executor model consult a stronger advisor model mid-generation (Anthropic, OpenRouter)
@@ -854,22 +854,29 @@ _(This example is complete, it can be run "as is")_
 
 ## Computer Tool
 
-The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends a tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind, such as the one Pydantic AI Harness's `ComputerUse` capability adds, as the provider's native computer use tool, which models are trained to use. Like the [Memory Tool](#memory-tool), the provider doesn't run its calls: the model adapter turns them into calls of the local tool, and the results back into the provider's format.
+The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool to the model as the provider's own computer use tool. Models are trained to use that tool. As with the [Memory Tool](#memory-tool), the provider doesn't run the calls. Pydantic AI runs each call with the agent's `computer` tool and sends the result back in the provider's format. It finds that tool by its kind, `computer`, not by its name.
 
-The local tool is found by its kind, not its name. The native tool is sent when the request has exactly one tool of that kind that the model can call: not deferred, or revealed by history. With none, the native tool is left out when it is `optional`, and the request is refused when it isn't. With more than one, the request is refused.
+Pydantic AI Harness's [`ComputerUse`](harness/computer-use.md) capability adds both the `computer` tool and the `ComputerTool` for you. With `ComputerUse(native=False)`, it leaves out the `ComputerTool`, and the model gets `computer` as a regular function tool.
 
-`ComputerUse` adds it for you, with the size of the screenshots the model sees, and leaves it out with `native=False`.
+The native tool is sent only when the request has exactly one `computer` tool the model can call. If there is none, an `optional` `ComputerTool` is left out, and a required one raises [`UserError`][pydantic_ai.exceptions.UserError]. If there is more than one, the request raises `UserError`.
 
 ### Provider Support
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI Responses | ✅ | On GPT-5.4 (not nano), GPT-5.5, GPT-5.6 and GPT-6 through OpenAI and Bedrock Mantle. OpenAI's tool can't zoom, triple-click, hold a key, press or release a mouse button, or read the pointer position. |
-| Anthropic | ✅ | On Claude Haiku 4.5, Sonnet 4.6, Opus 4.5 and later through the Claude API and Amazon Bedrock, as the computer use tool or toolset that [`anthropic_computer_tool_version`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_computer_tool_version] names. See [Anthropic computer use](models/anthropic.md#computer-use). |
+| OpenAI Responses | ✅ | On GPT-5.4 (except GPT-5.4 nano), GPT-5.5, GPT-5.6 and GPT-6, through OpenAI and Bedrock Mantle. OpenAI's tool can't zoom, triple-click, hold a key down, press or release a mouse button on its own, or read the pointer position. |
+| Anthropic | ✅ | On Claude Haiku 4.5, Sonnet 4.6, Opus 4.5 and later through the Claude API and Amazon Bedrock. See [Anthropic computer use](models/anthropic.md#computer-use). |
+| Google | ❌ | |
+| xAI | ❌ | |
+| Groq | ❌ | |
+| Bedrock | ❌ | Claude on Amazon Bedrock gets it through `AnthropicModel`. See the Anthropic row. |
+| Mistral | ❌ | |
+| Cohere | ❌ | |
+| HuggingFace | ❌ | |
 
 ### Usage
 
-Here the desktop comes from a Docker container, and `ComputerUse` adds the `computer` tool and its native tool:
+This example runs the desktop in a Docker container:
 
 ```py {title="computer_tool.py" test="skip"}
 from pydantic_ai_harness import ComputerUse, DockerContainer

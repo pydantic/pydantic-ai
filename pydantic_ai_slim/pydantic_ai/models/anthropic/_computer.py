@@ -1,4 +1,9 @@
-"""Mapping the `computer` tool to Anthropic's computer use tools, and their calls back to `computer` calls."""
+"""Send the `computer` tool to Claude as Anthropic's computer use tool, and turn Claude's calls into `computer` calls.
+
+Anthropic's earlier tools, `computer_20250124` and `computer_20251124`, are one tool named `computer`. Each call names
+what to do in its `action` field, such as `left_click`. The `computer_toolset_20260801` toolset is a set of tools
+instead, one per action, such as a `left_click` tool. This module calls each of those actions a member.
+"""
 
 from __future__ import annotations as _annotations
 
@@ -30,7 +35,7 @@ COMPUTER_TOOL_BETAS: dict[AnthropicComputerToolVersion, str] = {
 
 
 class ComputerBlock(TypedDict):
-    """A call of the computer use tool, as Claude made it."""
+    """One call Claude made to Anthropic's computer use tool, unchanged."""
 
     id: str
     name: str
@@ -38,25 +43,32 @@ class ComputerBlock(TypedDict):
 
 
 class ComputerReplay(TypedDict):
-    """What a `computer` call keeps in its `provider_details`, to send back the calls it came from as they were."""
+    """What a `computer` call stores in `provider_details`, so Claude's original calls can be sent back unchanged."""
 
     computer_blocks: list[ComputerBlock]
     computer_tool: AnthropicComputerToolVersion
     computer_action_counts: list[Annotated[int, Field(ge=1)]]
-    """How many actions each call became, so results are matched to calls without mapping them again."""
+    """How many `computer` actions each of Claude's calls became.
+
+    Results are matched to calls by these counts, so the calls aren't converted again.
+    """
 
 
 _REPLAY = TypeAdapter(ComputerReplay)
 
 
 def computer_replay(part: ToolCallPart, provider_name: str, sent: NativeComputer) -> ComputerReplay | None:
-    """The calls a `computer` call came from, or `None` to send it back as a plain call.
+    """Return Claude's original calls behind a `computer` call, or `None` to send it back as a regular tool call.
 
-    A history may come from storage or a UI, so what it kept is validated: one count per call, each at least 1,
-    adding up to the call's actions. The part's class isn't checked: a call whose actions don't validate, such as one
-    with an option the `computer` tool lacks, is a plain `ToolCallPart` after JSON, and still goes back as its calls.
-    Calls whose actions or tool aren't the part's, such as after a hook changed or renamed them, or of another computer
-    use tool version than the one `sent`, aren't sent back: they'd say theirs ran.
+    The history may come from storage or a UI, so the stored data is validated. There must be one count per call, each
+    count must be at least 1, and the counts must add up to the call's number of actions.
+
+    The part's class isn't checked. A call with an action the `computer` tool doesn't accept, such as an option it
+    lacks, becomes a plain `ToolCallPart` after a round trip through JSON. It is still sent back as Claude's calls.
+
+    The original calls aren't sent back if the part's actions or tool name no longer match them, such as after a hook
+    changed or renamed them. They also aren't sent back if they came from a different tool version than `sent`. In both
+    cases, sending them would tell Claude that its own calls ran.
     """
     if part.provider_name != provider_name or part.tool_name != sent.name:
         return None
@@ -79,9 +91,10 @@ def computer_replay(part: ToolCallPart, provider_name: str, sent: NativeComputer
 
 
 def _made(block: ComputerBlock, actions: list[Any], version: AnthropicComputerToolVersion) -> bool:
-    """Whether `actions` are what Claude's call `block` became, or its refusal for running after another tool's call.
+    """Whether `actions` are what Claude's call `block` became, or its refusal for coming after another tool's call.
 
-    A call that maps to another number of actions now, as an earlier release may have mapped it, is left to its count.
+    If the call now becomes a different number of actions, because an earlier release converted it differently, the
+    check passes and the stored count is used.
     """
     if any(isinstance(action, dict) and 'after_tool_calls' in action for action in actions):
         return True
@@ -94,7 +107,7 @@ def _made(block: ComputerBlock, actions: list[Any], version: AnthropicComputerTo
 
 @dataclass(frozen=True)
 class NativeComputer:
-    """The `computer` tool and the Anthropic computer use tool sent in its place, from a `ComputerTool`."""
+    """The `computer` tool, and the Anthropic computer use tool sent in its place. Built from a `ComputerTool`."""
 
     name: str
     version: AnthropicComputerToolVersion
@@ -121,7 +134,7 @@ class NativeComputer:
         )
 
     def answers(self, block: BetaContentBlock | None) -> TypeGuard[BetaToolUseBlock]:
-        """Whether a block is a call of the computer use tool sent for the `computer` tool."""
+        """Whether `block` is Claude's call to the computer use tool sent in place of the `computer` tool."""
         if not isinstance(block, BetaToolUseBlock):
             return False
         if self.is_toolset:
@@ -134,9 +147,9 @@ class NativeComputer:
         provider_name: str,
         member_actions: list[list[dict[str, Any]]] | None = None,
     ) -> ComputerCallPart:
-        """Calls of the computer use tool as one `computer` call, keeping them to send back unchanged.
+        """Turn Claude's computer use calls into one `computer` call, keeping the calls to send back unchanged.
 
-        `member_actions` are each call's actions, if `member_actions()` already mapped them.
+        Pass `member_actions` when `member_actions()` has already converted each call, so they aren't converted again.
         """
         if member_actions is None:
             member_actions = [self.member_actions(block) for block in blocks]
@@ -148,7 +161,7 @@ class NativeComputer:
         )
         return ComputerCallPart(
             self.name,
-            # A field Claude left out takes the `computer` tool's default.
+            # A field Claude left out is dropped, so the `computer` tool's default applies.
             {'actions': [{key: value for key, value in action.items() if value is not None} for action in actions]},
             tool_call_id=blocks[0]['id'],
             provider_name=provider_name,
@@ -156,10 +169,12 @@ class NativeComputer:
         )
 
     def member_actions(self, block: ComputerBlock, after_tool_calls: Sequence[str] = ()) -> list[dict[str, Any]]:
-        """The `computer` tool actions one call becomes, or one the tool refuses if it can't run as asked.
+        """Convert one of Claude's calls into `computer` tool actions.
 
-        `after_tool_calls` names the other tools Claude called just before the call: run as one batch, the call would
-        run before them, so the batch is refused and Claude asked again.
+        If the call can't run as Claude asked, the result is one action that the `computer` tool refuses.
+
+        `after_tool_calls` names the other tools Claude called just before this call. The batch runs as one `computer`
+        call, so this call would run before those tools. The batch is refused instead, and Claude is asked again.
         """
         name, args = computer_member(block, self.version)
         if after_tool_calls:
@@ -171,33 +186,33 @@ SPLIT_BATCH_REFUSAL = (
     'No computer action ran: they run together as one batch, and another tool call came between them. Make the '
     "computer calls before or after the other tools' calls, not between them."
 )
-"""What Claude gets in place of the retry's validation errors when another tool call split a batch.
+"""What Claude gets instead of the validation errors when another tool call came between its computer calls.
 
-Fixed text, with nothing from the history in it, which may come from storage or a UI.
+The text is fixed. It holds nothing from the history, because the history may come from storage or a UI.
 """
 
 
 def splits_batch(part: ToolCallPart) -> bool:
-    """Whether a `computer` call that `computer_replay` accepted still has an action marked as after another tool's."""
+    """Whether a `computer` call that `computer_replay` accepted has an action marked as after another tool's call."""
     return any(isinstance(action, dict) and 'after_tool_calls' in action for action in part.args_as_dict()['actions'])
 
 
 @dataclass
 class ComputerBatch:
-    """Collects a response's calls of the computer use tool into the `computer` calls they become."""
+    """Collects Claude's computer use calls in one response and turns them into `computer` calls."""
 
     computer: NativeComputer | None
     provider_name: str
     blocks: list[ComputerBlock] = field(default_factory=list[ComputerBlock])
     index: int = 0
-    """Where in the response's parts the toolset's batch goes: at its first call."""
+    """The position in the response's parts where the toolset's batch goes, which is where its first call was."""
     between: list[str] = field(default_factory=list[str])
-    """The other tools called since the batch's last call, which would run out of order if the batch ran as one."""
+    """Other tools called since the batch's last call. They would run out of order if the batch ran as one call."""
     actions: list[list[dict[str, Any]]] = field(default_factory=list[list[dict[str, Any]]])
-    """Each call's actions, mapped once as it's added."""
+    """Each call's `computer` actions, converted once when the call is added."""
 
     def take(self, block: BetaToolUseBlock, parts: list[ModelResponsePart]) -> bool:
-        """Collect `block` if it's a call of the computer use tool; otherwise note it as another tool's call."""
+        """Collect `block` if it's a computer use call. Otherwise record it as another tool's call."""
         if self.computer is None or not self.computer.answers(block):
             self.note_other(block.name)
             return False
@@ -205,12 +220,12 @@ class ComputerBatch:
         if self.computer.is_toolset:
             self.add(call, len(parts))
         else:
-            # Each call of an earlier computer use tool is a call of its own.
+            # With an earlier computer use tool, each call becomes its own `computer` call.
             parts.append(self.computer.call_part([call], self.provider_name))
         return True
 
     def add(self, call: ComputerBlock, index: int = 0) -> None:
-        """Add a toolset call to the batch; `index` is where in the parts the batch goes if this is its first call."""
+        """Add a toolset call to the batch. If it's the first call, `index` is where the batch goes in the parts."""
         assert self.computer is not None
         if not self.blocks:
             self.index = index
@@ -219,7 +234,7 @@ class ComputerBatch:
         self.between = []
 
     def note_other(self, tool_name: str) -> None:
-        """Note another tool's call, which runs out of order if it comes between the batch's calls."""
+        """Record another tool's call. It would run out of order if it came between the batch's calls."""
         if self.blocks:
             self.between.append(tool_name)
 
@@ -230,30 +245,33 @@ class ComputerBatch:
         return self.computer.call_part(self.blocks, self.provider_name, self.actions)
 
     def insert(self, parts: list[ModelResponsePart]) -> None:
-        """Put the toolset's calls in `parts` as one `computer` call, at the first one's place.
+        """Insert the toolset's calls into `parts` as one `computer` call, where the first call was.
 
-        A response's toolset member calls are one batch, run in order until one fails. Text may sit between them;
-        another tool call can't, since it would then run after calls Claude made after it.
+        All toolset calls in one response form one batch. They run in order until one fails. Text may come between
+        them. Another tool call can't, because it would then run after calls that Claude made after it.
         """
         if (part := self.call_part()) is not None:
             parts.insert(self.index, part)
 
 
 def computer_member(block: ComputerBlock, version: AnthropicComputerToolVersion) -> tuple[str, dict[str, Any]]:
-    """A call's member and input: the earlier tools name the member in the input's `action`."""
+    """Return the member a call names, and the rest of its input.
+
+    The toolset names the member in the call's tool name. The earlier tools name it in the input's `action` field.
+    """
     if version == 'computer_toolset_20260801':
         return block['name'], block['input']
     return block['input'].get('action', ''), {key: value for key, value in block['input'].items() if key != 'action'}
 
 
 COMPUTER_NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
-"""The result Anthropic asks for on each member call after one that failed."""
+"""The result Anthropic asks for on each call that comes after the failed call in a batch."""
 
 COMPUTER_FAILED = 'Failed.'
-"""The result of the member call that failed. The error is only in the result's content, which a hook may change."""
+"""The result sent for the call that failed. The error is only in the result's content, which a hook may change."""
 
 COMPUTER_RESULT_ON_LAST = 'The result is on the last call of this turn.'
-"""The result of each member call but the last when the result doesn't say which calls ran."""
+"""The result sent for every call except the last, when the result doesn't say which calls ran."""
 
 _COMPUTER_CLICKS = {
     'left_click': ('left', 1),
@@ -265,7 +283,7 @@ _COMPUTER_CLICKS = {
 
 
 class _Strict(BaseModel, extra='forbid', strict=True):
-    """A member's input as the tool documents it, checked as is: a field it lacks or a number for text is refused."""
+    """A member's input as Anthropic documents it, checked strictly: an unknown field or a number for text fails."""
 
 
 _Coordinate = Annotated[list[int], Field(min_length=2, max_length=2)]
@@ -274,7 +292,7 @@ _Coordinate = Annotated[list[int], Field(min_length=2, max_length=2)]
 class _Click(_Strict):
     coordinate: _Coordinate | None = None
     text: str | None = None
-    """Keys held during the click, as for a scroll or drag."""
+    """Keys held down during the click. A scroll or a drag takes them the same way."""
 
 
 class _Move(_Strict):
@@ -339,7 +357,7 @@ _MEMBERS: dict[str, type[_Strict]] = {
     'screenshot': _NoInput,
     'cursor_position': _NoInput,
 }
-"""The input each computer use member takes that maps onto the `computer` tool."""
+"""The input of each member that has a matching `computer` tool action."""
 
 
 _COMPUTER_MEMBER_TYPES: dict[str, str] = {
@@ -351,7 +369,7 @@ _COMPUTER_MEMBER_TYPES: dict[str, str] = {
     'key': 'press_keys',
     'hold_key': 'hold_keys',
 }
-"""The `computer` tool action type of each member whose name differs from it."""
+"""The `computer` tool action type for each member whose name is different."""
 
 
 def _point(coordinate: list[int] | None) -> dict[str, int]:
@@ -364,10 +382,10 @@ def _modifiers(text: str | None) -> list[str]:
 
 
 def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]:
-    """One computer use call as `computer` tool actions.
+    """Convert one computer use call into `computer` tool actions.
 
-    A member or field that doesn't map fails validation, naming only what didn't map, so the model retries and the
-    call never runs in part.
+    A member or field with no matching `computer` action fails validation. The error names only what didn't match.
+    The model then retries, so the call never runs halfway.
     """
     kind = _COMPUTER_MEMBER_TYPES.get(name, name)
     schema = _MEMBERS.get(name)
@@ -376,7 +394,7 @@ def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]
     try:
         member = schema.model_validate(args)
     except ValidationError as error:
-        # Under the tool's own type, so the retry names the fields rather than refusing the member.
+        # Keep the member's action type, so the retry message names the bad fields instead of refusing the member.
         fields = sorted({str(detail['loc'][0]) for detail in error.errors() if detail['loc']})
         return [{'type': kind, 'unsupported_fields': fields}]
     match member:
@@ -409,7 +427,7 @@ def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]
         case _Type():
             return [{'type': 'type_text', 'text': member.text}]
         case _Key():
-            # xdotool syntax, which Claude writes: chords separated by spaces are pressed one after another.
+            # Claude writes keys in xdotool syntax: key combinations separated by spaces are pressed one after another.
             chords = member.text.split() or ['']
             return [{'type': 'press_keys', 'keys': [chord], 'repeat': member.repeat} for chord in chords]
         case _HoldKey():
@@ -417,7 +435,7 @@ def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]
         case _Wait():
             return [{'type': 'wait', 'seconds': member.duration}]
         case _Press():
-            # Claude's earlier tools press or release at a point: the pointer moves there first.
+            # Claude's earlier tools press or release the button at a point, so the pointer moves there first.
             move = [{'type': 'mouse_move', **_point(member.coordinate)}] if member.coordinate else []
             return [*move, {'type': kind}]
         case _Zoom():

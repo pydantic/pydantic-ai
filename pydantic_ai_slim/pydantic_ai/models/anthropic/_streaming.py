@@ -122,13 +122,13 @@ class AnthropicStreamedResponse(StreamedResponse):
     _after_computer_batch: list[ModelResponseStreamEvent] = field(
         default_factory=list[ModelResponseStreamEvent], init=False
     )
-    """The events that follow the batch's place, held until the response ends so the batch's call starts first."""
+    """Events that come after the batch's position, held until the response ends so the batch's call starts first."""
     _computer_input: list[str] = field(default_factory=list[str], init=False)
 
     @cached_property
     def _computer_batch(self) -> ComputerBatch:
-        # A response's computer toolset calls are one batch: one `computer` call at the first one's place, started once
-        # the response ends, when all its calls are known.
+        # All computer toolset calls in a response form one batch: one `computer` call where the first call was. Its
+        # start event is sent when the response ends, once all the calls are known.
         return ComputerBatch(self._native_computer, self.provider_name)
 
     def get(self) -> ModelResponse:
@@ -144,12 +144,15 @@ class AnthropicStreamedResponse(StreamedResponse):
             try:
                 async for event in MapStreamDecodeErrors(self._response, self._model_name):
                     for event_ in self._map_event(event):
+                        # The computer call's start event must come first, and the call is complete only when the
+                        # response ends. So every event after a toolset computer call, including text, is held until
+                        # then and arrives at once.
                         if self._computer_batch.blocks:
                             self._after_computer_batch.append(event_)
                         else:
                             yield event_
             finally:
-                # Saved even if the stream breaks off, so the response keeps every call the batch got.
+                # This runs even if the stream breaks off, so the response keeps every call the batch received.
                 if (part := self._computer_batch.call_part()) is not None:
                     batch_start = self._parts_manager.handle_part(vendor_part_id=part.tool_call_id, part=part)
             if batch_start is not None:
@@ -170,7 +173,7 @@ class AnthropicStreamedResponse(StreamedResponse):
             case BetaRawContentBlockStopEvent():
                 yield from self._map_content_block_stop(event)
             case BetaRawMessageStopEvent():
-                # A call cut off at `max_tokens` gets no block stop of its own.
+                # A call cut off at `max_tokens` gets no block-stop event, so it is finished here.
                 if self._native_computer and self._native_computer.answers(self._current_block):
                     yield from self._map_computer_block_stop(self._native_computer, self._current_block)
                 self._current_block = None
@@ -451,13 +454,13 @@ class AnthropicStreamedResponse(StreamedResponse):
     ) -> Iterator[ModelResponseStreamEvent]:
         computer_input_json = ''.join(self._computer_input)
         try:
-            # Without deltas, the input came whole with the block's start, as an ordinary tool call's may.
+            # With no input deltas, the whole input came with the block's start event, as an ordinary tool call's can.
             computer_args: dict[str, Any] = (
                 pydantic_core.from_json(computer_input_json) if self._computer_input else {**current_block.input}
             )
         except ValueError:
-            # Cut off mid-input, as at `max_tokens`: kept as the partial JSON, so the run stops on it as for any tool
-            # call cut off. It goes after the toolset's earlier calls, as the response's last part.
+            # The input was cut off, as at `max_tokens`. It is kept as partial JSON, so the run stops on it, as it does
+            # for any cut-off tool call. It goes after the toolset's earlier calls, as the response's last part.
             yield self._parts_manager.handle_part(
                 vendor_part_id=current_block.id,
                 part=ComputerCallPart(
@@ -473,7 +476,7 @@ class AnthropicStreamedResponse(StreamedResponse):
             batch = self._computer_batch
             batch.add(block)
             if len(batch.blocks) == 1:
-                # Takes the batch's place among the parts; its event comes at the response's end.
+                # Reserve the batch's position among the parts. Its event is sent when the response ends.
                 self._parts_manager.handle_part(
                     vendor_part_id=block['id'], part=native_computer.call_part([block], self.provider_name)
                 )

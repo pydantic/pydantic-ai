@@ -9,6 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace import with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_path_authority,
@@ -47,7 +48,7 @@ class DockerContainer(AbstractCapability[AgentDepsT]):
     """The image for a new container, such as `'python:3.13-slim'`; it needs a POSIX `sh` and the usual file utilities.
 
     Without one, the capability only attaches to and removes containers by ref, and leaves a run without a ref
-    to the agent's other workspace capabilities, unless `desktop` is set: then it builds the desktop image.
+    to the agent's other workspace capabilities. With `desktop` set, it builds the desktop image instead.
     """
 
     working_dir: str | None = '/workspace'
@@ -88,6 +89,7 @@ class DockerContainer(AbstractCapability[AgentDepsT]):
         reject_defer_loading('DockerContainer', self.defer_loading)
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
+        desktop_size(self.desktop)
         self._executable_path = resolve_executable(self.executable)
 
     def backend(self, ref: WorkspaceRef) -> DockerContainerBackend:
