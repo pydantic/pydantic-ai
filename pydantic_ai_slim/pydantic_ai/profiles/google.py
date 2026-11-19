@@ -214,9 +214,10 @@ class GoogleModelProfile(ModelProfile, total=False):
 
 _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
-    # listed support the default `GOOGLE_THINKING_LEVELS`, except where only one API enforces
-    # the documented set: `GoogleModel.profile` applies that set by the client's transport, as it
-    # does for `gemini-3.1-flash-image` on the Gemini API.
+    # listed support the default `GOOGLE_THINKING_LEVELS`, except where a level set holds on one
+    # API only: `GoogleModel.profile` applies that set by the client's transport, as it does on the
+    # Gemini API for `gemini-3.1-flash-image`, which only that API enforces, and for `gemini-4-neon`,
+    # which Vertex's thinking table doesn't list.
     # https://ai.google.dev/gemini-api/docs/thinking
     ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
     ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),

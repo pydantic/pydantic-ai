@@ -11,7 +11,7 @@ description: "Pydantic AI Harness is the official capability library for Pydanti
 
 **Pydantic AI Harness** is the official [capability](../capabilities/overview.md) and harness library for [Pydantic AI](../index.md). Every Pydantic AI agent already has a light harness: the typed agent loop, [any model](../models/overview.md), your own tools, structured output. For simple agents that's enough. But set an agent loose on complex, long-running work (fix a codebase, research a question, run for hours unattended) and what it needs around the model grows: a [workspace](filesystem.md) to act in, a [plan](planning.md) it keeps current, [memory](memory.md) that carries across sessions, [sub-agents](subagents.md) to hand work to, [context management](compaction.md) for long runs, and [durable execution](../durable_execution/overview.md) that survives a restart. **Pydantic AI Harness** ships that harness.
 
-Everything here is one primitive: a [capability](../capabilities/overview.md), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [90+ of them](#capabilities), and complete agents like [Coder](coder.md) and [Researcher](researcher.md) are themselves combinations of capabilities. Use a single capability, compose your own set, or start from the whole coding agent and swap parts out.
+Everything here is one primitive: a [capability](../capabilities/overview.md), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [100+ of them](#capabilities), and complete agents like [Coder](coder.md) and [Researcher](researcher.md) are themselves combinations of capabilities. Use a single capability, compose your own set, or start from the whole coding agent and swap parts out.
 
 ## Pydantic AI, the Harness, and CLAI
 
@@ -131,13 +131,15 @@ Look up a capability by the problem it solves. The Capabilities section below li
 | One tool result is flooding the context window | [`ToolOutputLimits`](tool-output-limits.md) | By default, a result of 10,000 characters or more spills to a file in the run's workspace, and the model gets a preview plus a handle to read the rest. If the write fails, the result is truncated to 4,000 characters. Without a workspace, pass `store=LocalFileOverflowStore()`. |
 | The agent's files and commands must start in a specific directory | Core [`LocalWorkspace`](../workspace.md), or a sandbox | Set the directory on the workspace: `LocalWorkspace('./repo')`, or `working_dir=` on a sandbox. Every capability that works in the workspace starts there; `Shell(cwd=)` and `FileSystem(cwd=)` warn and are ignored. In your own tool, `ctx.workspace.run(..., cwd='subdir')` starts one command elsewhere. |
 | A run, a day, or a tenant needs a spend ceiling | Core [`UsageLimits`](../agent.md#usage-limits), or [`SpendLimits`](spend.md) | For one run, pass `usage_limits=UsageLimits(cost_limit=Decimal('5'))`: the run raises `UsageLimitExceeded` after the response that crosses the limit. For a day or month, per tenant, or across worker processes, `SpendLimits(budgets=[Budget(usd=Decimal('100'), window='day')])` refuses the next request once a window is spent. |
+| The model hits a usage or spend limit before it answers | [`ReportRemainingBudget`](report-remaining-budget.md) | `ReportRemainingBudget(spend_limits=spend)` tells the model on every request how many requests, tool calls, tokens and dollars the run's `UsageLimits` and the `SpendLimits` budgets have left, so it can answer while it still can. |
 | The model should get only a few calls to an expensive tool per run | [`ToolBudgets`](tool-budgets.md) | `ToolBudgets(per_tool={'web_search': 3}, refuse_repeats={'web_search'})` answers the fourth call, or an exact repeat, with a tool result saying the budget is used, and the run continues. `UsageLimits.tool_calls_limit` stays the hard ceiling. |
 | The model repeats the same tool call without making progress | [`DetectLoops`](detect-loops.md) | The default `action='nudge'` adds a system prompt asking the model to change approach; `action='error'` stops the run with `LoopDetectedError`. |
+| A tool raises an exception and the whole run ends | [`ReportToolErrors`](report-tool-errors.md) | Sends the exception to the model as a failed tool result naming the tool and the exception type, so the model can try another way. `format_error=` replaces the text, for example to include the exception's message. `ModelRetry`, `ToolFailed` and approvals keep their meaning, and `UsageLimits.request_limit` stops a model that keeps calling a failing tool. |
 | The model sends malformed JSON in a tool call | [`RepairToolArguments`](repair-tool-arguments.md) | Runs `json-repair` on the arguments before validation, fixing trailing commas, single-quoted keys and truncated JSON; valid arguments pass through unchanged. Import it from `pydantic_ai_harness.repair_tool_arguments` and install the `repair-tool-arguments` extra. `Coder` includes `RepairToolArguments`, so its `coder` extra installs `json-repair` too. |
 
 ## Capabilities
 
-Every capability is a self-contained unit you drop into `capabilities=[...]`, and they all compose, with each other and with your own. Some come with [`pydantic-ai`](../index.md) itself, the rest with this package; the **Package** column says which. 90+ in all, grouped by what they give your agent:
+Every capability is a self-contained unit you drop into `capabilities=[...]`, and they all compose, with each other and with your own. Some come with [`pydantic-ai`](../index.md) itself, the rest with this package; the **Package** column says which. 100+ in all, grouped by what they give your agent:
 
 ### Harnesses
 
@@ -240,11 +242,13 @@ How the agent spends its context window over a long run, and how often it pays f
 |---|---|---|
 | [Code Mode](code-mode.md) | Harness | The model writes one Python script that calls many tools inside a [Monty](https://github.com/pydantic/monty) sandbox: one round-trip instead of N, and intermediate results never enter the context window |
 | [IPython Code Mode](ipython-code-mode.md) | Harness | Code Mode with a persistent [IPython](https://ipython.org/) kernel in place of the Monty sandbox: full CPython and any installed package, with state kept between calls. For local agents only; not a sandbox |
+| [Tool Bridge](tool-bridge.md) | Harness | Keep the tool list the model sees fixed behind `tool_search`, `tool_describe` and `tool_call`, so the prompt cache holds however many tools sit behind them |
 | [Tool Search](../capabilities/tool-search.md) | Core | Load tool definitions on demand instead of carrying hundreds in every prompt |
 | [Compaction](../capabilities/compaction.md) | Core | Provider-native compaction on OpenAI and Anthropic; the provider summarizes history server-side |
 | [Compaction](compaction.md) | Harness | Model-agnostic strategies: tool-result clearing, sliding-window trimming, LLM summarization, tiered; all window-relative, with live usage reporting |
 | [Tool Output Limits](tool-output-limits.md) | Harness | Truncate, spill to a queryable file, or summarize oversized tool returns at the source |
 | [Warn On Cache Busts](warn-on-cache-busts.md) | Harness | Detect prompt-cache prefix collapses between requests, from the provider's own numbers |
+| [Label Cross Model History](label-cross-model-history.md) | Harness | Tell the model when earlier assistant turns came from another model, after a model switch or handoff |
 
 ### Knowledge & memory
 
@@ -257,7 +261,9 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | [Conversation Search](conversation-search.md) | Harness | BM25 search over stored history, including turns compaction dropped |
 | [Skills](skills.md) | Harness | Load [Agent Skill](../capabilities/on-demand.md) (`SKILL.md`) instructions on demand |
 | [Repo Context](repo-context.md) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
+| [Report Stale Files](report-stale-files.md) | Harness | Tell the model when a file it read or wrote has since changed or been deleted in the workspace |
 | [Pydantic AI Docs](pydantic-ai-docs.md) | Harness | On-demand Pydantic AI documentation lookup |
+| [Current Time](current-time.md) | Harness | Today's date, or the current hour, in a time zone you pick, without breaking the prompt cache |
 
 ### Control & safety
 
@@ -267,20 +273,26 @@ Bounding what the agent may do, and keeping it on-instructions.
 |---|---|---|
 | [Repair Tool Arguments](repair-tool-arguments.md) | Harness | Repair malformed JSON tool arguments before schema validation. |
 | [Guardrails](guardrails.md) | Harness | Validate/block/redact user input, tool calls, tool results, and output, including secret masking and parallel async guards |
+| [Goal](goal.md) | Harness | Require a caller-defined completion check before an unattended run ends |
 | [Prompt Injection Defender](prompt-injection-defender.md) | Harness | Classify local tool results for indirect prompt injection and optionally withhold high-risk results |
 | [Artifact Scanning](artifact-scanning.md) | Harness | Scan memory files and skills for prompt injection, credential exfiltration, and hidden content before they are stored or loaded |
 | [Spend Limits](spend.md) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |
 | [Ask User](ask-user.md) | Harness | Let the model ask the user multiple-choice questions mid-run; you supply the answerer (terminal, web, test) |
+| [Deny Unanswered](deny-unanswered.md) | Harness | Deny approval and question calls that nobody answered by the end of an unattended run, in parent and child agents |
 | [Tool approval](../deferred-tools.md#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |
 | [Tool Call Judge](tool-call-judge.md) | Harness | A second model answers one risk question per tool call and blocks the call before the tool function runs |
 | [Approval Reviewer](approval-reviewer.md) | Harness | A second model answers one risk question per call waiting for approval, approves the low-risk ones, and leaves the rest to a person |
-| [Permissions](permissions.md) | Harness | Ask a person before file writes and commands, by permission mode: full access, auto (asks before risky commands), or read-only |
+| [Permissions](permissions.md) | Harness | Ask a person before file writes and commands, by permission mode: full access, auto (asks before risky commands), or read-only; allow, ask about, or deny tool calls and shell commands by rule |
 | [Handle Deferred Tool Calls](../capabilities/handle-deferred-tool-calls.md) | Core | Resolve approvals, answers and external results on deferred tool calls inside the run, in place or by waiting for them, durably on AWS Lambda |
 | [System Reminders](system-reminders.md) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
 | [Detect Loops](detect-loops.md) | Harness | Notice repeated tool calls, results, alternations, or responses, or a response repeating itself as it streams, and nudge the model, stop the run, or call your handler |
+| [Report Tool Errors](report-tool-errors.md) | Harness | Send an exception a tool raises to the model as a failed tool result, so the run continues |
 | [Tool Budgets](tool-budgets.md) | Harness | Cap calls per tool and per run, and refuse exact repeats, with a tool result the model can act on instead of an exception |
+| [Report Remaining Budget](report-remaining-budget.md) | Harness | Tell the model on every request how many requests, tool calls, tokens and dollars its usage limits and spend budgets have left |
 | [Trajectory Judge](trajectory-judge.md) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
 | [Refine Output](refine-output.md) | Harness | Send the agent back to review and revise its output before the run ends |
+| [Require Verification](require-verification.md) | Harness | Send the agent back to run its checks when it tries to finish after editing code without a passing check since its last edit |
+| [Wrap Up At Limits](wrap-up-at-limits.md) | Harness | End the run with a final answer, not `UsageLimitExceeded`, when a usage limit would stop it |
 
 ### Self-extension
 
@@ -302,6 +314,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 | [Render Workflows](render-workflows.md) | Harness | Run model requests and tool calls as chained task runs with separate retries, timeouts, and compute settings; retrying the task that runs the agent can repeat completed work |
 | [Step Persistence](step-persistence.md) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
 | [Model Fallback](../capabilities/model-fallback.md) | Core | Fall back to other models when a model request fails or its response is rejected, within the run's own request step |
+| [Model Router](model-router.md) | Harness | Let another model pick the run's model from a named menu, once per run or per step, with a declared default |
 | [Instrumentation](../capabilities/instrumentation.md) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |
 | [Managed Prompt](managed-prompt.md) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt; version and roll out without redeploying |
 | [Thread Executor](../capabilities/thread-executor.md) | Core | Run sync tools on a shared thread pool |

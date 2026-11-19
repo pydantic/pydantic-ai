@@ -45,12 +45,17 @@ BenchmarkJob = TypedDict('BenchmarkJob', {'needs': str, 'if': str})
 ConditionalJob = TypedDict('ConditionalJob', {'if': str})
 
 
+class DependentJob(TypedDict, total=False):
+    needs: str | list[str]
+
+
 WORKFLOW_ADAPTER: TypeAdapter[Workflow] = TypeAdapter(Workflow)
 CLASSIFIER_JOB_ADAPTER: TypeAdapter[ClassifierJob] = TypeAdapter(ClassifierJob)
 CHECK_JOB_ADAPTER: TypeAdapter[CheckJob] = TypeAdapter(CheckJob)
 JOB_STEPS_ADAPTER: TypeAdapter[JobSteps] = TypeAdapter(JobSteps)
 BENCHMARK_JOB_ADAPTER: TypeAdapter[BenchmarkJob] = TypeAdapter(BenchmarkJob)
 CONDITIONAL_JOB_ADAPTER: TypeAdapter[ConditionalJob] = TypeAdapter(ConditionalJob)
+DEPENDENT_JOB_ADAPTER: TypeAdapter[DependentJob] = TypeAdapter(DependentJob)
 
 
 def _workflow(path: Path = WORKFLOW) -> Workflow:
@@ -342,7 +347,7 @@ def test_harness_only_tier(tmp_path: Path, changed_files: list[tuple[str, str]],
 def test_harness_only_tier_skips_only_jobs_outside_the_harness():
     jobs = _workflow()['jobs']
     harness_skip = "needs.classify.outputs.harness_only != 'true'"
-    for name in ('mypy', 'test-temporal-latest', 'test-examples', 'test-fastmcp-4'):
+    for name in ('mypy', 'test-temporal-latest', 'test-examples'):
         assert harness_skip in CONDITIONAL_JOB_ADAPTER.validate_python(jobs[name])['if']
     for name in (
         'quality',
@@ -352,6 +357,7 @@ def test_harness_only_tier_skips_only_jobs_outside_the_harness():
         'test-all-extras',
         'test-durable-exec',
         'test-lowest-versions',
+        'test-fastmcp-3',
         'test-harness-browser-use',
         'coverage',
     ):
@@ -630,7 +636,7 @@ def test_python_test_jobs_use_content_only_output():
         'test-lowest-versions',
         'test-temporal-latest',
         'test-examples',
-        'test-fastmcp-4',
+        'test-fastmcp-3',
         'test-harness-browser-use',
         'test-clai2-clipboard',
         'coverage',
@@ -710,6 +716,15 @@ def test_aggregate_requires_the_selected_lightweight_job():
     ):
         assert job not in harness_skips
     assert harness_skips <= set(check['needs'])
+
+
+def test_latest_versions_canary_runs_on_tags_without_gating_any_job():
+    jobs = _workflow()['jobs']
+    canary = CONDITIONAL_JOB_ADAPTER.validate_python(jobs['latest-versions-canary'])
+    assert canary['if'] == "startsWith(github.ref, 'refs/tags/')"
+    for name, job in jobs.items():
+        needs = DEPENDENT_JOB_ADAPTER.validate_python(job).get('needs', [])
+        assert 'latest-versions-canary' not in ([needs] if isinstance(needs, str) else needs), name
 
 
 def test_clai2_clipboard_job_is_gated_on_the_classifier_output():

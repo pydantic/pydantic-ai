@@ -3279,6 +3279,7 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
             ]
         )
@@ -3362,6 +3363,7 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
             ]
         )

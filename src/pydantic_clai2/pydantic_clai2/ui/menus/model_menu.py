@@ -19,7 +19,7 @@ from pydantic_clai2.models import github_copilot, openrouter, vllm
 from pydantic_clai2.models.key_profiles import key_variables
 from pydantic_clai2.models.model_catalog import CatalogModel, catalog, github_copilot_models
 from pydantic_clai2.models.model_options import model_options, validate_model_options
-from pydantic_clai2.models.model_settings import ModelSettingsForm, model_defaults
+from pydantic_clai2.models.model_settings import ModelSettingsForm, chosen_codex_speed, model_defaults, with_codex_speed
 from pydantic_clai2.models.profiles import ALL, DEFAULT, base_model, parse_model, provider_of
 from pydantic_clai2.plugins.menus import Dialogs, Option, SettingsMenu
 from pydantic_clai2.ui.menus.custom_params import edit_custom_params
@@ -69,26 +69,15 @@ class ModelSettingsSource:
         for key, info in ModelSettingsForm.model_fields.items():
             if key not in options and key not in saved:
                 continue
-            codex_tier = key == 'service_tier' and provider_of(self._settings_as) == 'openai-codex'
             rows.append(
                 FieldRow(
                     key=key,
-                    label='Service Tier / Fast Mode' if codex_tier else setting_label(key),
+                    label=setting_label(key),
                     allow_custom=False,
-                    description=(
-                        'Fast mode uses more ChatGPT credits.\n'
-                        'Requests priority processing on supported Codex models.\n'
-                        'Availability depends on your model and account.\n'
-                        'Standard turns fast mode off.\n'
-                        'Reasoning effort is unchanged.\n'
-                        'Custom service_tier parameters override this setting.'
-                        if codex_tier
-                        else info.description or ''
+                    description=info.description or '',
+                    default=shown(
+                        model_defaults(model=self._settings_as, saved=with_codex_speed(saved, None)).get(key)
                     ),
-                    choice_labels={'priority': 'Fast (priority)', 'default': 'Standard (default)'}
-                    if codex_tier
-                    else {},
-                    default=shown(model_defaults(model=self._settings_as).get(key)),
                     choices=options.get(key, ()) or _choices(info.annotation),
                     note=self._environment_key() if key == 'api_key' and 'api_key' not in saved else '',
                 )
@@ -120,7 +109,8 @@ class ModelSettingsSource:
 
     def current(self, row: FieldRow) -> str:
         """The effective value, without persisting inherited defaults."""
-        values = {**model_defaults(model=self._settings_as), **self._store.model_settings(self.model)}
+        saved = self._store.model_settings(self.model)
+        values = {**model_defaults(model=self._settings_as, saved=saved), **chosen_codex_speed(saved)}
         return shown(values.get(row.key))
 
     def problem(self, row: FieldRow, text: str) -> str | None:
@@ -142,7 +132,12 @@ class ModelSettingsSource:
             for key, value in self._store.model_settings(self.model).items()
             if key not in ModelSettingsForm.model_fields
         }
-        self._store.save_model_settings(self.model, {**saved, **form.model_dump(exclude_none=True)})
+        values = {**saved, **form.model_dump(exclude_none=True)}
+        if row.key == 'codex_speed':
+            values = with_codex_speed(values, form.codex_speed)
+        elif row.key == 'service_tier':  # The tier just picked decides the Codex speed.
+            values.pop('codex_speed', None)
+        self._store.save_model_settings(self.model, values)
         return f'Saved {row.key} for {self.model}. Applies when this model is selected.'
 
     def reset(self, row: FieldRow) -> str:
@@ -153,6 +148,8 @@ class ModelSettingsSource:
             saved.pop('anthropic_thinking_budget', None)
             saved.pop('anthropic_thinking_display', None)
             saved.pop('anthropic_preserved_thinking', None)
+        if row.key == 'codex_speed':
+            saved = with_codex_speed(saved, None)
         self._store.save_model_settings(self.model, saved)
         return f'Reset {row.key} for {self.model}.'
 
@@ -182,6 +179,7 @@ def setting_label(key: str) -> str:
         'base_url': 'Base URL',
         'api_key': 'API Key',
         'openai_text_verbosity': 'Verbosity',
+        'codex_speed': 'Speed',
         'anthropic_thinking_mode': 'Extended Thinking',
         'anthropic_thinking_budget': 'Thinking Budget',
         'anthropic_effort': 'Effort',
@@ -544,7 +542,8 @@ def build_model_settings_picker(*, context: CommandContext, current: str | None)
 
 def model_settings_summary(*, store: SettingsStore, model: str, settings_as: str | None = None) -> str:
     """Preview effective settings without mutating the model or its saved overrides."""
-    values = {**model_defaults(model=settings_as or model), **store.model_settings(model)}
+    saved = store.model_settings(model)
+    values = {**model_defaults(model=settings_as or model, saved=saved), **chosen_codex_speed(saved)}
     # Never empty: every model has at least CLAI's prompt caching default.
     lines = [model, '', 'Configured settings:']
     lines.extend(f'{setting_label(key)}: {shown(value)}' for key, value in values.items())

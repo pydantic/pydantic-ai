@@ -126,12 +126,14 @@ How the agent spends its context window: the difference between an agent that de
 |---|---|---|
 | [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) | Harness | The model writes one Python script that calls many tools inside a [Monty](https://github.com/pydantic/monty) sandbox: one round-trip instead of N, and intermediate results never enter the context window |
 | [IPython Code Mode](https://pydantic.dev/docs/ai/harness/ipython-code-mode/) | Harness | Code Mode with a persistent [IPython](https://ipython.org/) kernel in place of the Monty sandbox: full CPython and any installed package, with state kept between calls. For local agents only; not a sandbox |
+| [Tool Bridge](https://pydantic.dev/docs/ai/harness/tool-bridge/) | Harness | Keep the tool list the model sees fixed behind `tool_search`, `tool_describe` and `tool_call`, so the prompt cache holds however many tools sit behind them |
 | [Tool Search](tool-search.md) | Core | Load tool definitions on demand instead of carrying hundreds in every prompt |
 | [Caching](caching.md) | Core | Provider-adaptive prompt caching of tools, instructions and the conversation, at a configurable retention |
 | [Compaction](compaction.md) | Core | Provider-native compaction on OpenAI and Anthropic; the provider summarizes history server-side |
 | [Compaction](https://pydantic.dev/docs/ai/harness/compaction/) | Harness | Model-agnostic strategies: tool-result clearing, sliding-window trimming, LLM summarization, tiered; all window-relative, with live usage reporting |
 | [Tool Output Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/) | Harness | Truncate, spill to a queryable file, or summarize oversized tool returns at the source |
 | [Warn On Cache Busts](https://pydantic.dev/docs/ai/harness/warn-on-cache-busts/) | Harness | Detect prompt-cache prefix collapses between requests, from the provider's own numbers |
+| [Label Cross Model History](https://pydantic.dev/docs/ai/harness/label-cross-model-history/) | Harness | Tell the model when earlier assistant turns came from another model, after a model switch or handoff |
 
 ### Knowledge & memory {#knowledge-memory}
 
@@ -145,6 +147,7 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | [Skills](https://pydantic.dev/docs/ai/harness/skills/) | Harness | Load [Agent Skill](on-demand.md) (`SKILL.md`) instructions on demand |
 | [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
 | [Pydantic AI Docs](https://pydantic.dev/docs/ai/harness/pydantic-ai-docs/) | Harness | On-demand Pydantic AI documentation lookup |
+| [Current Time](https://pydantic.dev/docs/ai/harness/current-time/) | Harness | Today's date, or the current hour, in a time zone you pick, without breaking the prompt cache |
 
 ### Control & safety {#control-safety}
 
@@ -153,6 +156,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | Capability | Package | What it does |
 |---|---|---|
 | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) | Harness | Validate/block/redact user input, tool calls, tool results, and output, including secret masking and parallel async guards |
+| [Goal](https://pydantic.dev/docs/ai/harness/goal/) | Harness | Require a caller-defined completion check before an unattended run ends |
 | [Prompt Injection Defender](https://pydantic.dev/docs/ai/harness/prompt-injection-defender/) | Harness | Classify local tool results for indirect prompt injection and optionally withhold high-risk results |
 | [Artifact Scanning](https://pydantic.dev/docs/ai/harness/artifact-scanning/) | Harness | Scan memory files and skills for prompt injection, credential exfiltration, and hidden content before they are stored or loaded |
 | [Spend Limits](https://pydantic.dev/docs/ai/harness/spend/) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |
@@ -163,6 +167,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Detect Loops](https://pydantic.dev/docs/ai/harness/detect-loops/) | Harness | Notice repeated tool calls, results, alternations, or responses, or a response repeating itself as it streams, and nudge the model, stop the run, or call your handler |
 | [Trajectory Judge](https://pydantic.dev/docs/ai/harness/trajectory-judge/) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
 | [Refine Output](https://pydantic.dev/docs/ai/harness/refine-output/) | Harness | Send the agent back to review and revise its output before the run ends |
+| [Require Verification](https://pydantic.dev/docs/ai/harness/require-verification/) | Harness | Send the agent back to run its checks when it tries to finish after editing code without a passing check since its last edit |
 
 ### Self-extension
 
