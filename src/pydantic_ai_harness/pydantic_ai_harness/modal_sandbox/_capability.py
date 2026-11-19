@@ -12,6 +12,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness._workspace import with_authority
 from pydantic_ai_harness._workspace_provider import (
@@ -277,6 +278,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         check_integer('idle_timeout', idle_timeout, optional=True)
         check_working_dir(working_dir)
         check_path_authority(path_authority)
+        desktop_size(desktop)
         self.id = id
         self.description = description
         self.defer_loading = defer_loading

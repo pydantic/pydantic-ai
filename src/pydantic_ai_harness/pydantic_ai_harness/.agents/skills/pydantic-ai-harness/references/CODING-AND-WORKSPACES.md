@@ -432,7 +432,8 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   browser) for `ComputerUse()`, or pass `desktop=(w, h)`. The default image has the desktop's programs; a custom
   `image` gets them installed on first use. The agent can type only ASCII.
 - `SpritesSandbox(desktop=True)` gives the Sprite the same desktop, whose programs the first use installs. A cold
-  wake closes the agent's windows; the desktop starts again on the next use.
+  wake closes the agent's windows. The display restarts on the next screenshot or action; until then, a program
+  started from the shell can't open a window.
 
 ### KubernetesSandbox
 

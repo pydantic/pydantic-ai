@@ -8,6 +8,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.computer_use import ComputerReturnPart
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai_harness.computer_use import ComputerUse
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend, ModalSandboxNoToolsWarning
@@ -95,3 +96,8 @@ async def test_a_desktop_sandbox_reattaches_with_its_display(fake_modal: FakeMod
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')
     assert ModalSandbox().backend(owner.ref).display is None
+
+
+def test_a_desktop_size_is_checked_when_the_capability_is_created() -> None:
+    with pytest.raises(UserError, match=r'`desktop` must be a `\(width, height\)` of at least 1 pixel each'):
+        ModalSandbox(desktop=(0, 800))
