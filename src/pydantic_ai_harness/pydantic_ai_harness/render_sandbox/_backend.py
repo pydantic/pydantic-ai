@@ -263,6 +263,8 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             argv, working_dir=self._resolved_working_dir or self._working_dir or '/', env=values, timeout=timeout
         )
         if self._display is not None:
+            # Checked before the display's lock is taken, which would bind it to this event loop.
+            require_asyncio(_ASYNCIO_ONLY)
             # Started first, so a program the command opens shows on the screen.
             await self._display.start()
         async with self._operation() as client:
