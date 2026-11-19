@@ -616,7 +616,9 @@ def book(*, trip: Trip, travellers: int) -> str:
     ) -> None:
         # A cell that has not stopped within the real-clock interrupt grace gets its kernel replaced, and a loaded
         # runner can take longer than that to stop one. With the grace unbounded, only the cell stopping ends the wait, and
-        # `slept` shows whether the interrupt stopped it before its sleep ran out.
+        # `slept` shows whether the interrupt stopped it before its sleep ran out. The interrupt is sent as soon as
+        # `begin` returns, and one that lands just before a `time.sleep` starts is raised only once it returns, so the
+        # cell sleeps in short steps.
         monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._INTERRUPT_GRACE_SECONDS', math.inf)
         started = asyncio.Event()
 
@@ -624,7 +626,7 @@ def book(*, trip: Trip, travellers: int) -> str:
             started.set()
 
         agent = Agent(
-            _scripted('slept = False\nbegin()\nimport time\ntime.sleep(30)\nslept = True'),
+            _scripted('slept = False\nbegin()\nimport time\nfor _ in range(300):\n    time.sleep(0.1)\nslept = True'),
             capabilities=[IPythonCodeMode(kernel=kernel, timeout=None)],
             tools=[Tool(begin)],
         )

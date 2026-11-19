@@ -87,7 +87,7 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
-from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning, ToolOutputLimits
+from pydantic_ai_harness import CodeMode, ToolOutputLimits
 from pydantic_ai_harness._code_tools import sanitize_tool_name
 from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import (
@@ -1114,7 +1114,7 @@ class TestCodeMode:
             'max_memory': ({'max_memory': 8 * 1024 * 1024}, 'x = [0] * 50_000_000\nlen(x)'),
             'max_suspensions': ({'max_suspensions': 2}, 'await add(a=3, b=4)'),
         }
-        assert set(exhaust_by_limit) == set(CodeModeResourceLimits.__annotations__) - {'max_duration_secs'}, (
+        assert set(exhaust_by_limit) == set(CodeModeResourceLimits.__annotations__), (
             'a new resource limit needs a case here, so that exhausting it is shown to still '
             'report the nested calls that already ran'
         )
@@ -1428,19 +1428,6 @@ class TestCodeMode:
             result = await wrapper.call_tool('run_code', {'code': 'await add(a=2, b=3)'}, ctx, tools['run_code'])
             assert result.return_value == 5
 
-    def test_max_duration_secs_is_a_deprecated_alias(self) -> None:
-        renamed = r"resource_limits=\{'max_duration_secs': \.\.\.\}\)` has been renamed"
-        with pytest.warns(HarnessDeprecationWarning, match=rf'`CodeMode\({renamed}'):
-            capability = CodeMode[object](resource_limits={'max_duration_secs': 5, 'max_memory': 1024})
-        assert capability.resource_limits == {'max_duration_seconds': 5, 'max_memory': 1024}
-        with pytest.warns(HarnessDeprecationWarning, match=rf'`CodeModeToolset\({renamed}'):
-            toolset = CodeModeToolset[object](
-                wrapped=_build_function_toolset(add), resource_limits={'max_duration_secs': 5}
-            )
-        assert toolset.resource_limits == {'max_duration_seconds': 5}
-        with pytest.raises(TypeError, match='`max_duration_secs` is its deprecated name'):
-            CodeMode[object](resource_limits={'max_duration_seconds': 5, 'max_duration_secs': 5})
-
     async def test_resource_limit_configuration_is_validated_on_enter(self) -> None:
         invalid = CodeModeToolset[object](
             wrapped=_build_function_toolset(add),
@@ -1448,14 +1435,6 @@ class TestCodeMode:
         )
         with pytest.raises(UserError, match='Unknown `resource_limits` key'):
             await invalid.__aenter__()
-
-        stale = CodeModeToolset[object](wrapped=_build_function_toolset(add))
-        stale.resource_limits = {'max_duration_secs': 5}
-        with pytest.raises(
-            UserError,
-            match=r"key\(s\): \['max_duration_secs'\]\. Valid keys are \['max_duration_seconds', 'max_memory', 'max_suspensions'\]",
-        ):
-            await stale.__aenter__()
 
         zero_calls = CodeModeToolset[object](wrapped=_build_function_toolset(add), max_tool_calls=0)
         with pytest.raises(UserError, match='`max_tool_calls` must be at least 1'):
@@ -2749,14 +2728,19 @@ class TestCodeMode:
         class PanicException(BaseException):
             """Match the pyo3 panic class recognized by `is_sandbox_panic`."""
 
+        class CrashedError(ValueError):
+            """Stand in for `MontyCrashedError`, which cannot be constructed from Python."""
+
+            timed_out = False
+
         errors: dict[str, BaseException] = {
-            'worker-crash': ValueError('worker crash'),
+            'worker-crash': CrashedError('worker crash'),
             'host-error': RuntimeError('host failure'),
             'sandbox-panic': PanicException('sandbox panic'),
         }
         # The native crash exception cannot be constructed from Python. Inject it after a real
         # feed so the snippet catches the refusal before the worker or host binding fails.
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', ValueError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyCrashedError', CrashedError)
         original_run = MontyExecutor.run
 
         async def fail_after_feed(
@@ -5485,32 +5469,8 @@ class TestCodeModeOSAccess:
         result = await wrapper.call_tool('run_code', {'code': "import os\nos.getenv('A')"}, ctx, tools['run_code'])
         assert result.return_value == "os.getenv('A', None)"
 
-    async def test_positional_os_callback_is_deprecated_but_still_works(self) -> None:
-        def os_cb(fn: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
-            return f'positional {fn}'
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            returns = [p for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
-            if returns:
-                return ModelResponse(parts=[TextPart(str(returns[-1].content))])
-            return ModelResponse(parts=[ToolCallPart('run_code', {'code': "import os\nos.getenv('A')"})])
-
-        with pytest.warns(HarnessDeprecationWarning, match='positional `os_access') as caught:
-            agent = Agent(FunctionModel(model_fn), capabilities=[CodeMode(os_access=os_cb, dynamic_catalog=True)])
-            # Two runs: the per-run copies must not warn again.
-            first = await agent.run('go')
-            await agent.run('go')
-        deprecations = [w for w in caught if issubclass(w.category, HarnessDeprecationWarning)]
-        assert len(deprecations) == 1
-        assert deprecations[0].filename == __file__
-        assert 'positional os.getenv' in first.output
-
-        with pytest.warns(HarnessDeprecationWarning, match='positional `os_access'):
-            CodeModeToolset[object](wrapped=_build_function_toolset(add), os_access=os_cb)
-
-    async def test_keyword_os_callback_missing_is_async_is_not_taken_as_positional(self) -> None:
-        """A keyword-only handler that forgot `is_async` is a broken handler, not the deprecated positional
-        form: it gets Monty's error about the missing argument, without a deprecation warning."""
+    async def test_keyword_os_callback_missing_is_async_gets_montys_error(self) -> None:
+        """A keyword-only handler that forgot `is_async` gets Monty's error about the missing argument."""
 
         def os_cb(*, name: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
             return 'unreachable'  # pragma: no cover

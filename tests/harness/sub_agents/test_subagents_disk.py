@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
@@ -21,7 +20,6 @@ from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.sub_agents import AgentOverride, SubAgent, SubAgents
 from pydantic_ai_harness.sub_agents._disk import ParsedAgent, parse_agent_markdown
 
@@ -63,30 +61,6 @@ def _user_warnings(record: pytest.WarningsRecorder) -> list[warnings.WarningMess
     leftovers can raise while the block runs.
     """
     return [warning for warning in record if issubclass(warning.category, UserWarning)]
-
-
-class TestClampEffort:
-    def test_deprecated_exports_still_apply_the_old_floor(self) -> None:
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore', HarnessDeprecationWarning)
-            old_subagents = importlib.import_module('pydantic_ai_harness.subagents')
-        with pytest.warns(HarnessDeprecationWarning, match='no longer imposes a minimum thinking effort') as record:
-            floor = old_subagents.MINIMUM_EFFORT_FLOOR
-            clamp = old_subagents.clamp_effort
-        assert len(_user_warnings(record)) == 2
-        assert all('AgentOverride(effort=' in str(warning.message) for warning in _user_warnings(record))
-        assert clamp(None) == floor
-        assert clamp(False) == floor
-        assert clamp(True) is True
-        assert clamp('minimal') == 'low'
-        assert clamp('low') == 'low'
-        assert clamp('high') == 'high'
-        assert clamp('low', floor='high') == 'high'
-        assert clamp('xhigh', floor='high') == 'xhigh'
-        assert clamp('max', floor='xhigh') == 'max'
-        assert clamp('xhigh', floor='max') == 'max'
-        with pytest.raises(AttributeError, match="has no attribute 'missing'"):
-            old_subagents.__getattr__('missing')
 
 
 class TestParseAgentMarkdown:
@@ -468,21 +442,6 @@ class TestToolResolver:
         assert listing is not None and '- w' in listing
 
 
-class TestInheritToolsDeprecation:
-    def test_true_warns(self) -> None:
-        worker = Agent(TestModel(), name='worker')
-        with pytest.warns(
-            HarnessDeprecationWarning,
-            match=r'inherit_tools=True\)` is deprecated.*Bind required tools directly.*include_self=True',
-        ):
-            cap: SubAgents[object] = SubAgents(agents=[SubAgent(worker)], inherit_tools=True)
-        assert cap.inherit_tools is True
-
-    def test_false_is_silent(self) -> None:
-        worker = Agent(TestModel(), name='worker')
-        SubAgents(agents=[SubAgent(worker)], inherit_tools=False)
-
-
 class TestModelInheritance:
     async def test_disk_agent_inherits_parent_model(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'worker.md', '---\nname: worker\n---\nDo the work.')
@@ -590,44 +549,16 @@ class TestWorkspaceDiscovery:
         assert listing is not None and '- expected' in listing and 'wrong' not in listing
 
     async def test_no_workspace_skips_convention_discovery(self) -> None:
-        # Neither the home root nor the host's cwd stands in for a missing workspace, but a folder
-        # earlier releases read is reported once per instance, not dropped without a word.
+        # Neither the home root nor the host's cwd stands in for a missing workspace.
         _write_agent(Path.home() / '.agents' / 'agents', 'reviewer.md', 'Review.')
         _write_agent(Path.cwd() / '.agents' / 'agents', 'planner.md', 'Plan.')
         cap: SubAgents[object] = SubAgents(agent_folders='agents')
-        with pytest.warns(HarnessDeprecationWarning, match=r'did not load the agent definitions') as record:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
             assert await _listing(cap, None) is None
-            assert await _listing(cap, None) is None
-        [warning] = _user_warnings(record)
-        assert f'`SubAgents(workspace=LocalWorkspaceBackend({str(Path.cwd())!r}))`' in str(warning.message)
 
-    async def test_no_workspace_warns_about_the_home_folder(self) -> None:
-        _write_agent(Path.home() / '.agents' / 'agents', 'planner.md', 'Plan.')
-        with pytest.warns(HarnessDeprecationWarning, match=r'did not load the agent definitions') as record:
-            assert await _listing(SubAgents(agent_folders='agents'), None) is None
-        [warning] = _user_warnings(record)
-        assert f'`SubAgents(workspace=LocalWorkspaceBackend({str(Path.home())!r}))`' in str(warning.message)
-
-        # The fix the warning names reads the home folder with convention discovery enabled.
         listing = await _listing(SubAgents(agent_folders='agents', workspace=LocalWorkspaceBackend(Path.home())), None)
-        assert listing is not None and '- planner' in listing
-
-    async def test_workspace_run_warns_about_the_home_folder(self, tmp_path: Path) -> None:
-        # The run's workspace holds the project, not this machine's home folder.
-        _write_agent(Path.home() / '.agents' / 'agents', 'planner.md', 'Plan.')
-        with pytest.warns(HarnessDeprecationWarning, match=r'did not load the agent definitions'):
-            assert await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path)) is None
-
-        # A workspace at the home directory reads the folder, so there is nothing to report.
-        listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(Path.home()))
-        assert listing is not None and '- planner' in listing
-
-    async def test_no_workspace_warns_about_the_claude_folder(self) -> None:
-        _write_agent(Path.cwd() / '.claude' / 'agents', 'planner.md', 'Plan.')
-        with pytest.warns(HarnessDeprecationWarning, match=r'\.claude') as record:
-            assert await _listing(SubAgents(agent_folders='agents'), None) is None
-        [warning] = _user_warnings(record)
-        assert f'LocalWorkspaceBackend({str(Path.cwd())!r})' in str(warning.message)
+        assert listing is not None and '- reviewer' in listing
 
     async def test_no_workspace_and_no_host_folder_is_silent(self) -> None:
         # Nothing was there to lose. `filterwarnings = error` turns any warning into a failure.

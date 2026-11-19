@@ -10,7 +10,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, 
 from contextlib import asynccontextmanager
 
 import pytest
-from pydantic_monty import AsyncSnapshot, MontyComplete
+from pydantic_monty import AsyncSnapshot
 
 from pydantic_ai import Agent, RunContext, Tool, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs
@@ -314,9 +314,7 @@ class TestEagerCodeMode:
         calls: list[str] = []
         original_run = MontyExecutor.run
 
-        async def observe_refusal(
-            self: MontyExecutor, feed_start: Callable[[], Awaitable[AsyncSnapshot]]
-        ) -> MontyComplete:
+        async def observe_refusal(self: MontyExecutor, feed_start: Callable[[], Awaitable[AsyncSnapshot]]) -> object:
             try:
                 return await original_run(self, feed_start)
             finally:

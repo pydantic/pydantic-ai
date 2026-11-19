@@ -59,6 +59,7 @@ from pydantic_ai_harness import (
     Advisor,
     BackgroundTools,
     BenchmarkInstructions,
+    CodeMode,
     Coder,
     CompactOnRequest,
     CurrentTime,
@@ -396,7 +397,6 @@ COMBINE_POLICY: dict[str, Policy] = {
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
     'OpenSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'DockerContainer': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
-    'DockerSandbox': Anonymous('deprecated alias of `DockerContainer`, and combines the same way'),
     'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'KubernetesSandbox': Anonymous(
         'two coexist; the first supplies the run workspace, as core picks the first supplier'
@@ -450,8 +450,12 @@ COMBINE_POLICY: dict[str, Policy] = {
     'WarnOnCacheBusts': Anonymous('a passive observer; several thresholds compose'),
     'TrajectoryJudge': Anonymous('each judge independently evaluates and steers the run'),
     'DetectLoops': Anonymous('only hooks; several detectors with their own thresholds and actions compose'),
+    'ReportToolErrors': Anonymous(
+        'a wrapper toolset; the innermost (last listed) formats the error and outer ones see a ToolFailed'
+    ),
     'ToolBudgets': Anonymous('only a hook; each counts the calls it lets run, so stacked budgets all apply'),
     'RefineOutput': Anonymous('only a hook; each counts its own rounds and adds its instructions to a round'),
+    'RequireVerification': Anonymous('only hooks; each keeps its own record of edits, checks, and attempts'),
     'WrapUpAtLimits': Anonymous('only hooks; several on one agent each add their prompt to the final request'),
     'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
@@ -473,6 +477,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     'FileSystem': Collides(
         'its toolset registers `read_file` and friends under fixed names',
         lambda cls: (cls(str(_TMP_A)), cls(str(_TMP_A.parent))),
+    ),
+    'Goal': Narrows(
+        'one goal per id; several goals each need their own id, and every completion check must accept',
+        lambda cls: (cls(goal='Finish'), cls(goal='Also finish')),
     ),
     'AskUser': Narrows(
         'one `ask_user_question` tool per id, and two answerers is a conflict, not one configuration stated twice',
@@ -500,10 +508,6 @@ COMBINE_POLICY: dict[str, Policy] = {
     'Notion': Narrows(
         'one Notion connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
-    ),
-    'PyaiDocs': Narrows(
-        'deprecated alias of `PydanticAIDocs`, and combines the same way',
-        lambda cls: (cls(), cls(cache=False)),
     ),
     'Macroscope': Narrows(
         'one `run_macroscope_review` tool per id; two that differ need their own ids and PrefixTools',
@@ -537,7 +541,10 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one Pylon connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
-    'CodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
+    'CodeMode': Narrows(
+        'one `run_code` tool per id; two that differ need their own ids and PrefixTools',
+        lambda cls: (cls(max_retries=1), cls(max_retries=2)),
+    ),
     'IPythonCodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
     'BrowserUse': Collides('its toolset registers its browser tools under fixed names'),
     'SmartSearch': Narrows(
@@ -790,13 +797,6 @@ async def test_two_of_a_colliding_capability_still_raise(name: str, anyio_backen
         pytest.param(
             'shared_capabilities', {'shared_capabilities': [Thinking(effort='high')]}, {}, id='shared_capabilities'
         ),
-        pytest.param(
-            'inherit_tools',
-            {'inherit_tools': True},
-            {'inherit_tools': False},
-            id='inherit_tools',
-            marks=pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
-        ),
         pytest.param('tool_name', {'tool_name': 'delegate_task'}, {'tool_name': 'ask_specialist'}, id='tool_name'),
         pytest.param('forward_usage', {'forward_usage': False}, {'forward_usage': True}, id='forward_usage'),
         pytest.param('tool_retries', {'tool_retries': 5}, {'tool_retries': 2}, id='tool_retries'),
@@ -842,6 +842,17 @@ def test_sub_agents_compose_the_roster_and_nothing_else(
 
     with pytest.raises(UserError, match=f'disagree on {field_name!r}'):
         SubAgents.combine([first, second])
+
+
+def test_code_mode_merges_after_a_run_changed_its_stats() -> None:
+    """Two identical `CodeMode` still merge once one has been used: its counters are state, not configuration.
+
+    Not a VCR test: `combine` makes no request.
+    """
+    first, second = CodeMode[Any](), CodeMode[Any]()
+    first.speculation_stats.launched += 1
+
+    assert CodeMode.combine([first, second]) is first
 
 
 def test_system_reminders_keep_two_llm_reminders_whose_models_differ_only_in_settings() -> None:
