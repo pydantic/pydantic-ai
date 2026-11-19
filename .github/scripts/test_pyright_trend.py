@@ -42,14 +42,6 @@ class FakeApi:
         ]
 
 
-@pytest.fixture
-def outputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv('GITHUB_REPOSITORY', REPO)
-    monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(tmp_path / 'summary.md'))
-    monkeypatch.setenv('GITHUB_OUTPUT', str(tmp_path / 'output'))
-    return tmp_path
-
-
 def test_the_job_and_step_it_reads_exist_in_ci():
     workflow = TypeAdapter(dict[str | bool, object]).validate_python(
         yaml.safe_load(WORKFLOW.read_text(encoding='utf-8'))
@@ -58,6 +50,14 @@ def test_the_job_and_step_it_reads_exist_in_ci():
     [job] = [job for job in jobs.values() if job.get('name') == pyright_trend.JOB_NAME]
     steps = TypeAdapter(list[dict[str, object]]).validate_python(job['steps'])
     assert pyright_trend.STEP_NAME in [step.get('name') for step in steps]
+
+
+@pytest.fixture
+def outputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv('GITHUB_REPOSITORY', REPO)
+    monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(tmp_path / 'summary.md'))
+    monkeypatch.setenv('GITHUB_OUTPUT', str(tmp_path / 'output'))
+    return tmp_path
 
 
 @pytest.mark.parametrize(
@@ -103,4 +103,14 @@ def test_a_window_whose_newest_run_is_older_than_fresh_for_is_not_judged(outputs
     pyright_trend.main(api, NOW)
 
     assert (outputs / 'output').read_text() == 'slower=false\n'
+    assert len(api.calls) == 1
+
+
+def test_no_main_runs_are_not_judged(outputs: Path):
+    api = FakeApi([])
+
+    pyright_trend.main(api, NOW)
+
+    assert (outputs / 'output').read_text() == 'slower=false\n'
+    assert 'No `main` run finished in the last 90 minutes' in (outputs / 'summary.md').read_text()
     assert len(api.calls) == 1
