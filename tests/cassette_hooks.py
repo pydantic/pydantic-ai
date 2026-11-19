@@ -223,39 +223,38 @@ def scrub_json_body(body: bytes, fields: tuple[str, ...] = SCRUBBED_JSON_FIELDS)
     return json.dumps(parsed).encode('utf-8')
 
 
-def clear_access_programs(body: bytes | None) -> bytes | None:
-    """Clear the recording account's `access_programs` from an OpenAI Responses body, streamed or not.
+def clear_access_programs(body: bytes | None, headers: dict[str, list[str]]) -> bytes | None:
+    """Clear the recording account's `access_programs` from an OpenAI Responses body.
 
-    The SDK types the field as an object, so it becomes null rather than a string. A streamed event has it inside `response`.
+    The field sits at the top of a JSON response, and inside `response` in a streamed event. It becomes null, not a
+    string, because the SDK expects an object there. A body that doesn't parse is kept as it came.
     """
     if not body or b'"access_programs"' not in body:
         return body
-    if not body.startswith((b'event:', b'data:')):
-        return _clear_access_programs_json(body)
-    return b'\n'.join(
-        b'data: ' + _clear_access_programs_json(line[5:])
-        if line.startswith(b'data:') and b'"access_programs"' in line
-        else line
-        for line in body.split(b'\n')
-    )
+    if _content_type(headers).startswith('text/event-stream') or body.startswith((b'event:', b'data:')):
+        return b'\n'.join(_clear_event_line(line) for line in body.split(b'\n'))
+    if _content_type(headers).startswith('application/json'):
+        return _clear_access_programs(body, None)
+    return body
 
 
-def _clear_access_programs_json(text: bytes) -> bytes:
-    parsed: Any = json.loads(text)
-    _clear_nested(parsed, 'access_programs')
+def _clear_event_line(line: bytes) -> bytes:
+    if not line.startswith(b'data:'):
+        return line
+    cleared = _clear_access_programs(line[5:], 'response')
+    return line if cleared == line[5:] else b'data: ' + cleared
+
+
+def _clear_access_programs(text: bytes, inside: str | None) -> bytes:
+    try:
+        parsed: Any = json.loads(text)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return text
+    target = parsed.get(inside) if inside and is_str_dict(parsed) else parsed
+    if not is_str_dict(target) or target.get('access_programs') is None:
+        return text
+    target['access_programs'] = None
     return json.dumps(parsed).encode('utf-8')
-
-
-def _clear_nested(obj: Any, field: str) -> None:
-    if isinstance(obj, dict):
-        for key, value in cast('dict[Any, Any]', obj).items():
-            if key == field:
-                obj[key] = None
-            else:
-                _clear_nested(value, field)
-    elif isinstance(obj, list):
-        for item in cast('list[Any]', obj):
-            _clear_nested(item, field)
 
 
 def scrub_form_credentials(body: bytes) -> bytes:
@@ -313,6 +312,7 @@ def before_record_request(request: RawRequest) -> RawRequest:
 def before_record_response(response: RawResponse) -> RawResponse:
     response.headers = filter_headers(response.headers)
     response.body = clear_access_programs(
-        scrub_body(response.body, response.headers, SCRUBBED_JSON_FIELDS + SCRUBBED_RESPONSE_JSON_FIELDS)
+        scrub_body(response.body, response.headers, SCRUBBED_JSON_FIELDS + SCRUBBED_RESPONSE_JSON_FIELDS),
+        response.headers,
     )
     return response
