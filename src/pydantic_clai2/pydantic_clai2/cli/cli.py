@@ -362,7 +362,7 @@ def _settings_for(
             overrides['run.request_limit'] = request_limit
         if agent:
             overrides |= {'run.code_mode': False, 'run.speculative_code_mode': False}
-        settings = resolve_settings(overrides)
+        settings = resolve_settings(overrides, stored=True)
         return settings.model_copy(update={'model': None}) if agent_model else settings
 
     return settings_for

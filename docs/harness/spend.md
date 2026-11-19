@@ -169,7 +169,7 @@ async def report(limits: SpendLimits[None]) -> None:
 
 Without a run context, budgets on a `run` or `conversation` window are omitted, so is a budget whose ceiling is a callable, and so is a budget declaring a `scope` unless `scope=` names the partition to read. Pass `ctx` inside a run and every budget resolves.
 
-Set `expose_tools=True` to give the agent a `get_spend` tool. It is off by default: a tool costs schema tokens on every request, and most applications want the number on a screen rather than in the model's context.
+Set `expose_tools=True` to give the agent a `get_spend` tool. It is off by default: a tool costs schema tokens on every request, and most applications want the number on a screen rather than in the model's context. To put the remaining budget in front of the model on every request instead, use [Report Remaining Budget](report-remaining-budget.md).
 
 ## Reacting to a threshold
 

@@ -35,6 +35,7 @@ from pydantic_ai.conversation_store import (
     ConversationConflict,
     ConversationEntry,
     ConversationRecord,
+    ConversationStore,
     InMemoryConversationStore,
 )
 from pydantic_ai.exceptions import RunCancelled, UsageLimitExceeded, UserError
@@ -1253,6 +1254,209 @@ class _RecordRacingStore(InMemoryConversationStore):
         if race is not None:
             await race()
         return record
+
+
+async def test_a_conversation_s_title_and_metadata_change_only_through_update() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation, scope='user-1')
+
+    metadata = {'pinned': True}
+    updated = await store.update(conversation.conversation_id, title='Greetings', metadata=metadata)
+    assert (updated.title, updated.metadata, updated.revision) == ('Greetings', {'pinned': True}, conversation.revision)
+    # The store keeps its own copy, so changing the dict passed in doesn't change the stored one.
+    metadata['pinned'] = False
+
+    # The update didn't change the revision, so the conversation saves on, and the save keeps both.
+    conversation.messages.append(ModelResponse(parts=[TextPart('two')]))
+    await store.save(conversation)
+    saved = await store.read_record(conversation.conversation_id)
+    assert saved is not None
+    assert (saved.title, saved.metadata) == ('Greetings', {'pinned': True})
+    cleared = await store.update(conversation.conversation_id, metadata=None, scope='user-1')
+    assert (cleared.title, cleared.metadata) == ('Greetings', None)
+
+    [listed] = await store.list_conversations(scope='user-1')
+    assert (listed.title, listed.metadata, listed.revision) == ('Greetings', None, conversation.revision)
+    fork = await store.fork(conversation.conversation_id)
+    forked = await store.read_record(fork.conversation_id)
+    assert forked is not None
+    assert (forked.title, forked.metadata) == (None, None)
+
+
+async def test_a_save_that_read_the_record_before_an_update_keeps_it() -> None:
+    store = _RecordRacingStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+    conversation.messages.append(ModelResponse(parts=[TextPart('two')]))
+
+    async def retitle() -> None:
+        await store.update(conversation.conversation_id, title='Greetings')
+
+    store.race = retitle
+    await store.save(conversation)
+
+    record = await store.read_record(conversation.conversation_id)
+    assert record is not None
+    assert (record.title, record.revision) == ('Greetings', conversation.revision)
+
+
+async def test_an_update_racing_a_save_applies_to_the_saved_conversation() -> None:
+    store = _RecordRacingStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+
+    async def save() -> None:
+        await store.save(conversation)
+
+    store.race = save
+    updated = await store.update(conversation.conversation_id, title='Greetings')
+
+    assert (updated.title, updated.revision) == ('Greetings', conversation.revision)
+
+
+async def test_an_update_keeps_a_field_another_update_changed_since_it_read_the_record() -> None:
+    store = _RecordRacingStore()
+    conversation = Conversation()
+    await store.save(conversation)
+
+    async def pin() -> None:
+        await store.update(conversation.conversation_id, metadata={'pinned': True})
+
+    store.race = pin
+    await store.update(conversation.conversation_id, title='Greetings')
+
+    record = await store.read_record(conversation.conversation_id)
+    assert record is not None
+    assert (record.title, record.metadata) == ('Greetings', {'pinned': True})
+
+
+async def test_an_update_with_expected_title_never_replaces_a_title_set_since() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation()
+    await store.save(conversation)
+    conversation_id = conversation.conversation_id
+
+    # A titling agent titles it while it has no title.
+    titled = await store.update(conversation_id, title='Login page 500 error', expected_title=None)
+    assert titled.title == 'Login page 500 error'
+
+    # The user renames it, and the agent's next title is refused rather than written over theirs.
+    await store.update(conversation_id, title='Prod outage')
+    with pytest.raises(
+        ConversationConflict, match="is titled 'Prod outage', not None, so it was not updated"
+    ) as conflict:
+        await store.update(conversation_id, title='Debugging auth', expected_title=None)
+    assert conflict.value.conversation_id == conversation_id
+    record = await store.read_record(conversation_id)
+    assert record is not None
+    assert record.title == 'Prod outage'
+
+    # Naming the title it has now applies the update.
+    retitled = await store.update(conversation_id, title='Prod outage, fixed', expected_title='Prod outage')
+    assert retitled.title == 'Prod outage, fixed'
+
+
+async def test_an_update_with_expected_title_keeps_a_rename_made_after_it_read_the_record() -> None:
+    store = _RecordRacingStore()
+    conversation = Conversation()
+    await store.save(conversation)
+
+    async def rename() -> None:
+        await store.update(conversation.conversation_id, title='Prod outage')
+
+    store.race = rename
+    with pytest.raises(ConversationConflict, match="is titled 'Prod outage'"):
+        await store.update(conversation.conversation_id, title='Login page 500 error', expected_title=None)
+
+    record = await store.read_record(conversation.conversation_id)
+    assert record is not None
+    assert record.title == 'Prod outage'
+
+
+async def test_write_details_writes_only_while_every_expected_value_is_stored() -> None:
+    """`write_details` is the primitive backends copy, so it checks every key in `expected`, not just the title."""
+    store = InMemoryConversationStore()
+    conversation = Conversation()
+    await store.save(conversation)
+    conversation_id = conversation.conversation_id
+    assert conversation.revision is not None
+    await store.update(conversation_id, metadata={'model': 'a'})
+
+    with pytest.raises(ConversationConflict):
+        await store.write_details(
+            conversation_id,
+            {'metadata': {'model': 'c'}},
+            expected_revision=conversation.revision,
+            expected={'metadata': {'model': 'b'}},
+        )
+    record = await store.read_record(conversation_id)
+    assert record is not None
+    assert record.metadata == {'model': 'a'}
+
+    written = await store.write_details(
+        conversation_id,
+        {'metadata': {'model': 'c'}},
+        expected_revision=conversation.revision,
+        expected={'metadata': {'model': 'a'}},
+    )
+    assert written.metadata == {'model': 'c'}
+
+
+async def test_updating_a_conversation_the_store_does_not_have_or_another_scope_s_raises() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation()
+    await store.save(conversation, scope='alice')
+
+    with pytest.raises(UserError, match='is not in the store'):
+        await store.update('unknown', title='Greetings')
+    with pytest.raises(UserError, match='is not in the store'):
+        await store.update(conversation.conversation_id, title='Greetings', scope='bob')
+
+
+async def test_a_backend_without_write_details_says_it_can_t_update() -> None:
+    class _OlderStore(InMemoryConversationStore):
+        write_details = ConversationStore.write_details
+
+    store = _OlderStore()
+    conversation = Conversation()
+    await store.save(conversation)
+
+    with pytest.raises(NotImplementedError, match="_OlderStore doesn't implement `write_details`"):
+        await store.update(conversation.conversation_id, title='Greetings')
+    # An update that changes nothing doesn't need it.
+    unchanged = await store.update(conversation.conversation_id)
+    assert (unchanged.title, unchanged.revision) == (None, conversation.revision)
+
+
+async def test_a_save_keeps_a_title_on_a_backend_that_stores_records_as_given() -> None:
+    class _WholeRecordStore(InMemoryConversationStore):
+        """Writes each record as given, as a backend without `write_details` does."""
+
+        async def write_record(
+            self,
+            record: ConversationRecord,
+            *,
+            new_entries: Sequence[ConversationEntry] = (),
+            expected_revision: str | None,
+        ) -> None:
+            await super().write_record(record, new_entries=new_entries, expected_revision=expected_revision)
+            self._records[record.conversation_id] = record
+
+    store = _WholeRecordStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+    record = await store.read_record(conversation.conversation_id)
+    assert record is not None
+    await store.write_record(
+        dataclasses.replace(record, title='Set elsewhere', metadata={'pinned': True}), expected_revision=record.revision
+    )
+
+    await store.save(conversation)
+
+    saved = await store.read_record(conversation.conversation_id)
+    assert saved is not None
+    assert (saved.title, saved.metadata) == ('Set elsewhere', {'pinned': True})
 
 
 def _call_look_up(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

@@ -850,6 +850,17 @@ class TestReadFile:
         assert walked == 'feed.c:3:needle = 3;'
         assert 'lines: 3' in await toolset.file_info('feed.c', workspace=ws)
 
+    async def test_window_deep_into_a_file(self, tmp_path: Path) -> None:
+        # About 30 KB of short lines, so the offset lies several 4 KiB blocks into the file.
+        (tmp_path / 'long.txt').write_bytes(''.join(f'line {i}\n' for i in range(3000)).encode())
+        result = await _unhashed_toolset().read_file(
+            'long.txt', offset=2500, limit=2, workspace=LocalWorkspaceBackend(tmp_path)
+        )
+        assert result == (
+            '[long.txt | 3000 lines]\n  2501\tline 2500\n  2502\tline 2501\n'
+            '... (498 more lines. Use offset=2502 to continue reading.)\n'
+        )
+
     async def test_crlf_lines_match_without_their_carriage_return(self, tmp_path: Path) -> None:
         (tmp_path / 'dos.txt').write_bytes(b'first\r\nneedle\r\n')
         walked = await _unhashed_toolset().search_files(
@@ -2414,6 +2425,11 @@ class TestMutationKillers:
         assert 'hash:' in result
         # Verify hash is a real hex hash not None
         assert 'hash:None' not in result
+
+    async def test_write_file_counts_a_final_line_without_a_line_feed(
+        self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend
+    ) -> None:
+        assert 'Wrote 3 chars (2 lines) to f.txt.' in await toolset.write_file('f.txt', 'a\nb', workspace=ws)
 
     async def test_edit_file_output_format(
         self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
