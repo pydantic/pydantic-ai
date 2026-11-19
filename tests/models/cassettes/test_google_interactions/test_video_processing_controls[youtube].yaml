@@ -1,0 +1,85 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "339"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        store: false
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: Describe this video in one sentence.
+          - mime_type: video/mp4
+            processing:
+              end_offset: 1s
+              fps: 1.0
+              start_offset: 0s
+              type: static
+            resolution: low
+            type: video
+            uri: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=3985
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 376
+          total_input_tokens: 100
+          input_tokens_by_modality:
+          - modality: video
+            tokens: 92
+          - modality: text
+            tokens: 8
+          total_cached_tokens: 0
+          total_output_tokens: 26
+          total_tool_use_tokens: 0
+          total_thought_tokens: 250
+          initial_input_tokens: 114
+        created: 2026-11-06T02:49:41Z
+        updated: 2026-11-06T02:49:41Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            ErUICrIIAWkUfROMCeOxfv/pwEvPICTf7B7TdW0CdCNz1OP8QkoyVCfS6pdbgOISsaKCAnrWSwG4fuKz37wvTRyoiBxl3wj7hbO5SbRO+zz/ZAZb3c6PVC3VH/ugzm8BkuwTE4fSi8N6AOwui04Kc30bfqDp2v+5XZUQBWVlbHK2rktn15HaRa0Y8SyzP8WIcqLztCrkAVBVK/bubdjCDHR3Orq5GX5pcyD5V961ACWfJT6QpmS7cuO1TBe6+s0wun5vEUvkAf7S2npvISszKaJxY+IxDnOGMAXFdYv2KK/6xqx5ukqIx7sUBGXDpu4jprxICNWHn2a/UijtFkPCFi62rhz356IYmePeCugiE3zh1o88FZCTQa0d8vj/Hj1tbjBmYOUrrE5WYBPCohHZzCLUkKbym4qMbP3yXxScwsyezPNrQHYQ2RB1xf8ANvoMrTaOLy5QGX5rQJ16ObSyfg3ygBGjvyDvCekb1l/B41DYRJj1sgBlB7ui59K1CjZk+TjAlCi+PkHa/HaWKvBYn6BM3Ett+MpiGYh9IrlAgH0dmJA6GHCXCOS1E9CocbsQxfYSW/X/0VyOUtw7AyPrv7ulQdXsYHYLMmFGMnnQdoKfeKN+vtFqZAJeWrTLGqA8/CPe1P2oiyZ9dt8fz7kz+NHqKCjn9WDxxw/sJHCikidyUsUA2bOkhzdp6PPY619Skq1VddSWoYSzt5eZS36SCOvQZthnjDanlgiNkmTiyoxI/XKTkDdHgkzzP6mQAWJ+XgfzSZdh9VeB3MDaEhwFU62FS4yTBqr/0vKOAyfMLzkG+Dav+n4jbHVamjdSJyz/FLjZPko0LZyuroxFdw+lSUgZm0cVWiJQcdtTP79u5LYQgsuw9/8HxVT0VJfoDchhSk/TGYV54bRl7+Elc39/+tv4awtRsD0tAkZfa0k+XgcdyY43fwFSu4Snxko+2pv2JP2NyFmg7b4dqx2SBdmQhPaxqDm/ddy2XW954IlmVsb8RWKTYJ3AlKHG7pYm883Tnry/pL6YU49Ubb4nlizGX+ZMwCLVMi/XmGW2VnQUeV7TcgeJShCOph0wEE62KOfwBFtmEPHcnLijycDntpB36zeuAdxukGIQ1Ef6kkgEnMwea1x17u4/JatoNyfBdqaAbeaN8tNHOLfxH3g79y5JFjU8j7qhhryGmWazAhZHS0hg+qpg+xZGoJglDXJJ4ACfmFPtwo3SihJWhgF3ASYJ+sNDZ+KQcP0CFWhATKkl2f/YW2zEwItOBCUJXjD7TmktW9Pch2AZ7yaooSAinLAz9gRwGuXu/ZuTAwKy81/wu6WUXtEZA3uZuZ5v5f7znnnRdu+Sj7GEh2/Wvlt90MtY2wockZuxHQCJJRR8MlsrhDSyej1BR9ekPLGKoV1xVN7UKWvnQRoZX/8cKE4mS7175Twfcw088a47
+          type: thought
+        - content:
+          - text: >-
+              A brief clip shows singer Rick Astley at the start of the music video for his
+              hit song "Never Gonna Give You Up."
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:49:41.714402+00:00

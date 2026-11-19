@@ -1,0 +1,84 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "323"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          thinking_level: low
+          thinking_summaries: auto
+        labels:
+          purpose: test
+        safety_settings:
+        - threshold: block_only_high
+          type: harassment
+        service_tier: standard
+        store: false
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: Reply hello.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=1969
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 5
+          total_input_tokens: 4
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 4
+          total_cached_tokens: 0
+          total_output_tokens: 1
+          total_tool_use_tokens: 0
+          total_thought_tokens: 0
+          initial_input_tokens: 3
+        created: 2026-11-05T15:43:53Z
+        updated: 2026-11-05T15:43:53Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EmkKZwFpFH0TGyyyOO1hk17cMrm0kqpMAPVnHzBKLoAg7cqzbfCp3lWM8gTxeXH4UCdlQQ+MydUEELC3YV9AHqHwAoFNdGBdE83DTsORiI3mU6CZa4lWqg6cSfLFOPdGNpsiM63FSwt+6ac=
+          type: thought
+        - content:
+          - text: hello
+            type: text
+          type: model_output
+        safety_settings:
+        - type: harassment
+          threshold: block_only_high
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-05T15:43:53.409671+00:00

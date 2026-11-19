@@ -1,0 +1,212 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "249"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        input:
+        - content:
+          - text: >-
+              Use code_execution to calculate the sum of the first 137 prime numbers. Include
+              the numerical answer.
+            type: text
+          type: user_input
+        store: false
+        tools:
+        - type: code_execution
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=8357
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 542
+          total_input_tokens: 77
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 77
+          total_cached_tokens: 0
+          total_output_tokens: 165
+          total_tool_use_tokens: 247
+          tool_use_tokens_by_modality:
+          - modality: text
+            tokens: 247
+          total_thought_tokens: 53
+          initial_input_tokens: 23
+        created: 2026-11-05T15:02:25Z
+        updated: 2026-11-05T15:02:25Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            Er4CCrsCAWkUfROHNMbU08QhSNcXkTD1gZ7lwiCDyjcQZ5WkNDVeTbJ4vljr97VYDmeehGnstghCOUx2/LFwJq8sguTmYZKd7JqjxeNFIrZp0unUE2RTwT3GH1M8+xwqmqFsyiAlIj+1MmiMiSd+vEjj58R3gadLSJIqoVvPwmQmzk+mfIcfkS2SrH24SNin1sQFSbG6PG4gcm728P3BX6jmwUlk0G8Z7/IRtEDZThe40aQvyzMyPLRFgLjfy89LpPjAw91Idr9ONDzPu1rq2OU5GOQOmIoHY6HAGKjMHxq2BTSWXxap+XFijFawsDCNRtaZJoaNJqXSrohZJ3bQGxSE0xFchIVyL9slVcW4ZJR/JJuxaAjm0rlzUI3W1gL00+6Jjalo2ZRZ+3wLpzZepJLbM/Ilc5tsfAfYQpMYSDGh
+          type: thought
+        - id: call_472499
+          type: code_execution_call
+          arguments:
+            language: python
+            code: |
+              from sympy import primerange, prime
+
+              # Calculate the sum of the first 137 prime numbers
+              # prime(n) gives the n-th prime number (1-indexed)
+              primes = [prime(i) for i in range(1, 138)]
+              sum_primes = sum(primes)
+              print(f"Number of primes: {len(primes)}")
+              print(f"137th prime: {primes[-1]}")
+              print(f"Sum of the first 137 prime numbers: {sum_primes}")
+        - call_id: call_472499
+          type: code_execution_result
+          result: |
+            Number of primes: 137
+            137th prime: 773
+            Sum of the first 137 prime numbers: 48494
+          is_error: false
+        - signature: >-
+            EmkKZwFpFH0TcJG+im+RB29in6sV7eGETqQtYsaCmhPeGINvRQUzHaoZuZvWevTTgh7EIktab1OWJpf2w6H+eYgDkr7aPaQFlppzWPvY8a7Czp5yXeAcNKMh4PbD4rkcPbcjUoD4hNuPhCM=
+          type: thought
+        - content:
+          - text: The sum of the first 137 prime numbers (from 2 up to 773) is **48,494**.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-05T15:02:25.488867+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1772"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        input:
+        - content:
+          - text: >-
+              Use code_execution to calculate the sum of the first 137 prime numbers. Include
+              the numerical answer.
+            type: text
+          type: user_input
+        - signature: >-
+            Er4CCrsCAWkUfROHNMbU08QhSNcXkTD1gZ7lwiCDyjcQZ5WkNDVeTbJ4vljr97VYDmeehGnstghCOUx2/LFwJq8sguTmYZKd7JqjxeNFIrZp0unUE2RTwT3GH1M8+xwqmqFsyiAlIj+1MmiMiSd+vEjj58R3gadLSJIqoVvPwmQmzk+mfIcfkS2SrH24SNin1sQFSbG6PG4gcm728P3BX6jmwUlk0G8Z7/IRtEDZThe40aQvyzMyPLRFgLjfy89LpPjAw91Idr9ONDzPu1rq2OU5GOQOmIoHY6HAGKjMHxq2BTSWXxap+XFijFawsDCNRtaZJoaNJqXSrohZJ3bQGxSE0xFchIVyL9slVcW4ZJR/JJuxaAjm0rlzUI3W1gL00+6Jjalo2ZRZ+3wLpzZepJLbM/Ilc5tsfAfYQpMYSDGh
+          type: thought
+        - arguments:
+            code: |
+              from sympy import primerange, prime
+
+              # Calculate the sum of the first 137 prime numbers
+              # prime(n) gives the n-th prime number (1-indexed)
+              primes = [prime(i) for i in range(1, 138)]
+              sum_primes = sum(primes)
+              print(f"Number of primes: {len(primes)}")
+              print(f"137th prime: {primes[-1]}")
+              print(f"Sum of the first 137 prime numbers: {sum_primes}")
+            language: python
+          id: call_472499
+          type: code_execution_call
+        - call_id: call_472499
+          result: |
+            Number of primes: 137
+            137th prime: 773
+            Sum of the first 137 prime numbers: 48494
+          is_error: false
+          type: code_execution_result
+        - signature: >-
+            EmkKZwFpFH0TcJG+im+RB29in6sV7eGETqQtYsaCmhPeGINvRQUzHaoZuZvWevTTgh7EIktab1OWJpf2w6H+eYgDkr7aPaQFlppzWPvY8a7Czp5yXeAcNKMh4PbD4rkcPbcjUoD4hNuPhCM=
+          type: thought
+        - content:
+          - text: The sum of the first 137 prime numbers (from 2 up to 773) is **48,494**.
+            type: text
+          type: model_output
+        - content:
+          - text: Summarize the answer briefly using only the preceding information.
+            type: text
+          type: user_input
+        store: false
+        tools:
+        - type: code_execution
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=2483
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 143
+          total_input_tokens: 123
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 123
+          total_cached_tokens: 0
+          total_output_tokens: 20
+          total_tool_use_tokens: 0
+          total_thought_tokens: 0
+          initial_input_tokens: 289
+        created: 2026-11-05T15:02:27Z
+        updated: 2026-11-05T15:02:27Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EmkKZwFpFH0Tta2gfdJA/LBCUsxsLVK8qIBHun0nZD7CxuK9tCnre/f6sqxsKdAoiCxpG2uVCCkqy3HZD2cCv5TwhTgNyOZmQqe8TP9neBW633LBOY19U6WMbEOvcRvJJhxznCoMH74r5h4=
+          type: thought
+        - content:
+          - text: The sum of the first 137 prime numbers is **48,494**.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-05T15:02:28.008702+00:00

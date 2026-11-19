@@ -1,0 +1,53 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "218"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.1-flash-image
+        response_format:
+          delivery: uri
+          type: image
+        store: false
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: Draw one small red square on a white background.
+  response:
+    status: 400
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - "90"
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=432
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        error:
+          message: Image delivery mode is not supported.
+          code: invalid_request
+  recorded_at: 2026-11-05T15:43:50.659509+00:00

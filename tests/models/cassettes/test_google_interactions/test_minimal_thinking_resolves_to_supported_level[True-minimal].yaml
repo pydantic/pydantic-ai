@@ -1,0 +1,81 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "216"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          thinking_level: low
+          thinking_summaries: auto
+        store: false
+        stream: true
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: Reply exactly OK.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=1514
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: |+
+        event: interaction.created
+        data: {"interaction":{"object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.created"}
+
+        event: interaction.status_update
+        data: {"status":"in_progress","event_type":"interaction.status_update"}
+
+        event: step.start
+        data: {"index":0,"step":{"type":"thought"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":0,"delta":{"signature":"EmkKZwFpFH0TR4gWv2I64EmMvXUFcMsagwL9zMDHhS8b3VIhoBv55R1uHj0HTW2nvaZhwEAj+nW2FS+bPATngPAFsRdzQvj6Ku73Ho3aVYyjEpCzBnk1d+PI4B1m1AqOkaXZ/AwbkGefnYs=","type":"thought_signature"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":0,"event_type":"step.stop"}
+
+        event: step.start
+        data: {"index":1,"step":{"type":"model_output"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":1,"delta":{"text":"OK","type":"text"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":1,"event_type":"step.stop"}
+
+        event: interaction.completed
+        data: {"interaction":{"status":"completed","usage":{"total_tokens":6,"total_input_tokens":5,"input_tokens_by_modality":[{"modality":"text","tokens":5}],"total_cached_tokens":0,"total_output_tokens":1,"total_tool_use_tokens":0,"total_thought_tokens":0,"initial_input_tokens":4},"created":"2026-11-05T23:27:05Z","updated":"2026-11-05T23:27:05Z","service_tier":"standard","object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.completed"}
+
+        event: done
+        data: [DONE]
+
+  recorded_at: 2026-11-05T23:27:05.597521+00:00

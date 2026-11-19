@@ -1,0 +1,301 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "414"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_capital
+          parameters:
+            additionalProperties: false
+            properties:
+              country:
+                type: string
+            required:
+            - country
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: What is the capital of Frankreich? Use the get_capital tool.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=6149
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 547
+          total_input_tokens: 47
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 47
+          total_cached_tokens: 0
+          total_output_tokens: 16
+          total_tool_use_tokens: 0
+          total_thought_tokens: 484
+          initial_input_tokens: 30
+        created: 2026-11-06T02:45:17Z
+        updated: 2026-11-06T02:45:17Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            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
+          type: thought
+        - id: call_8440408574050956978
+          type: function_call
+          name: get_capital
+          arguments:
+            country: France
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:45:17.406318+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "3482"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_capital
+          parameters:
+            additionalProperties: false
+            properties:
+              country:
+                type: string
+            required:
+            - country
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: What is the capital of Frankreich? Use the get_capital tool.
+        - signature: >-
+            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
+          type: thought
+        - id: call_8440408574050956978
+          name: get_capital
+          type: function_call
+          arguments:
+            country: France
+        - type: function_result
+          name: get_capital
+          call_id: call_8440408574050956978
+          is_error: true
+          result:
+          - type: text
+            text: The country is not supported. Use "France" instead.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=6385
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 1264
+          total_input_tokens: 555
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 555
+          total_cached_tokens: 0
+          total_output_tokens: 16
+          total_tool_use_tokens: 0
+          total_thought_tokens: 693
+          initial_input_tokens: 545
+        created: 2026-11-06T02:45:23Z
+        updated: 2026-11-06T02:45:23Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            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
+          type: thought
+        - id: call_7303656494046924631
+          type: function_call
+          name: get_capital
+          arguments:
+            country: france
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:45:23.823672+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "7495"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_capital
+          parameters:
+            additionalProperties: false
+            properties:
+              country:
+                type: string
+            required:
+            - country
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: What is the capital of Frankreich? Use the get_capital tool.
+        - signature: >-
+            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
+          type: thought
+        - id: call_8440408574050956978
+          name: get_capital
+          type: function_call
+          arguments:
+            country: France
+        - type: function_result
+          name: get_capital
+          call_id: call_8440408574050956978
+          is_error: true
+          result:
+          - type: text
+            text: The country is not supported. Use "France" instead.
+        - signature: >-
+            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
+          type: thought
+        - id: call_7303656494046924631
+          name: get_capital
+          type: function_call
+          arguments:
+            country: france
+        - type: function_result
+          name: get_capital
+          call_id: call_7303656494046924631
+          is_error: false
+          result:
+          - type: text
+            text: Paris
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=1874
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 1302
+          total_input_tokens: 1272
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 1272
+          total_cached_tokens: 0
+          total_output_tokens: 11
+          total_tool_use_tokens: 0
+          total_thought_tokens: 19
+          initial_input_tokens: 1258
+        created: 2026-11-06T02:45:25Z
+        updated: 2026-11-06T02:45:25Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            ErMBCrABAWkUfROe0cJXQhKY5Yc+Q+7wvs4fu672dLcBrwbrEyYphCXKxmmROS0usnvMYSqyyNBxKF6hHkZJ8aV5OIIliYKedkWdUGgaaXmWaoO4/5aRKCrcMoBmN79ae1bgbiYz1VcvDdWYO+ZCSeFz0bs8oz8zZtAOgIvmyDbT622bf/NOO0+rG35uS6YPATodSQGLJFgpT6ath8fL/YaMvQGRDkUDxYt7pYPlwggMUlPePBY=
+          type: thought
+        - content:
+          - text: The capital of Frankreich (France) is **Paris**.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:45:25.720542+00:00

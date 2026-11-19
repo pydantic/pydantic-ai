@@ -1,0 +1,80 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "191"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          temperature: 0.0
+        store: false
+        stream: true
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: "Reply with exactly: Paris"
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=1651
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: |+
+        event: interaction.created
+        data: {"interaction":{"object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.created"}
+
+        event: interaction.status_update
+        data: {"status":"in_progress","event_type":"interaction.status_update"}
+
+        event: step.start
+        data: {"index":0,"step":{"type":"thought"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":0,"delta":{"signature":"EuMCCuACAWkUfRMTUB08SE8EMy2v9w+xG7KRw1z5dBDTFM2WFlpyNofgAj3MSmEVYAduRHYhUk6xhQZeq3QUaHvhBBYAmrkTaWasOWUVfOvXXNKcyyJJmzpBeRT5HpViKjPhrZVHDih+7nFcOkwZf2/oeOf7f99CPuMbAErlnTXC0Ck1Rn+EyzHYIm0IrI1tfkktWY4IZW6ylmpAL3qL39k1cXjAX/Bq5e5O9nteH5fwTPA6dGcztODSthRHys+E9CBtqF5kGbzpwevCl54BWv4/HYHKoDcT8lGzY43pcOeF3RaOsTaqRMHLyMJLkjH597syZ4g6PzIBw9A4E0BiT5MaMf21WwRGQ09wmtGHUISJCQ8NfuOK8MFS9P/XbNNrHpJldYcLXXUmOQtntp9S+wvZyBYTvnjcL93TK1spFOXEyd0U5yMTFyuoY8EO0wJcnlrBozW4K2pjt7SrxGTXZOC0kadVLQ==","type":"thought_signature"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":0,"event_type":"step.stop"}
+
+        event: step.start
+        data: {"index":1,"step":{"type":"model_output"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":1,"delta":{"text":"Paris","type":"text"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":1,"event_type":"step.stop"}
+
+        event: interaction.completed
+        data: {"interaction":{"status":"completed","usage":{"total_tokens":65,"total_input_tokens":6,"input_tokens_by_modality":[{"modality":"text","tokens":6}],"total_cached_tokens":0,"total_output_tokens":1,"total_tool_use_tokens":0,"total_thought_tokens":58,"initial_input_tokens":5},"created":"2026-11-06T02:18:03Z","updated":"2026-11-06T02:18:03Z","service_tier":"standard","object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.completed"}
+
+        event: done
+        data: [DONE]
+
+  recorded_at: 2026-11-06T02:18:03.084764+00:00

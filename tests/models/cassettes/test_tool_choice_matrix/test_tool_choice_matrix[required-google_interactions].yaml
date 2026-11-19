@@ -1,0 +1,86 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "363"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: any
+        store: false
+        tools:
+        - description: Get weather for a city
+          name: get_weather
+          parameters:
+            type: object
+            properties:
+              city:
+                type: string
+            required:
+            - city
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: What's the weather in Paris?
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=1835
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 104
+          total_input_tokens: 51
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 51
+          total_cached_tokens: 0
+          total_output_tokens: 16
+          total_tool_use_tokens: 0
+          total_thought_tokens: 37
+          initial_input_tokens: 30
+        created: 2026-11-06T02:04:41Z
+        updated: 2026-11-06T02:04:41Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EukBCuYBAWkUfROWqO8U+KTzV9g2HHqDWU1yPBrCgOpN+gYcWD7a25PEysKs1wPBfcIUVB9A1izy3sejkukZSUXtYfbOf/YIOxVrIl3AdexbDok3Zpl/NDQ4c40+rb0ZQ+vjOLyFh5r/lRIQJAhBZQDrss6ZsaBppg/Z7WHhWR4qxBUdfULV4oa6po8wJarJOhQkb9KOIFuP9XC7WWdCi7+ZcChWcEkDtMMTNAAPgb7dfvnu/IP/6Em2D4rUPiHcY65qboa7xjgE+eYKUEX2OggyCP9Ak9wbu7Lsr3arPBcMSdAZm43W08dtwQs=
+          type: thought
+        - id: call_4271094228794113690
+          type: function_call
+          name: get_weather
+          arguments:
+            city: Paris
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:04:42.020131+00:00

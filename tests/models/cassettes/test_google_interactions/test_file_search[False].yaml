@@ -1,0 +1,262 @@
+version: 1
+interactions:
+- request:
+    method: DELETE
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/fileSearchStores/interactionstest-aqz9nc24ajz1?force=True
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=385
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content: {}
+  recorded_at: 2026-11-05T15:14:13.169799+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/interactionstest-aqz9nc24ajz1:uploadToFileSearchStore
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "55"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        mimeType: text/plain
+        displayName: secret.txt
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - "0"
+      content-type:
+      - text/plain; charset=utf-8
+      x-goog-upload-status:
+      - active
+      x-goog-upload-url:
+      - >-
+        https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/interactionstest-aqz9nc24ajz1:uploadToFileSearchStore?upload_id=AFy3sg2HfPLboAKTnUlzEBME1C_DVbKTpEOxInKHPDJY_IgzwGqBz9wrz5yHtn1jB7NSNDkNaVna4xyGBbdGI8EmbGTJz-31LI1z3Cj3rhbc6K0&upload_protocol=resumable
+    body:
+      type: none
+  recorded_at: 2026-11-05T15:13:56.809730+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/interactionstest-aqz9nc24ajz1:uploadToFileSearchStore?upload_id=AFy3sg2HfPLboAKTnUlzEBME1C_DVbKTpEOxInKHPDJY_IgzwGqBz9wrz5yHtn1jB7NSNDkNaVna4xyGBbdGI8EmbGTJz-31LI1z3Cj3rhbc6K0&upload_protocol=resumable
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "41"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: text
+      content: The secret project code is emerald tiger.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - "417"
+      content-type:
+      - application/json; charset=UTF-8
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-goog-upload-status:
+      - final
+    body:
+      type: json
+      content:
+        name: >-
+          fileSearchStores/interactionstest-aqz9nc24ajz1/upload/operations/secrettxt-6dhfp1czjblm
+        response:
+          "@type": >-
+            type.googleapis.com/google.ai.generativelanguage.v1main.UploadToFileSearchStoreResponse
+          parent: fileSearchStores/interactionstest-aqz9nc24ajz1
+          documentName: fileSearchStores/interactionstest-aqz9nc24ajz1/documents/secrettxt-6dhfp1czjblm
+          mimeType: text/plain
+          sizeBytes: "41"
+  recorded_at: 2026-11-05T15:13:58.928203+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/fileSearchStores
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "36"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        displayName: interactions-test
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=342
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: fileSearchStores/interactionstest-aqz9nc24ajz1
+        displayName: interactions-test
+        createTime: 2026-11-05T15:13:56.328228Z
+        updateTime: 2026-11-05T15:13:56.328228Z
+        embeddingModel: models/gemini-embedding-001
+  recorded_at: 2026-11-05T15:13:56.369678+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "270"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        input:
+        - content:
+          - text: Use file_search to find the secret project code.
+            type: text
+          type: user_input
+        store: false
+        tools:
+        - file_search_store_names:
+          - fileSearchStores/interactionstest-aqz9nc24ajz1
+          type: file_search
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=13812
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 556
+          total_input_tokens: 47
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 47
+          total_cached_tokens: 0
+          total_output_tokens: 30
+          total_tool_use_tokens: 411
+          tool_use_tokens_by_modality:
+          - modality: text
+            tokens: 411
+          total_thought_tokens: 68
+          initial_input_tokens: 319
+        created: 2026-11-05T15:14:12Z
+        updated: 2026-11-05T15:14:12Z
+        service_tier: standard
+        steps:
+        - id: call_362131
+          signature: >-
+            EvQCCvECCAIS7AIBaRR9E9Udu0vQ1ssbZTKJdVF8itZ5kc3zQN4sx4ZZKLr0QvXY00nkYDj7/JFGcMMoGz6U1wP8I9MdFSO5IQ6J2vVTVrJ9oNK3DMLAtsNAoIi/HC17MMwSJ8uBn7ZezK98P9P5M+SgoKK+HI46rZes+UgJLgxOZqgukalmTebj42Vut0ub5QL1N4/H/w//JD2ZLi3nhk8ZQqpZ0B5g/qoUEHO/4W6KUzSXv/IbS1Q19kQIjt2yFJ3c94WYTP4o53KonKEk5lgIM4K4iclEIIY+j4TUfD8dIH4H4LoStHkq+1aNWbR06KDSLY1LHEK7J+oNWp2T+FYkO+oPyhJ8EoHhlKjZjTHZtgRstU06R+LAIT8jDbZCaaNMeD4Hh5BUEgmfbgRREt86qaRPYDArLINm4UFrC6DZZUtrcKTcLN3qbuFGHWXMMzerT4vev1vo9Wx2A0wGevAt6k9WlhwKqHmF9NWlgMD+IV8IXTvS
+          type: file_search_call
+        - call_id: call_362131
+          signature: >-
+            CAIS7gMBaRR9E2mEE2pCDzPYe37qon3eqHzJl/QYBIwymCa1DbI6lkpGeu3FPASgiTtvZX3lglnTrpjTga6w/uoG1qu4gAlSWZURPKnH3HXiZFwvGZwCDhlhsJOZDQHxbhcmPd8cornHanR5ghGJPumOsJdfi3HAnibG6Q4acs2aS1fLSK27RCDQtOJ+uS5+RXoD2GY3nZAtJF/gf6MQcv6Y/FFcWNj7GPlEIVzOLpNqDQjQonDW8eiKAWMkrMzB6roFhUHasOe/uVCgBVqbGPgpAwAJ3K4ndNeJ2wpqOJOnX5+cDqDPRokcKWk+6W/kPe21ludA1cYFsO8OLsRZv6icZvpTcIeP+CzuUH1l6hyQUWJcpayhDKSYxy/6Jy8MqK03Zr/Z0lAALZYcV1iOHmGPnf/i7ZIWkaToc66zz0mD0RwuEVkzD4iz+C2fr0ZSXaR+Y0OMqDuWTrClaATAeCSVsRbPtPmFQk5ATsP6usQCpveDqW6XFpVcippjlOEczhktjlQ41weOZ/Zp/z3n1MYmstQ9XBmnLqfkCCogOoj2KCRRlS4g3cqauv8iIjU5ET8E5hR0C/IvaoCTdHeqkx4MVGU6ec+KZTfQGA9J3VuZoXWkfJCM9UOKrIFBQxOb00F0EPXLPhOE+2d0ih8cFguwww==
+          type: file_search_result
+        - signature: >-
+            EvgBCvUBAWkUfRM0XwlpspEsAS46sdjwAqHjtN9c1EgmKlT/T+UEvyldJfwIVOfebk2tlJJ6+sG5MMbMJApC2V4wNvMQBasahcYv3hWNAHfhxGe7xHtQwwFiKzzr3mWWp6guEouSnLf+VY6eYTlegW+YLIFpQdiRPOQxh1O0ERzypzxO6jIiG6BD809D5nzKHefZr1GUoYaQjm69CB0Z9zPeR1S5r7N17NuW0MbEzH/LDOXy46kfEgliAyYPRPhWcBVYlxWEYeg7/rdeo2jnAyzh8xYnDK342f2vJofcYWp5yg/lfQlaMbdD963bEhVDiOSlN24nYmGR9OE=
+          type: thought
+        - content:
+          - text: The secret project code is **emerald tiger**.
+            annotations:
+            - start_index: 0
+              end_index: 44
+              document_uri: fileSearchStores/interactionstest-aqz9nc24ajz1
+              file_name: secret.txt
+              source: |
+                The secret project code is emerald tiger.
+              type: file_citation
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-05T15:14:12.762460+00:00

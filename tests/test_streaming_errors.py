@@ -7,6 +7,7 @@ to enable FallbackModel and consistent error handling. See #4729.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Literal, assert_never
 
@@ -15,7 +16,7 @@ import httpx2
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelConnectionError, ModelHTTPError, ModelTimeoutError
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.providers.gateway import gateway_provider
@@ -56,6 +57,8 @@ with try_import() as google_imports:
     from google.genai import errors as google_errors
 
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
+    from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as bedrock_imports:
     from botocore.exceptions import ClientError
@@ -1174,3 +1177,73 @@ async def test_fallback_model_streaming_error_triggers_fallback(allow_model_requ
         text = await result.get_output()
 
     assert text == 'hello'
+
+
+@dataclass
+class _InteractionsErrorStream(httpx2.AsyncByteStream):
+    phase: Literal['peek', 'midstream']
+    kind: Literal['status', 'connection', 'timeout']
+    request: httpx2.Request
+    closed: bool = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        if self.phase == 'midstream':
+            yield b'data: {"event_type":"step.start","index":0,"step":{"type":"model_output","content":[]}}\n\n'
+            yield b'data: {"event_type":"step.delta","index":0,"delta":{"type":"text","text":"hello"}}\n\n'
+        if self.kind == 'status':
+            yield b'data: {"event_type":"error","error":{"code":"503","message":"unavailable"}}\n\n'
+        elif self.kind == 'connection':
+            raise httpx2.ReadError('connection lost', request=self.request)
+        else:
+            raise httpx2.ReadTimeout('read timed out', request=self.request)
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.skipif(not google_imports(), reason='google-genai not installed')
+@pytest.mark.parametrize('phase', ['creation', 'peek', 'midstream'])
+@pytest.mark.parametrize(
+    ('kind', 'expected'),
+    [('status', ModelHTTPError), ('connection', ModelConnectionError), ('timeout', ModelTimeoutError)],
+)
+async def test_google_interactions_stream_errors(
+    allow_model_requests: None,
+    phase: Literal['creation', 'peek', 'midstream'],
+    kind: Literal['status', 'connection', 'timeout'],
+    expected: type[ModelAPIError],
+):
+    """Transport failures and provider error events keep their categories before and after output starts."""
+    streams: list[_InteractionsErrorStream] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if phase == 'creation':
+            if kind == 'status':
+                return httpx2.Response(503, json={'error': {'code': 503, 'message': 'unavailable'}})
+            elif kind == 'connection':
+                raise httpx2.ConnectError('cannot connect', request=request)
+            else:
+                raise httpx2.ConnectTimeout('connection timed out', request=request)
+        stream = _InteractionsErrorStream(phase, kind, request)
+        streams.append(stream)
+        return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, stream=stream)
+
+    model = GoogleInteractionsModel(
+        'gemini-3.8-flash',
+        provider=GoogleProvider(
+            api_key='test',
+            base_url='http://localhost',
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+        ),
+    )
+    with pytest.raises(expected) as caught:
+        async with Agent(model).run_stream('hello') as result:
+            await result.get_output()
+    if kind == 'status':
+        assert isinstance(caught.value, ModelHTTPError)
+        assert caught.value.status_code == 503
+        assert caught.value.in_stream is (phase != 'creation')
+    else:
+        assert isinstance(caught.value, ModelConnectionError)
+        assert caught.value.phase == ('connect' if phase == 'creation' else 'read')
+    assert all(stream.closed for stream in streams)

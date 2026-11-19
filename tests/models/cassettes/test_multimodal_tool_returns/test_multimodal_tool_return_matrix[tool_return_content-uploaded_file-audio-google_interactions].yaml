@@ -1,0 +1,190 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "385"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a audio file, then describe what you
+              received.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=2367
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 159
+          total_input_tokens: 36
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 36
+          total_cached_tokens: 0
+          total_output_tokens: 10
+          total_tool_use_tokens: 0
+          total_thought_tokens: 113
+          initial_input_tokens: 29
+        created: 2026-11-06T02:56:57Z
+        updated: 2026-11-06T02:56:57Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EvUDCvIDAWkUfRO26pLaPDhbyxblfjzBWkAgK4eIwFf4x6pPamzs4kQU/q+dhCnpo8vKx2GEqvcJHIsP6Rf9TdWqdmCxVIPvRUqv8RLJ90SVI010wR9O3TQe4yDHzG271YtQ8oufmb+R9k6/fk7hNn+5LlSdC4sVeoFXPXgDBm6Z6zlGwxM5zd/NPlM9y2I+RMYOj2wykaMo33VCt5LGBAjGHQIQEEPF7C65A9gwT9x0p0Qt+vNB40P6M5+VCIyEgsWvR7i+f/eYLacM6+16ZuCU8570bvLVHiqpkfg3TFqZxh34VpjBHnGJCco4TA7uv6Ju3F41kFOZA8BTCCqohPLp/FR3qtQX7S5vRnshRP4ZROHYMGSzNMgLZyolRtXPbmn8wLZ92nbUxIaHS6/l3wZatk8uNKey9fNXAcLZ62qIGKbM7kcu4YpmVHoD00q97ws29oXvj6GXXbTbLGh3ppUFna7/b7kgpsGvO04Cct59owtKNRhCLfofBapCV4g0GxYvQwZSI6wZLQM35Ah487MzNzXH0jQHVPCwy3v8GkqyOMaAg8wPCBAe+U3tmz7X15H9qNJSRQwRpYNn46YTnDdoCOWtV+RmRUHSMdG2OmAQgrZBi3ISUWZoJGJsxtK0qm+Odm+eo3nygePRPM/DnhVz9QlQ577Z
+          type: thought
+        - id: call_10259851854793997869
+          type: function_call
+          name: get_file
+          arguments: {}
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:56:57.866148+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1484"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a audio file, then describe what you
+              received.
+        - signature: >-
+            EvUDCvIDAWkUfRO26pLaPDhbyxblfjzBWkAgK4eIwFf4x6pPamzs4kQU/q+dhCnpo8vKx2GEqvcJHIsP6Rf9TdWqdmCxVIPvRUqv8RLJ90SVI010wR9O3TQe4yDHzG271YtQ8oufmb+R9k6/fk7hNn+5LlSdC4sVeoFXPXgDBm6Z6zlGwxM5zd/NPlM9y2I+RMYOj2wykaMo33VCt5LGBAjGHQIQEEPF7C65A9gwT9x0p0Qt+vNB40P6M5+VCIyEgsWvR7i+f/eYLacM6+16ZuCU8570bvLVHiqpkfg3TFqZxh34VpjBHnGJCco4TA7uv6Ju3F41kFOZA8BTCCqohPLp/FR3qtQX7S5vRnshRP4ZROHYMGSzNMgLZyolRtXPbmn8wLZ92nbUxIaHS6/l3wZatk8uNKey9fNXAcLZ62qIGKbM7kcu4YpmVHoD00q97ws29oXvj6GXXbTbLGh3ppUFna7/b7kgpsGvO04Cct59owtKNRhCLfofBapCV4g0GxYvQwZSI6wZLQM35Ah487MzNzXH0jQHVPCwy3v8GkqyOMaAg8wPCBAe+U3tmz7X15H9qNJSRQwRpYNn46YTnDdoCOWtV+RmRUHSMdG2OmAQgrZBi3ISUWZoJGJsxtK0qm+Odm+eo3nygePRPM/DnhVz9QlQ577Z
+          type: thought
+        - id: call_10259851854793997869
+          name: get_file
+          type: function_call
+          arguments: {}
+        - type: function_result
+          name: get_file
+          call_id: call_10259851854793997869
+          is_error: false
+          result:
+          - type: text
+            text: File attached
+        - type: user_input
+          content:
+          - mime_type: audio/mpeg
+            type: audio
+            uri: https://generativelanguage.googleapis.com/v1beta/files/djwjjhbupbgo
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=2961
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 367
+          total_input_tokens: 281
+          input_tokens_by_modality:
+          - modality: audio
+            tokens: 113
+          - modality: text
+            tokens: 168
+          total_cached_tokens: 0
+          total_output_tokens: 39
+          total_tool_use_tokens: 0
+          total_thought_tokens: 47
+          initial_input_tokens: 299
+        created: 2026-11-06T02:57:00Z
+        updated: 2026-11-06T02:57:00Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            ErECCq4CAWkUfRMY1aL4/YSEYlfcpeqMg+DxNpHPvnIeuhpI78UUilBUvGqm+9trr4OiAevkCCcP5VNd1vx76jfqzyvnVMB/p5NTWiLpBTYT1QLYgvd1Y4fDzIX2mjq27eZIvgMtbhpxHo2g5/mvzZ77xKPE56z1K9uqkQ0On5LPDJaFn1pGkeGXizzAzqpMPpASv1WHlufHOxaQe722B2asA6s6+POAFcJF7Tdov4S4HCm6MoM9+IoE8fi8LKd1X3ERHwX1VgNozTuq6S9mAt6iJJWQI3B4pKim3iCl2hQCAu8NO69hMhleRvL/83NwLTt/AnxPuvfKLNXIt7NXFuslA8JcHRlgjM/H7aK5ZhM+efms2+ecY4jfFxu97h1G6mMO+wzzab7GivR7wnKcZ8FTGoM=
+          type: thought
+        - content:
+          - text: |-
+              I received a short audio clip (about 4-5 seconds long) featuring a male voice speaking in English with an accent, saying:
+
+              > *"Hello, my name is Marcelo."*
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:57:00.852732+00:00

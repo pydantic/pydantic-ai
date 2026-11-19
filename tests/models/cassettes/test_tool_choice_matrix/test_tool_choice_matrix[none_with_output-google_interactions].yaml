@@ -1,0 +1,112 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "683"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice:
+            allowed_tools:
+              mode: any
+              tools:
+              - final_result
+        store: false
+        tools:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          type: function
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: Tell me about Paris
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=20462
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 377
+          total_input_tokens: 106
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 106
+          total_cached_tokens: 0
+          total_output_tokens: 129
+          total_tool_use_tokens: 0
+          total_thought_tokens: 142
+          initial_input_tokens: 32
+        created: 2026-11-06T02:05:04Z
+        updated: 2026-11-06T02:05:04Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            Es0FCsoFAWkUfRNH6SLiZgyvGv4yxmELclCoaXdBolZuTYxBMLRuIigQU4mW+1WjYOVoOM4nIi4YBd/KCaMMMBjPyhHCjSCNP1c/6PwkkOa/ykGT4lyG2juuAJe5TVLyW7ntt8qpAWHaKJMvb1oGwFR6p/qsgOr4L9rnXLHtWFPTrkQljSNtZAvEXxFYuhXDhcTC03opApQ3m1Mxn3mIMx7Hzm3xtn+mBz0baZbb8WzpIOaewStOaQOVQ1vCW3kB6bQj56KwJdIVkEPc0Gl2EsNzHLPe4hd7d+xqtF41kA4PuxVdLwt7nB3O6FJhKuVIkV0QW9DMc0I2WytaexKLIi3lHRpyfliuJhWrzf8UUhl0I9eBs/Lky+cNkQqKw3t0pqce+tT4OIPzeP64DHwMaLDge9j4E8a2IlxEAFJo2p8RPtm9Ds8seoe49ktMu/gLnMjLwJvlKsJ+FIYraZdcPHGiEirgtRbtfkK4CXdfFyczKy6o5m27mr7nEa0dp1e8zm15uAQbC9x7Gvai6sNoICBC6Vms5c3IMCOJO7C5Q9R1Bsw1UALYKlTjAo0Re2eGHW2eSs5xncDDABN7KzI0V2fBDKHcGHYCa9Y2jkgDSX4MzVTgr6hAgo5lu4BPxJ5B8RKTIrmbnN6Zu2o1LN7WNTfHTBQ8ym3wKOcfV9g/IO7i+ULJ6Nf7xFg2iUlwvAWNamR9AMqKMN7ZCPI5T+Tc+ppwM1zqVK2H4MWBt0ynZqZM309ezF1rP9QKcJ0c5gWfcuoMHONEnvRnEOsw6siWi3lDORTnGIhHFHFtycS4s7SOCabu0+lh09WF3Y1cDhI0L1Dfw8L9N1DVqBeCKeWyyQiKu+u2MvS2Zt5MfGKGRkKKMkAe3D3Fl1ef5iLDMJUdthgCaYnxoKxiKxGoXRhNIEYEIQFUyu2L8npmvh3+T9W/2BusNT4PjASeGFdyNbXT
+          type: thought
+        - id: call_11651251032123393840
+          type: function_call
+          name: final_result
+          arguments:
+            city: Paris
+            summary: >-
+              Paris is the capital and most populous city of France, situated along the Seine
+              River. Renowned globally as a major hub for art, fashion, gastronomy, and
+              culture, it is often called the 'City of Light' (La Ville Lumière). Key landmarks
+              include the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, the Arc de
+              Triomphe, and the Champs-Élysées. Paris is also a leading global business and financial
+              center, celebrated for its historic architecture, café culture, and world-class
+              culinary tradition.
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:05:04.553853+00:00

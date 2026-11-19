@@ -1,0 +1,78 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "222"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-4-neon
+        generation_config:
+          thinking_level: low
+          thinking_summaries: none
+        store: false
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: What is 2+2? Reply with just the number.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=3205
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 128
+          total_input_tokens: 44
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 44
+          total_cached_tokens: 0
+          total_output_tokens: 5
+          output_tokens_by_modality:
+          - modality: text
+            tokens: 5
+          total_tool_use_tokens: 0
+          total_thought_tokens: 79
+          initial_input_tokens: 44
+        created: 2026-11-19T01:16:24Z
+        updated: 2026-11-19T01:16:24Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            Eo4DCosDAWkUfRPhfbD3z5AugYY+K9x/+l0q/VOCEjwITidJLVWKGLnTGcL95TO1rNKH+R5igndnOehKvcBxXQYJqyndFTKpJiATWOJd+sZDKSIRVoPjZapl8mexeNUG8WniOyQ7b82BulrrpFNEpzx+PzDLrz8ZrDpxAMJ+CTRpc9nvNfS9247RRjcdiSuhrEu9b72RpNyGyU0kIypNcG42LanozSnawJ3l933VXzvnYYokWPj5t+9vxdYm24yCbMeUmYN9Z8j3C//dm9mWFLh7ImSd551aaaxr/5U6om46mUf4bUiKNDKYQK/36ksS9MXhEH8yW3XvlntMsZbjlSjfpLN3UrVzIe8SlNSziKaAgshhBr4RBjVM4DIMIU9ukrYd+wQrmO+8O5uFI+g6ATcacg+LUzfEDO3CpC/OoSucGPdwA/ktGnP8ec7PTT+f69d6u5pNJLqzRTYDS2qiabEQvAgXdbKJsUNeTnnh6/kKt+0l13LSaKiyYT71ocBmqZdSRCGRUAEYcFuJgChFiNg=
+          type: thought
+        - content:
+          - text: "4"
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-4-neon
+  recorded_at: 2026-11-19T01:16:24.995721+00:00

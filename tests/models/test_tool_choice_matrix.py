@@ -13,7 +13,7 @@ from typing import Any, Literal, assert_never
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
@@ -29,7 +29,7 @@ from ..cassette_utils import (
     get_first_post_body,
     get_function_tool_names_from_cassette,
 )
-from ..conftest import try_import
+from ..conftest import RequestCapture, try_import
 
 with try_import() as openai_available:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
@@ -41,6 +41,7 @@ with try_import() as anthropic_available:
 
 with try_import() as google_available:
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as bedrock_available:
@@ -110,6 +111,12 @@ SUPPORT_MATRIX: dict[tuple[str, Scenario], Expectation] = {
     ('google', 'list_single'): 'native',
     ('google', 'none_with_output'): 'native',
     ('google', 'tools_plus_output'): 'native',
+    ('google_interactions', 'auto'): 'native',
+    ('google_interactions', 'none'): 'native',
+    ('google_interactions', 'required'): 'native',
+    ('google_interactions', 'list_single'): 'native',
+    ('google_interactions', 'none_with_output'): 'native',
+    ('google_interactions', 'tools_plus_output'): 'native',
     ('bedrock', 'auto'): 'native',
     ('bedrock', 'none'): 'native',
     ('bedrock', 'required'): 'native',
@@ -154,6 +161,7 @@ MODEL_CONFIGS: dict[str, tuple[str, Any]] = {
     'groq': ('meta-llama/llama-4-scout-17b-16e-instruct', groq_available),
     'mistral': ('mistral-large-latest', mistral_available),
     'google': ('gemini-2.5-flash', google_available),
+    'google_interactions': ('gemini-3.8-flash', google_available),
     'bedrock': ('us.anthropic.claude-sonnet-4-5-20250929-v1:0', bedrock_available),
     'huggingface': ('meta-llama/Llama-4-Scout-17B-16E-Instruct', huggingface_available),
     'xai': ('grok-3-fast', xai_available),
@@ -166,6 +174,7 @@ def create_model(
     api_keys: dict[str, str],
     bedrock_provider: Any = None,
     xai_provider: Any = None,
+    request_capture: RequestCapture | None = None,
 ) -> Model:
     model_name = MODEL_CONFIGS[provider][0]
     if provider == 'openai':
@@ -184,6 +193,12 @@ def create_model(
         return MistralModel(model_name, provider=MistralProvider(api_key=api_keys['mistral']))
     elif provider == 'google':
         return GoogleModel(model_name, provider=GoogleProvider(api_key=api_keys['google']))
+    elif provider == 'google_interactions':
+        assert request_capture is not None
+        return GoogleInteractionsModel(
+            model_name,
+            provider=GoogleProvider(api_key=api_keys['google'], http_client=request_capture.http_client(timeout=120)),
+        )
     elif provider == 'bedrock':
         assert bedrock_provider is not None
         return BedrockConverseModel(model_name, provider=bedrock_provider)
@@ -232,8 +247,14 @@ def make_tool_def(name: str, description: str, param_name: str) -> ToolDefinitio
     )
 
 
-def get_tool_choice_from_cassette(cassette: Any, provider: str, xai_provider: Any = None) -> Any:
-    """Extract tool_choice from cassette request body, handling provider differences."""
+def get_tool_choice(
+    cassette: Any, provider: str, xai_provider: Any = None, request_capture: RequestCapture | None = None
+) -> Any:
+    """Read tool choice from the captured request or the provider's recorded wire shape."""
+    if provider == 'google_interactions':
+        assert request_capture is not None
+        config = TypeAdapter(dict[str, JsonValue]).validate_python(request_capture.body()['generation_config'])
+        return config.get('tool_choice')
     if provider == 'xai':
         return _get_xai_tool_choice(xai_provider)
 
@@ -376,6 +397,16 @@ EXPECTED_TOOL_CHOICE: dict[tuple[str, Scenario], Any] = {
     ('google', 'list_single'): snapshot('ANY'),
     ('google', 'none_with_output'): snapshot('ANY'),
     ('google', 'tools_plus_output'): snapshot('ANY'),
+    ('google_interactions', 'auto'): snapshot('validated'),
+    ('google_interactions', 'none'): snapshot('none'),
+    ('google_interactions', 'required'): snapshot('any'),
+    ('google_interactions', 'list_single'): snapshot({'allowed_tools': {'mode': 'any', 'tools': ['get_weather']}}),
+    ('google_interactions', 'none_with_output'): snapshot(
+        {'allowed_tools': {'mode': 'any', 'tools': ['final_result']}}
+    ),
+    ('google_interactions', 'tools_plus_output'): snapshot(
+        {'allowed_tools': {'mode': 'any', 'tools': ['final_result', 'get_weather']}}
+    ),
     ('bedrock', 'auto'): snapshot('auto'),
     ('bedrock', 'none'): snapshot(None),
     ('bedrock', 'required'): snapshot('any'),
@@ -410,6 +441,7 @@ PROVIDERS = [
     pytest.param('groq', id='groq'),
     pytest.param('mistral', id='mistral'),
     pytest.param('google', id='google'),
+    pytest.param('google_interactions', id='google_interactions'),
     pytest.param('bedrock', id='bedrock'),
     pytest.param('huggingface', id='huggingface'),
     pytest.param('xai', id='xai'),
@@ -436,6 +468,7 @@ async def test_tool_choice_matrix(
     xai_provider: Any,
     allow_model_requests: None,
     vcr: Any,
+    request_capture: RequestCapture,
 ):
     """Validate provider tool-choice wire payloads.
 
@@ -451,7 +484,7 @@ async def test_tool_choice_matrix(
         skip_info = SKIP_REASONS.get((provider, scenario))
         pytest.skip(skip_info.reason if skip_info else f'{provider}/{scenario} skipped')
 
-    model = create_model(provider, api_keys, bedrock_provider, xai_provider)
+    model = create_model(provider, api_keys, bedrock_provider, xai_provider, request_capture=request_capture)
     expected_tool_choice = EXPECTED_TOOL_CHOICE.get((provider, scenario))
 
     if scenario == 'auto':
@@ -500,7 +533,7 @@ async def test_tool_choice_matrix(
     else:
         assert_never(scenario)
 
-    actual_tool_choice = get_tool_choice_from_cassette(vcr, provider, xai_provider)
+    actual_tool_choice = get_tool_choice(vcr, provider, xai_provider, request_capture)
     assert actual_tool_choice == expected_tool_choice
 
     if provider == 'bedrock' and scenario == 'list_single':

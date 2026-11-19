@@ -6,6 +6,7 @@ a provider malfunction no recording reliably reproduces.
 
 from __future__ import annotations
 
+import json
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -14,7 +15,7 @@ from typing import Any
 
 import httpx2
 import pytest
-from pydantic import TypeAdapter
+from pydantic import JsonValue, TypeAdapter
 
 from pydantic_ai import Agent, UsageLimitUnavailableWarning
 from pydantic_ai._genai_prices import best_effort_price
@@ -108,6 +109,7 @@ with try_import() as google_imports:
     )
 
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as cohere_imports:
@@ -510,6 +512,41 @@ def google_stream_model(omit_usage: bool, monkeypatch: pytest.MonkeyPatch) -> Mo
     return model
 
 
+def google_interactions_model(omit_usage: bool, monkeypatch: pytest.MonkeyPatch, *, stream: bool = False) -> Model:
+    body: dict[str, JsonValue] = {
+        'id': 'interaction-1',
+        'status': 'completed',
+        'model': 'gemini-3.8-flash',
+        'steps': [{'type': 'model_output', 'content': [{'type': 'text', 'text': 'hello'}]}],
+    }
+    if not omit_usage:
+        body['usage'] = {'total_input_tokens': 0, 'total_output_tokens': 0}
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        if not stream:
+            return httpx2.Response(200, json=body)
+        events: list[dict[str, JsonValue]] = [
+            {'event_type': 'step.start', 'index': 0, 'step': {'type': 'model_output'}},
+            {'event_type': 'step.delta', 'index': 0, 'delta': {'type': 'text', 'text': 'hello'}},
+            {'event_type': 'step.stop', 'index': 0},
+            {'event_type': 'interaction.completed', 'interaction': body},
+        ]
+        return httpx2.Response(
+            200,
+            headers={'content-type': 'text/event-stream'},
+            content=''.join(f'data: {json.dumps(event)}\n\n' for event in events),
+        )
+
+    return GoogleInteractionsModel(
+        'gemini-3.8-flash',
+        provider=GoogleProvider(api_key='x', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle))),
+    )
+
+
+def google_interactions_stream_model(omit_usage: bool, monkeypatch: pytest.MonkeyPatch) -> Model:
+    return google_interactions_model(omit_usage, monkeypatch, stream=True)
+
+
 def cohere_model(omit_usage: bool, monkeypatch: pytest.MonkeyPatch) -> Model:
     usage = None if omit_usage else cohere.Usage(tokens=cohere.UsageTokens(input_tokens=0, output_tokens=0))
     completion = cohere.ChatResponse(
@@ -580,6 +617,18 @@ CASES = [
     ),
     Case('google', google_model, stream=False, marks=skip_unless(google_imports, 'google-genai')),
     Case('google-stream', google_stream_model, stream=True, marks=skip_unless(google_imports, 'google-genai')),
+    Case(
+        'google-interactions',
+        google_interactions_model,
+        stream=False,
+        marks=skip_unless(google_imports, 'google-genai'),
+    ),
+    Case(
+        'google-interactions-stream',
+        google_interactions_stream_model,
+        stream=True,
+        marks=skip_unless(google_imports, 'google-genai'),
+    ),
     Case('cohere', cohere_model, stream=False, marks=skip_unless(cohere_imports, 'cohere')),
     Case('bedrock-stream', bedrock_stream_model, stream=True, marks=skip_unless(bedrock_imports, 'boto3')),
 ]

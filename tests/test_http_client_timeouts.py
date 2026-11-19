@@ -8,12 +8,13 @@ is the layer HTTPX hands them to.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import httpx2
 import pytest
 from inline_snapshot import snapshot
+from pydantic import JsonValue
 
 from pydantic_ai import Agent
 from pydantic_ai._http import ConnectPoolTimeoutCap, create_async_httpx2_client
@@ -28,6 +29,7 @@ with try_import() as openai_imports_successful:
 
 with try_import() as google_imports_successful:
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
 _OPENAI_RESPONSE: dict[str, Any] = {
@@ -43,6 +45,15 @@ _GOOGLE_RESPONSE: dict[str, Any] = {
     'candidates': [{'content': {'role': 'model', 'parts': [{'text': 'Paris'}]}, 'finishReason': 'STOP'}],
     'usageMetadata': {'promptTokenCount': 1, 'candidatesTokenCount': 1, 'totalTokenCount': 2},
     'modelVersion': 'gemini-2.5-flash',
+}
+
+
+_GOOGLE_INTERACTIONS_RESPONSE: dict[str, JsonValue] = {
+    'id': 'interaction-1',
+    'status': 'completed',
+    'model': 'gemini-3.8-flash',
+    'steps': [{'type': 'model_output', 'content': [{'type': 'text', 'text': 'Paris'}]}],
+    'usage': {'total_input_tokens': 1, 'total_output_tokens': 1},
 }
 
 
@@ -194,15 +205,23 @@ async def test_model_settings_timeout_leaves_user_client_untouched(
         ),
     ],
 )
+@pytest.mark.parametrize('api_family', ['generate-content', 'interactions'])
 async def test_google_provider_client_keeps_connect_timeout(
     allow_model_requests: None,
     model_settings: ModelSettings,
     expected: dict[str, float | None],
     sent_timeouts: Callable[[dict[str, Any]], list[dict[str, float | None]]],
+    api_family: Literal['generate-content', 'interactions'],
 ):
     """google-genai sends the provider's pinned 20-minute `HttpOptions.timeout` as a scalar on every request."""
-    sent = sent_timeouts(_GOOGLE_RESPONSE)
-    agent = Agent(GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test')))
+    sent = sent_timeouts(_GOOGLE_INTERACTIONS_RESPONSE if api_family == 'interactions' else _GOOGLE_RESPONSE)
+    provider = GoogleProvider(api_key='test')
+    model = (
+        GoogleInteractionsModel('gemini-3.8-flash', provider=provider)
+        if api_family == 'interactions'
+        else GoogleModel('gemini-2.5-flash', provider=provider)
+    )
+    agent = Agent(model)
 
     async with agent:
         result = await agent.run('What is the capital of France?', model_settings=model_settings)

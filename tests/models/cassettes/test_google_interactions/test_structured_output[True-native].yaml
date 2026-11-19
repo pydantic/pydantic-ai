@@ -1,0 +1,91 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "364"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        input:
+        - content:
+          - text: Name the capital city of France and its country.
+            type: text
+          type: user_input
+        response_format:
+          mime_type: application/json
+          schema:
+            properties:
+              name:
+                type: string
+              country:
+                type: string
+            required:
+            - name
+            - country
+            type: object
+          type: text
+        store: false
+        stream: true
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=3365
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: |+
+        event: interaction.created
+        data: {"interaction":{"object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.created"}
+
+        event: interaction.status_update
+        data: {"status":"in_progress","event_type":"interaction.status_update"}
+
+        event: step.start
+        data: {"index":0,"step":{"type":"thought"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":0,"delta":{"signature":"EscICsQIAWkUfRMoejR+om2Geb/mhdMy890IzGEe0HfQ9mIbxs8o/ZyKMWbQrwxch/0ffhGAqyJxX0uURfWMun2gvPzYURO5mUmxXS5Yinq2hc8x2igWS3tieJqgCceG3CSMWgJGmjtGhKA5icl38ll13qGxyZUsXoNk9nGBjcmA8WzTbqVk4jCI7srOzMK57qa4n5v+2363P8LvGkYlj6Ea2Ph+Iwgf/hGbWNIqOnVzez4GyZ+eB7zr3fdgs4S6jZrweFMoLl9EvfvA0SfbXO/b1+/PCAzwddeV69BceGCuNwfdHbqsVwIxqb0afrMesQVQ0iyuB9IjwfDdHhCo34FHIn7sQlNTxLqpWfS4jI73GVkEqtg52C3INlTKFK27ZR8dmYw7VaRLE/eh2+aP1/WAzRypJ8rRle37aCRjlufJfy7kuLGc1OZ3Bekio6CfmVXdFvSpsXcuFi42TRxAWSqzG3UNWa8e7EGWNJrLITg7Cp/JIvS4HSQtYW8MOWZtWmMLh8DHK93eE0+kGj0R0B6jYgjWF+5vcvXzm7CIlY5la9JdOiikFIdOME6DExKkLX+LnLLuTtwSmqFe1e3qKZORaCMAIaT4LCyN/wDVfERP8zyglK+ZBnAFXk2pm+11tkLdZdo/PjWbbFu+JBuTSbR84weQ806y3w+68O66QR6UE1147dJ8VpkBnlYpD6sFWFjcpzJ+aeBqfb0YB7uqltnQ2f53kXy86OEamHgHp/1kVKchlt2aW4LK28BzpMbTARooMzrIK4KoO3njXelCGq/+zfDgk8Q5Oglyfm+nm+1FOaSlst5/0KDQMSz10Aqmt2mqZro3/l/3LUg41G7PfmO1JFRaomX08VtVFeKkq+astNnNrcwG3pw/YOsR/Gq5qtgtmayWVpn1iu6sXrm5nsHaVB/7+UjWfvm3xQevWJtYlFHmnGtwc1RKR3usNJb/AgzZhTRBRYXqmwjavXhEv1D3Cn7T9GSKqTTGq5neL2sklrQLuKHQEJRpReX7lXzvDZQsBV04GJSFsKHa6lkA26CVWs26zcCetJn0O9DMVNZVycAXdQ7m88dh2kaAOvBdhRUQ55eeakjGlZDQwi1hePwlkZi4htkgyu+QEtFSgt1C0tomI6g6FIyPy69amiiT75JzWNYWgCmES7H3rXqsNsuAqbp9fGsLU3TRR9d/N/pl5FnPL5ALqTGLDzPlUBojFySzEeIp/JqjGHn7r/3h3kj024u141wZhoLCUn/d4n7QrgUk1aeud4JKO3SKCrhr8mWW8Pe63x/LDpmTINqW2lQcVzrKaz87h+U3DbPLkRh+EFPu06isSBSO5qx+pO2TIZ8Ww1ueZ1i8NJfD9PxZST5AZOWA9rcwldnMpyHf6h6prFfxh1nS49g+2dKql8t7iJV2d/R770e0hALHBfIgPI4Bduy4h709xAZ6GIQFJ7oqqa74z2aMJNwQ","type":"thought_signature"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":0,"event_type":"step.stop"}
+
+        event: step.start
+        data: {"index":1,"step":{"type":"model_output"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":1,"delta":{"text":"{\"name\":\"Paris\",\"country\":\"France\"}","type":"text"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":1,"event_type":"step.stop"}
+
+        event: interaction.completed
+        data: {"interaction":{"status":"completed","usage":{"total_tokens":267,"total_input_tokens":11,"input_tokens_by_modality":[{"modality":"text","tokens":11}],"total_cached_tokens":0,"total_output_tokens":9,"total_tool_use_tokens":0,"total_thought_tokens":247,"initial_input_tokens":75},"created":"2026-11-05T15:00:51Z","updated":"2026-11-05T15:00:51Z","service_tier":"standard","object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.completed"}
+
+        event: done
+        data: [DONE]
+
+  recorded_at: 2026-11-05T15:00:51.027916+00:00

@@ -167,6 +167,7 @@ Need deterministic, fast tests?
 | OpenAI | `openai:` | `openai:gpt-5.2` |
 | Anthropic | `anthropic:` | `anthropic:claude-sonnet-4-6` |
 | Google (Gemini API) | `google:` | `google:gemini-3-pro-preview` |
+| Google Interactions | `google-interactions:` | `google-interactions:gemini-3.8-flash` |
 | Google Cloud | `google-cloud:` | `google-cloud:gemini-3-pro-preview` |
 | Groq | `groq:` | `groq:llama-3.3-70b-versatile` |
 | Mistral | `mistral:` | `mistral:mistral-large-latest` |

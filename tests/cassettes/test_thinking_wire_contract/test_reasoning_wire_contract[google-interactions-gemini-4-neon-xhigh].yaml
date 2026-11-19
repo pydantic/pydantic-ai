@@ -1,0 +1,86 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "224"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-4-neon
+        generation_config:
+          thinking_level: xhigh
+          thinking_summaries: auto
+        store: false
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: What is 2+2? Reply with just the number.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=3922
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 134
+          total_input_tokens: 44
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 44
+          total_cached_tokens: 0
+          total_output_tokens: 5
+          output_tokens_by_modality:
+          - modality: text
+            tokens: 5
+          total_tool_use_tokens: 0
+          total_thought_tokens: 85
+          initial_input_tokens: 44
+        created: 2026-11-19T01:16:28Z
+        updated: 2026-11-19T01:16:28Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EsoDCscDAWkUfRMTPgUcs8XAO7SJt15KbuZawB4ktsw/IYcns5WjvVQ5dELEqOFfRP7fa3ykROnbk3OY9+TsHdrwEsp6S6x/6JeYO0yG3bQYsBvwotldalh2Vn/3/gtcEhZSMqtz94pC8aSjuZdi+9/PBZBiCD726T0hcd3FsLL80fmk9Et89GwStPDJJ/5f17aMLLPUNUn4wcuyGOvsPlMChetenfV4QgsZdMRHZMbwO/+M3FLSRwDoUUy2f65U5ayDkCsdgQxznFIP63aLNE0+SLAduYOJwnNr+HY5W5wevsR9w13bNUG3XUp41WSK/SYZbtmcY1707kX6USdZrPSLcXxAyUkIPPeTBxyFi3Gnbb4nicIw7Zt3NNalN1q57mHrOPyLd5GeiJWI3GrTJ1oVr//N86sYy6j/Fw6Nddacek9ryp32ygcTAIWa/yRYH1KEnWmyawGqpTiNkC5Rr8OCoUSz3Qi16/HrqimYdi0k4hMX/1hGGPXyvYoYKNL5F+o8gmHi6/B8OV/EtnlGEiGDsJm/IZFn2Of8MY7Kg3nR/athMwMYcFzMIxufAQ5lCG7raksi0IdWGP3IAENIT0r/75u0h247xgO3jsQ=
+          summary:
+          - text: |+
+              **My Mental Calculation on "2+2"**
+
+              Okay, so the user wants me to do a quick calculation. Let's see, the core of this is pretty straightforward: it's "2+2." My constraints are clear: they want *just* the number, no extra fluff. Right, no framing, no explanation, no sentence, nothing. Just the raw answer. So, I calculate: 2 + 2... that's 4. Now, according to the constraints, I need to format the response to meet the user's explicit request. I just need to spit out the numerical answer. Okay, that's done.
+
+
+            type: text
+          type: thought
+        - content:
+          - text: "4"
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-4-neon
+  recorded_at: 2026-11-19T01:16:28.970007+00:00

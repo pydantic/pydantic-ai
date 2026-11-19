@@ -265,6 +265,23 @@ def google_wire(contents: JsonValue) -> list[WireMessage]:
     return wire
 
 
+def google_interactions_wire(steps: JsonValue) -> list[WireMessage]:
+    """Interactions steps separate model text, calls, and results into independently typed items."""
+    wire: list[WireMessage] = []
+    for fields in map(_fields, _items(steps)):
+        step_type = _text(fields.get('type'))
+        if step_type == 'function_call':
+            blocks = [WireBlock('call', _text(fields.get('id')))]
+        elif step_type == 'function_result':
+            blocks = [WireBlock('result', _text(fields.get('call_id')))]
+        elif step_type in ('user_input', 'model_output'):
+            blocks = _content_blocks(fields.get('content'))
+        else:
+            blocks = [WireBlock('other')]
+        wire.append(WireMessage(step_type, blocks))
+    return wire
+
+
 def duplicate_call_id_violations(messages: Sequence[WireMessage], *, across_messages: bool) -> list[str]:
     """`wire.duplicate_call_id`: no call id is sent twice in one message, or, `across_messages`, in the whole body."""
     scopes = [messages] if across_messages else [[message] for message in messages]

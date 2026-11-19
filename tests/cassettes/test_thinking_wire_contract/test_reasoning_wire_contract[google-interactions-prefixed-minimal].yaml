@@ -1,0 +1,85 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "232"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: models/gemini-3.8-flash
+        generation_config:
+          thinking_level: low
+          thinking_summaries: auto
+        store: false
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: What is 2+2? Reply with just the number.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=3161
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 78
+          total_input_tokens: 14
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 14
+          total_cached_tokens: 0
+          total_output_tokens: 1
+          total_tool_use_tokens: 0
+          total_thought_tokens: 63
+          initial_input_tokens: 13
+        created: 2026-11-06T02:44:08Z
+        updated: 2026-11-06T02:44:08Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EqoCCqcCAWkUfRPzJyf+PS53w5tIv3IwAwn+YP9fDSuAwDULFb+UFvan1g6mM4XzUp39KJw9dDJHZE/hSqtzOlm4nOkHJ+zesmxXwte2UsGyxo/Fw13hGJguzZWhfFrxQlG2IyVTx1vcti89dCHqXgt0EJDTEZQrTjO4lf3FvQf6N9ZwWQkF1GFpZfL3GkrYGCcf9BRGlF10ZRyvc1WILNoUhw26vC7qEXtE5gg4egk9qRUFBs1q/n/6KxQ7Rh++yxo9UwjX4k2KjglUjzxmwS/FGmmQCsyRUKXWrV7jk5lrHcgu3lYKi58yNOILMWaeuMLeVwnaJ/2zkbZxqFYxoeu4lXz5g8nQDhl6rSZl+2tdvkO99Bkp1PKhYA8kFiUjGIjLwcwIUam8mQg2lg==
+          summary:
+          - text: |+
+              Okay, here's my summary, tailored for an expert audience, as if it were my thought process:
+
+              **Internal Review of a Trivial Calculation and Output Constraint**
+
+              Alright, let's break this down. First, the core task: it's a fundamental arithmetic problem, the classic "2 + 2". I don't even need to expend much cognitive effort here; the answer, of course, is 4. I could probably do this in my sleep. However, I need to make sure I'm adhering to the specific output constraint. The directive states, very clearly, that I am to "Reply with just the number." Therefore, the focus shifts from the *calculation* itself (which is trivial) to the *presentation* of the answer. It's about format, not content. So, even though I know the value is 4, I must ensure that the output is unadorned, pure, just the digit itself: "4". Anything more complex, even a simple word, would be a failure. In essence, it's a test of following instructions more than it is a test of mathematical prowess.
+
+
+            type: text
+          type: thought
+        - content:
+          - text: "4"
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:44:08.271167+00:00
