@@ -1089,7 +1089,7 @@ async def test_the_editor_opens_compact_below_the_shell() -> None:
         assert not terminal.alternate
         lines = terminal.lines()
         assert lines[0] == '$ clai2' and lines[1] == ''
-        assert any(line.startswith('draft') for line in lines[2:6])
+        assert any(line.startswith('❯ draft') for line in lines[2:6])
         assert lines[-1] == '', 'the panel takes only the rows it needs'
 
 
