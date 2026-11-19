@@ -735,8 +735,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Turn off defaults that haven't been checked live on this provider.
 
         Azure clients and the gateway lose the Batch API and Responses WebSockets. Every provider class except
-        `OpenAIProvider` and `BedrockMantleProvider` loses the native `ComputerTool`, and so do Azure clients and the
-        gateway. The check is on the provider class, so `OpenAIProvider(base_url=...)` keeps the tool on any server.
+        `OpenAIProvider` and `BedrockMantleProvider` loses the native `ComputerTool`, and so do Azure clients. The
+        gateway's OpenAI route is an `OpenAIProvider` that reaches OpenAI's API, so it keeps the tool. The check is on
+        the provider class, so `OpenAIProvider(base_url=...)` keeps the tool on any server.
 
         Every model resolves this, so it reads only the client's type and the provider's identity, never client state
         such as URLs, which a mocked or partly built client may not have yet.
@@ -745,14 +746,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # Azure batches need a batch deployment; the gateway doesn't serve the Batch API yet.
             profile = merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
         # An Azure-named custom provider may advertise socket support with an ordinary OpenAI client.
-        azure_or_gateway = isinstance(self._provider.client, AsyncAzureOpenAI) or is_gateway_provider(self._provider)
-        if azure_or_gateway:
+        azure_client = isinstance(self._provider.client, AsyncAzureOpenAI)
+        if azure_client or is_gateway_provider(self._provider):
             # Responses WebSockets aren't verified on the Azure client, and the gateway's handshake fails with a 503
             # while HTTP succeeds (live, 2026-10-22).
             profile = merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
-        if azure_or_gateway or not isinstance(self._provider, OpenAIProvider | BedrockMantleProvider):
+        if azure_client or not isinstance(self._provider, OpenAIProvider | BedrockMantleProvider):
             # OpenAI's computer tool has been checked live only on OpenAI's API and Bedrock Mantle, so only
-            # `OpenAIProvider` and `BedrockMantleProvider` keep it. Every other provider class gets `ComputerUse`'s
+            # `OpenAIProvider` and `BedrockMantleProvider` keep it. The gateway's OpenAI route is an `OpenAIProvider`
+            # that reaches OpenAI's API, so it keeps it too. Every other provider class gets `ComputerUse`'s
             # function tool, which works anywhere, even when the model's profile lists `ComputerTool` for its own
             # provider's API (Claude's does). Other native tools stay as they were. `OpenAIProvider(base_url=...)`
             # keeps the tool whatever server it calls. A user whose server doesn't support it removes `ComputerTool`

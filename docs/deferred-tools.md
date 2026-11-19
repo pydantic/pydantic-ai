@@ -257,6 +257,7 @@ print(result.all_messages())
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
+        metadata={'__pydantic_ai__': {'deferred_pause': True}},
     ),
     ModelRequest(
         parts=[

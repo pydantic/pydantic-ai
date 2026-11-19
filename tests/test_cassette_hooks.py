@@ -182,6 +182,12 @@ def test_account_id_is_scrubbed_from_responses_only():
             id='stream-with-comment',
         ),
         pytest.param(b'not json "access_programs"', 'text/plain', b'not json "access_programs"', id='not-json'),
+        pytest.param(
+            b'data: {"access_programs": cut off\n\n',
+            'text/event-stream',
+            b'data: {"access_programs": cut off\n\n',
+            id='stream-event-not-json',
+        ),
     ],
 )
 def test_access_programs_are_cleared_from_responses(body: bytes, content_type: str, expected: bytes):

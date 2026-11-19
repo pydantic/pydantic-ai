@@ -136,6 +136,20 @@ To mirror the official Codex client's prompt-cache affinity, [`OpenAICodexModel`
 
 The Codex backend caches prompts implicitly and rejects the explicit prompt caching fields of the OpenAI API, so the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting, [`CachePoint`][pydantic_ai.messages.CachePoint]s, and `openai_cache_instructions` have no effect.
 
+## Speed
+
+The Codex CLI's [Fast and Ultrafast speeds](https://developers.openai.com/codex/speed) are service tiers, which you select with [`openai_service_tier`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_service_tier]. The CLI's `/fast` sends `'priority'`, `/ultrafast` sends `'ultrafast'`, and Standard sends no tier. Faster speeds use more of your plan's usage. Ultrafast is only offered on some models, and whether you can use a speed depends on your plan.
+
+```python {title="codex_speed.py" test="skip - requires a ChatGPT sign-in"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+
+agent = Agent(
+    'openai-codex:gpt-6-astra',
+    model_settings=OpenAIResponsesModelSettings(openai_service_tier='ultrafast'),
+)
+```
+
 ## Continuing on the OpenAI API
 
 The Codex backend and the OpenAI API accept each other's encrypted reasoning and compaction items, so a conversation can move between [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel] and an [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] on the OpenAI API, in either direction, without losing them: both have the `openai` [canonical system](../message-history.md#sending-history-to-another-provider). After a compaction, the other model continues from the compaction item rather than from the full earlier history. Response and item IDs stay with the provider that issued them. The OpenAI API ignores reasoning encrypted for another organization, which a ChatGPT plan's usually is, without failing the request.

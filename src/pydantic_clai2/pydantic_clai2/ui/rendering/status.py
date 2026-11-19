@@ -4,8 +4,8 @@ import asyncio
 import contextlib
 import math
 import time
-from collections.abc import AsyncGenerator, Callable
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator, Callable, Sequence
+from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Self, cast
@@ -16,6 +16,8 @@ from rich.console import Console
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
 from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -23,10 +25,15 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
 )
+from pydantic_clai2.config import DEFAULT_FOOTER_FIELDS, FooterField
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.duration import format_duration
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 from pydantic_clai2.ui.rendering.usage_report import format_cost
+
+TEXT_TIME = 'clai2_last_text_at'
+"""Local text-observation time stored in response metadata, not sent to the provider."""
 
 StatusSegment = Callable[[], str]
 """One short status-row fragment supplied by a plugin; see `PluginHost.status_segment`."""
@@ -36,6 +43,16 @@ StatusSegment = Callable[[], str]
 class Status:
     """Reported context and explicitly approximate live output counts."""
 
+    fields: Callable[[], Sequence[FooterField]] = lambda: DEFAULT_FOOTER_FIELDS
+    clock: Callable[[], float] = time.time
+    text_updates: int = 0
+    last_text_at: float | None = None
+    """Main-assistant text time, independent of the subagent whose figures are shown."""
+    updates: StatusSegment = lambda: ''
+    live: StatusSegment = lambda: ''
+    queued: Callable[[], int] = lambda: 0
+    _text_response: ModelResponse | None = field(default=None, init=False, repr=False)
+    _streamed_text: bool = field(default=False, init=False, repr=False)
     model: str = 'agent default'
     workspace: str = ''
     """The session's working directory; hidden while empty."""
@@ -56,7 +73,7 @@ class Status:
     streamed_chars: int = 0
     activity: str = 'ready'
     status_segments: tuple[StatusSegment, ...] = ()
-    """Plugin fragments appended after the built-in figures; the shell fills this in each turn."""
+    """Fragments in the main footer's configurable `plugins` group; the shell fills this in each turn."""
     agent: str = ''
     """The subagent these figures belong to, painted before the model; empty for the main conversation."""
     subagent: 'Callable[[], Status | None]' = lambda: None
@@ -72,14 +89,57 @@ class Status:
         self.cost = None
         self.cost_is_lower_bound = False
         self.streamed_chars = 0
+        self.last_text_at = None
+        self._text_response = None
+        self._streamed_text = False
+
+    def restore_text_age(self, messages: Sequence[ModelMessage], *, keep_live: bool = True) -> None:
+        """Restore from the last textual response's local receipt time, retaining an observed live delta time.
+
+        A rewind passes `keep_live=False`; no user, tool or thinking timestamp substitutes for text.
+        """
+        response = next(
+            (
+                message
+                for message in reversed(messages)
+                if isinstance(message, ModelResponse)
+                and any(isinstance(part, TextPart) and part.content for part in message.parts)
+            ),
+            None,
+        )
+        streamed = self._streamed_text
+        self._streamed_text = False
+        if response is self._text_response and keep_live:
+            return
+        self._text_response = response
+        if keep_live and streamed and response is not None:
+            return
+        if response is None:
+            self.last_text_at = None
+            return
+        saved = response.metadata.get(TEXT_TIME) if response.metadata else None
+        if isinstance(saved, (int, float)) and not isinstance(saved, bool) and math.isfinite(saved):
+            self.last_text_at = float(saved)
+        else:
+            self.last_text_at = response.timestamp.timestamp()
 
     @property
     def window(self) -> int | None:
         """The window to show: the latest request's, or the selected model's before a request resolved one."""
         return self.model_window if self.context_window is None else self.context_window
 
+    def _observe_text(self, event: AgentStreamEvent) -> None:
+        """Track only nonempty text starts and deltas, independently of token estimates."""
+        if (isinstance(event, PartStartEvent) and isinstance(event.part, TextPart) and event.part.content) or (
+            isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta) and event.delta.content_delta
+        ):
+            self.last_text_at = self.clock()
+            self.text_updates += 1
+            self._streamed_text = True
+
     def observe(self, event: AgentStreamEvent) -> None:
         """Include text, thinking, and streamed tool arguments in the estimate."""
+        self._observe_text(event)
         if isinstance(event, PartStartEvent):
             part = event.part
             if isinstance(part, (TextPart, ThinkingPart)):
@@ -99,27 +159,53 @@ class Status:
         elif isinstance(event, FunctionToolResultEvent):
             self.activity = 'working'
 
-    def segments(self, frame: str = '') -> tuple[str, str, str, str, str, str, str]:
-        """Separate figures from labels so plain text and both painters share the same boundaries.
+    def segments(self, frame: str = '') -> tuple[str, ...]:
+        """The configured visible fields, sharing the toolbar's boundaries and conditional visibility."""
+        painted = self.toolbar()
+        return (frame + ' ' if frame else '', *(text for _, text in painted))
 
-        While a subagent runs, its figures replace these; the plugin fragments stay.
-        """
-        return (self.subagent() or self)._segments(frame, self._plugin_text())
-
-    def _segments(self, frame: str, plugins: str) -> tuple[str, str, str, str, str, str, str]:
-        estimated = '~' if self.context_estimated else ''
-        context = f'{estimated}{_compact_tokens(self.context_tokens)}/{_compact_tokens(self.window)}'
-        output = f'~{math.ceil(self.streamed_chars / 4):,}'
+    def _fields(self) -> dict[FooterField, list[tuple[str, str]]]:
+        """Style each field by meaning, before applying the main conversation's layout."""
+        shown = self.subagent() or self
+        estimated = '~' if shown.context_estimated else ''
+        context = f'{estimated}{_compact_tokens(shown.context_tokens)}/{_compact_tokens(shown.window)}'
+        output = f'~{math.ceil(shown.streamed_chars / 4):,}'
         output_label = 'streamed tokens'
-        if self.output_tokens is not None:
-            output = f'{self.output_tokens:,}'
+        if shown.output_tokens is not None:
+            output = f'{shown.output_tokens:,}'
             output_label = 'output tokens'
-        cost = '' if self.cost is None else f' | {">=" if self.cost_is_lower_bound else ""}{format_cost(self.cost)}'
-        # A POSIX directory name may hold a newline or an escape sequence; keep it inert on every painter.
-        workspace = f' | {_short_path(terminal_text(self.workspace, keep=""))}' if self.workspace else ''
-        label = ': '.join(part for part in (self.agent, self.model) if part)
-        head = f'{frame} {label}{workspace} | context: '.lstrip()
-        return head, context, ' tokens | ', output, f' {output_label}{cost} | ', self.activity, plugins
+        cost = '' if shown.cost is None else f'{">=" if shown.cost_is_lower_bound else ""}{format_cost(shown.cost)}'
+        named = [(theme.INFO, shown.agent)] if shown.agent else []
+        if shown.agent and shown.model:
+            named.append((theme.MUTED, ': '))
+        activity = [(theme.MUTED, shown.activity)]
+        if shown.activity.startswith(('tool: ', 'running: ')):
+            label, _, tool = shown.activity.partition(': ')
+            activity = [(theme.MUTED, label + ': '), (theme.THINKING, tool)]
+        age = (
+            'last text: ' + format_duration(self.clock() - self.last_text_at, started_at=self.last_text_at)
+            if self.last_text_at is not None
+            else ''
+        )
+        queued = self.queued()
+        return {
+            'model': [*named, (theme.MUTED, shown.model)],
+            # A POSIX path can contain terminal controls; sanitize it on every painter.
+            'workspace': [(theme.MUTED, _short_path(terminal_text(shown.workspace, keep='')))],
+            'context': [
+                (theme.MUTED, 'context: '),
+                (theme.WARNING if shown.context_alert else theme.MUTED, context),
+                (theme.MUTED, ' tokens'),
+            ],
+            'output': [(theme.LITHIUM, output), (theme.MUTED, f' {output_label}')],
+            'cost': [(theme.MUTED, cost)],
+            'activity': activity,
+            'plugins': [(theme.MUTED, self._plugin_text().removeprefix(' | '))],
+            'updates': [(theme.MUTED, self.updates())],
+            'live': [(theme.MUTED, self.live())],
+            'queued': [(theme.MUTED, f'queued: {queued}' if queued else '')],
+            'assistant_age': [(theme.MUTED, age)],
+        }
 
     def _plugin_text(self) -> str:
         """Plugin fragments, separated and prefixed; a fragment that raises or returns a non-string is reported."""
@@ -143,24 +229,17 @@ class Status:
         return ''.join(self.segments(frame))
 
     def toolbar(self) -> list[tuple[str, str]]:
-        """Accent output counts, tool names, and a running subagent, keeping chrome muted and context alerts visible."""
-        shown = self.subagent() or self
-        head, figure, prefix, count, details, activity, plugins = shown._segments('', self._plugin_text())
-        named = [(theme.INFO, shown.agent)] if shown.agent else []
-        painted = [
-            *named,
-            (theme.MUTED, head.removeprefix(shown.agent)),
-            (theme.WARNING if shown.context_alert else theme.MUTED, figure),
-            (theme.MUTED, prefix),
-            (theme.LITHIUM, count),
-            (theme.MUTED, details),
-        ]
-        if activity.startswith(('tool: ', 'running: ')):
-            label, _, tool = activity.partition(': ')
-            painted.extend([(theme.MUTED, label + ': '), (theme.THINKING, tool)])
-        else:
-            painted.append((theme.MUTED, activity))
-        return [*painted, (theme.MUTED, plugins)] if plugins else painted
+        """Apply visibility and ordering without tying any field's style to its position."""
+        fields = self._fields()
+        painted: list[tuple[str, str]] = []
+        for name in self.fields():
+            fragments = fields[name]
+            if not any(text for _, text in fragments):
+                continue
+            if painted:
+                painted.append((theme.MUTED, ' | '))
+            painted.extend((role, text) for role, text in fragments if text)
+        return painted
 
 
 class StatusLine:

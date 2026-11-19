@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from pydantic_ai.settings import CacheRetention, ModelSettings
 from pydantic_clai2.models.custom_params import expand_params
-from pydantic_clai2.models.profiles import KEY_NAME
+from pydantic_clai2.models.profiles import KEY_NAME, base_model, provider_of
 
 if TYPE_CHECKING:
     # Typing only: the provider modules load the Anthropic and OpenAI SDKs, and every turn loads this module.
@@ -22,6 +22,31 @@ if TYPE_CHECKING:
 
     from pydantic_ai.models.anthropic import AnthropicModelSettings
     from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+
+ULTRAFAST_CODEX_MODELS = frozenset(
+    f'openai-codex:{name}' for name in ('gpt-6.2-astra', 'gpt-6.2-sol', 'gpt-6.1-sol', 'gpt-6-astra')
+)
+"""Codex models that offer the Ultrafast speed, per https://developers.openai.com/codex/speed."""
+
+CodexSpeed = Literal['standard', 'fast', 'ultrafast']
+"""A Codex speed, as the Codex CLI's `/fast` and `/ultrafast` select it."""
+
+_CODEX_SERVICE_TIERS: dict[CodexSpeed, Literal['default', 'priority', 'ultrafast']] = {
+    'standard': 'default',
+    'fast': 'priority',
+    'ultrafast': 'ultrafast',
+}
+"""The `openai_service_tier` each Codex speed sends, as the Codex CLI's `/fast` and `/ultrafast` do."""
+
+_TIER_SPEEDS: dict[str, CodexSpeed] = {'default': 'standard', 'priority': 'fast'}
+"""The Codex speed a saved `service_tier` stands for."""
+
+_SPEED_TIERS: dict[CodexSpeed, Literal['default', 'priority']] = {
+    'standard': 'default',
+    'fast': 'priority',
+    'ultrafast': 'priority',
+}
+"""The `service_tier` saved beside each Codex speed for older CLAI builds, its nearest for ultrafast."""
 
 
 class ModelSettingsForm(BaseModel):
@@ -71,6 +96,13 @@ class ModelSettingsForm(BaseModel):
     openai_text_verbosity: Literal['low', 'medium', 'high'] | None = Field(
         default=None, description='OpenAI answer verbosity.'
     )
+    codex_speed: CodexSpeed | None = Field(
+        default=None,
+        description=(
+            'Codex speed. Fast and ultrafast use more ChatGPT credits; availability depends on your model and '
+            'plan. Overrides service_tier.'
+        ),
+    )
     anthropic_cache: bool | Literal['5m', '1h'] | None = Field(
         default=None, description='Claude conversation caching: off, on (5 minutes), or a TTL.'
     )
@@ -80,8 +112,9 @@ class ModelSettingsForm(BaseModel):
     anthropic_cache_tool_definitions: bool | Literal['5m', '1h'] | None = Field(
         default=None, description='Cache Claude tool descriptions and schemas.'
     )
-    anthropic_thinking_mode: Literal['enabled', 'adaptive', 'disabled'] | None = Field(
-        default=None, description='Claude thinking mode. Overrides generic thinking.'
+    anthropic_thinking_mode: Literal['enabled', 'adaptive', 'disabled', 'between_tools'] | None = Field(
+        default=None,
+        description="Claude thinking mode. Overrides generic thinking. 'between_tools' is Sonnet 5.5's off switch.",
     )
     anthropic_thinking_budget: int | None = Field(
         default=None, ge=1024, description='Classic thinking token budget, below max_tokens. Default: 10000.'
@@ -92,7 +125,7 @@ class ModelSettingsForm(BaseModel):
     anthropic_thinking_display: Literal['updates', 'summarized'] | None = Field(
         default=None,
         description=(
-            "How Fable 5.1 reports reasoning between tool calls. 'updates' shows status lines while "
+            "How Claude reports reasoning between tool calls. 'updates' (Fable 5.1) shows status lines while "
             "reasoning stays hidden; 'summarized' folds them into a condensed trace."
         ),
     )
@@ -201,6 +234,8 @@ class ModelSettingsForm(BaseModel):
             openai['openai_reasoning_summary'] = self.openai_reasoning_summary
         if self.openai_text_verbosity is not None:
             openai['openai_text_verbosity'] = self.openai_text_verbosity
+        if self.codex_speed is not None:
+            openai['openai_service_tier'] = _CODEX_SERVICE_TIERS[self.codex_speed]
         return openai
 
     def _anthropic_settings(self) -> 'AnthropicModelSettings':
@@ -222,7 +257,7 @@ class ModelSettingsForm(BaseModel):
         return anthropic
 
     def _anthropic_thinking(self) -> 'BetaThinkingConfigParam | None':
-        """The `thinking` object, carrying Fable 5.1's `display` and `block_binding` keys.
+        """The `thinking` object, carrying the `display` and `block_binding` keys.
 
         `display` and `block_binding` only exist on the enabled and adaptive shapes, so asking
         for one picks adaptive unless a mode was chosen. Core adds the block-binding beta when
@@ -235,6 +270,8 @@ class ModelSettingsForm(BaseModel):
             mode = 'adaptive'
         if mode == 'disabled':
             return {'type': 'disabled'}
+        if mode == 'between_tools':
+            return {'type': 'between_tools'}
         thinking: BetaThinkingConfigEnabledParam | BetaThinkingConfigAdaptiveParam
         if mode == 'enabled':
             thinking = {'type': 'enabled', 'budget_tokens': self.anthropic_thinking_budget or 10000}
@@ -256,7 +293,11 @@ class ModelSettingsForm(BaseModel):
         betas: list[str] = []
         if self.anthropic_interleaved_thinking:
             betas.append('interleaved-thinking-2025-05-14')
-        if thinking is not None and thinking['type'] != 'disabled' and thinking.get('display') == 'updates':
+        if (
+            thinking is not None
+            and thinking['type'] in ('enabled', 'adaptive')
+            and thinking.get('display') == 'updates'
+        ):
             betas.append('thinking-display-updates-2026-08-18')
         return betas
 
@@ -277,14 +318,43 @@ class ModelSettingsForm(BaseModel):
         return body
 
 
-def model_defaults(*, model: str) -> dict[str, JsonValue]:
-    """CLAI's prompt caching default for every model, and reasoning defaults for GPT families.
+def with_codex_speed(saved: Mapping[str, JsonValue], speed: CodexSpeed | None) -> dict[str, JsonValue]:
+    """`saved` with `speed` and the `service_tier` older CLAI builds read for it, its nearest for ultrafast.
+
+    `None` drops both, so the model's default speed applies again.
+    """
+    row = {key: value for key, value in saved.items() if key != 'codex_speed'}
+    if speed is not None:
+        return {**row, 'codex_speed': speed, 'service_tier': _SPEED_TIERS[speed]}
+    if isinstance(tier := row.get('service_tier'), str) and tier in _TIER_SPEEDS:
+        del row['service_tier']
+    return row
+
+
+def chosen_codex_speed(saved: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+    """`saved` with the Codex speed last chosen: a tier an older CLAI build changed since outranks `codex_speed`."""
+    speed, tier = saved.get('codex_speed'), saved.get('service_tier')
+    if speed in _SPEED_TIERS and isinstance(tier, str) and tier in _TIER_SPEEDS and _SPEED_TIERS[speed] != tier:
+        return {**saved, 'codex_speed': _TIER_SPEEDS[tier]}
+    return dict(saved)
+
+
+def model_defaults(*, model: str, saved: Mapping[str, JsonValue] | None = None) -> dict[str, JsonValue]:
+    """CLAI's prompt caching default for every model, reasoning defaults for GPT families, and Codex speeds.
 
     Caching uses the unified `cache` setting, which providers without configurable caching ignore. A
     saved `anthropic_cache*` override still applies, since provider-specific cache settings take
-    precedence over it.
+    precedence over it. A Codex model's speed follows a `service_tier` in `saved` that `/fast` writes,
+    as older CLAI builds also read it; without a saved tier, the Codex models that offer ultrafast use it.
     """
-    return {'cache': True, **gpt_defaults(model=model)}
+    defaults: dict[str, JsonValue] = {'cache': True, **gpt_defaults(model=model)}
+    if provider_of(model) == 'openai-codex':
+        tier = (saved or {}).get('service_tier')
+        if isinstance(tier, str) and tier in _TIER_SPEEDS:
+            defaults['codex_speed'] = _TIER_SPEEDS[tier]
+        elif tier is None and base_model(model) in ULTRAFAST_CODEX_MODELS:
+            defaults['codex_speed'] = 'ultrafast'
+    return defaults
 
 
 def gpt_defaults(*, model: str) -> dict[str, JsonValue]:
@@ -304,13 +374,20 @@ def gpt_defaults(*, model: str) -> dict[str, JsonValue]:
     }
 
 
-def default_model_settings(*, model: str, saved: Mapping[str, JsonValue]) -> ModelSettings | None:
+def default_model_settings(
+    *, model: str, saved: Mapping[str, JsonValue], selected: Mapping[str, JsonValue] | None = None
+) -> ModelSettings | None:
     """The family defaults for `model` that `saved` leaves unset, as `ModelSettings`.
 
     Every default fills exactly one `ModelSettings` key, so merging the saved settings over these
-    gives the same settings as `model_settings_from_json(saved, model=model)`.
+    gives the same settings as `model_settings_from_json(saved, model=model)`. `selected` is the saved
+    row of the CLI selection `model` runs under, such as its chain, whose tier picks a Codex speed.
+    Without it, as for `open_stock_agent`, Codex gets no default speed, so a tier set above these applies.
     """
-    defaults = {key: value for key, value in model_defaults(model=model).items() if key not in saved}
+    defaults = model_defaults(model=model, saved=selected)
+    if selected is None:
+        defaults.pop('codex_speed', None)
+    defaults = {key: value for key, value in defaults.items() if key not in saved}
     return ModelSettingsForm.model_validate(defaults).to_model_settings()
 
 
@@ -320,5 +397,5 @@ def model_settings_from_json(values: dict[str, JsonValue], *, model: str | None 
     Known fields still validate normally. New edits use the strict form directly. With `model`, its
     family defaults fill the fields `values` leaves unset; without it, only `values` are read.
     """
-    defaults = model_defaults(model=model) if model is not None else {}
-    return ModelSettingsForm.model_validate({**defaults, **values}, extra='ignore')
+    defaults = model_defaults(model=model, saved=values) if model is not None else {}
+    return ModelSettingsForm.model_validate({**defaults, **chosen_codex_speed(values)}, extra='ignore')
