@@ -22,9 +22,10 @@ from collections.abc import (
     Generator,
     Iterable,
     Iterator,
+    Mapping,
 )
 from concurrent.futures import Executor
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import aclosing, asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
@@ -595,12 +596,12 @@ class _TemporalGroupsContext(Generic[T]):
     task: asyncio.Task[T] | None = None
 
 
-async def _ungrouped_items(context: _TemporalGroupsContext[T]) -> AsyncIterator[list[T]]:
+async def _ungrouped_items(context: _TemporalGroupsContext[T]) -> AsyncGenerator[list[T]]:
     async for item in context.aiterator:
         yield [item]
 
 
-async def _debounced_groups(context: _TemporalGroupsContext[T], soft_max_interval: float) -> AsyncIterator[list[T]]:
+async def _debounced_groups(context: _TemporalGroupsContext[T], soft_max_interval: float) -> AsyncGenerator[list[T]]:
     assert soft_max_interval >= 0, 'soft_max_interval must be a positive number'
     buffer: list[T] = []
     group_start_time: float | None = None
@@ -685,7 +686,12 @@ async def group_by_temporal(
     """
     context = _TemporalGroupsContext(aiter(aiterable))
     try:
-        yield _ungrouped_items(context) if soft_max_interval is None else _debounced_groups(context, soft_max_interval)
+        # A consumer that leaves early drops the groups generator still suspended, and a reference cycle can keep it
+        # alive until the garbage collector finalizes it in a detached `aclose()` task, at an arbitrary later point.
+        async with aclosing(
+            _ungrouped_items(context) if soft_max_interval is None else _debounced_groups(context, soft_max_interval)
+        ) as groups:
+            yield groups
     finally:
         await _cleanup_temporal_group(context.task, context.aiterator)
 
@@ -1104,13 +1110,14 @@ def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
     return type_hints.get(first_param_name)
 
 
-def get_function_type_hints(func: Any) -> dict[str, Any]:
+def get_function_type_hints(func: Any, *, include_keys: set[str] | None = None) -> dict[str, Any]:
     """Resolve type hints for a function, including forward references.
 
     Wraps `pydantic._internal._typing_extra.get_function_type_hints` so callers
-    don't need to import Pydantic internals directly.
+    don't need to import Pydantic internals directly. With `include_keys`, only
+    those annotations are resolved.
     """
-    return _typing_extra.get_function_type_hints(func)
+    return _typing_extra.get_function_type_hints(func, include_keys=include_keys)
 
 
 def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:
@@ -1295,6 +1302,18 @@ def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     return isinstance(obj, dict)
 
 
+def is_str_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
+    """Whether a value is a mapping whose keys are all strings."""
+    if not isinstance(value, Mapping):
+        return False
+    return all(isinstance(key, str) for key in value)  # pyright: ignore[reportUnknownVariableType]
+
+
+def is_list(obj: Any) -> TypeGuard[list[Any]]:
+    """Check if obj is a list, narrowing the type to `list[Any]`."""
+    return isinstance(obj, list)
+
+
 def is_google_files_api_url(url: str) -> bool:
     """Whether a URL uses the Google Files API prefix recognized by the Google adapters.
 
@@ -1317,7 +1336,8 @@ def host_derived_id(url: str) -> str | None:
 def is_text_like_media_type(media_type: str) -> bool:
     """Check if a media type represents text-like content.
 
-    Returns True for `text/*`, JSON, XML, YAML, TOML, and their structured syntax suffixes.
+    Returns True for `text/*`, JSON, XML, YAML and TOML, and the `+json` and `+xml` structured syntax suffixes.
+    `+yaml` types aren't included: see `has_yaml_structured_suffix`.
     """
     # Media types may carry parameters (RFC 2045); classify on the bare type.
     media_type = media_type.split(';', 1)[0].strip()
@@ -1331,6 +1351,15 @@ def is_text_like_media_type(media_type: str) -> bool:
         # TOML is UTF-8 text (RFC 9519); `BinaryContent.from_path` infers it for `.toml` files.
         or media_type == 'application/toml'
     )
+
+
+def has_yaml_structured_suffix(media_type: str) -> bool:
+    """Check if a media type has the `+yaml` structured syntax suffix (RFC 9512), ignoring its parameters.
+
+    `is_text_like_media_type` doesn't include these types, so only the adapters that call this inline them as text:
+    https://github.com/pydantic/pydantic-ai/issues/13925.
+    """
+    return media_type.split(';', 1)[0].strip().endswith('+yaml')
 
 
 def format_inlined_text_file(text: str, *, media_type: str, identifier: str) -> str:

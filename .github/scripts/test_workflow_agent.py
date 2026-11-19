@@ -11,9 +11,8 @@ from functools import partial
 from pathlib import Path
 
 import pytest
+from fastmcp.exceptions import McpError
 from logfire.testing import CaptureLogfire
-from mcp.shared.exceptions import McpError
-from mcp.types import ErrorData
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -37,10 +36,10 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT
-from pydantic_clai2.cli.headless import run_headless
-from pydantic_clai2.config import Settings
-from pydantic_clai2.config.project_settings import ProjectSettings
-from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_ai_pax.cli.headless import run_headless
+from pydantic_ai_pax.config import Settings
+from pydantic_ai_pax.config.project_settings import ProjectSettings
+from pydantic_ai_pax.config.settings_store import SettingsStore
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -293,7 +292,7 @@ async def test_safe_output_past_its_limit_is_answered_and_no_longer_offered(
 
     def noop(message: str) -> str:
         if sink.exists():
-            error = McpError(ErrorData(code=-32602, message='calling "tools/call": E002: noop limit reached'))
+            error = McpError(code=-32602, message='calling "tools/call": E002: noop limit reached')
             raise ModelRetry(str(error)) from error
         sink.write_text(json.dumps({'type': 'noop', 'message': message}) + '\n')
         return 'ok'
@@ -356,7 +355,7 @@ async def test_noop_in_the_time_reserve_leaves_the_model_no_tools(
 
     def noop(message: str) -> str:
         if sink.exists():
-            error = McpError(ErrorData(code=-32602, message='calling "tools/call": E002: noop limit reached'))
+            error = McpError(code=-32602, message='calling "tools/call": E002: noop limit reached')
             raise ModelRetry(str(error)) from error
         sink.write_text(json.dumps({'type': 'noop', 'message': message}) + '\n')
         return 'ok'

@@ -570,8 +570,8 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
     missing: list[str] = []
     runtime = str(_as_mapping(agent.get('env')).get('GH_AW_ENGINE_VERSION', ''))
     runtime_match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)', runtime)
-    if runtime_match is None or tuple(map(int, runtime_match.groups())) < (0, 64, 0):
-        missing.append('a published runtime pin of 0.64.0 or newer')
+    if runtime_match is None or tuple(map(int, runtime_match.groups())) < (0, 70, 0):
+        missing.append('a published runtime pin of 0.70.0 or newer')
     if len(executions) != 1:
         missing.append('exactly one public engine execution')
     else:
@@ -1749,6 +1749,50 @@ def check_assigned_alert_metadata_gate(workflows_dir: Path = WORKFLOWS_DIR) -> l
     return []
 
 
+def check_at_claude_maintainer_threads(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Same-repo @claude must run only on maintainers' threads, with the action's context from their comments only."""
+    source = workflows_dir / 'at-claude.yml'
+    if not source.is_file():
+        return [Violation(str(source), 'at-claude-maintainer-threads', '@claude workflow is missing.')]
+    jobs = _as_mapping(_as_mapping(yaml.safe_load(source.read_text(encoding='utf-8'))).get('jobs'))
+    outputs = _as_mapping(_as_mapping(jobs.get('get-pr-info')).get('outputs'))
+    job = _as_mapping(jobs.get('at-claude'))
+    violations: list[Violation] = []
+    gate = 'contains(fromJSON(\'["write","admin"]\'), needs.get-pr-info.outputs.thread_author_permission)'
+    if not outputs.get('thread_author_permission') or not _condition_is_required(str(job.get('if', '')), gate):
+        violations.append(
+            Violation(
+                str(source),
+                'at-claude-maintainer-threads',
+                '`at-claude` must require `write` or `admin` permission from the thread author.',
+            )
+        )
+    raw_steps = job.get('steps')
+    steps = [_as_mapping(step) for step in raw_steps] if _is_object_sequence(raw_steps) else []
+    actions = [
+        _as_mapping(step.get('with'))
+        for step in steps
+        if str(step.get('uses', '')).startswith('anthropics/claude-code-action@')
+    ]
+    authors = '${{ needs.get-pr-info.outputs.included_comment_authors }}'
+    non_empty = "needs.get-pr-info.outputs.included_comment_authors != ''"
+    if (
+        not outputs.get('included_comment_authors')
+        or not _condition_is_required(str(job.get('if', '')), non_empty)
+        or not actions
+        or any(action.get('include_comments_by_actor') != authors for action in actions)
+    ):
+        violations.append(
+            Violation(
+                str(source),
+                'at-claude-maintainer-threads',
+                '`at-claude` must pass `include_comments_by_actor` from `get-pr-info` and skip when it is empty; '
+                'an empty value includes every commenter.',
+            )
+        )
+    return violations
+
+
 def changed_files(base_ref: str) -> list[str]:
     """Return paths changed relative to `base_ref` (empty if git can't resolve it)."""
     try:
@@ -1804,6 +1848,7 @@ def run_checks(
     violations += check_provider_health_host_result(workflows_dir)
     violations += check_provider_health_monitor(workflows_dir)
     violations += check_assigned_alert_metadata_gate(workflows_dir)
+    violations += check_at_claude_maintainer_threads(workflows_dir)
     if compatibility is not None:
         violations += check_compiler_version_compatibility(locks, compatibility)
     if changed:

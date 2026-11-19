@@ -6,7 +6,6 @@ import os
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import threading
@@ -18,6 +17,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
+from tests._ports import reserve_loopback_port
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .conftest import renderless_environment
@@ -151,12 +151,6 @@ class LocalRenderRuntime:
         return self.log_path.read_text(errors='replace') if self.log_path.exists() else '<missing>'
 
 
-def _unused_local_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
-        server.bind(('127.0.0.1', 0))
-        return int(server.getsockname()[1])
-
-
 def _stop_process_group(process: subprocess.Popen[str]) -> None:
     """Stop the dev server and the task workers it spawned, within bounded time.
 
@@ -212,7 +206,7 @@ def local_render_runtime(tmp_path_factory: pytest.TempPathFactory) -> Iterator[L
     repository = Path(__file__).resolve().parents[3]
     log_path = tmp_path_factory.mktemp('render-runtime') / 'render-workflows-dev.log'
     log_file = log_path.open('w')
-    port = _unused_local_port()
+    port = reserve_loopback_port()
     command = [
         'render',
         'workflows',
