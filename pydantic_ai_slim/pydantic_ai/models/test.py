@@ -706,7 +706,7 @@ class _JsonSchemaTestData:
             elif addition_props is False:
                 return
             else:
-                while (key := f'additionalProperty_{next(numbers)}') in data:
+                while (key := f'additionalProperty_{next(numbers)}') in data or key in properties:
                     pass
                 data[key] = self._gen_any(addition_props or {})
 

@@ -1312,6 +1312,11 @@ TEST_MODEL_SCHEMAS: dict[str, JsonSchema] = {
     'allOf-anyOf': {'type': 'string', 'allOf': [{'anyOf': [{'type': 'string'}, {'type': 'integer'}]}]},
     'minProperties': {'type': 'object', 'minProperties': 1},
     'minProperties-optional': {'type': 'object', 'properties': {'a': _LEAF}, 'minProperties': 1},
+    'minProperties-declared-name': {
+        'type': 'object',
+        'properties': {'additionalProperty_1': {'$ref': '#/$defs/Count'}},
+        'minProperties': 1,
+    },
     'maxProperties': {'type': 'object', 'additionalProperties': True, 'maxProperties': 0},
     'multipleOf-within-exclusive': {'type': 'integer', 'multipleOf': 5, 'exclusiveMinimum': 5, 'exclusiveMaximum': 11},
     'multipleOf-below-maximum': {'type': 'integer', 'multipleOf': 5, 'maximum': 8},
@@ -1333,6 +1338,7 @@ _TEST_MODEL_DEFS: JsonSchema = {
     'Flag': True,
     'Alias': {'$ref': '#/$defs/TwoCharacters'},
     'TwoCharacters': {'minLength': 2},
+    'Count': {'type': 'integer'},
 }
 """Definitions beside `TEST_MODEL_SCHEMAS`."""
 
