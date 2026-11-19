@@ -331,6 +331,9 @@ def _walk_binary_content(
     try:
         return _replace_binary_content(value, set(), media_part, redact)
     except Exception as e:
+        if not redact:
+            # Nothing is being excluded, so the caller's own serialization fallback is safe to use.
+            return value
         # Instrumentation must not fail an otherwise-successful run, and the value can't be handed
         # back to make that happen: the callers fall back to `str(value)`, whose `BinaryContent`
         # repr prints the very data the flag excludes. Only the exception's type is reported for

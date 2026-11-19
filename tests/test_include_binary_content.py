@@ -541,6 +541,48 @@ async def test_output_the_walk_cannot_traverse_does_not_crash_the_run(capfire: C
     )
 
 
+async def test_tool_result_the_walk_cannot_traverse_is_recorded_as_before_with_binary_content(
+    capfire: CaptureLogfire,
+) -> None:
+    """With binary content included, nothing is redacted, so a value the walk can't traverse is serialized as usual.
+
+    Converting the media in a tool result walks it whatever the flag, but only an excluding walk has data to protect
+    by recording its failure in place of the value.
+    """
+
+    class Detached(Mapping[str, Any]):
+        def __iter__(self) -> Iterator[str]:
+            raise RuntimeError('cannot iterate detached rows')
+
+        def __getitem__(self, key: str) -> Any:
+            raise KeyError(key)  # pragma: no cover
+
+        def __len__(self) -> int:
+            return 0  # pragma: no cover
+
+        def __repr__(self) -> str:
+            return 'Detached()'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('final_result', {})])
+
+    def detached() -> dict[str, Any]:
+        return {'rows': Detached()}
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_binary_content=True))],
+        output_type=detached,
+        name='agent',
+    )
+    await agent.run('make an image')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    assert [
+        span['attributes']['gen_ai.tool.call.result'] for span in spans if span['name'] == 'execute_tool final_result'
+    ] == snapshot(['"{\'rows\': Detached()}"'])
+
+
 async def test_the_walks_own_failure_does_not_report_a_binary_carrying_message(capfire: CaptureLogfire) -> None:
     """The fallback names the exception's type, never its message.
 
