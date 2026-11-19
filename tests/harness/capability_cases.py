@@ -238,6 +238,14 @@ def _ipython_code_mode() -> AbstractCapability[Any]:
     return IPythonCodeMode(tools=[])
 
 
+def _browser_use(_: Path) -> AbstractCapability[Any]:
+    # Imported here, so collecting the suites never imports browser-use, which only the `harness browser-use` CI job
+    # installs. The test has already skipped when it isn't installed (the case's `requires`).
+    from .browser_use._offline_browser import offline_browser_use
+
+    return offline_browser_use()
+
+
 def _time_reminder(ctx: RunContext[Any]) -> str:
     return f'It is now {CLOCK.now:%H:%M} UTC.'
 
@@ -937,6 +945,7 @@ CASES: dict[str, CapabilityCase] = {
     'BrowserUse': CapabilityCase(
         Collides('its toolset registers its browser tools under fixed names'),
         requires='browser_use',
+        calls=Calls((('browse_web', {'task': 'Find the price of the Pro plan.'}),), _browser_use),
     ),
     'SmartSearch': CapabilityCase(
         Narrows(

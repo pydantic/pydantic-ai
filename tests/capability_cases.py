@@ -707,6 +707,7 @@ CUSTOM_ID = Contract(
         'PlaywrightBrowser': Exempt(_SEPARATE_TOOLSET_ID),
         'Planning': Exempt(f'its toolset hardcodes the id `planning`: {_ISSUES}13968'),
         'PydanticAIDocs': Exempt(_TOOLSET_WITHOUT_ID),
+        'BrowserUse': Exempt(_TOOLSET_WITHOUT_ID),
         'Peers': Exempt(_NO_DURABLE_TOOLSET_ID),
         'MCP': Exempt(_USERS_TOOLSET),
         'Toolset': Exempt(_USERS_TOOLSET),
@@ -726,5 +727,22 @@ COMBINE_FIXED_POINT = Contract(
 """A configuration stated twice is the same as stating it once, for one of `make`'s pair and for what the pair
 combines into: the same instructions, tool definitions, model settings and native tools reach the model."""
 
-CONTRACTS = (RENAMED, UNSET_ID, CUSTOM_ID, COMBINE_FIXED_POINT)
+FORWARDS_USAGE = Contract('forwards_usage', applies=lambda _, case: case.calls is not None)
+"""Every request a capability's calls send, nested runs included, counts toward the run's usage and stays within
+its `request_limit`, which a nested run that leaves out the run's usage or limits breaks."""
+
+WORKSPACE_FROM_FUNCTION = Contract(
+    'workspace_from_function',
+    applies=_buildable,
+    exempt={
+        'Skills': Exempt(
+            'it reads its catalog in `for_run`, before the run selects a workspace a capability function supplies: '
+            'https://github.com/pydantic/pydantic-ai/pull/10403'
+        ),
+    },
+)
+"""A capability that uses the run's workspace works the same when a capability function supplies it, which the run
+selects only after every `for_run`."""
+
+CONTRACTS = (RENAMED, UNSET_ID, CUSTOM_ID, COMBINE_FIXED_POINT, FORWARDS_USAGE, WORKSPACE_FROM_FUNCTION)
 """Every contract, so a meta-test can check each one's exemptions."""

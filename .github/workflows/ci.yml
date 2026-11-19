@@ -1708,6 +1708,8 @@ jobs:
       # `--no-config`: the project's `exclude-dependencies` would otherwise drop the package too.
       - run: uv pip install --no-config "browser-use>=0.13.6,<0.14"
       - run: uv run --no-sync coverage run -m pytest tests/harness/browser_use
+      # The capability contracts skip `BrowserUse` on every other job.
+      - run: uv run --no-sync coverage run -m pytest tests/harness/test_capability_contracts.py -k BrowserUse
       - run: uv run --no-sync pyright -p tests/harness/browser_use
         env:
           PYRIGHT_PYTHON_IGNORE_WARNINGS: 1
