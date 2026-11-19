@@ -40,6 +40,7 @@ members = [
     "pydantic-ai",
     "pydantic-ai-examples",
     "pydantic-ai-harness",
+    "pydantic-ai-pax",
     "pydantic-ai-slim",
     "pydantic-clai2",
     "pydantic-evals",
@@ -7592,6 +7593,95 @@ requires-dist = [
 provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "azure-durable-task", "boxd", "boxlite", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "kubernetes", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "opensandbox", "ordinal", "pgtask", "pixeltable", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "repair-tool-arguments", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
+name = "pydantic-ai-pax"
+source = { editable = "src/pydantic_ai_pax" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "fastapi" },
+    { name = "fastmcp-slim", extra = ["client"] },
+    { name = "genai-prices" },
+    { name = "httpx" },
+    { name = "keyring" },
+    { name = "logfire", extra = ["httpx"] },
+    { name = "opentelemetry-instrumentation-httpx" },
+    { name = "pillow" },
+    { name = "prompt-toolkit" },
+    { name = "pydantic-ai-harness", extra = ["coder", "skills"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "mcp", "openai"] },
+    { name = "pydantic-monty" },
+    { name = "pyfiglet" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
+    { name = "rich" },
+    { name = "termflow-md" },
+    { name = "uvicorn" },
+    { name = "websockets" },
+]
+
+[package.optional-dependencies]
+boxd = [
+    { name = "pydantic-ai-harness", extra = ["boxd"] },
+]
+daytona = [
+    { name = "pydantic-ai-harness", extra = ["daytona"] },
+]
+e2b = [
+    { name = "pydantic-ai-harness", extra = ["e2b"] },
+]
+kubernetes = [
+    { name = "pydantic-ai-harness", extra = ["kubernetes"] },
+]
+modal = [
+    { name = "pydantic-ai-harness", extra = ["modal"] },
+]
+opensandbox = [
+    { name = "pydantic-ai-harness", extra = ["opensandbox"] },
+]
+render = [
+    { name = "pydantic-ai-harness", extra = ["render"] },
+]
+sprites = [
+    { name = "pydantic-ai-harness", extra = ["sprites"] },
+]
+typesafe = [
+    { name = "pydantic-ai-slim", extra = ["typesafe"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cryptography", specifier = ">=42" },
+    { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "fastmcp-slim", extras = ["client"], specifier = ">=3.4.0,<5" },
+    { name = "genai-prices", specifier = ">=0.1.7" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "keyring", specifier = ">=25.6" },
+    { name = "logfire", extras = ["httpx"], specifier = ">=4.31.0" },
+    { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.65b0" },
+    { name = "pillow", specifier = ">=12.3.0" },
+    { name = "prompt-toolkit", specifier = ">=3.0.52" },
+    { name = "pydantic-ai-harness", extras = ["boxd"], marker = "extra == 'boxd'", editable = "src/pydantic_ai_harness" },
+    { name = "pydantic-ai-harness", extras = ["coder", "skills"], editable = "src/pydantic_ai_harness" },
+    { name = "pydantic-ai-harness", extras = ["daytona"], marker = "extra == 'daytona'", editable = "src/pydantic_ai_harness" },
+    { name = "pydantic-ai-harness", extras = ["e2b"], marker = "extra == 'e2b'", editable = "src/pydantic_ai_harness" },
+    { name = "pydantic-ai-harness", extras = ["kubernetes"], marker = "extra == 'kubernetes'", editable = "src/pydantic_ai_harness" },
+    { name = "pydantic-ai-harness", extras = ["modal"], marker = "extra == 'modal'", editable = "src/pydantic_ai_harness" },
+    { name = "pydantic-ai-harness", extras = ["opensandbox"], marker = "extra == 'opensandbox'", editable = "src/pydantic_ai_harness" },
+    { name = "pydantic-ai-harness", extras = ["render"], marker = "extra == 'render'", editable = "src/pydantic_ai_harness" },
+    { name = "pydantic-ai-harness", extras = ["sprites"], marker = "extra == 'sprites'", editable = "src/pydantic_ai_harness" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "mcp", "openai"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["typesafe"], marker = "extra == 'typesafe'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-monty", specifier = ">=1.5.0,<2" },
+    { name = "pyfiglet", specifier = ">=1.0.4" },
+    { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
+    { name = "rich", specifier = ">=14" },
+    { name = "termflow-md", specifier = ">=1.0.0,<2" },
+    { name = "uvicorn", specifier = ">=0.38.0" },
+    { name = "websockets", specifier = ">=15.0" },
+]
+provides-extras = ["boxd", "daytona", "e2b", "kubernetes", "modal", "opensandbox", "render", "sprites", "typesafe"]
+
+[[package]]
 name = "pydantic-ai-slim"
 source = { editable = "pydantic_ai_slim" }
 dependencies = [
@@ -7832,88 +7922,50 @@ provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras"
 name = "pydantic-clai2"
 source = { editable = "src/pydantic_clai2" }
 dependencies = [
-    { name = "cryptography" },
-    { name = "fastapi" },
-    { name = "fastmcp-slim", extra = ["client"] },
-    { name = "genai-prices" },
-    { name = "httpx" },
-    { name = "keyring" },
-    { name = "logfire", extra = ["httpx"] },
-    { name = "opentelemetry-instrumentation-httpx" },
-    { name = "pillow" },
-    { name = "prompt-toolkit" },
-    { name = "pydantic-ai-harness", extra = ["coder", "skills"] },
-    { name = "pydantic-ai-slim", extra = ["anthropic", "mcp", "openai"] },
-    { name = "pydantic-monty" },
-    { name = "pyfiglet" },
-    { name = "python-dotenv" },
-    { name = "pyyaml" },
-    { name = "rich" },
-    { name = "termflow-md" },
-    { name = "uvicorn" },
-    { name = "websockets" },
+    { name = "pydantic-ai-pax" },
 ]
 
 [package.optional-dependencies]
 boxd = [
-    { name = "pydantic-ai-harness", extra = ["boxd"] },
+    { name = "pydantic-ai-pax", extra = ["boxd"] },
 ]
 daytona = [
-    { name = "pydantic-ai-harness", extra = ["daytona"] },
+    { name = "pydantic-ai-pax", extra = ["daytona"] },
 ]
 e2b = [
-    { name = "pydantic-ai-harness", extra = ["e2b"] },
+    { name = "pydantic-ai-pax", extra = ["e2b"] },
 ]
 kubernetes = [
-    { name = "pydantic-ai-harness", extra = ["kubernetes"] },
+    { name = "pydantic-ai-pax", extra = ["kubernetes"] },
 ]
 modal = [
-    { name = "pydantic-ai-harness", extra = ["modal"] },
+    { name = "pydantic-ai-pax", extra = ["modal"] },
 ]
 opensandbox = [
-    { name = "pydantic-ai-harness", extra = ["opensandbox"] },
+    { name = "pydantic-ai-pax", extra = ["opensandbox"] },
 ]
 render = [
-    { name = "pydantic-ai-harness", extra = ["render"] },
+    { name = "pydantic-ai-pax", extra = ["render"] },
 ]
 sprites = [
-    { name = "pydantic-ai-harness", extra = ["sprites"] },
+    { name = "pydantic-ai-pax", extra = ["sprites"] },
 ]
 typesafe = [
-    { name = "pydantic-ai-slim", extra = ["typesafe"] },
+    { name = "pydantic-ai-pax", extra = ["typesafe"] },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "cryptography", specifier = ">=42" },
-    { name = "fastapi", specifier = ">=0.115.0" },
-    { name = "fastmcp-slim", extras = ["client"], specifier = ">=3.4.0,<5" },
-    { name = "genai-prices", specifier = ">=0.1.7" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "keyring", specifier = ">=25.6" },
-    { name = "logfire", extras = ["httpx"], specifier = ">=4.31.0" },
-    { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.65b0" },
-    { name = "pillow", specifier = ">=12.3.0" },
-    { name = "prompt-toolkit", specifier = ">=3.0.52" },
-    { name = "pydantic-ai-harness", extras = ["boxd"], marker = "extra == 'boxd'", editable = "src/pydantic_ai_harness" },
-    { name = "pydantic-ai-harness", extras = ["coder", "skills"], editable = "src/pydantic_ai_harness" },
-    { name = "pydantic-ai-harness", extras = ["daytona"], marker = "extra == 'daytona'", editable = "src/pydantic_ai_harness" },
-    { name = "pydantic-ai-harness", extras = ["e2b"], marker = "extra == 'e2b'", editable = "src/pydantic_ai_harness" },
-    { name = "pydantic-ai-harness", extras = ["kubernetes"], marker = "extra == 'kubernetes'", editable = "src/pydantic_ai_harness" },
-    { name = "pydantic-ai-harness", extras = ["modal"], marker = "extra == 'modal'", editable = "src/pydantic_ai_harness" },
-    { name = "pydantic-ai-harness", extras = ["opensandbox"], marker = "extra == 'opensandbox'", editable = "src/pydantic_ai_harness" },
-    { name = "pydantic-ai-harness", extras = ["render"], marker = "extra == 'render'", editable = "src/pydantic_ai_harness" },
-    { name = "pydantic-ai-harness", extras = ["sprites"], marker = "extra == 'sprites'", editable = "src/pydantic_ai_harness" },
-    { name = "pydantic-ai-slim", extras = ["anthropic", "mcp", "openai"], editable = "pydantic_ai_slim" },
-    { name = "pydantic-ai-slim", extras = ["typesafe"], marker = "extra == 'typesafe'", editable = "pydantic_ai_slim" },
-    { name = "pydantic-monty", specifier = ">=1.5.0,<2" },
-    { name = "pyfiglet", specifier = ">=1.0.4" },
-    { name = "python-dotenv", specifier = ">=1.2.2" },
-    { name = "pyyaml", specifier = ">=6.0.2" },
-    { name = "rich", specifier = ">=14" },
-    { name = "termflow-md", specifier = ">=1.0.0,<2" },
-    { name = "uvicorn", specifier = ">=0.38.0" },
-    { name = "websockets", specifier = ">=15.0" },
+    { name = "pydantic-ai-pax", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["boxd"], marker = "extra == 'boxd'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["daytona"], marker = "extra == 'daytona'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["e2b"], marker = "extra == 'e2b'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["kubernetes"], marker = "extra == 'kubernetes'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["modal"], marker = "extra == 'modal'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["opensandbox"], marker = "extra == 'opensandbox'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["render"], marker = "extra == 'render'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["sprites"], marker = "extra == 'sprites'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["typesafe"], marker = "extra == 'typesafe'", editable = "src/pydantic_ai_pax" },
 ]
 provides-extras = ["boxd", "daytona", "e2b", "kubernetes", "modal", "opensandbox", "render", "sprites", "typesafe"]
 

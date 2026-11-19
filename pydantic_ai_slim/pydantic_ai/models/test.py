@@ -7,7 +7,8 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, I
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime
-from typing import Any, Literal, TypeVar, assert_never, cast
+from fractions import Fraction
+from typing import Any, ClassVar, Literal, TypeVar, assert_never, cast
 from uuid import UUID
 
 import pydantic_core
@@ -489,13 +490,6 @@ class TestStreamedResponse(StreamedResponse):
 
 
 _chars = string.ascii_letters + string.digits + string.punctuation
-_NUMBER_BOUNDS: tuple[tuple[str, Callable[[float, float], bool]], ...] = (
-    ('minimum', lambda value, bound: value >= bound),
-    ('maximum', lambda value, bound: value <= bound),
-    ('exclusiveMinimum', lambda value, bound: value > bound),
-    ('exclusiveMaximum', lambda value, bound: value < bound),
-)
-"""Each JSON Schema numeric bound, and whether a value is within it."""
 _SEED_DATE = date(2024, 1, 1).toordinal()
 
 
@@ -504,31 +498,7 @@ def _seed_date(seed: int) -> str:
     return date.fromordinal((_SEED_DATE + seed - 1) % date.max.toordinal() + 1).isoformat()
 
 
-_FORMATS: dict[str, Callable[[int], str]] = {
-    'date': _seed_date,
-    'date-time': lambda seed: f'{_seed_date(seed)}T00:00:00Z',
-    'time': lambda seed: f'00:00:{seed % 60:02}Z',
-    'duration': lambda seed: f'PT{abs(seed)}S',
-    'email': lambda seed: f'user{seed}@example.com',
-    'uri': lambda seed: f'https://example.com/{seed}',
-    'uuid': lambda seed: str(UUID(int=seed % (1 << 128))),
-    'ipv4': lambda seed: f'192.0.2.{seed % 256}',
-    'ipv6': lambda seed: f'2001:db8::{seed % 65536:x}',
-}
-"""A value for each string `format` the generator knows, by seed; any other `format` gets an ordinary string."""
 _BoundT = TypeVar('_BoundT', int, float)
-
-
-def _merge_keywords(merged: dict[str, Any], member: dict[str, Any]) -> None:
-    """Add an `allOf` member's keywords to `merged`, combining `properties` objects and `required` lists."""
-    for key, value in member.items():
-        existing = merged.get(key)
-        if key == 'properties' and _utils.is_str_dict(value) and (existing is None or _utils.is_str_dict(existing)):
-            merged['properties'] = {**value, **(existing or {})}
-        elif key == 'required' and isinstance(value, list) and isinstance(existing, list | None):
-            merged['required'] = [*(existing or []), *value]
-        elif key not in ('allOf', 'anyOf', '$ref'):
-            merged.setdefault(key, value)
 
 
 class _JsonSchemaTestData:
@@ -536,6 +506,39 @@ class _JsonSchemaTestData:
 
     This tries to generate the minimal viable data for the schema.
     """
+
+    _NUMBER_BOUNDS: ClassVar[tuple[tuple[str, Callable[[float, float], bool]], ...]] = (
+        ('minimum', lambda value, bound: value >= bound),
+        ('maximum', lambda value, bound: value <= bound),
+        ('exclusiveMinimum', lambda value, bound: value > bound),
+        ('exclusiveMaximum', lambda value, bound: value < bound),
+    )
+    """Each JSON Schema numeric bound, and whether a value is within it."""
+    _TIGHTER_BOUND: ClassVar[dict[str, Callable[[float, float], float]]] = {
+        'minimum': max,
+        'exclusiveMinimum': max,
+        'minLength': max,
+        'minItems': max,
+        'minProperties': max,
+        'maximum': min,
+        'exclusiveMaximum': min,
+        'maxLength': min,
+        'maxItems': min,
+        'maxProperties': min,
+    }
+    """Each JSON Schema bound, and how two `allOf` members' values for it combine into the tighter one."""
+    _FORMATS: ClassVar[dict[str, Callable[[int], str]]] = {
+        'date': _seed_date,
+        'date-time': lambda seed: f'{_seed_date(seed)}T00:00:00Z',
+        'time': lambda seed: f'00:00:{seed % 60:02}Z',
+        'duration': lambda seed: f'PT{abs(seed)}S',
+        'email': lambda seed: f'user{seed}@example.com',
+        'uri': lambda seed: f'https://example.com/{seed}',
+        'uuid': lambda seed: str(UUID(int=seed % (1 << 128))),
+        'ipv4': lambda seed: f'192.0.2.{seed % 256}',
+        'ipv6': lambda seed: f'2001:db8::{seed % 65536:x}',
+    }
+    """A value for each string `format` the generator knows, by seed; any other `format` gets an ordinary string."""
 
     def __init__(self, schema: ObjectJsonSchema, seed: int = 0):
         self.schema = schema
@@ -601,7 +604,8 @@ class _JsonSchemaTestData:
     def _merge_all_of(self, schema: dict[str, Any], all_of: list[object]) -> dict[str, Any]:
         """`schema` without `allOf`, with each member's keywords added.
 
-        `properties` and `required` are combined; any other keyword the schema or an earlier member has keeps its value.
+        `properties` and `required` are combined, a property two of them declare gets both schemas as an `allOf`, and a
+        bound takes the tighter value; any other keyword the schema or an earlier member has keeps its value.
         """
         merged = {key: value for key, value in schema.items() if key != 'allOf'}
         # A member's own `allOf`, `$ref` and the `anyOf` member the seed picks are merged as members too, and each `$ref`
@@ -616,8 +620,27 @@ class _JsonSchemaTestData:
                 members.append({'$ref': chained})
             if _utils.is_list(any_of := member.get('anyOf')) and any_of:
                 members.append(any_of[self.seed % len(any_of)])
-            _merge_keywords(merged, member)
+            self._merge_keywords(merged, member)
         return merged
+
+    @staticmethod
+    def _merge_keywords(merged: dict[str, Any], member: dict[str, Any]) -> None:
+        """Add an `allOf` member's keywords to `merged`, combining `properties`, `required` and bounds."""
+        for key, value in member.items():
+            existing = merged.get(key)
+            if key == 'properties' and _utils.is_str_dict(value) and (existing is None or _utils.is_str_dict(existing)):
+                existing = existing or {}
+                both = {name: {'allOf': [existing[name], schema]} for name, schema in value.items() if name in existing}
+                merged['properties'] = {**value, **existing, **both}
+            elif key == 'required' and isinstance(value, list) and isinstance(existing, list | None):
+                merged['required'] = [*(existing or []), *value]
+            elif (tighter := _JsonSchemaTestData._TIGHTER_BOUND.get(key)) and (
+                (bound := _JsonSchemaTestData._finite_bound(merged, key)) is not None
+                and (other := _JsonSchemaTestData._finite_bound(member, key)) is not None
+            ):
+                merged[key] = tighter(bound, other)
+            elif key not in ('allOf', 'anyOf', '$ref'):
+                merged.setdefault(key, value)
 
     def _all_of_member(self, member: object, seen: set[str]) -> dict[str, Any] | None:
         """An `allOf` member with its `$ref` resolved, or `None` for one with nothing to merge.
@@ -674,7 +697,10 @@ class _JsonSchemaTestData:
         if (addition_props := schema.get('additionalProperties')) and (
             max_properties is None or max_properties > len(data)
         ):
-            data[self._additional_key(data)] = self._gen_any(addition_props)
+            add_prop_key = 'additionalProperty'
+            while add_prop_key in data:
+                add_prop_key += '_'
+            data[add_prop_key] = self._gen_any(addition_props)
 
         self._add_min_properties(data, properties, addition_props, self._finite_bound(schema, 'minProperties') or 0)
         return data
@@ -686,27 +712,30 @@ class _JsonSchemaTestData:
         addition_props: dict[str, Any] | bool | None,
         min_properties: float,
     ) -> None:
-        """Add optional properties, then additional ones where the schema allows them, until `minProperties` holds."""
-        optional = [key for key in properties if key not in data]
-        while len(data) < min_properties and (optional or addition_props is not False):
-            if optional:
-                key = optional.pop(0)
-                data[key] = self._gen_any(properties[key])
-            else:
-                data[self._additional_key(data)] = self._gen_any(addition_props or {})
+        """Add optional properties, then additional ones where the schema allows them, until `minProperties` holds.
 
-    @staticmethod
-    def _additional_key(data: dict[str, Any]) -> str:
-        key = 'additionalProperty'
-        while key in data:
-            key += '_'
-        return key
+        An optional property holding a `$ref` is left out: through a recursive definition, adding it can recurse forever.
+        """
+        optional = iter(
+            [key for key, value in properties.items() if key not in data and not _utils.contains_ref(value)]
+        )
+        # Numbered names keep the time and the names' length linear in `minProperties`.
+        numbers = itertools.count(1)
+        while len(data) < min_properties:
+            if (key := next(optional, None)) is not None:
+                data[key] = self._gen_any(properties[key])
+            elif addition_props is False:
+                return
+            else:
+                while (key := f'additionalProperty_{next(numbers)}') in data or key in properties:
+                    pass
+                data[key] = self._gen_any(addition_props or {})
 
     def _str_gen(self, schema: dict[str, Any]) -> str:
         """Generate a string from a JSON Schema string."""
         # A value of a known format, unless it breaks the length bounds an ordinary string below keeps to.
-        if isinstance(fmt := schema.get('format'), str) and fmt in _FORMATS:
-            value = _FORMATS[fmt](self.seed)
+        if isinstance(fmt := schema.get('format'), str) and fmt in self._FORMATS:
+            value = self._FORMATS[fmt](self.seed)
             min_length, max_length = self._finite_bound(schema, 'minLength'), self._finite_bound(schema, 'maxLength')
             if (min_length or 0) <= len(value) <= (len(value) if max_length is None else max_length):
                 return value
@@ -769,8 +798,8 @@ class _JsonSchemaTestData:
     @staticmethod
     def _multiple_of(value: _BoundT, schema: dict[str, Any]) -> _BoundT:
         """`value`, or the nearest multiple of the schema's `multipleOf` above or below it that stays within bounds."""
-        step = schema.get('multipleOf')
-        if isinstance(step, bool) or not isinstance(step, int | float) or step <= 0:
+        step = _JsonSchemaTestData._finite_bound(schema, 'multipleOf')
+        if step is None or step <= 0:
             return value
         try:
             if value % step == 0:
@@ -781,6 +810,11 @@ class _JsonSchemaTestData:
                 candidates = ((lower + 1) * step, lower * step)
             elif math.isfinite(quotient := value / step):
                 candidates = (math.ceil(quotient) * step, math.floor(quotient) * step)
+                if isinstance(value, int):
+                    # The integer multiples of a fractional step p/q in lowest terms are the multiples of p.
+                    numerator = Fraction(step).numerator
+                    lower = value // numerator
+                    candidates += ((lower + 1) * numerator, lower * numerator)
             else:
                 # A step so small that the quotient overflows has no multiple to move to.
                 return value
@@ -796,7 +830,7 @@ class _JsonSchemaTestData:
                 not isinstance(bound := schema.get(key), int | float)
                 or isinstance(bound, bool)
                 or within(candidate, bound)
-                for key, within in _NUMBER_BOUNDS
+                for key, within in _JsonSchemaTestData._NUMBER_BOUNDS
             )
         )
         return next(within_bounds, value)

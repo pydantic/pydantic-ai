@@ -577,6 +577,32 @@ def test_json_schema_test_data_additional():
     TestModel.model_validate(data)
 
 
+def test_json_schema_test_data_min_properties():
+    """Properties added for `minProperties` get numbered names, so many of them take linear time and memory.
+
+    A name a property already has is skipped, and a closed object gets only the properties it lists.
+    """
+    data = _JsonSchemaTestData({'type': 'object', 'minProperties': 1000}).generate()
+    assert len(data) == 1000
+    assert max(map(len, data)) == len('additionalProperty_1000')
+
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'additionalProperty_1': {'type': 'integer'}},
+        'required': ['additionalProperty_1'],
+        'minProperties': 2,
+    }
+    assert list(_JsonSchemaTestData(schema).generate()) == ['additionalProperty_1', 'additionalProperty_2']
+
+    closed: JsonSchema = {
+        'type': 'object',
+        'properties': {'a': {'type': 'integer'}},
+        'additionalProperties': False,
+        'minProperties': 2,
+    }
+    assert list(_JsonSchemaTestData(closed).generate()) == ['a']
+
+
 def test_json_schema_test_data_equal_inclusive_bounds():
     class TestModel(BaseModel):
         my_int_eq: Annotated[int, Ge(7), Le(7)]
@@ -1284,13 +1310,32 @@ TEST_MODEL_SCHEMAS: dict[str, JsonSchema] = {
     'allOf-ref-to-boolean': {'allOf': [{'$ref': '#/$defs/Flag'}, {'type': 'integer'}]},
     'allOf-ref-to-ref': {'type': 'string', 'allOf': [{'$ref': '#/$defs/Alias'}]},
     'allOf-anyOf': {'type': 'string', 'allOf': [{'anyOf': [{'type': 'string'}, {'type': 'integer'}]}]},
+    'allOf-repeated-bound': {'allOf': [{'type': 'integer', 'minimum': -10}, {'type': 'integer', 'minimum': 0}]},
+    'allOf-repeated-property': {
+        'allOf': [
+            {'type': 'object', 'properties': {'a': {'type': 'integer', 'minimum': -10}}, 'required': ['a']},
+            {'properties': {'a': {'type': 'integer', 'minimum': 0}}},
+        ]
+    },
     'minProperties': {'type': 'object', 'minProperties': 1},
     'minProperties-optional': {'type': 'object', 'properties': {'a': _LEAF}, 'minProperties': 1},
+    'minProperties-declared-name': {
+        'type': 'object',
+        'properties': {'additionalProperty_1': {'$ref': '#/$defs/Count'}},
+        'minProperties': 1,
+    },
     'maxProperties': {'type': 'object', 'additionalProperties': True, 'maxProperties': 0},
     'multipleOf-within-exclusive': {'type': 'integer', 'multipleOf': 5, 'exclusiveMinimum': 5, 'exclusiveMaximum': 11},
     'multipleOf-below-maximum': {'type': 'integer', 'multipleOf': 5, 'maximum': 8},
     'multipleOf-fractional-integer': {'type': 'integer', 'multipleOf': 2.5, 'minimum': 0, 'maximum': 10},
+    'multipleOf-fractional-integer-off-the-adjacent-multiples': {
+        'type': 'integer',
+        'multipleOf': 1.5,
+        'minimum': 1,
+        'maximum': 4,
+    },
     'multipleOf-integer-too-large-for-a-float': {'type': 'integer', 'multipleOf': 3, 'minimum': 10**400},
+    'multipleOf-fractional-number': {'type': 'number', 'multipleOf': 0.5, 'minimum': 0.3},
     'format-longer-than-maxLength': {'type': 'string', 'format': 'uri', 'maxLength': 3},
     'not': {'type': 'string', 'not': {'const': 'a'}},
 }
@@ -1301,6 +1346,7 @@ _TEST_MODEL_DEFS: JsonSchema = {
     'Flag': True,
     'Alias': {'$ref': '#/$defs/TwoCharacters'},
     'TwoCharacters': {'minLength': 2},
+    'Count': {'type': 'integer'},
 }
 """Definitions beside `TEST_MODEL_SCHEMAS`."""
 
@@ -1408,6 +1454,26 @@ def test_test_model_arguments_validate(name: str, schema: JsonSchema, adapter: T
         pytest.param(
             _arguments_schema({'type': 'integer', 'multipleOf': 2.5, 'minimum': 10**400}, {}),
             id='multipleOf-fractional-step-for-an-integer-too-large-for-a-float',
+        ),
+        pytest.param(
+            _arguments_schema({'type': 'integer', 'multipleOf': float('inf'), 'minimum': 1}, {}),
+            id='multipleOf-infinite',
+        ),
+        pytest.param(
+            _arguments_schema(
+                {'$ref': '#/$defs/Filter'},
+                {
+                    'Filter': {
+                        'type': 'object',
+                        'properties': {
+                            'and': {'type': 'array', 'items': {'$ref': '#/$defs/Filter'}},
+                            'eq': {'type': 'string'},
+                        },
+                        'minProperties': 1,
+                    }
+                },
+            ),
+            id='minProperties-recursive',
         ),
     ],
 )
