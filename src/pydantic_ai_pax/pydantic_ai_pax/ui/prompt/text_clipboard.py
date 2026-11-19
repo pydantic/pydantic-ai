@@ -92,7 +92,7 @@ class LatestCopy:
                 return
             self._running = True
         # Not a daemon: exiting right after a copy waits for it, at most `COPY_TIMEOUT`, rather than losing it.
-        threading.Thread(target=self._drain, name='clai-copy', daemon=False).start()
+        threading.Thread(target=self._drain, name='pax-copy', daemon=False).start()
 
     def _drain(self) -> None:
         while True:

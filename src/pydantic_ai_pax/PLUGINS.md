@@ -235,9 +235,9 @@ sampling or native provider-side MCP.
 
 ## On-demand authoring help
 
-The default Pax agent lists `clai_customization` as one deferred capability.
+The default Pax agent lists `pax_customization` as one deferred capability.
 Its catalog entry tells the model to load it when asked about Pax itself. Only
-then does the model get `search_clai_docs(query)` and `read_clai_docs(path)`, with
+then does the model get `search_pax_docs(query)` and `read_pax_docs(path)`, with
 a short instruction to read the
 [customization guide](pydantic_ai_pax/customization.md) before advising on Pax
 customization. An ordinary coding turn gets neither the docs nor their tools.
@@ -252,7 +252,7 @@ current limits: PluginHost does not replace the prompt editor or change the
 built-in model catalog's entries. Those need a custom agent launcher or a source
 change, as explained in the guide.
 
-Custom agents can opt in with `ClaiDocs()` from `pydantic_ai_pax.clai_docs`;
+Custom agents can opt in with `PaxDocs()` from `pydantic_ai_pax.pax_docs`;
 `customization_guide()` from `pydantic_ai_pax.customization` returns the same. The
 tools only return documentation; they do not write files, activate plugins, or
 grant permission to execute generated code. Keep the customization guide aligned

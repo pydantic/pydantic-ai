@@ -361,7 +361,7 @@ async def sibling_processes(uv: str) -> list[str]:
 
 
 def _in_thread(work: Callable[[], None]) -> None:
-    threading.Thread(target=work, name='clai-update-check', daemon=True).start()
+    threading.Thread(target=work, name='pax-update-check', daemon=True).start()
 
 
 Output = Callable[[str], Awaitable[None]]

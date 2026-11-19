@@ -566,7 +566,7 @@ def _shutdown(instance: logfire.Logfire) -> bool:
 
     # OTel can ignore its flush timeout: https://github.com/open-telemetry/opentelemetry-python/issues/4568
     # A daemon lets cleanup finish later without adding an interpreter-exit thread join.
-    worker = Thread(target=shutdown, name='clai2-logfire-shutdown', daemon=True)
+    worker = Thread(target=shutdown, name='pax-logfire-shutdown', daemon=True)
     worker.start()
     worker.join(timeout_seconds)
     if worker.is_alive():

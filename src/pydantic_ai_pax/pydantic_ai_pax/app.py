@@ -28,6 +28,7 @@ from pydantic_ai_pax.config.builtins import DEFAULT_PLUGINS, STOCK_PLUGINS
 from pydantic_ai_pax.config.project_settings import ProjectSettings, load_project_settings, with_current_approvals
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.models.resolver import ModelResolver
+from pydantic_ai_pax.pax_docs import PaxDocs
 from pydantic_ai_pax.plugins import (
     SessionEndReason,
     SessionStart,
@@ -60,7 +61,7 @@ OutputT = TypeVar('OutputT')
 
 def create_agent(model: str | None = None) -> Agent[None, str]:
     """Build the base Pax agent. The coding tools come from the built-in `coder` plugin, not from here."""
-    return Agent(model, deps_type=type(None), capabilities=[ClaiDocs()])
+    return Agent(model, deps_type=type(None), capabilities=[PaxDocs(), ClaiDocs()])
 
 
 def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str]:
@@ -68,7 +69,7 @@ def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str
 
     It is named `clai2`, which its run spans carry and which Logfire Agent Control addresses it by.
     """
-    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[ClaiDocs()], name='clai2')
+    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[PaxDocs(), ClaiDocs()], name='clai2')
 
 
 @asynccontextmanager

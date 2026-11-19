@@ -171,7 +171,7 @@ async def clone_repository(url: str, destination: Path) -> tuple[int, bytes]:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         ),
-        name='clai-plugin-clone',
+        name='pax-plugin-clone',
     )
     try:
         process = await asyncio.shield(spawn)

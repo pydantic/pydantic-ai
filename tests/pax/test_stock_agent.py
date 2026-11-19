@@ -25,8 +25,8 @@ from pydantic_ai_harness.guardrails import GuardrailResult, ToolCallInfo, ToolGu
 from pydantic_ai_pax import app, open_stock_agent
 from pydantic_ai_pax.config import PluginSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
-from pydantic_ai_pax.customization import customization_guide
 from pydantic_ai_pax.models.resolver import ModelResolver
+from pydantic_ai_pax.pax_docs import PaxDocs
 from pydantic_ai_pax.plugins.loader import PluginSettingsError
 
 
@@ -131,7 +131,7 @@ async def test_only_the_coding_loop_is_eager(tmp_path: Path) -> None:
 
     # The CLI adds the docs capability to this stock set, as `create_stock_agent` does.
     async with open_stock_agent(
-        workspace=tmp_path, model=FunctionModel(stream_function=stream), capabilities=[customization_guide()]
+        workspace=tmp_path, model=FunctionModel(stream_function=stream), capabilities=[PaxDocs()]
     ) as agent:
         await agent.run('hello')
     first, second = seen
@@ -144,7 +144,7 @@ async def test_only_the_coding_loop_is_eager(tmp_path: Path) -> None:
         if 'capability:deferred_capabilities' in part.content
     ]
     assert len(catalog) == 1
-    assert '- clai_customization: Use when asked to customize Pax itself' in catalog[0]
+    assert '- pax_customization: Use when asked to customize Pax itself' in catalog[0]
     assert catalog == [
         part.content
         for part in second.model_request_parameters.instruction_parts or ()

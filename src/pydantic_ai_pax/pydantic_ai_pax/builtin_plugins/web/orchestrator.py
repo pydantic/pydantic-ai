@@ -212,7 +212,7 @@ class Orchestrator:
         saved = await self.load()
         if self.running:  # Checked after the read, as another request may have started a turn meanwhile.
             raise RuntimeError('The orchestrator is still working. Wait for it, or stop it.')
-        self._task = asyncio.get_running_loop().create_task(self._run(text, saved), name='clai2-orchestrator')
+        self._task = asyncio.get_running_loop().create_task(self._run(text, saved), name='pax-orchestrator')
 
     async def _run(self, prompt: str, saved: Saved) -> None:
         item = Item(id=f'orchestrator{time.monotonic_ns()}', kind='user', text=prompt)
