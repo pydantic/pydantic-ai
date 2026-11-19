@@ -374,6 +374,8 @@ class JsonSchemaTransformer(ABC):
         self.recursive_refs = set[str]()
         self._walked_defs: dict[str, tuple[JsonSchema, int]] = {}
         self._inlined = InlinedValues('JSON schema')
+        self._unwalked_ref_writer: UnwalkedRefWriter | None = None
+        """Set during `walk()`'s second pass, which writes out each definition the walk reaches as it reaches it."""
 
     @abstractmethod
     def transform(self, schema: JsonSchema) -> JsonSchema:
@@ -389,8 +391,8 @@ class JsonSchemaTransformer(ABC):
             return self._walk_with_unwalked_refs_written_out(walked)
         return walked
 
-    def _walk_schema(self, kept: Mapping[str, JsonSchema] | None = None) -> JsonSchema:
-        """One pass of `walk()` over `self.schema`, with `kept` definitions to emit under `$defs` where referenced."""
+    def _walk_schema(self) -> JsonSchema:
+        """One pass of `walk()` over `self.schema`."""
         schema = deepcopy(self.schema)
 
         self.recursive_refs.clear()
@@ -406,8 +408,8 @@ class JsonSchemaTransformer(ABC):
             return handled
 
         defs = {key: self._copy_walked_def(key) for key in self.recursive_refs}
-        if kept:
-            self._add_referenced_definitions(defs, handled, kept)
+        if (writer := self._unwalked_ref_writer) is not None and writer.kept:
+            self._add_referenced_definitions(defs, handled, writer.kept_definitions())
         if not defs:
             return handled
 
@@ -428,32 +430,28 @@ class JsonSchemaTransformer(ABC):
     def _walk_with_unwalked_refs_written_out(self, walked: JsonSchema) -> JsonSchema:
         """`walk()`'s second pass, for a schema whose first pass, `walked`, leaves a `$ref` into `$defs` dangling.
 
-        Each `$defs` `$ref` under a keyword the walk doesn't enter is written out in place by `UnwalkedRefWriter`, and
-        the schema is walked again; a recursive one stays, and the definition it points at goes under `$defs`.
-        Writing out counts toward `MAX_INLINED_SCHEMA_VALUES` like inlining does, but a schema that passes it there
-        keeps `walked`, as a `$ref` the walk doesn't inline never raised.
+        Each `$defs` `$ref` under a keyword the walk doesn't enter is written out in place by `UnwalkedRefWriter`: in
+        the schema before the walk, and in each definition as the walk reaches it. A recursive one stays, and the
+        definition it points at goes under `$defs`. Writing out counts toward `MAX_INLINED_SCHEMA_VALUES` like
+        inlining does. A schema whose writing out raises, the limit included, keeps `walked`, which the first pass
+        produced without raising.
         """
-        schema, defs = self.schema, self.defs
+        schema = self.schema
         recursive_refs, is_strict_compatible = set(self.recursive_refs), self.is_strict_compatible
-        writer = UnwalkedRefWriter(schema, defs, self._inlined)
+        self._unwalked_ref_writer = writer = UnwalkedRefWriter(schema, self.defs, self._inlined)
         self._inlined.count = 0
         try:
-            self.defs = {
-                name: definition
-                if isinstance(definition, bool)
-                else writer.write_out(definition, unwalked=False, stack=(name,))
-                for name, definition in defs.items()
-            }
             self.schema = writer.write_out({k: v for k, v in schema.items() if k != '$defs'}, unwalked=False)
-            if not (writer.wrote_out or writer.kept):
-                return walked
-            return self._walk_schema(writer.kept_definitions())
-        except UserError:
+            rewalked = self._walk_schema()
+        # Any raise, such as a `RecursionError` on a long chain of definitions the first pass never entered: the
+        # second pass must not fail a schema the first one walked.
+        except Exception:
             self.recursive_refs, self.is_strict_compatible = recursive_refs, is_strict_compatible
             self.refs_stack.clear()
             return walked
         finally:
-            self.schema, self.defs = schema, defs
+            self.schema, self._unwalked_ref_writer = schema, None
+        return rewalked if writer.wrote_out or writer.kept else walked
 
     def _add_referenced_definitions(
         self, defs: dict[str, JsonSchema], handled: JsonSchema, kept: Mapping[str, JsonSchema]
@@ -558,6 +556,8 @@ class JsonSchemaTransformer(ABC):
             # A pointer can reach nodes the up-front check doesn't visit, like draft-07 `definitions`.
             if def_schema is not None:
                 _check_schema_shape(def_schema, _json_pointer_path(key))
+        elif self._unwalked_ref_writer is not None and isinstance(def_schema, dict):
+            def_schema = self._unwalked_ref_writer.write_out(def_schema, unwalked=False, stack=(key,))
         if def_schema is None:
             raise UserError(f'Could not find $ref definition for {key}')
 

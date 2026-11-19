@@ -32,7 +32,12 @@ from jsonschema.validators import Draft201909Validator, Draft202012Validator, va
 from pydantic import JsonValue
 from referencing.exceptions import Unresolvable
 
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
+from pydantic_ai._json_schema import (
+    InlineDefsJsonSchemaTransformer,
+    JsonSchema,
+    JsonSchemaTransformer,
+    UnwalkedRefWriter,
+)
 from pydantic_ai._json_schema_keywords import (
     SUBSCHEMA_KEYWORDS,
     Subschema,
@@ -394,6 +399,28 @@ def _verdict(schema: JsonSchema, data: JsonValue, draft: type[Validator] = Draft
         return validator_for(schema, default=draft)(schema).is_valid(data)
     except (Unresolvable, re.error):
         return None
+
+
+def test_walked_keywords_are_the_keywords_the_walk_enters():
+    """`UnwalkedRefWriter.WALKED_KEYWORDS` names exactly the keywords under which the walk transforms an inlined `$ref`.
+
+    Under any other keyword the `$ref` is written out as written, without `transform()`. If the walk starts entering
+    another keyword, this fails until `WALKED_KEYWORDS` lists it. `$defs` and `definitions` hold definitions, which
+    the walk reaches through `$ref`s instead of by entering them.
+    """
+
+    class TitleMarking(InlineDefsJsonSchemaTransformer):
+        def transform(self, schema: JsonSchema) -> JsonSchema:
+            if 'title' in schema:
+                schema['title'] += ' (transformed)'
+            return schema
+
+    entered = {
+        keyword
+        for keyword in SUBSCHEMA_KEYWORDS.keys() - {'$defs', 'definitions'}
+        if 'Leaf (transformed)' in json.dumps(TitleMarking(deepcopy(CORPUS[f'{keyword}-ref'])).walk())
+    }
+    assert entered == UnwalkedRefWriter.WALKED_KEYWORDS
 
 
 _INSTANCES: list[JsonValue] = [

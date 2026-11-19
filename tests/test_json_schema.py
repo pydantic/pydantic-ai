@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import json
 import re
+import sys
 from copy import deepcopy
 from typing import Any
 
@@ -1569,10 +1570,11 @@ def test_inline_defs_leaves_a_ref_under_not_it_cannot_write_out():
 def test_inline_defs_leaves_a_ref_under_not_when_writing_it_out_passes_the_value_limit(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """A `$ref` under `not` whose definition passes the value limit once written out stays as the walk left it.
+    """A `$ref` under `not` whose definition passes the value limit once written out stays, pointing at nothing.
 
-    The walk doesn't inline a `$ref` there, so such a schema didn't raise before, and doesn't now. Unit test: the
-    limit is reached while the schema is prepared, before any provider is involved.
+    The walk doesn't inline a `$ref` there, so such a schema didn't raise before, and doesn't now: it goes out as the
+    walk left it, without its `$defs`. Unit test: the limit is reached while the schema is prepared, before any
+    provider is involved.
     """
     monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
     levels = _VALUE_LIMIT.bit_length()
@@ -1584,6 +1586,48 @@ def test_inline_defs_leaves_a_ref_under_not_when_writing_it_out_passes_the_value
     assert InlineDefsJsonSchemaTransformer(schema).walk() == {
         'type': 'object',
         'properties': {'x': {'not': {'$ref': f'#/$defs/D{levels}'}}},
+    }
+
+
+def test_inline_defs_writes_out_only_the_definitions_the_walk_reaches(monkeypatch: pytest.MonkeyPatch):
+    """A definition nothing refers to isn't written out, so it can't push the schema past the value limit.
+
+    Unit test: the limit is reached while the schema is prepared, before any provider is involved.
+    """
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
+    levels = _VALUE_LIMIT.bit_length()
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'code': {'type': 'string', 'not': {'$ref': '#/$defs/Short'}}},
+        '$defs': {
+            **_doubling_chain(levels)['$defs'],
+            'Unused': {'not': {'$ref': f'#/$defs/D{levels}'}},
+            'Short': {'type': 'string', 'maxLength': 2},
+        },
+    }
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == snapshot(
+        {'type': 'object', 'properties': {'code': {'type': 'string', 'not': {'type': 'string', 'maxLength': 2}}}}
+    )
+
+
+def test_inline_defs_leaves_a_ref_under_not_when_writing_it_out_recurses_too_deep():
+    """A chain of definitions under `not` too deep to write out stays as the walk left it, rather than raising.
+
+    The walk never enters `not`, so the chain didn't raise before. Unit test: the recursion happens while the schema
+    is prepared, before any provider is involved.
+    """
+    depth = sys.getrecursionlimit()
+    defs: JsonSchema = {'D0': {'type': 'string'}}
+    for i in range(1, depth):
+        defs[f'D{i}'] = {'not': {'$ref': f'#/$defs/D{i - 1}'}}
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'x': {'not': {'$ref': f'#/$defs/D{depth - 1}'}}},
+        '$defs': defs,
+    }
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == {
+        'type': 'object',
+        'properties': {'x': {'not': {'$ref': f'#/$defs/D{depth - 1}'}}},
     }
 
 
