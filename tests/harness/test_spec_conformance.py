@@ -32,9 +32,10 @@ from pydantic_ai_harness.ask_user import AskUser
 from ..spec_conformance import JsonSchema, check_capability_forms_load, check_capability_parameters
 from ._shipped_capabilities import shipped_capability_types
 
+SHIPPED, SKIPPED_MODULES = shipped_capability_types()
 CLASSES = {
     name: cls
-    for name, cls in shipped_capability_types()[0].items()
+    for name, cls in SHIPPED.items()
     if not inspect.isabstract(cls) and '__dataclass_fields__' in vars(cls) and cls.get_serialization_name() is not None
 }
 """The classes a spec can name: concrete, decorated with `@dataclass` as the registry requires, and serializable."""
@@ -128,16 +129,25 @@ def test_spec_forms_load(name: str, tmp_path: Path):
     )
 
 
+def _shipped_class(name: str) -> type[AbstractCapability[object]]:
+    """The class a table names; when every module imported, a name with no class fails as a stale entry."""
+    if name not in CLASSES and SKIPPED_MODULES:  # pragma: lax no cover
+        pytest.skip(f'{name} needs an optional dependency group that is not installed')
+    return CLASSES[name]
+
+
 @pytest.mark.parametrize('name', sorted(KNOWN_SCHEMA_FAILURES))
 def test_known_schema_failures(name: str):
     error, match = _SCHEMA_ERRORS[KNOWN_SCHEMA_FAILURES[name]]
     with pytest.raises(error, match=match):
-        AgentSpec.model_json_schema_with_capabilities([CLASSES[name]])
+        AgentSpec.model_json_schema_with_capabilities([_shipped_class(name)])
 
 
 def test_tables_name_checked_classes():
     tables = {**OPT_OUT, **KNOWN, **KNOWN_UNLOADABLE, **KNOWN_REJECTED}.keys() | {*NARROWED_FROM_SPEC}
-    assert tables <= set(CHECKED), f'Remove the entries for classes that are gone: {sorted(tables - set(CHECKED))}'
+    # Only meaningful when every module imported: a class whose optional group isn't installed looks deleted.
+    if not SKIPPED_MODULES:  # pragma: lax no cover -- every optional group imports only where browser-use is installed
+        assert tables <= set(CHECKED), f'Remove the entries for classes that are gone: {sorted(tables - set(CHECKED))}'
 
 
 @pytest.mark.parametrize('name', NARROWED_FROM_SPEC)
@@ -146,7 +156,7 @@ def test_narrowed_from_spec_keeps_init_parameters(name: str):
 
     Only the annotations may differ, so a spec-loaded instance can't drift from one built directly.
     """
-    cls = CLASSES[name]
+    cls = _shipped_class(name)
 
     def parameters(signature: inspect.Signature) -> dict[str, tuple[object, object]]:
         return {p.name: (p.kind, p.default) for p in signature.parameters.values() if p.name != 'self'}
@@ -157,7 +167,7 @@ def test_narrowed_from_spec_keeps_init_parameters(name: str):
 @pytest.mark.parametrize('name', NARROWED_FROM_SPEC)
 def test_subclass_loads_its_own_fields_and_defaults(name: str):
     """A subclass loads through the default `from_spec`, which takes the fields it adds and keeps the defaults it sets."""
-    parent = CLASSES[name]
+    parent = _shipped_class(name)
 
     @dataclass(kw_only=True)
     class Custom(parent):
