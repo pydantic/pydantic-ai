@@ -292,10 +292,10 @@ def test_visibility_of_unresolved_parameters_uses_authored_deferral() -> None:
 
 
 def test_available_tool_names_for_kind_skips_deferred_tools_until_history_reveals_them() -> None:
-    lookup = ToolKind('test', 'lookup')
+    lookup = ToolKind('request_parameters', 'lookup')
     params = ModelRequestParameters(
         function_tools=[
-            ToolDefinition(name='search', tool_kind='test.search'),
+            ToolDefinition(name='search', tool_kind='request_parameters.search'),
             ToolDefinition(name='hidden_lookup', tool_kind=lookup, defer_loading=True),
             ToolDefinition(name='revealed_lookup', tool_kind=lookup, defer_loading=True),
             ToolDefinition(name='lookup', tool_kind=lookup),
@@ -304,7 +304,7 @@ def test_available_tool_names_for_kind_skips_deferred_tools_until_history_reveal
     )
     assert params.available_tool_names_for_kind(lookup) == ['revealed_lookup', 'lookup']
     assert params.available_tool_names_for_kind(lookup.id) == ['revealed_lookup', 'lookup']
-    assert params.available_tool_names_for_kind('test.missing') == []
+    assert params.available_tool_names_for_kind('request_parameters.missing') == []
 
 
 @pytest.mark.parametrize(
