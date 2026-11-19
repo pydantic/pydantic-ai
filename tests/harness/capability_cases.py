@@ -1,0 +1,920 @@
+"""One case per Pydantic AI Harness capability: how the suites build it, and what two of it on one agent mean.
+
+See `tests/capability_cases.py` for the case types and the core capabilities. Every capability class in
+`pydantic_ai_harness`, public or not, has an entry in `CASES`, and `test_every_capability_has_a_case` fails
+when one is missing. Adding a capability is therefore one entry, and a decision about what two of it mean,
+taken once, here. The three answers, and what picks between them:
+
+- `Combines` -- the class declares a default `id`, so two are one configuration stated twice and
+  Pydantic AI merges them field by field. This is what lets two packaged harnesses that each carry
+  a `ToolOutputLimits` compose instead of colliding.
+- `Anonymous` -- no default `id`, and two really do coexist.
+- `Collides` -- no default `id`, and two never coexist anyway, because the toolset registers fixed
+  tool names. A fact rather than a preference, and pinned by
+  `test_two_of_a_colliding_capability_still_raise` so it cannot drift back into an `Anonymous`
+  reason describing a configuration ("one per rooted directory") that is unreachable.
+
+Declaring a default `id` is the whole policy: there is no `combine` to write unless the merge needs
+something the field-by-field default cannot express, such as a budget that should take the *smaller*
+value.
+"""
+
+from __future__ import annotations
+
+import tempfile
+from collections.abc import Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import pydantic_ai_harness
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, RawToolArgs
+from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai_harness import (
+    Advisor,
+    ApprovalReviewer,
+    AskUser,
+    BackgroundTools,
+    BenchmarkInstructions,
+    BubblewrappedWorkspace,
+    CapabilityCreation,
+    ClampOversizedMessages,
+    ClearToolResults,
+    Coder,
+    CompactOnRequest,
+    CurrentTime,
+    DayAI,
+    DeduplicateFileReads,
+    FallbackCompaction,
+    FileSystem,
+    Goal,
+    Grain,
+    InputGuardrail,
+    LabelCrossModelHistory,
+    Macroscope,
+    ManagedPrompt,
+    ModelChoice,
+    ModelRouter,
+    Ordinal,
+    OutputGuardrail,
+    Planning,
+    PostHog,
+    PruneToolResults,
+    Pylon,
+    RelevanceCompaction,
+    RepoContext,
+    RequireVerification,
+    Researcher,
+    Shell,
+    SlidingWindowCompaction,
+    SmartSearch,
+    SpendLimits,
+    SSHWorkspace,
+    StackOne,
+    StepPersistence,
+    StreamGuardrail,
+    SubAgent,
+    SubAgents,
+    SummarizingCompaction,
+    SystemReminders,
+    TieredCompaction,
+    ToolBridge,
+    ToolCallJudge,
+    ToolOutputLimits,
+    TrajectoryJudge,
+    WarnNearLimits,
+)
+from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
+from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
+from pydantic_ai_harness.github import GitHub
+from pydantic_ai_harness.linear import Linear
+from pydantic_ai_harness.logfire_mcp import LogfireMCP
+from pydantic_ai_harness.notion import Notion
+from pydantic_ai_harness.peers import InMemoryPeerNetwork
+from pydantic_ai_harness.skills import Skills
+from pydantic_ai_harness.slack import Slack
+from pydantic_ai_harness.step_persistence import InMemoryStepStore
+from pydantic_ai_harness.system_reminders import Reminder
+
+from ..append_only import CLOCK, Fixture
+from ..capability_cases import (
+    Anonymous,
+    CapabilityCase,
+    Collides,
+    Combines,
+    Narrows,
+    Rejected,
+    Unbuildable,
+)
+from ._mcp_server import MCPServer
+
+if TYPE_CHECKING:
+    from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
+
+
+HARNESS_CAPABILITY_PACKAGES = ('pydantic_ai_harness',)
+"""The package whose capability classes `CASES` covers."""
+
+
+def _hosted_server() -> MCPServer:
+    """An in-process stand-in for a hosted MCP service, with server instructions and one tool."""
+    server = MCPServer('hosted', instructions='Hosted service instructions.')
+
+    @server.tool()
+    def search() -> str:
+        return 'found'  # pragma: no cover
+
+    return server
+
+
+def _hosted(cls: Callable[..., AbstractCapability[Any]]) -> Fixture:
+    """A hosted MCP integration, run against an in-process server through its `client` field."""
+    return lambda _: cls(client=_hosted_server())
+
+
+def _workspace(build: Callable[[], AbstractCapability[Any]]) -> Fixture:
+    """The capability plus a local workspace in the test's directory, for capabilities that need one."""
+    return lambda tmp_path: [build(), LocalWorkspace(tmp_path)]
+
+
+def _repo_context(tmp_path: Path) -> list[AbstractCapability[Any]]:
+    (tmp_path / 'AGENTS.md').write_text('Keep answers short.\n')
+    return [RepoContext(), FileSystem(), LocalWorkspace(tmp_path)]
+
+
+def _skills(tmp_path: Path) -> list[AbstractCapability[Any]]:
+    skill = tmp_path / 'skills' / 'weather'
+    skill.mkdir(parents=True)
+    (skill / 'SKILL.md').write_text('---\ndescription: Report the weather.\n---\n\nSay sunny.\n')
+    return [Skills(tmp_path / 'skills'), LocalWorkspace(tmp_path)]
+
+
+def _read_file_key(call: ToolCallPart) -> str | None:
+    args = call.args_as_dict()
+    return str(args['path']) if call.tool_name == 'read_file' else None
+
+
+def _deduplicate_file_reads(tmp_path: Path) -> list[AbstractCapability[Any]]:
+    (tmp_path / 'notes.md').write_text('Sunny.\n')
+    return [DeduplicateFileReads(file_key=_read_file_key), FileSystem(), LocalWorkspace(tmp_path)]
+
+
+class _PruneLatestReturn(AbstractCapability[None]):
+    """Points a scripted `prune_tool_result` call at the previous step's result, whose ID differs by provider."""
+
+    async def before_tool_validate(
+        self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
+    ) -> RawToolArgs:
+        if call.tool_name != 'prune_tool_result':
+            return args
+        [latest] = [part.tool_call_id for part in ctx.messages[-2].parts if isinstance(part, ToolReturnPart)]
+        return {**call.args_as_dict(), 'tool_call_id': latest}
+
+
+def _modal_sandbox() -> AbstractCapability[Any]:
+    # Imported here, not at module level, so collecting the suites never imports the Modal SDK. The test has
+    # already skipped when `modal` isn't installed (the case's `requires`).
+    from pydantic_ai_harness.modal_sandbox import ModalSandbox
+
+    return ModalSandbox(warn_if_no_tools=False)
+
+
+def _kubernetes_sandbox() -> KubernetesSandbox:
+    # Imported here, so collecting the suites never imports the agent-sandbox SDK. The test has already
+    # skipped when it isn't installed (the case's `requires`).
+    from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
+
+    return KubernetesSandbox(warm_pool='python-pool')
+
+
+def _ipython_code_mode() -> AbstractCapability[Any]:
+    # Imported here, so collecting the suites never imports `jupyter_client`. The test has already skipped
+    # when it isn't installed (the case's `requires`).
+    from pydantic_ai_harness.ipython_code_mode import IPythonCodeMode
+
+    return IPythonCodeMode(tools=[])
+
+
+def _time_reminder(ctx: RunContext[Any]) -> str:
+    return f'It is now {CLOCK.now:%H:%M} UTC.'
+
+
+async def _goal_met(ctx: RunContext[None], output: object) -> None:
+    return None
+
+
+async def _decline(request: AskUserRequest) -> AskUserResponse:
+    """Only here to construct `AskUser`; the combine tests never call a tool."""
+    return AskUserResponse(cancelled=True)  # pragma: no cover
+
+
+COMBINE_ROOT_A = Path(tempfile.mkdtemp(prefix='combine-a-'))
+COMBINE_ROOT_B = Path(tempfile.mkdtemp(prefix='combine-b-'))
+"""Two distinct roots, so a `Collides` pair differs in the way its `Anonymous` reason once claimed
+mattered -- and still collides."""
+
+
+def _check_skills(merged: Any) -> None:
+    assert [source.directories for source in merged._sources] == [('first',), ('second',)]
+
+
+def _check_model_router(merged: ModelRouter[object]) -> None:
+    assert (list(merged.choices), merged.default) == (['fast', 'capable'], 'capable')
+
+
+def _check_planning(merged: Any) -> None:
+    assert merged.inject is False
+
+
+def _check_spend_limits(merged: Any) -> None:
+    assert merged.expose_tools is False
+
+
+def _check_step_persistence(merged: Any) -> None:
+    assert merged.agent_name == 'second'
+
+
+def _check_summarizing(merged: Any) -> None:
+    assert merged.keep_messages == 7
+
+
+def _check_relevance(merged: Any) -> None:
+    assert merged.keep_tokens == 7
+
+
+def _check_system_reminders(merged: Any) -> None:
+    # Additive sequences union, so every reminder either side declared still fires.
+    assert [r.content for r in merged.reminders] == ['first', 'second']
+
+
+def _check_compact_on_request(merged: Any) -> None:
+    assert merged.max_per_run == 2
+
+
+def _check_prune_tool_results(merged: PruneToolResults[None]) -> None:
+    assert merged.placeholder == '[second]'
+
+
+def _check_tool_output_limits(merged: Any) -> None:
+    assert merged.strip_ansi is True
+
+
+def _check_tool_bridge(merged: ToolBridge[None]) -> None:
+    assert merged.max_results == 5
+
+
+def _check_advisor(merged: Any) -> None:
+    assert merged.max_tokens == 4096
+
+
+def _check_background_tools(merged: Any) -> None:
+    assert callable(merged.tools)
+
+
+def _check_benchmark_instructions(merged: BenchmarkInstructions[None]) -> None:
+    assert merged.id == 'benchmark_instructions'
+
+
+def _check_current_time(merged: CurrentTime[None]) -> None:
+    assert (merged.timezone, merged.precision) == ('Asia/Tokyo', 'hour')
+
+
+def _check_label_cross_model_history(merged: LabelCrossModelHistory[None]) -> None:
+    assert (merged.id, merged.notice) == ('label_cross_model_history', 'second')
+
+
+def _check_sub_agents(merged: Any) -> None:
+    # Rosters union: an agent either side could reach stays reachable through one delegate tool.
+    assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
+
+
+def _check_ssh_workspace(merged: SSHWorkspace[Any]) -> None:
+    assert (merged.destination, merged.env, merged.read_only) == ('second', None, False)
+
+
+_SANDBOX = 'two coexist; the first supplies the run workspace, as core picks the first supplier'
+_DURABILITY = (
+    'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
+    'itself up, before any id is consulted'
+)
+_EXA_KEY = {'EXA_API_KEY': 'test-key'}
+_YOU_KEY = {'YDC_API_KEY': 'test-key'}
+
+
+CASES: dict[str, CapabilityCase] = {
+    # -- One per agent: a default `id`, and `combine` says what two of them mean. --
+    'Skills': CapabilityCase(
+        Combines(
+            'one catalog; every library either names stays reachable',
+            lambda: (Skills[Any]('first'), Skills[Any]('second')),
+            _check_skills,
+        ),
+        build=_skills,
+    ),
+    'Memory': CapabilityCase(
+        Narrows(
+            'one notebook per id, and its store and namespace are a tenant boundary; two that differ need their own ids',
+            lambda cls: (cls(namespace='first'), cls(namespace='second')),
+        )
+    ),
+    'ModelRouter': CapabilityCase(
+        Combines(
+            'only the last model contribution selects, so two routers become one whose menu has both sets of choices',
+            lambda: (
+                ModelRouter[object](
+                    choices={'fast': ModelChoice('test', 'Use for lookups.')},
+                    router_model='test',
+                    default='fast',
+                    mode='per_step',
+                ),
+                ModelRouter[object](
+                    choices={'capable': ModelChoice('test', 'Use for hard work.')},
+                    router_model='test',
+                    default='capable',
+                ),
+            ),
+            _check_model_router,
+        ),
+        build=Unbuildable(
+            "Replaces the run's model with one from its menu, so the scenario's provider model is never requested."
+        ),
+    ),
+    'Planning': CapabilityCase(
+        Combines(
+            'one plan per agent; `PlanningToolset` registers fixed tool names',
+            lambda: (Planning[Any](), Planning[Any](inject=False)),
+            _check_planning,
+        )
+    ),
+    'SpendLimits': CapabilityCase(
+        Combines(
+            'one spend authority per agent',
+            lambda: (SpendLimits[Any](), SpendLimits[Any](expose_tools=False)),
+            _check_spend_limits,
+        )
+    ),
+    'StepPersistence': CapabilityCase(
+        Combines(
+            'one run identity per agent',
+            lambda: (StepPersistence[Any](agent_name='first'), StepPersistence[Any](agent_name='second')),
+            _check_step_persistence,
+        )
+    ),
+    'RelevanceCompaction': CapabilityCase(
+        Combines(
+            'two would each judge every step, the second judging what the first already compacted',
+            lambda: (
+                RelevanceCompaction[Any](TestModel(), max_tokens=50, keep_tokens=3),
+                RelevanceCompaction[Any](TestModel(), max_tokens=50, keep_tokens=7),
+            ),
+            _check_relevance,
+        ),
+        build=lambda _: RelevanceCompaction(TestModel(), max_tokens=20, keep_tokens=1),
+    ),
+    'SummarizingCompaction': CapabilityCase(
+        Combines(
+            'two would each make a model call, the second summarizing the first summary',
+            lambda: (
+                SummarizingCompaction[Any](max_messages=50, keep_messages=3),
+                SummarizingCompaction[Any](max_messages=50, keep_messages=7),
+            ),
+            _check_summarizing,
+        ),
+        build=lambda _: SummarizingCompaction(TestModel(), max_messages=6, keep_messages=2),
+    ),
+    'SystemReminders': CapabilityCase(
+        Combines(
+            'reminders are additive, so both sides keep firing',
+            lambda: (
+                SystemReminders[Any](reminders=[Reminder('first', tag=None)]),
+                SystemReminders[Any](reminders=[Reminder('second', tag=None)]),
+            ),
+            _check_system_reminders,
+        ),
+        build=lambda _: SystemReminders(dynamic_reminders=[_time_reminder]),
+    ),
+    'CompactOnRequest': CapabilityCase(
+        Combines(
+            'one `compact_context` tool per agent, and two strategies for one request would compact twice',
+            lambda: (
+                CompactOnRequest[Any](SlidingWindowCompaction[Any](max_messages=1), max_per_run=1),
+                CompactOnRequest[Any](SlidingWindowCompaction[Any](max_messages=1), max_per_run=2),
+            ),
+            _check_compact_on_request,
+        ),
+        build=lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
+    ),
+    'PruneToolResults': CapabilityCase(
+        Combines(
+            'one `prune_tool_result` tool per agent',
+            lambda: (PruneToolResults[None](placeholder='[first]'), PruneToolResults[None](placeholder='[second]')),
+            _check_prune_tool_results,
+        ),
+        build=lambda _: [PruneToolResults(), _PruneLatestReturn()],
+    ),
+    'ToolOutputLimits': CapabilityCase(
+        Combines(
+            'one output-limit policy; `tool_filter`/`per_tool` are how one instance varies by tool',
+            lambda: (ToolOutputLimits[Any](), ToolOutputLimits[Any](strip_ansi=True)),
+            _check_tool_output_limits,
+        ),
+        build=_workspace(ToolOutputLimits),
+    ),
+    'ToolBridge': CapabilityCase(
+        Combines(
+            'one set of dispatcher tools per agent; `tools` is how one instance picks what it bridges',
+            lambda: (ToolBridge[None](max_results=3), ToolBridge[None](max_results=5)),
+            _check_tool_bridge,
+        )
+    ),
+    'SubAgents': CapabilityCase(
+        Combines(
+            'one delegate tool per agent, so two rosters become one',
+            lambda: (
+                SubAgents[Any](agents=[SubAgent(Agent(TestModel(), name='alpha'))]),
+                SubAgents[Any](agents=[SubAgent(Agent(TestModel(), name='beta'))]),
+            ),
+            _check_sub_agents,
+        )
+    ),
+    'Advisor': CapabilityCase(
+        Combines(
+            'one advisor per agent; its tool name is fixed',
+            lambda: (
+                Advisor[Any]('anthropic:claude-fable-5', max_tokens=2048),
+                Advisor[Any]('anthropic:claude-fable-5', max_tokens=4096),
+            ),
+            _check_advisor,
+        ),
+        build=lambda _: Advisor(TestModel()),
+    ),
+    'SSHWorkspace': CapabilityCase(
+        Combines(
+            'the later configuration replaces the earlier one whole, so an `env` (and its secrets) never carries over',
+            lambda: (
+                SSHWorkspace[Any]('first', env={'FIRST_SECRET': 'x'}, read_only=True),
+                SSHWorkspace[Any]('second'),
+            ),
+            _check_ssh_workspace,
+        ),
+        build=Unbuildable('Needs an SSH host to attach a workspace to.'),
+    ),
+    'BackgroundTools': CapabilityCase(
+        Combines(
+            'one background scheduler per agent; selectors combine without wrapping a tool twice',
+            lambda: (BackgroundTools[Any](tools=['first']), BackgroundTools[Any](tools=['second'])),
+            _check_background_tools,
+        )
+    ),
+    'BenchmarkInstructions': CapabilityCase(
+        Combines(
+            'one fixed text; two would state it twice',
+            lambda: (BenchmarkInstructions[None](), BenchmarkInstructions[None]()),
+            _check_benchmark_instructions,
+        )
+    ),
+    'CurrentTime': CapabilityCase(
+        Combines(
+            'one statement of the time per id; the later configuration wins',
+            lambda: (
+                CurrentTime[None](timezone='Europe/Amsterdam'),
+                CurrentTime[None](timezone='Asia/Tokyo', precision='hour'),
+            ),
+            _check_current_time,
+        )
+    ),
+    'LabelCrossModelHistory': CapabilityCase(
+        Combines(
+            'one `notice` instruction block per agent; two would state it twice',
+            lambda: (LabelCrossModelHistory[None](notice='first'), LabelCrossModelHistory[None](notice='second')),
+            _check_label_cross_model_history,
+        )
+    ),
+    # -- Several of these is the normal case, so they stay anonymous. --
+    'RepairToolArguments': CapabilityCase(Anonymous('repairing valid arguments again is a no-op')),
+    'ServingModelRecorder': CapabilityCase(Anonymous('one per sub-agent run, added by the delegating toolset')),
+    '_Skill': CapabilityCase(
+        Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name')
+    ),
+    'RequireWorkspace': CapabilityCase(Anonymous('the same run-start check; two check the same thing twice')),
+    '_BoundToolOutputs': CapabilityCase(Anonymous('Coder-local truncation composes with standalone output policies')),
+    '_CoderGuidance': CapabilityCase(
+        Rejected(
+            'Coder-local guidance; its `coder_instructions` id is set per instance, so a second copy raises rather '
+            'than merging'
+        )
+    ),
+    '_DefaultCaching': CapabilityCase(Anonymous('Coder-local caching default; it yields to any `cache` already set')),
+    '_SetToolStrict': CapabilityCase(
+        Anonymous('Coder-local strict default; it only fills a `strict` still unset, so the first wins')
+    ),
+    '_ReportExhaustedRetries': CapabilityCase(
+        Anonymous(
+            'Coder-local retry reporting; whichever sees the exhausted retry turns it into a tool failure, and the '
+            'other passes that on'
+        )
+    ),
+    'Coder': CapabilityCase(
+        Anonymous('a packaged harness; composing two is composing their members'),
+        build=_workspace(Coder),
+    ),
+    'OpenSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='opensandbox'),
+    'DockerContainer': CapabilityCase(Anonymous(_SANDBOX)),
+    'DockerSandbox': CapabilityCase(Anonymous('deprecated alias of `DockerContainer`, and combines the same way')),
+    'E2BSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='e2b'),
+    'KubernetesSandbox': CapabilityCase(
+        Anonymous(_SANDBOX),
+        build=lambda _: _kubernetes_sandbox(),
+        requires='k8s_agent_sandbox',
+    ),
+    'RenderSandbox': CapabilityCase(Anonymous(_SANDBOX)),
+    'SpritesSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='sprites'),
+    'DaytonaSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='daytona'),
+    'BoxdSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='boxd'),
+    'SmolSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='smol'),
+    'BoxLiteSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='boxlite'),
+    'BubblewrappedWorkspace': CapabilityCase(
+        Anonymous('a structural wrapper, applied once per wrapped workspace capability'),
+        build=lambda tmp_path: BubblewrappedWorkspace(LocalWorkspace(tmp_path)),
+    ),
+    'ModalSandbox': CapabilityCase(
+        Anonymous(_SANDBOX),
+        build=lambda _: _modal_sandbox(),
+        requires='modal',
+    ),
+    'Researcher': CapabilityCase(
+        Anonymous('a packaged harness; composing two is composing their members'),
+        build=_workspace(Researcher),
+    ),
+    'ClampOversizedMessages': CapabilityCase(
+        Anonymous('clamping twice is a no-op; several thresholds compose'),
+        build=lambda _: ClampOversizedMessages(max_part_chars=100_000),
+    ),
+    'DelegationReports': CapabilityCase(
+        Anonymous('one per task owner and conversation; each delivers only its own reports, so several coexist')
+    ),
+    'TaskLink': CapabilityCase(Anonymous('the abstract base of the links below; never attached itself')),
+    'LocalTaskLink': CapabilityCase(
+        Anonymous('`SubAgents(task_control=TaskControl())` attaches one to each task run it starts')
+    ),
+    '_WorkerLink': CapabilityCase(Anonymous('`SubAgentWorker` attaches one to each task run it serves')),
+    '_ForwardingWorkerLink': CapabilityCase(
+        Anonymous('`SubAgentWorker` attaches one to each task run that forwards its events')
+    ),
+    'ClearToolResults': CapabilityCase(
+        Anonymous('several form an escalation ladder, like `TieredCompaction` tiers'),
+        build=lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
+    ),
+    'DenyUnanswered': CapabilityCase(Anonymous('a second instance would deny what the first already denied')),
+    'DeduplicateFileReads': CapabilityCase(
+        Anonymous('file-read identification is agent-specific; one per `file_key`'),
+        build=_deduplicate_file_reads,
+    ),
+    'DynamicWorkflow': CapabilityCase(
+        Anonymous('one per workflow definition'),
+        build=Unbuildable('Runs sub-agents a caller supplies, whose requests are their own conversations.'),
+    ),
+    'FallbackCompaction': CapabilityCase(
+        Anonymous('drives a fallback chain; several independent chains compose'),
+        build=lambda _: FallbackCompaction(fallback_chain=[SlidingWindowCompaction(max_messages=6, keep_messages=2)]),
+    ),
+    'InputGuardrail': CapabilityCase(
+        Anonymous('several guards is the design'),
+        build=lambda _: InputGuardrail(guard=lambda text: True),
+    ),
+    'OutputGuardrail': CapabilityCase(
+        Anonymous('several guards is the design'),
+        build=lambda _: OutputGuardrail(guard=lambda output: True),
+    ),
+    'PromptInjectionDefender': CapabilityCase(
+        Anonymous('one per `tool_filter`; several scopes compose'),
+        requires='stackone_defender',
+    ),
+    'StreamGuardrail': CapabilityCase(
+        Anonymous('several guards is the design'),
+        build=lambda _: StreamGuardrail(guard=lambda part: True),
+    ),
+    'ToolGuardrail': CapabilityCase(Anonymous('several guards is the design')),
+    'ToolCallJudge': CapabilityCase(
+        Anonymous('one per risk question; stacked judges must all allow a call'),
+        build=lambda _: ToolCallJudge(TestModel(), question='Is this call safe?'),
+    ),
+    'ApprovalReviewer': CapabilityCase(
+        Anonymous('one per risk question; each answers the approval requests the ones before it left'),
+        build=lambda _: ApprovalReviewer(TestModel(), question='Is this safe?'),
+    ),
+    'Permissions': CapabilityCase(
+        Anonymous('each mode holds the calls it asks about, so stacked ones ask when any of them would')
+    ),
+    'ManagedPrompt': CapabilityCase(
+        Anonymous(
+            'one per prompt name; the name derives its `id`, so two of one prompt are rejected when the agent is built'
+        ),
+        build=lambda _: ManagedPrompt('assistant', default='You answer questions about the news.'),
+    ),
+    'LogfireMCP': CapabilityCase(
+        Narrows(
+            'one Logfire connection per id; two that differ need their own ids and tool prefixes',
+            lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
+        ),
+        build=_hosted(LogfireMCP),
+    ),
+    'RepoContext': CapabilityCase(Anonymous('one per workspace root'), build=_repo_context),
+    'ReportContextUsage': CapabilityCase(Anonymous('a passive observer; several callbacks compose')),
+    'ReportRemainingBudget': CapabilityCase(
+        Anonymous('only a hook; each reports the run limits and its own `SpendLimits`')
+    ),
+    'ReportStaleFiles': CapabilityCase(Anonymous('only an event listener and a hook; two would send two notices')),
+    'SlidingWindowCompaction': CapabilityCase(
+        Anonymous('composes as a tier under `TieredCompaction`'),
+        build=lambda _: SlidingWindowCompaction(max_messages=6, keep_messages=2),
+    ),
+    'GoogleWorkspace': CapabilityCase(
+        Anonymous('one per set of products, and `services` is what names it'),
+        build=Unbuildable('Needs Google OAuth credentials to list its tools.'),
+    ),
+    'StackOne': CapabilityCase(
+        Anonymous('one per linked account, and `account_id` is what names it'),
+        build=lambda _: StackOne('account', client=_hosted_server()),
+    ),
+    'TieredCompaction': CapabilityCase(
+        Anonymous('drives other strategies; one per tier list'),
+        build=lambda _: TieredCompaction(tiers=[ClearToolResults(max_messages=6, keep_pairs=1)], target_tokens=10),
+    ),
+    'WarnNearLimits': CapabilityCase(
+        Anonymous('a passive observer; several thresholds compose'),
+        build=lambda _: WarnNearLimits(max_iterations=2),
+    ),
+    'WarnOnCacheBusts': CapabilityCase(Anonymous('a passive observer; several thresholds compose')),
+    'TrajectoryJudge': CapabilityCase(
+        Anonymous('each judge independently evaluates and steers the run'),
+        build=lambda _: TrajectoryJudge(model=TestModel()),
+    ),
+    'DetectLoops': CapabilityCase(
+        Anonymous('only hooks; several detectors with their own thresholds and actions compose')
+    ),
+    'ReportToolErrors': CapabilityCase(
+        Anonymous('a wrapper toolset; the innermost (last listed) formats the error and outer ones see a ToolFailed')
+    ),
+    'ToolBudgets': CapabilityCase(
+        Anonymous('only a hook; each counts the calls it lets run, so stacked budgets all apply')
+    ),
+    'RefineOutput': CapabilityCase(
+        Anonymous('only a hook; each counts its own rounds and adds its instructions to a round')
+    ),
+    'RequireVerification': CapabilityCase(
+        Anonymous('only hooks; each keeps its own record of edits, checks, and attempts'),
+        build=lambda tmp_path: [
+            RequireVerification(verification_commands=[r'true\b']),
+            FileSystem(),
+            Shell(denied_commands=[]),
+            LocalWorkspace(tmp_path),
+        ],
+    ),
+    'WrapUpAtLimits': CapabilityCase(
+        Anonymous('only hooks; several on one agent each add their prompt to the final request')
+    ),
+    'RenderWorkflows': CapabilityCase(
+        Rejected('Only one durability capability can be attached to an agent.'),
+        build=Unbuildable('Durable engine: needs a Render Workflows app.'),
+    ),
+    'AWSLambdaDurability': CapabilityCase(
+        Rejected(_DURABILITY),
+        build=Unbuildable('Durable engine: needs the AWS Lambda durable functions runtime.'),
+    ),
+    'AbsurdDurability': CapabilityCase(
+        Rejected(_DURABILITY),
+        build=Unbuildable('Durable engine: needs a Postgres-backed Absurd queue.'),
+    ),
+    'AzureDurableTaskDurability': CapabilityCase(
+        Rejected('an agent accepts only one durable execution engine; core rejects a second before binding'),
+        requires='durabletask',
+    ),
+    'PGTaskDurability': CapabilityCase(
+        Rejected(_DURABILITY),
+        build=Unbuildable('Durable engine: needs Postgres.'),
+    ),
+    # -- No default `id`, but two never coexist anyway: their tool names collide. --
+    'FileSystem': CapabilityCase(
+        Collides(
+            'its toolset registers `read_file` and friends under fixed names',
+            lambda cls: (cls(str(COMBINE_ROOT_A)), cls(str(COMBINE_ROOT_A.parent))),
+        ),
+        build=_workspace(FileSystem),
+    ),
+    'Goal': CapabilityCase(
+        Narrows(
+            'one goal per id; several goals each need their own id, and every completion check must accept',
+            lambda cls: (cls(goal='Finish'), cls(goal='Also finish')),
+        ),
+        build=lambda _: Goal(goal='Report the weather.', verify=_goal_met),
+    ),
+    'AskUser': CapabilityCase(
+        Narrows(
+            'one `ask_user_question` tool per id, and two answerers is a conflict, not one configuration stated twice',
+            lambda cls: (cls(answerer=_decline), cls(answerer=None)),
+        ),
+        build=lambda _: AskUser(answerer=None),
+    ),
+    'Peers': CapabilityCase(
+        Narrows(
+            'one peer network per id; merging two networks would widen who receives messages',
+            lambda cls: (
+                cls(network=InMemoryPeerNetwork().join(handle='a')),
+                cls(network=InMemoryPeerNetwork().join(handle='b')),
+            ),
+        )
+    ),
+    'Shell': CapabilityCase(
+        Collides(
+            'its toolset registers `run_command` and friends under fixed names',
+            lambda cls: (cls(default_timeout=10.0), cls(default_timeout=20.0)),
+        ),
+        build=_workspace(Shell),
+    ),
+    'CapabilityCreation': CapabilityCase(
+        Narrows(
+            'one store directory per id; two that differ need their own ids and PrefixTools',
+            lambda cls: (cls(str(COMBINE_ROOT_A)), cls(str(COMBINE_ROOT_B))),
+        ),
+        build=lambda tmp_path: [CapabilityCreation(tmp_path / 'capabilities'), LocalWorkspace(tmp_path)],
+    ),
+    'PydanticAIDocs': CapabilityCase(
+        Narrows(
+            'one `read_pyai_docs` tool per id; two that differ need their own ids and PrefixTools',
+            lambda cls: (cls(), cls(cache=False)),
+        )
+    ),
+    'Notion': CapabilityCase(
+        Narrows(
+            'one Notion connection per id; two that differ need their own ids and tool prefixes',
+            lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
+        ),
+        build=_hosted(Notion),
+    ),
+    'PyaiDocs': CapabilityCase(
+        Narrows(
+            'deprecated alias of `PydanticAIDocs`, and combines the same way',
+            lambda cls: (cls(), cls(cache=False)),
+        )
+    ),
+    'Macroscope': CapabilityCase(
+        Narrows(
+            'one `run_macroscope_review` tool per id; two that differ need their own ids and PrefixTools',
+            lambda cls: (cls(timeout=10.0), cls(timeout=20.0)),
+        ),
+        build=_workspace(Macroscope),
+    ),
+    'LocalStack': CapabilityCase(
+        Narrows(
+            'one LocalStack environment per id, and its service lists are an access boundary',
+            lambda cls: (cls(allowed_services=['s3']), cls(allowed_services=['sqs'])),
+        )
+    ),
+    'Linear': CapabilityCase(
+        Narrows(
+            'one Linear connection per id; two that differ need their own ids and tool prefixes',
+            lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
+        ),
+        build=_hosted(Linear),
+    ),
+    'Ordinal': CapabilityCase(
+        Narrows(
+            'one Ordinal connection per id; two that differ need their own ids and tool prefixes',
+            lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
+        ),
+        build=_hosted(Ordinal),
+    ),
+    'Grain': CapabilityCase(
+        Narrows(
+            'one Grain connection per id; two that differ need their own ids and tool prefixes',
+            lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
+        ),
+        build=_hosted(Grain),
+    ),
+    'DayAI': CapabilityCase(
+        Narrows(
+            'one DayAI connection per id; two that differ need their own ids and tool prefixes',
+            lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
+        ),
+        build=_hosted(DayAI),
+    ),
+    'PostHog': CapabilityCase(
+        Narrows(
+            'one PostHog connection per id; two that differ need their own ids and tool prefixes',
+            lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
+        ),
+        build=_hosted(PostHog),
+    ),
+    'Pylon': CapabilityCase(
+        Narrows(
+            'one Pylon connection per id; two that differ need their own ids and tool prefixes',
+            lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
+        ),
+        build=_hosted(Pylon),
+    ),
+    'CodeMode': CapabilityCase(
+        Narrows(
+            'one `run_code` tool per id; two that differ need their own ids and PrefixTools',
+            lambda cls: (cls(max_retries=1), cls(max_retries=2)),
+        )
+    ),
+    'IPythonCodeMode': CapabilityCase(
+        Collides('`run_code` is reserved, so a second one is rejected by name'),
+        # Keeps the scenario's tools native, so the conversation checks the `run_code` declaration without
+        # launching a kernel process for every provider.
+        build=lambda _: _ipython_code_mode(),
+        requires='jupyter_client',
+    ),
+    'BrowserUse': CapabilityCase(
+        Collides('its toolset registers its browser tools under fixed names'),
+        requires='browser_use',
+    ),
+    'SmartSearch': CapabilityCase(
+        Narrows(
+            'one `smart_search` tool per id, and its judge `model` decides which provider receives the source',
+            lambda cls: (cls('test'), cls('other')),
+        ),
+        build=_workspace(lambda: SmartSearch(model=TestModel())),
+    ),
+    'PlaywrightBrowser': CapabilityCase(
+        Narrows(
+            'one browser per id, and its egress settings are an access boundary',
+            lambda cls: (cls(), cls(allowed_domains=['example.com'])),
+        ),
+        requires='playwright',
+    ),
+    'ConversationSearch': CapabilityCase(
+        Narrows(
+            'one `search_conversation_history` tool per id, and its source and scope bound what it can read',
+            lambda cls: (
+                cls(SnapshotHistorySource(InMemoryStepStore()), scope='conversation'),
+                cls(SnapshotHistorySource(InMemoryStepStore()), scope='all'),
+            ),
+        ),
+        build=lambda _: ConversationSearch(SnapshotHistorySource(InMemoryStepStore()), scope='conversation'),
+    ),
+    'ExaAgent': CapabilityCase(
+        Narrows(
+            'one Exa agent configuration per id; two that differ need their own ids and PrefixTools',
+            lambda cls: (cls(effort=None), cls(system_prompt='Be thorough.')),
+        ),
+        requires='exa_py',
+        env=_EXA_KEY,
+    ),
+    'Pixeltable': CapabilityCase(
+        Narrows(
+            'one Pixeltable catalog configuration per id, and its table allowlist is an access boundary',
+            lambda cls: (cls(tables=['app']), cls(tables=['app.docs'])),
+        ),
+        build=lambda _: pydantic_ai_harness.Pixeltable(tables=['*']),
+        requires='pixeltable',
+    ),
+    'ExaSearch': CapabilityCase(
+        Narrows(
+            'one Exa search configuration per id, and its domain lists are an access boundary',
+            lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
+        ),
+        requires='exa_py',
+        env=_EXA_KEY,
+    ),
+    'GitHub': CapabilityCase(
+        Narrows(
+            'one GitHub connection per id; two that differ need their own ids and tool prefixes',
+            lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
+        ),
+        build=_hosted(GitHub),
+    ),
+    'YouResearch': CapabilityCase(
+        Narrows(
+            'one You.com research configuration per id, and its domain lists are an access boundary',
+            lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
+        ),
+        requires='youdotcom',
+        env=_YOU_KEY,
+    ),
+    'YouSearch': CapabilityCase(
+        Narrows(
+            'one You.com search configuration per id, and its domain lists are an access boundary',
+            lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
+        ),
+        requires='youdotcom',
+        env=_YOU_KEY,
+    ),
+    'KeenableSearch': CapabilityCase(
+        Narrows(
+            'one Keenable search configuration per id; two that differ need their own ids and PrefixTools',
+            lambda cls: (cls(), cls(num_results=3)),
+        )
+    ),
+    'Slack': CapabilityCase(
+        Narrows(
+            'one Slack connection per id; two that differ need their own ids and tool prefixes',
+            lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
+        ),
+        build=_hosted(Slack),
+    ),
+}
+"""Every Pydantic AI Harness capability, public or not, keyed by class name."""

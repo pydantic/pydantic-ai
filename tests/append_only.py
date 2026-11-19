@@ -1063,13 +1063,13 @@ def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]
     return inspect.isclass(obj) and issubclass(obj, AbstractCapability)
 
 
-def skip_unless_installed(name: str, optional_dependencies: Mapping[str, str]) -> None:
-    """Skip the case for `name` when the module its optional dependency group provides isn't installed.
+def skip_unless_installed(name: str, module: str | None) -> None:
+    """Skip the case for `name` when `module`, which its optional dependency group provides, isn't installed.
 
     Checked with `find_spec` rather than imported, since several of these SDKs are kept out of collection
-    (`TID253`). Only capabilities listed here may be skipped: any other `ImportError` fails the test.
+    (`TID253`). Only a case that names its module in `requires` may be skipped: any other `ImportError` fails
+    the test.
     """
-    module = optional_dependencies.get(name)
     if module is not None and importlib.util.find_spec(module) is None:  # pragma: lax no cover
         pytest.skip(f'`{name}` needs `{module}`, from an optional dependency group that is not installed')
 
@@ -1090,17 +1090,10 @@ def build_capabilities(
         return [cls()]
     except (TypeError, ValueError, UserError) as exc:
         pytest.fail(
-            f'`{name}()` cannot be built with its defaults ({exc}). Add a `FIXTURES` entry that configures it, '
-            "or an `EXEMPT` entry saying why it can't run offline.",
+            f'`{name}()` cannot be built with its defaults ({exc}). Give its `CASES` entry a `build` that '
+            "configures it, or an `Unbuildable` saying why it can't run offline.",
             pytrace=False,
         )
-
-
-@dataclass(frozen=True)
-class Exempt:
-    """A capability the test can't construct generically, with the reason."""
-
-    reason: str
 
 
 Check = Literal['prefix', 'ids', 'determinism', 'request-scope']
