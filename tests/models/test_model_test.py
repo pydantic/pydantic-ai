@@ -1435,6 +1435,26 @@ def test_test_model_arguments_validate(name: str, schema: JsonSchema, adapter: T
             _arguments_schema({'type': 'integer', 'multipleOf': 2.5, 'minimum': 10**400}, {}),
             id='multipleOf-fractional-step-for-an-integer-too-large-for-a-float',
         ),
+        pytest.param(
+            _arguments_schema({'type': 'integer', 'multipleOf': float('inf'), 'minimum': 1}, {}),
+            id='multipleOf-infinite',
+        ),
+        pytest.param(
+            _arguments_schema(
+                {'$ref': '#/$defs/Filter'},
+                {
+                    'Filter': {
+                        'type': 'object',
+                        'properties': {
+                            'and': {'type': 'array', 'items': {'$ref': '#/$defs/Filter'}},
+                            'eq': {'type': 'string'},
+                        },
+                        'minProperties': 1,
+                    }
+                },
+            ),
+            id='minProperties-recursive',
+        ),
     ],
 )
 def test_test_model_generates_for_schemas_it_cant_satisfy(schema: JsonSchema):
