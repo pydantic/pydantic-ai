@@ -21,6 +21,7 @@ from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResu
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._callable import takes_context
 from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._from_spec import use_default_from_spec
 from pydantic_ai_harness.ask_user._events import AskUserAnsweredEvent
 from pydantic_ai_harness.ask_user._toolset import (
     OWNER_METADATA_KEY,
@@ -148,6 +149,26 @@ class AskUser(AbstractCapability[AgentDepsT]):
             description: str | None = None,
             defer_loading: bool = False,
         ) -> None: ...
+
+    # Core reads this signature to generate the spec's JSON schema. Inherited, core reads `__init__`, and generating
+    # the schema fails on `answerer`, whose answerer protocols have no JSON schema. `timeout` bounds the answerer, so
+    # with `answerer=None` it can only be `None` too.
+    @classmethod
+    def from_spec(
+        cls,
+        *,
+        answerer: None,
+        timeout: None = None,
+        id: str | None = 'ask_user',
+        description: str | None = None,
+        defer_loading: bool = False,
+    ) -> AskUser[AgentDepsT]:
+        """Build from an agent spec, where `answerer` and `timeout` can only be `None`, which defers every call."""
+        return cls(answerer=answerer, timeout=timeout, id=id, description=description, defer_loading=defer_loading)
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        use_default_from_spec(cls, AskUser)
 
     def __post_init__(self) -> None:
         if self.timeout is not None and self.timeout <= 0:

@@ -7,6 +7,8 @@ from dataclasses import KW_ONLY, dataclass, field
 from pydantic_ai import AbstractToolset
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, ToolSearch
 from pydantic_ai.tools import AgentDepsT, ToolSelector
+from pydantic_ai_harness._from_spec import use_default_from_spec
+from pydantic_ai_harness._judge import SerializableToolSelector
 from pydantic_ai_harness.ipython_code_mode._kernel import IPythonKernel
 from pydantic_ai_harness.ipython_code_mode._toolset import IPythonCodeModeToolset
 from pydantic_ai_harness.tool_bridge import ToolBridge
@@ -70,6 +72,39 @@ class IPythonCodeMode(AbstractCapability[AgentDepsT]):
     run ends. Pass an `IPythonKernel` to share one kernel across the runs of a conversation; you own
     it and shut it down.
     """
+
+    # Core reads this signature to generate the spec's JSON schema. Inherited, core falls back to the variadic base
+    # `from_spec`, because the `ToolSelector` hint on `tools` refers to `ToolDefinition`, which this module doesn't
+    # import, and publishes only the bare `'IPythonCodeMode'`. Reading `__init__` would not help: generating the
+    # schema fails on `kernel`, whose `IPythonKernel` has no JSON schema.
+    @classmethod
+    def from_spec(
+        cls,
+        tools: SerializableToolSelector = 'all',
+        max_retries: int = 3,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        max_tool_calls: int = 100,
+        timeout: float | None = 60.0,
+        kernel: None = None,
+    ) -> IPythonCodeMode[AgentDepsT]:
+        """Build from an agent spec, where `tools` takes names or metadata and `kernel` can only be `None`."""
+        return cls(
+            tools,
+            max_retries,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+            max_tool_calls=max_tool_calls,
+            timeout=timeout,
+            kernel=kernel,
+        )
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        use_default_from_spec(cls, IPythonCodeMode)
 
     def get_ordering(self) -> CapabilityOrdering:
         """Wrap around `ToolSearch`, so `search_tools` stays native, and `ToolBridge`, so its dispatchers are sandboxed."""

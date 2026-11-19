@@ -6,7 +6,14 @@ from dataclasses import KW_ONLY, dataclass
 
 from pydantic_ai import AbstractToolset
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, ToolSearch, ToolSearchFunc
-from pydantic_ai.tools import AgentDepsT, ToolSelector
+
+# `ToolSelector` and `ToolSearchFunc` refer to `ToolDefinition` by a forward string. Import it eagerly so agent spec
+# schema generation (`get_type_hints` on `ToolBridge.__init__`) resolves it against this module's globals.
+from pydantic_ai.tools import (
+    AgentDepsT,
+    ToolDefinition,  # pyright: ignore[reportUnusedImport]  # noqa: F401
+    ToolSelector,
+)
 from pydantic_ai_harness.tool_bridge._toolset import ToolBridgeToolset
 
 

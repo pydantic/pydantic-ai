@@ -21,6 +21,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     AbstractCapability,
     HandleDeferredToolCalls,
@@ -611,6 +612,11 @@ class TestDeferred:
     def test_a_timeout_needs_an_answerer(self) -> None:
         with pytest.raises(UserError, match='cannot be combined with `answerer=None`'):
             AskUser(answerer=None, timeout=5)
+
+    def test_a_spec_offers_timeout_only_as_null(self) -> None:
+        """A spec's `answerer` can only be `None`, so its schema offers `timeout` only as `null`."""
+        schema = AgentSpec.model_json_schema_with_capabilities([AskUser])
+        assert schema['$defs']['spec_params_AskUser']['properties']['timeout'] == {'title': 'Timeout', 'type': 'null'}
 
     @pytest.mark.parametrize('timeout', [0, -1])
     def test_a_timeout_must_be_positive(self, timeout: float) -> None:
