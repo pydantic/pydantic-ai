@@ -24,6 +24,7 @@ from pydantic_ai.tools import (
     matches_tool_selector,
 )
 from pydantic_ai_harness._durable import in_durable_context
+from pydantic_ai_harness._shell_command import shell_command, shell_command_arg
 from pydantic_ai_harness.file_system._tool_kinds import CREATE_DIRECTORY_KIND, EDIT_FILE_KIND, WRITE_FILE_KIND
 from pydantic_ai_harness.permissions._rules import PermissionRule, PermissionRuleSpec, decide
 
@@ -274,10 +275,10 @@ class Permissions(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]
     ) -> _Asked | None:
         """What to ask about this call, or `None` to run it; raises `SkipToolExecution` when a rule denies it."""
-        command = _command(tool_def, args)
+        command = shell_command(tool_def, args)
         rules = [rule for rule in self.rules if await matches_tool_selector(rule.tools, ctx, tool_def)]
         posix = ctx.workspace.platform != 'windows'
-        rule = decide(rules, command=command, command_arg=_command_arg(tool_def), args=args, posix=posix)
+        rule = decide(rules, command=command, command_arg=shell_command_arg(tool_def), args=args, posix=posix)
         if rule is not None and rule.verdict != 'allow':
             return _rule_asks(ctx, rule, _subject(tool_def, args, command))
         return self._mode_asks(
@@ -314,20 +315,6 @@ class Permissions(AbstractCapability[AgentDepsT]):
                 reason=f'{label} mode asks before commands that delete, push, install, or reach the network.',
             )
         return None
-
-
-def _command_arg(tool_def: ToolDefinition) -> str | None:
-    """The argument holding the shell command a tool runs, when it declares one."""
-    metadata = tool_def.metadata or {}
-    name = metadata.get('code_arg_name')
-    return name if metadata.get('code_arg_language') == 'shell' and isinstance(name, str) else None
-
-
-def _command(tool_def: ToolDefinition, args: dict[str, Any]) -> str | None:
-    """The shell command a call runs, when its tool declares one."""
-    name = _command_arg(tool_def)
-    command = None if name is None else args.get(name)
-    return command if isinstance(command, str) else None
 
 
 def _subject(
