@@ -456,7 +456,10 @@ async def test_a_chain_does_not_hide_a_profile_that_is_not_signed_in(tmp_path: P
 
 
 async def test_first_run_without_codex_offers_other_providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """With no credentials, the default Codex model names the other ways in instead of starting a Codex sign-in."""
+    """With no credentials, the default Codex model names the other ways in instead of starting a Codex sign-in.
+
+    Not a VCR test: loading the missing credentials fails before any provider request, so there is nothing to record.
+    """
 
     async def no_login(*args: object, **kwargs: object) -> str:
         raise AssertionError('Codex sign-in started on its own')  # pragma: no cover
