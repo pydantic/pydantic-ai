@@ -4392,7 +4392,7 @@ class BaseToolCallPart(Generic[ArgsT_co]):
         This is just for convenience with models that require dicts as input.
 
         Args:
-            raise_if_invalid: If `True`, a `ValueError` or `AssertionError`
+            raise_if_invalid: If `True`, a `ValueError`, `TypeError`, or `AssertionError`
                 caused by malformed or non-object JSON in `args` will be re-raised.  When
                 `False` (the default), such JSON is handled gracefully by
                 returning `{'INVALID_JSON': '<raw args>'}` so that the value
@@ -4409,7 +4409,7 @@ class BaseToolCallPart(Generic[ArgsT_co]):
             if not isinstance(args, dict):
                 raise AssertionError('args should be a dict')
             return cast(dict[str, Any], args)
-        except (ValueError, AssertionError):
+        except (ValueError, TypeError, AssertionError):
             if raise_if_invalid:
                 raise
             return {INVALID_JSON_KEY: self.args}

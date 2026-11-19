@@ -3266,6 +3266,15 @@ def test_args_as_dict_malformed_json_returns_invalid_json_wrapper():
     assert result == {INVALID_JSON_KEY: malformed}
 
 
+@pytest.mark.parametrize('raw', ['\ud800', '{"text": "\udfff"}'])
+def test_args_as_dict_lone_surrogate_returns_invalid_json_wrapper(raw: str):
+    """Exercise the actual JSON parser through the public message API, without a provider call."""
+    part = ToolCallPart(tool_name='test_tool', args=raw)
+    assert part.args_as_dict() == {INVALID_JSON_KEY: raw}
+    with pytest.raises(TypeError):
+        part.args_as_dict(raise_if_invalid=True)
+
+
 def test_args_as_dict_non_dict_json_returns_invalid_json_wrapper():
     """args_as_dict should return INVALID_JSON wrapper for valid JSON that's not a dict."""
     json_list = '[1, 2, 3]'
