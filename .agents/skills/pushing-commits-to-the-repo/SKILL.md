@@ -193,7 +193,7 @@ end of the body, before the checklist. Skip the section entirely when the log is
 ```
 
 Do not copy the decisions template's instructions into the PR body.
-Wrap each `Fixes #N`, `Closes #N` or `Resolves #N` inside a copied entry in backticks. A bare closing keyword in the body closes that issue when the PR merges.
+Wrap every closing keyword inside a copied entry in backticks (`close`, `fix` or `resolve` in any form, followed by an issue reference). A bare closing keyword in the body closes that issue when the PR merges.
 The section is public. Leave out confidential or privileged reasoning. Keep session ids: a later agent uses them to find the session that made the decision.
 
 ### Keep labels current with the title and body
@@ -333,7 +333,7 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   Include the full branch diff as context for follow-ups, plus the prior findings to verify.
   Disable external diff and text conversion while gathering diffs.
 - Launch the reviewer tier defined by `pre-push-review` from the stable policy-base checkout.
-  Use the current harness's native no-history primitive and native read and search tools.
+  Start it as a fresh session of the current harness, with no prior history and only native read and search tools. A subagent of your own session does not qualify when it inherits your working directory or loaded instructions.
   Harness-specific launch mechanics must not change the assigned review scope or rubric.
 - The reviewer may work the review rubric, or decompose this diff and fan out to subagents of its
   own where the diff's risk is specific enough that the rubric would not name it. That
@@ -517,6 +517,7 @@ if the head changes, capture the new SHA and restart the loop.
      It does nothing on a PR whose author has write access.
      A `failure` leaves the gate unsatisfied until a later head passes or a maintainer applies `pr-review-checks:accepted`.
      A `failure` whose description names `Incomplete`, `No result` or a rerun, and not `Blocking findings`, has no finding to triage. Rerun that `PR Review Checks` run once, then escalate.
+     A rerun keeps the original run's `pr-review-checks.yml`, including the secrets its steps receive, but checks out its scripts from current `main`. When a fix to that workflow file has merged since, push a new head instead.
      When the run posted findings, its `target_url` links that review. Triage the findings in step 4.
    - **`CI Review`:** do not wait for it unless explicitly requested. On same-repository PRs, it runs
      when a user with write access approves the current head, when someone adds the `final-review`
