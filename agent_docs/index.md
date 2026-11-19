@@ -137,4 +137,5 @@ Check these when working in specific areas:
 - **[Pydantic AI Slim Architecture](pydantic-ai-slim.md)**: When changing agents, tools, output, message history, providers, profiles, capabilities, toolsets, UI adapters, or durable execution
 - **[Provider Adapters](provider-adapters.md)**: When mapping messages to or from a provider's wire format in a model adapter, adding a capability check, or adding a profile flag an adapter reads
 - **[Cognitive Complexity](complexity.md)**: When pre-commit or CI reports a function's cognitive complexity, or before you add a branch to a function that is already over the limit
+- **[Glossary](GLOSSARY.md)**: When a term in an agent instruction is unclear or seems to name two things, or before you name a new concept in one
 <!-- /braindump -->

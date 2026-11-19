@@ -61,7 +61,7 @@ candidate tree, so citing it would route this boundary through the tree the boun
 escape. Note the directory's literal path — later phases run in fresh shells — and remove it by that
 path on every exit.
 
-Launch every phase's subagents from the policy-base checkout so startup loads the stable instructions.
+Launch every phase's subagents from the policy base checkout so startup loads the stable instructions.
 Supply the candidate diff or immutable candidate content for inspection as data.
 Give subagents absolute artifact paths in the candidate worktree.
 Use the resolved `<absolute-audit-dir>` for every phase artifact, including driver reads and writes.

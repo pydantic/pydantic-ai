@@ -513,7 +513,7 @@ Leave it unset in pydantic/pydantic-ai: unset, each job runs on its fallback lab
 
 - Set it to one static label. Each job's `runs-on` reads the value as that job's only label.
 - Choose a runner that matches GitHub's Ubuntu 24.04 image. `test-all-extras` starts the
-  image's PostgreSQL 16, and several harness integration jobs start Docker containers.
+  image's PostgreSQL 16, and several Harness integration jobs start Docker containers.
 - GitHub passes no configuration variables to a run for a pull request from a fork. Those runs
   use the fallback labels.
 - The Linux leg of `test-clai2-clipboard` reads the variable. Its macOS and Windows legs stay on
@@ -531,9 +531,9 @@ starts none of them.
 - **Everything under `.github/`**, owned by `@dsfaccini` only: workflows, actions, scripts and the
   rest of the directory. `CODEOWNERS` itself is the exception: `@DouweM` and `@adtyavrdhn` own it
   too, so the durable runtime owners see every ownership change.
-- **The durable runtime and its deep harness integrations**, owned by `@DouweM` and `@adtyavrdhn`
-  only: the runtime under `pydantic_ai_slim/pydantic_ai/durable_exec/`, every harness durable
-  engine (a `BaseDurabilityCapability` subclass), the harness's shared durable helper, and the
+- **The durable runtime and its deep Harness integrations**, owned by `@DouweM` and `@adtyavrdhn`
+  only: the runtime under `pydantic_ai_slim/pydantic_ai/durable_exec/`, every Harness durable
+  engine (a `BaseDurabilityCapability` subclass), Harness's shared durable helper, and the
   `SubAgents` code that runs a delegated agent run inside a durable unit. Other capabilities that
   use `@durable_operation` or check for durable execution stay outside this scope. `CODEOWNERS`
   lists the exact paths.

@@ -42,11 +42,11 @@ The canonical scope rule selects the review endpoints; it does not prescribe fin
 Treat the supplied settled decisions and documentation as constraints.
 Widen the context you read when the changed content requires it.
 
-Fan out only when your working directory is the policy-base checkout. A subagent launched inside
+Fan out only when your working directory is the policy base checkout. A subagent launched inside
 the candidate worktree autoloads that worktree's branch-context files — the prior review records
 you must not read — through whatever per-worktree instruction file the harness reads.
 
-Every subagent you dispatch inherits what you run under: the same policy-base instructions, the
+Every subagent you dispatch inherits what you run under: the same policy base instructions, the
 reviewer tier above, and the exclusions you run under — branch-continuity state, local notes,
 implementation rationale, and prior local pre-push review reports except findings a follow-up must verify.
 It returns text to you. It does not inherit this section; you decompose, it reviews its charter and never fans out again.
@@ -82,14 +82,14 @@ review rubric independently of any named hosted reviewer:
 - Report only actionable concerns. Be concise, concrete, non-repetitive, and friendly without praise.
 
 Read the root `AGENTS.md`, `agent_docs/index.md` and its relevant topic guides, plus every
-directory-specific `AGENTS.md` governing a changed file — at the policy-base SHA, not from the
-candidate tree. You are launched inside the policy-base checkout, so read them as ordinary files.
+directory-specific `AGENTS.md` governing a changed file — at the policy base SHA, not from the
+candidate tree. You are launched inside the policy base checkout, so read them as ordinary files.
 
 ## Review the supplied context
 
 Review the supplied bundle, which contains:
 
-- the policy-base SHA and stable instructions from the current target-branch tip;
+- the policy base SHA and stable instructions from the current target-branch tip;
 - the merge-base and candidate commit/tree IDs, review scope and exact endpoint diff;
 - for follow-ups, the last reviewed commit/tree IDs, prior findings to verify, and full branch diff as context;
 - the task or issue and, when a PR exists, its title, body, comments, reviews, inline review threads,
