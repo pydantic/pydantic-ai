@@ -6724,19 +6724,33 @@ def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
     )
 
 
-def test_tool_return_deeply_nested_json_string_stays_string() -> None:
-    """A tool return nested past the recursion limit loads as the string, like any other non-JSON return."""
-    content = '[' * 100_000 + ']' * 100_000  # deeper than `json.loads` can parse on every supported Python
-    loaded = AGUIAdapter.load_messages(
-        [
-            AssistantMessage(
-                id='msg-1', tool_calls=[ToolCall(id='tc-1', function=FunctionCall(name='get_value', arguments='{}'))]
-            ),
-            ToolMessage(id='msg-2', tool_call_id='tc-1', content=content),
-        ]
+@pytest.mark.parametrize(
+    'content',
+    [
+        # deeper than `json.loads` can parse on every supported Python
+        pytest.param('[' * 100_000 + ']' * 100_000, id='past-the-recursion-limit'),
+        # valid JSON, nested deeper than the request body itself may be
+        pytest.param('{"a":' * 5_000 + '1' + '}' * 5_000, id='past-the-request-depth-limit'),
+    ],
+)
+async def test_tool_return_deeply_nested_json_string_stays_string(content: str) -> None:
+    """A deeply nested tool return reaches the model as the string, like any other plain-text return."""
+    received: list[ToolReturnPart] = []
+
+    async def stream_function(messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+        received.extend(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        yield 'done'
+
+    run_input = create_input(
+        AssistantMessage(
+            id='msg-1', tool_calls=[ToolCall(id='tc-1', function=FunctionCall(name='get_value', arguments='{}'))]
+        ),
+        ToolMessage(id='msg-2', tool_call_id='tc-1', content=content),
     )
-    tool_returns = list(iter_message_parts(loaded, ModelRequest, ToolReturnPart))
-    assert tool_returns == [
+    events = await run_and_collect_events(Agent(FunctionModel(stream_function=stream_function)), run_input)
+
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    assert received == [
         ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content, timestamp=IsDatetime())
     ]
 
