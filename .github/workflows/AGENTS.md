@@ -154,6 +154,11 @@ that checks out the head as data. Without `ref:`, the checkout is the PR's merge
 A PR that changes a workflow and a script it runs therefore runs its own workflow with `main`'s
 script. Expect the script change's first real run to be on `main`.
 
+A run on a pull request event restores a cache from the PR's own `refs/pull/<number>/merge` scope
+before `main`'s, and the PR's own `CI` run can write to that scope. So a job that holds secrets
+restores no cache on such an event. `setup-douwebot-tools` restores its cache only when
+`github.ref` is `refs/heads/main`, and installs its pinned tools otherwise.
+
 A PR into a maintenance branch runs that branch's copies. `v1` has none of these workflows, so its
 PRs get no labels, reviews or `.github` guard.
 
