@@ -18,7 +18,7 @@ they run on the display of the run's [workspace](../workspace.md), and the tool 
 pip/uv-add "pydantic-ai-harness[anthropic]"
 ```
 
-Use your model provider's extra instead of `anthropic`. The example needs Docker; the first run builds a desktop
+Use your model provider's extra instead of `anthropic`. The example needs Docker. The first run builds a desktop
 image, which takes a few minutes.
 
 ## Usage
@@ -35,7 +35,7 @@ async def main():
     print(result.output)
 ```
 
-The container keeps running after the run; see [Clean up](docker-container.md#clean-up). If the run fails, remove it
+The container keeps running after the run. To remove it, see [Clean up](docker-container.md#clean-up). If the run fails, remove it
 in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up).
 
 ### Where the screen comes from

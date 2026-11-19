@@ -110,7 +110,7 @@ container = DockerContainer(
 )
 ```
 
-The mount is the only part of your machine's files the commands can change; the network is a separate setting. For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`, since Docker refuses a second `--network` next to `--network none`. A container with `desktop`, created or attached, refuses the host's network (such as `--network host`) before its desktop starts: its X clients could reach an X server on the host and drive its screen. `docker_args` can't change the container's name, its `ai.pydantic.workspace=true` label or its entrypoint. Set the directory commands start in with `working_dir`.
+The mount is the only part of your machine's files the commands can change; the network is a separate setting. For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`, since Docker refuses a second `--network` next to `--network none`. With `desktop`, a container on the host's network (such as `--network host`) is refused before its desktop starts, whether the run created it or attached to it. On the host's network, programs in the container could connect to your machine's X server, the program that draws your screen, and control your screen. `docker_args` can't change the container's name, its `ai.pydantic.workspace=true` label or its entrypoint. Set the directory commands start in with `working_dir`.
 
 A new container gets `--pids-limit 2048`, so a runaway fork loop can't use up the process table of the machine (or VM) running Docker. A command that hits it fails with `Cannot fork` or `Resource temporarily unavailable`; pass your own `--pids-limit` in `docker_args` to change it, or `-1` to remove it.
 
@@ -199,9 +199,9 @@ async def main():
     print(result.output)
 ```
 
-Without an `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, a window manager, Firefox and a terminal), and later runs reuse it. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. An existing container whose screen is already running keeps its size. Add `Coder` to give the agent the container's shell and files too.
+Without an `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, a window manager, Firefox and a terminal), and later runs reuse it. The screen is 1280x800. For another size, pass it, such as `desktop=(1440, 900)`. An existing container whose screen is already running keeps its size. Add `Coder` to give the agent the container's shell and files too.
 
-The built image is reused, so it doesn't get security updates. To update it, or to keep it under your own tag, build it from `DESKTOP_DOCKERFILE` and pass it as `image`; `--no-cache` skips Docker's cached layers. Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), build it before the first run, so the build doesn't count against a step's timeout.
+The built image is reused, so it doesn't get security updates. To update it, or to keep it under your own tag, build it yourself from `DESKTOP_DOCKERFILE` and pass it as `image`. The `--no-cache` flag below makes Docker rebuild every step instead of reusing earlier results. Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), build it before the first run, so the build doesn't count against a step's timeout.
 
 ```bash
 python -c "from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE; print(DESKTOP_DOCKERFILE)" | docker build --pull --no-cache --tag my-desktop -
@@ -209,9 +209,9 @@ python -c "from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE; 
 
 Then pass `DockerContainer(image='my-desktop', desktop=True)`.
 
-A custom `image` needs Xvfb, `xdotool`, `xwininfo` (Debian's `x11-utils`), `scrot` and `setsid`, plus `fluxbox` and `xprop` for a window manager. Start from `DESKTOP_DOCKERFILE`.
+A custom `image` needs the programs the desktop runs: Xvfb draws the screen, `xdotool` moves the mouse and types, `xwininfo` (Debian's `x11-utils`) reads the screen size, `scrot` takes screenshots, and `setsid` keeps the screen running after the command that started it ends. It also needs `fluxbox`, the window manager, and `xprop`, which checks that the window manager started. The easiest way is to start from `DESKTOP_DOCKERFILE`.
 
-The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+The agent can type only ASCII characters. An action that types or presses a character such as `é` fails, and the model is told why.
 
 There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](../computer_use/#watching-a-run).
 
@@ -267,7 +267,7 @@ Specs saved before the rename use the `DockerSandbox` block name. To keep loadin
 
 | Option | What it does |
 | --- | --- |
-| `image` | Image for a new container, such as `'python:3.13-slim'`. Default: `None`, which only attaches to and removes containers by ref, or with `desktop=True` builds the desktop image. |
+| `image` | Image for a new container, such as `'python:3.13-slim'`. Default: `None`. The capability then only attaches to and removes containers by ref, unless `desktop=True`, which builds the desktop image. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`; `None` uses the image's own (`WORKDIR`, or `/`). |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the container except Docker's proxy settings, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
 | `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |

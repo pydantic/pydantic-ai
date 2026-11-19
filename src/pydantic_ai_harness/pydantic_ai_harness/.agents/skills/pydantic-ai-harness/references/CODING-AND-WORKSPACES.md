@@ -487,7 +487,7 @@ Python up to 3.14.
 - The first operation creates the container; the image needs a POSIX `sh`, and its own entrypoint and
   command don't run. Creating the container (and pulling) is not bounded by a command's `timeout`. Without `image` the
   capability only attaches and removes by ref, and leaves a run without a ref to other workspace capabilities,
-  unless `desktop=True`, which builds the desktop image (below).
+  unless `desktop=True`: then it builds the desktop image (below).
   `working_dir=None` uses the image's `WORKDIR`; a missing `working_dir` is created on first use, in an attached container too.
 - The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`; attaching starts a stopped container,
   so it comes back. The container outlives the run: `await DockerContainer().destroy(ref)`.
@@ -500,10 +500,10 @@ Python up to 3.14.
 - New containers get `--pids-limit 2048`; a `--pids-limit` in `docker_args` replaces it (`-1` removes it).
 - With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
   With Podman, `run()` returns when the command exits.
-- `desktop=True` gives the container a 1280x800 X display for `ComputerUse()`; commands and files stay available.
-  Without `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, xterm, Firefox) and later runs reuse
-  it; a custom `image` needs Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid`. Under durable execution, build the image first and
-  pass it as `image`.
+- `desktop=True` gives the container a 1280x800 screen for `ComputerUse()`. Commands and files still work.
+  Without `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, xterm, Firefox), and later runs reuse
+  it. A custom `image` needs Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid`. Under durable execution, build the
+  image before the first run and pass it as `image`.
 
 ### OpenSandbox
 
