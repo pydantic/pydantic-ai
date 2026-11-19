@@ -313,14 +313,16 @@ def _rejection(
     login: str,
     line: re.Match[str],
     finding: ReviewComment,
+    reviewer: str | None,
     pull: ReviewPullRequest,
     writers: set[str],
     own: set[str],
     opened: dict[str, datetime],
-    optional: bool,
 ) -> str | None:
     """Why a disposition reply does not answer its finding, or `None` when it does."""
     writer = login in writers
+    if reviewer is None and not writer:
+        return f'only write access answers a thread no registered reviewer started, and `{login}` has none'
     if not writer and login != pull.user.login:
         return f'`{login}` is neither the PR author nor a user with write access'
     if sha := line['sha']:
@@ -329,6 +331,7 @@ def _rejection(
         if (at := opened.get(number)) is None:
             return f'#{number} is not another issue or PR'
         return None if writer or at >= finding.created_at else f'#{number} was opened before the finding'
+    optional = reviewer == 'douwebot' and finding.body.startswith(OPTIONAL_FINDING_PREFIX)
     return None if writer or optional else '`Declined:` needs write access'
 
 
@@ -344,6 +347,7 @@ def finding_dispositions(
     A reply counts from the PR author or from write access. A reply line `Fixed in <sha>` names a commit of this PR,
     and `Tracked in #N` another issue or PR, opened at or after the finding unless the replier has write access.
     `Declined: <reason>` counts from write access, and from the author on a douwebot `Optional:` finding.
+    On a thread no registered reviewer started, only a reply from write access counts.
     A resolved thread started before `RESOLVED_THREADS_STARTED_BEFORE` is settled, whatever bot started it.
     """
     parents = {review.id: review for review in reviews}
@@ -370,22 +374,29 @@ def finding_dispositions(
             continue
         url = f'{pull.html_url}#discussion_r{finding.id}'
         reviewer = finding_reviewer(finding, parents.get(finding.pull_request_review_id))
+        name = f'the {reviewer} finding' if reviewer else f'the `{finding.user.login}` thread'
         if reviewer is None:
             unregistered.append(f'{url}: no registered reviewer started this `{finding.user.login}` thread.')
-            continue
-        optional = reviewer == 'douwebot' and finding.body.startswith(OPTIONAL_FINDING_PREFIX)
         rejections = [
-            _rejection(login, line, finding, pull, writers, own, opened, optional)
+            _rejection(login, line, finding, reviewer, pull, writers, own, opened)
             for login, line in answers.get(finding.id, [])
         ]
         if None in rejections:
             continue
         reasons = '; '.join(reason for reason in rejections if reason)
         unanswered.append(
-            f'{url}: the {reviewer} finding has no accepted disposition reply: {reasons}.'
+            f'{url}: {name} has no accepted disposition reply: {reasons}.'
             if reasons
-            else f'{url}: the {reviewer} finding has no disposition reply.'
+            else f'{url}: {name} has no disposition reply.'
         )
+    summary = [f'{len(findings)} review bot findings.']
+    if unregistered:
+        summary += [
+            f'{len(unregistered)} review bot threads have no registered reviewer, so only a reply from write access '
+            'answers them. Register the bot in `REVIEWER_LOGINS`, or see #14014 for a `github-actions[bot]` thread '
+            'without a receipt.',
+            *unregistered,
+        ]
     failures: list[str] = []
     if unanswered:
         failures += [
@@ -393,12 +404,7 @@ def finding_dispositions(
             '`Fixed in <sha>`, `Tracked in #N` or `Declined: <reason>`.',
             *unanswered,
         ]
-    if unregistered:
-        failures += [
-            f'{len(unregistered)} review bot threads have no registered reviewer in `REVIEWER_LOGINS`.',
-            *unregistered,
-        ]
-    return Verdict(summary=[f'{len(findings)} review bot findings.'], failures=failures)
+    return Verdict(summary=summary, failures=failures)
 
 
 def settled_optional_finding(comment: ReviewComment, parent: Review | None, resolved: set[int]) -> bool:

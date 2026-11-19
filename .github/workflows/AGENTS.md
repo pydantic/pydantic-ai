@@ -238,8 +238,9 @@ with the new commits.
 
 Resolving a thread does not answer it, except that a thread started before 2026-11-19 needs no reply once
 resolved. `REVIEWER_LOGINS` in `review_gates.py` names the review bots, and receipts tell douwebot,
-`PR Review Checks` and `CI Review` apart on `github-actions[bot]`. A thread from an unregistered bot, or a
-`github-actions[bot]` thread without one of those receipts, fails whatever the reply. Threads a person starts and
+`PR Review Checks` and `CI Review` apart on `github-actions[bot]`. On a thread from an unregistered bot, or a
+`github-actions[bot]` thread without one of those receipts, only a reply from a user with write access counts, and the
+`PR Review Gates` run still lists the thread as unregistered. Threads a person starts and
 review-body findings are not checked. `CI Review` findings do not wake the gate yet (#13971), so the status
 reflects them only from the next wake-up.
 

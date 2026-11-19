@@ -558,11 +558,10 @@ if the head changes, capture the new SHA and restart the loop.
    An inline finding that an earlier run posted is not posted again, but it still counts toward the status. Find it in the earlier `PR Review Checks` threads.
    After you refute a `critical` or `high` finding, the status still fails. Ask a maintainer to apply `pr-review-checks:accepted` to the current head.
    For each comment:
-   - **Valid** → fix it, run targeted verification, commit, apply the pre-push gate and its scope/exemptions, push, and
-     complete the current-HEAD gates in steps 2 and 3. Then reply with what changed, react 👍,
-     and resolve the thread.
-     On an inline finding from a review bot, reply as soon as you push the fixing commit, before the gates in steps 2 and 3.
-     Open that reply, after any required attribution line, with `Fixed in <sha>`, naming the fixing commit.
+   - **Valid** → fix it, run targeted verification, commit, apply the pre-push gate and its scope/exemptions, and
+     push. Then reply with what changed. On an inline finding from a review bot, open the reply, after any required
+     attribution line, with `Fixed in <sha>`, naming the fixing commit.
+     Complete the current-HEAD gates in steps 2 and 3, then react 👍 and resolve the thread.
    - **Valid but out of scope** → file the follow-up issue the root `AGENTS.md` scope rule calls for, or find an
      existing one. Reply with its link, react 👍, and resolve the thread.
      On an inline finding from a review bot, open the reply, after any required attribution line, with `Tracked in #<n>`.

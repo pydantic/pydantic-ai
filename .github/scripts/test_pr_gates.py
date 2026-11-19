@@ -1108,12 +1108,27 @@ def test_only_threads_resolved_before_the_cutoff_need_no_answer(posted: datetime
     assert bool(verdicts(github)['dispositions'].failures) is not passes
 
 
-def test_unregistered_bot_fails_even_with_an_answer():
+def test_only_write_access_answers_an_unregistered_bot_thread():
+    """A maintainer can always clear a thread the gate cannot attribute, and the run still names it."""
     stranger = review_gates.ReviewUser(id=6, login='new-reviewer[bot]', type='Bot')
-    github = ReviewGitHub(comments=[finding(stranger), reply('Declined: noise.', MAINTAINER)])
-    assert verdicts(github)['dispositions'].failures[1:] == [
-        'https://github.com/o/r/pull/7#discussion_r40: no registered reviewer started this `new-reviewer[bot]` thread.'
+    github = ReviewGitHub(
+        comments=[finding(stranger), reply('Fixed in 1234abc', CONTRIBUTOR)], commits={'1234abc' + 'f' * 33}
+    )
+    unregistered = [
+        '1 review bot threads have no registered reviewer, so only a reply from write access answers them. '
+        'Register the bot in `REVIEWER_LOGINS`, or see #14014 for a `github-actions[bot]` thread without a receipt.',
+        'https://github.com/o/r/pull/7#discussion_r40: no registered reviewer started this `new-reviewer[bot]` thread.',
     ]
+    assert verdicts(github)['dispositions'] == pr_gates.Verdict(
+        summary=['1 review bot findings.', *unregistered],
+        failures=[
+            '1 of 1 review bot findings need a reply: `Fixed in <sha>`, `Tracked in #N` or `Declined: <reason>`.',
+            'https://github.com/o/r/pull/7#discussion_r40: the `new-reviewer[bot]` thread has no accepted disposition '
+            'reply: only write access answers a thread no registered reviewer started, and `contributor` has none.',
+        ],
+    )
+    github.comments.append(reply('Declined: noise.', MAINTAINER, id=42))
+    assert verdicts(github)['dispositions'] == pr_gates.Verdict(summary=['1 review bot findings.', *unregistered])
     github.comments = [finding(stranger, posted=review_gates.RESOLVED_THREADS_STARTED_BEFORE.replace(day=18))]
     github.resolved = {40}
     assert not verdicts(github)['dispositions'].failures
