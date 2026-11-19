@@ -611,9 +611,17 @@ class ReviewGitHub:
 
 
 def verdicts(github: ReviewGitHub) -> dict[review_gates.ReviewGate, pr_gates.Verdict]:
-    return review_gates.review_verdicts(
-        github, github.pull_request(), github.reviews(), github.review_comments(), github.resolved_comment_ids()
+    snapshot = (
+        github,
+        github.pull_request(),
+        github.reviews(),
+        github.review_comments(),
+        github.resolved_comment_ids(),
     )
+    return {
+        **review_gates.review_verdicts(*snapshot),
+        'dispositions': review_gates.finding_dispositions(*snapshot),
+    }
 
 
 @pytest.mark.parametrize('size', ['size: S', 'size: M', 'size: L', 'size: XL'])
@@ -848,6 +856,16 @@ def test_reevaluation_replaces_a_failure_with_success_on_the_live_head():
     ]
 
 
+def test_a_failed_disposition_lookup_leaves_the_douwebot_status_its_own():
+    class IssuesDown(ReviewGitHub):
+        def issue_created_at(self, number: int) -> datetime | None:
+            raise GateError('Server Error (HTTP 502)')
+
+    github = IssuesDown(comments=[finding(), reply('Tracked in #12')])
+    assert review_gates.reconcile_reviews(github, ENV) == 1
+    assert github.statuses == [(HEAD, 'douwebot', 'success'), (HEAD, 'dispositions', 'failure')]
+
+
 @pytest.mark.parametrize(
     'error',
     [GateError('API unavailable'), review_gates.ValidationError('ReviewComment', []), OSError('Cannot read metadata')],
@@ -975,7 +993,11 @@ def test_merged_prs_with_unanswered_findings_fail(number: int, reviewers: list[s
     )
 
     def evaluate(comments: list[review_gates.ReviewComment]) -> dict[review_gates.ReviewGate, pr_gates.Verdict]:
-        return review_gates.review_verdicts(github, recording.pull, recording.reviews, comments, recording.resolved)
+        snapshot = (github, recording.pull, recording.reviews, comments, recording.resolved)
+        return {
+            **review_gates.review_verdicts(*snapshot),
+            'dispositions': review_gates.finding_dispositions(*snapshot),
+        }
 
     result = evaluate(recording.comments)
     assert result['douwebot'] == pr_gates.Verdict(

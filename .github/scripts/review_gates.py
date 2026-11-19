@@ -193,22 +193,19 @@ def review_verdicts(
     comments: list[ReviewComment],
     resolved: set[int],
 ) -> dict[ReviewGate, Verdict]:
-    """Apply the finding dispositions and the size-dependent review bar to a live metadata snapshot."""
-    verdicts: dict[ReviewGate, Verdict] = {
-        'douwebot': Verdict(),
-        'dispositions': finding_dispositions(github, pull, reviews, comments, resolved),
-    }
+    """Apply the size-dependent review bar to a live metadata snapshot."""
+    verdicts: dict[ReviewGate, Verdict] = {'douwebot': Verdict()}
     size = github.size(pull)
     size_labels = {label.name for label in pull.labels if label.name.startswith('size:')}
     if size_labels != {size}:
-        verdicts['douwebot'].failures.append(
-            f'Expected exactly the recomputed `{size}` label; found {sorted(size_labels)!r}.'
-        )
+        for verdict in verdicts.values():
+            verdict.failures.append(f'Expected exactly the recomputed `{size}` label; found {sorted(size_labels)!r}.')
         return verdicts
     if size == 'size: S':
-        verdicts['douwebot'].summary.append(
-            'Size S: automated review enforcement is skipped; the manual merge bar still applies.'
-        )
+        for verdict in verdicts.values():
+            verdict.summary.append(
+                'Size S: automated review enforcement is skipped; the manual merge bar still applies.'
+            )
         return verdicts
 
     verdicts['douwebot'] = douwebot_approval(github, pull, reviews, comments, resolved)
@@ -418,6 +415,20 @@ def review_order(review: Review) -> tuple[float, int]:
     return (review.submitted_at.timestamp() if review.submitted_at else 0, review.id)
 
 
+def _disposition_verdict(
+    github: ReviewGitHub,
+    pull: ReviewPullRequest,
+    reviews: list[Review],
+    comments: list[ReviewComment],
+    resolved: set[int],
+) -> tuple[Verdict, bool]:
+    """A failed disposition lookup fails only its own status and the job; the douwebot verdict stands."""
+    try:
+        return finding_dispositions(github, pull, reviews, comments, resolved), False
+    except (GateError, ValidationError, OSError) as error:
+        return Verdict(failures=[f'{type(error).__name__}: {error}']), True
+
+
 def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
     """Serialize externally, read live state, and replace the statuses on that exact head."""
     url = f'{env["GITHUB_SERVER_URL"]}/{env["GITHUB_REPOSITORY"]}/actions/runs/{env["GITHUB_RUN_ID"]}'
@@ -441,6 +452,7 @@ def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
             comments = github.review_comments()
             resolved = github.resolved_comment_ids()
             verdicts = review_verdicts(github, pull, reviews, comments, resolved)
+            verdicts['dispositions'], failed = _disposition_verdict(github, pull, reviews, comments, resolved)
             # A push, relabel or thread resolution during the API reads must not publish an old snapshot.
             if (
                 github.pull_request() == pull
