@@ -1110,13 +1110,14 @@ def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
     return type_hints.get(first_param_name)
 
 
-def get_function_type_hints(func: Any) -> dict[str, Any]:
+def get_function_type_hints(func: Any, *, include_keys: set[str] | None = None) -> dict[str, Any]:
     """Resolve type hints for a function, including forward references.
 
     Wraps `pydantic._internal._typing_extra.get_function_type_hints` so callers
-    don't need to import Pydantic internals directly.
+    don't need to import Pydantic internals directly. With `include_keys`, only
+    those annotations are resolved.
     """
-    return _typing_extra.get_function_type_hints(func)
+    return _typing_extra.get_function_type_hints(func, include_keys=include_keys)
 
 
 def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:
