@@ -301,8 +301,22 @@ def test_server(start):
     start(port=port)
 """
 
+_READ_BEFORE_REBIND = """\
+import socket
 
-@pytest.mark.parametrize('source', [_RETURNED, _READ_AFTER])
+
+def test_server(start, cond):
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    if cond:
+        port = 8123
+    start(port)
+    port = 8124
+"""
+
+
+@pytest.mark.parametrize('source', [_RETURNED, _READ_AFTER, _READ_BEFORE_REBIND])
 def test_a_port_used_after_its_socket_closes_fails(repo: Path, capsys: pytest.CaptureFixture[str], source: str):
     code, out = _staged(repo, capsys, 'tests/test_new.py', source)
 

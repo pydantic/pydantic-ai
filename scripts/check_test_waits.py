@@ -57,7 +57,10 @@ _ADVICE: dict[Rule, str] = {
         'a wait on the real clock: order the steps with an `Event` and bound the wait with '
         '`READINESS_WAIT_TIMEOUT` from `tests/_timeouts.py`, or inject the delay'
     ),
-    'sleep-loop': 'a loop that sleeps polls the real clock: wait on an `Event`, a stream or the condition itself',
+    'sleep-loop': (
+        'a loop that sleeps polls, on the real clock or, with `sleep(0)`, on the scheduler: '
+        'wait on an `Event`, a stream or the condition itself'
+    ),
 }
 _ESCAPABLE: frozenset[Rule] = frozenset({'literal-wait', 'sleep-loop'})
 _EXEMPT: dict[Rule, str] = {'readiness-constant': 'tests/_timeouts.py', 'probe-port': 'tests/_ports.py'}
@@ -219,10 +222,11 @@ class _Finder:
         }
         end = node.end_lineno or node.lineno
         scope = _enclosing_scope(self.tree, node)
-        rebound = {
-            n.id for n in ast.walk(scope) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store) and n.lineno > end
-        }
-        return any(name.id in ports - rebound and name.lineno > end for name in _call_arguments(scope))
+        rebinds = _rebinds(scope, node, ports)
+        return any(
+            name.id in ports and name.lineno > end and not any(end < line < name.lineno for line in rebinds[name.id])
+            for name in _call_arguments(scope)
+        )
 
 
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
@@ -309,6 +313,45 @@ def _enclosing_scope(tree: ast.Module, target: ast.AST) -> ast.AST:
     return scope
 
 
+def _rebinds(scope: ast.AST, node: ast.stmt, names: set[str]) -> dict[str, list[int]]:
+    """The lines after `node` where a statement beside it assigns each of `names` again, so a later read is not the port.
+
+    Only an assignment in the same statement list counts: one under a condition or in another function may not run.
+    """
+    lines: dict[str, list[int]] = {name: [] for name in names}
+    for body in _statement_lists(scope):
+        if not any(statement is node for statement in body):
+            continue
+        for statement in body[body.index(node) + 1 :]:
+            for target in statement.targets if isinstance(statement, ast.Assign) else []:
+                if isinstance(target, ast.Name) and target.id in names:
+                    lines[target.id].append(statement.lineno)
+    return lines
+
+
+def _statement_lists(scope: ast.AST) -> Iterator[list[ast.stmt]]:
+    """Every list of statements in `scope`: each block's body, `else` and `finally`."""
+    for node in ast.walk(scope):
+        match node:
+            case ast.For() | ast.AsyncFor() | ast.While() | ast.If():
+                yield from (node.body, node.orelse)
+            case ast.Try() | ast.TryStar():
+                yield from (node.body, node.orelse, node.finalbody)
+            case (
+                ast.Module()
+                | ast.FunctionDef()
+                | ast.AsyncFunctionDef()
+                | ast.ClassDef()
+                | ast.With()
+                | ast.AsyncWith()
+                | ast.ExceptHandler()
+                | ast.match_case()
+            ):
+                yield node.body
+            case _:
+                pass
+
+
 def _call_arguments(scope: ast.AST) -> Iterator[ast.Name]:
     """Every name read in a call's arguments in `scope`, outside `assert` statements."""
     asserted = {id(n) for a in ast.walk(scope) if isinstance(a, ast.Assert) for n in ast.walk(a)}
@@ -388,7 +431,7 @@ def _added_escapes(path: str, old: _Scan, new: _Scan) -> list[tuple[str, _Escape
 def _growth(changes: list[Change]) -> tuple[list[_Growth], list[tuple[str, _Escape]]]:
     """Each rule a change raised the count of in a file, and each `# real-wait` comment it added."""
     scans = [(c, _scan(c.old_source, c.old_path or ''), _scan(c.new_source, c.new_path or '')) for c in changes]
-    # Only a wait moves: the other rules have no findings left to move.
+    # Only a wait may move, so a probe or constant removed from one file does not excuse one added to another.
     moves: dict[Rule, Counter[str]] = {rule: Counter() for rule in _ESCAPABLE}
     for _, old, new in scans:
         for rule in _ESCAPABLE & old.findings.keys():
