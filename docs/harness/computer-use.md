@@ -53,8 +53,8 @@ With `defer_loading=True`, the model reads only the capability's `description` u
 
 The model must accept images.
 
-- Claude models get Anthropic's own computer use tool through `AnthropicModel` on the clients and models listed under
-  [Anthropic](../models/anthropic.md#computer-use), and the function tool elsewhere.
+- Claude models on `AnthropicModel` get Anthropic's own computer use tool on the clients and models listed under
+  [Anthropic](../models/anthropic.md#computer-use). Other Claude models and clients get the function tool.
 - GPT-5.4 (not nano), GPT-5.5, GPT-5.6 and GPT-6 get OpenAI's own computer tool through `OpenAIResponsesModel` on OpenAI and Bedrock Mantle; see
   [OpenAI](../models/openai.md#native-tools).
 - Every other model gets `computer` as a regular function tool.
@@ -115,13 +115,14 @@ Some models only take screenshots up to a size, set by
 
 - Claude Opus 4.8 and the Claude 5 models: 2576 pixels on the longer side and about 3.75 megapixels (2576x1456).
 - Claude Opus 4.7: 2576 pixels on the longer side and 3.6 megapixels.
-- Claude Opus 4.5 and 4.6, Sonnet 4.6 and Haiku 4.5: 1568 pixels and about 1.15 megapixels.
+- Claude Opus 4.5 and 4.6, Sonnet 4.6 and Haiku 4.5: 1568 pixels on the longer side and about 1.15 megapixels.
 
 `ComputerUse` sends screenshots at the screen's size, so a larger screen stops the run with an error naming the
 largest size that fits. A 1280x800 screen fits every model.
 
-Claude's native toolset also refuses a screenshot over 4784 image tokens of 28x28 pixels each, such as 2549x1457,
-even when it fits those limits, and the run stops with Anthropic's error.
+Claude's `computer_toolset_20260801` tool also caps a screenshot at 4784 image tokens, where one token covers 28x28
+pixels. It refuses a larger screenshot, such as 2549x1457, even when it fits the limits above, and the run stops with
+Anthropic's error.
 
 GPT-5.5 clicks accurately up to 1920x1200 and GPT-5.4 up to 2048x1280, and can miss on a larger screen.
 

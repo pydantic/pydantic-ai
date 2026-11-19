@@ -66,7 +66,7 @@ with try_import() as anthropic_installed:
 with try_import() as bedrock_installed:
     from anthropic import AsyncAnthropicBedrock
 
-    # `AsyncAnthropicBedrock` imports this as a stream starts, and the test's event loop refuses an import there.
+    # `AsyncAnthropicBedrock` imports this when a stream starts, and the test's event loop refuses imports there.
     importlib.import_module('botocore.parsers')
 
 needs_openai = pytest.mark.skipif(not openai_installed(), reason='openai not installed')
@@ -233,7 +233,7 @@ def _tools(body: dict[str, JsonValue]) -> list[dict[str, JsonValue]]:
 
 
 def _results(body: dict[str, JsonValue]) -> list[tuple[JsonValue, list[JsonValue]]]:
-    """Each tool result's error flag and its blocks: a text block's text, any other block's type."""
+    """Each tool result's error flag and its blocks: the text of a text block, and the type of any other block."""
     return [
         (result['is_error'], [block['text'] if block['type'] == 'text' else block['type'] for block in blocks])
         for result in content_blocks(body, 'tool_result')
@@ -252,12 +252,12 @@ async def test_claude_drives_the_screen_through_the_computer_toolset(
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     first, *_, last = request_capture.bodies('/v1/messages')
-    # The capability's `computer` tool went out as Claude's toolset, which has no name or schema of ours.
+    # The capability's `computer` tool was sent as Claude's toolset, which has no name or schema from us.
     assert _tools(first) == [{'type': 'computer_toolset_20260801'}]
-    # Claude put a screenshot before its click and typing, and the batch ran in one go: one request after the first.
+    # Claude took a screenshot before its click and typing, and the batch ran at once: one request after the first.
     assert len(request_capture.bodies('/v1/messages')) == 2
-    # Every member call got its own result, in order and in the toolset: `OK`, with the screen as the screenshot call
-    # found it, and the last call the screen after the batch.
+    # Every toolset call got its own result, in order, marked with the toolset. The screenshot call got `OK` and the
+    # screen it saw. The last call got the screen after the batch.
     calls = content_blocks(last, 'tool_use')
     results = content_blocks(last, 'tool_result')
     assert [result['tool_use_id'] for result in results] == [call['id'] for call in calls]
@@ -304,7 +304,7 @@ async def test_claude_sees_an_image_a_result_holds_beside_its_screenshot(
 
     assert 'red' in result.output.lower()
     last = request_capture.bodies('/v1/messages')[-1]
-    # The last call that ran carries the whole result as it is: the image, the summary and the screen.
+    # The last call that ran gets the whole result unchanged: the image, the summary and the screen.
     *_, last_result = _results(last)
     assert last_result == (False, ['image', 'Ran 1 action. Screenshot attached (1280x800).', 'image'])
 
@@ -321,7 +321,8 @@ async def test_claude_drives_the_screen_after_loading_a_deferred_computer(
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     first, second, *_ = bodies = request_capture.bodies('/v1/messages')
-    # Before loading, `computer` is a deferred function; after it, Claude's toolset, which history can't reference.
+    # Before it is loaded, `computer` is a deferred function tool. After, it is Claude's toolset, which the history
+    # can't name.
     assert {'name': 'computer', 'defer_loading': True}.items() <= _tools(first)[-1].items()
     assert {'type': 'computer_toolset_20260801'} in _tools(second)
     for body in bodies:
@@ -338,7 +339,7 @@ async def test_claude_sonnet_4_6_gets_computer_20251124_sized_to_the_display(
     await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(TASK)
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
-    # The capability gave the display size the earlier tool must declare, and the beta it needs went out.
+    # The capability sent the display size the earlier tool requires, and the beta it needs.
     assert _tools(request_capture.bodies('/v1/messages')[0]) == [
         {
             'type': 'computer_20251124',
@@ -383,7 +384,7 @@ async def test_claude_drives_the_screen_through_the_streamed_computer_toolset(
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     last = request_capture.bodies('/v1/messages')[-1]
-    # The streamed member calls went back as they came, each answered in order.
+    # The streamed toolset calls went back unchanged, each with its result, in order.
     calls = content_blocks(last, 'tool_use')
     results = content_blocks(last, 'tool_result')
     assert calls and all(call['toolset_name'] == 'computer' for call in calls)
@@ -400,7 +401,7 @@ async def test_claude_shift_clicks_through_computer_20251124(
     task = 'Take a screenshot, then shift+click at x=100 y=200, then reply "done". Do nothing else.'
     await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(task)
 
-    # Claude holds the modifier in the click's `text`, as the toolset does.
+    # Claude puts the held key in the click's `text` field, as the toolset does.
     assert provider.actions == [Click(x=100, y=200, modifiers=('shift',))]
     calls = content_blocks(request_capture.bodies('/v1/messages')[-1], 'tool_use')
     assert {'action': 'left_click', 'coordinate': [100, 200], 'text': 'shift'} in [call['input'] for call in calls]
@@ -420,7 +421,7 @@ async def test_claude_sonnet_4_6_drags_with_a_button_held_across_calls(
     )
     await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(task)
 
-    # Claude presses and releases at a point, in calls of their own: the button stays pressed between them.
+    # Claude presses and releases the button at a point, in separate calls. The button stays pressed between them.
     assert provider.actions == [
         MouseMove(x=100, y=200),
         MouseDown(),
@@ -445,7 +446,7 @@ async def test_claude_sonnet_4_6_drags_with_a_button_held_across_calls(
         pytest.param(
             'click at x=100 y=200, hold the shift key for 1 second, then type "b"',
             [Click(x=100, y=200)],
-            # The click ran and carries the whole result, the hold failed, and the typing never ran.
+            # The click ran and gets the whole result. The key hold failed, and the typing never ran.
             [
                 (
                     False,
@@ -463,7 +464,8 @@ async def test_claude_sonnet_4_6_drags_with_a_button_held_across_calls(
         pytest.param(
             'hold the shift key for 1 second, then type "b"',
             [],
-            # Nothing ran before the hold, so it carries the whole result, which an error result can't hold.
+            # Nothing ran before the key hold, so the hold gets the whole result. It isn't marked as an error,
+            # because an error result can hold only text.
             [
                 (
                     False,
@@ -502,7 +504,7 @@ async def test_claude_toolset_batch_stops_at_the_failed_call(
 async def test_claude_reads_a_zoom_and_the_pointer_position_from_the_last_calls_result(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ) -> None:
-    """The last call that ran gets the whole result, the zoom's image and the pointer position included."""
+    """The last call that ran gets the whole result, including the zoom's image and the pointer position."""
     provider = ScreenProvider()
     model = _claude('claude-haiku-5-5', anthropic_api_key, request_capture)
     task = (
@@ -541,7 +543,7 @@ def note(text: str) -> str:
 @pytest.mark.parametrize(
     'model_name, native_tools, task, tools, tool_choice',
     [
-        # The toolset has no name to force it by, so it's offered alone and a call required.
+        # The toolset has no name to force it with, so it is offered alone and a tool call is required.
         pytest.param(
             'claude-haiku-5-5', [], 'Reply "done".', ['computer_toolset_20260801'], {'type': 'any'}, id='toolset'
         ),
@@ -553,7 +555,7 @@ def note(text: str) -> str:
             {'type': 'tool', 'name': 'computer'},
             id='computer_20251124',
         ),
-        # Web search is left out too: requiring a tool would let Claude search instead.
+        # Web search is left out too. Otherwise Claude could meet the requirement by searching.
         pytest.param(
             'claude-haiku-5-5',
             [WebSearchTool(max_uses=1)],
@@ -582,7 +584,7 @@ async def test_claude_is_forced_to_call_the_computer(
     )
 
     first = request_capture.bodies('/v1/messages')[0]
-    # A function tool by its name, any other by its type.
+    # A function tool is listed by its name, and any other tool by its type.
     sent = [tool.get('type', tool.get('name')) for tool in _tools(first)]
     assert (sent, first['tool_choice']) == (tools, tool_choice)
     # Claude's first response called the computer.
@@ -606,7 +608,7 @@ async def test_claude_toolset_calls_go_back_to_a_request_without_the_computer_to
     )
     assert '100' in answer.output and '200' in answer.output
 
-    # As plain `computer` calls and results, outside the toolset, which isn't in the request.
+    # They go back as plain `computer` calls and results, outside the toolset, which isn't in the request.
     last = request_capture.bodies('/v1/messages')[-1]
     assert 'tools' not in last
     calls = content_blocks(last, 'tool_use')
@@ -633,7 +635,7 @@ async def test_claude_toolset_calls_go_back_to_a_computer_20251124_model(
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello'), Click(x=10, y=10)]
     last = request_capture.bodies('/v1/messages')[-1]
     assert [tool['type'] for tool in _tools(last)] == ['computer_20251124']
-    # The toolset's calls went back as plain `computer` calls, and the new one as `computer_20251124`'s own.
+    # The toolset's calls went back as plain `computer` calls, and the new call as a `computer_20251124` call.
     inputs = json_objects([call['input'] for call in content_blocks(last, 'tool_use')])
     assert 'actions' in inputs[0] and inputs[-1] == {'action': 'left_click', 'coordinate': [10, 10]}
     assert 'toolset_name' not in str(last['messages'])
@@ -658,7 +660,7 @@ async def test_claude_computer_20251124_calls_go_back_to_a_toolset_model(
     assert provider.actions == [*DONE, Click(x=10, y=10)]
     last = request_capture.bodies('/v1/messages')[-1]
     assert _tools(last) == [{'type': 'computer_toolset_20260801'}]
-    # `computer_20251124`'s calls went back as plain `computer` calls, and the new one as a toolset member's.
+    # The `computer_20251124` calls went back as plain `computer` calls, and the new call as a toolset call.
     calls = content_blocks(last, 'tool_use')
     assert 'actions' in json_objects([calls[0]['input']])[0] and 'toolset_name' not in calls[0]
     assert calls[-1]['toolset_name'] == 'computer'
@@ -680,7 +682,7 @@ async def test_claude_on_bedrock_drives_the_screen_through_the_computer_toolset(
     await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(TASK)
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
-    # Bedrock takes the toolset, as the Claude API does.
+    # Bedrock accepts the toolset, as the Claude API does.
     assert _tools(request_capture.bodies()[0]) == [{'type': 'computer_toolset_20260801'}]
 
 

@@ -869,7 +869,7 @@ The native tool is sent only when the request has exactly one `computer` tool th
 | Google | ❌ | |
 | xAI | ❌ | |
 | Groq | ❌ | |
-| Bedrock | ❌ | Claude on Amazon Bedrock gets it through `AnthropicModel`, as above. |
+| Bedrock | ❌ | Claude on Amazon Bedrock gets it through `AnthropicModel`. See the Anthropic row. |
 | Mistral | ❌ | |
 | Cohere | ❌ | |
 | HuggingFace | ❌ | |
