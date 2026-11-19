@@ -96,8 +96,8 @@ ALLOWED_HEADERS = {
 
 SCRUBBED_JSON_FIELDS = ('access_token', 'id_token', 'refresh_token', 'safety_identifier')
 # OpenRouter error responses echo the id of the account whose key made the request. Requests keep `user_id`: Z.AI
-# takes the caller's own end-user id there.
-SCRUBBED_RESPONSE_JSON_FIELDS = ('user_id',)
+# takes the caller's own end-user id there. OpenAI Responses bodies name the recording account's `access_programs`.
+SCRUBBED_RESPONSE_JSON_FIELDS = ('user_id', 'access_programs')
 # ElevenLabs `GET /v1/convai/agents/{id}` bodies carry the workspace owner's identity in `access_info`.
 SCRUBBED_NESTED_JSON_FIELDS = ('creator_email', 'creator_name')
 SCRUBBED_FORM_FIELDS = (
@@ -215,8 +215,9 @@ def scrub_json_body(body: bytes, fields: tuple[str, ...] = SCRUBBED_JSON_FIELDS)
     parsed = normalize_body(parsed)
     if is_str_dict(parsed):
         for field in fields:
-            if parsed.get(field) is not None:
-                parsed[field] = 'scrubbed'
+            if (value := parsed.get(field)) is not None:
+                # A non-string value is cleared, so the SDK still parses the body.
+                parsed[field] = 'scrubbed' if isinstance(value, str) else None
         if isinstance(signed_url := parsed.get('signed_url'), str):
             parsed['signed_url'] = _SIGNED_URL_TOKEN.sub(r'\1=scrubbed', signed_url)
     _scrub_nested_fields(parsed)
