@@ -848,10 +848,10 @@ def test_argument_correctness_invalid_json(args: str):
 
 
 def test_argument_correctness_deeply_nested_json():
-    """Arguments nested past the recursion limit fail the check instead of raising.
+    """Arguments `json.loads` can't parse for their nesting fail the check instead of raising.
 
-    From Python 3.14, whether `json.loads` raises `RecursionError` at this depth depends on the stack size,
-    so where it parses them the arguments fail as a non-object instead.
+    From Python 3.14, whether `json.loads` raises `RecursionError` at this depth depends on the stack size.
+    On a stack large enough to parse and print them, the arguments fail as a non-object instead.
     """
     tree = _build_tree([_v3_tool_span(name='search', span_id=1, args='[' * 100_000 + ']' * 100_000, start_offset=0.0)])
     result = ArgumentCorrectness(tool_name='search', expected_arguments={'q': 'cats'}).evaluate(_ctx(tree=tree))
