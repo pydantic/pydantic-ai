@@ -1,0 +1,104 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.mistral.ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "452"
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    body:
+      type: json
+      content:
+        model: mistral-large-latest
+        messages:
+        - content:
+          - text: What is the title of this API? Answer with the title only.
+            type: text
+          - text: |-
+              -----BEGIN FILE id="f23449" type="application/openapi+yaml"-----
+              openapi: 3.1.0
+              info:
+                title: Demo API
+                version: 1.0.0
+              paths: {}
+
+              -----END FILE id="f23449"-----
+            type: text
+          role: user
+        top_p: 1.0
+        stream: false
+        stop: null
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 01a1f0f1-ad08-7ca2-809a-aed5056ee779
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: 55c92b4a7f7a48e7abc4597d20cb4807
+        created: 1795043732
+        model: mistral-large-latest
+        usage:
+          prompt_tokens: 88
+          total_tokens: 184
+          completion_tokens: 96
+          prompt_tokens_details:
+            cached_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 91
+          service_tier: standard
+        object: chat.completion
+        choices:
+        - index: 0
+          finish_reason: stop
+          message:
+            role: assistant
+            tool_calls: null
+            content:
+            - type: thinking
+              thinking:
+              - type: text
+                text: |-
+                  The user wants me to identify the title of the API from the provided OpenAPI YAML file. Looking at the file content:
+
+                  ```yaml
+                  openapi: 3.1.0
+                  info:
+                    title: Demo API
+                    version: 1.0.0
+                  paths: {}
+                  ```
+
+                  The `info.title` field contains "Demo API". The user specifically asked to "Answer with the title only."
+
+                  So the answer should be: Demo API
+              closed: true
+            - type: text
+              text: Demo API
+  recorded_at: 2026-11-18T23:15:34.902321+00:00

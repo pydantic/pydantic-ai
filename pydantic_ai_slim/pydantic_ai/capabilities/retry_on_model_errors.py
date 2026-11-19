@@ -55,9 +55,9 @@ retries by default.
 [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError],
 [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] (including an overloaded model),
 [`ModelServerError`][pydantic_ai.exceptions.ModelServerError] and
-[`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] (including a transport timeout). Extend it
-to retry another error too, as in `retry_on=(*TRANSIENT_MODEL_ERRORS, MyError)`, or check an error against it with
-`isinstance(error, TRANSIENT_MODEL_ERRORS)`.
+[`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] (including a transport timeout or an HTTP
+408). Extend it to retry another error too, as in `retry_on=(*TRANSIENT_MODEL_ERRORS, MyError)`, or check an error
+against it with `isinstance(error, TRANSIENT_MODEL_ERRORS)`.
 """
 # `TRANSIENT_MODEL_ERRORS` by name, for the spec schema.
 _DEFAULT_SPEC_RETRY_ON: tuple[SpecModelError, ...] = (
@@ -76,7 +76,8 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
     [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError], a
     [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] (including an overloaded model), a
     [`ModelServerError`][pydantic_ai.exceptions.ModelServerError], or a
-    [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] (including a transport timeout):
+    [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] (including a transport timeout or an
+    HTTP 408):
 
     ```python
     from pydantic_ai import Agent

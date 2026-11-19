@@ -910,10 +910,11 @@ async def test_a_profile_that_turns_it_on_gets_the_native_tool(
     assert request['tools'] == [{'type': 'computer'}]
 
 
-def test_azure_the_gateway_and_openrouter_keep_the_function_tool() -> None:
-    """The native tool isn't verified on Azure or the gateway. OpenRouter answers it with only a reasoning item.
+def test_azure_and_openrouter_keep_the_function_tool_and_the_gateway_gets_the_native_tool() -> None:
+    """The native tool isn't verified on Azure. OpenRouter answers it with only a reasoning item.
 
-    `OpenRouterProvider` isn't an `OpenAIProvider`, so `_instance_profile_defaults` removes the tool for it.
+    `OpenRouterProvider` isn't an `OpenAIProvider`, so `_instance_profile_defaults` removes the tool for it. The
+    gateway's OpenAI route is an `OpenAIProvider` that reaches OpenAI's own API, so it keeps the tool.
     """
     from openai import AsyncAzureOpenAI
 
@@ -926,7 +927,7 @@ def test_azure_the_gateway_and_openrouter_keep_the_function_tool() -> None:
         'gpt-5.5', provider=gateway_provider('openai', api_key='gw-key', base_url='https://gateway.example.com')
     )
     assert ComputerTool not in (azure.profile.get('supported_native_tools') or ())
-    assert ComputerTool not in (gateway.profile.get('supported_native_tools') or ())
+    assert ComputerTool in (gateway.profile.get('supported_native_tools') or ())
     openrouter = OpenAIResponsesModel('openai/gpt-5.5', provider=OpenRouterProvider(api_key='test'))
     assert ComputerTool not in (openrouter.profile.get('supported_native_tools') or ())
 

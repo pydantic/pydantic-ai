@@ -170,8 +170,8 @@ class ServerForm:
 
     @property
     def on_demand(self) -> bool:
-        """Whether the configuration asks for `defer_loading`."""
-        return self._field('defer_loading') is True
+        """Whether the configuration keeps `defer_loading`, which is on unless set to `false`."""
+        return self._field('defer_loading') is not False
 
     @property
     def description(self) -> str:
@@ -180,8 +180,8 @@ class ServerForm:
         return description if isinstance(description, str) else ''
 
     def toggle_on_demand(self) -> None:
-        """Switch on-demand loading on or off; off is the default, so it leaves the JSON."""
-        self._update('on-demand loading', defer_loading=None if self.on_demand else True)
+        """Switch on-demand loading on or off; on is the default, so it leaves the JSON."""
+        self._update('on-demand loading', defer_loading=False if self.on_demand else None)
 
     def set_description(self, text: str) -> None:
         """Write the catalog description; empty text removes it, so the server's own one is used."""
@@ -329,7 +329,7 @@ class ServerForm:
         lines.append(
             'On demand keeps its tools out of every prompt until the agent loads them by the description.'
             if self.on_demand
-            else 'Turn on On demand to keep its tools out of prompts until the agent needs them.'
+            else 'Its tools go into every prompt; turn on On demand to keep them out until the agent needs them.'
         )
         return '\n'.join(lines)
 
