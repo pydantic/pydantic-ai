@@ -9,12 +9,14 @@ from __future__ import annotations as _annotations
 import base64
 import errno
 import functools
+import html
 import ntpath
 import os
 import re
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from subprocess import DEVNULL, PIPE
 
@@ -68,6 +70,11 @@ _EPILOGUE = '\nif ($?) { exit 0 } elseif ($LASTEXITCODE) { exit $LASTEXITCODE } 
 
 _POWERSHELL_FLAGS = ('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-OutputFormat', 'Text')
 
+_CLIXML_HEADER = re.compile(r'^#< CLIXML\r?\n', re.MULTILINE)
+_CLIXML_OPEN = '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">'
+_CLIXML_STRING = re.compile(r'<S S="[^"<>]*">([^<]*)</S>')
+_CLIXML_ESCAPE = re.compile(r'_x([0-9A-Fa-f]{4})_')
+
 _PROCESS_SET_QUOTA = 0x0100
 _PROCESS_TERMINATE = 0x0001
 
@@ -88,6 +95,29 @@ def powershell_script(script: str) -> str:
     detached job, so that it behaves like a command run directly.
     """
     return f'{_PREAMBLE}{script}{_EPILOGUE}'
+
+
+def _clixml_text(objects: str) -> str:
+    text = ''.join(
+        _CLIXML_ESCAPE.sub(lambda escape: chr(int(escape[1], 16)), html.unescape(string))
+        for string in _CLIXML_STRING.findall(objects)
+    )
+    # `_xHHHH_` escapes UTF-16 code units, so a character outside the BMP arrives as a surrogate pair.
+    return text.encode('utf-16-le', 'surrogatepass').decode('utf-16-le', 'replace')
+
+
+def _decode_clixml(stderr: str) -> str:
+    """`stderr` with the CLIXML records Windows PowerShell writes for its error stream replaced by their text."""
+    if (header := _CLIXML_HEADER.search(stderr)) is None:
+        return stderr
+    pieces = [stderr[: header.start()]]
+    position = header.end()
+    # `str.find`, not a regex, so unclosed records can't make this quadratic.
+    while (start := stderr.find(_CLIXML_OPEN, position)) != -1 and (end := stderr.find('</Objs>', start)) != -1:
+        pieces += (stderr[position:start], _clixml_text(stderr[start:end]))
+        position = end + len('</Objs>')
+    pieces.append(stderr[position:])
+    return ''.join(pieces)
 
 
 def _powershell_command(executable: str, script: str) -> list[str]:
@@ -202,6 +232,8 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
     like it, this isolates nothing: commands and absolute paths reach anywhere this process can. Paths are
     Windows paths (`C:\Users\me\project`), and a `shell=True` command runs in PowerShell: `pwsh` when it
     is on `PATH`, else Windows PowerShell. Its exit code is the last native command's, as in `sh`.
+    Windows PowerShell serializes its errors as CLIXML, which is decoded to text in the result's `stderr`;
+    `pwsh`'s stderr, and the `stderr` of a timeout or output-limit error, are left as captured.
 
     Each command runs in a Windows Job Object, so a timeout or cancellation ends the processes it started
     along with it. A background job started with `Start-Process` stays in that Job Object: it outlives a
@@ -268,6 +300,21 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
         if (job := _job_objects().assign(process.pid)) is not None:  # pragma: no branch
             self._jobs[process.pid] = job
         return process
+
+    async def _run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool,
+        env: Mapping[str, str] | None,
+        timeout: float | None,
+        cwd: str | None,
+    ) -> CommandResult:
+        result = await super()._run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
+        # Windows PowerShell, unlike `pwsh`, writes its error stream as CLIXML for an `-EncodedCommand` script.
+        if shell and ntpath.basename(self._executable()).lower() in ('powershell', 'powershell.exe'):
+            return replace(result, stderr=_decode_clixml(result.stderr))
+        return result
 
     def _kill_tree(self, process: anyio.abc.Process) -> tuple[PermissionError | None, PermissionError | None]:
         job = self._jobs.get(process.pid)

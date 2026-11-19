@@ -13,6 +13,7 @@ from pathlib import Path
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import WindowsWorkspace
@@ -25,6 +26,10 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
 )
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
+from pydantic_ai.workspaces.windows import (
+    _decode_clixml,  # pyright: ignore[reportPrivateUsage]
+    powershell_script,
+)
 
 windows_only = pytest.mark.skipif(sys.platform != 'win32', reason='`WindowsWorkspaceBackend` runs only on Windows')
 
@@ -51,6 +56,49 @@ class TestWindowsCommands:
         result = await WindowsWorkspaceBackend(tmp_path).run('Get-Item missing.txt', shell=True)
         assert result.exit_code == 1
         assert 'missing.txt' in result.stderr
+        assert 'CLIXML' not in result.stderr
+
+    async def test_pwsh_stderr_is_left_as_captured(self, tmp_path: Path) -> None:
+        record = (
+            '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><S S="Error">x</S></Objs>'
+        )
+        result = await WindowsWorkspaceBackend(tmp_path, powershell='pwsh').run(
+            f'[Console]::Error.Write("#< CLIXML`r`n" + \'{record}\')', shell=True
+        )
+        assert result.stderr == f'#< CLIXML\r\n{record}'
+
+    async def test_a_windows_powershell_cmdlet_failure_is_text(self, tmp_path: Path) -> None:
+        backend = WindowsWorkspaceBackend(tmp_path, powershell='powershell.exe')
+        result = await backend.run('Get-Item missing.txt', shell=True)
+        assert result.exit_code == 1
+        assert result.stderr.startswith('Get-Item : Cannot find path ')
+        assert 'missing.txt' in result.stderr
+        assert 'CLIXML' not in result.stderr
+        assert '_x000D_' not in result.stderr
+
+    async def test_windows_powershell_errors_are_text(self, tmp_path: Path) -> None:
+        """Windows PowerShell 5.1 writes its error stream as CLIXML when the script comes from `-EncodedCommand`."""
+        backend = WindowsWorkspaceBackend(tmp_path, powershell='powershell.exe')
+        script = (
+            "[Console]::Error.WriteLine('<Objs a><S S=\"x\">y</S></Objs>')\nWrite-Error 'a <b> & _x000A_ \U0001f600'"
+        )
+        result = await backend.run(script, shell=True)
+        assert result.exit_code == 1
+        # A top-level `Write-Error` quotes the whole script it ran in, with Windows line endings.
+        quoted = powershell_script(script).replace('\n', '\r\n')
+        assert result.stderr == (
+            '<Objs a><S S="x">y</S></Objs>\r\n'
+            f'{quoted} : a <b> & _x000A_ \U0001f600\r\n'
+            '    + CategoryInfo          : NotSpecified: (:) [Write-Error], WriteErrorException\r\n'
+            '    + FullyQualifiedErrorId : Microsoft.PowerShell.Commands.WriteErrorException\r\n'
+            ' \r\n'
+        )
+
+    async def test_argv_stderr_is_not_decoded(self, tmp_path: Path) -> None:
+        clixml = '#< CLIXML\r\n<Objs a><S S="x">y</S></Objs>\r\n'
+        (tmp_path / 'clixml.txt').write_bytes(clixml.encode())
+        result = await WindowsWorkspaceBackend(tmp_path).run(['cmd', '/c', 'type clixml.txt 1>&2'])
+        assert result.stderr == clixml
 
     async def test_timeout_ends_the_whole_process_tree(self, tmp_path: Path) -> None:
         backend = WindowsWorkspaceBackend(tmp_path)
@@ -127,3 +175,48 @@ class TestWindowsCommands:
         assert result.workspace is not None
         assert result.workspace.ref == WorkspaceRef(provider='windows', id=str(tmp_path))
         assert result.workspace.platform == 'windows'
+
+
+def test_clixml_stderr_is_decoded() -> None:
+    """Real Windows PowerShell 5.1 `Get-Item` output, pinned whole and on every runner, Linux included.
+
+    On the Windows job its line wrapping follows the temporary path. Also markup that isn't a CLIXML record,
+    and an unclosed record.
+    """
+    clixml = (
+        '<Objs a><S S="x">y</S></Objs>\r\n'
+        '#< CLIXML\r\n'
+        '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">'
+        '<Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T></TN>'
+        '<MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV></PR></MS></Obj>'
+        '<S S="Error">Get-Item : Cannot find path \'C:\\work\\missing.txt\' because it does not exist._x000D__x000A_</S>'
+        '<S S="Error">At line:4 char:1_x000D__x000A_</S>'
+        '<S S="Error">+ Get-Item missing.txt_x000D__x000A_</S>'
+        '<S S="Error">+ ~~~~~~~~~~~~~~~~~~~~_x000D__x000A_</S>'
+        '<S S="Error">    + CategoryInfo          : ObjectNotFound: (C:\\work\\missing.txt:String) [Get-Item], ItemNotFoundExcep _x000D__x000A_</S>'
+        '<S S="Error">   tion_x000D__x000A_</S>'
+        '<S S="Error">    + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetItemCommand_x000D__x000A_</S>'
+        '<S S="Error"> _x000D__x000A_</S>'
+        '<S S="Error">a &lt;b&gt; &amp; _x005F_x000A_ _xD83D__xDE00__x000D__x000A_</S>'
+        '</Objs>'
+        '<Objs a><S S="x">z</S></Objs>\r\n'
+    )
+    assert _decode_clixml(clixml) == snapshot(
+        """\
+<Objs a><S S="x">y</S></Objs>\r
+Get-Item : Cannot find path 'C:\\work\\missing.txt' because it does not exist.\r
+At line:4 char:1\r
++ Get-Item missing.txt\r
++ ~~~~~~~~~~~~~~~~~~~~\r
+    + CategoryInfo          : ObjectNotFound: (C:\\work\\missing.txt:String) [Get-Item], ItemNotFoundExcep \r
+   tion\r
+    + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetItemCommand\r
+ \r
+a <b> & _x000A_ \U0001f600\r
+<Objs a><S S="x">z</S></Objs>\r
+"""
+    )
+    assert _decode_clixml('<Objs a><S S="x">y</S></Objs>\n') == '<Objs a><S S="x">y</S></Objs>\n'
+    opening = '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">'
+    unclosed = f'{opening}<S S="Error">cut</S>'
+    assert _decode_clixml(f'#< CLIXML\n{opening}<S S="Error">boom</S></Objs>{unclosed}') == f'boom{unclosed}'
