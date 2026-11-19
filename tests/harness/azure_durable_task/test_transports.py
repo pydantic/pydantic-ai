@@ -2,7 +2,7 @@ import asyncio
 import json
 import sys
 from collections.abc import Generator
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from functools import partial
 from importlib import import_module
@@ -10,7 +10,8 @@ from typing import Annotated, Any, Self
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field, Json, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, Json, JsonValue, SecretStr, computed_field
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -18,7 +19,7 @@ from pydantic_ai import (
     Choices,
     RunContext,
 )
-from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, Hooks, durable_operation
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -29,6 +30,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
@@ -158,6 +160,123 @@ def test_aliased_tool_arguments_are_restored_from_json(durable_worker: 'InMemory
     with registered_agent(durable_worker, agent):
         assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
     assert observed == [('Ada', 2)]
+
+
+class Venue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
+
+
+@dataclass
+class Place:
+    city: Annotated[str, Field(alias='cityName')]
+
+
+class SerializedAs(BaseModel):
+    room: str = Field(serialization_alias='roomOut')
+
+
+class Counted(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    qty: int
+
+    @computed_field
+    @property
+    def doubled(self) -> int:
+        return self.qty * 2
+
+
+def test_tool_arguments_are_validated_from_the_model_arguments_in_the_activity(
+    durable_worker: 'InMemoryWorker',
+) -> None:
+    """The activity validates the arguments the model sent, as the orchestrator did, rather than a JSON dump of the validated ones.
+
+    The dump writes a `TypedDict` and a stdlib dataclass by field name while their schema reads the alias, masks
+    the `SecretStr`, and writes the parsed `Json` value while the schema expects a string.
+    """
+    observed: list[tuple[Venue, Place, str, list[int], SerializedAs, Counted]] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        args = {
+            'venue': {'roomName': 'A1'},
+            'place': {'cityName': 'Paris'},
+            'token': 'hunter2',
+            'nums': '[1, 2]',
+            'out': {'room': 'A1'},
+            'counted': {'qty': 2},
+        }
+        return ModelResponse(parts=[ToolCallPart('book', args)] if len(messages) == 1 else [TextPart('done')])
+
+    agent = Agent(FunctionModel(model), name='model-args', capabilities=[AzureDurableTaskDurability()])
+
+    @agent.tool_plain
+    def book(
+        venue: Venue, place: Place, token: SecretStr, nums: Json[list[int]], out: SerializedAs, counted: Counted
+    ) -> str:
+        observed.append((venue, place, token.get_secret_value(), nums, out, counted))
+        return 'booked'
+
+    with registered_agent(durable_worker, agent):
+        assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
+    assert observed == [
+        ({'room': 'A1'}, Place(city='Paris'), 'hunter2', [1, 2], SerializedAs(room='A1'), Counted(qty=2))
+    ]
+
+
+class Order(BaseModel):
+    qty: int
+
+
+def test_arguments_changed_by_hooks_reach_the_activity_as_changed(durable_worker: 'InMemoryWorker') -> None:
+    """Arguments a hook replaced, mutated or repaired don't validate back from the model's, so the activity gets them dumped."""
+    observed: list[object] = []
+    hooks = Hooks[None]()
+
+    @hooks.on.before_tool_validate(tools=['stay'])
+    async def repair(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
+    ) -> dict[str, Any]:
+        return {'nights': 2}
+
+    @hooks.on.after_tool_validate(tools=['order'])
+    async def replace_note(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {**args, 'note': 'hook'}
+
+    @hooks.on.before_tool_execute(tools=['order'])
+    async def mutate_order(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        args['order'].qty = 99
+        return args
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(
+            parts=[
+                ToolCallPart('order', {'order': {'qty': 1}, 'note': 'model'}),
+                ToolCallPart('stay', '{"nights": "two"}'),
+            ]
+        )
+
+    agent = Agent(
+        FunctionModel(model), name='hook-args', deps_type=type(None), capabilities=[hooks, AzureDurableTaskDurability()]
+    )
+
+    @agent.tool_plain
+    def order(order: Order, note: str) -> str:
+        observed.append((order, note))
+        return 'ordered'
+
+    @agent.tool_plain
+    def stay(nights: int) -> str:
+        observed.append(nights)
+        return 'stayed'
+
+    with registered_agent(durable_worker, agent):
+        assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
+    assert observed == [(Order(qty=99), 'hook'), 2]
 
 
 def test_choice_action_output_and_partial_output(durable_worker: 'InMemoryWorker') -> None:

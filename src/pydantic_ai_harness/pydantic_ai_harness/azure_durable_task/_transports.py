@@ -24,6 +24,7 @@ from pydantic_ai.durable_exec import (
     ToolsetGetToolsParams,
     WorkspaceCall,
     WorkspaceCallParams,
+    raw_tool_args_for_unit,
     revalidate_function_call,
 )
 from pydantic_ai.exceptions import UserError
@@ -127,6 +128,7 @@ class _Call:
     context: ContextSnapshot
     tool_def: ToolDefinition | None
     original_name: str | None = None
+    raw_tool_args: str | dict[str, Any] | None = None
 
 
 _CALL = TypeAdapter(_Call)
@@ -144,6 +146,7 @@ def function_transport(
             context=ContextSnapshot.capture(params.ctx),
             tool_def=tool.tool_def,
             original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,
+            raw_tool_args=raw_tool_args_for_unit(toolset, params),
         )
 
     def load(wire: _Call) -> ToolsetCallToolParams:
@@ -156,7 +159,9 @@ def function_transport(
                 f'Tool {wire.name!r} is no longer available in toolset {toolset.id!r}. '
                 'Keep registered tools compatible with running orchestrations.'
             ) from exc
-        return ToolsetCallToolParams(wire.name, tool_args=wire.tool_args, ctx=ctx, tool=tool)
+        return ToolsetCallToolParams(
+            wire.name, tool_args=wire.tool_args, ctx=ctx, tool=tool, raw_tool_args=wire.raw_tool_args
+        )
 
     return _Transport(_CALL, dump, load)
 

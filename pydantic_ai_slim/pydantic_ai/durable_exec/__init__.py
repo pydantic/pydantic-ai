@@ -65,7 +65,7 @@ if TYPE_CHECKING:
     from ._retry_after import model_error_retry_after
     from ._run_context import DurableRunContext
     from ._spec import DurabilityEngineSpec
-    from ._toolset import CallToolResult, DynamicToolsResult, revalidate_function_call
+    from ._toolset import CallToolResult, DynamicToolsResult, raw_tool_args_for_unit, revalidate_function_call
     from ._workspace import WorkspaceCall, WorkspaceCallParams, WorkspaceCallResult
 
 __all__ = [
@@ -117,6 +117,7 @@ __all__ = [
     'ResultCodec',
     'ToolsetCallToolParams',
     'ToolsetGetToolsParams',
+    'raw_tool_args_for_unit',
     'revalidate_function_call',
     'WorkspaceCall',
     'WorkspaceCallParams',
@@ -180,6 +181,7 @@ _exports = {
     'ResultCodec': ('._operation', 'ResultCodec'),
     'ToolsetCallToolParams': ('._operation', 'ToolsetCallToolParams'),
     'ToolsetGetToolsParams': ('._operation', 'ToolsetGetToolsParams'),
+    'raw_tool_args_for_unit': ('._toolset', 'raw_tool_args_for_unit'),
     'revalidate_function_call': ('._toolset', 'revalidate_function_call'),
     'WorkspaceCall': ('._workspace', 'WorkspaceCall'),
     'WorkspaceCallParams': ('._workspace', 'WorkspaceCallParams'),

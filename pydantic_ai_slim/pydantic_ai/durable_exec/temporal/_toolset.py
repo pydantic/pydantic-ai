@@ -57,6 +57,8 @@ class CallToolParams:
     tool_def: ToolDefinition | None
     original_name: str | None = None
     """The name the toolset holds the tool under, when a `prepare` function renamed it in `tool_def.name`."""
+    raw_tool_args: str | dict[str, Any] | None = None
+    """A function tool call's arguments as the model sent them, when they validate to `tool_args`; see `raw_tool_args_for_unit`."""
 
 
 @asynccontextmanager

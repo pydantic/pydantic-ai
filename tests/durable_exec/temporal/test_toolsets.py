@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import sys
 import uuid
@@ -13,8 +14,9 @@ from typing import Annotated, Any, cast
 from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, Json, SecretStr, computed_field
 from pydantic_core import PydanticSerializationError
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     AbstractToolset,
@@ -45,6 +47,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
     Capability,
+    Hooks,
     PrefixTools,
     Toolset,
 )
@@ -78,6 +81,7 @@ try:
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
+    from pydantic_ai.durable_exec import ToolsetCallToolParams
     from pydantic_ai.durable_exec._toolset import (
         CallToolResult,
         unwrap_tool_call_result,
@@ -1347,6 +1351,257 @@ async def test_aliased_args_reach_the_activity(client: Client, path: str):
 
     assert output == 'Done.'
     assert _received_bookings == [('Ada', Place(cityName='Paris'), Revision(draftNumber=0, draft=7))]
+
+
+class Venue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
+
+
+@dataclass
+class StdPlace:
+    city: Annotated[str, Field(alias='cityName')]
+
+
+class SerializedAs(BaseModel):
+    room: str = Field(serialization_alias='roomOut')
+
+
+class Counted(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    qty: int
+
+    @computed_field
+    @property
+    def doubled(self) -> int:
+        return self.qty * 2
+
+
+_received_model_args: list[object] = []
+"""The arguments the tools below ran with, recorded in the activity."""
+
+
+def reserve(
+    venue: Venue, place: StdPlace, token: SecretStr, nums: Json[list[int]], out: SerializedAs, counted: Counted
+) -> str:
+    """Reserve a venue."""
+    _received_model_args.append((venue, place, token.get_secret_value(), nums, out, counted))
+    return 'Reserved.'
+
+
+def pair(pair: tuple[float, str]) -> str:
+    """Record a pair."""
+    _received_model_args.append(pair)
+    return 'Paired.'
+
+
+def ping() -> str:
+    """Ping."""
+    _received_model_args.append('ping')
+    return 'Pong.'
+
+
+_RESERVE_ARGS = json.dumps(
+    {
+        'venue': {'roomName': 'A1'},
+        'place': {'cityName': 'Paris'},
+        'token': 'hunter2',
+        'nums': '[1, 2]',
+        'out': {'room': 'A1'},
+        'counted': {'qty': 2},
+    }
+)
+
+
+def _model_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('Done.')])
+    return ModelResponse(
+        parts=[
+            ToolCallPart('reserve', _RESERVE_ARGS, tool_call_id='c1'),
+            ToolCallPart('pair', {'pair': [1.5, 'x']}, tool_call_id='c2'),
+            ToolCallPart('ping', tool_call_id='c3'),
+        ]
+    )
+
+
+_model_args_agent = Agent(
+    FunctionModel(_model_args_model),
+    name='model_args_durable',
+    tools=[reserve, pair, ping],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class ModelArgsWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _model_args_agent.run('Reserve room A1 in Paris.')
+        return result.output
+
+
+async def test_tool_arguments_are_validated_from_the_model_arguments_in_the_activity(client: Client):
+    """The activity validates the arguments the model sent, as the workflow did, rather than a dump of the validated ones.
+
+    The converter's dump writes a `TypedDict` and a stdlib dataclass by field name while their schema reads the alias,
+    masks the `SecretStr`, writes the parsed `Json` value while the schema expects a string, writes a field under the
+    serialization alias its validation doesn't read, and writes a computed field that a model forbidding extra fields
+    rejects.
+    """
+    _received_model_args.clear()
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[ModelArgsWorkflow], plugins=[AgentPlugin(_model_args_agent)]
+    ):
+        handle = await client.start_workflow(
+            ModelArgsWorkflow.run, id=f'{ModelArgsWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+        assert await handle.result() == 'Done.'
+
+    assert sorted(_received_model_args, key=repr) == sorted(
+        [
+            ({'room': 'A1'}, StdPlace(city='Paris'), 'hunter2', [1, 2], SerializedAs(room='A1'), Counted(qty=2)),
+            (1.5, 'x'),
+            'ping',
+        ],
+        key=repr,
+    )
+    assert _call_tool_activity_raw_args(await handle.fetch_history()) == {
+        'c1': _RESERVE_ARGS,
+        'c2': {'pair': [1.5, 'x']},
+        # No arguments to send: the call's `args` is `None`.
+        'c3': None,
+    }
+
+
+def _call_tool_activity_raw_args(history: WorkflowHistory) -> dict[str, object]:
+    """Each `call_tool` activity's `raw_tool_args` input, by tool call ID."""
+    raw_args: dict[str, object] = {}
+    for event in history.events:
+        attributes = event.activity_task_scheduled_event_attributes
+        if attributes.activity_type.name.endswith('__call_tool'):
+            params = json.loads(attributes.input.payloads[0].data)
+            raw_args[params['serialized_run_context']['tool_call_id']] = params['raw_tool_args']
+    return raw_args
+
+
+class Order(BaseModel):
+    qty: int
+
+
+_received_hook_args: list[object] = []
+"""The arguments the tools below ran with, recorded in the activity."""
+
+
+def order(order: Order, note: str) -> str:
+    """Place an order."""
+    _received_hook_args.append((order, note))
+    return 'Ordered.'
+
+
+def stay(nights: int) -> str:
+    """Book nights."""
+    _received_hook_args.append(nights)
+    return 'Stayed.'
+
+
+_hooks = Hooks[None]()
+
+
+@_hooks.on.before_tool_validate(tools=['stay'])
+async def _repair_nights(
+    ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
+) -> dict[str, Any]:
+    return {'nights': 2}
+
+
+@_hooks.on.after_tool_validate(tools=['order'])
+async def _replace_note(
+    ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+) -> dict[str, Any]:
+    return {**args, 'note': 'hook'}
+
+
+@_hooks.on.before_tool_execute(tools=['order'])
+async def _mutate_order(
+    ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+) -> dict[str, Any]:
+    args['order'].qty = 99
+    return args
+
+
+def _hook_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('Done.')])
+    return ModelResponse(
+        parts=[
+            ToolCallPart('order', {'order': {'qty': 1}, 'note': 'model'}, tool_call_id='c1'),
+            ToolCallPart('stay', '{"nights": "two"}', tool_call_id='c2'),
+        ]
+    )
+
+
+_hook_args_agent = Agent(
+    FunctionModel(_hook_args_model),
+    name='hook_args_durable',
+    deps_type=type(None),
+    tools=[order, stay],
+    capabilities=[_hooks, TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class HookArgsWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _hook_args_agent.run('Order one and stay two nights.')
+        return result.output
+
+
+async def test_arguments_changed_by_hooks_reach_the_activity_as_changed(client: Client):
+    """Arguments a hook replaced, mutated or repaired don't validate back from the model's, so the activity gets them dumped."""
+    _received_hook_args.clear()
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[HookArgsWorkflow], plugins=[AgentPlugin(_hook_args_agent)]
+    ):
+        output = await client.execute_workflow(
+            HookArgsWorkflow.run, id=f'{HookArgsWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+
+    assert output == 'Done.'
+    assert sorted(_received_hook_args, key=repr) == sorted([(Order(qty=99), 'hook'), 2], key=repr)
+
+
+async def test_history_recorded_without_model_arguments_replays(client: Client, monkeypatch: pytest.MonkeyPatch):
+    """A workflow whose activity input carries only the validated arguments, as before, still completes and replays.
+
+    Unsandboxed, so the patch reaches the workflow's transport.
+    """
+    _received_bookings.clear()
+
+    def without_model_args(toolset: FunctionToolset[Any], params: ToolsetCallToolParams) -> None:
+        return None
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._transports.raw_tool_args_for_unit', without_model_args)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BookWorkflow],
+        plugins=[AgentPlugin(_book_durable_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            BookWorkflow.run, args=['durability'], id=f'{BookWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+        assert await handle.result() == 'Done.'
+    monkeypatch.undo()
+    assert _received_bookings == [('Ada', Place(cityName='Paris'), Revision(draftNumber=0, draft=7))]
+
+    history = await handle.fetch_history()
+    assert _call_tool_activity_raw_args(history) == {'c1': None}
+    replay = await Replayer(
+        workflows=[BookWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
+    ).replay_workflow(history)
+    assert replay.replay_failure is None
 
 
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

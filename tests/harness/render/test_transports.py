@@ -4,10 +4,10 @@ import dataclasses
 import inspect
 from dataclasses import dataclass
 from datetime import date
-from typing import Annotated
+from typing import Annotated, Any
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, Json, SecretStr, computed_field
 from render.workflows import TaskContext, Workflows
 from typing_extensions import TypedDict
 
@@ -17,6 +17,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolKind, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import RenderWorkflows
@@ -194,6 +195,127 @@ async def test_aliased_function_arguments_are_revalidated_after_the_json_boundar
     assert await pending == 'aliased arguments arrived'
     assert seen == [('Ada', 2)]
     assert 'aliased-arguments__function_toolset__<agent>.call_tool' in context.task_names
+
+
+class Venue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
+
+
+@dataclass
+class Place:
+    city: Annotated[str, Field(alias='cityName')]
+
+
+class SerializedAs(BaseModel):
+    room: str = Field(serialization_alias='roomOut')
+
+
+class Counted(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    qty: int
+
+    @computed_field
+    @property
+    def doubled(self) -> int:
+        return self.qty * 2
+
+
+def model_sent_arguments_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        return ModelResponse(parts=[TextPart('done')])
+    args = {
+        'venue': {'roomName': 'A1'},
+        'place': {'cityName': 'Paris'},
+        'token': 'hunter2',
+        'nums': '[1, 2]',
+        'out': {'room': 'A1'},
+        'counted': {'qty': 2},
+    }
+    return ModelResponse(parts=[ToolCallPart('book', args, tool_call_id='book')])
+
+
+async def test_function_arguments_are_validated_from_the_model_arguments_in_the_task() -> None:
+    """The task validates the arguments the model sent, as the run did, rather than a JSON dump of the validated ones.
+
+    The dump writes a `TypedDict` and a stdlib dataclass by field name while their schema reads the alias, masks
+    the `SecretStr`, writes the parsed `Json` value while the schema expects a string, and writes a computed field
+    that a model forbidding extra fields rejects.
+    """
+    seen: list[tuple[Venue, Place, str, list[int], SerializedAs, Counted]] = []
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(model_sent_arguments_model), name='model-arguments', deps_type=type(None), capabilities=[runtime]
+    )
+
+    @agent.tool_plain
+    async def book(
+        venue: Venue, place: Place, token: SecretStr, nums: Json[list[int]], out: SerializedAs, counted: Counted
+    ) -> str:
+        seen.append((venue, place, token.get_secret_value(), nums, out, counted))
+        return 'ok'
+
+    assert await run_agent_in_task(agent, runtime, RecordingTaskContext()) == 'done'
+    assert seen == [({'room': 'A1'}, Place(city='Paris'), 'hunter2', [1, 2], SerializedAs(room='A1'), Counted(qty=2))]
+
+
+class Order(BaseModel):
+    qty: int
+
+
+def hook_arguments_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(
+        parts=[
+            ToolCallPart('order', {'order': {'qty': 1}, 'note': 'model'}, tool_call_id='order'),
+            ToolCallPart('stay', '{"nights": "two"}', tool_call_id='stay'),
+        ]
+    )
+
+
+async def test_arguments_changed_by_hooks_reach_the_task_as_changed() -> None:
+    """Arguments a hook replaced, mutated or repaired don't validate back from the model's, so the task gets them dumped."""
+    seen: list[object] = []
+    hooks = Hooks[None]()
+
+    @hooks.on.before_tool_validate(tools=['stay'])
+    async def repair(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
+    ) -> dict[str, Any]:
+        return {'nights': 2}
+
+    @hooks.on.after_tool_validate(tools=['order'])
+    async def replace_note(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {**args, 'note': 'hook'}
+
+    @hooks.on.before_tool_execute(tools=['order'])
+    async def mutate_order(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        args['order'].qty = 99
+        return args
+
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(hook_arguments_model), name='hook-arguments', deps_type=type(None), capabilities=[hooks, runtime]
+    )
+
+    @agent.tool_plain
+    async def order(order: Order, note: str) -> str:
+        seen.append((order, note))
+        return 'ok'
+
+    @agent.tool_plain
+    async def stay(nights: int) -> str:
+        seen.append(nights)
+        return 'ok'
+
+    assert await run_agent_in_task(agent, runtime, RecordingTaskContext()) == 'done'
+    assert seen == [(Order(qty=99), 'hook'), 2]
 
 
 async def test_invalid_typed_arguments_follow_normal_model_retry_control_flow() -> None:

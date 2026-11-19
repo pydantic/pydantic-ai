@@ -216,7 +216,7 @@ All other agents and toolsets are supported.
 
 A tool's [`args_validator`](../tools-advanced.md#args-validator) runs in a `validate_args` activity, so it may perform I/O and dynamic-tool validators survive the workflow boundary. A tool without one schedules no extra activity. Validation runs before [approval and deferral](../deferred-tools.md), so rejected arguments never reach an approver. A validator may also raise `ApprovalRequired` or `CallDeferred`; resuming an approved call runs validation again with `tool_call_approved` set.
 
-Each activity derives its typed arguments independently, so schema validators must be idempotent. A Pydantic validation context is rebuilt from the `validation_context` configured on [`Agent`][pydantic_ai.agent.Agent]; a callable context builder runs again with the activity's own run context.
+Each activity derives its typed arguments independently, so schema validators must be idempotent. The activity validates the arguments the model sent, as the workflow did, so the tool gets the values it would get outside Temporal. When a hook or a wrapper toolset changed the arguments after validation, the activity validates their JSON form instead, which can differ for values that don't survive a JSON round trip, like a `SecretStr` or a field written under a different alias than the one it's read by. A Pydantic validation context is rebuilt from the `validation_context` configured on [`Agent`][pydantic_ai.agent.Agent]; a callable context builder runs again with the activity's own run context.
 
 ### Agent Run Context and Dependencies
 
@@ -328,6 +328,7 @@ Temporal stores every payload it records in the workflow execution event history
 
 - **Binary content**, such as an image a tool returns or a model puts on its response. Binary data is base64-encoded on its way into the payload, so the usable budget for raw bytes is about three quarters of the cap — roughly 1.5MB. An image whose size reads as comfortably under 2MB can still be rejected.
 - **A large [dependencies object](../dependencies.md)**, which is copied into history every time Pydantic AI schedules a model, tool, MCP, or event-handler activity — so a wide tool fan-out can both bloat history permanently and breach the per-payload limit.
+- **Large function tool arguments**, which a tool's activity input carries twice: as the model sent them, for the activity to [validate](#tool-argument-validation), and as the workflow validated them, for a worker running an earlier Pydantic AI version.
 
 #### When a tool return or model response is too large
 

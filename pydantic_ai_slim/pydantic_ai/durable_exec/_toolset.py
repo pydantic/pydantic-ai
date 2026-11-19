@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import functools
 import inspect
+import math
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -22,14 +23,14 @@ from typing import (
 
 import anyio
 from pydantic import Discriminator, Field, Tag, ValidationError
-from pydantic_core import PydanticCustomError, PydanticSerializationError, to_jsonable_python
+from pydantic_core import PydanticCustomError, PydanticSerializationError, SchemaValidator, to_jsonable_python
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._agent_graph import build_validation_context
 from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._enqueue import EnqueueGuard
 from pydantic_ai._run_context import ToolNamePath, with_tool_name_path, without_tool_name_path
-from pydantic_ai._utils import is_str_dict
+from pydantic_ai._utils import is_list, is_str_dict
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -47,6 +48,7 @@ from pydantic_ai.tools import (
     _without_toolset_sequential_defer_loading,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.abstract import SchemaValidatorProt
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
@@ -530,7 +532,8 @@ async def revalidate_function_call(
 
     Looks the tool up in `toolset` when it wasn't transported, then validates the arguments
     against its schema with the context's validation context, so the tool receives the same
-    Python values it would in-process.
+    Python values it would in-process. It validates `params.raw_tool_args` when the transport
+    carried them, and `params.tool_args` otherwise.
     """
     tool = params.tool
     if tool is None:
@@ -541,8 +544,69 @@ async def revalidate_function_call(
                 f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
                 f'Removing or renaming tools during an agent run is not supported with {engine_spec.engine_name}.'
             ) from exc
-    args = revalidate_function_args(toolset, tool, params.tool_args, context=unit_validation_context(params.ctx))
+    context = unit_validation_context(params.ctx)
+    if params.raw_tool_args is not None:
+        args = _validate_raw_tool_args(tool.args_validator, params.raw_tool_args, context=context)
+    else:
+        args = revalidate_function_args(toolset, tool, params.tool_args, context=context)
     return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
+
+
+def raw_tool_args_for_unit(toolset: FunctionToolset[Any], params: ToolsetCallToolParams) -> str | dict[str, Any] | None:
+    """The function tool call's arguments as the model sent them, for a transport to carry into the durable unit.
+
+    Validating the arguments again after a JSON dump doesn't always give back the values the
+    workflow validated: the dump writes serialization aliases, masks secrets and runs serializers.
+    The model's own arguments are what the workflow validated, so validating them again in the unit
+    reproduces those values. They are returned only when they still do: when validating them now,
+    as the unit will, gives arguments equal to `params.tool_args`. A hook, a wrapper toolset or an
+    `args_validator` that changed the arguments makes them unequal, and so does a validator whose
+    output isn't stable (a `default_factory`, a type without `__eq__`). The function then returns
+    `None`, and the transport carries only `tool_args`, as before.
+
+    Call this workflow-side in a function-call transport's `dump`, and set the loaded value on
+    [`ToolsetCallToolParams.raw_tool_args`][pydantic_ai.durable_exec.ToolsetCallToolParams.raw_tool_args]
+    worker-side.
+    """
+    tool = params.tool
+    raw_args = params.ctx._tool_call_args  # pyright: ignore[reportPrivateUsage]
+    if (
+        raw_args is None
+        or not isinstance(tool, FunctionToolsetTool)
+        or not _is_json_value(raw_args)
+        # The unit validates with the tool it rebuilds from `toolset`.
+        or (source := toolset.tools.get(tool.original_name or tool.tool_def.name)) is None
+    ):
+        return None
+    try:
+        reproduced = _validate_raw_tool_args(
+            source.function_schema.validator, raw_args, context=params.ctx.validation_context
+        )
+    except ValidationError:
+        return None
+    return raw_args if reproduced == params.tool_args else None
+
+
+def _validate_raw_tool_args(
+    validator: SchemaValidator | SchemaValidatorProt, raw_args: str | dict[str, Any], *, context: Any
+) -> dict[str, Any]:
+    """Validate a tool call's arguments the way `ToolManager` does."""
+    if isinstance(raw_args, str):
+        return validator.validate_json(raw_args or '{}', context=context)
+    return validator.validate_python(raw_args, context=context)
+
+
+def _is_json_value(value: object) -> bool:
+    """Whether `value` crosses a JSON boundary unchanged."""
+    if isinstance(value, str | int | None):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if is_list(value):
+        return all(_is_json_value(item) for item in value)
+    if is_str_dict(value):
+        return all(isinstance(key, str) and _is_json_value(item) for key, item in value.items())
+    return False
 
 
 def revalidate_function_args(
