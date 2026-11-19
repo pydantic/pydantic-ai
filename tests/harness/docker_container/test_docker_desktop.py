@@ -296,7 +296,9 @@ async def test_missing_display_programs_are_installed_on_first_use(
     assert docker.apt_get_calls == [f'{sudo}update -qq', f'{sudo}{_INSTALL}']
 
 
-async def test_a_program_missing_beside_a_running_display_is_installed(docker: FakeDocker, container_dir: Path) -> None:
+async def test_one_missing_program_makes_the_first_start_install_them_all(
+    docker: FakeDocker, container_dir: Path
+) -> None:
     docker.uninstall('scrot')
     _hide_host_programs(docker)
     docker.run_as(0)
