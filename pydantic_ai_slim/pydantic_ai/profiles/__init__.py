@@ -182,11 +182,10 @@ class ModelProfile(TypedDict, total=False):
     """The size of the grid the model points on instead of pixels, a convention of the model's maker. Default: unset,
     meaning pixels.
 
-    With `1000`, the agent tells the model in the `computer` tool's description that positions run from 0 to 999,
-    and records the grid on each of the model's calls as
+    With `1000`, the `computer` tool's description tells the model that positions run from 0 to 999, and the agent
+    records the grid on each of the model's calls as
     [`ComputerCallPart.coordinate_grid`][pydantic_ai.computer_use.ComputerCallPart.coordinate_grid] so the tool can
-    scale them to pixels: under `ModelFallback` the tool can't otherwise tell which model made the call. Gemini 3
-    profiles set it.
+    scale them to pixels. Gemini 3 profiles set it.
     """
 
     computer_use_screenshot_max_side: int
@@ -194,11 +193,9 @@ class ModelProfile(TypedDict, total=False):
     meaning no limit.
 
     The agent records it on each of the model's `computer` calls as
-    [`ComputerCallPart.screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side], since
-    under `ModelFallback` the tool can't otherwise tell which model made the call, and a capability that drives the
-    screen can then refuse a larger one. Set by the profiles of models whose computer tool scales a larger screenshot
-    down, along with `computer_use_screenshot_max_pixels`, since such a model then answers in the smaller image's
-    pixels.
+    [`ComputerCallPart.screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side], so a
+    capability that drives the screen can refuse a larger one. Set it, with `computer_use_screenshot_max_pixels`, for
+    a model whose computer tool scales a larger screenshot down, since that model answers in the smaller image's pixels.
     """
 
     computer_use_screenshot_max_pixels: int
@@ -206,7 +203,7 @@ class ModelProfile(TypedDict, total=False):
     Default: unset, meaning no limit.
 
     Recorded on the model's calls as
-    [`ComputerCallPart.screenshot_max_pixels`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_pixels]; see
+    [`ComputerCallPart.screenshot_max_pixels`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_pixels], like
     `computer_use_screenshot_max_side`.
     """
 

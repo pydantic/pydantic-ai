@@ -411,8 +411,7 @@ Gotchas:
 One `computer` tool: the model sends a list of mouse and keyboard actions, they run on
 `ctx.workspace`'s display, and the tool returns a screenshot. Needs a workspace whose backend
 implements `SupportsDisplay` and a model that accepts images. A model without image input fails before
-its request. A workspace without a display ends the run with `UserError` at its first display read:
-the native tool's size before the first request, or the first `computer` call.
+its request, and a workspace without a display ends the run with `UserError`.
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
@@ -444,11 +443,10 @@ Gotchas:
   action in the validated `args['actions']` isn't `screenshot`, `zoom`, `wait` or `cursor_position`. Don't test
   `isinstance(call, ComputerCallPart)`: a call whose arguments a hook repaired arrives as a plain `ToolCallPart`.
 - Gemini 3 models get a 0-999 coordinate grid (profile `computer_use_coordinate_grid`), scaled to
-  pixels; a `FallbackModel` keeps the grid only when every model in it uses the same one. Under `ModelFallback`,
-  each model that answers is told its own coordinates; one that can't take images, or would see the latest screenshot
-  scaled down, ends the run with a `UserError` before its request. Each `ComputerCallPart` is labelled with its
-  model's `coordinate_grid`, `screenshot_max_side` and `screenshot_max_pixels`; a custom runner reads those instead of
-  the run's model.
+  pixels. Under `ModelFallback`, each model that answers is told its own coordinates; one that can't take images, or
+  would see the latest screenshot scaled down, ends the run with a `UserError` before its request. A custom runner
+  reads each `ComputerCallPart`'s `coordinate_grid`, `screenshot_max_side` and `screenshot_max_pixels` instead of the
+  run's model.
 - Screenshots are sent at the screen's size: a screen larger than the model takes (profile
   `computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`) stops the run before the call acts,
   with an error naming the largest size that fits. 1280x800 fits every model.

@@ -116,7 +116,7 @@ def _prepare(params: ModelRequestParameters) -> ModelRequestParameters:
 
 @pytest.mark.parametrize('display_size', [(0, 800), (1280, -1)])
 def test_computer_tool_refuses_a_display_size_that_is_not_positive(display_size: tuple[int, int]) -> None:
-    with pytest.raises(UserError, match='display_size` must be positive'):
+    with pytest.raises(ValueError, match='display_size` must be positive'):
         ComputerTool(display_size=display_size)
 
 

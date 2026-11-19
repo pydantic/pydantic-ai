@@ -1,8 +1,8 @@
 """The `computer` tool: its kind, its actions, and the shapes of its arguments and result.
 
 A capability that gives an agent a screen defines a tool of [`COMPUTER_KIND`][pydantic_ai.computer_use.COMPUTER_KIND]
-and drives the screen. A model adapter whose provider has a native computer tool sends that tool as the native one
-and translates its calls and results.
+and drives the screen. A model adapter whose provider has a native computer tool sends that tool in its place and
+translates its calls and results.
 
 Coordinates are pixels of the latest screenshot, from the top left, unless the call's
 [`coordinate_grid`][pydantic_ai.computer_use.ComputerCallPart.coordinate_grid] puts them on a grid. A click or scroll
@@ -16,14 +16,11 @@ whatever the keyboard layout needs to type it; an upper-case letter is its lower
 How the actions change, so a tool written today keeps doing what the model asked:
 
 - A new kind of action is a new type in [`ComputerToolAction`][pydantic_ai.computer_use.ComputerToolAction], so an
-  older tool fails a call it doesn't know rather than ignoring it.
-- An action refuses unknown fields, so a field added later is never silently dropped.
-- An existing action only gains fields whose default is today's behaviour. Anything a tool must honour, such as
-  scrolling by pixels, is a new type.
+  older tool fails a call it doesn't know rather than ignoring it. Actions refuse unknown fields for the same reason.
+- An existing action only gains fields whose default is today's behaviour, and those fields are left out of
+  serialized data while they hold the default. Anything a tool must honour, such as scrolling by pixels, is a new type.
 - The values a field accepts, such as the mouse buttons, don't grow. Key names are added only for keys no existing
   name covers.
-- A field added later is left out of serialized data while it holds its default (`Field(exclude_if=...)`), so an
-  older version can still read actions that don't use it.
 - A new field, here or in a result, never changes what an existing field means.
 
 A result's content is a short summary, then what each action returned, in order, then the screenshot. The last image
@@ -521,9 +518,8 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
     def coordinate_grid(self) -> int | None:
         """The size of the grid the call's positions are on, such as `1000` for 0 to 999, or `None` for pixels.
 
-        This is the answering model's profile value, `computer_use_coordinate_grid`: a convention of the model's maker.
-        The agent records it on the call, because under `ModelFallback` the tool can't otherwise tell which model made
-        the call. A history that lost the call's `provider_details`, such as one a UI rebuilt, reads `None`.
+        The agent records the answering model's `computer_use_coordinate_grid` profile value on the call. A history that
+        lost the call's `provider_details`, such as one a UI rebuilt, reads `None`.
         """
         return _label(self, _COORDINATE_GRID, minimum=2)
 
@@ -531,11 +527,9 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
     def screenshot_max_side(self) -> int | None:
         """The longest side, in pixels, of a screenshot the call's model takes, or `None` for no limit.
 
-        This is the answering model's profile value, `computer_use_screenshot_max_side`: a limit set by the model's
-        maker. The agent records it on the call, because under `ModelFallback` the tool can't otherwise tell which
-        model made the call. A `FallbackModel`'s calls get the smallest limit across its models: its response is matched
-        to one of them only by provider, which doesn't tell two models on one provider apart. A computer use capability
-        can then refuse a screen the model can't see before the call acts. A history a UI rebuilt reads `None`.
+        The agent records the answering model's `computer_use_screenshot_max_side` profile value on the call, so a
+        computer use capability can refuse a screen the model can't see before the call acts. A `FallbackModel`'s calls
+        get the smallest limit across its models. A history a UI rebuilt reads `None`.
         """
         return _label(self, _SCREENSHOT_MAX_SIDE)
 
@@ -543,8 +537,8 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
     def screenshot_max_pixels(self) -> int | None:
         """The most pixels in a screenshot the call's model takes, or `None` for no limit.
 
-        The answering model's profile value, `computer_use_screenshot_max_pixels`, recorded as
-        [`screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side] is.
+        The agent records the answering model's `computer_use_screenshot_max_pixels` profile value, as for
+        [`screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side].
         """
         return _label(self, _SCREENSHOT_MAX_PIXELS)
 

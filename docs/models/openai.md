@@ -365,10 +365,9 @@ The Responses API has native tools that you can use instead of building your own
 
 Web search, Code interpreter, Image generation, and File search are natively supported through the [Native tools](../native-tools.md) feature.
 
-Computer use comes from the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability, which adds a
-[`ComputerTool`](../native-tools.md#computer-tool). GPT-5.4 (not nano), GPT-5.5, GPT-5.6 and GPT-6 get OpenAI's own
-computer tool through `OpenAIResponsesModel` on OpenAI and Bedrock Mantle. Other models, and any model with
-`ComputerUse(native=False)`, get a function tool.
+Computer use comes from the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. It sends
+OpenAI's own computer tool to the models listed under [Computer Tool](../native-tools.md#computer-tool), and a function
+tool to other models or with `ComputerUse(native=False)`.
 
 #### Referencing earlier responses
 
