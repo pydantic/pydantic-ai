@@ -58,7 +58,7 @@ from ...messages import (
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
 from ._citations import citations_provider_details, fetched_page, map_citations
-from ._computer import ComputerBatch, ComputerBlock, NativeComputer
+from ._computer import ComputerBatch, ComputerBlock, NativeComputer, stop_computer_calls_unless_finished
 from ._errors import map_api_errors
 from ._native_tools import (
     finalize_streamed_tool_search_call_part,
@@ -135,6 +135,9 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     def get(self) -> ModelResponse:
         response = super().get()
+        response.parts = stop_computer_calls_unless_finished(
+            response.parts, self.model_request_parameters, response.finish_reason
+        )
         if self._thread_record is None:
             return response
         return self._thread_record.stamp(response, from_fallback_model=self._from_fallback_model)
