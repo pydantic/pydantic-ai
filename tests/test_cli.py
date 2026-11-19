@@ -1607,6 +1607,7 @@ def _plain(output: str) -> str:
 def test_clai_intro_shows_banner(
     capfd: CaptureFixture[str],
     mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
     env: TestEnv,
     terminal_clai: None,
     uvx_path: str | None,
@@ -1615,6 +1616,9 @@ def test_clai_intro_shows_banner(
     env.set('OPENAI_API_KEY', 'test')
     mocker.patch('pydantic_ai._cli.ask_agent')
     mocker.patch('pydantic_ai._cli.shutil.which', return_value=uvx_path)
+    # Earlier tests run the module-level `cli_agent`, and its first run names it `agent`. A fresh `clai`
+    # process has no name to show, and the extra `agent: agent • ` wraps the line asserted below.
+    monkeypatch.setattr(cli_agent, 'name', None)
 
     assert cli(['hello']) == 0
 
