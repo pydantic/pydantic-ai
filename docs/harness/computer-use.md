@@ -71,12 +71,15 @@ The model must accept images.
 - Claude models on `AnthropicModel` get Anthropic's own computer use tool on the clients and models listed under
   [Anthropic](../models/anthropic.md#computer-use). Other Claude models and clients get the function tool.
 - GPT-5.4 (except GPT-5.4 nano), GPT-5.5, GPT-5.6 and GPT-6 get OpenAI's own computer tool when you use them
-  through `OpenAIResponsesModel`, on OpenAI or on Bedrock Mantle. See [OpenAI](../models/openai.md#native-tools).
+  through `OpenAIResponsesModel` with `OpenAIProvider` or `BedrockMantleProvider`. See [OpenAI](../models/openai.md#native-tools).
 - Every other model gets `computer` as a regular function tool.
 
-On any other OpenAI-compatible server, such as Azure, Ollama or vLLM, the model gets the function tool. If the
-server supports OpenAI's computer tool, add `ComputerTool` to `supported_native_tools` in the model's `profile=`
-argument. Setting it in the provider's profile has no effect.
+OpenAI's computer tool is sent only through `OpenAIProvider` and `BedrockMantleProvider`, except with an Azure client
+or through the Pydantic AI Gateway. Pydantic AI checks the provider class, not the server it calls. If you point
+`OpenAIProvider(base_url=...)` at another server, such as Ollama or vLLM, that doesn't support the computer tool,
+remove `ComputerTool` from `supported_native_tools` in the model's `profile=` argument. Every other provider gets the
+function tool. If its server supports OpenAI's computer tool, add `ComputerTool` to `supported_native_tools` in the
+model's `profile=` argument. Setting it in the provider's profile has no effect.
 
 Gemini 3 gives positions on a grid from 0 to 999 instead of in pixels. `ComputerUse` converts them to pixels.
 
