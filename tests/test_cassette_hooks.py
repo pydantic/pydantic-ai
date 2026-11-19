@@ -185,7 +185,7 @@ def test_account_id_is_scrubbed_from_responses_only():
     ],
 )
 def test_access_programs_are_cleared_from_responses(body: bytes, content_type: str, expected: bytes):
-    """OpenAI Responses bodies name the recording account's access programs, typed as an object, so they become null."""
+    """The recorder sets the recording account's `access_programs` in OpenAI Responses bodies to null."""
     response = before_record_response(_response(body=body, **{'content-type': content_type}))
     assert response.body == expected
 
