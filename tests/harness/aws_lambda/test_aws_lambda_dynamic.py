@@ -11,7 +11,7 @@ import pytest
 
 pytest.importorskip('aws_durable_execution_sdk_python')
 
-from typing import Any
+from typing import Any, Self
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -95,6 +95,37 @@ class TestDynamicToolset:
         assert resumed.invoked == []
         assert resolver.resolutions == resolutions
         assert resolver.calls == calls
+
+    def test_per_run_step_false_toolset_is_resolved_and_entered_once_per_run(self) -> None:
+        """The steps run in the handler's process with the run's own `RunContext`, so they share the toolset the run holds."""
+        counts = {'factory': 0, 'enter': 0}
+
+        class CountingToolset(FunctionToolset[object]):
+            async def __aenter__(self) -> Self:
+                counts['enter'] += 1
+                return await super().__aenter__()
+
+        def build(ctx: RunContext[object]) -> FunctionToolset[object]:
+            counts['factory'] += 1
+            toolset = CountingToolset()
+
+            def double(value: int) -> int:
+                return value * 2
+
+            toolset.add_function(double, name='double')
+            return toolset
+
+        agent = Agent(
+            double_then_done(),
+            name='d',
+            toolsets=[DynamicToolset[object](build, per_run_step=False, id='tools')],
+            capabilities=[AWSLambdaDurability()],
+        )
+
+        result = run_durable(lambda: agent.run('double 21'), context=FakeDurableContext())
+
+        assert result.output == 'doubled'
+        assert counts == {'factory': 1, 'enter': 1}
 
     def test_transparent_outside_a_durable_handler(self) -> None:
         resolver = Resolver()

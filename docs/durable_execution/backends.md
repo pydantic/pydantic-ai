@@ -194,6 +194,13 @@ and returns a [`BoundDurableOperation`][pydantic_ai.durable_exec.BoundDurableOpe
 worker-side handler inside [`durable_unit_scope`][pydantic_ai.durable_exec.durable_unit_scope], so
 a durable operation called from inside the unit runs directly instead of scheduling another unit.
 
+With the default dynamic toolset transports, a unit gets the run's own `RunContext`, so a
+[`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] built with `per_run_step=False` is resolved
+once per run and held for the units, as a non-durable run holds it. An engine whose
+[`dynamic_get_tools`][pydantic_ai.durable_exec.ParameterTransports.dynamic_get_tools] or
+[`dynamic_call`][pydantic_ai.durable_exec.ParameterTransports.dynamic_call] returns a transport of its
+own resolves the toolset again in each unit.
+
 Every parameter type carries the run's `RunContext` (as `run_context`, or `ctx` on the toolset
 parameters; it is `None` when a suspended response is cancelled outside a run), and that context
 holds objects that cannot be serialized. Use [`DurableRunContext`][pydantic_ai.durable_exec.DurableRunContext] for it:

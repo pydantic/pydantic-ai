@@ -225,8 +225,6 @@ class PylonPlugin(Plugin[PylonSettings, DepsT]):
             await warn_if_signed_out(SIGN_IN, self.host.console)
 
     async def _for_run(self, _: RunContext[DepsT]) -> Pylon[DepsT] | None:
-        # The token is resolved here, not passed as a callable `auth`: Pylon would answer with a
-        # `DynamicToolset`, and pydantic-ai 2.49 drops a dynamic toolset returned from a `CapabilityFunc`.
         settings = self.config.settings
         if settings.auth == 'browser':
             # Checked per run, so signing in from the menu or `/pylon login` applies to the next prompt.

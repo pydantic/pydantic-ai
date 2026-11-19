@@ -135,6 +135,10 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   same after a crash.
 - An async function tool with [`durable=False`](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) gets no
   step: it runs in the task on every attempt, so keep it deterministic and free of I/O.
+- A `DynamicToolset` built with `per_run_step=False` is resolved once per run and held for its
+  steps. Its factory, and the `for_run` of the toolset it returns (for an `MCPToolset`, its `auth` or
+  `headers` function), run in the task outside any step on every attempt, so keep them deterministic
+  and leave their I/O to the steps.
 
 ## Rules
 
