@@ -1,5 +1,7 @@
 """Wire-format utilities shared by the Google API adapters."""
 
+import math
+
 from ..exceptions import UserError
 from ..profiles.google import (
     GOOGLE_THINKING_LEVEL_SCALE,
@@ -80,3 +82,48 @@ def resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleModel
             else GOOGLE_THINKING_LEVELS - {'MINIMAL'}
         )
     return snap_thinking_level(thinking_effort_to_level(thinking), levels)
+
+
+GEMINI_API_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
+    # Thinking levels that only the Gemini API enforces, so they follow the client's transport, which
+    # `google_model_profile` can't see from the model name; Google Cloud keeps the default levels.
+    # Google documents only `minimal` and `high` on both APIs, but the Gemini API alone 400s `LOW` and `MEDIUM`
+    # for this id and its `-preview`: verified live 2026-09-30 on GenerateContent (Vertex `global`, `us` and `eu`
+    # accept them) and 2026-11-19 on `/interactions` with `store=false`.
+    # https://ai.google.dev/gemini-api/docs/image-generation
+    ('gemini-3.1-flash-image', frozenset(('MINIMAL', 'HIGH'))),
+    # The Gemini API 400s `Thinking level MINIMAL is not supported for this model` and accepts the rest: verified
+    # live 2026-11-18 on GenerateContent and 2026-11-19 on `/interactions`. Vertex is not probed and its thinking
+    # table doesn't list the model.
+    # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
+    # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+    ('gemini-4-neon', frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH'))),
+)
+
+
+def with_gemini_api_thinking_levels(model_name: str, profile: GoogleModelProfile) -> GoogleModelProfile:
+    """`profile` with the thinking levels the Gemini API enforces for `model_name`, unless `profile` sets its own.
+
+    Apply it only when the client talks to the Gemini API.
+    """
+    levels = next((levels for prefix, levels in GEMINI_API_THINKING_LEVELS if model_name.startswith(prefix)), None)
+    if levels is None or 'google_thinking_levels' in profile:
+        return profile
+    return {**profile, 'google_thinking_levels': levels, 'google_supports_minimal_thinking_level': 'MINIMAL' in levels}
+
+
+def set_server_timeout(headers: dict[str, str], client_timeout_ms: int | None) -> None:
+    """Ask Google for a whole-request deadline with `X-Server-Timeout`, unless `headers` already carries one.
+
+    A read timeout only bounds the wait between bytes, so the server would cut off a response that streams for
+    longer than its own deadline. Ask for the client's timeout, or Google's long-decode figure if that's longer; a
+    client without a timeout sends none. A caller's header keeps its value, in the spelling the GenerateContent SDK
+    checks before sending its own.
+    """
+    # Imported here: `providers.google` needs `google-genai`, which importing this module must not.
+    from ..providers.google import _LONG_DECODE_TIMEOUT  # pyright: ignore[reportPrivateUsage]
+
+    if caller_name := next((name for name in headers if name.lower() == 'x-server-timeout'), None):
+        headers['X-Server-Timeout'] = headers.pop(caller_name)
+    elif client_timeout_ms:
+        headers['X-Server-Timeout'] = str(math.ceil(max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)))

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import math
 from collections.abc import AsyncGenerator, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
@@ -58,7 +57,7 @@ from ...native_tools import (
     WebSearchTool,
 )
 from ...profiles import ModelProfile, ModelProfileSpec, merge_profile
-from ...profiles.google import GoogleModelProfile, GoogleThinkingLevel, google_interactions_model_profile
+from ...profiles.google import GoogleModelProfile, google_interactions_model_profile
 from ...providers import Provider, infer_provider
 from ...settings import ModelSettings, ThinkingEffort
 from .. import (
@@ -83,8 +82,6 @@ try:
     # Interactions uses separate compatibility errors that the public google.genai.errors does not export.
     from google.genai._gaos.lib.compat_errors import APIConnectionError, APIError, APIStatusError, APITimeoutError
     from google.genai.types import MediaResolution
-
-    from ...providers.google import _LONG_DECODE_TIMEOUT  # pyright: ignore[reportPrivateUsage]
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google Interactions API: `pip install "pydantic-ai-slim[google]"`'
@@ -173,15 +170,6 @@ class GoogleInteractionsModelSettings(ModelSettings, total=False):
     """Default resolution for video inputs. Per-file `vendor_metadata` takes precedence."""
 
 
-_GEMINI_API_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
-    # The thinking levels `GoogleModel.profile` applies on the Gemini API only, which `/interactions` enforces there
-    # too: verified live 2026-11-19 with `store=false`. `gemini-3.1-flash-image` returns 400 for `low` and `medium`,
-    # and `gemini-4-neon` for `minimal`; each accepts the rest of its set. Google Cloud keeps the default levels.
-    ('gemini-3.1-flash-image', frozenset(('MINIMAL', 'HIGH'))),
-    ('gemini-4-neon', frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH'))),
-)
-
-
 @dataclass(init=False)
 class GoogleInteractionsModel(Model[Client]):
     """A Google model accessed through the Interactions API, with `store=False`.
@@ -242,17 +230,8 @@ class GoogleInteractionsModel(Model[Client]):
     @cached_property
     def profile(self) -> GoogleModelProfile:
         profile = GoogleModelProfile(**super().profile)
-        model_name = self.model_name.rsplit('/', 1)[-1]
-        levels = next((levels for prefix, levels in _GEMINI_API_THINKING_LEVELS if model_name.startswith(prefix)), None)
-        if levels is not None and 'google_thinking_levels' not in profile and not self.client.vertexai:
-            profile = GoogleModelProfile(
-                **merge_profile(
-                    profile,
-                    GoogleModelProfile(
-                        google_thinking_levels=levels, google_supports_minimal_thinking_level='MINIMAL' in levels
-                    ),
-                )
-            )
+        if not self.client.vertexai:
+            profile = _google_common.with_gemini_api_thinking_levels(self.model_name.rsplit('/', 1)[-1], profile)
         if not profile.get('supports_image_output', False):
             return GoogleModelProfile(
                 **merge_profile(
@@ -417,14 +396,8 @@ class GoogleInteractionsModel(Model[Client]):
             if caller_user_agents
             else f'{sdk_user_agent} {get_user_agent()}'
         )
-        # The server ends a request at its own deadline unless `X-Server-Timeout` asks for longer. The Interactions SDK
-        # never sends it, where the GenerateContent SDK sends the client's timeout, so a long decode would be cut off
-        # mid-stream. Send what `GoogleModel` does: the client's timeout, or Google's long-decode figure if that's
-        # longer, unless the caller sent their own.
-        if not any(name.lower() == 'x-server-timeout' for name in headers) and (
-            client_timeout_ms := self.client._api_client._http_options.timeout  # pyright: ignore[reportPrivateUsage]
-        ):
-            headers['X-Server-Timeout'] = str(math.ceil(max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)))
+        # The Interactions SDK never sends `X-Server-Timeout`, so without this a long decode is cut off mid-stream.
+        _google_common.set_server_timeout(headers, self.client._api_client._http_options.timeout)  # pyright: ignore[reportPrivateUsage]
         options: _HttpOptions = {'extra_headers': headers}
         if (timeout := settings.get('timeout')) is not None:
             options['timeout'] = (
