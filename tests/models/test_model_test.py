@@ -577,6 +577,32 @@ def test_json_schema_test_data_additional():
     TestModel.model_validate(data)
 
 
+def test_json_schema_test_data_min_properties():
+    """Properties added for `minProperties` get numbered names, so many of them take linear time and memory.
+
+    A name a property already has is skipped, and a closed object gets only the properties it lists.
+    """
+    data = _JsonSchemaTestData({'type': 'object', 'minProperties': 1000}).generate()
+    assert len(data) == 1000
+    assert max(map(len, data)) == len('additionalProperty_1000')
+
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'additionalProperty_1': {'type': 'integer'}},
+        'required': ['additionalProperty_1'],
+        'minProperties': 2,
+    }
+    assert list(_JsonSchemaTestData(schema).generate()) == ['additionalProperty_1', 'additionalProperty_2']
+
+    closed: JsonSchema = {
+        'type': 'object',
+        'properties': {'a': {'type': 'integer'}},
+        'additionalProperties': False,
+        'minProperties': 2,
+    }
+    assert list(_JsonSchemaTestData(closed).generate()) == ['a']
+
+
 def test_json_schema_test_data_equal_inclusive_bounds():
     class TestModel(BaseModel):
         my_int_eq: Annotated[int, Ge(7), Le(7)]

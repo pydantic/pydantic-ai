@@ -674,7 +674,10 @@ class _JsonSchemaTestData:
         if (addition_props := schema.get('additionalProperties')) and (
             max_properties is None or max_properties > len(data)
         ):
-            data[self._additional_key(data)] = self._gen_any(addition_props)
+            add_prop_key = 'additionalProperty'
+            while add_prop_key in data:
+                add_prop_key += '_'
+            data[add_prop_key] = self._gen_any(addition_props)
 
         self._add_min_properties(data, properties, addition_props, self._finite_bound(schema, 'minProperties') or 0)
         return data
@@ -687,20 +690,18 @@ class _JsonSchemaTestData:
         min_properties: float,
     ) -> None:
         """Add optional properties, then additional ones where the schema allows them, until `minProperties` holds."""
-        optional = [key for key in properties if key not in data]
-        while len(data) < min_properties and (optional or addition_props is not False):
-            if optional:
-                key = optional.pop(0)
+        optional = iter([key for key in properties if key not in data])
+        # Numbered names keep the time and the names' length linear in `minProperties`.
+        numbers = itertools.count(1)
+        while len(data) < min_properties:
+            if (key := next(optional, None)) is not None:
                 data[key] = self._gen_any(properties[key])
+            elif addition_props is False:
+                return
             else:
-                data[self._additional_key(data)] = self._gen_any(addition_props or {})
-
-    @staticmethod
-    def _additional_key(data: dict[str, Any]) -> str:
-        key = 'additionalProperty'
-        while key in data:
-            key += '_'
-        return key
+                while (key := f'additionalProperty_{next(numbers)}') in data:
+                    pass
+                data[key] = self._gen_any(addition_props or {})
 
     def _str_gen(self, schema: dict[str, Any]) -> str:
         """Generate a string from a JSON Schema string."""
