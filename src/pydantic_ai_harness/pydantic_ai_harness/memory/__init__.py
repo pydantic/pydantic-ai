@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.memory._capability import Memory, MemorySnapshotPart, WriteMetadataFunc
 from pydantic_ai_harness.memory._file import FileMemoryStore
 from pydantic_ai_harness.memory._in_memory import InMemoryMemoryStore
@@ -63,7 +64,14 @@ if TYPE_CHECKING:
     from pydantic_ai_harness.memory._pixeltable import PixeltableMemoryStore as PixeltableMemoryStore
 
 
+_RENAMED = {'FileStore': FileMemoryStore, 'InMemoryStore': InMemoryMemoryStore}
+
+
 def __getattr__(name: str) -> object:
+    renamed = _RENAMED.get(name)
+    if renamed is not None:
+        warn_class_renamed(name, renamed.__name__, __name__)
+        return renamed
     if name == 'PixeltableMemoryStore':
         from pydantic_ai_harness.memory._pixeltable import PixeltableMemoryStore
 

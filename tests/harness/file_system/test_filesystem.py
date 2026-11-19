@@ -47,6 +47,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness._workspace import READ_ONLY_FAILURE
 from pydantic_ai_harness.file_system import (
     FILE_SYSTEM_TOOL_NAMES,
@@ -2608,10 +2609,32 @@ class TestFileSystemCapability:
         assert FileSystem().max_read_chars == 50_000
         assert FileSystem(max_read_chars=None).max_read_chars is None
 
+    def test_deprecated_cwd_is_ignored(self) -> None:
+        with pytest.warns(Warning, match='cwd'):
+            assert FileSystem(cwd='elsewhere').root_dir is None
+
     def test_read_only_defaults(self) -> None:
         fs = FileSystem()
         assert '**/.git' in fs.read_only_patterns
         assert '**/.env' in fs.read_only_patterns
+
+    def test_protected_patterns_is_a_deprecated_alias(self) -> None:
+        with pytest.warns(
+            HarnessDeprecationWarning, match=r'`FileSystem\(protected_patterns=\.\.\.\)` has been renamed'
+        ):
+            fs = FileSystem(protected_patterns=['*.lock'])
+        assert fs.read_only_patterns == ['*.lock']
+        assert replace(fs, read_only_patterns=[]).read_only_patterns == []
+
+    def test_protected_patterns_with_read_only_patterns_rejected(self) -> None:
+        with pytest.raises(TypeError, match='`protected_patterns` is its deprecated name'):
+            FileSystem(read_only_patterns=['*.lock'], protected_patterns=['*.lock'])
+
+    def test_toolset_protected_patterns_is_a_deprecated_alias(self) -> None:
+        with pytest.warns(HarnessDeprecationWarning, match=r'`FileSystemToolset\(protected_patterns=\.\.\.\)`'):
+            _toolset_with_patterns(None, ['*.lock'])
+        with pytest.raises(TypeError, match='`protected_patterns` is its deprecated name'):
+            _toolset_with_patterns([], ['*.lock'])
 
     def test_non_positive_max_read_lines_rejected(self) -> None:
         with pytest.raises(ValueError, match='max_read_lines must be a positive integer'):
@@ -2998,6 +3021,19 @@ class TestWalkBounds:
                 workspace=FilesystemOnlyWorkspace(loop_root),
             )
         assert [event.truncated for event in seen] == [True]
+
+
+def _toolset_with_patterns(read_only: list[str] | None, protected: list[str]) -> FileSystemToolset[None]:
+    return FileSystemToolset[None](
+        allowed_patterns=[],
+        denied_patterns=[],
+        read_only_patterns=read_only,
+        protected_patterns=protected,
+        max_read_lines=1,
+        max_list_results=1,
+        max_search_results=1,
+        max_find_results=1,
+    )
 
 
 class TestUsedAsAToolset:

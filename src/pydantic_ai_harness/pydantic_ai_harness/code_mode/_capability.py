@@ -32,6 +32,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelect
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._monty_exec import build_remote_pool, session_os_policy
 from pydantic_ai_harness._monty_turns import MontyTurn, TurnRequest, redacted_error_type, run_monty_turn
+from pydantic_ai_harness._warn import renamed_duration_limit
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore
 from pydantic_ai_harness.code_mode._speculation import (
@@ -45,7 +46,9 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeOSPolicy,
     CodeModeResourceLimits,
     CodeModeToolset,
+    as_os_handler,
     in_durable_execution,
+    monty_sandbox_from_url,
 )
 from pydantic_ai_harness.tool_bridge import ToolBridge
 
@@ -168,6 +171,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     loop's thread, with the run's contextvars set, so it must not touch asyncio objects; an `async`
     handler is awaited on an event loop instead. Inside a Temporal workflow, clock, environment, and
     randomness calls run on the workflow's own thread, so the handler can use `workflow.now()`.
+    The positional `(name, args, kwargs)` form is deprecated.
     """
 
     mount: CodeModeMount | None = None
@@ -228,6 +232,9 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     output stay in your process, and so do mounts unless turns run as activities, where the activity
     worker reads them.
     """
+
+    monty_sandbox_url: str | None = field(default=None, repr=False)
+    """Deprecated: pass `monty_sandbox=url` instead."""
 
     repl_store: CodeModeReplStore[AgentDepsT] | None = None
     """Keep the `run_code` REPL across agent runs in this store.
@@ -293,6 +300,11 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         return one_per_id(capabilities)
 
     def __post_init__(self) -> None:
+        # Converted once here, so the per-run copies and the toolsets built from this do not warn again.
+        self.os_access = as_os_handler(self.os_access)
+        self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeMode')
+        self.monty_sandbox_url = None
+        self.resource_limits = renamed_duration_limit(self.resource_limits, 'CodeMode')
         if isinstance(self.speculate, str) and self.speculate != 'declared':
             raise UserError(
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "

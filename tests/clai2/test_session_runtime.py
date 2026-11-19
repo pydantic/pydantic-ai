@@ -194,7 +194,9 @@ async def test_task_events_reach_only_the_session_holding_the_conversation() -> 
     # A session that takes the conversation over does not take over B's task, until it resumes the task.
     held['a'] = 'b'
     assert a.records() == (record,) and not a.running()
-    start = DelegationStartedEvent(agent_name='worker', task='inspect', truncated=False, model=None)
+    start = DelegationStartedEvent(
+        agent_name='worker', task='inspect', truncated=False, inherits_tools=True, model=None
+    )
     await router.observe(DelegationTaskEvent(task=record, event=start))
     assert router.started == {record.id: a}
     assert a.running() and not b.running()

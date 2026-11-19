@@ -72,6 +72,7 @@ from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import LiveRuntime, handling
 from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
+from pydantic_clai2.runtime.footer_activity import FooterActivity
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.git_actions import git_commands
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
@@ -507,7 +508,8 @@ def create_shell(
         )
     )
     screen = Screen()
-    status = Status()
+    status = Status(fields=lambda: context.settings.footer_fields)
+    status.restore_text_age(session.messages)
     loader = SessionPlugins[DepsT](
         process=process.plugins,
         console=console,
@@ -534,7 +536,9 @@ def create_shell(
         inputs=lambda: shell,
         forks=lambda: shell.forks.listing(),
     )
-    session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
+    session.on_change = _ConversationFooter(
+        status=status, fire=loader.fire, shown=session.conversation_id, history=lambda: session.messages
+    ).changed
     updates.report = lambda: loader.fire if loader.handles(InstallProgress) else None
     # Only a page has no terminal to watch uv in; elsewhere uv keeps drawing its progress there.
     updates.capture = lambda: web_serving(loader) is not None
@@ -668,12 +672,14 @@ class _ConversationFooter:
     status: Status
     fire: Callable[[ConversationChanged], Awaitable[None]]
     shown: str
+    history: Callable[[], Sequence[ModelMessage]]
 
     async def changed(self, event: ConversationChanged) -> None:
         # The footer belongs to one conversation: any switch, by command or plugin, starts it afresh.
         if event.conversation_id != self.shown:
             self.shown = event.conversation_id
             self.status.clear_conversation()
+            self.status.restore_text_age(self.history(), keep_live=False)
         await self.fire(event)
 
 
@@ -742,6 +748,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
     _question_status: QuestionStatus[DepsT] = field(init=False, repr=False)
+    _footer_activity: FooterActivity[DepsT] = field(init=False, repr=False)
     _measured_model: str | None = field(default=None, init=False, repr=False)
     """The model whose completed turn measured the status row's figures; `None` once the model changes."""
     _inbox: PromptInbox = field(default_factory=PromptInbox, init=False, repr=False)
@@ -898,6 +905,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     def __post_init__(self) -> None:
         self._question_status = QuestionStatus(self.live_session)
+        # Stable capability identity keeps the stock agent bound across turns and layout edits.
+        self._footer_activity = FooterActivity(status=self.status, run_id=lambda: self.session.summary.run_id)
         self.tasks = Tasks(
             console=self.console,
             conversation_id=lambda: self.session.summary.id,
@@ -909,6 +918,9 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             show_task_models=lambda: self.context.settings.task_models,
         )
         self.status.subagent = self.tasks.focused
+        self.status.queued = lambda: self.queued
+        self.status.updates = self.updates.segment
+        self.status.live = self._live_segment
         self.forks = Forks(
             console=self.console,
             history=lambda: self.session.messages,
@@ -930,7 +942,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         supplied = (*self.plugins, *self.loader.run_capabilities())
         permissions = unattended_only(self.permissions, supplied)
         granted = (*self.plugins, *self.loader.capabilities(), *permissions)
-        bound = (*supplied, *permissions, self._question_status, NON_STRICT_SCHEMAS)
+        bound = (*supplied, *permissions, self._question_status, self._footer_activity, NON_STRICT_SCHEMAS)
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)
@@ -1288,6 +1300,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         Its known window, a plugin model's taken from its `settings_from` provider, and the conversation's last
         response's context (zero when empty) show until a turn on it measures them.
         """
+        if not self.turning:
+            self.status.restore_text_age(self.session.messages)
         model = self.session.model or _model_label(self.agent)
         if model != self.status.model:
             self.status.context_window = None
@@ -1308,7 +1322,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     def _show_status_segments(self) -> None:
         """Paint the status segments of the plugins loaded now."""
-        self.status.status_segments = (*self.loader.status_segments(), self.updates.segment, self._live_segment)
+        self.status.status_segments = tuple(self.loader.status_segments())
 
     def _live_segment(self) -> str:
         """How many sessions are live in this CLAI, shown in the terminal once the browser opened others."""
@@ -1324,6 +1338,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 except Exception as exc:  # noqa: BLE001 -- a failed save must not end the shell.
                     self.console.print(f'Rewind failed: {exc}', style=theme.color(theme.WARNING), markup=False)
                 else:
+                    self.status.restore_text_age(self.session.messages, keep_live=False)
                     self.console.print(notice, markup=False)
 
     async def _read_loop(self) -> SessionEndReason:
@@ -1522,6 +1537,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         self, start: TurnStart, *, images: Sequence[BinaryContent] = (), headless: bool = False, automated: bool = False
     ) -> TurnEnd:
         """Apply turn hooks and settings, then run with optional terminal rendering."""
+        self.status.restore_text_age(self.session.messages, keep_live=False)
         self.turning = True
         self.live_session.changed()
         try:

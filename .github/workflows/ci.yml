@@ -1027,12 +1027,12 @@ jobs:
   # `all-extras` is the slowest install shape by a wide margin -- it alone pulls in every
   # optional dependency -- so it gets its own job, split into shards, instead of sharing the
   # `test` job's timeout budget with the three much lighter install shapes.
-  # A `pydantic-ai-harness`-only change runs just `tests/harness` and `tests/clai2` here, in one
-  # shard per version.
+  # A `pydantic-ai-harness`-only change runs just `tests/harness` and `tests/clai2` here, keeping
+  # three shards on 3.11 for its legacy coverage tracer and one shard on every other version.
   test-all-extras:
     name: >-
       test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/${{
-        needs.classify.outputs.harness_only == 'true' && 1 || matrix.python-version == '3.11' && 3 || 2
+        matrix.python-version == '3.11' && 3 || needs.classify.outputs.harness_only == 'true' && 1 || 2
       }})
     needs: [classify, test-durations-baseline]
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
@@ -1047,7 +1047,7 @@ jobs:
         # so a pull request skips only 3.12 (see the `test` job's matrix).
         pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         include: >-
-          ${{ fromJSON(needs.classify.outputs.harness_only == 'true' && '[]' || '[{"python-version": "3.11", "shard": 3}]') }}
+          ${{ fromJSON(needs.classify.outputs.harness_only == 'true' && '[{"python-version": "3.11", "shard": 2}, {"python-version": "3.11", "shard": 3}]' || '[{"python-version": "3.11", "shard": 3}]') }}
         exclude:
           - pull_request: "true"
             python-version: "3.12"
@@ -1058,7 +1058,7 @@ jobs:
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.python-version == '3.11' }}
       # Computed from `classify`'s output, so passed to the shell through the environment.
       SHARD: ${{ matrix.shard }}
-      SPLITS: ${{ needs.classify.outputs.harness_only == 'true' && 1 || matrix.python-version == '3.11' && 3 || 2 }}
+      SPLITS: ${{ matrix.python-version == '3.11' && 3 || needs.classify.outputs.harness_only == 'true' && 1 || 2 }}
       TEST_PATHS: ${{ needs.classify.outputs.harness_only == 'true' && 'tests/harness tests/clai2' || '' }}
       DURATIONS_PREFIX: test-durations-${{ matrix.python-version }}-all-extras-
       DURATIONS_BASELINE: test-durations-baseline/${{ matrix.python-version }}-all-extras.json
@@ -1900,11 +1900,15 @@ jobs:
       # `test-durable-exec`: Prefect writes its result cache from inside the event loop.
       # `tests/test_conftest.py` tests BlockBuster itself, which skips in lanes that turn it off; this
       # is the only BlockBuster-on lane that uploads coverage.
+      # `--no-extra sentence-transformers`: no MCP test module imports it, and its torch and CUDA
+      # wheels are about 2.6 GB of the 3.2 GB this step downloads on a uv cache miss. A slow download
+      # of them has run this job past `timeout-minutes` (#13931), as in `test-durable-exec`. The
+      # combine step drops it too, so it doesn't sync it back in.
       - name: run tests
         shell: bash
         run: |
           run=(
-            uv run --all-extras --no-extra mcp-tasks --all-packages
+            uv run --all-extras --no-extra mcp-tasks --no-extra sentence-transformers --all-packages
             --with "fastmcp${{ matrix.fastmcp.spec }}"
             --with "fastmcp-slim${{ matrix.fastmcp.spec }}"
             coverage run -m pytest -n logical --dist=loadgroup
@@ -1931,10 +1935,10 @@ jobs:
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
           SKIP: ${{ matrix.fastmcp.skip }}
 
-      # See the matching step in the `test` job. Plain `uv run`: combining is
-      # environment-independent, so the FastMCP 3 `--with` overlay isn't needed.
+      # See the matching step in the `test` job. No `--with`: combining is
+      # environment-independent, so the FastMCP 3 overlay isn't needed.
       - name: combine coverage files
-        run: uv run --all-extras --all-packages coverage combine
+        run: uv run --all-extras --no-extra sentence-transformers --all-packages coverage combine
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-3-${{ matrix.fastmcp.name }}
 

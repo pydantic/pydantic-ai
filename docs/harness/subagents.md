@@ -75,6 +75,8 @@ A delegate's name -- how the parent model refers to it, and how it is listed in 
 - **Capabilities can be shared.** `shared_capabilities` are applied to every sub-agent run -- e.g. give all sub-agents a common guardrail, memory, or planning capability without rebuilding each `Agent`.
 - **Sub-agent events can be streamed.** Pass an `event_stream_handler` and it's forwarded to each sub-agent run, so the sub-agent's model-streaming and tool events surface to the caller (the handler receives the sub-agent's own `RunContext`).
 
+`inherit_tools=True` is deprecated and emits a `HarnessDeprecationWarning`. It adds the parent agent's own tools (registered via `tools=` or `toolsets=`) to each sub-agent run, minus the delegate tool, but not the tools contributed by the parent's capabilities. Bind the tools an explicit sub-agent needs directly to its `Agent`, use `include_self=True` to delegate to a fresh run of the agent with everything bound to it, or use a `tool_resolver` to give disk-loaded agents tools.
+
 ## Delegating to the agent itself
 
 With `include_self=True`, the roster also lists the running agent itself, as `self`. A delegation to `self` starts a fresh run of that agent (`RunContext.agent`) on the parent run's model (or the `models` option the parent picks), with no parent conversation. Because the child is the same `Agent`, it has every capability, toolset, and instruction bound to it, and they register again in the child run: a guardrail, approval gate, or audit hook bound next to `SubAgents` sees the tool calls the delegate makes, not only the `delegate_task` call. This is what [`Coder`](coder.md) uses by default.
@@ -92,7 +94,7 @@ agent = Agent(
 - **Only what is bound to the `Agent` carries over.** Capabilities, toolsets, instructions, and model settings passed to the parent's `run()` are not part of the agent, so the delegate does not get them. Passing `SubAgents(include_self=True)` itself to `run()` raises a `UserError` when the run starts, since the delegate would come up without it.
 - **Delegation depth is capped.** The delegate carries `delegate_task` too, so `max_depth` (default `3`, counting the top-level run) bounds the tree: the top-level run delegates, its delegates delegate once more, and a run at the limit gets neither `delegate_task` nor the sub-agent listing. The limit applies to every delegation through `SubAgents`, including explicit rosters.
 - **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation, and the delegate returns the agent's own `output_type`, rendered with `str()` (a delegate run that ends with [`DeferredToolRequests`](../deferred-tools.md) or [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits) returns a steering message instead, as described under failure handling).
-- The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
+- The deprecated `inherit_tools` does not apply to `self`, whose tools are already the parent's. The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
 - **On Temporal, `agent_folders` is not supported.** Sub-agents read from `agent_folders` add a toolset at run time, which Temporal refuses, so pass `agent_folders=None`. When `self` is the only delegate, it runs in the workflow, so register a `Model` instance from `models` with `TemporalDurability(models=...)`. Otherwise delegations run in an activity, or in a child workflow when you opt in (see [Delegates as child workflows](#delegates-as-child-workflows)), neither of which has access to the parent run's model, so a delegate needs a model of its own (or, in an activity, a `models` option); see [delegation on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
 
 ## Per-delegate run controls
@@ -235,10 +237,10 @@ An *unexpected crash* -- any other exception the child raises, such as a provide
 
 | Event | Dispatch | When | Payload |
 |---|---|---|---|
-| `DelegationStartedEvent` | stream | a delegation passed every check and the child run is about to start | `agent_name`, `task`, `truncated`, `model` (the menu key, or `None`) |
+| `DelegationStartedEvent` | stream | a delegation passed every check and the child run is about to start | `agent_name`, `task`, `truncated`, `model` (the menu key, or `None`), `inherits_tools` |
 | `DelegationFinishedEvent` | stream | the delegation settled into what the parent receives | `agent_name`, `outcome`, `output`, `truncated`, `usage`, `duration_ms` |
 
-Both are notifications. One delegation is one `delegate_task` call, so a start and its end share the `tool_call_id` core stamps on every event; that is how a subscriber pairs them when the model delegates in parallel. `duration_ms` is in milliseconds. A payload saved under the earlier `duration_seconds` key, in seconds, still loads.
+Both are notifications. One delegation is one `delegate_task` call, so a start and its end share the `tool_call_id` core stamps on every event; that is how a subscriber pairs them when the model delegates in parallel. `duration_ms` is in milliseconds. `duration_seconds` is its deprecated name: it still reads, in seconds and with a warning, and a payload saved under it still loads.
 
 `outcome` follows the failure handling above: `ok` (the child's output went back to the parent), `timeout`, `budget` (the child's own `usage_limits`), `failed` (a soft model error, returned as a tool result or raised as a `ModelRetry` per `on_model_error`, or a child run that ended with `DeferredToolRequests` or `PendingModelResponse`, returned as a steering message), or `contained` (a crash `contain_errors` caught). `output` is what the delegate tool hands back to the parent in each case: the child's output, the steering message, or the retry text. It is emitted from inside the tool, before any `ToolGuardrail` result guard screens that text for the model; a host that needs the screened version reads the `ToolReturnPart` in core's `FunctionToolResultEvent`. `usage` is the child's own `RunUsage` when it has separate accounting (`usage_limits` set, or `forward_usage=False`) and `None` when it accrues into the parent's usage, where its share is not separable.
 
@@ -344,7 +346,7 @@ Unlike `DelegationStartedEvent` and `DelegationFinishedEvent`, these events are 
 
 Events listeners can change are dispatched immediately, so their decisions take effect. A vetoed message is not sent, and the model is told why. With a bound `DelegationTasks`, `DelegationStartedEvent` and `DelegationFinishedEvent` go to its observer only, as in [Managed delegation sessions](#managed-delegation-sessions); with the run's own owner, they go to the run as before.
 
-Earlier releases named some of these differently: `SubAgentMessage`, `ParentMessage` and `ChildMessage` (each now ends in `Event`), `TaskFollowUpEvent` (`TaskResumedEvent`), `TaskMessageEvent` (`TaskSteeredEvent`), `TaskAnswerEvent` (`TaskAnsweredEvent`), `TaskCancelRequestEvent` (`TaskCancelRequestedEvent`), `TaskForceCancelEvent` (`TaskForceCancelRequestedEvent`), `TaskQuestionEvent` (`TaskQuestionAskedEvent`) and `TaskRetryEvent` (`TaskRetriedEvent`). Each event's `kind` is unchanged. `AgentCreatedEvent.name` is now `agent_name`, and `parent_id` on `DelegationStartedEvent` and `DelegationFinishedEvent` is now `parent_task_id`; an event serialized under an old key still loads. Constructing one of these events takes the new keyword only. They serialize under the new keys: update code that reads a serialized event by key, and upgrade any process that loads events this release writes.
+Earlier releases named some of these differently. The old class names still import from the deprecated `pydantic_ai_harness.subagents` path, with a `HarnessDeprecationWarning`: `SubAgentMessage`, `ParentMessage` and `ChildMessage` (each now ends in `Event`), `TaskFollowUpEvent` (`TaskResumedEvent`), `TaskMessageEvent` (`TaskSteeredEvent`), `TaskAnswerEvent` (`TaskAnsweredEvent`), `TaskCancelRequestEvent` (`TaskCancelRequestedEvent`), `TaskForceCancelEvent` (`TaskForceCancelRequestedEvent`), `TaskQuestionEvent` (`TaskQuestionAskedEvent`) and `TaskRetryEvent` (`TaskRetriedEvent`). Each event's `kind` is unchanged. `AgentCreatedEvent.name` is now `agent_name`, and `parent_id` on `DelegationStartedEvent` and `DelegationFinishedEvent` is now `parent_task_id`: the old attributes still read, with the same warning, and an event serialized under an old key still loads. Constructing one of these events takes the new keyword only. They serialize under the new keys: update code that reads a serialized event by key, and upgrade any process that loads events this release writes.
 
 ```python
 from pydantic_ai.capabilities import AbstractCapability, on_event
@@ -622,7 +624,7 @@ On DBOS, use `DBOSDurability()` and `SetToolMetadata(tools=['delegate_task'], db
 
 - Every delegate must be durable on the parent's engine: the tool body runs as workflow code.
 - On Temporal, register each delegate with the worker too, for example with an [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin].
-- `include_self`, `models`, `shared_capabilities`, `event_stream_handler`, `dynamic_agents`, `task_control`, and a delegate's `max_calls` rely on parent-run state the child workflow doesn't receive, so a delegation with any of them raises a `UserError`.
+- `include_self`, `inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`, `dynamic_agents`, `task_control`, and a delegate's `max_calls` rely on parent-run state the child workflow doesn't receive, so a delegation with any of them raises a `UserError`.
 - The delegate's usage isn't reliably counted in the parent run's usage, and the parent's usage limits don't bound it.
 - The delegation depth isn't carried into the child workflow, so if a delegate's own `SubAgents` also opts in, `max_depth` counts again from each child workflow and no longer bounds the tree.
 
@@ -710,7 +712,7 @@ SubAgents(
 
 When `effort` is unset, the disk agent adds no thinking setting, so the inherited model's defaults apply. An explicit value, including `False` or `'minimal'`, is passed through unchanged via Pydantic AI's `ModelSettings.thinking`.
 
-Pass `AgentOverride(effort=...)` when a disk agent needs an explicit level, or apply an application-specific floor outside the capability.
+`MINIMUM_EFFORT_FLOOR` and `clamp_effort(level, floor=...)` remain importable from the deprecated `pydantic_ai_harness.subagents` path, with a `HarnessDeprecationWarning`. `SubAgents` no longer uses them. Pass `AgentOverride(effort=...)` when a disk agent needs an explicit level, or apply an application-specific floor outside the capability.
 
 ### Tools
 
@@ -747,6 +749,7 @@ SubAgents(
     agent_overrides={},    # Mapping[str, AgentOverride] -- per-disk-agent model/effort override
     tool_resolver=None,    # Callable[[str], Sequence[AgentToolset[object]] | None] -- disk-agent tool mapping
     forward_usage=True,    # share the parent's usage with sub-agent runs
+    inherit_tools=False,   # deprecated: use include_self=True, or tool_resolver for disk agents
     shared_capabilities=(),# capabilities applied to every sub-agent run
     event_stream_handler=None,  # forwarded to each sub-agent run to stream its events
     tool_name='delegate_task',

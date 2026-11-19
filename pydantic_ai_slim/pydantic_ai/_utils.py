@@ -1335,7 +1335,8 @@ def host_derived_id(url: str) -> str | None:
 def is_text_like_media_type(media_type: str) -> bool:
     """Check if a media type represents text-like content.
 
-    Returns True for `text/*`, JSON, XML, YAML, TOML, and their structured syntax suffixes.
+    Returns True for `text/*`, JSON, XML, YAML and TOML, and the `+json` and `+xml` structured syntax suffixes.
+    `+yaml` types aren't included: see `has_yaml_structured_suffix`.
     """
     # Media types may carry parameters (RFC 2045); classify on the bare type.
     media_type = media_type.split(';', 1)[0].strip()
@@ -1349,6 +1350,15 @@ def is_text_like_media_type(media_type: str) -> bool:
         # TOML is UTF-8 text (RFC 9519); `BinaryContent.from_path` infers it for `.toml` files.
         or media_type == 'application/toml'
     )
+
+
+def has_yaml_structured_suffix(media_type: str) -> bool:
+    """Check if a media type has the `+yaml` structured syntax suffix (RFC 9512), ignoring its parameters.
+
+    `is_text_like_media_type` doesn't include these types, so only the adapters that call this inline them as text:
+    https://github.com/pydantic/pydantic-ai/issues/13925.
+    """
+    return media_type.split(';', 1)[0].strip().endswith('+yaml')
 
 
 def format_inlined_text_file(text: str, *, media_type: str, identifier: str) -> str:

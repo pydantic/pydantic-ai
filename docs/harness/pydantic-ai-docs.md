@@ -114,8 +114,10 @@ result = agent.run_sync('...')
 print(result.output)
 ```
 
-Specs saved before the rename from `PyaiDocs` use the old block name. Rename the block to
-`PydanticAIDocs` to load them; the options are unchanged.
+Specs saved before the rename from `PyaiDocs` use the old block name. To keep loading
+them, pass the deprecated `PyaiDocs` class (imported from `pydantic_ai_harness.docs`,
+which emits a deprecation warning) alongside or instead of `PydanticAIDocs` -- it keeps
+the `PyaiDocs` serialization name. Re-save with `PydanticAIDocs` to migrate.
 
 ## API reference
 

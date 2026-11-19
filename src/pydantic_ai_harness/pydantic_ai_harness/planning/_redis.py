@@ -19,7 +19,14 @@ from __future__ import annotations
 import json
 from typing import Protocol, runtime_checkable
 
-from pydantic_ai_harness.planning._store import apply_updates
+from pydantic_ai_harness.planning._events import PlanEventEmitter
+from pydantic_ai_harness.planning._store import (
+    apply_updates,
+    emit_created,
+    emit_deleted,
+    emit_mutation,
+    warn_event_emitter,
+)
 from pydantic_ai_harness.planning._types import PlanItem, TaskStatus
 
 
@@ -50,11 +57,14 @@ class RedisPlanStore:
         session: str = 'default',
         key_prefix: str = 'plan',
         expire_seconds: int | None = None,
+        event_emitter: PlanEventEmitter | None = None,
     ) -> None:
+        warn_event_emitter(event_emitter)
         self._client = client
         self._session = session
         self._key_prefix = key_prefix
         self._expire_seconds = expire_seconds
+        self._emitter = event_emitter
 
     @property
     def _key(self) -> str:
@@ -91,6 +101,7 @@ class RedisPlanStore:
             raise ValueError(f'A step with id {item.id!r} is already in this plan.')
         items.append(item)
         await self._save(items)
+        await emit_created(self._emitter, item)
         return item
 
     async def update_item(
@@ -107,6 +118,7 @@ class RedisPlanStore:
         items = await self._load()
         for item in items:
             if item.id == item_id:
+                previous = item.model_copy() if self._emitter is not None else None
                 apply_updates(
                     item,
                     content=content,
@@ -116,6 +128,7 @@ class RedisPlanStore:
                     depends_on=depends_on,
                 )
                 await self._save(items)
+                await emit_mutation(self._emitter, item, previous)
                 return item
         return None
 
@@ -124,7 +137,8 @@ class RedisPlanStore:
         items = await self._load()
         for index, item in enumerate(items):
             if item.id == item_id:
-                del items[index]
+                removed = items.pop(index)
                 await self._save(items)
+                await emit_deleted(self._emitter, removed)
                 return True
         return False

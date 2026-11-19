@@ -40,10 +40,14 @@ if TYPE_CHECKING:
     from .deny_unanswered import DenyUnanswered
     from .detect_loops import DetectLoops
     from .docker_container import DockerContainer, DockerContainerBackend
+
+    # Deprecated names: the redundant aliases type them for users; at runtime they resolve lazily, with a warning.
+    from .docker_sandbox import DockerSandbox as DockerSandbox, DockerSandboxBackend as DockerSandboxBackend  # pyright: ignore[reportDeprecated]
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
     from .file_system import READ_ONLY_TOOL_NAMES, FileSystem
+    from .goal import Goal, GoalVerifier
     from .grain import Grain
     from .guardrails import (
         GuardrailError,
@@ -152,6 +156,8 @@ __all__ = [
     'ExaSearch',
     'FallbackCompaction',
     'FileSystem',
+    'Goal',
+    'GoalVerifier',
     'Grain',
     'GuardrailError',
     'GuardrailResult',
@@ -281,6 +287,8 @@ _LAZY_EXPORTS = {
     'ExaSearch': 'exa',
     'FallbackCompaction': 'compaction',
     'FileSystem': 'file_system',
+    'Goal': 'goal',
+    'GoalVerifier': 'goal',
     'Grain': 'grain',
     'GuardrailError': 'guardrails',
     'GuardrailResult': 'guardrails',
@@ -362,6 +370,18 @@ _LAZY_EXPORTS = {
     'wrapped_up_by': 'wrap_up_at_limits',
     'YouResearch': 'youdotcom',
     'YouSearch': 'youdotcom',
+    # Pre-rename names; the target module's `__getattr__` emits the
+    # deprecation warning when these resolve.
+    'BubblewrapSandbox': 'bubblewrap_sandbox',
+    'GuardResult': 'guardrails',
+    'InputGuard': 'guardrails',
+    'InputGuardFunc': 'guardrails',
+    'OutputGuard': 'guardrails',
+    'OutputGuardFunc': 'guardrails',
+    # Pre-rename names; importing the `pydantic_ai_harness.docker_sandbox` shim emits
+    # the deprecation warning.
+    'DockerSandbox': 'docker_sandbox',
+    'DockerSandboxBackend': 'docker_sandbox',
 }
 
 
