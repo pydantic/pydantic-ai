@@ -82,7 +82,7 @@ from ...messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ...native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, WebSearchTool
+from ...native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, WebFetchTool, WebSearchTool
 from ...output import OutputObjectDefinition
 from ...profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ...profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole, validate_openai_profile
@@ -129,6 +129,13 @@ from ._chat_completions import (
 )
 from ._chat_streaming import OpenAIStreamedResponse
 from ._citations import map_chat_content
+from ._deepseek_web_tools import (
+    CHAT_REASONING_KEY,
+    CHAT_STEPS_KEY,
+    chat_web_steps,
+    chat_web_tool_param,
+    check_chat_web_error,
+)
 from ._errors import check_azure_content_filter, is_azure, map_api_errors
 from ._model_names import OpenAIModelName
 from ._model_response_streaming import ModelResponseStreamedResponse
@@ -375,7 +382,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool})
+        return frozenset({WebSearchTool, WebFetchTool})
 
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
         """Return all of `native_tool`'s restricting settings, as Chat Completions' `web_search_options` takes none."""
@@ -400,8 +407,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 _profile,
                 ModelProfile(supported_document_media_types=document_media_types & TEXT_DOCUMENT_MEDIA_TYPES),
             )
-        if not _profile.get('openai_chat_supports_web_search', False):
-            new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebSearchTool}
+        if not _profile.get('deepseek_web_tools', False):
+            new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebFetchTool}
+            if not _profile.get('openai_chat_supports_web_search', False):
+                new_tools -= {WebSearchTool}
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
         return cast(OpenAIModelProfile, _profile)
 
@@ -414,6 +423,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if (
             any(isinstance(tool, WebSearchTool) for tool in model_request_parameters.native_tools)
             and not self.profile.get('openai_chat_supports_web_search', False)
+            and not self.profile.get('deepseek_web_tools', False)
             and not any(t.unless_native == 'web_search' for t in model_request_parameters.function_tools)
         ):
             raise UserError(
@@ -546,8 +556,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         tool_choice: ChatCompletionToolChoiceOptionParam | None
 
         tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
-        web_search_options = self._get_web_search_options(model_request_parameters)
         profile = self.profile
+        web_search_options = (
+            None if profile.get('deepseek_web_tools', False) else self._get_web_search_options(model_request_parameters)
+        )
 
         # A flagged model rejects any request that sends tools while reasoning is on, output tools included, with a
         # 400 pointing at `/v1/responses` or `reasoning_effort='none'`. `thinking=False` maps to `'none'` only where
@@ -725,6 +737,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if response.created is None:  # pyright: ignore[reportUnnecessaryComparison]
             response.created = 0
 
+        if self.profile.get('deepseek_web_tools', False):
+            check_chat_web_error((response.model_extra or {}).get('error'), self.model_name, in_stream=False)
         missing_finish_reason = self._fill_missing_finish_reason(response)
 
         content_parts = raw_non_text_content_parts(response)
@@ -777,6 +791,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             )
 
         items: list[ModelResponsePart] = []
+        if self.profile.get('deepseek_web_tools', False):
+            items.extend(self._map_deepseek_web_steps(choice.message, provider_details))
 
         if thinking_parts := self._process_thinking(choice.message):
             items.extend(thinking_parts)
@@ -810,6 +826,21 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             canonical_system=self._canonical_system_stamp,
             finish_reason=finish_reason,
         )
+
+    def _map_deepseek_web_steps(
+        self, message: chat.ChatCompletionMessage, provider_details: dict[str, Any]
+    ) -> list[ModelResponsePart]:
+        items: list[ModelResponsePart] = []
+        message_extras = message.model_extra or {}
+        if raw_steps := message_extras.get('server_tool_calls'):
+            steps = chat_web_steps.validate_python(raw_steps)
+            provider_details[CHAT_STEPS_KEY] = chat_web_steps.dump_python(steps, mode='json', exclude_unset=True)
+            if isinstance(final_reasoning := message_extras.get('reasoning_content'), str):
+                provider_details[CHAT_REASONING_KEY] = final_reasoning
+            for step in steps:
+                items.extend(call.call_part(self.system) for call in step.calls)
+                items.extend(call.return_part(self.system) for call in step.calls)
+        return items
 
     def _fill_missing_finish_reason(self, response: chat.ChatCompletion) -> bool:
         """Fill in the finish reason of a response that came without one, and say whether it did."""
@@ -930,7 +961,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return OpenAIStreamedResponse
 
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
-        request_usage = map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
+        request_usage = map_usage(
+            response,
+            self._provider.name,
+            self._provider.base_url,
+            self.model_name,
+            deepseek_web_tools=self.profile.get('deepseek_web_tools', False),
+        )
         if self.profile.get('openai_chat_completion_tokens_omit_reasoning', False):
             add_reasoning_tokens_omitted_from_completion_tokens(request_usage, response.usage)
         return request_usage
@@ -966,6 +1003,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         tools: list[chat.ChatCompletionToolParam] = [
             self._map_tool_definition(t, model_settings) for t in tool_defs.values()
         ]
+        if self.profile.get('deepseek_web_tools', False):
+            tools.extend(
+                chat_web_tool_param(tool)
+                for tool in model_request_parameters.native_tools
+                if isinstance(tool, WebSearchTool | WebFetchTool)
+            )
         if not tools:
             return tools, None
 
@@ -1240,7 +1283,19 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         Subclasses of `OpenAIChatModel` may override this method to provide their own mapping logic.
         """
-        return self._MapModelResponseContext(self).map_assistant_message(message)
+        param = self._MapModelResponseContext(self).map_assistant_message(message)
+        if self.profile.get('deepseek_web_tools', False) and self.accepts_stateless_artifacts(message):
+            details = message.provider_details or {}
+            if wire_steps := details.get(CHAT_STEPS_KEY):
+                steps = chat_web_steps.validate_python(wire_steps)
+                param = param or chat.ChatCompletionAssistantMessageParam(role='assistant', content=None)
+                # The SDK message type lacks these DeepSeek extensions.
+                wire = cast(dict[str, object], param)
+                wire['server_tool_calls'] = chat_web_steps.dump_python(steps, mode='json', exclude_unset=True)
+                wire.pop('reasoning_content', None)
+                if isinstance(final_reasoning := details.get(CHAT_REASONING_KEY), str):
+                    wire['reasoning_content'] = final_reasoning
+        return param
 
     def _map_carried_thinking(self, message: ModelResponse) -> chat.ChatCompletionUserMessageParam | None:
         """Build the user message that carries this `ModelResponse`'s reasoning ahead of its assistant message.

@@ -1,0 +1,35 @@
+event: message_start
+data: {"type":"message_start","message":{"id":"d08ebd8b-d197-413e-b983-67b0da56199f","type":"message","role":"assistant","model":"deepseek-flash","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":26,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0,"service_tier":"standard"}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_rl_00_176770804afa43789ab2f389b2666027","name":"deepseek_read_url","input":{"action":"read_link","url":"https://httpbin.org/uuid"},"caller":{"type":"direct"},"kind":"read_link"}}
+
+event: ping
+data: {"type":"ping"}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"web_fetch_tool_result","tool_use_id":"srvtoolu_rl_00_176770804afa43789ab2f389b2666027","content":{"type":"web_fetch_result","url":"https://httpbin.org/uuid","content":{"type":"document","source":{"type":"text","media_type":"text/plain","data":""},"title":""},"published_at":null},"kind":"read_link","signature":"recorded-page-signature"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: content_block_start
+data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"READ"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Y"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":2}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":115,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2,"service_tier":"standard","server_tool_use":{"web_search_requests":0,"web_fetch_requests":1,"tool_search":0,"tool_fetch":1,"tool_image_search":0}}}
+
+event: message_stop
+data: {"type":"message_stop"}

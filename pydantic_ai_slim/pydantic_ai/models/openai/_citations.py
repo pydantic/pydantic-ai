@@ -13,6 +13,8 @@ from ... import _utils
 from ..._thinking_part import split_content_into_text_and_thinking
 from ...messages import (
     Citation,
+    CitationAnchor,
+    ContentCitationAnchor,
     DocumentCitationSource,
     MarkerCitationAnchor,
     TextPart,
@@ -46,6 +48,12 @@ def marker_citation_anchor(start: int, end: int, text: str) -> MarkerCitationAnc
     return MarkerCitationAnchor(start=start, end=end) if 0 <= start < end <= len(text) else None
 
 
+def _url_citation_anchor(start: int, end: int, text: str, *, content_offsets: bool) -> CitationAnchor | None:
+    if content_offsets:
+        return ContentCitationAnchor(start=start, end=end) if 0 <= start < end <= len(text) else None
+    return marker_citation_anchor(start, end, text)
+
+
 def responses_citation_annotations(
     annotations: Sequence[responses.response_output_text.Annotation],
 ) -> list[responses.response_output_text.AnnotationURLCitation | responses.response_output_text.AnnotationFileCitation]:
@@ -74,6 +82,8 @@ def responses_citation_annotations(
 def map_responses_citations(
     annotations: Sequence[responses.response_output_text.Annotation],
     text: str,
+    *,
+    content_offsets: bool = False,
 ) -> list[Citation] | None:
     citations: list[Citation] = []
     for annotation in responses_citation_annotations(annotations):
@@ -82,7 +92,7 @@ def map_responses_citations(
             citations.append(
                 Citation(
                     sources=[WebCitationSource(url=annotation.url, title=annotation.title)],
-                    anchor=marker_citation_anchor(start, end, text),
+                    anchor=_url_citation_anchor(start, end, text, content_offsets=content_offsets),
                 )
             )
         elif annotation.file_id or annotation.filename:  # a file citation naming no file has no source to show
@@ -153,7 +163,9 @@ def chat_citations_provider_details(annotations: Sequence[BaseModel]) -> dict[st
     return {'citations': chat_annotations_ta.dump_python(citations, warnings=False)}
 
 
-def map_chat_citations(annotations: Sequence[BaseModel], text: str) -> list[Citation] | None:
+def map_chat_citations(
+    annotations: Sequence[BaseModel], text: str, *, content_offsets: bool = False
+) -> list[Citation] | None:
     citations: list[Citation] = []
     for annotation in annotations:
         # OpenRouter's annotation list can also hold its own file annotations, which aren't citations.
@@ -171,7 +183,7 @@ def map_chat_citations(annotations: Sequence[BaseModel], text: str) -> list[Cita
                         excerpts=[content] if isinstance(content, str) and content else [],
                     )
                 ],
-                anchor=marker_citation_anchor(start, end, text),
+                anchor=_url_citation_anchor(start, end, text, content_offsets=content_offsets),
             )
         )
     return citations or None
@@ -189,7 +201,11 @@ def map_chat_content(
     )
     if message.annotations:
         attach_chat_annotations(
-            content_parts, message.annotations, provider_name, include_raw_annotations=include_raw_annotations
+            content_parts,
+            message.annotations,
+            provider_name,
+            include_raw_annotations=include_raw_annotations,
+            content_offsets=profile.get('deepseek_web_tools', False),
         )
     return [
         replace(part, id='content', provider_name=provider_name) if isinstance(part, ThinkingPart) else part
@@ -203,11 +219,12 @@ def attach_chat_annotations(
     provider_name: str,
     *,
     include_raw_annotations: bool,
+    content_offsets: bool = False,
 ) -> None:
     """Attach a Chat Completions message's annotations to the text parts its content was split into."""
     text_parts = [part for part in content_parts if isinstance(part, TextPart)]
     if len(content_parts) == 1 and text_parts:
-        if citations := map_chat_citations(annotations, text_parts[0].content):
+        if citations := map_chat_citations(annotations, text_parts[0].content, content_offsets=content_offsets):
             text_parts[0].citations = citations
             text_parts[0].provider_name = provider_name
             text_parts[0].provider_details = chat_citations_provider_details(annotations)

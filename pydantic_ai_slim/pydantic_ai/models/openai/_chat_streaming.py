@@ -16,7 +16,14 @@ from pydantic import ValidationError
 
 from ... import ModelAPIError, _utils, usage
 from ..._utils import now_utc as _now_utc, number_to_datetime
-from ...messages import FinishReason, ModelResponseStreamEvent, PartStartEvent, TextPart, ThinkingPart
+from ...messages import (
+    FinishReason,
+    ModelResponseStreamEvent,
+    NativeToolReturnPart,
+    PartStartEvent,
+    TextPart,
+    ThinkingPart,
+)
 from ...profiles import DEFAULT_THINKING_TAGS
 from ...profiles.openai import OpenAIModelProfile
 from .. import StreamedResponse
@@ -34,6 +41,14 @@ from ._citations import (
     chat_citations_provider_details,
     jsonable_annotation,
     map_chat_citations,
+)
+from ._deepseek_web_tools import (
+    CHAT_REASONING_KEY,
+    CHAT_STEPS_KEY,
+    ChatWebCall,
+    ChatWebEvent,
+    chat_web_steps,
+    check_chat_web_error,
 )
 from ._errors import map_api_errors
 from ._model_names import OpenAIModelName
@@ -68,6 +83,9 @@ class OpenAIStreamedResponse(StreamedResponse):
     _pending_raw_annotations: list[object] = field(default_factory=list[object], init=False)
     _unmapped_chunks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
 
+    _deepseek_final_reasoning: list[str] = field(default_factory=list[str], init=False)
+    _deepseek_started_calls: dict[str, ChatWebCall] = field(default_factory=dict[str, ChatWebCall], init=False)
+
     async def close_stream(self) -> None:
         await self._response.source.close()
 
@@ -99,6 +117,8 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     def _map_chunk(self, chunk: ChatCompletionChunk) -> Iterator[ModelResponseStreamEvent]:
         self._map_top_level_fields(chunk)
+        if self._model_profile.get('deepseek_web_tools', False):
+            check_chat_web_error((chunk.model_extra or {}).get('error'), self.model_name, in_stream=True)
 
         # Empty on the final usage-only chunk; `None` from OpenAI-compatible providers emitting
         # malformed chunks that the openai SDK's loose constructor lets through (https://github.com/pydantic/pydantic-ai/issues/5165).
@@ -129,7 +149,57 @@ class OpenAIStreamedResponse(StreamedResponse):
                 provider_details.pop('finish_reason', None)
             self.provider_details = {**(self.provider_details or {}), **provider_details}
 
+        if self._model_profile.get('deepseek_web_tools', False):
+            yield from self._map_deepseek_web_chunk(choice)
         yield from self._map_part_delta(choice)
+
+    def _map_deepseek_web_chunk(self, choice: chat_completion_chunk.Choice) -> Iterator[ModelResponseStreamEvent]:
+        if raw_event := (choice.model_extra or {}).get('server_tool_event'):
+            yield from self._map_deepseek_web_progress(ChatWebEvent.model_validate(raw_event))
+        delta = choice.delta.model_extra or {}
+        if isinstance(reasoning := delta.get('reasoning_content'), str):
+            self._deepseek_final_reasoning.append(reasoning)
+        if raw_steps := delta.get('server_tool_calls'):
+            steps = chat_web_steps.validate_python(raw_steps)
+            self.provider_details = {
+                **(self.provider_details or {}),
+                CHAT_STEPS_KEY: chat_web_steps.dump_python(steps, mode='json', exclude_unset=True),
+                CHAT_REASONING_KEY: ''.join(self._deepseek_final_reasoning),
+            }
+            for step in steps:
+                for call in step.calls:
+                    call_id = ('deepseek_call', call.id)
+                    if self._parts_manager.get_part_by_vendor_id(call_id) is None:
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=call_id, part=call.call_part(self.provider_name)
+                        )
+                    yield from self._map_deepseek_web_result(call)
+
+    def _map_deepseek_web_progress(self, event: ChatWebEvent) -> Iterator[ModelResponseStreamEvent]:
+        if event.type == 'step_reasoning_done':
+            self._deepseek_final_reasoning.clear()
+            self._advance_part_boundary('tool')
+        elif event.type == 'call_started':
+            call = ChatWebCall.model_validate(event.call)
+            self._deepseek_started_calls[call.id] = call
+            yield self._parts_manager.handle_part(
+                vendor_part_id=('deepseek_call', call.id), part=call.call_part(self.provider_name)
+            )
+        elif event.call and isinstance(call_id := event.call.get('id'), str):
+            if started_call := self._deepseek_started_calls.pop(call_id, None):
+                # Progress completion provides result fields but omits the original action and signature.
+                completed_call = ChatWebCall.model_validate(started_call.model_dump(exclude_unset=True) | event.call)
+                yield from self._map_deepseek_web_result(completed_call)
+
+    def _map_deepseek_web_result(self, call: ChatWebCall) -> Iterator[ModelResponseStreamEvent]:
+        result_id = ('deepseek_result', call.id)
+        result = call.return_part(self.provider_name)
+        previous = self._parts_manager.get_part_by_vendor_id(result_id)
+        if not isinstance(previous, NativeToolReturnPart) or (previous.content, previous.outcome) != (
+            result.content,
+            result.outcome,
+        ):
+            yield self._parts_manager.handle_part(vendor_part_id=result_id, part=result)
 
     def _map_top_level_fields(self, chunk: ChatCompletionChunk) -> None:
         """Map the fields of `chunk` outside its choices, which chunks without choices carry too."""
@@ -198,7 +268,9 @@ class OpenAIStreamedResponse(StreamedResponse):
         # Annotation positions count into the message's original text, so citations only go on a single text part that
         # still equals it: not split by reasoning, and not changed by removing thinking tags or whitespace.
         citations = (
-            map_chat_citations(annotations, part.content)
+            map_chat_citations(
+                annotations, part.content, content_offsets=self._model_profile.get('deepseek_web_tools', False)
+            )
             if len(text_part_ids) == 1 and part.content == self._raw_text_content
             else None
         )
@@ -407,7 +479,13 @@ class OpenAIStreamedResponse(StreamedResponse):
         return None
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
-        request_usage = map_usage(response, self._provider_name, self._provider_url, self.model_name)
+        request_usage = map_usage(
+            response,
+            self._provider_name,
+            self._provider_url,
+            self.model_name,
+            deepseek_web_tools=self._model_profile.get('deepseek_web_tools', False),
+        )
         if self._model_profile.get('openai_chat_completion_tokens_omit_reasoning', False):
             add_reasoning_tokens_omitted_from_completion_tokens(request_usage, response.usage)
         return request_usage

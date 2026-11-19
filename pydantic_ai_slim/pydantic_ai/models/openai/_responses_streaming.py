@@ -799,7 +799,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         existing_part = self._parts_manager.get_part_by_vendor_id(content_key)
         # Annotation positions count into the final text, so they can't go on streamed text that differs.
         citations = (
-            map_responses_citations(annotations, chunk.text)
+            map_responses_citations(annotations, chunk.text, content_offsets=self._deepseek_web_tools)
             if isinstance(existing_part, TextPart) and existing_part.content == chunk.text
             else None
         )
@@ -851,7 +851,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             self.provider_details = {**(self.provider_details or {}), 'conversation_id': response.conversation.id}
 
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
-        return map_usage(response, self._provider_name, self._provider_url, self.model_name)
+        return map_usage(
+            response,
+            self._provider_name,
+            self._provider_url,
+            self.model_name,
+            deepseek_web_tools=self._deepseek_web_tools,
+        )
 
     def _record_usage(self, response: responses.Response) -> None:
         self._add_usage(self._map_usage(response), reported=response.usage is not None)

@@ -4,6 +4,8 @@ Read this file when the user wants provider-native tools such as web search, web
 
 Prefer provider-adaptive capabilities like `WebSearch()`, `WebFetch()`, `MCP()`, or `ImageGeneration()` when the user wants a provider-agnostic solution. Use native tools directly when they explicitly want provider-native behavior or provider-specific configuration.
 
+DeepSeek Flash supports `WebSearch()` and `WebFetch()` on Chat Completions, Responses, and Messages. For Messages, pair `AnthropicModel` with `DeepSeekMessagesProvider` from `pydantic_ai.providers.deepseek_messages`. Reuse the complete message history with the same API so signed pages remain available on later turns.
+
 ## Give My Agent Web Search or Code Execution
 
 Native tools are wrapped in [`NativeTool`][pydantic_ai.capabilities.NativeTool] and passed via `capabilities=[...]`.

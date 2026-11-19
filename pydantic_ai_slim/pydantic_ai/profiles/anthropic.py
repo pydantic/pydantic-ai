@@ -98,6 +98,9 @@ class AnthropicModelProfile(ModelProfile, total=False):
     ALL FIELDS MUST BE `anthropic_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
+    anthropic_deepseek_web_tools: bool
+    """Whether the endpoint uses DeepSeek Flash's signed web tool protocol."""
+
     anthropic_supports_fast_speed: bool
     """Whether the model supports fast inference speed (`anthropic_speed='fast'`). Default: `False`.
 

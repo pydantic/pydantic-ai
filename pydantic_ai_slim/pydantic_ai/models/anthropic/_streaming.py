@@ -57,6 +57,7 @@ from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
 from ._citations import citations_provider_details, fetched_page, map_citations
 from ._computer import ComputerBlock, NativeComputer
+from ._deepseek_web_tools import web_tool_part
 from ._errors import map_api_errors
 from ._native_tools import (
     finalize_streamed_tool_search_call_part,
@@ -112,6 +113,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     _native_computer: NativeComputer | None = None
     _from_fallback_model: bool = field(default=False, init=False)
     _current_block: BetaContentBlock | None = field(default=None, init=False)
+    _deepseek_web_tools: bool = False
     _ignored_block_indices: set[int] = field(default_factory=set[int], init=False)
     """Blocks whose deltas are dropped: calls to server tools that aren't enabled, and block types the SDK doesn't know."""
     _pending_citations: dict[int, list[BetaTextCitation]] = field(
@@ -161,7 +163,13 @@ class AnthropicStreamedResponse(StreamedResponse):
             # as `BetaRawMessageStartEvent(message=None)`. Skip them entirely so we
             # don't dereference `event.message.id` / `.container` below.
             return
-        self._usage = map_usage(event, self._provider_name, self._provider_url, self._model_name)
+        self._usage = map_usage(
+            event,
+            self._provider_name,
+            self._provider_url,
+            self._model_name,
+            deepseek_web_tools=self._deepseek_web_tools,
+        )
         self.provider_response_id = event.message.id
         if event.message.container:
             self.provider_details = self.provider_details or {}
@@ -191,6 +199,9 @@ class AnthropicStreamedResponse(StreamedResponse):
         self._current_block = current_block = event.content_block
         if self._native_computer and self._native_computer.is_computer_call(current_block):
             self._computer_input = []
+            return
+        if self._deepseek_web_tools and (part := web_tool_part(current_block, self.provider_name)) is not None:
+            yield self._parts_manager.handle_part(vendor_part_id=event.index, part=part)
             return
         match current_block:
             # The SDK builds a block type it doesn't know as a `BetaTextBlock` carrying that type.
@@ -376,7 +387,14 @@ class AnthropicStreamedResponse(StreamedResponse):
                 pass
 
     def _map_message_delta(self, event: BetaRawMessageDeltaEvent) -> None:
-        self._usage = map_usage(event, self._provider_name, self._provider_url, self._model_name, self._usage)
+        self._usage = map_usage(
+            event,
+            self._provider_name,
+            self._provider_url,
+            self._model_name,
+            self._usage,
+            deepseek_web_tools=self._deepseek_web_tools,
+        )
         self._from_fallback_model = served_by_fallback_model(event.usage)
         if (context_input_tokens := last_pass_input_tokens(event.usage)) is not None:
             mark_context_input_tokens(self, context_input_tokens)

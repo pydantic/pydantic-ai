@@ -15,6 +15,7 @@ from ... import usage
 from ..._instrumentation import add_input_transformations_event
 from ..._utils import is_str_dict as _is_str_dict
 from ...messages import STANDING_PROMPT_PLANTED_KEY, CompactionPart, FinishReason, ModelResponseState
+from .._deepseek_web_tools import DeepSeekWebUsage
 
 RESPONSES_FINISH_REASON_MAP: dict[
     Literal['max_output_tokens', 'max_messages', 'content_filter', 'steered'] | ResponseStatus, FinishReason
@@ -147,9 +148,11 @@ def map_usage(
     provider: str,
     provider_url: str,
     model: str,
+    *,
+    deepseek_web_tools: bool = False,
 ) -> usage.RequestUsage:
     response_usage = response.usage
-    web_search_requests = billed_web_searches(response)
+    web_search_requests = 0 if deepseek_web_tools else billed_web_searches(response)
     if response_usage is None:
         if web_search_requests:
             return usage.RequestUsage(
@@ -199,6 +202,8 @@ def map_usage(
         cache_write_tokens = input_tokens_details.get('cache_write_tokens')
         if isinstance(cache_write_tokens, int):
             request_usage.cache_write_tokens = cache_write_tokens
+    if deepseek_web_tools and (tool_usage := usage_data.get('server_tool_use')) is not None:
+        DeepSeekWebUsage.model_validate(tool_usage).apply(request_usage)
     return request_usage
 
 

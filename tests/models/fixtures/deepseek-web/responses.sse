@@ -1,0 +1,44 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"7e99c1f4-0e16-4a13-bd3e-3d35558663cd","object":"response","created_at":1794909398,"status":"in_progress","background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":256,"max_tool_calls":null,"model":"deepseek-flash","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+event: response.in_progress
+data: {"type":"response.in_progress","response":{"id":"7e99c1f4-0e16-4a13-bd3e-3d35558663cd","object":"response","created_at":1794909398,"status":"in_progress","background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":256,"max_tool_calls":null,"model":"deepseek-flash","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"type":"web_search_call","id":"srvtoolu_rl_00_00c82d87d89241a48a43672a776e8b69","status":"in_progress","kind":"read_link","action":{"type":"open_page","url":"https://httpbin.org/uuid"}},"output_index":0,"sequence_number":2}
+
+event: response.web_search_call.in_progress
+data: {"type":"response.web_search_call.in_progress","item_id":"srvtoolu_rl_00_00c82d87d89241a48a43672a776e8b69","output_index":0,"sequence_number":3}
+
+event: response.web_search_call.searching
+data: {"type":"response.web_search_call.searching","item_id":"srvtoolu_rl_00_00c82d87d89241a48a43672a776e8b69","output_index":0,"sequence_number":4}
+
+event: response.web_search_call.completed
+data: {"type":"response.web_search_call.completed","item_id":"srvtoolu_rl_00_00c82d87d89241a48a43672a776e8b69","output_index":0,"sequence_number":5}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"srvtoolu_rl_00_00c82d87d89241a48a43672a776e8b69","status":"completed","kind":"read_link","action":{"type":"open_page","url":"https://httpbin.org/uuid"},"page":{"url":"https://httpbin.org/uuid","title":"","published_at":null},"signature":"recorded-page-signature"},"output_index":0,"sequence_number":6}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"type":"message","id":"a476106a-83e3-4f87-a8a1-82d1c44a2aae","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":7}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","content_index":0,"item_id":"a476106a-83e3-4f87-a8a1-82d1c44a2aae","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":8}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"READ","item_id":"a476106a-83e3-4f87-a8a1-82d1c44a2aae","logprobs":[],"output_index":1,"sequence_number":9}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"Y","item_id":"a476106a-83e3-4f87-a8a1-82d1c44a2aae","logprobs":[],"output_index":1,"sequence_number":10}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","content_index":0,"item_id":"a476106a-83e3-4f87-a8a1-82d1c44a2aae","logprobs":[],"output_index":1,"sequence_number":11,"text":"READY"}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","content_index":0,"item_id":"a476106a-83e3-4f87-a8a1-82d1c44a2aae","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"READY"},"sequence_number":12}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"type":"message","id":"a476106a-83e3-4f87-a8a1-82d1c44a2aae","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"READY"}],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":13}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"7e99c1f4-0e16-4a13-bd3e-3d35558663cd","object":"response","created_at":1794909398,"status":"completed","background":false,"completed_at":1794909399,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":256,"max_tool_calls":null,"model":"deepseek-flash","moderation":null,"output":[{"type":"web_search_call","id":"srvtoolu_rl_00_00c82d87d89241a48a43672a776e8b69","status":"completed","kind":"read_link","action":{"type":"open_page","url":"https://httpbin.org/uuid"},"page":{"url":"https://httpbin.org/uuid","title":"","published_at":null},"signature":"recorded-page-signature"},{"type":"message","id":"a476106a-83e3-4f87-a8a1-82d1c44a2aae","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"READY"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":118,"input_tokens_details":{"cached_tokens":0},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":120,"server_tool_use":{"tool_search":0,"tool_fetch":1,"tool_image_search":0}},"user":null,"metadata":{}},"sequence_number":14}

@@ -22,6 +22,7 @@ from ..._context_size import mark_context_input_tokens, marked_context_input_tok
 from ..._instrumentation import add_input_transformations_event
 from ...messages import FinishReason, ModelMessage, ModelResponse
 from .. import StreamedResponse
+from .._deepseek_web_tools import DeepSeekWebUsage
 
 FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
     'compaction': 'stop',
@@ -214,6 +215,8 @@ def map_usage(
     provider_url: str,
     model: str,
     existing_usage: usage.RequestUsage | None = None,
+    *,
+    deepseek_web_tools: bool = False,
 ) -> usage.RequestUsage:
     match message:
         case BetaMessage():
@@ -259,6 +262,8 @@ def map_usage(
     # genai-prices doesn't map Anthropic's thinking token count, which is already priced inside `output_tokens`.
     if thinking_tokens := details.get('thinking_tokens'):
         request_usage.output_reasoning_tokens = thinking_tokens
+    if deepseek_web_tools and (tool_usage := response_usage.server_tool_use) is not None:
+        DeepSeekWebUsage.model_validate(tool_usage.model_dump(mode='python')).apply(request_usage)
     return request_usage
 
 
