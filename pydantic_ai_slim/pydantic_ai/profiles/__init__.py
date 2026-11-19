@@ -458,7 +458,8 @@ class ModelProfile(TypedDict, total=False):
 
     [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction] compacts only for a model with it. It's set for the
     OpenAI Responses API on OpenAI and Azure OpenAI, and for the Claude models Anthropic's Messages API compacts
-    on demand.
+    on demand: see Anthropic's [on-demand compaction docs](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand)
+    for the models.
     """
 
     compaction_instructions: CompactionInstructionsMode | None
