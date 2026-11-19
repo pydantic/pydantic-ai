@@ -231,6 +231,14 @@ class FallbackModel(Model):
             matching[0] if matching else candidates[0],
         )
 
+    def _durable_compaction_boundary(
+        self,
+        messages: Sequence[ModelMessage],
+        model_settings: ModelSettings | None = None,
+    ) -> tuple[int, int]:
+        merged = merge_model_settings(self.settings, model_settings)
+        return min(model._durable_compaction_boundary(messages, merged) for model in self.models)
+
     async def request(
         self,
         messages: list[ModelMessage],

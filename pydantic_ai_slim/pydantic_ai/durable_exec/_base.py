@@ -1771,10 +1771,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         )
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
+            messages = request.model._trim_durable_messages(request.messages, request.model_settings)  # pyright: ignore[reportPrivateUsage]
             return await operations.request(
                 ModelRequestParams(
                     model_id,
-                    messages=request.messages,
+                    messages=messages,
                     model_settings=request.model_settings,
                     model_request_parameters=request.model_request_parameters,
                     run_context=ctx,
@@ -1782,10 +1783,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             )
 
         async def request_stream_segment(request: ModelRequestContext) -> StreamedModelRequestResult:
+            messages = request.model._trim_durable_messages(request.messages, request.model_settings)  # pyright: ignore[reportPrivateUsage]
             return await operations.request_stream(
                 ModelRequestParams(
                     model_id,
-                    messages=request.messages,
+                    messages=messages,
                     model_settings=request.model_settings,
                     model_request_parameters=request.model_request_parameters,
                     run_context=ctx,
@@ -1800,6 +1802,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         async def compact_messages_segment(
             compact_context: ModelRequestContext, instructions: str | None
         ) -> ModelResponse:
+            trimmed = compact_context.model._trim_durable_messages(  # pyright: ignore[reportPrivateUsage]
+                compact_context.messages, compact_context.model_settings
+            )
+            if trimmed is not compact_context.messages:
+                compact_context = replace(compact_context, messages=trimmed)
             return await operations.compact_messages(
                 ModelCompactMessagesParams(
                     model_id,
@@ -1814,10 +1821,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 return await count_context.model.count_tokens(
                     count_context.messages, count_context.model_settings, count_context.model_request_parameters
                 )
+            messages = count_context.model._trim_durable_messages(  # pyright: ignore[reportPrivateUsage]
+                count_context.messages, count_context.model_settings
+            )
             counted = await operations.count_tokens(
                 ModelRequestParams(
                     model_id,
-                    messages=count_context.messages,
+                    messages=messages,
                     model_settings=count_context.model_settings,
                     model_request_parameters=count_context.model_request_parameters,
                     run_context=ctx,

@@ -1568,6 +1568,51 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             else standing_prompt_retained,
         )
 
+    def _durable_compaction_boundary(
+        self,
+        messages: Sequence[ModelMessage],
+        model_settings: ModelSettings | None = None,
+    ) -> tuple[int, int]:
+        """Where the post-compaction window this model needs across a durable boundary begins, or `(0, 0)`."""
+        if not self._honors_compaction_boundaries:
+            return 0, 0
+        for message_index in range(len(messages) - 1, -1, -1):
+            message = messages[message_index]
+            if not isinstance(message, ModelResponse):
+                continue
+            for part_index in range(len(message.parts) - 1, -1, -1):
+                part = message.parts[part_index]
+                if isinstance(part, CompactionPart) and _compaction_part_is_wire_boundary(
+                    message,
+                    part,
+                    self.accepts_stateless_artifacts,
+                    requires_encrypted_content=self.compaction_requires_encrypted_content,
+                ):
+                    return message_index, part_index
+        return 0, 0
+
+    def _trim_durable_messages(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None = None,
+    ) -> list[ModelMessage]:
+        """Drop pre-compaction history that no candidate serving a durable unit can use.
+
+        Preserves the opening standing prompt (`include_system_parts=True`) even when the
+        serving adapter sets `compaction_retains_standing_prompt`, so a durable re-compaction
+        unit can still re-plant it while ordinary request units apply their own adapter trim.
+        """
+        message_index, part_index = self._durable_compaction_boundary(messages, model_settings)
+        if (message_index, part_index) == (0, 0):
+            return messages
+        boundary = messages[message_index]
+        assert isinstance(boundary, ModelResponse)
+        return [
+            *_standing_prompt_request(messages[:message_index], include_system_parts=True),
+            replace(boundary, parts=boundary.parts[part_index:]),
+            *messages[message_index + 1 :],
+        ]
+
     @abstractmethod
     async def request(
         self,

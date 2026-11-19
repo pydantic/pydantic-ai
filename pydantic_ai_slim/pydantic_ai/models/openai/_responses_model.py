@@ -2400,6 +2400,22 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             for part in response.parts
         )
 
+    def _durable_compaction_boundary(
+        self,
+        messages: Sequence[ModelMessage],
+        model_settings: ModelSettings | None = None,
+    ) -> tuple[int, int]:
+        boundary = super()._durable_compaction_boundary(messages, model_settings)
+        if boundary == (0, 0):
+            return boundary
+        merged = cast(OpenAIResponsesModelSettings, merge_model_settings(self.settings, model_settings) or {})
+        if (conversation_id := merged.get('openai_conversation_id')) is not None:
+            full_id, _ = self._resolve_conversation_id(conversation_id, list(messages))
+            kept_id, _ = self._resolve_conversation_id(conversation_id, list(messages[boundary[0] :]))
+            if full_id != kept_id:
+                return 0, 0
+        return boundary
+
     def _is_response_id_reachable(
         self, response: ModelResponse, store: bool | Omit | None, *, websocket_mode: bool = False
     ) -> bool:

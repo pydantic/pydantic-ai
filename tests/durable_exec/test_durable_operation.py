@@ -1038,6 +1038,279 @@ async def test_temporal_compaction_payload_round_trips_live_durable_model() -> N
     assert decoded[0].model_request_parameters == ModelRequestParameters()
 
 
+async def test_durable_model_segments_trim_pre_compaction_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Committed `CompactionPart` boundaries shrink durable model payloads while preserving workflow `all_messages()`."""
+    pytest.importorskip('openai')
+    pytest.importorskip('anthropic')
+    pytest.importorskip('temporalio')
+    from pydantic_ai.durable_exec.temporal import TemporalDurability
+    from pydantic_ai.durable_exec.temporal._transports import (
+        _CompactMessagesParams,  # pyright: ignore[reportPrivateUsage]
+        _RequestParams,
+    )
+    from pydantic_ai.messages import CompactionPart, SystemPromptPart
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.wrapper import WrapperModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    openai_model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    anthropic_model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test'))
+
+    async def fake_request(
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('ok')], model_name='gpt-5.2', provider_name='openai')
+
+    openai_model.request = fake_request
+    wrapped_openai = WrapperModel(openai_model)
+
+    standing_part = SystemPromptPart('Standing prompt.')
+    compaction_part = CompactionPart(
+        id='cmp_1',
+        content=None,
+        provider_name='openai',
+        provider_details={
+            'encrypted_content': 'enc_1',
+            'pydantic_ai_standing_prompt_planted': True,
+        },
+    )
+    compaction_response = ModelResponse(
+        parts=[TextPart('drop before compaction'), compaction_part, TextPart('kept after compaction')],
+        model_name='gpt-5.2',
+        provider_name='openai',
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[standing_part, UserPromptPart('turn 1')],
+            instructions='Follow policy.',
+        ),
+        ModelResponse(parts=[TextPart('early answer')], model_name='gpt-5.2', provider_name='openai'),
+        ModelRequest.user_text_prompt('turn 2'),
+        compaction_response,
+    ]
+
+    # Workflow run through `JournalDurability` covers both `request` and `request_stream` while keeping `all_messages()`.
+    durability = JournalDurability(name='compact_trim')
+    agent = Agent(wrapped_openai, name='compact_trim', capabilities=[durability])
+    result = await agent.run('turn 3', message_history=list(history))
+    assert len(result.all_messages()) == len(history) + 2
+
+    _, request_cache_key, _ = durability.calls[0]
+    dispatched_messages = cast(list[ModelMessage], request_cache_key[1])
+    assert dispatched_messages == [
+        ModelRequest(parts=[standing_part], instructions='Follow policy.'),
+        replace(compaction_response, parts=[compaction_part, TextPart('kept after compaction')]),
+        dispatched_messages[-1],
+    ]
+
+    # Streamed segment, `count_tokens`, and `compact_messages` (both trimmed and untrimmed) over Temporal wire transport.
+    temporal_agent = Agent(openai_model, name='temporal_compact_trim', capabilities=[TemporalDurability()])
+    temporal = TemporalDurability.from_agent(temporal_agent)
+    assert temporal is not None
+    dispatched_temporal: list[tuple[object, Sequence[object]]] = []
+
+    async def execute_activity(activity: Callable[..., object], *, args: Sequence[object], **config: object) -> object:
+        dispatched_temporal.append((activity, args))
+        if activity is temporal.count_tokens_activity:
+            return CountTokensResult(usage=RequestUsage(input_tokens=12))
+        return ModelResponse(parts=[TextPart('stream-or-compact')], model_name='gpt-5.2', provider_name='openai')
+
+    def always_patched(_id: str) -> bool:
+        return True
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._operation_backend.execute_activity', execute_activity)
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._durability.workflow.patched', always_patched)
+
+    ctx = RunContext(deps=None, model=openai_model, usage=RunUsage(), agent=temporal_agent, run_id='r1')
+    tail_messages = [*history, ModelRequest.user_text_prompt('turn 3')]
+    req_ctx = ModelRequestContext(
+        model=openai_model,
+        messages=tail_messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    from contextlib import AsyncExitStack
+
+    async with AsyncExitStack() as stack:
+        token = temporal._request_model_scope.set(stack)  # pyright: ignore[reportPrivateUsage]
+        try:
+            durable_model = await temporal._build_durable_model(ctx, req_ctx)  # pyright: ignore[reportPrivateUsage]
+            async with durable_model.request_stream(tail_messages, None, ModelRequestParameters(), ctx) as streamed:
+                assert streamed.get().parts == [TextPart('stream-or-compact')]
+            usage = await durable_model.count_tokens(tail_messages, None, ModelRequestParameters())
+            assert usage == RequestUsage(input_tokens=12)
+            await durable_model.compact_messages(req_ctx, instructions='focus')
+            # First compaction (no prior boundary in messages) passes `compact_context` through unchanged.
+            uncompacted_ctx = ModelRequestContext(
+                model=openai_model,
+                messages=[ModelRequest.user_text_prompt('first turn')],
+                model_settings=None,
+                model_request_parameters=ModelRequestParameters(),
+            )
+            await durable_model.compact_messages(uncompacted_ctx, instructions=None)
+        finally:
+            temporal._request_model_scope.reset(token)  # pyright: ignore[reportPrivateUsage]
+
+    stream_wire = cast(_RequestParams, dispatched_temporal[0][1][0])
+    count_wire = cast(_RequestParams, dispatched_temporal[1][1][0])
+    recompact_wire = cast(_CompactMessagesParams, dispatched_temporal[2][1][0])
+    first_compact_wire = cast(_CompactMessagesParams, dispatched_temporal[3][1][0])
+    assert len(stream_wire.messages) == 3
+    assert len(count_wire.messages) == 3
+    assert len(recompact_wire.messages) == 3
+    assert first_compact_wire.messages is uncompacted_ctx.messages
+
+    # Anthropic honors its own readable/signed CompactionPart and ignores OpenAI's encrypted-only one.
+    assert anthropic_model._trim_durable_messages(tail_messages) is tail_messages  # pyright: ignore[reportPrivateUsage]
+    anthropic_history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('before anthropic compaction'),
+        ModelResponse(
+            parts=[CompactionPart(content='Anthropic summary.', provider_name='anthropic')],
+            provider_name='anthropic',
+        ),
+        ModelRequest.user_text_prompt('after anthropic compaction'),
+    ]
+    assert anthropic_model._trim_durable_messages(anthropic_history) == anthropic_history[1:]  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_durable_compaction_trim_respects_fallback_and_openai_conversation_id() -> None:
+    """Fallback chains keep messages while any candidate needs them; `ModelFallback` trims per attempt."""
+    pytest.importorskip('openai')
+    pytest.importorskip('anthropic')
+    from pydantic_ai.capabilities import ModelFallback
+    from pydantic_ai.exceptions import ModelAPIError
+    from pydantic_ai.messages import CompactionPart
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.fallback import FallbackModel
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    openai_primary = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    openai_secondary = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key='test'))
+    anthropic_fallback = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test'))
+
+    openai_only_history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('turn 1'),
+        ModelResponse(
+            parts=[TextPart('pre-boundary')],
+            model_name='gpt-5.2',
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1/',
+            provider_details={'conversation_id': 'conv_pre'},
+        ),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    id='cmp_openai',
+                    content=None,
+                    provider_name='openai',
+                    provider_details={'encrypted_content': 'enc_openai'},
+                )
+            ],
+            model_name='gpt-5.2',
+            provider_name='openai',
+            provider_details={'compaction': True},
+        ),
+        ModelRequest.user_text_prompt('turn 2'),
+    ]
+
+    # `FallbackModel`: cross-provider or non-compacting candidate keeps full history; same-family trims.
+    cross_fb = FallbackModel(openai_primary, anthropic_fallback)
+    non_compacting_fb = FallbackModel(openai_primary, TestModel())
+    same_family_fb = FallbackModel(openai_primary, openai_secondary)
+    assert cross_fb._trim_durable_messages(openai_only_history) is openai_only_history  # pyright: ignore[reportPrivateUsage]
+    assert non_compacting_fb._trim_durable_messages(openai_only_history) is openai_only_history  # pyright: ignore[reportPrivateUsage]
+    assert same_family_fb._trim_durable_messages(openai_only_history) == openai_only_history[2:]  # pyright: ignore[reportPrivateUsage]
+
+    # Multi-provider boundaries in one history trim to the earliest boundary honored by every candidate.
+    dual_boundary_history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('turn 0'),
+        ModelResponse(
+            parts=[CompactionPart(content='Anthropic checkpoint.', provider_name='anthropic')],
+            provider_name='anthropic',
+        ),
+        ModelRequest.user_text_prompt('turn 1'),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    id='cmp_openai',
+                    content=None,
+                    provider_name='openai',
+                    provider_details={'encrypted_content': 'enc_openai'},
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('turn 2'),
+    ]
+    assert cross_fb._trim_durable_messages(dual_boundary_history) == dual_boundary_history[1:]  # pyright: ignore[reportPrivateUsage]
+
+    # `openai_conversation_id='auto'` keeps pre-boundary messages when the conversation ID lives only before compaction,
+    # and trims once a post-boundary response carries it.
+    assert (
+        openai_primary._trim_durable_messages(  # pyright: ignore[reportPrivateUsage]
+            openai_only_history, cast(ModelSettings, {'openai_conversation_id': 'auto'})
+        )
+        is openai_only_history
+    )
+    post_conv_history: list[ModelMessage] = [
+        *openai_only_history,
+        ModelResponse(
+            parts=[TextPart('post-boundary')],
+            model_name='gpt-5.2',
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1/',
+            provider_details={'conversation_id': 'conv_pre'},
+        ),
+        ModelRequest.user_text_prompt('turn 3'),
+    ]
+    assert (
+        openai_primary._trim_durable_messages(  # pyright: ignore[reportPrivateUsage]
+            post_conv_history, cast(ModelSettings, {'openai_conversation_id': 'auto'})
+        )
+        == post_conv_history[2:]
+    )
+
+    # `ModelFallback` capability: primary OpenAI attempt dispatches trimmed messages; on failure, Anthropic attempt
+    # receives the untrimmed pre-boundary history.
+    async def fail_openai(
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        raise ModelAPIError(model_name='gpt-5.2', message='unavailable')
+
+    async def succeed_anthropic(
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('recovered')], model_name='claude-sonnet-4-6', provider_name='anthropic')
+
+    openai_primary.request = fail_openai
+    anthropic_fallback.request = succeed_anthropic
+
+    durability = JournalDurability(name='model_fallback_trim', models={'anthropic_fb': anthropic_fallback})
+    agent = Agent(
+        openai_primary,
+        name='model_fallback_trim',
+        capabilities=[ModelFallback('anthropic_fb'), durability],
+    )
+    res = await agent.run('turn 2', message_history=openai_only_history[:-1])
+    assert res.output == 'recovered'
+    assert len(durability.calls) == 2
+    attempt_1_messages = cast(list[ModelMessage], durability.calls[0][1][1])
+    attempt_2_messages = cast(list[ModelMessage], durability.calls[1][1][1])
+    assert len(attempt_1_messages) == 2
+    assert len(attempt_2_messages) == len(openai_only_history)
+
+
 async def test_temporal_backend_labels_validation_activity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

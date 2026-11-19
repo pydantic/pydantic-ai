@@ -276,6 +276,13 @@ class WrapperModel(Model):
     def _model_for_response(self, response: ModelResponse) -> Model:
         return self.wrapped._model_for_response(response)
 
+    def _durable_compaction_boundary(
+        self,
+        messages: Sequence[ModelMessage],
+        model_settings: ModelSettings | None = None,
+    ) -> tuple[int, int]:
+        return self.wrapped._durable_compaction_boundary(messages, model_settings)
+
     @property
     def model_id(self) -> str:
         # `Model.model_id` derives from `system` and `model_name`, which are forwarded above, so for
