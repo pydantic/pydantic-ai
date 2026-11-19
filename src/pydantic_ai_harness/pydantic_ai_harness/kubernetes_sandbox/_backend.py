@@ -210,8 +210,8 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDispl
         desktop: Whether the sandbox has a display for
             [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or its
             `(width, height)`. The image needs Xvfb, `xdotool`, `xwininfo` (`x11-utils`), `scrot` and `setsid`
-            (`util-linux`); pods run as a non-root user, so nothing is installed, and the first use of the
-            display raises `WorkspaceUnavailableError` naming what is missing. No port is opened for it.
+            (`util-linux`). A non-root pod installs nothing: without them, the first use of the display raises
+            `WorkspaceUnavailableError` naming what is missing. No port is opened for it.
     """
 
     # File operations don't use sandboxd's file API: it serves only paths under its root and moves
