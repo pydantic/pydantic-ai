@@ -39,7 +39,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.native_tools import AdvisorTool, ComputerTool
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
@@ -379,6 +379,28 @@ async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_
     assert '"loc":["actions",0,"mouse_down","unsupported_fields"]' in retry.model_response_str()
 
 
+async def test_a_legacy_call_whose_action_is_not_a_string_runs_nothing_and_is_retried(
+    allow_model_requests: None,
+) -> None:
+    def call(input: dict[str, Any]) -> BetaToolUseBlock:
+        return BetaToolUseBlock.model_validate(
+            {'id': 'toolu_1', 'type': 'tool_use', 'name': 'computer', 'input': input}
+        )
+
+    client = MockAnthropic.create_mock(
+        [_turn(call({'action': [], 'coordinate': [5, 6]})), _turn(BetaTextBlock(text='done', type='text'))]
+    )
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+    computer = FakeComputer()
+    result = await _agent(model, computer).run('Go.')
+
+    assert computer.actions == []
+    call_part = next(part for part in result.all_messages()[1].parts if isinstance(part, ToolCallPart))
+    assert call_part.args_as_dict() == {'actions': [{'type': '', 'unsupported_fields': ['action', 'coordinate']}]}
+    (retry,) = [part for part in result.all_messages()[2].parts if isinstance(part, ToolReturnPart)]
+    assert retry.outcome == 'retried'
+
+
 async def test_an_earlier_tool_result_stored_as_a_json_string_keeps_its_screenshot(allow_model_requests: None) -> None:
     call = ComputerCallPart(
         'computer',
@@ -656,7 +678,7 @@ async def test_toolset_members_map_onto_the_computer_tool(
 @pytest.mark.parametrize('model_name', ['claude-haiku-5-5', 'claude-opus-4-8'])
 def test_the_newest_models_get_the_computer_toolset(model_name: str) -> None:
     """`tests/profiles/test_resolution_matrix.py` checks the earlier tools and the models that get none."""
-    profile = anthropic_model_profile(model_name)
+    profile = AnthropicProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('anthropic_computer_tool_version') == 'computer_toolset_20260801'
 
@@ -893,12 +915,54 @@ async def test_a_streamed_computer_call_cut_off_mid_input_stops_the_run(
             await _agent(model, FakeComputer()).run(
                 'Go.', model_settings={'max_tokens': 60}, event_stream_handler=drain
             )
-    # The cut-off call keeps its partial input and is the response's last part. The run checks the last part.
+    # The cut-off call is the response's last part, with arguments that don't parse. The run checks the last part.
     *_, response = [message for message in messages if isinstance(message, ModelResponse)]
     assert response.finish_reason == 'length'
     last = response.parts[-1]
     assert isinstance(last, ComputerCallPart)
-    assert (last.tool_call_id, last.args) == ('toolu_2', '{"text": "word0 wo')
+    assert last.tool_call_id == 'toolu_2'
+    with pytest.raises(ValueError):
+        last.args_as_dict(raise_if_invalid=True)
+
+
+@pytest.mark.parametrize('streamed', [False, True])
+async def test_a_batch_cut_off_by_max_tokens_runs_nothing(allow_model_requests: None, streamed: bool) -> None:
+    # Claude stopped at `max_tokens` after two whole members and some text. Without the rest of the batch, neither
+    # member may run. Claude is asked again, and its calls go back unchanged, each answered as an error.
+    blocks: list[BetaContentBlock] = [
+        _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
+        _tool_use('toolu_2', 'type', {'text': 'hello'}),
+        BetaTextBlock(text='Then I will', type='text'),
+    ]
+    done = BetaTextBlock(text='done', type='text')
+    if streamed:
+        events = _stream(*blocks)
+        message_delta = next(event for event in events if isinstance(event, BetaRawMessageDeltaEvent))
+        message_delta.delta = Delta(stop_reason='max_tokens')
+        client = MockAnthropic.create_stream_mock([events, _stream(done)])
+    else:
+        client = MockAnthropic.create_mock(
+            [_turn(*blocks).model_copy(update={'stop_reason': 'max_tokens'}), _turn(done)]
+        )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    computer = FakeComputer()
+
+    async def drain(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            pass
+
+    result = await _agent(model, computer).run('Go.', event_stream_handler=drain if streamed else None)
+
+    assert computer.actions == []
+    assert result.output == 'done'
+    _, second = get_mock_chat_completion_kwargs(client)
+    calls = second['messages'][-2]['content']
+    assert [(c['id'], c['name']) for c in calls if c['type'] == 'tool_use'] == [
+        ('toolu_1', 'left_click'),
+        ('toolu_2', 'type'),
+    ]
+    results = second['messages'][-1]['content']
+    assert [(r['tool_use_id'], r['is_error']) for r in results] == [('toolu_1', True), ('toolu_2', True)]
 
 
 async def test_a_call_named_computer_is_a_function_tools_when_tool_choice_leaves_out_the_computer(
@@ -1073,15 +1137,20 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
         assert rest == [[ON_LAST]] * (members - 1)
         assert len(last) == 1 and last != [ON_LAST]
     else:
-        # Apart from the `OK`s, the failure and `ON_LAST`, the content goes back once, whole and in order.
+        # Apart from the `OK`s, the failure and `ON_LAST`, the content goes back once, whole and in order. When the
+        # first call failed, its error result holds only the text.
+        first_failed = metadata is not None and 'error' in metadata and performed < counts[0]
         carried = [
             _item(block)
             for r in sent
-            if not r['is_error']
             for block in r['content']
-            if block['type'] != 'text' or block['text'] not in ('OK', ON_LAST, 'Failed.')
+            if block['type'] != 'text' or block['text'] not in ('OK', ON_LAST, 'Failed.', NOT_EXECUTED)
         ]
-        expected = [item if isinstance(item, str) else base64.b64encode(item.data).decode() for item in content]
+        expected = [
+            item if isinstance(item, str) else base64.b64encode(item.data).decode()
+            for item in content
+            if isinstance(item, str) or not first_failed
+        ]
         assert carried == expected
 
 
@@ -1125,14 +1194,14 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
             [(False, ['Action 2 of 2 (type_text) failed: no keyboard.', 'image']), (True, ['Failed.'])],
             id='recorded-counts',
         ),
-        # Nothing ran. The first call gets the result and says it failed in text, because an error result can hold
-        # only text.
+        # The first call failed. Anthropic asks for an error result on it, which can hold only text, so the
+        # screenshot is dropped.
         pytest.param(
             _MEMBERS[:2],
             [1, 1],
             ['Action 1 of 2 (click) failed: no mouse.', _PNG],
             {'performed': 0, 'error': 'no mouse'},
-            [(False, ['Failed.', 'Action 1 of 2 (click) failed: no mouse.', 'image']), (True, [NOT_EXECUTED])],
+            [(True, ['Failed.', 'Action 1 of 2 (click) failed: no mouse.']), (True, [NOT_EXECUTED])],
             id='failed-first',
         ),
     ],
