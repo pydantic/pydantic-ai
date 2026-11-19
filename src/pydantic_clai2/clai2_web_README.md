@@ -127,14 +127,14 @@ was. Settings every session shares, such as `/set display.*`, still change them 
 **Models** (`#settings/models`, or `/model` typed in the composer) picks the model for
 the next prompt, exactly as `/model NAME` does: the session switches, the terminal's status row and
 the composer show it, and it is saved as the default. Each saved model and fallback chain has a row
-that opens its settings beneath it, the rows `/model settings NAME` edits, so effort and Codex fast
-mode changed here are what `/effort` and `/fast` read; the current model's opens first. **Add a
+that opens its settings beneath it, the rows `/model settings NAME` edits, so effort and Codex speed
+changed here are what `/effort` and `/fast` read; the current model's opens first. **Add a
 model** asks for a provider and one of its catalog models, then the account when the provider has
 several, as `/model add` does; GitHub Copilot, OpenRouter, and vLLM, which sign in or ask for an
 address first, are added from the terminal. **Remove a model** deletes one after asking, keeping the
 current model and the saved default. Creating, editing, and renaming fallback chains stays in the
 terminal's `/model chains`. `/effort` typed in the composer opens a dialog with the active model's
-settings, effort among them, and `/fast` still toggles fast mode.
+settings, effort among them, and `/fast` still sets the Codex speed.
 
 <!-- From #10457 -->
 **Keys & accounts** (`#settings/keys`, or `/keys`, `/login`, or `/accounts` in the composer) lists

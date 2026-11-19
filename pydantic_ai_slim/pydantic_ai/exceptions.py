@@ -781,7 +781,7 @@ RequestTimeoutSetting: TypeAlias = Literal['request_timeout', 'first_event_timeo
 
 
 class ModelConnectionError(ModelAPIError):
-    """Raised when the request could not reach the provider or its response could not be read.
+    """Raised when the request could not reach the provider, its response could not be read, or the provider timed it out.
 
     For example a refused connection, a reset connection, or a dropped stream. The transport library's exception
     is available as `__cause__`.
@@ -796,7 +796,8 @@ class ModelConnectionError(ModelAPIError):
     - `'read'`: receiving the response, including a stream that broke off. The request was sent, so the provider
       may have acted on it.
 
-    `None` when the transport error doesn't say, e.g. a connection closed at an unknown point.
+    `None` when the transport error doesn't say, e.g. a connection closed at an unknown point, and for a timeout the
+    provider reports, which is not a transport error.
     """
 
     def __init__(
@@ -827,12 +828,14 @@ class ModelConnectionError(ModelAPIError):
 
 
 class ModelTimeoutError(ModelConnectionError):
-    """Raised when a single attempt at the request timed out at the transport layer.
+    """Raised when a single attempt at the request timed out, at the transport layer or at the provider.
 
-    This is the provider SDK's or HTTP client's own timeout, controlled by
-    [`ModelSettings['timeout']`][pydantic_ai.settings.ModelSettings.timeout], and applies to one attempt. A deadline
-    over all attempts at a request is [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout],
-    which raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] instead.
+    A transport timeout is the provider SDK's or HTTP client's own, controlled by
+    [`ModelSettings['timeout']`][pydantic_ai.settings.ModelSettings.timeout], and applies to one attempt. A timeout
+    the provider reports, like an HTTP 408 or Bedrock's `ModelTimeoutException`, is also a
+    [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], and its `phase` is `None`. A deadline over all attempts
+    at a request is [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout], which
+    raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] instead.
     """
 
 
@@ -1040,6 +1043,7 @@ class ModelHTTPError(ModelAPIError):
             | ModelQuotaExceededError
             | ModelUnavailableError
             | ModelServerError
+            | ModelTimeoutError
             | ModelRequestRejectedError
         ]
         | None,
@@ -1075,6 +1079,7 @@ class ModelHTTPError(ModelAPIError):
                 [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError],
                 [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError],
                 [`ModelServerError`][pydantic_ai.exceptions.ModelServerError],
+                [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError],
                 [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError],
                 [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError],
                 [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError], or
@@ -1170,6 +1175,10 @@ class _HTTPModelServerError(_CategorizedHTTPError, ModelServerError):
     pass
 
 
+class _HTTPModelTimeoutError(_CategorizedHTTPError, ModelTimeoutError):
+    pass
+
+
 class _HTTPModelContextWindowExceededError(_CategorizedHTTPError, ModelContextWindowExceededError):
     pass
 
@@ -1192,6 +1201,7 @@ _HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[_CategorizedHTTPError]] =
     ModelUnavailableError: _HTTPModelUnavailableError,
     ModelOverloadedError: _HTTPModelOverloadedError,
     ModelServerError: _HTTPModelServerError,
+    ModelTimeoutError: _HTTPModelTimeoutError,
     ModelContextWindowExceededError: _HTTPModelContextWindowExceededError,
     ModelRequestRejectedError: _HTTPModelRequestRejectedError,
     ModelAuthenticationError: _HTTPModelAuthenticationError,

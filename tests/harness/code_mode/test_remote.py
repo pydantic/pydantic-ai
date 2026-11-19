@@ -470,8 +470,8 @@ class TestCodeModeErrorRouting:
         at the public native snapshot boundary after a real tool call, not into the harness executor.
         """
         assert _SECRET in str(error)
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', _CrashedError)
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyDisconnectError', _DisconnectError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyCrashedError', _CrashedError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyDisconnectError', _DisconnectError)
         original_resume = AsyncFutureSnapshot.resume
 
         async def fail_after_tool(
