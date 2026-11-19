@@ -928,6 +928,17 @@ def test_azure_the_gateway_and_openrouter_keep_the_function_tool() -> None:
     assert ComputerTool not in (openrouter.profile.get('supported_native_tools') or ())
 
 
+def test_a_server_whose_profile_sets_no_native_tools_keeps_the_function_tool() -> None:
+    """Ollama's profile sets no list of native tools. The native computer tool isn't checked there, so it's left out."""
+    from pydantic_ai.native_tools import WebSearchTool
+    from pydantic_ai.providers.ollama import OllamaProvider
+
+    model = OpenAIResponsesModel('gpt-oss:20b', provider=OllamaProvider(base_url='http://localhost:11434/v1'))
+    native_tools = model.profile.get('supported_native_tools') or ()
+    assert ComputerTool not in native_tools
+    assert WebSearchTool in native_tools
+
+
 @pytest.mark.parametrize(
     'model_name, detail',
     [

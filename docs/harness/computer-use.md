@@ -73,9 +73,8 @@ The model must accept images.
   through `OpenAIResponsesModel`, on OpenAI or on Bedrock Mantle. See [OpenAI](../models/openai.md#native-tools).
 - Every other model gets `computer` as a regular function tool.
 
-An `OpenAIResponsesModel` on another OpenAI-compatible server also gets OpenAI's computer tool when the model's
-profile doesn't set `supported_native_tools`. If the server doesn't support that tool, use `ComputerUse(native=False)`,
-or set `supported_native_tools` in the profile without `ComputerTool`.
+On any other OpenAI-compatible server, such as Azure, Ollama or vLLM, the model gets the function tool. If the
+server supports OpenAI's computer tool, add `ComputerTool` to `supported_native_tools` in the model's profile.
 
 Gemini 3 gives positions on a grid from 0 to 999 instead of in pixels. `ComputerUse` converts them to pixels.
 

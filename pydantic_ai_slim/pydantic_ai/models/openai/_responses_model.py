@@ -730,7 +730,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return cast(OpenAIModelProfile, profile)
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Turn off Batch API, Responses WebSocket and `ComputerTool` defaults for Azure clients and the gateway.
+        """Turn off defaults that haven't been checked live on this provider.
+
+        Azure clients and the gateway lose the Batch API and Responses WebSockets. Every server except OpenAI and
+        Bedrock Mantle loses the native `ComputerTool`.
 
         Every model resolves this, so it reads only the client's type and the provider's identity, never client state
         such as URLs, which a mocked or partly built client may not have yet.
@@ -739,16 +742,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # Azure batches need a batch deployment; the gateway doesn't serve the Batch API yet.
             profile = merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
         # An Azure-named custom provider may advertise socket support with an ordinary OpenAI client.
-        if isinstance(self._provider.client, AsyncAzureOpenAI) or is_gateway_provider(self._provider):
+        azure_or_gateway = isinstance(self._provider.client, AsyncAzureOpenAI) or is_gateway_provider(self._provider)
+        if azure_or_gateway:
             # Responses WebSockets aren't verified on the Azure client, and the gateway's handshake fails with a 503
-            # while HTTP succeeds (live, 2026-10-22). The native computer tool isn't verified on either one, so
-            # `ComputerUse` sends its function tool there.
-            return merge_profile(
+            # while HTTP succeeds (live, 2026-10-22).
+            profile = merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
+        if azure_or_gateway or 'supported_native_tools' not in profile:
+            # The native computer tool has been checked live only on OpenAI and Bedrock Mantle, whose providers list
+            # it. Azure, the gateway and servers whose profile sets no list (Ollama, vLLM, ...) get `ComputerUse`'s
+            # function tool, which works on any server. Their other native tools stay as on main.
+            profile = merge_profile(
                 profile,
                 OpenAIModelProfile(
-                    openai_responses_supports_websocket=False,
                     supported_native_tools=profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-                    - {ComputerTool},
+                    - {ComputerTool}
                 ),
             )
         return profile
