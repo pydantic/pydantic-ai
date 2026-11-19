@@ -609,21 +609,27 @@ def test_after_exit_script(tmp_path: Path) -> None:
 
 def test_install_after_exit_starts_windows_powershell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The script goes in a file PowerShell deletes once read, not on the command line, where antivirus flags it."""
-    temp = tmp_path / "o'temp"
+    # PowerShell ends a single-quoted string at `'` and at U+2019, so both are doubled.
+    temp = tmp_path / "o'temp\u2019"
     temp.mkdir()
     monkeypatch.setattr(tempfile, 'tempdir', str(temp))
     started: list[Sequence[str]] = []
     install_after_exit('Write-Host é', environ={'SystemRoot': r'D:\Win'}, start=started.append)
     [argv] = started
-    [script] = temp.iterdir()
-    path = str(script).replace("'", "''")
+    [directory] = temp.iterdir()
+    [script] = directory.iterdir()
+
+    def quoted(path: Path) -> str:
+        return str(path).replace("'", "''").replace('\u2019', '\u2019\u2019')
+
     assert argv == [
         r'D:\Win\System32\WindowsPowerShell\v1.0\powershell.exe',
         '-NoProfile',
         '-ExecutionPolicy',
         'Bypass',
         '-Command',
-        f"$s = [IO.File]::ReadAllText('{path}'); [IO.File]::Delete('{path}'); & ([ScriptBlock]::Create($s))",
+        f"$s = [IO.File]::ReadAllText('{quoted(script)}'); [IO.Directory]::Delete('{quoted(directory)}', $true); "
+        '& ([ScriptBlock]::Create($s))',
     ]
     # UTF-8 with a BOM, which Windows PowerShell needs to read anything but ASCII.
     assert script.read_bytes() == codecs.BOM_UTF8 + 'Write-Host é'.encode()

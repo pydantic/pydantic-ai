@@ -71,7 +71,8 @@ def _powershell_start(script: str, *args: str, window: str) -> str:
         f'[IO.File]::WriteAllText($start, {_powershell_literal(_powershell_assignments(args) + script)}); '
         f'Start-Process {window} -FilePath (Get-Process -Id $PID).Path -ArgumentList '
         "('-NoProfile -NonInteractive -Command \"$s = [IO.File]::ReadAllText(''{0}''); [IO.File]::Delete(''{0}''); "
-        '& ([ScriptBlock]::Create($s))"\' -f $start.Replace("\'", "\'\'"))'
+        '& ([ScriptBlock]::Create($s))"\' -f '
+        '[Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($start))'
     )
 
 

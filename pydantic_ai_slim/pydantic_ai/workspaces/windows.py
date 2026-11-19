@@ -11,11 +11,11 @@ import functools
 import ntpath
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
-from contextlib import suppress
 from pathlib import Path
 from subprocess import DEVNULL, PIPE
 
@@ -88,22 +88,29 @@ def powershell_script(script: str) -> str:
     return f'{_PREAMBLE}{script}{_EPILOGUE}'
 
 
+_SCRIPT_NAME = 'script.ps1'
+
+
 def _write_script(script: str) -> str:
-    """The path of a new `.ps1` holding `powershell_script(script)`, in this user's temporary directory.
+    """A new temporary directory holding `powershell_script(script)` as `_SCRIPT_NAME`.
 
-    `mkstemp` creates it for this user alone, as the script may hold secrets. UTF-8 with a BOM, which Windows
-    PowerShell needs to read anything but ASCII.
+    The script may hold secrets, so it goes in a directory `mkdtemp` creates for this user alone: on Windows
+    too, with an owner-only ACL, since Python 3.11.10, 3.12.4 and 3.13, whatever the temporary directory's
+    own ACL. UTF-8 with a BOM, which Windows PowerShell needs to read anything but ASCII.
     """
-    fd, path = tempfile.mkstemp(prefix='pydantic-ai-', suffix='.ps1')
-    with open(fd, 'w', encoding='utf-8-sig', newline='') as file:
-        file.write(powershell_script(script))
-    return path
+    directory = tempfile.mkdtemp(prefix='pydantic-ai-')
+    try:
+        with open(os.path.join(directory, _SCRIPT_NAME), 'x', encoding='utf-8-sig', newline='') as file:
+            file.write(powershell_script(script))
+    except BaseException:
+        _remove_script(directory)
+        raise
+    return directory
 
 
-def _remove_script(path: str) -> None:
+def _remove_script(directory: str) -> None:
     # An antivirus scan can hold the file open for a moment; a leftover in the temporary directory is harmless.
-    with suppress(OSError):
-        os.unlink(path)
+    shutil.rmtree(directory, ignore_errors=True)
 
 
 def _powershell_command(executable: str, script_path: str) -> list[str]:
@@ -113,7 +120,8 @@ def _powershell_command(executable: str, script_path: str) -> list[str]:
     command line holds only about 12,000 characters of an encoded script. PowerShell reads the file as text
     rather than running it with `-File`, so no execution policy, Group Policy's included, applies to it.
     """
-    literal = script_path.replace("'", "''")
+    # PowerShell also ends a single-quoted string at a typographic single quote, so those are doubled too.
+    literal = re.sub("(['\u2018\u2019\u201a\u201b])", r'\1\1', script_path)
     return [
         executable,
         *_POWERSHELL_FLAGS,
@@ -246,7 +254,7 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
         self._powershell = powershell
         # Keyed by PID: each command's Job Object, from its start until it is reaped.
         self._jobs: dict[int, int] = {}
-        # Keyed by PID: each `shell=True` command's script file, from its start until it is reaped.
+        # Keyed by PID: each `shell=True` command's script directory, from its start until it is reaped.
         self._scripts: dict[int, str] = {}
 
     @property
@@ -273,11 +281,12 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
         return await self._run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
 
     async def _spawn(self, command: WorkspaceCommand, working_dir: Path, env: Mapping[str, str]) -> anyio.abc.Process:
-        script_path: str | None = None
+        script_dir: str | None = None
         try:
             if isinstance(command, str):
                 # Disk I/O and a `PATH` search, so not on the event loop.
-                script_path = await run_in_executor(_write_script, command)
+                script_dir = await run_in_executor(_write_script, command)
+                script_path = os.path.join(script_dir, _SCRIPT_NAME)
                 command = _powershell_command(await run_in_executor(self._executable), script_path)
             command = await run_in_executor(_resolve_program, command, env)
             process = await anyio.open_process(
@@ -290,11 +299,11 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
                 creationflags=_CREATE_NEW_PROCESS_GROUP,
             )
         except BaseException:
-            if script_path is not None:
-                await run_in_executor(_remove_script, script_path)
+            if script_dir is not None:
+                await run_in_executor(_remove_script, script_dir)
             raise
-        if script_path is not None:
-            self._scripts[process.pid] = script_path
+        if script_dir is not None:
+            self._scripts[process.pid] = script_dir
         if (job := _job_objects().assign(process.pid)) is not None:  # pragma: no branch
             self._jobs[process.pid] = job
         return process
@@ -317,8 +326,8 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
             # Closing the handle leaves the processes running: a background job outlives a command that returned.
             if (job := self._jobs.pop(process.pid, None)) is not None:  # pragma: no branch
                 _job_objects().close(job)
-            if (script_path := self._scripts.pop(process.pid, None)) is not None:
-                await run_in_executor(_remove_script, script_path)
+            if (script_dir := self._scripts.pop(process.pid, None)) is not None:
+                await run_in_executor(_remove_script, script_dir)
 
     @staticmethod
     def _path(path: str) -> Path:

@@ -160,8 +160,8 @@ class TestPowerShellLaunch:
 
     @pytest.fixture
     def temp(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-        # A quote in the path checks that it is quoted for PowerShell.
-        temp = tmp_path / "o'temp"
+        # Quotes in the path check that it is quoted for PowerShell, which also ends a string at U+2019.
+        temp = tmp_path / "o'temp\u2019"
         temp.mkdir()
         monkeypatch.setattr(tempfile, 'tempdir', str(temp))
         return temp
@@ -173,7 +173,8 @@ class TestPowerShellLaunch:
         open_process = anyio.open_process
 
         def read_files() -> dict[Path, tuple[bytes, int]]:
-            return {path: (path.read_bytes(), path.stat().st_mode) for path in temp.iterdir()}
+            """Each file's content, and its directory's mode."""
+            return {path: (path.read_bytes(), path.parent.stat().st_mode) for path in temp.rglob('*') if path.is_file()}
 
         async def fake_open_process(command: Sequence[str], **kwargs: Any) -> anyio.abc.Process:
             launches.append((list(command), await anyio.to_thread.run_sync(read_files)))
@@ -194,7 +195,7 @@ class TestPowerShellLaunch:
         [(path, (content, mode))] = files.items()
         assert path.suffix == '.ps1'
         assert '-EncodedCommand' not in argv
-        quoted = str(path).replace("'", "''")
+        quoted = str(path).replace("'", "''").replace('\u2019', '\u2019\u2019')
         assert argv == [
             _POWERSHELL,
             '-NoLogo',
@@ -208,9 +209,10 @@ class TestPowerShellLaunch:
             f"& ([ScriptBlock]::Create([IO.File]::ReadAllText('{quoted}')))",
         ]
         assert len(subprocess.list2cmdline(argv)) < 1_000
-        # UTF-8 with a BOM, which Windows PowerShell needs to read non-ASCII; owner-only, as it may hold secrets.
+        # UTF-8 with a BOM, which Windows PowerShell needs to read non-ASCII.
         assert content == codecs.BOM_UTF8 + powershell_script(script).encode()
-        assert stat.S_IMODE(mode) == 0o600
+        # The script may hold secrets, so its directory is `mkdtemp`'s: owner-only here, and an owner-only ACL on Windows.
+        assert stat.S_IMODE(mode) == 0o700
         assert list(temp.iterdir()) == []
 
     async def test_the_temporary_file_is_removed_when_powershell_cannot_start(
@@ -218,5 +220,14 @@ class TestPowerShellLaunch:
     ) -> None:
         with pytest.raises(FileNotFoundError):
             await WindowsWorkspaceBackend(tmp_path, powershell='missing-pwsh').run('Get-Date', shell=True)
+        assert launches == []
+        assert list(temp.iterdir()) == []
+
+    async def test_the_temporary_file_is_removed_when_writing_it_fails(
+        self, tmp_path: Path, temp: Path, launches: _Launches
+    ) -> None:
+        # A lone surrogate has no UTF-8 encoding.
+        with pytest.raises(UnicodeEncodeError):
+            await WindowsWorkspaceBackend(tmp_path, powershell=_POWERSHELL).run('Write-Output \ud800', shell=True)
         assert launches == []
         assert list(temp.iterdir()) == []

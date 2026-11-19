@@ -16,6 +16,7 @@ import os
 import re
 import secrets
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -237,21 +238,28 @@ def install_after_exit(
 ) -> None:
     """Run `script` in a new console with Windows PowerShell, found by full path rather than a `PATH` search.
 
-    The script goes in a private temporary file that PowerShell reads and deletes, not on its command line,
-    where antivirus software flags an `-EncodedCommand` launch.
+    The script goes in a temporary file that PowerShell reads and deletes, not on its command line, where
+    antivirus software flags an `-EncodedCommand` launch. Its directory is `mkdtemp`'s, private to this user,
+    and the file is UTF-8 with a BOM, which Windows PowerShell needs to read anything but ASCII.
     """
     root = environ.get('SystemRoot', r'C:\Windows')
     executable = f'{root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
-    # UTF-8 with a BOM, which Windows PowerShell needs to read anything but ASCII.
-    descriptor, name = tempfile.mkstemp(prefix='clai2-update-', suffix='.ps1')
-    with os.fdopen(descriptor, 'w', encoding='utf-8-sig') as file:
-        file.write(script)
-    path = name.replace("'", "''")
-    bootstrap = f"$s = [IO.File]::ReadAllText('{path}'); [IO.File]::Delete('{path}'); & ([ScriptBlock]::Create($s))"
+    directory = tempfile.mkdtemp(prefix='clai2-update-')
+    path = os.path.join(directory, 'update.ps1')
+    # PowerShell also ends a single-quoted string at a typographic single quote, so those are doubled too.
+    quoted_path, quoted_directory = (
+        re.sub("(['\u2018\u2019\u201a\u201b])", r'\1\1', name) for name in (path, directory)
+    )
+    bootstrap = (
+        f"$s = [IO.File]::ReadAllText('{quoted_path}'); [IO.Directory]::Delete('{quoted_directory}', $true); "
+        '& ([ScriptBlock]::Create($s))'
+    )
     try:
+        with open(path, 'x', encoding='utf-8-sig') as file:
+            file.write(script)
         start([executable, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', bootstrap])
     except BaseException:
-        os.unlink(name)
+        shutil.rmtree(directory, ignore_errors=True)
         raise
 
 
