@@ -454,6 +454,25 @@ async def test_a_chain_does_not_hide_a_profile_that_is_not_signed_in(tmp_path: P
             await Agent(model).run('hello')
 
 
+async def test_first_run_without_codex_offers_other_providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no credentials, the default Codex model names the other ways in instead of starting a Codex sign-in."""
+
+    async def no_login(*args: object, **kwargs: object) -> str:
+        raise AssertionError('Codex sign-in started on its own')  # pragma: no cover
+
+    monkeypatch.setattr(CodexAuth, 'login', no_login)
+    models = resolver(tmp_path)
+    model = await models.resolve(Settings().model or '')
+    with override_allow_model_requests(True):
+        with pytest.raises(UserError) as failed:
+            await Agent(model).run('hello')
+    message = str(failed.value)
+    assert message.startswith('Codex is not connected. Run /login openai-codex')
+    # Skipping Codex: another subscription, another provider's model, or an API key.
+    for way in ('/login github-copilot', '/model add', '/keys'):
+        assert way in message
+
+
 async def test_resolver_reports_profile_problems(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     models = resolver(tmp_path, {'single': ModelProvider(prefix='single', resolve=echo)})
     with pytest.raises(UserError, match=r'No chain named missing\. Create one with /model chains\.'):
