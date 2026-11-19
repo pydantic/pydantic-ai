@@ -33,7 +33,7 @@ _SCROLL_PIXELS_PER_CLICK = 114
 
 OpenAI asks for scrolls in pixels, and the `computer` tool scrolls in wheel clicks.
 
-Measured in Firefox ESR 153 on the 1280x800 desktop of `DockerContainer(desktop=True)`: every click scrolled 114 pixels.
+Measured in Firefox ESR 153 on a 1280x800 Xvfb screen in Debian bookworm with fluxbox: every click scrolled 114 pixels.
 """
 
 _BLANK_SCREENSHOT = (
@@ -271,15 +271,20 @@ def stop_computer_calls_unless_completed(
     status: ResponseStatus | None,
     refused: bool,
 ) -> list[ModelResponsePart]:
-    """Stop every `computer` call in a response, unless the response completed and the model didn't refuse.
+    """Keep every `computer` call in a response from running, unless the response completed and the model didn't refuse.
 
     OpenAI says not to run the actions of a response that is incomplete, failed or refused, even when a call in it
     finished. A stream learns the final status only after it has sent its calls. So the check runs on the final parts,
-    for streamed and non-streamed responses, and for native and function-tool `computer` calls alike. A stopped call
+    for streamed and non-streamed responses, and for native and function-tool `computer` calls alike. A blocked call
     keeps its place, with arguments that aren't valid JSON, like a call cut off by the token limit. Other function
     calls are left as they came. A response without a status counts as completed, since some OpenAI-compatible APIs
-    send none. Calls to a deferred `computer` tool are stopped too, because tool search can reveal it in the same
+    send none. Calls to a deferred `computer` tool are blocked too, because tool search can reveal it in the same
     response.
+
+    This doesn't end the run. The agent treats a blocked call like any function call whose arguments don't parse: it
+    asks the model for the call again, and raises once the tool's retries are used up. When the response hit the token
+    limit and the call is its last part, that error is `IncompleteToolCall`. A refused response that isn't streamed
+    has no parts, so the run raises `ContentFilterError` without asking again.
     """
     if status in (None, 'completed') and not refused:
         return list(parts)
