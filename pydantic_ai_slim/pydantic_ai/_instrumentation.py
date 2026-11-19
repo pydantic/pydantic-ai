@@ -297,7 +297,7 @@ def redact_binary_content(value: Any, settings: InstrumentationSettings) -> obje
     """
     if settings.include_binary_content:
         return value
-    return _walk_binary_content(value, media_part=None)
+    return _walk_binary_content(value, media_part=None, redact=True)
 
 
 def tool_result_otel_value(value: Any, settings: InstrumentationSettings) -> object:
@@ -314,13 +314,22 @@ def tool_result_otel_value(value: Any, settings: InstrumentationSettings) -> obj
     """
     from pydantic_ai.messages import multi_modal_otel_part
 
-    return _walk_binary_content(value, media_part=lambda item: multi_modal_otel_part(item, settings))
+    return _walk_binary_content(
+        value,
+        media_part=lambda item: multi_modal_otel_part(item, settings),
+        redact=not settings.include_binary_content,
+    )
 
 
-def _walk_binary_content(value: Any, *, media_part: Callable[[MultiModalContent], object] | None) -> object:
-    """Walk `value` replacing its media: with `media_part`'s message part, or, without one, `BinaryContent` redacted."""
+def _walk_binary_content(
+    value: Any, *, media_part: Callable[[MultiModalContent], object] | None, redact: bool
+) -> object:
+    """Walk `value` replacing its media: with `media_part`'s message part, or, without one, `BinaryContent` redacted.
+
+    `redact` also drops the base64 data an MCP Apps record in a `ToolReturn`'s metadata keeps in wire form.
+    """
     try:
-        return _replace_binary_content(value, set(), media_part)
+        return _replace_binary_content(value, set(), media_part, redact)
     except Exception as e:
         # Instrumentation must not fail an otherwise-successful run, and the value can't be handed
         # back to make that happen: the callers fall back to `str(value)`, whose `BinaryContent`
@@ -330,7 +339,7 @@ def _walk_binary_content(value: Any, *, media_part: Callable[[MultiModalContent]
 
 
 def _replace_binary_content(
-    value: Any, active: set[int], media_part: Callable[[MultiModalContent], object] | None
+    value: Any, active: set[int], media_part: Callable[[MultiModalContent], object] | None, redact: bool
 ) -> object:
     from pydantic_ai._deferred import DeferredToolRequests
     from pydantic_ai._mcp_apps import redact_mcp_app_binary
@@ -344,7 +353,7 @@ def _replace_binary_content(
     if identity in active:
         return CIRCULAR_REFERENCE_PLACEHOLDER
 
-    walk = partial(_replace_binary_content, active=active, media_part=media_part)
+    walk = partial(_replace_binary_content, active=active, media_part=media_part, redact=redact)
 
     # Tracks the objects on the path currently being walked, not every object seen, so that the
     # same `BinaryContent` appearing twice side by side is redacted twice rather than the second
@@ -363,7 +372,7 @@ def _replace_binary_content(
             return {
                 'return_value': walk(value.return_value),
                 'content': walk(value.content),
-                'metadata': walk(redact_mcp_app_binary(value.metadata)),
+                'metadata': walk(redact_mcp_app_binary(value.metadata) if redact else value.metadata),
                 # Tool names, so never binary.
                 'tools': value.tools,
                 'kind': value.kind,
