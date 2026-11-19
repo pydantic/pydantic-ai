@@ -169,6 +169,19 @@ def test_account_id_is_scrubbed_from_responses_only():
             b'event: response.created\ndata: {"response": {"id": "resp_1", "access_programs": null}}\n\n',
             id='stream',
         ),
+        pytest.param(
+            b'{"id":"resp_1","access_programs":null,"metadata":{"access_programs":"mine"}}',
+            'application/json',
+            b'{"id": "resp_1", "access_programs": null, "metadata": {"access_programs": "mine"}}',
+            id='caller-metadata-kept',
+        ),
+        pytest.param(
+            b': keep-alive\n\ndata: {"response":{"access_programs":{"program":"synthetic"}}}\n\ndata: {"type":"done"}\n\n',
+            'text/event-stream',
+            b': keep-alive\n\ndata: {"response": {"access_programs": null}}\n\ndata: {"type":"done"}\n\n',
+            id='stream-with-comment',
+        ),
+        pytest.param(b'not json "access_programs"', 'text/plain', b'not json "access_programs"', id='not-json'),
     ],
 )
 def test_access_programs_are_cleared_from_responses(body: bytes, content_type: str, expected: bytes):
