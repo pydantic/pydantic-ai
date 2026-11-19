@@ -2,6 +2,8 @@
 
 import asyncio
 import io
+import re
+import threading
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 
@@ -9,6 +11,7 @@ import anyio
 import pytest
 from pydantic import BaseModel
 from rich.console import Console
+from termflow.ansi import make_link
 from termflow.tui import MenuItem
 from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.pager import Pager
@@ -20,6 +23,7 @@ from pydantic_ai_pax.ui.menus import dialogs
 from pydantic_ai_pax.ui.menus.dialogs import TerminalDialogs, build_pager, run_settings_menu, wrap
 from pydantic_ai_pax.ui.menus.field_menu import Runners
 from pydantic_ai_pax.ui.menus.menu_worker import holding_output
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.pax.dialog_script import Back, Pick, ScriptedDialogs, Type
 from tests.pax.menu_script import UNTIL_CLOSED, Script, pick, typed
 
@@ -186,6 +190,74 @@ async def test_wait_raises_when_its_screen_fails_rather_than_reading_as_a_cancel
         await TerminalDialogs(Runners(run_choice=broken)).wait(
             title='Signing in', description='Finish it.', task=forever
         )
+
+
+async def test_wait_links_each_url_and_folds_one_too_long_for_the_pane(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pane cuts long lines, which would drop a link's closing escape, so such a URL is folded, as Rich does."""
+    monkeypatch.setattr(dialogs, 'terminal_size', lambda: (81, 24))  # An 80-column frame: a 37-column preview.
+    short = 'https://example.test/device?code=ABCD'
+    long = 'https://example.test/authorize?' + 'x' * 60
+    huge = 'https://example.test/' + 'y' * 2048  # Too long to repeat on every row, so left as it was.
+    escaped = 'https://example.test/\x1b[31m'  # Never a link target.
+    shown = threading.Event()
+    previews: list[str] = []
+
+    def run_choice(menu: Menu) -> MenuResult:
+        assert shown.wait(timeout=READINESS_WAIT_TIMEOUT)
+        previews.append(preview(menu, menu._items[0]))  # pyright: ignore[reportPrivateUsage]
+        return CLOSED
+
+    async def task(show: Callable[[str], None]) -> None:
+        show(f'{short}\n\nOpen {long} now\nIf no browser opened, enter the code {short}\n{huge}\n{escaped}')
+        shown.set()
+        await anyio.sleep_forever()
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        assert not await TerminalDialogs(Runners(run_choice=run_choice)).wait(
+            title='Signing in', description='Finish it.', task=task
+        )
+    assert previews[0].splitlines() == [
+        'Finish it.',
+        '',
+        make_link(short, short),
+        '',
+        f'Open {make_link(long, long[:32])}',
+        make_link(long, long[32:69]),
+        f'{make_link(long, long[69:])} now',
+        'If no browser opened, enter the code ',
+        make_link(short, short),
+        huge,
+        escaped,
+    ]
+
+
+@pytest.mark.parametrize('columns', [81, 200])
+async def test_wait_folds_urls_to_the_pane_termflow_draws(monkeypatch: pytest.MonkeyPatch, columns: int) -> None:
+    """Termflow cuts a row wider than its pane, closing escape and all, so each folded row must fit what it draws."""
+    monkeypatch.setattr(dialogs, 'terminal_size', lambda: (columns, 60))
+    url = 'https://example.test/authorize?' + 'x' * 300
+    shown = threading.Event()
+    frames: list[list[str]] = []
+
+    def run_choice(menu: Menu) -> MenuResult:
+        assert shown.wait(timeout=READINESS_WAIT_TIMEOUT)
+        menu._size = lambda: (columns, 60)  # pyright: ignore[reportPrivateUsage]
+        frames.append(menu._frame())  # pyright: ignore[reportPrivateUsage]
+        return CLOSED
+
+    async def task(show: Callable[[str], None]) -> None:
+        show(f'Open {url}.')
+        shown.set()
+        await anyio.sleep_forever()
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await TerminalDialogs(Runners(run_choice=run_choice)).wait(title='Signing in', description='', task=task)
+    rows = [row for row in frames[0] if '\x1b]8;' in row]
+    assert len(rows) > 1
+    for row in rows:
+        assert re.findall(r'\x1b\]8;[^\x1b]*\x1b\\', row)[-1] == '\x1b]8;;\x1b\\', 'the row closes its link'
+    labels = [re.findall(r'\x1b\]8;;[^\x1b]+\x1b\\(.*?)\x1b\]8;;\x1b\\', row) for row in rows]
+    assert ''.join(label for row in labels for label in row) == url, 'all of the URL shows, without the full stop'
 
 
 def _on_loop() -> bool:
