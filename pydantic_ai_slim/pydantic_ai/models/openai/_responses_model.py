@@ -1492,7 +1492,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if not tools and not history_declared_tool_names:
             tool_choice = None
 
-        previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
+        previous_response_id, conversation_id, messages = await self._resolve_server_side_state(
+            model_settings, messages
+        )
         if not sends_effort_changes:
             messages = _without_model_settings_deltas(messages)
 
@@ -2472,7 +2474,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return False
         return None
 
-    def _resolve_server_side_state(
+    async def _resolve_server_side_state(
         self, model_settings: OpenAIResponsesModelSettings, messages: list[ModelMessage]
     ) -> tuple[str | None, str | None, list[ModelMessage]]:
         previous_response_id_setting = model_settings.get('openai_previous_response_id')
@@ -2484,7 +2486,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             )
 
         if conversation_id_setting is not None:
-            conversation_id, messages = self._resolve_conversation_id(conversation_id_setting, messages)
+            conversation_id, messages = await self._resolve_conversation_id(
+                conversation_id_setting, messages, model_settings
+            )
             return None, conversation_id, messages
 
         previous_response_id, messages = self._resolve_previous_response_id(
@@ -2495,47 +2499,78 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         return previous_response_id, None, messages
 
-    def _resolve_conversation_id(
-        self, setting: Literal['auto'] | str, messages: list[ModelMessage]
+    async def _resolve_conversation_id(
+        self,
+        setting: Literal['auto'] | str,
+        messages: list[ModelMessage],
+        model_settings: OpenAIResponsesModelSettings,
     ) -> tuple[str | None, list[ModelMessage]]:
         if setting == 'auto':
             # Agent runs stamp the active Pydantic AI conversation ID on the final request.
             # Direct model calls may still pass an empty message list.
             pydantic_ai_conversation_id = next((m.conversation_id for m in messages[-1:]), None)
-            return self._get_conversation_id_and_new_messages(
-                messages, pydantic_ai_conversation_id=pydantic_ai_conversation_id
+            return await self._get_conversation_id_and_new_messages(
+                messages, model_settings, pydantic_ai_conversation_id=pydantic_ai_conversation_id
             )
+        return await self._get_conversation_id_and_new_messages(
+            messages, model_settings, openai_conversation_id=setting
+        )
 
-        conversation_id, trimmed = self._get_conversation_id_and_new_messages(messages, openai_conversation_id=setting)
-        if conversation_id is not None:
-            return conversation_id, trimmed
-        return setting, messages
-
-    def _get_conversation_id_and_new_messages(
+    async def _get_conversation_id_and_new_messages(
         self,
         messages: list[ModelMessage],
+        model_settings: OpenAIResponsesModelSettings,
         *,
         openai_conversation_id: str | None = None,
         pydantic_ai_conversation_id: str | None = None,
     ) -> tuple[str | None, list[ModelMessage]]:
+        """The OpenAI conversation to send to, and the messages after the last response it holds.
+
+        Without such a response, every message is sent, to `openai_conversation_id` if one is given or found.
+        """
         trimmed_messages: list[ModelMessage] = []
         for m in reversed(messages):
-            if isinstance(m, ModelResponse) and self.accepts_server_state(m):
+            # A response from another Pydantic AI conversation doesn't continue this one.
+            if (
+                isinstance(m, ModelResponse)
+                and self.accepts_server_state(m)
+                and (pydantic_ai_conversation_id is None or m.conversation_id in (None, pydantic_ai_conversation_id))
+            ):
                 candidate = m.provider_details and m.provider_details.get('conversation_id')
-                if (
-                    pydantic_ai_conversation_id is not None
-                    and m.conversation_id is not None
-                    and m.conversation_id != pydantic_ai_conversation_id
-                ):
-                    trimmed_messages.append(m)
-                    continue
-                if isinstance(candidate, str) and (
-                    openai_conversation_id is None or candidate == openai_conversation_id
-                ):
-                    return candidate, list(reversed(trimmed_messages))
+                if isinstance(candidate, str) and openai_conversation_id in (None, candidate):
+                    if await self._conversation_holds(candidate, m, model_settings):
+                        return candidate, list(reversed(trimmed_messages))
+                    # Send this response again, with what came before it, to the same conversation.
+                    openai_conversation_id = candidate
             trimmed_messages.append(m)
 
-        return None, messages
+        return openai_conversation_id, messages
+
+    async def _conversation_holds(
+        self, conversation_id: str, response: ModelResponse, model_settings: OpenAIResponsesModelSettings
+    ) -> bool:
+        """Whether the OpenAI conversation holds `response`.
+
+        OpenAI adds a response's input and output items to its conversation only once the response completes.
+        A response whose stream dropped or was cancelled before it finished may have completed anyway, or not,
+        so its output items are looked up among the conversation's newest items. One with no item IDs to look
+        up is taken as missing.
+        """
+        if response.state != 'interrupted' or response.finish_reason is not None:
+            return True
+        item_ids = {
+            part.id
+            for part in response.parts
+            if not isinstance(part, NativeToolReturnPart | NativeToolSearchReturnPart) and part.id
+        }
+        if not item_ids:
+            return False
+        extra_headers, timeout = self._build_request_options(model_settings)
+        with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
+            items = await with_max_retries(self.client, model_settings).conversations.items.list(
+                conversation_id, order='desc', limit=100, extra_headers=extra_headers, timeout=timeout
+            )
+        return not item_ids.isdisjoint(item.id for item in items.data)
 
     async def _map_messages(
         self,

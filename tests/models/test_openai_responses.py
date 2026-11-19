@@ -8,7 +8,7 @@ from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -6611,103 +6611,6 @@ async def test_openai_conversation_id_streaming_provider_details(allow_model_req
         response = message(result.all_messages(), ModelResponse, index=-1)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
-
-
-class _StreamCutAfterToolCall(httpx2.AsyncByteStream):
-    """A Responses stream that delivers a complete function call, then drops before `response.completed`."""
-
-    async def __aiter__(self) -> AsyncGenerator[bytes]:
-        item = {
-            'type': 'function_call',
-            'id': 'fc_1',
-            'call_id': 'call_1',
-            'name': 'lookup',
-            'arguments': '',
-            'status': 'in_progress',
-        }
-        yield _sse(
-            {
-                'type': 'response.created',
-                'response': {
-                    **_failed_response_json(None),
-                    'status': 'in_progress',
-                    'conversation': {'id': 'conv_1'},
-                },
-                'sequence_number': 0,
-            },
-            {'type': 'response.output_item.added', 'output_index': 0, 'item': item, 'sequence_number': 1},
-            {
-                'type': 'response.output_item.done',
-                'output_index': 0,
-                'item': {**item, 'arguments': '{}', 'status': 'completed'},
-                'sequence_number': 2,
-            },
-        )
-        raise httpx2.ReadError('connection dropped before `response.completed`')
-
-
-@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
-async def test_openai_conversation_id_continues_after_interrupted_stream(allow_model_requests: None):
-    """A response whose stream dropped before `response.completed` may not be in the conversation, so the
-    continuation sends its function call along with the synthesized result.
-
-    A mock transport stands in for a cassette because no real provider drops a stream on demand.
-    """
-    bodies: list[dict[str, Any]] = []
-
-    async def handler(request: httpx2.Request) -> httpx2.Response:
-        bodies.append(json.loads(request.content))
-        if len(bodies) == 1:
-            return httpx2.Response(200, stream=_StreamCutAfterToolCall(), headers={'content-type': 'text/event-stream'})
-        return httpx2.Response(
-            200,
-            json={
-                **_failed_response_json(None),
-                'id': 'resp_002',
-                'status': 'completed',
-                'conversation': {'id': 'conv_1'},
-                'output': [
-                    {
-                        'type': 'message',
-                        'id': 'msg_1',
-                        'role': 'assistant',
-                        'status': 'completed',
-                        'content': [{'type': 'output_text', 'text': 'done', 'annotations': []}],
-                    }
-                ],
-            },
-        )
-
-    executed: list[str] = []
-    async with AsyncOpenAI(
-        api_key='test',
-        base_url='https://api.openai.com/v1',
-        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
-    ) as openai_client:
-        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
-        agent = Agent(model, model_settings=OpenAIResponsesModelSettings(openai_conversation_id='conv_1'))
-
-        @agent.tool_plain
-        def lookup() -> str:
-            executed.append('lookup')  # pragma: no cover
-            return 'known value'  # pragma: no cover
-
-        with capture_run_messages() as history, pytest.raises(ModelAPIError):
-            async with agent.run_stream('Look up a value') as result:
-                await result.get_output()  # pragma: no cover
-
-        interrupted = message(history, ModelResponse, index=-1)
-        assert interrupted.state == 'interrupted'
-        assert interrupted.provider_details is not None
-        assert interrupted.provider_details['conversation_id'] == 'conv_1'
-
-        await agent.run('Continue', message_history=history)
-
-    assert executed == []
-    continuation = bodies[1]
-    call_ids = {item['call_id'] for item in continuation['input'] if item.get('type') == 'function_call'}
-    output_ids = {item['call_id'] for item in continuation['input'] if item.get('type') == 'function_call_output'}
-    assert output_ids <= call_ids
 
 
 async def test_openai_responses_usage_without_tokens_details(allow_model_requests: None):
@@ -16477,6 +16380,342 @@ _ERROR_EVENT: dict[str, Any] = {
     'message': 'You exceeded your current quota',
     'sequence_number': 0,
 }
+
+
+def _lookup_call_events(response_id: str, call_id: str, *, completed: bool) -> bytes:
+    """A streamed turn in conversation `conv_1` that calls `lookup`, ending in `response.completed` if `completed`."""
+    item = {
+        'type': 'function_call',
+        'id': f'fc_{call_id}',
+        'call_id': call_id,
+        'name': 'lookup',
+        'arguments': '',
+        'status': 'in_progress',
+    }
+    done_item = {**item, 'arguments': '{}', 'status': 'completed'}
+    response = {
+        **_failed_response_json(None),
+        'id': response_id,
+        'status': 'in_progress',
+        'conversation': {'id': 'conv_1'},
+    }
+    events: list[dict[str, Any]] = [
+        {'type': 'response.created', 'response': response},
+        {'type': 'response.output_item.added', 'output_index': 0, 'item': item},
+        {'type': 'response.output_item.done', 'output_index': 0, 'item': done_item},
+    ]
+    if completed:
+        events.append(
+            {'type': 'response.completed', 'response': {**response, 'status': 'completed', 'output': [done_item]}}
+        )
+    return _sse(*({**event, 'sequence_number': index} for index, event in enumerate(events)))
+
+
+class _DroppedStream(httpx2.AsyncByteStream):
+    """Server-sent events whose connection drops before `response.completed`."""
+
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+
+    async def __aiter__(self) -> AsyncGenerator[bytes]:
+        yield self.content
+        raise httpx2.ReadError('connection dropped before `response.completed`')
+
+
+_FINAL_MESSAGE_JSON: dict[str, Any] = {
+    **_failed_response_json(None),
+    'id': 'resp_final',
+    'status': 'completed',
+    'conversation': {'id': 'conv_1'},
+    'output': [
+        {
+            'type': 'message',
+            'id': 'msg_final',
+            'role': 'assistant',
+            'status': 'completed',
+            'content': [{'type': 'output_text', 'text': 'done', 'annotations': []}],
+        }
+    ],
+}
+
+
+@dataclass
+class _ConversationTransport:
+    """Serves scripted Responses turns, and the items of conversation `conv_1`, recording what was asked."""
+
+    turns: list[httpx2.Response]
+    conversation_items: list[dict[str, Any]]
+    bodies: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    item_lookups: list[str] = field(default_factory=list[str])
+
+    async def handle(self, request: httpx2.Request) -> httpx2.Response:
+        if request.method == 'GET':
+            self.item_lookups.append(str(request.url))
+            return httpx2.Response(
+                200,
+                json={
+                    'object': 'list',
+                    'data': self.conversation_items,
+                    'first_id': None,
+                    'last_id': None,
+                    'has_more': False,
+                },
+            )
+        self.bodies.append(json.loads(request.content))
+        return self.turns[len(self.bodies) - 1]
+
+    def openai_client(self) -> AsyncOpenAI:
+        return AsyncOpenAI(
+            api_key='test',
+            base_url='https://api.openai.com/v1',
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(self.handle)),
+        )
+
+
+_COMMITTED_LOOKUP_CALL: list[dict[str, Any]] = [
+    {'type': 'function_call', 'id': 'fc_call_1', 'call_id': 'call_1', 'name': 'lookup', 'arguments': '{}'},
+    {
+        'type': 'message',
+        'id': 'msg_prompt',
+        'role': 'user',
+        'status': 'completed',
+        'content': [{'type': 'input_text', 'text': 'Look up a value'}],
+    },
+]
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize('continuation_setting', ['conv_1', 'auto'])
+@pytest.mark.parametrize('committed', [False, True], ids=['missing', 'committed'])
+async def test_openai_conversation_id_continues_after_interrupted_stream(
+    allow_model_requests: None, committed: bool, continuation_setting: str
+):
+    """OpenAI adds a response to its conversation only once it completes, and one whose stream dropped before then
+    may have completed anyway, or not. The continuation looks its output items up in the conversation: when they're
+    missing, it sends the turn again, function call included, to the same conversation; when they're there, only
+    what came after it. Either way, the interrupted tool call gets its synthesized result and the tool doesn't run.
+
+    A mock transport stands in for a cassette because no real provider drops a stream on demand.
+    """
+    transport = _ConversationTransport(
+        turns=[
+            httpx2.Response(
+                200,
+                stream=_DroppedStream(_lookup_call_events('resp_001', 'call_1', completed=False)),
+                headers={'content-type': 'text/event-stream'},
+            ),
+            httpx2.Response(200, json=_FINAL_MESSAGE_JSON),
+        ],
+        conversation_items=_COMMITTED_LOOKUP_CALL if committed else [],
+    )
+    executed: list[str] = []
+    async with transport.openai_client() as openai_client:
+        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(model, model_settings=OpenAIResponsesModelSettings(openai_conversation_id='conv_1'))
+
+        @agent.tool_plain
+        def lookup() -> str:
+            executed.append('lookup')  # pragma: no cover
+            return 'known value'  # pragma: no cover
+
+        with capture_run_messages() as history, pytest.raises(ModelAPIError):
+            async with agent.run_stream('Look up a value') as result:
+                await result.get_output()  # pragma: no cover
+
+        interrupted = message(history, ModelResponse, index=-1)
+        assert (interrupted.state, interrupted.finish_reason) == ('interrupted', None)
+
+        await agent.run(
+            'Continue',
+            message_history=history,
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id=continuation_setting),
+        )
+
+    assert executed == []
+    assert transport.item_lookups == snapshot(
+        ['https://api.openai.com/v1/conversations/conv_1/items?limit=100&order=desc']
+    )
+    continuation = transport.bodies[1]
+    assert continuation['conversation'] == 'conv_1'
+    expected_input = {
+        False: snapshot(
+            [
+                {'role': 'user', 'content': 'Look up a value'},
+                {'name': 'lookup', 'arguments': '{}', 'call_id': 'call_1', 'type': 'function_call', 'id': 'fc_call_1'},
+                {
+                    'type': 'function_call_output',
+                    'call_id': 'call_1',
+                    'output': 'The tool call was interrupted before a result was produced.',
+                },
+                {'role': 'user', 'content': 'Continue'},
+            ]
+        ),
+        True: snapshot(
+            [
+                {
+                    'type': 'function_call_output',
+                    'call_id': 'call_1',
+                    'output': 'The tool call was interrupted before a result was produced.',
+                },
+                {'role': 'user', 'content': 'Continue'},
+            ]
+        ),
+    }
+    assert continuation['input'] == expected_input[committed]
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+async def test_openai_conversation_id_resends_tool_result_before_missing_response(allow_model_requests: None):
+    """When a dropped response is missing from the conversation, so is the tool result it was sent with: the
+    continuation goes back to the last response the conversation holds and sends that result again, rather than
+    running the tool again.
+
+    A mock transport stands in for a cassette because no real provider drops a stream on demand.
+    """
+    transport = _ConversationTransport(
+        turns=[
+            httpx2.Response(
+                200,
+                content=_lookup_call_events('resp_001', 'call_1', completed=True),
+                headers={'content-type': 'text/event-stream'},
+            ),
+            httpx2.Response(
+                200,
+                stream=_DroppedStream(_lookup_call_events('resp_002', 'call_2', completed=False)),
+                headers={'content-type': 'text/event-stream'},
+            ),
+            httpx2.Response(200, json=_FINAL_MESSAGE_JSON),
+        ],
+        conversation_items=_COMMITTED_LOOKUP_CALL,
+    )
+    executed: list[str] = []
+    async with transport.openai_client() as openai_client:
+        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(model, model_settings=OpenAIResponsesModelSettings(openai_conversation_id='conv_1'))
+
+        @agent.tool_plain
+        def lookup() -> str:
+            executed.append('lookup')
+            return 'known value'
+
+        with capture_run_messages() as history, pytest.raises(ModelAPIError):
+            async with agent.run_stream('Look up a value') as result:
+                await result.get_output()  # pragma: no cover
+
+        await agent.run('Continue', message_history=history)
+
+    assert executed == ['lookup']
+    assert len(transport.item_lookups) == 1
+    continuation = transport.bodies[2]
+    assert continuation['conversation'] == 'conv_1'
+    assert continuation['input'] == snapshot(
+        [
+            {'type': 'function_call_output', 'call_id': 'call_1', 'output': 'known value'},
+            {'name': 'lookup', 'arguments': '{}', 'call_id': 'call_2', 'type': 'function_call', 'id': 'fc_call_2'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'call_2',
+                'output': 'The tool call was interrupted before a result was produced.',
+            },
+            {'role': 'user', 'content': 'Continue'},
+        ]
+    )
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+async def test_openai_conversation_id_resends_prompt_when_stream_drops_before_output(allow_model_requests: None):
+    """A response whose stream dropped before any output item has no item to look up in the conversation, so it's
+    taken as missing and the prompt that started it is sent again.
+
+    A mock transport stands in for a cassette because no real provider drops a stream on demand.
+    """
+    created = {
+        'type': 'response.created',
+        'response': {**_failed_response_json(None), 'status': 'in_progress', 'conversation': {'id': 'conv_1'}},
+        'sequence_number': 0,
+    }
+    transport = _ConversationTransport(
+        turns=[
+            httpx2.Response(200, stream=_DroppedStream(_sse(created)), headers={'content-type': 'text/event-stream'}),
+            httpx2.Response(200, json=_FINAL_MESSAGE_JSON),
+        ],
+        conversation_items=[],
+    )
+    async with transport.openai_client() as openai_client:
+        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(model, model_settings=OpenAIResponsesModelSettings(openai_conversation_id='conv_1'))
+
+        with capture_run_messages() as history, pytest.raises(ModelAPIError):
+            async with agent.run_stream('Look up a value') as result:
+                await result.get_output()  # pragma: no cover
+
+        await agent.run('Continue', message_history=history)
+
+    assert transport.item_lookups == []
+    continuation = transport.bodies[1]
+    assert continuation['conversation'] == 'conv_1'
+    assert continuation['input'] == snapshot(
+        [{'role': 'user', 'content': 'Look up a value'}, {'role': 'user', 'content': 'Continue'}]
+    )
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+async def test_openai_conversation_id_continues_after_usage_limit_without_lookup(allow_model_requests: None):
+    """A response that crossed a usage limit is `'interrupted'` too, but it arrived complete, with its finish reason,
+    so the conversation holds it: the continuation sends only what came after it, without a lookup.
+
+    A mock transport stands in for a cassette, matching the dropped-stream tests this one contrasts with.
+    """
+    transport = _ConversationTransport(
+        turns=[
+            httpx2.Response(
+                200,
+                json={
+                    **_FINAL_MESSAGE_JSON,
+                    'id': 'resp_001',
+                    'output': _COMMITTED_LOOKUP_CALL[:1],
+                    'usage': {
+                        'input_tokens': 10,
+                        'input_tokens_details': {'cached_tokens': 0},
+                        'output_tokens': 10,
+                        'output_tokens_details': {'reasoning_tokens': 0},
+                        'total_tokens': 20,
+                    },
+                },
+            ),
+            httpx2.Response(200, json=_FINAL_MESSAGE_JSON),
+        ],
+        conversation_items=[],
+    )
+    async with transport.openai_client() as openai_client:
+        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(model, model_settings=OpenAIResponsesModelSettings(openai_conversation_id='conv_1'))
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'known value'  # pragma: no cover
+
+        with capture_run_messages() as history, pytest.raises(UsageLimitExceeded):
+            await agent.run('Look up a value', usage_limits=UsageLimits(output_tokens_limit=5))
+
+        stopped = message(history, ModelResponse, index=-1)
+        assert (stopped.state, stopped.finish_reason) == ('interrupted', 'stop')
+
+        await agent.run('Continue', message_history=history)
+
+    assert transport.item_lookups == []
+    continuation = transport.bodies[1]
+    assert continuation['conversation'] == 'conv_1'
+    assert continuation['input'] == snapshot(
+        [
+            {
+                'type': 'function_call_output',
+                'call_id': 'call_1',
+                'output': 'The tool call was interrupted before a result was produced.',
+            },
+            {'role': 'user', 'content': 'Continue'},
+        ]
+    )
 
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
