@@ -23,7 +23,7 @@ from typing import (
 
 import anyio
 from pydantic import Discriminator, Field, Tag, ValidationError
-from pydantic_core import PydanticCustomError, PydanticSerializationError, SchemaValidator, to_jsonable_python
+from pydantic_core import PydanticCustomError, PydanticSerializationError, SchemaValidator, to_json, to_jsonable_python
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._agent_graph import build_validation_context
@@ -601,7 +601,10 @@ def raw_tool_args_for_unit(
         return None
     try:
         reproduced = _validate_raw_tool_args(source.function_schema.validator, copy.deepcopy(raw_args), context=context)
-        return raw_args if reproduced == params.tool_args else None
+        # `==` can ignore state a hook changed (a `compare=False` field, a lenient `__eq__`); the JSON form
+        # includes it, and both sides lose the same things to it.
+        reproduces = reproduced == params.tool_args and to_json(reproduced) == to_json(params.tool_args)
+        return raw_args if reproduces else None
     except Exception:
         return None
 
