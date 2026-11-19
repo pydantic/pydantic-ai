@@ -32,10 +32,11 @@ from pydantic import TypeAdapter
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.models import infer_model, infer_model_profile
 from pydantic_ai.providers import infer_provider_class
+from tests._ports import reserve_loopback_port
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ...conftest import TestEnv, try_import
-from ..oauth_helpers import free_port, get_callback, make_jwt
+from ..oauth_helpers import get_callback, make_jwt
 from .conftest import CODEX_URL, TOKEN_RESPONSE, FakeCredentialSource, make_credentials
 
 with try_import() as imports_successful:
@@ -884,7 +885,7 @@ async def test_exchange_code_from_callback(monkeypatch: pytest.MonkeyPatch):
     """The built-in one-shot server ignores foreign-state requests and exchanges the real one."""
     mock = TokenEndpointMock(TOKEN_RESPONSE)
     monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
-    url = f'http://127.0.0.1:{free_port()}/auth/callback'
+    url = f'http://127.0.0.1:{reserve_loopback_port()}/auth/callback'
     flow = OpenAICodexOAuthFlow(redirect_uri=url)
     exchange = asyncio.create_task(flow.exchange_code_from_callback())
 
@@ -918,7 +919,7 @@ async def test_exchange_code_from_callback_survives_malformed_request_line(monke
     # The server drops a connection that sends nothing for this long; a stalled runner can take that long between
     # opening a connection and sending its request, so keep it beyond any stall.
     monkeypatch.setattr('pydantic_ai.providers._oauth._CALLBACK_READ_TIMEOUT', READINESS_WAIT_TIMEOUT)
-    port = free_port()
+    port = reserve_loopback_port()
     url = f'http://127.0.0.1:{port}/auth/callback'
     flow = OpenAICodexOAuthFlow(redirect_uri=url)
     exchange = asyncio.create_task(flow.exchange_code_from_callback())
@@ -942,7 +943,7 @@ async def test_exchange_code_from_callback_drops_stalled_client(monkeypatch: pyt
     mock = TokenEndpointMock(TOKEN_RESPONSE)
     monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     monkeypatch.setattr('pydantic_ai.providers._oauth._CALLBACK_READ_TIMEOUT', 0.2)
-    port = free_port()
+    port = reserve_loopback_port()
     url = f'http://127.0.0.1:{port}/auth/callback'
     flow = OpenAICodexOAuthFlow(redirect_uri=url)
     exchange = asyncio.create_task(flow.exchange_code_from_callback())
@@ -960,7 +961,7 @@ async def test_exchange_code_from_callback_drops_stalled_client(monkeypatch: pyt
 
 async def test_exchange_code_from_callback_denied():
     """An error callback (e.g. the user clicked Deny) surfaces instead of hanging."""
-    url = f'http://127.0.0.1:{free_port()}/auth/callback'
+    url = f'http://127.0.0.1:{reserve_loopback_port()}/auth/callback'
     flow = OpenAICodexOAuthFlow(redirect_uri=url)
     exchange = asyncio.create_task(flow.exchange_code_from_callback())
 

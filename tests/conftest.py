@@ -7,7 +7,6 @@ import importlib.util
 import os
 import re
 import secrets
-import socket
 import sys
 import warnings
 from collections.abc import AsyncIterator, Callable, Coroutine, Generator, Iterator, Sequence
@@ -65,6 +64,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from . import cassette_hooks, cost_guards, gc_isolation
 from ._inline_snapshot import Builder, Custom, customize
+from ._ports import reserve_loopback_port
 from ._timeouts import READINESS_WAIT_TIMEOUT
 from .cassette_utils import check_cache_prefix_stability
 from .function_model_prefix import RequestRecorder, check_function_model_prefix_stability, patch_models
@@ -1103,26 +1103,6 @@ except ImportError:
     pass
 
 
-def _reserve_loopback_port() -> int:
-    """A loopback port that no other `bind(0)` is handed while it is in `TIME_WAIT`, but a server can still bind.
-
-    Closing an accepted connection first leaves the port itself in `TIME_WAIT`: the kernel then skips it
-    when allocating a port, while a server that sets `SO_REUSEADDR` (uvicorn does) can bind it. Linux
-    allows that bind only if the socket that left the port in `TIME_WAIT` set `SO_REUSEADDR` too, so the
-    listener sets it, as Rust's `TcpListener::bind` does for the Temporal SDK, which reserves its
-    dev-server ports the same way.
-    """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listener.bind(('127.0.0.1', 0))
-        listener.listen()
-        port: int = listener.getsockname()[1]
-        with socket.create_connection(('127.0.0.1', port)):
-            accepted, _ = listener.accept()
-            accepted.close()
-    return port
-
-
 @pytest.fixture(scope='session')
 def prefect_test_server() -> Iterator[None]:
     """A Prefect test server with an isolated database, shared by every Prefect test in the worker.
@@ -1163,7 +1143,7 @@ def prefect_test_server() -> Iterator[None]:
         # The harness picks its port by binding port 0 and closing the socket, which leaves the port free
         # for the 15-25s uvicorn takes to bind it. A server another worker starts meanwhile, such as a
         # Temporal dev server, can be handed it and answer the harness's health check, failing its setup.
-        monkeypatch.setattr(prefect.testing.utilities, '_find_available_port', _reserve_loopback_port)
+        monkeypatch.setattr(prefect.testing.utilities, '_find_available_port', reserve_loopback_port)
         with prefect_test_harness(server_startup_timeout=120):
             yield
 

@@ -326,8 +326,11 @@ include = [
     "docs/**/*.py",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/_ratchet.py",
     "scripts/check_complexity.py",
     "scripts/test_check_complexity.py",
+    "scripts/check_test_waits.py",
+    "scripts/test_check_test_waits.py",
     "scripts/durable_exec_contract.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
@@ -466,6 +469,7 @@ quote-style = "single"
 ".github/scripts/test_douwebot_opencode_result.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 "scripts/test_check_complexity.py" = ["D"]
+"scripts/test_check_test_waits.py" = ["D"]
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]
 "!tests/**/*.py" = ["TID253"]
 # Modules dedicated to one of the heavy dependencies `TID253` bans need it at module level, e.g. for Temporal
@@ -506,8 +510,11 @@ include = [
     "src/pydantic_clai2",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/_ratchet.py",
     "scripts/check_complexity.py",
     "scripts/test_check_complexity.py",
+    "scripts/check_test_waits.py",
+    "scripts/test_check_test_waits.py",
     "scripts/durable_exec_contract.py",
 ]
 # Pyright always skips paths under a dot directory, even ones named here or on its command line, so
@@ -529,6 +536,7 @@ executionEnvironments = [
     { root = "scripts/typecheck_changed.py", pythonVersion = "3.11" },
     { root = "scripts/test_typecheck_changed.py", extraPaths = ["scripts"], pythonVersion = "3.11", reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = "scripts/test_check_complexity.py", extraPaths = ["scripts"], reportPrivateUsage = false },
+    { root = "scripts/test_check_test_waits.py", extraPaths = ["scripts"], reportPrivateUsage = false },
 ]
 exclude = [
     # Need `browser-use`, which the workspace lock excludes; the `harness browser-use` CI job checks them.
