@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Literal, cast
 
 from anthropic.types.beta import (
+    BetaMessage,
     BetaServerToolUseBlock,
     BetaServerToolUseBlockParam,
     BetaToolUnionParam,
@@ -15,11 +16,26 @@ from anthropic.types.beta import (
 )
 from pydantic import BaseModel, ConfigDict, JsonValue
 
+from ..._utils import is_str_dict
+from ...exceptions import ModelServerError
 from ...messages import NativeToolCallPart, NativeToolReturnPart
 from ...native_tools import WebFetchTool, WebSearchTool
 from .._deepseek_web_tools import DeepSeekWebToolKind, DeepSeekWebToolName, native_web_tool_name, web_tool_name
 
 _DETAILS_KEY = 'deepseek_messages_web_block'
+
+
+def check_web_generation_error(response: BetaMessage, model_name: str) -> None:
+    """Handle a DeepSeek generation error sent with HTTP 200."""
+    error = (response.model_extra or {}).get('error')
+    if is_str_dict(error) and isinstance(message := error.get('message'), str):
+        error_type = error.get('type')
+        raise ModelServerError(
+            model_name,
+            message,
+            body=response.model_dump(exclude_unset=True, warnings=False),
+            provider_error_type=error_type if isinstance(error_type, str) else None,
+        )
 
 
 class _WebCallBlock(BaseModel):

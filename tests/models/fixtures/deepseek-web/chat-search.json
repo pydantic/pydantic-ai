@@ -1,0 +1,130 @@
+{
+  "id": "6d6da3f3-259f-4abe-85f0-85e613023cea",
+  "object": "chat.completion",
+  "created": 1794909380,
+  "model": "deepseek-flash",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "The official DeepSeek application API (often referred to as the \"full suite\" application API) was released on **November 13, 2026**.\n\nAccording to the official DeepSeek API documentation, this update integrated the core interactive capabilities behind the DeepSeek App—such as web search, file input, URL reading, and voice features—directly into the API. Developers can now enable these functions through corresponding parameters or call them as standalone interfaces.\n\n**Announcement Source:**\n*   **Official Documentation**: DeepSeek API Docs published the announcement titled \"DeepSeek 发布全家桶应用 API\" (DeepSeek Releases Full Suite Application API) and its English version \"The full DeepSeek App experience, now via API\".\n*   **Media Coverage**: Multiple media outlets including Sohu, NetEase, and TMTPost reported on November 13 that DeepSeek officially opened this API.",
+        "annotations": [
+          {
+            "type": "url_citation",
+            "url_citation": {
+              "url": "https://api-docs.deepseek.com/zh-cn/news/news261113/",
+              "title": "DeepSeek 发布全家桶应用 API | DeepSeek API Docs",
+              "start_index": 0,
+              "end_index": 468
+            }
+          },
+          {
+            "type": "url_citation",
+            "url_citation": {
+              "url": "https://api-docs.deepseek.com/news/news261113/#1",
+              "title": "The full DeepSeek App experience, now via API | DeepSeek API Docs - The full suite of DeepSeek application APIs is now available: web search, file input, URL reading, model safety, ASR, TTS and mo...",
+              "start_index": 0,
+              "end_index": 468
+            }
+          },
+          {
+            "type": "url_citation",
+            "url_citation": {
+              "url": "https://api-docs.deepseek.com/zh-cn/news/news261113/",
+              "title": "DeepSeek 发布全家桶应用 API | DeepSeek API Docs",
+              "start_index": 468,
+              "end_index": 721
+            }
+          },
+          {
+            "type": "url_citation",
+            "url_citation": {
+              "url": "https://api-docs.deepseek.com/news/news261113/#1",
+              "title": "The full DeepSeek App experience, now via API | DeepSeek API Docs - The full suite of DeepSeek application APIs is now available: web search, file input, URL reading, model safety, ASR, TTS and mo...",
+              "start_index": 468,
+              "end_index": 721
+            }
+          },
+          {
+            "type": "url_citation",
+            "url_citation": {
+              "url": "https://www.sohu.com/a/1101373309_260616?scm=10001.325_13-325_13.0.0-0-0-0-0.5_1334&spm=smpc.channel_248.block3_308_NDdFbm_1_fd.1.1794614730569EEy5Xxh",
+              "title": "DeepSeek开放全家桶应用API：开发者可1:1复刻出完整的DeepSeek App",
+              "start_index": 721,
+              "end_index": 871
+            }
+          },
+          {
+            "type": "url_citation",
+            "url_citation": {
+              "url": "https://www.163.com/dy/article/LBLARRFF0511B8LM.html",
+              "title": "DeepSeek发布全家桶应用API：开发者将能1:1复刻完整DeepSeek App",
+              "start_index": 721,
+              "end_index": 871
+            }
+          },
+          {
+            "type": "url_citation",
+            "url_citation": {
+              "url": "https://m.tmtpost.com/nictation/8204828.html",
+              "title": "DeepSeek发布全家桶应用API-钛媒体官方网站",
+              "start_index": 721,
+              "end_index": 871
+            }
+          }
+        ],
+        "server_tool_calls": [
+          {
+            "index": 0,
+            "calls": [
+              {
+                "index": 0,
+                "id": "srvtoolu_s_00_c5e8eb87e1a0441aa971ae748d821aec",
+                "type": "deepseek_web_search",
+                "kind": "search",
+                "action": {
+                  "type": "search",
+                  "queries": [
+                    "When was the official DeepSeek application API released?",
+                    "site:api-docs.deepseek.com API release announcement"
+                  ]
+                },
+                "status": "completed",
+                "sources": [
+                  {
+                    "type": "url",
+                    "url": "https://api-docs.deepseek.com/zh-cn/news/news261113/",
+                    "title": "DeepSeek 发布全家桶应用 API | DeepSeek API Docs",
+                    "snippet": "DeepSeek 全家桶应用 API 已发布：联网搜索 ... DeepSeek 发布全家桶应用 API ... 今天，我们正式开放这套全家桶应用 API：在原有 API 中开启对应参数 ... 本次更新将 DeepSeek App 的各项交互功能直接整合进原有 API。开启对应参数后 ... Responses 与 Chat Completions 接口下支持以下能力...",
+                    "site_name": "DeepSeek",
+                    "site_icon": "https://cdn.deepseek.com/site-icons/deepseek.com",
+                    "published_at": "2026-11-12T16:00:00+00:00"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 6402,
+    "completion_tokens": 217,
+    "total_tokens": 6619,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 6402,
+    "server_tool_use": {
+      "tool_search": 2,
+      "tool_fetch": 0,
+      "tool_image_search": 0
+    }
+  },
+  "system_fingerprint": "bc19ba97cbe016479903222bb1578db6"
+}

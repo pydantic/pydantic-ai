@@ -119,7 +119,7 @@ DeepSeek [documents](https://api-docs.deepseek.com/guides/responses_api) which p
 - [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] uses the Responses `web_search` declaration with `deepseek-v4-pro`. See [Native web tools](#native-web-tools) for Flash.
 - Image and document inputs are replaced with placeholder text rather than rejected.
 - Reasoning is configured with `openai_reasoning_effort` (or the unified [`thinking`](../capabilities/thinking.md) setting); `openai_reasoning_summary` is accepted but produces no summary.
-- [`NativeOutput`][pydantic_ai.output.NativeOutput] is available here but not on Chat Completions: DeepSeek honors a strict JSON Schema on the Responses API, while its Chat Completions endpoint rejects one with `This response_format type is unavailable now`.
+- [`NativeOutput`][pydantic_ai.output.NativeOutput] with a strict JSON Schema is supported on Responses for requests without native web tools. Chat Completions rejects a strict JSON Schema with `This response_format type is unavailable now`.
 
 The one difference Pydantic AI handles for you: DeepSeek merges each function call into its adjacent assistant message. Replaying a turn that interleaves calls with thinking or text would therefore create separate messages with unanswered calls, which DeepSeek rejects with `No tool output found for tool call ...`. Pydantic AI moves the calls after the other items when building the request. This reorders only the request; your [message history](../message-history.md) is unchanged.
 
@@ -127,9 +127,11 @@ Reordering applies only when every function call has a result and the turn conta
 
 ## Native web tools
 
-With `deepseek-flash`, [`WebSearch()`][pydantic_ai.capabilities.WebSearch] enables `deepseek_web_search`, and [`WebFetch()`][pydantic_ai.capabilities.WebFetch] enables `deepseek_read_url` on all three APIs. DeepSeek runs both tools and may bill their use separately. The model chooses when to search or read a link. URL reading considers links in the last user message. When both tools are enabled with thinking, DeepSeek uses deep search to decide which pages to open. See the [DeepSeek web tools guide](https://api-docs.deepseek.com/guides/web_tools/).
+With `deepseek-flash`, [`WebSearch()`][pydantic_ai.capabilities.WebSearch] enables `deepseek_web_search`, and [`WebFetch()`][pydantic_ai.capabilities.WebFetch] enables `deepseek_read_url` on all three APIs. DeepSeek runs both tools and reports usage counts. The model chooses when to search or read a link. URL reading considers links in the last user message. With thinking enabled, web search runs in deep search mode and decides which pages to open. This mode takes precedence over URL reading when both tools are declared. See the [DeepSeek web tools guide](https://api-docs.deepseek.com/guides/web_tools/).
 
 The tools have no domain filters or caller-specified use limits. Keep the complete message history to let DeepSeek restore signed page context in later turns, including turns with web tools disabled. Use the same API for those turns.
+
+Chat Completions and Responses accept text output formats when these tools are enabled.
 
 Use `pydantic-ai-slim[anthropic]` for the Messages endpoint and pair [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] with `DeepSeekMessagesProvider`. The provider reads `DEEPSEEK_API_KEY` by default.
 

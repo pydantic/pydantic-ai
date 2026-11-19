@@ -1,0 +1,137 @@
+{
+  "id": "db1bbb5e-f4ef-4cc4-b0c6-3b097bb3cfee",
+  "object": "response",
+  "created_at": 1794909384,
+  "status": "completed",
+  "background": false,
+  "completed_at": 1794909386,
+  "content_filters": null,
+  "error": null,
+  "frequency_penalty": 0.0,
+  "incomplete_details": null,
+  "instructions": null,
+  "max_output_tokens": 256,
+  "max_tool_calls": null,
+  "model": "deepseek-flash",
+  "moderation": null,
+  "output": [
+    {
+      "type": "web_search_call",
+      "id": "srvtoolu_s_00_3e1d862a9eec4417b63acfa6f757fbf0",
+      "status": "completed",
+      "kind": "search",
+      "action": {
+        "type": "search",
+        "queries": [
+          "DeepSeek 官方应用 API 发布日期",
+          "site:api-docs.deepseek.com release date",
+          "DeepSeek API 正式发布 公告"
+        ],
+        "sources": [
+          {
+            "type": "url",
+            "url": "https://api-docs.deepseek.com/zh-cn/news/news261113/",
+            "title": "DeepSeek 发布全家桶应用 API | DeepSeek API Docs",
+            "snippet": "DeepSeek 全家桶应用 API 已发布：联网搜索 ... DeepSeek 发布全家桶应用 API ... 今天，我们正式开放这套全家桶应用 API：在原有 API 中开启对应参数 ... 本次更新将 DeepSeek App 的各项交互功能直接整合进原有 API。开启对应参数后...",
+            "site_name": "DeepSeek",
+            "site_icon": "https://cdn.deepseek.com/site-icons/deepseek.com",
+            "published_at": "2026-11-12T16:00:00+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "type": "message",
+      "id": "e69bbfdf-f6ed-4a1e-8eef-a362d49e74ce",
+      "status": "completed",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [
+            {
+              "type": "url_citation",
+              "url": "https://api-docs.deepseek.com/zh-cn/news/news261113/",
+              "title": "DeepSeek 发布全家桶应用 API | DeepSeek API Docs",
+              "start_index": 0,
+              "end_index": 241
+            },
+            {
+              "type": "url_citation",
+              "url": "https://www.163.com/dy/article/LBLAGNHH05198CJN.html?spss=dy_author",
+              "title": "DeepSeek发布全家桶应用API",
+              "start_index": 242,
+              "end_index": 385
+            },
+            {
+              "type": "url_citation",
+              "url": "https://www.ithome.com/1/026/960.htm",
+              "title": "DeepSeek 发布全家桶应用 API：开发者将能 1:1 复刻完整 DeepSeek App",
+              "start_index": 242,
+              "end_index": 385
+            },
+            {
+              "type": "url_citation",
+              "url": "https://api-docs.deepseek.com/zh-cn/news/news261113/",
+              "title": "DeepSeek 发布全家桶应用 API | DeepSeek API Docs",
+              "start_index": 386,
+              "end_index": 609
+            },
+            {
+              "type": "url_citation",
+              "url": "https://www.163.com/dy/article/LBLARRFF0511B8LM.html",
+              "title": "DeepSeek发布全家桶应用API：开发者将能1:1复刻完整DeepSeek App",
+              "start_index": 386,
+              "end_index": 609
+            }
+          ],
+          "logprobs": [],
+          "text": "The official DeepSeek \"full-suite\" application API was released on **November 13, 2026**.\n\nThe announcement was made via DeepSeek's official API documentation site, which published a post titled \"DeepSeek Releases Full-Suite Application API\" . Multiple media outlets (including IT之家 and 财联社) also reported on November 13 that DeepSeek officially announced the opening of this API suite .\n\nThis release integrated DeepSeek App capabilities such as web search, file input, link reading, and speech interaction directly into the existing API, allowing developers to replicate the complete DeepSeek App experience ."
+        }
+      ],
+      "phase": "final_answer",
+      "role": "assistant"
+    }
+  ],
+  "parallel_tool_calls": true,
+  "presence_penalty": 0.0,
+  "previous_response_id": null,
+  "prompt_cache_key": null,
+  "prompt_cache_retention": null,
+  "reasoning": {
+    "effort": "none",
+    "summary": null
+  },
+  "safety_identifier": null,
+  "service_tier": "default",
+  "store": false,
+  "temperature": 1.0,
+  "text": {
+    "format": {
+      "type": "text"
+    },
+    "verbosity": null
+  },
+  "tool_choice": "auto",
+  "tools": [],
+  "top_logprobs": 0,
+  "top_p": 1.0,
+  "truncation": "disabled",
+  "usage": {
+    "input_tokens": 6082,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens": 146,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 6228,
+    "server_tool_use": {
+      "tool_search": 3,
+      "tool_fetch": 0,
+      "tool_image_search": 0
+    }
+  },
+  "user": null,
+  "metadata": {}
+}

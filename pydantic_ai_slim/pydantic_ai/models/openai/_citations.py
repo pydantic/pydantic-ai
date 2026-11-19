@@ -205,7 +205,7 @@ def map_chat_content(
             message.annotations,
             provider_name,
             include_raw_annotations=include_raw_annotations,
-            content_offsets=profile.get('deepseek_web_tools', False),
+            content_offsets=profile.get('openai_deepseek_web_tools', False),
         )
     return [
         replace(part, id='content', provider_name=provider_name) if isinstance(part, ThinkingPart) else part

@@ -407,7 +407,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 _profile,
                 ModelProfile(supported_document_media_types=document_media_types & TEXT_DOCUMENT_MEDIA_TYPES),
             )
-        if not _profile.get('deepseek_web_tools', False):
+        if not _profile.get('openai_deepseek_web_tools', False):
             new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebFetchTool}
             if not _profile.get('openai_chat_supports_web_search', False):
                 new_tools -= {WebSearchTool}
@@ -423,7 +423,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if (
             any(isinstance(tool, WebSearchTool) for tool in model_request_parameters.native_tools)
             and not self.profile.get('openai_chat_supports_web_search', False)
-            and not self.profile.get('deepseek_web_tools', False)
+            and not self.profile.get('openai_deepseek_web_tools', False)
             and not any(t.unless_native == 'web_search' for t in model_request_parameters.function_tools)
         ):
             raise UserError(
@@ -558,7 +558,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
         profile = self.profile
         web_search_options = (
-            None if profile.get('deepseek_web_tools', False) else self._get_web_search_options(model_request_parameters)
+            None
+            if profile.get('openai_deepseek_web_tools', False)
+            else self._get_web_search_options(model_request_parameters)
         )
 
         # A flagged model rejects any request that sends tools while reasoning is on, output tools included, with a
@@ -737,7 +739,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if response.created is None:  # pyright: ignore[reportUnnecessaryComparison]
             response.created = 0
 
-        if self.profile.get('deepseek_web_tools', False):
+        if self.profile.get('openai_deepseek_web_tools', False):
             check_chat_web_error((response.model_extra or {}).get('error'), self.model_name, in_stream=False)
         missing_finish_reason = self._fill_missing_finish_reason(response)
 
@@ -791,7 +793,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             )
 
         items: list[ModelResponsePart] = []
-        if self.profile.get('deepseek_web_tools', False):
+        if self.profile.get('openai_deepseek_web_tools', False):
             items.extend(self._map_deepseek_web_steps(choice.message, provider_details))
 
         if thinking_parts := self._process_thinking(choice.message):
@@ -838,6 +840,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             if isinstance(final_reasoning := message_extras.get('reasoning_content'), str):
                 provider_details[CHAT_REASONING_KEY] = final_reasoning
             for step in steps:
+                if step.reasoning_content:
+                    items.append(
+                        ThinkingPart(id='reasoning_content', content=step.reasoning_content, provider_name=self.system)
+                    )
                 items.extend(call.call_part(self.system) for call in step.calls)
                 items.extend(call.return_part(self.system) for call in step.calls)
         return items
@@ -966,7 +972,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             self._provider.name,
             self._provider.base_url,
             self.model_name,
-            deepseek_web_tools=self.profile.get('deepseek_web_tools', False),
+            deepseek_web_tools=self.profile.get('openai_deepseek_web_tools', False),
         )
         if self.profile.get('openai_chat_completion_tokens_omit_reasoning', False):
             add_reasoning_tokens_omitted_from_completion_tokens(request_usage, response.usage)
@@ -1003,7 +1009,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         tools: list[chat.ChatCompletionToolParam] = [
             self._map_tool_definition(t, model_settings) for t in tool_defs.values()
         ]
-        if self.profile.get('deepseek_web_tools', False):
+        if self.profile.get('openai_deepseek_web_tools', False):
             tools.extend(
                 chat_web_tool_param(tool)
                 for tool in model_request_parameters.native_tools
@@ -1284,17 +1290,43 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         Subclasses of `OpenAIChatModel` may override this method to provide their own mapping logic.
         """
         param = self._MapModelResponseContext(self).map_assistant_message(message)
-        if self.profile.get('deepseek_web_tools', False) and self.accepts_stateless_artifacts(message):
+        if self.profile.get('openai_deepseek_web_tools', False) and self.accepts_stateless_artifacts(message):
             details = message.provider_details or {}
             if wire_steps := details.get(CHAT_STEPS_KEY):
-                steps = chat_web_steps.validate_python(wire_steps)
-                param = param or chat.ChatCompletionAssistantMessageParam(role='assistant', content=None)
-                # The SDK message type lacks these DeepSeek extensions.
-                wire = cast(dict[str, object], param)
+                param = self._replay_deepseek_web_steps(message, param, wire_steps, details.get(CHAT_REASONING_KEY))
+        return param
+
+    def _replay_deepseek_web_steps(
+        self,
+        message: ModelResponse,
+        param: chat.ChatCompletionAssistantMessageParam | None,
+        wire_steps: object,
+        final_reasoning: object,
+    ) -> chat.ChatCompletionAssistantMessageParam | None:
+        calls: set[tuple[str, str]] = set()
+        returns: set[tuple[str, str]] = set()
+        for part in message.parts:
+            if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and self.accepts_stateless_artifacts(
+                message, part
+            ):
+                keys = calls if isinstance(part, NativeToolCallPart) else returns
+                keys.add((part.tool_call_id, part.tool_name))
+        retained = calls & returns
+        steps = [
+            step.model_copy(update={'calls': step_calls})
+            for step in chat_web_steps.validate_python(wire_steps)
+            if (step_calls := [call for call in step.calls if (call.id, call.tool_name) in retained])
+        ]
+        if steps:
+            param = param or chat.ChatCompletionAssistantMessageParam(role='assistant', content=None)
+        if param is not None:
+            # The SDK message type lacks these DeepSeek extensions.
+            wire = cast(dict[str, object], param)
+            if steps:
                 wire['server_tool_calls'] = chat_web_steps.dump_python(steps, mode='json', exclude_unset=True)
-                wire.pop('reasoning_content', None)
-                if isinstance(final_reasoning := details.get(CHAT_REASONING_KEY), str):
-                    wire['reasoning_content'] = final_reasoning
+            wire.pop('reasoning_content', None)
+            if isinstance(final_reasoning, str):
+                wire['reasoning_content'] = final_reasoning
         return param
 
     def _map_carried_thinking(self, message: ModelResponse) -> chat.ChatCompletionUserMessageParam | None:

@@ -87,14 +87,18 @@ class ChatWebCall(BaseModel):
     signature: str | None = None
     error: dict[str, JsonValue] | None = None
 
+    @property
+    def tool_name(self) -> str:
+        return native_web_tool_name(self.kind)
+
     def call_part(self, provider: str) -> NativeToolCallPart:
         return NativeToolCallPart(
-            tool_name=native_web_tool_name(self.kind), tool_call_id=self.id, args=self.action, provider_name=provider
+            tool_name=self.tool_name, tool_call_id=self.id, args=self.action, provider_name=provider
         )
 
     def return_part(self, provider: str) -> NativeToolReturnPart:
         return NativeToolReturnPart(
-            tool_name=native_web_tool_name(self.kind),
+            tool_name=self.tool_name,
             tool_call_id=self.id,
             content=self.model_dump(include={'status', 'sources', 'page', 'error'}, exclude_none=True),
             outcome='failed' if self.status == 'failed' else 'success',

@@ -117,7 +117,7 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     def _map_chunk(self, chunk: ChatCompletionChunk) -> Iterator[ModelResponseStreamEvent]:
         self._map_top_level_fields(chunk)
-        if self._model_profile.get('deepseek_web_tools', False):
+        if self._model_profile.get('openai_deepseek_web_tools', False):
             check_chat_web_error((chunk.model_extra or {}).get('error'), self.model_name, in_stream=True)
 
         # Empty on the final usage-only chunk; `None` from OpenAI-compatible providers emitting
@@ -149,7 +149,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                 provider_details.pop('finish_reason', None)
             self.provider_details = {**(self.provider_details or {}), **provider_details}
 
-        if self._model_profile.get('deepseek_web_tools', False):
+        if self._model_profile.get('openai_deepseek_web_tools', False):
             yield from self._map_deepseek_web_chunk(choice)
         yield from self._map_part_delta(choice)
 
@@ -269,7 +269,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         # still equals it: not split by reasoning, and not changed by removing thinking tags or whitespace.
         citations = (
             map_chat_citations(
-                annotations, part.content, content_offsets=self._model_profile.get('deepseek_web_tools', False)
+                annotations, part.content, content_offsets=self._model_profile.get('openai_deepseek_web_tools', False)
             )
             if len(text_part_ids) == 1 and part.content == self._raw_text_content
             else None
@@ -484,7 +484,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             self._provider_name,
             self._provider_url,
             self.model_name,
-            deepseek_web_tools=self._model_profile.get('deepseek_web_tools', False),
+            deepseek_web_tools=self._model_profile.get('openai_deepseek_web_tools', False),
         )
         if self._model_profile.get('openai_chat_completion_tokens_omit_reasoning', False):
             add_reasoning_tokens_omitted_from_completion_tokens(request_usage, response.usage)
