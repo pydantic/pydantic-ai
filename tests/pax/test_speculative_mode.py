@@ -88,9 +88,9 @@ def streamed(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse]) 
 
 
 def fold_agent(model: FunctionModel, counters: SpeculationCounters, root: Path) -> Agent[None, str]:
-    """Coder's own `FileSystem` provides the read tools, as in CLAI, so they may speculate.
+    """Coder's own `FileSystem` provides the read tools, as in Pax, so they may speculate.
 
-    `LocalWorkspace` comes last, as CLAI attaches it, so a sandbox plugin earlier in the list wins.
+    `LocalWorkspace` comes last, as Pax attaches it, so a sandbox plugin earlier in the list wins.
     """
     for name in ('a.py', 'b.py'):
         (root / name).write_text(f'contents of {name}\n')
@@ -793,7 +793,7 @@ class Sandbox(LocalWorkspaceBackend):
 
 
 class SandboxPlugin(AbstractCapability[object]):
-    """A plugin that supplies the run's workspace in place of CLAI's `LocalWorkspace`."""
+    """A plugin that supplies the run's workspace in place of Pax's `LocalWorkspace`."""
 
     def __init__(self, root: Path) -> None:
         self.root = root

@@ -2,10 +2,10 @@
 
 The default-enabled `observability` plugin: Logfire instrumentation owned by the plugin, not the process.
 
-The same instance records failures CLAI reports and recovers from: startup plugin load failures, failed turns,
+The same instance records failures Pax reports and recovers from: startup plugin load failures, failed turns,
 failed slash commands other than usage errors, and failing plugin handlers; with `include_content` off, these
 keep only the exception's type. With `ui_events` on, it also records
-CLAI's UI interactions (see `pydantic_ai_pax.ui.telemetry`).
+Pax's UI interactions (see `pydantic_ai_pax.ui.telemetry`).
 With `token` naming a `/keys` entry, everything goes to that key's Logfire project, such as one a team shares.
 With `variables_key` naming one holding a Logfire API key, the same instance can read the project's managed variables.
 
@@ -77,12 +77,12 @@ class LogfireSettings(BaseModel):
     user_tag: Literal['logfire-account', 'git-email', False] = Field(
         default='logfire-account',
         description='Tag session roots with the email of the Logfire account that signed in during project setup, '
-        'or with git config user.email. Only the root and its `CLAI session opened` log carry it.',
+        'or with git config user.email. Only the root and its `Pax session opened` log carry it.',
     )
     account: LogfireAccount | None = Field(
         default=None,
         description='Saved by project setup. Its email tags session roots only while `token` still names the '
-        '/keys entry that setup saved, so pointing `token` elsewhere from any CLAI build drops the tag.',
+        '/keys entry that setup saved, so pointing `token` elsewhere from any Pax build drops the tag.',
     )
     token: KeyReference | None = Field(
         default=None,
@@ -114,7 +114,7 @@ class LogfireSettings(BaseModel):
 class LogfirePlugin(Plugin[LogfireSettings]):
     """Core instrumentation for every agent, without changing the supplied agent or global OTel providers.
 
-    CLAI's own turns get the per-run `Instrumentation` capability. Agents built elsewhere, such as
+    Pax's own turns get the per-run `Instrumentation` capability. Agents built elsewhere, such as
     the compaction summarizer and sub-agents, follow `Agent.instrument_all`, which the plugin points
     at the same instance while it is loaded and restores when it unloads.
     """
@@ -144,14 +144,14 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 api_key=api_key,
                 service_name=settings.service_name,
                 console=False,
-                # CLAI passes attributes, never f-strings. Inspecting the caller's source fails once that file
+                # Pax passes attributes, never f-strings. Inspecting the caller's source fails once that file
                 # changes on disk mid-session, and the warning it prints to stderr tears through the live display.
                 inspect_arguments=False,
                 config_dir=private_dir,
                 data_dir=private_dir,
                 # UI events and handled errors name settings, keys, plugins, and events, such as `sessions.naming`,
                 # `OPENAI_API_KEY`, or `SessionEnd`, that look like secrets. The callback only keeps those names, and
-                # only on CLAI's own records, so everything else is scrubbed as usual.
+                # only on Pax's own records, so everything else is scrubbed as usual.
                 scrubbing=logfire.ScrubbingOptions(callback=telemetry.keep_names),
                 advanced=logfire.AdvancedOptions(base_url=settings.base_url) if settings.base_url else None,
             )
@@ -171,7 +171,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             _shutdown(self.instance)
             raise
         self._session_tracing = SessionTracing(instance=self.instance, session_id=lambda: self.host.session_id)
-        # UI records and plugin errors are CLAI's own, so they share the session root's scope.
+        # UI records and plugin errors are Pax's own, so they share the session root's scope.
         self._clai2 = logfire.Logfire(config=self.instance.config, otel_scope=telemetry.SCOPE)
 
     @classmethod
@@ -356,7 +356,7 @@ _ROWS = (
     FieldRow(
         key='service_name',
         label='Service name',
-        description='The OpenTelemetry service.name that CLAI traces are filed under in Logfire.',
+        description='The OpenTelemetry service.name that Pax traces are filed under in Logfire.',
         default='pydantic-clai2',
     ),
     FieldRow(

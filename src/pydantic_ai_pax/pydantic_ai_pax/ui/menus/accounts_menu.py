@@ -98,7 +98,7 @@ class AccountsMenu:
             lines = [
                 'Sign in to another account.',
                 '',
-                'Pick a provider; CLAI fills in a name',
+                'Pick a provider; Pax fills in a name',
                 'you can keep or change.',
             ]
         elif is_save_and_close(item):

@@ -629,8 +629,8 @@ async def move_heads(
 
 `pydantic_ai_harness.step_persistence.conversations` provides
 `SqliteConversationStore`, `ConversationSummary`, and `SavedConversation`, the
-local session store behind CLAI's resume browser: alongside the messages it keeps
-CLAI's workspace, title, naming, and busy-process metadata. For conversations in
+local session store behind Pax's resume browser: alongside the messages it keeps
+Pax's workspace, title, naming, and busy-process metadata. For conversations in
 an application, use core's `ConversationStore` instead, and see
 [Moving sessions to a `ConversationStore`](#moving-sessions-to-a-conversationstore)
 to copy heads already saved here. A conversation head is separate from per-run checkpoints:
@@ -685,8 +685,8 @@ There is no automatic conversation TTL or media garbage collection.
 
 `pydantic_ai_harness.step_persistence.naming` is deprecated and emits a
 `HarnessDeprecationWarning` on import. Its naming prompt, queue bounds, and
-failure policy are CLAI's resume-browser policy rather than a Harness primitive,
-so CLAI now owns its own copy. Copy the helpers you use into your application;
+failure policy are Pax's resume-browser policy rather than a Harness primitive,
+so Pax now owns its own copy. Copy the helpers you use into your application;
 the module will be removed in a future release. The conversation store above is
 unaffected. Until then, applications using its `SessionNamer` must join the worker
 before closing its model clients or storage, and failed or timed-out naming
@@ -696,7 +696,7 @@ requests may still incur provider usage.
 
 Set `capture_frontier=True` to save accepted request histories before model
 requests and the model response frontier before tool execution. The default is
-`False` to preserve existing checkpoint frequency. CLAI enables it. A first model
+`False` to preserve existing checkpoint frequency. Pax enables it. A first model
 request failure can then retain its prompt, and a process killed mid-tool-cycle
 can retain the proposed calls and arguments even before a cycle settles.
 
@@ -715,7 +715,7 @@ in-memory checkpoint through shared references.
 
 `SnapshotSavedEvent` is a typed capability event emitted after a checkpoint write
 completes. It carries `persistence_run_id`, `conversation_id`, `step_index`, and
-`state`. Subscribe using core's `hooks.on.event(SnapshotSavedEvent)`, which a CLAI plugin
+`state`. Subscribe using core's `hooks.on.event(SnapshotSavedEvent)`, which a Pax plugin
 returns from `get_capabilities`. Store writes are the source of truth; notifications may
 repeat during durable replay and observer failures cannot undo committed writes.
 `STEP_PERSISTENCE_EVENTS` is the namespace of that event (`step_persistence`), not of the

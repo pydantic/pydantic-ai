@@ -22,7 +22,7 @@ AGENT_INSTRUCTION_FILES = {'AGENTS.md', 'CLAUDE.md'}
 # navigation entry and remove it from here.
 UNPUBLISHED_PAGES = {
     'harness/clai2.md': (
-        'Disagrees with the CLAI2 README and code in several places: https://github.com/pydantic/pydantic-ai/issues/8938'
+        'Disagrees with the Pax README and code in several places: https://github.com/pydantic/pydantic-ai/issues/8938'
     ),
     'harness/mutation-testing.md': (
         "Contributor guidance for mutation-testing the harness's own filesystem and shell toolsets, "

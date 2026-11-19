@@ -1,25 +1,25 @@
-# CLAI 2.0
+# Pax
 
 A separately installable terminal client for Pydantic AI, using `Coder(unrestricted_filesystem=True)` by default.
 Python 3.11+ is required by Termflow. Tracking issue: https://github.com/pydantic/pydantic-ai-harness/issues/875.
 
 !!! note
-    CLAI is now the `pydantic-ai-pax` package, and its command is `pax`. The former `pydantic-clai2` package and
+    Pax is now the `pydantic-ai-pax` package, and its command is `pax`. The former `pydantic-clai2` package and
     `clai2` command still work, printing a deprecation note. A plugin that imports `pydantic_clai2` needs the
     `pydantic-clai2` package installed, or its imports changed to `pydantic_ai_pax`, as in
     `from pydantic_ai_pax.plugins import Plugin`.
 
-CLAI file tools can access paths outside the workspace, including `/tmp`, and do
+Pax file tools can access paths outside the workspace, including `/tmp`, and do
 not protect secret files or repository metadata. OS permissions still apply.
-CLAI attaches the launch directory as the agent's workspace, so relative paths
-and commands start there. Commands get CLAI's environment minus LLM provider API
+Pax attaches the launch directory as the agent's workspace, so relative paths
+and commands start there. Commands get Pax's environment minus LLM provider API
 keys. Use a custom agent with `Coder()` to retain workspace-scoped file tools. Shell output is displayed dimly.
 
 ## Pasting images
 
-Copy a screenshot or image, then press **Ctrl-V** in CLAI to attach it. If your
+Copy a screenshot or image, then press **Ctrl-V** in Pax to attach it. If your
 terminal intercepts Ctrl-V, use **Alt-V** (or press Esc, then V). On macOS, Cmd-V
-is the terminal's text paste, not CLAI's clipboard-image shortcut. You can also
+is the terminal's text paste, not Pax's clipboard-image shortcut. You can also
 paste or drag an existing image file path into the prompt using your terminal's
 bracketed-paste support.
 
@@ -42,15 +42,15 @@ Ctrl+Z undoes the last change to your draft on macOS, Linux, and Windows. It
 brings back text removed with Backspace, Delete, word deletion, Ctrl+U, Ctrl+K,
 or Ctrl+C, and takes back a paste or a history recall. Typing undoes a word at a
 time, and a run of Backspace or Delete presses undoes in one step. Ctrl+Y or
-Ctrl+Shift+Z redoes. CLAI keeps the last 100 steps; submitting a message starts
+Ctrl+Shift+Z redoes. Pax keeps the last 100 steps; submitting a message starts
 the next draft with none.
 
-The editor reads keys in raw mode, so Ctrl+Z reaches CLAI instead of suspending
-it to the shell. CLAI has no suspend shortcut; quit with Ctrl+D or `/exit`.
+The editor reads keys in raw mode, so Ctrl+Z reaches Pax instead of suspending
+it to the shell. Pax has no suspend shortcut; quit with Ctrl+D or `/exit`.
 Without kitty or xterm modified-key reporting, a terminal sends Ctrl+Shift+Z
 as Ctrl+Z, so use Ctrl+Y to redo there.
 
-Cmd+Z and Cmd+Shift+Z undo and redo too, when the terminal passes them on. CLAI
+Cmd+Z and Cmd+Shift+Z undo and redo too, when the terminal passes them on. Pax
 asks for kitty keyboard reporting, which reports Cmd as Super, but most macOS
 terminals keep Cmd shortcuts for their own menus:
 
@@ -80,7 +80,7 @@ including multiline input. They are stored as plaintext in `input-history` next
 to `config.db`: `$XDG_CONFIG_HOME/pydantic-clai2/input-history`, or
 `~/.config/pydantic-clai2/input-history` by default. On POSIX the file is restricted
 to its owner (mode 0600). Avoid entering secrets in the prompt: input history is
-not encrypted. Delete this file while CLAI is closed to clear saved input.
+not encrypted. Delete this file while Pax is closed to clear saved input.
 `/clear` (alias `/new`), or bare `clear`, clears model conversation history, not
 input recall, and clears the screen back to the startup banner.
 Model responses and tool results are not saved to this file.
@@ -99,21 +99,21 @@ a `.env` in the launch directory. See [Environment variables](#environment-varia
 for discovery, precedence, and trust requirements.
 Codex uses subscription OAuth instead, not `OPENAI_API_KEY`. The default Coder
 can read and modify files and execute commands with your user permissions. Run it
-in a workspace you trust. CLAI does not add a sandbox or approval layer.
+in a workspace you trust. Pax does not add a sandbox or approval layer.
 
 The startup splash adapts Code Puppy's stdlib-only, alternate-screen Pydantic
-pyramid, with CLAI lettering. The persistent `CLAI 2.0` banner uses `ansi_shadow`.
+pyramid, with Pax lettering. The persistent `Pax` banner uses `ansi_shadow`.
 The splash is disabled for redirected output, CLI arguments, small terminals,
 Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
 
 ## Environment variables
 
-CLAI trusts the launch directory and its parents for automatic dotenv loading.
+Pax trusts the launch directory and its parents for automatic dotenv loading.
 A `.env` can change provider endpoints while reusing your exported API keys, and
 alter how tool subprocesses execute. Set `PYTHON_DOTENV_DISABLED=1` in your
-environment before launching CLAI in an untrusted directory.
+environment before launching Pax in an untrusted directory.
 
-CLAI loads the nearest `.env` file at startup using `python-dotenv`, before reading
+Pax loads the nearest `.env` file at startup using `python-dotenv`, before reading
 settings or importing agents and plugins. It searches the launch directory first,
 then its parents, and loads only the first file found. The search is not limited
 to Git repository boundaries. With `--worktree`, loading happens before switching
@@ -137,30 +137,30 @@ py-cli pax -w
 A Git worktree is another checkout of the same repository with its own branch
 and working files. Run these commands inside a repository with at least one
 commit. `--worktree NAME` creates a `clai-NAME` branch from the current `HEAD`
-and starts CLAI at `<repository-root>/.worktrees/NAME`. If that worktree already
-exists, CLAI reopens it; if only the `clai-NAME` branch exists, CLAI checks it out.
+and starts Pax at `<repository-root>/.worktrees/NAME`. If that worktree already
+exists, Pax reopens it; if only the `clai-NAME` branch exists, Pax checks it out.
 `-w` is the short form; omit the name to generate one. Names start with a letter
 or digit and contain only ASCII letters, digits, hyphens, and underscores.
 
-After checkout succeeds, CLAI adds `/.worktrees/` to Git's local `info/exclude`
+After checkout succeeds, Pax adds `/.worktrees/` to Git's local `info/exclude`
 file to keep generated checkouts out of `git status`, without changing your
 tracked `.gitignore`.
 Uncommitted changes, ignored files, and untracked files are not copied. Project settings, repository instructions, and coding
 tools use the new worktree root. Your user settings and plugins stay available;
 a relative `--database` path still refers to the directory you launched from.
 
-CLAI prints the path and branch. A directory at that path that is not a Git
-worktree is rejected. If checkout fails, CLAI tries to remove only the branch it just
+Pax prints the path and branch. A directory at that path that is not a Git
+worktree is rejected. If checkout fails, Pax tries to remove only the branch it just
 created, without forcing deletion. If cleanup or the ignore edit fails, the error
 names the retained branch or checkout for recovery.
 
-On interactive exit, CLAI removes an unchanged worktree this launch created and
+On interactive exit, Pax removes an unchanged worktree this launch created and
 tries to delete its newly created branch with `git branch -d`. It also removes
 a `--worktree` checkout with no uncommitted or untracked files and no unpushed commits,
 keeping the branch, unless a saved **No, don't ask again for this worktree**
 choice keeps it. Ignored files are deleted with the checkout; lock it with
 `git worktree lock PATH` to keep it. Other unchanged worktrees are kept. If the
-checkout changed, CLAI asks whether to remove it.
+checkout changed, Pax asks whether to remove it.
 Default Git removal keeps the branch and refuses dirty or locked checkouts.
 
 You can register a user-only `worktrees.remove_commands` entry for a repository.
@@ -184,7 +184,7 @@ git branch -d clai-my-task
 ```
 
 !!! warning "Worktrees are not sandboxes"
-    A worktree separates working files, not permissions. CLAI's default tools can
+    A worktree separates working files, not permissions. Pax's default tools can
     still access files outside it. Creation runs before the agent starts and emits
     no agent telemetry spans.
 
@@ -193,32 +193,32 @@ git branch -d clai-my-task
 `/login openai-codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
 authorization code with PKCE, state validation, and a callback at
 `http://localhost:1455/auth/callback`. It times out after five minutes. The browser
-must be able to reach that callback on the machine running CLAI.
+must be able to reach that callback on the machine running Pax.
 
 Login adds every model your account's Codex catalog lists to `/model`, skipping
-models the catalog hides. If listing the models fails, the login stays saved, CLAI
+models the catalog hides. If listing the models fails, the login stays saved, Pax
 reports why, and it adds the built-in Codex models instead.
 
 Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-clai2/`
 (`credentials-ACCOUNT.enc`), not stored in SQLite or `~/.codex/auth.json`. The key
-that decrypts them is the only entry CLAI keeps in the configured Python `keyring`
-backend (service `pydantic-clai2`, account `encryption-key`). CLAI reads that entry
+that decrypts them is the only entry Pax keeps in the configured Python `keyring`
+backend (service `pydantic-clai2`, account `encryption-key`). Pax reads that entry
 at most once per session, so macOS asks for keychain access at most once, instead of
 once per saved credential. Logins that older versions saved as keyring entries are
-moved into encrypted files the first time they are read. Choose an OS-backed credential store: CLAI
+moved into encrypted files the first time they are read. Choose an OS-backed credential store: Pax
 uses the configured backend and does not enforce its encryption or storage policy.
 Installing or selecting a plaintext backend can store the key in plaintext. Core owns
-token refresh through CLAI's `OpenAICodexCredentialSource`. Tests mock keyring,
+token refresh through Pax's `OpenAICodexCredentialSource`. Tests mock keyring,
 the browser, and OAuth exchange and do not access real credentials.
 
-If Codex cannot refresh your login, CLAI tells you to run `/login openai-codex`
+If Codex cannot refresh your login, Pax tells you to run `/login openai-codex`
 in an interactive session, then retry your message. This replaces the generic
 connection error that can hide an expired login. Headless runs show the same
-advice on stderr and exit with code 1. CLAI does not retry the turn automatically.
+advice on stderr and exit with code 1. Pax does not retry the turn automatically.
 
 The default Coder shell runs under your OS identity, without a sandbox. Commands
 can read files and access credential backends available to that identity, including
-CLAI's tokens. Keyring is storage, not isolation from model-controlled commands.
+Pax's tokens. Keyring is storage, not isolation from model-controlled commands.
 Use a separate OS account or isolated environment for untrusted repositories.
 
 The requested default does not guarantee model availability for a subscription.
@@ -239,19 +239,19 @@ to `/model` and, when you have not chosen a model, selects a recent strong one, 
 as Claude Opus 5.5 or Gemini 4 Argon; a model you chose stays selected. To switch,
 open `/model add` and choose `github-copilot`. The provider menu also starts login
 when no credentials exist. If listing the models fails, the login stays saved and
-CLAI reports why.
+Pax reports why.
 
-No application registration or client ID configuration is required. CLAI supplies the same
+No application registration or client ID configuration is required. Pax supplies the same
 [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
 and requests `read:user` access to your GitHub profile. This identifies the existing
-Copilot OAuth application, not a separately registered CLAI application.
+Copilot OAuth application, not a separately registered Pax application.
 `GITHUB_COPILOT_CLIENT_ID` is an optional override for your own device-enabled OAuth
 application; unset or blank uses the bundled default. The workspace pins the merged
 Pydantic AI device-flow implementation until its release.
 
 Login prints a code and `https://github.com/login/device`, then starts polling.
 Open the link on this or another device and approve only your own session's code.
-CLAI does not launch a browser, so a text browser cannot block login or take over
+Pax does not launch a browser, so a text browser cannot block login or take over
 an SSH terminal. Ctrl-C stops polling; GitHub controls expiry. There is no localhost callback.
 
 GitHub authorization does not establish Copilot access. Login and the model menu
@@ -261,19 +261,19 @@ organization policy still control inference access. A known ID also works with
 `/model github-copilot:claude-haiku-4.5`.
 
 The `github-copilot` keyring account is separate from Codex and named API keys.
-Without a keyring, CLAI reports the plaintext `credentials-github-copilot.json`
-fallback under the user's CLAI config directory, created with mode `0600`.
+Without a keyring, Pax reports the plaintext `credentials-github-copilot.json`
+fallback under the user's Pax config directory, created with mode `0600`.
 Tokens and issuance time stay out of settings, history, and login output.
 Expiring tokens require another `/login github-copilot`; there is no automatic
 refresh. Failed or cancelled authorization preserves the previous login.
 
 Saved login takes precedence over `GITHUB_COPILOT_API_KEY`,
 `GITHUB_COPILOT_API_TOKEN`, and `COPILOT_GITHUB_TOKEN`, checked in that order when
-no login is saved. CLAI does not read `GH_TOKEN`, `GITHUB_TOKEN`, or another
-application's token files. Core owns inference and its telemetry; CLAI adds no
+no login is saved. Pax does not read `GH_TOKEN`, `GITHUB_TOKEN`, or another
+application's token files. Core owns inference and its telemetry; Pax adds no
 login-specific spans. Bare `/login` asks which sign-in to run.
 
-Set `GITHUB_COPILOT_INTEGRATION_ID` to change the integration id CLAI sends with
+Set `GITHUB_COPILOT_INTEGRATION_ID` to change the integration id Pax sends with
 every Copilot request; [Integration id](../models/github-copilot.md#integration-id)
 covers what Copilot does with it.
 
@@ -285,7 +285,7 @@ A repository can add its own layer with a `.clai/settings.json` file, found by
 walking up from the launch directory to the git root. Its display settings apply
 at once, as does a `permissions` value no wider than your own; any other key, such as
 `model`, a wider `permissions`, or `instructions`, waits until you approve it for that
-repository with `/project approve`. Conversation messages and CLAI's
+repository with `/project approve`. Conversation messages and Pax's
 Codex tokens are not written to the settings database. Plugin settings are arbitrary
 JSON stored in plaintext in this database, including secrets if you put them there.
 Pass secret references or use plugin-owned credential storage instead of embedding keys.
@@ -333,12 +333,12 @@ any other.
 `/plugins disable NAME` does not wait behind the turn or your queued messages.
 Commands, status segments, and model providers change at once. The running turn
 keeps the tools and hooks it started with, because the agent binds them when a
-run begins; the change reaches the agent on your next prompt, and CLAI says so.
+run begins; the change reaches the agent on your next prompt, and Pax says so.
 A plugin turned off mid-turn finishes its cleanup when the turn ends. While a
 delegated task is running, `/plugins` still refuses changes, as between turns.
 
 `/system_prompt` shows the full system prompt sent with the latest request and
-edits your own instructions, the `run.instructions` setting. CLAI sends them after
+edits your own instructions, the `run.instructions` setting. Pax sends them after
 its built-in instructions, `AGENTS.md`, and plugin instructions, which stay
 read-only; yours replace none of them, and resetting removes them. Editing opens
 `$VISUAL` or `$EDITOR`; on Windows, when neither is set, or when the editor cannot
@@ -348,7 +348,7 @@ start, a built-in editor opens instead. Changes apply from your next prompt.
 
 `/model` selects from models you have already added. Choose **Add a model...**
 to browse providers. `/model PROVIDER:NAME` switches directly to any model. A model
-not yet in your list is added and selected; CLAI does not check that it exists, so a
+not yet in your list is added and selected; Pax does not check that it exists, so a
 mistyped name fails on the next prompt with the provider's error. Model names normally
 start with a provider (`{{ openai:medium }}`), so no real model is called `add` or `settings`.
 
@@ -382,15 +382,15 @@ penalties, `parallel_tool_calls`, `thinking`, and `service_tier`. They are
 saved per model and passed to every run with that model. Unsupported settings
 may be ignored or rejected by the provider; select only settings your provider supports. `/model NAME` sets the model without the menu.
 
-CLAI installs the SDKs for OpenAI and Anthropic. Selecting a model whose provider SDK is
-missing from the Python CLAI runs on fails right away, naming the install command, instead
+Pax installs the SDKs for OpenAI and Anthropic. Selecting a model whose provider SDK is
+missing from the Python Pax runs on fails right away, naming the install command, instead
 of on the next prompt. TypeSafe's Jev needs the `typesafe` extra:
 
 ```bash
 pip/uv-add "pydantic-ai-pax[typesafe]"
 ```
 
-From a pydantic-ai checkout, run CLAI with the extra instead:
+From a pydantic-ai checkout, run Pax with the extra instead:
 
 ```bash
 uv run --package pydantic-ai-pax --extra typesafe pax
@@ -420,20 +420,20 @@ Unknown slash commands are not sent to the model. Up/down recall prompt history
 (see [Input history](#input-history)). Ctrl-D exits. For Ctrl-C, see
 [Interrupting a turn](#interrupting-a-turn). No cancelled run is automatically retried.
 
-## Reload CLAI during development
+## Reload Pax during development
 
 ```text
 /reload
 ```
 
 After editing `pydantic_ai_pax` source, run `/reload` without arguments. It uses
-`importlib.reload` on loaded CLAI modules and rebuilds the prompt loop, commands,
+`importlib.reload` on loaded Pax modules and rebuilds the prompt loop, commands,
 and session with the updated code. The Python process, agent, dependencies passed
 to `chat`, conversation messages, selected model, and active settings are kept.
 Enabled plugins unload and load again so their handlers use the refreshed
 shell types. Disabled and unapproved project plugins stay off.
 
-If an import or shell rebuild fails, CLAI reports the error and restores the
+If an import or shell rebuild fails, Pax reports the error and restores the
 previous module bindings. Correct the source and retry `/reload`. Plugin
 instances and their contributions are recreated. Installed module globals not
 overwritten by the new source can survive; initialize mutable state in `__init__`.
@@ -446,7 +446,7 @@ does not rerun the CLI or recursively reload third-party packages. Use
 
 ## The stock agent in your own code
 
-`open_stock_agent` opens CLAI's stock coding agent without the terminal. Use it with
+`open_stock_agent` opens Pax's stock coding agent without the terminal. Use it with
 `agent.run`, `run_stream_events`, `iter`, or anything else that takes an agent:
 
 ```python
@@ -470,7 +470,7 @@ configured as in `pax`, except that `coder`'s `task_control` is off: pass
 `plugin_settings={'coder': {'task_control': True}}` to give the model the task
 tools and background delegation. The file and shell tools work in `workspace`,
 unless a capability you pass supplies a workspace, and `AGENTS.md` or
-`CLAUDE.md` is read from it. Model names resolve as in `pax`, with CLAI's
+`CLAUDE.md` is read from it. Model names resolve as in `pax`, with Pax's
 per-model defaults. Nothing else you saved for `pax` applies: no saved,
 drop-in, or project plugins, no `.clai/settings.json`, no `/model settings`, and
 no `chain:` fallback chains. `plugin_settings` changes a built-in's settings,
@@ -520,13 +520,13 @@ input/status area. Each bundled palette paints the sample's foreground and
 background. Browsing does not apply a palette or save a setting. Enter confirms;
 Esc or Ctrl-C keeps your current choice. Narrow terminals show the list alone.
 
-`default` preserves CLAI's existing brand colours, including Markdown, menus,
+`default` preserves Pax's existing brand colours, including Markdown, menus,
 and status. Its diffs use green additions and red deletions. Starting and exiting with this choice leaves your
 terminal palette untouched. The default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
 
 All other choices come from Termflow's bundled registry, including
-`catppuccin_mocha`, `catppuccin_latte`, `tokyo_night`, and `github_light`. CLAI adds
+`catppuccin_mocha`, `catppuccin_latte`, `tokyo_night`, and `github_light`. Pax adds
 no new palettes. `/theme NAME` and `/set display.theme NAME` apply the same
 validated preference immediately and save it for future sessions. Tab completes
 these names. The `/set` theme row also lets you reset immediately;
@@ -535,13 +535,13 @@ these names. The `/set` theme row also lets you reset immediately;
 For a bundled palette, Markdown and newly opened menus use Termflow's
 `to_render_style()`, and shell roles use its colours. Termflow changes the terminal
 foreground, background, and 16 ANSI slots via OSC escape sequences. Supported
-terminals may also recolour existing ANSI-styled scrollback. CLAI resets terminal
+terminals may also recolour existing ANSI-styled scrollback. Pax resets terminal
 colours when you return to `default` or exit a selected palette, including failure
 and cancellation. Unsupported terminals may ignore these changes. Redirected
 output receives no palette-changing sequences. Your terminal configuration file
 is not modified.
 
-The early splash and the `CLAI 2.0` banner keep Pydantic's brand colours under
+The early splash and the `Pax` banner keep Pydantic's brand colours under
 every palette, except on 16-colour terminals, where the palette owns the ANSI
 slots. Syntax highlighting keeps Monokai;
 bundled palettes use Termflow's default diff colours. Theme selection adds no
@@ -575,7 +575,7 @@ stream handler is preserved. Custom renderer integrations must await `finish()`
 and use `await abort()` on cancellation.
 
 Response and thinking parts end with a blank separator line; responses have no
-repeated CLAI heading. Intermediate text is flushed when a tool-call part begins,
+repeated Pax heading. Intermediate text is flushed when a tool-call part begins,
 before the tool's arguments finish streaming. Incomplete lines within a text part
 still wait for a newline or part boundary, as in Code Puppy's Markdown path.
 
@@ -706,7 +706,7 @@ The optional `assistant_age` field reads `last text: 2m 3s`. Only a nonempty
 main-assistant text part start or text delta resets it. Empty text, thinking,
 tool calls and results, user messages, and descendant activity do not. It keeps
 tracking the main assistant even when the footer shows a focused subagent.
-While `assistant_age` is enabled, CLAI saves the observed live text time in
+While `assistant_age` is enabled, Pax saves the observed live text time in
 response metadata and restores it on resume, rewind, or conversation switch.
 Disabling the field stops those metadata writes without erasing existing history.
 Histories without that metadata fall back to the last nonempty textual response's timestamp. No textual response
@@ -757,8 +757,8 @@ class Bell(Plugin):
 Drop the file in `~/.config/pydantic-clai2/plugins/`, register anything
 importable with `/plugins add NAME module[:Class] [JSON]`, or clone a trusted
 repository with `/plugins add https://github.com/your-org/my-plugin.git` inside
-CLAI. Git repositories need an `__init__.py` or `plugin.py` at their root; install
-any dependencies in CLAI's Python environment first. See
+Pax. Git repositories need an `__init__.py` or `plugin.py` at their root; install
+any dependencies in Pax's Python environment first. See
 [where plugins live](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/PLUGINS.md#where-plugins-live)
 for supported URLs and checkout management.
 The plugin is live for the next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
@@ -777,7 +777,7 @@ its own.
 
 ## Telemetry and references
 
-CLAI emits no additional telemetry. Pydantic AI's own instrumentation covers model
+Pax emits no additional telemetry. Pydantic AI's own instrumentation covers model
 requests, tools, and capability hooks when configured on the supplied agent.
 
 - [Pydantic AI agent execution and events](https://pydantic.dev/docs/ai/core-concepts/agent/)
@@ -790,10 +790,10 @@ See `THIRD_PARTY_NOTICES.md` for attribution.
 
 ## vllm connection
 
-Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
+Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. Pax queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
 
 ## openrouter connection
 
-Open `/model add`, choose `openrouter`, then paste an API key from https://openrouter.ai/keys in the masked prompt, then select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. This flow uses API-key authentication, not browser OAuth.
+Open `/model add`, choose `openrouter`, then paste an API key from https://openrouter.ai/keys in the masked prompt, then select a model from the live catalog. Pax validates the key with `/api/v1/key` before fetching `/api/v1/models`. This flow uses API-key authentication, not browser OAuth.
 
 The connection is saved in the configured Python keyring backend after selection; backend security depends on your keyring configuration. Tokens are not stored in SQLite or command history. The selected model persists across restarts. Select the provider again to browse its live models or reconfigure the saved connection. Discovery is explicit and has a 20-second network timeout; redirects are not followed. Agent inference uses Pydantic AI core.

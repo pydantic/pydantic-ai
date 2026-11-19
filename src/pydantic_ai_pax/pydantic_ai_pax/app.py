@@ -59,7 +59,7 @@ OutputT = TypeVar('OutputT')
 
 
 def create_agent(model: str | None = None) -> Agent[None, str]:
-    """Build the base CLAI agent. The coding tools come from the built-in `coder` plugin, not from here."""
+    """Build the base Pax agent. The coding tools come from the built-in `coder` plugin, not from here."""
     return Agent(model, deps_type=type(None), capabilities=[ClaiDocs()])
 
 
@@ -79,13 +79,13 @@ async def open_stock_agent(
     capabilities: Sequence[AgentCapability[None]] = (),
     plugin_settings: Mapping[str, Mapping[str, JsonValue]] | None = None,
 ) -> AsyncGenerator[Agent[None, str]]:
-    """Open CLAI's stock coding agent for runs from code, without the terminal.
+    """Open Pax's stock coding agent for runs from code, without the terminal.
 
     The agent has the `coder`, `repo_context`, and `compaction` built-ins as the CLI configures them,
     then `capabilities`, all bound at construction so delegated tasks carry them too. It works in
     `workspace` on this machine unless one of `capabilities` supplies a workspace, such as a sandbox.
     Commands get this process's environment minus LLM provider API keys. Model names, the agent's own
-    and any a run passes, resolve as in the CLI and get CLAI's per-model defaults. Without `model`,
+    and any a run passes, resolve as in the CLI and get Pax's per-model defaults. Without `model`,
     each run must pass one.
 
     `plugin_settings` maps a built-in's id to settings merged over its stock ones, such as
@@ -194,7 +194,7 @@ async def chat(
     `session_id` names the new conversation, or the copy. These follow the CLI's rules: a bad combination,
     or a `session_id` that is not a UUID, raises `ValueError` before anything is drawn.
     `worktree` is the checkout `--worktree` opened; its path and branch are shown under the launch banner.
-    `web` is the web UI CLAI served before `/update` restarted it: the `web` plugin serves it again, with no
+    `web` is the web UI Pax served before `/update` restarted it: the `web` plugin serves it again, with no
     browser opening, so its open pages reconnect.
     `settings_for` gives the settings of a session the web UI opens in another directory, beside that one's
     project file; without it, such a session starts with `settings`. The terminal shows one session at a
@@ -310,7 +310,7 @@ async def chat(
                     resume = _continued_conversation(last, home=shell)
                 else:
                     with transcript.capture(console):
-                        console.print('CLAI2 reloaded. Conversation preserved.', style=theme.color(theme.INFO))
+                        console.print('Pax reloaded. Conversation preserved.', style=theme.color(theme.INFO))
                     fresh = True
             if (relaunch := last.relaunch(web=served)) is not None:
                 raise relaunch
@@ -332,7 +332,7 @@ def _create_home_shell(
     settings_for: Callable[[ProjectSettings], Settings] | None,
     worktree: Worktree | None,
 ) -> SessionRuntime[DepsT, OutputT]:
-    """Build the session CLAI starts with, under the launch banner."""
+    """Build the session Pax starts with, under the launch banner."""
     with theme.use(lambda: settings.theme if settings is not None else 'default'), transcript.capture(console):
         project = project or ProjectSettings()
         print_welcome(project, console, worktree=worktree)
@@ -393,12 +393,12 @@ async def _close_home_shell(
     transcript: TranscriptBuffer,
     console: Console,
 ) -> SessionRuntime[DepsT, OutputT]:
-    """Close `shell`, the session CLAI started with, unless it closed already; return the session shown last."""
-    # The session shown last restarts CLAI: `/reload` and `/update` work in it.
+    """Close `shell`, the session Pax started with, unless it closed already; return the session shown last."""
+    # The session shown last restarts Pax: `/reload` and `/update` work in it.
     last = terminal.ended_in or shell
     if not terminal.home_closed:
         with transcript.capture(console):
-            # It ends for good when another session's reload or exit restarts or ends CLAI.
+            # It ends for good when another session's reload or exit restarts or ends Pax.
             await shell.close(reason if last is shell else 'exit')
     return last
 
@@ -417,7 +417,7 @@ def _reload_shell(
     transcript: TranscriptBuffer,
     load_plugins: bool,
 ) -> SessionRuntime[DepsT, OutputT]:
-    """Reload CLAI's modules and rebuild the session CLAI started with from `last`, the session shown last."""
+    """Reload Pax's modules and rebuild the session Pax started with from `last`, the session shown last."""
     return reload_clai(
         lambda shell=last: create_shell(
             rebuild_stock(()) if rebuild_stock is not None else agent,
@@ -447,7 +447,7 @@ def _continued_conversation(
 ) -> str | None:
     """The conversation `home` resumes after a failed reload: that of `last`, the session shown that asked for it.
 
-    `home`, the session CLAI started with, resumes nothing when it asked for the reload itself.
+    `home`, the session Pax started with, resumes nothing when it asked for the reload itself.
     """
     return None if last is home else last.session.conversation_id
 
@@ -456,7 +456,7 @@ def _report_reload_failure(exc: Exception, *, console: Console) -> None:
     console.print(f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False)
     if isinstance(exc, ImportError) and exc.name and exc.name.startswith('pydantic_ai_harness'):
         console.print(
-            'Harness is not refreshed by /reload. Restart CLAI2 with the same launch options and '
+            'Harness is not refreshed by /reload. Restart Pax with the same launch options and '
             '--resume to continue this session. Keep the worktree if asked to remove it.',
             style=theme.color(theme.INFO),
             markup=False,
@@ -464,7 +464,7 @@ def _report_reload_failure(exc: Exception, *, console: Console) -> None:
 
 
 async def _serve_again(loader: SessionPlugins[DepsT], web: WebHandoff | None, *, console: Console) -> None:
-    """Serve `web` again, the web UI CLAI served before `/update` restarted it; nothing without one."""
+    """Serve `web` again, the web UI Pax served before `/update` restarted it; nothing without one."""
     if web is not None:
         from pydantic_ai_pax.cli.web import serve_again
 
@@ -481,7 +481,7 @@ def _opener(
     load_plugins: bool,
     console: Callable[[], Console],
 ) -> Callable[[Path | None], SessionRuntime[DepsT, OutputT]]:
-    """Builds a session the web UI opens beside `shell`, in a directory, by default the one CLAI started in."""
+    """Builds a session the web UI opens beside `shell`, in a directory, by default the one Pax started in."""
     launched_in, launch_project = Path(shell.session.workspace), shell.context.project
 
     def build(directory: Path | None) -> SessionRuntime[DepsT, OutputT]:

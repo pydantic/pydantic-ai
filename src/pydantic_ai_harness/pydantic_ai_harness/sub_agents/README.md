@@ -580,7 +580,7 @@ task fails.
 the bound scope; they do not add delegation to an agent without `SubAgents`.
 `SubAgent(read_only=True)` wraps the child's workspace in `ReadOnlyWorkspace`.
 Also give that agent only trusted read-only capabilities: arbitrary Python tools
-can bypass the workspace API. CLAI's Explore and Plan specialists use filesystem
+can bypass the workspace API. Pax's Explore and Plan specialists use filesystem
 readers and expose no shell, code execution, or parent plugin tools.
 
 Core's agent/model/tool spans provide execution telemetry; task IDs, parent IDs,

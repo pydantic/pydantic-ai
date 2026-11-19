@@ -41,7 +41,7 @@ class Checkout:
 class Backend(Protocol):
     """What a kind of workspace does: make the files, and remove them again.
 
-    The local Git worktree is the first. Its sessions run in this CLAI, in the checkout, as any other does.
+    The local Git worktree is the first. Its sessions run in this Pax, in the checkout, as any other does.
     """
 
     async def create(self, *, workspace_id: str, kind: WorktreeKind, repo: str, ref: str) -> Checkout:
@@ -55,7 +55,7 @@ class Backend(Protocol):
 
 @dataclass(kw_only=True)
 class LocalWorktrees:
-    """`local-worktree`: a linked Git worktree of a local repository, or of a clone CLAI keeps under `clones`."""
+    """`local-worktree`: a linked Git worktree of a local repository, or of a clone Pax keeps under `clones`."""
 
     clones: Path
 

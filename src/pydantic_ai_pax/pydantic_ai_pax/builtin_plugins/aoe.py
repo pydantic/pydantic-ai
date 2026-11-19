@@ -1,6 +1,6 @@
 """Opt-in Agent of Empires (AoE) status, session, and title integration.
 
-AoE launches CLAI as a custom agent in a tmux session and reads a non-built-in agent's state from
+AoE launches Pax as a custom agent in a tmux session and reads a non-built-in agent's state from
 `/tmp/aoe-hooks-<euid>/<instance>/status`. This plugin writes that file the way AoE's own hooks do,
 publishes the conversation ID beside it, remembers which conversation the AoE session holds so a
 restarted pane picks it up again, and, when its `titles` setting is on, pushes the conversation
@@ -69,7 +69,7 @@ class AoeSettings(BaseModel):
         default=False,
         description=(
             "Rename the AoE session after the conversation title. With AoE's `session.tie_workdir_to_name`, "
-            'a rename can move an AoE-managed worktree out from under CLAI2.'
+            'a rename can move an AoE-managed worktree out from under Pax.'
         ),
     )
 
@@ -145,7 +145,7 @@ def _hidden_instance_id(pane: str, session_name: str) -> str | None:
 
 
 def nested(pane_pid: int) -> bool:
-    """Whether another CLAI is an ancestor of this process within the pane, so that one reports instead."""
+    """Whether another Pax is an ancestor of this process within the pane, so that one reports instead."""
     listing = _output('ps', '-A', '-o', 'pid=,ppid=,args=')
     if listing is None:
         return False
@@ -467,7 +467,7 @@ class AoePlugin(Plugin[AoeSettings]):
     def __init__(self, host: PluginHost[None], settings: AoeSettings) -> None:
         super().__init__(host, settings)
         self.pane = os.environ.get('TMUX_PANE')
-        # Headless runs have no terminal, and AoE only starts CLAI in a tmux pane on a POSIX system.
+        # Headless runs have no terminal, and AoE only starts Pax in a tmux pane on a POSIX system.
         candidate = sys.platform != 'win32' and bool(os.environ.get('TMUX')) and bool(self.pane)
         self.reporter = _Reporter(host=host) if candidate and host.console.is_terminal else None
         if self.reporter is not None:
