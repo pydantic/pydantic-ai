@@ -259,12 +259,29 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
 _INSTALL = 'install -y -qq --no-install-recommends xvfb xdotool x11-utils scrot util-linux'
 
 # The fake docker hides a program only from its own bin directory, so a host that has it would skip the install.
-_host_without_display_programs = pytest.mark.skipif(
-    bool(shutil.which('xdotool') or shutil.which('scrot')), reason='the host has xdotool or scrot on PATH'
+_HOST_TOOLS = (
+    'base64',
+    'cat',
+    'cp',
+    'dirname',
+    'env',
+    'grep',
+    'mkdir',
+    'mv',
+    'rm',
+    'sleep',
+    'tail',
+    'touch',
+    'tr',
+    'true',
 )
+"""The host programs the start script and the fakes use, for `hide_host_programs`."""
 
 
-@_host_without_display_programs
+def _hide_host_programs(docker: FakeDocker) -> None:
+    docker.hide_host_programs(*_HOST_TOOLS, *(['flock'] if shutil.which('flock') else []))
+
+
 @pytest.mark.parametrize(('uid', 'sudo'), [(0, ''), (1000, 'sudo ')])
 async def test_missing_display_programs_are_installed_on_first_use(
     docker: FakeDocker, container_dir: Path, uid: int, sudo: str
@@ -272,27 +289,28 @@ async def test_missing_display_programs_are_installed_on_first_use(
     # A user other than root installs with passwordless sudo; root installs without it.
     docker.remove_display()
     docker.uninstall('xdotool', 'scrot')
+    _hide_host_programs(docker)
     docker.run_as(uid, sudo=uid != 0)
 
     assert await screen(_desktop(container_dir, image='my-desktop')).display_size() == (1280, 800)
     assert docker.apt_get_calls == [f'{sudo}update -qq', f'{sudo}{_INSTALL}']
 
 
-@_host_without_display_programs
 async def test_a_program_missing_beside_a_running_display_is_installed(docker: FakeDocker, container_dir: Path) -> None:
     docker.uninstall('scrot')
+    _hide_host_programs(docker)
     docker.run_as(0)
 
     assert await screen(_desktop(container_dir, image='my-desktop')).screenshot() == FAKE_SCREENSHOT
     assert docker.apt_get_calls == ['update -qq', _INSTALL]
 
 
-@_host_without_display_programs
 async def test_missing_display_programs_without_root_say_what_is_missing(
     docker: FakeDocker, container_dir: Path
 ) -> None:
     docker.remove_display()
     docker.uninstall('xdotool', 'scrot')
+    _hide_host_programs(docker)
 
     with pytest.raises(
         WorkspaceUnavailableError, match="the display needs xdotool scrot, and there's no root or passwordless sudo"
@@ -316,14 +334,6 @@ async def test_missing_display_programs_without_apt_get_say_what_is_missing(
         WorkspaceUnavailableError, match="the display needs xdotool, and there's no apt-get to install them with"
     ):
         await screen(backend).screenshot()
-
-
-_HOST_TOOLS = ('base64', 'cat', 'cp', 'dirname', 'env', 'grep', 'mkdir', 'mv', 'rm', 'sleep', 'tail', 'touch', 'tr')
-"""The host programs the start script and the fakes use, for `hide_host_programs`."""
-
-
-def _hide_host_programs(docker: FakeDocker) -> None:
-    docker.hide_host_programs(*_HOST_TOOLS, *(['flock'] if shutil.which('flock') else []))
 
 
 async def test_a_running_x_server_needs_no_xvfb(docker: FakeDocker, container_dir: Path) -> None:
@@ -373,7 +383,6 @@ async def test_a_desktop_log_that_isnt_a_file_still_starts_the_desktop(
     assert docker.panel_starts == 1
 
 
-@_host_without_display_programs
 async def test_a_desktop_program_the_package_lists_lack_leaves_the_display_working(
     docker: FakeDocker, container_dir: Path
 ) -> None:
@@ -389,13 +398,13 @@ async def test_a_desktop_program_the_package_lists_lack_leaves_the_display_worki
     assert docker.panel_starts == 0
 
 
-@_host_without_display_programs
 async def test_a_running_x_server_gets_no_xvfb_installed(docker: FakeDocker, container_dir: Path) -> None:
     backend = _desktop(container_dir, image='my-desktop')
     await backend.working_dir()
     assert backend.ref is not None
     docker.leave_x_lock(backend.ref.id, owner='Xvnc')
     docker.uninstall('scrot')
+    _hide_host_programs(docker)
     docker.run_as(0)
 
     assert await screen(backend).screenshot() == FAKE_SCREENSHOT
@@ -430,6 +439,8 @@ async def test_the_desktop_settings_are_written_for_the_user_unless_present(
     # New windows fill the screen, the panel aside.
     assert (home / '.fluxbox' / 'apps').read_text() == '[app] (class!=Tint2)\n  [Maximized] {yes}\n[end]\n'
     assert (home / '.config' / 'tint2' / 'tint2rc').read_text() == 'panel_position = top\n'
+    # The terminal uses a large, clear font, however it's opened.
+    assert (home / '.Xdefaults').read_text() == 'XTerm*faceName: Monospace\nXTerm*faceSize: 14\n'
 
 
 async def test_the_panel_settings_go_where_tint2_reads_them(
@@ -444,10 +455,10 @@ async def test_the_panel_settings_go_where_tint2_reads_them(
     assert 'panel_position = bottom left horizontal' in (config / 'tint2' / 'tint2rc').read_text().splitlines()
 
 
-@_host_without_display_programs
 async def test_a_failed_install_says_why(docker: FakeDocker, container_dir: Path) -> None:
     docker.remove_display()
     docker.uninstall('xdotool')
+    _hide_host_programs(docker)
     docker.run_as(0)
     docker.fail_installs()
 
