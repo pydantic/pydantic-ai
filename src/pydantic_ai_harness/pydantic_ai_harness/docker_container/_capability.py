@@ -9,6 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace import with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_path_authority,
@@ -88,6 +89,7 @@ class DockerContainer(AbstractCapability[AgentDepsT]):
         reject_defer_loading('DockerContainer', self.defer_loading)
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
+        desktop_size(self.desktop)
         self._executable_path = resolve_executable(self.executable)
 
     def backend(self, ref: WorkspaceRef) -> DockerContainerBackend:

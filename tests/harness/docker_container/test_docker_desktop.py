@@ -294,6 +294,11 @@ def test_a_desktop_size_must_be_a_width_and_height_of_at_least_1(desktop: tuple[
         DockerContainerBackend(desktop=desktop)
 
 
+def test_a_desktop_size_is_checked_when_the_capability_is_created() -> None:
+    with pytest.raises(UserError, match=r'`desktop` must be a `\(width, height\)` of at least 1 pixel each'):
+        DockerContainer(desktop=(0, 800))
+
+
 def test_a_desktop_sandbox_reattaches_with_its_display(docker: FakeDocker) -> None:
     ref = WorkspaceRef(provider='docker', id='pydantic-ai-abc')
 
