@@ -1,8 +1,19 @@
 """The models Anthropic and OpenAI have deprecated on their own APIs, for `ModelProfile.deprecation`.
 
-Each table is keyed by every id the API accepts for a model, aliases included, and each entry cites the provider's
-announcement. A platform that serves the same models on a schedule of its own, such as Amazon Bedrock or Azure, is
-not covered. Compiled from the providers' deprecation pages as fetched on 2026-11-19.
+Compiled from the providers' deprecation pages as fetched on 2026-11-19. This file is the source of truth: edit it by
+hand when a provider announces a deprecation, following `.agents/skills/add-new-model/SKILL.md`. Each entry follows
+these rules:
+
+- Add a model only when the provider's notice gives it a deprecation or retirement date. A model the notice doesn't
+  date gets no entry, such as the bare `gpt-4o` alias, whose dated snapshots are listed instead.
+- Cover only the schedule the provider sets for its own API: the Claude API for Anthropic, Chat Completions and
+  Responses for OpenAI. A platform that serves the same models on a schedule of its own, such as Amazon Bedrock or
+  Azure, is not covered.
+- Key the entry by every id the API accepts for the model, aliases included.
+- Set `source_url` to the section of the provider's page that lists the model.
+- Set `replacement` to the first model id the notice recommends, or leave it `None` when the notice names none. A
+  qualifier the notice adds, such as a reasoning mode, stays on the linked page.
+- Keep an entry after its retirement date: the warning then explains the request's failure.
 """
 
 from __future__ import annotations as _annotations
