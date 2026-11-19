@@ -409,6 +409,30 @@ async def test_a_desktop_program_the_package_lists_lack_leaves_the_display_worki
     assert docker.panel_starts == 0
 
 
+async def test_a_failed_update_for_the_desktop_alone_is_kept_in_the_desktop_log(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    # Only the panel is missing, so the update is the desktop's, and starting Xvfb must not wipe why it failed.
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    docker.remove_display()
+    docker.uninstall('tint2')
+    _hide_host_programs(docker)
+    docker.run_as(0)
+    docker.fail_updates()
+    docker.lack_packages('tint2')
+
+    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert docker.apt_get_calls == ['update -qq', 'install -y -qq --no-install-recommends tint2']
+    assert docker.panel_starts == 0
+    log = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop.log'
+    assert log.read_text().splitlines() == [
+        'E: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease',
+        'E: Unable to locate package tint2',
+    ]
+
+
 async def test_a_running_x_server_gets_no_xvfb_installed(docker: FakeDocker, container_dir: Path) -> None:
     backend = _desktop(container_dir, image='my-desktop')
     await backend.working_dir()
