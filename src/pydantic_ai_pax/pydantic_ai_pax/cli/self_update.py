@@ -12,7 +12,6 @@ On Windows, which locks the files of a running program, the install runs in a ne
 CLAI exits.
 """
 
-import base64
 import os
 import re
 import secrets
@@ -236,11 +235,24 @@ def install_after_exit(
     environ: Mapping[str, str] = os.environ,
     start: Callable[[Sequence[str]], None] = _start_detached,
 ) -> None:
-    """Run `script` in a new console with Windows PowerShell, found by full path rather than a `PATH` search."""
+    """Run `script` in a new console with Windows PowerShell, found by full path rather than a `PATH` search.
+
+    The script goes in a private temporary file that PowerShell reads and deletes, not on its command line,
+    where antivirus software flags an `-EncodedCommand` launch.
+    """
     root = environ.get('SystemRoot', r'C:\Windows')
     executable = f'{root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
-    encoded = base64.b64encode(script.encode('utf-16-le')).decode('ascii')
-    start([executable, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded])
+    # UTF-8 with a BOM, which Windows PowerShell needs to read anything but ASCII.
+    descriptor, name = tempfile.mkstemp(prefix='clai2-update-', suffix='.ps1')
+    with os.fdopen(descriptor, 'w', encoding='utf-8-sig') as file:
+        file.write(script)
+    path = name.replace("'", "''")
+    bootstrap = f"$s = [IO.File]::ReadAllText('{path}'); [IO.File]::Delete('{path}'); & ([ScriptBlock]::Create($s))"
+    try:
+        start([executable, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', bootstrap])
+    except BaseException:
+        os.unlink(name)
+        raise
 
 
 @dataclass(frozen=True, kw_only=True)

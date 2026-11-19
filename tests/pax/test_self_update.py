@@ -1,11 +1,12 @@
 """`/update`: release lookup, install commands, the footer notice, and the shell exit after an install."""
 
 import argparse
-import base64
+import codecs
 import json
 import os
 import shlex
 import sys
+import tempfile
 import threading
 from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
@@ -606,20 +607,41 @@ def test_after_exit_script(tmp_path: Path) -> None:
     assert 'Remove-Item' not in after_exit_script(['uv'], pid=42, overrides=None)
 
 
-def test_install_after_exit_starts_windows_powershell() -> None:
+def test_install_after_exit_starts_windows_powershell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The script goes in a file PowerShell deletes once read, not on the command line, where antivirus flags it."""
+    temp = tmp_path / "o'temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, 'tempdir', str(temp))
     started: list[Sequence[str]] = []
     install_after_exit('Write-Host é', environ={'SystemRoot': r'D:\Win'}, start=started.append)
     [argv] = started
-    assert argv[:5] == [
+    [script] = temp.iterdir()
+    path = str(script).replace("'", "''")
+    assert argv == [
         r'D:\Win\System32\WindowsPowerShell\v1.0\powershell.exe',
         '-NoProfile',
         '-ExecutionPolicy',
         'Bypass',
-        '-EncodedCommand',
+        '-Command',
+        f"$s = [IO.File]::ReadAllText('{path}'); [IO.File]::Delete('{path}'); & ([ScriptBlock]::Create($s))",
     ]
-    assert base64.b64decode(argv[5]).decode('utf-16-le') == 'Write-Host é'
+    # UTF-8 with a BOM, which Windows PowerShell needs to read anything but ASCII.
+    assert script.read_bytes() == codecs.BOM_UTF8 + 'Write-Host é'.encode()
     install_after_exit('', environ={}, start=started.append)
     assert started[1][0] == r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+
+
+def test_install_after_exit_removes_the_script_when_powershell_cannot_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path))
+
+    def fail(argv: Sequence[str]) -> None:
+        raise FileNotFoundError(argv[0])
+
+    with pytest.raises(FileNotFoundError):
+        install_after_exit('Write-Host hi', start=fail)
+    assert list(tmp_path.iterdir()) == []
 
 
 async def test_windows_hands_the_install_off_and_exits() -> None:

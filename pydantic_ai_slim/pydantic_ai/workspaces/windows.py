@@ -6,7 +6,6 @@ subprocesses in PowerShell -- it **isolates nothing**.
 
 from __future__ import annotations as _annotations
 
-import base64
 import errno
 import functools
 import ntpath
@@ -14,7 +13,9 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from pathlib import Path
 from subprocess import DEVNULL, PIPE
 
@@ -53,9 +54,6 @@ _INHERITED_ENV = (
 )
 """Not secrets, and without them PowerShell, `git` and most tools fail to start or miss the user's configuration."""
 
-_MAX_COMMAND_LINE = 32_767
-"""Characters `CreateProcess` accepts in one command line, the program's own name included."""
-
 _PREAMBLE = (
     "$ProgressPreference = 'SilentlyContinue'\n"
     'try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch {}\n'
@@ -90,17 +88,38 @@ def powershell_script(script: str) -> str:
     return f'{_PREAMBLE}{script}{_EPILOGUE}'
 
 
-def _powershell_command(executable: str, script: str) -> list[str]:
-    """The argv that runs `script` in PowerShell, exiting with its last native command's code.
+def _write_script(script: str) -> str:
+    """The path of a new `.ps1` holding `powershell_script(script)`, in this user's temporary directory.
 
-    The script is passed as `-EncodedCommand`, so no quoting rule of `CreateProcess` or PowerShell
-    applies to it. Raises `OSError(E2BIG)` when the encoded script is too long for one command line.
+    `mkstemp` creates it for this user alone, as the script may hold secrets. UTF-8 with a BOM, which Windows
+    PowerShell needs to read anything but ASCII.
     """
-    encoded = base64.b64encode(powershell_script(script).encode('utf-16-le')).decode('ascii')
-    argv = [executable, *_POWERSHELL_FLAGS, '-EncodedCommand', encoded]
-    if len(subprocess.list2cmdline(argv)) >= _MAX_COMMAND_LINE:
-        raise OSError(errno.E2BIG, 'the PowerShell command is too long for one Windows command line')
-    return argv
+    fd, path = tempfile.mkstemp(prefix='pydantic-ai-', suffix='.ps1')
+    with open(fd, 'w', encoding='utf-8-sig', newline='') as file:
+        file.write(powershell_script(script))
+    return path
+
+
+def _remove_script(path: str) -> None:
+    # An antivirus scan can hold the file open for a moment; a leftover in the temporary directory is harmless.
+    with suppress(OSError):
+        os.unlink(path)
+
+
+def _powershell_command(executable: str, script_path: str) -> list[str]:
+    """The argv that runs the script at `script_path` in PowerShell.
+
+    The script stays off the command line: antivirus software flags an `-EncodedCommand` launch, and one
+    command line holds only about 12,000 characters of an encoded script. PowerShell reads the file as text
+    rather than running it with `-File`, so no execution policy, Group Policy's included, applies to it.
+    """
+    literal = script_path.replace("'", "''")
+    return [
+        executable,
+        *_POWERSHELL_FLAGS,
+        '-Command',
+        f"& ([ScriptBlock]::Create([IO.File]::ReadAllText('{literal}')))",
+    ]
 
 
 class _JobObjects:
@@ -227,6 +246,8 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
         self._powershell = powershell
         # Keyed by PID: each command's Job Object, from its start until it is reaped.
         self._jobs: dict[int, int] = {}
+        # Keyed by PID: each `shell=True` command's script file, from its start until it is reaped.
+        self._scripts: dict[int, str] = {}
 
     @property
     def workspace_platform(self) -> WorkspacePlatform:
@@ -252,19 +273,28 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
         return await self._run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
 
     async def _spawn(self, command: WorkspaceCommand, working_dir: Path, env: Mapping[str, str]) -> anyio.abc.Process:
-        if isinstance(command, str):
-            # Both search `PATH` on disk, so not on the event loop.
-            command = _powershell_command(await run_in_executor(self._executable), command)
-        command = await run_in_executor(_resolve_program, command, env)
-        process = await anyio.open_process(
-            command,
-            cwd=working_dir,
-            env=env,
-            stdin=DEVNULL,
-            stdout=PIPE,
-            stderr=PIPE,
-            creationflags=_CREATE_NEW_PROCESS_GROUP,
-        )
+        script_path: str | None = None
+        try:
+            if isinstance(command, str):
+                # Disk I/O and a `PATH` search, so not on the event loop.
+                script_path = await run_in_executor(_write_script, command)
+                command = _powershell_command(await run_in_executor(self._executable), script_path)
+            command = await run_in_executor(_resolve_program, command, env)
+            process = await anyio.open_process(
+                command,
+                cwd=working_dir,
+                env=env,
+                stdin=DEVNULL,
+                stdout=PIPE,
+                stderr=PIPE,
+                creationflags=_CREATE_NEW_PROCESS_GROUP,
+            )
+        except BaseException:
+            if script_path is not None:
+                await run_in_executor(_remove_script, script_path)
+            raise
+        if script_path is not None:
+            self._scripts[process.pid] = script_path
         if (job := _job_objects().assign(process.pid)) is not None:  # pragma: no branch
             self._jobs[process.pid] = job
         return process
@@ -287,6 +317,8 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
             # Closing the handle leaves the processes running: a background job outlives a command that returned.
             if (job := self._jobs.pop(process.pid, None)) is not None:  # pragma: no branch
                 _job_objects().close(job)
+            if (script_path := self._scripts.pop(process.pid, None)) is not None:
+                await run_in_executor(_remove_script, script_path)
 
     @staticmethod
     def _path(path: str) -> Path:
