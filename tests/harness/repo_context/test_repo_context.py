@@ -36,6 +36,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, Workspace
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction import SummarizingCompaction
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.repo_context import (
@@ -1141,8 +1142,9 @@ class TestNestedTraversal:
             pytest.param('file', id='symlinked-file-whose-parent-resolves-outside'),
         ],
     )
+    @pytest.mark.parametrize('detection', [pytest.param('events', id='events'), pytest.param('sniffer', id='sniffer')])
     async def test_a_symlink_in_the_path_does_not_surface_files_outside_the_working_directory(
-        self, tmp_path: Path, via: Literal['directory', 'file']
+        self, tmp_path: Path, via: Literal['directory', 'file'], detection: Literal['events', 'sniffer']
     ) -> None:
         _write(tmp_path / 'AGENTS.md', 'OUTSIDE BODY')
         repo = tmp_path / 'repo'
@@ -1167,7 +1169,16 @@ class TestNestedTraversal:
             else:
                 yield 'done'
 
-        repo_context = RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents')
+        if detection == 'events':
+            repo_context = RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents')
+        else:
+            with pytest.warns(HarnessDeprecationWarning):
+                repo_context = RepoContext(
+                    autoload_instructions=False,
+                    nested_traversal=True,
+                    nested_inject='contents',
+                    traversal_tool_names=frozenset({'read_file'}),
+                )
         result = await Agent(
             FunctionModel(stream_function=stream), capabilities=[FileSystem(root_dir=repo), repo_context]
         ).run('go', workspace=LocalWorkspaceBackend(working_dir=repo))
@@ -1693,6 +1704,41 @@ class TestNestedTraversal:
             ],
         ).run('go', workspace=LocalWorkspaceBackend(working_dir=workspace))
 
+    @pytest.mark.parametrize('remove_before_return', [False, True])
+    async def test_customized_sniff_fallback_warns_and_supports_non_event_tool(
+        self, tmp_path: Path, remove_before_return: bool
+    ) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='list_dir', json_args='{"target":"sub"}', tool_call_id='list')}
+            else:
+                assert len(_repo_notes(messages)) == (0 if remove_before_return else 1)
+                yield 'done'
+
+        def list_dir(target: str) -> list[dict[str, str]]:
+            if remove_before_return:
+                (tmp_path / target / 'AGENTS.md').unlink()
+                (tmp_path / target).rmdir()
+            return [{'name': 'AGENTS.md'}, {'name': 'one.py'}]
+
+        with pytest.warns(
+            HarnessDeprecationWarning,
+            match='Traversal detection now reacts to `FileReadEvent`, `DirectoryListedEvent` and `FileWrittenEvent`',
+        ):
+            capability = RepoContext(
+                autoload_instructions=False,
+                expose_inventory_tool=False,
+                nested_traversal=True,
+                traversal_tool_names=frozenset({'list_dir'}),
+                traversal_path_arg='target',
+            )
+
+        await Agent(FunctionModel(stream_function=stream), capabilities=[capability], tools=[list_dir]).run(
+            'go', workspace=LocalWorkspaceBackend(working_dir=tmp_path)
+        )
+
     async def test_traversal_into_a_directory_without_a_context_file_enqueues_nothing(self, tmp_path: Path) -> None:
         _write(tmp_path / 'sub' / 'one.py', 'one')
 
@@ -1714,6 +1760,99 @@ class TestNestedTraversal:
                 ),
             ],
         ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+
+    async def test_customized_sniff_ignores_a_non_string_path_and_accepts_an_absolute_one(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            returns = _tool_returns(messages)
+            if returns == 0:
+                yield {0: DeltaToolCall(name='list_dir', json_args='{"target":7}', tool_call_id='bad')}
+            elif returns == 1:
+                assert _repo_notes(messages) == []
+                args = json.dumps({'target': str(tmp_path / 'sub')})
+                yield {0: DeltaToolCall(name='list_dir', json_args=args, tool_call_id='abs')}
+            else:
+                assert len(_repo_notes(messages)) == 1
+                yield 'done'
+
+        def list_dir(target: object) -> str:
+            return 'listed'
+
+        with pytest.warns(HarnessDeprecationWarning, match='Traversal detection now reacts'):
+            capability = RepoContext(
+                autoload_instructions=False,
+                expose_inventory_tool=False,
+                nested_traversal=True,
+                traversal_tool_names=frozenset({'list_dir'}),
+                traversal_path_arg='target',
+            )
+
+        await Agent(FunctionModel(stream_function=stream), capabilities=[capability], tools=[list_dir]).run(
+            'go', workspace=LocalWorkspaceBackend(working_dir=tmp_path)
+        )
+
+    async def test_customized_sniff_labels_a_context_file_outside_the_workspace(self, tmp_path: Path) -> None:
+        workspace = tmp_path / 'workspace'
+        workspace.mkdir()
+        outside = _write(tmp_path / 'outside' / 'AGENTS.md', 'OUTSIDE BODY')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                args = json.dumps({'target': str(outside.parent)})
+                yield {0: DeltaToolCall(name='list_dir', json_args=args, tool_call_id='out')}
+            else:
+                notes = _repo_notes(messages)
+                assert len(notes) == 1
+                assert outside.as_posix() in notes[0]
+                yield 'done'
+
+        def list_dir(target: object) -> str:
+            return 'listed'
+
+        with pytest.warns(HarnessDeprecationWarning, match='Traversal detection now reacts'):
+            capability = RepoContext(
+                autoload_instructions=False,
+                expose_inventory_tool=False,
+                nested_traversal=True,
+                traversal_tool_names=frozenset({'list_dir'}),
+                traversal_path_arg='target',
+            )
+
+        await Agent(FunctionModel(stream_function=stream), capabilities=[capability], tools=[list_dir]).run(
+            'go', workspace=LocalWorkspaceBackend(working_dir=workspace)
+        )
+
+    async def test_customized_sniff_labels_an_ancestor_context_file_relatively(self, tmp_path: Path) -> None:
+        workspace = tmp_path / 'workspace'
+        workspace.mkdir()
+        _write(tmp_path / 'AGENTS.md', 'PARENT BODY')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='list_dir', json_args='{"target":".."}', tool_call_id='up')}
+            else:
+                yield 'done'
+
+        def list_dir(target: object) -> str:
+            return 'listed'
+
+        with pytest.warns(HarnessDeprecationWarning, match='Traversal detection now reacts'):
+            capability = RepoContext(
+                autoload_instructions=False,
+                expose_inventory_tool=False,
+                nested_traversal=True,
+                nested_inject='contents',
+                traversal_tool_names=frozenset({'list_dir'}),
+                traversal_path_arg='target',
+            )
+
+        result = await Agent(FunctionModel(stream_function=stream), capabilities=[capability], tools=[list_dir]).run(
+            'go', workspace=LocalWorkspaceBackend(working_dir=workspace)
+        )
+        assert _repo_notes(result.all_messages()) == snapshot(
+            ['<context_file path="../AGENTS.md">PARENT BODY</context_file>']
+        )
 
 
 class TestForRunAndMisc:

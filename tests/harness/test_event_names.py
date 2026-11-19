@@ -1,7 +1,10 @@
-"""Harness `CapabilityEvent` class and field names: the wire kinds and keys a rename must keep."""
+"""Harness `CapabilityEvent` class and field names: the deprecated aliases, and the wire kinds and keys a rename must keep."""
 
 from __future__ import annotations
 
+import importlib
+import re
+import warnings
 from types import ModuleType
 
 import pytest
@@ -12,6 +15,7 @@ import pydantic_ai_harness.shell as shell
 import pydantic_ai_harness.step_persistence as step_persistence
 import pydantic_ai_harness.sub_agents as sub_agents
 from pydantic_ai import AgentStreamEvent, CapabilityEvent
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.code_mode import (
     SpeculativeCallLaunchedEvent,
     SpeculativeCallMissedEvent,
@@ -27,31 +31,49 @@ from pydantic_ai_harness.planning import (
 )
 
 
+def _renamed_module(name: str) -> ModuleType:
+    """The deprecated shim at `pydantic_ai_harness.<name>`, which keeps the old event names."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', HarnessDeprecationWarning)
+        return importlib.import_module(f'pydantic_ai_harness.{name}')
+
+
+old_filesystem = _renamed_module('filesystem')
+old_subagents = _renamed_module('subagents')
+
+
 @pytest.mark.parametrize(
     ('module', 'old_name', 'new_name', 'kind'),
     [
-        (file_system, 'FileChangeRequestEvent', 'FileChangeRequestedEvent', 'file_system.file_change_request'),
+        (old_filesystem, 'FileChangeRequestEvent', 'FileChangeRequestedEvent', 'file_system.file_change_request'),
         (step_persistence, 'SnapshotSaved', 'SnapshotSavedEvent', 'step_persistence.snapshot_saved'),
-        (sub_agents, 'DelegationStartEvent', 'DelegationStartedEvent', 'sub_agents.delegation_start'),
-        (sub_agents, 'DelegationEndEvent', 'DelegationFinishedEvent', 'sub_agents.delegation_end'),
-        (sub_agents, 'SubAgentMessage', 'SubAgentMessageEvent', ''),
-        (sub_agents, 'ParentMessage', 'ParentMessageEvent', ''),
-        (sub_agents, 'ChildMessage', 'ChildMessageEvent', ''),
-        (sub_agents, 'TaskFollowUpEvent', 'TaskResumedEvent', 'sub_agents.task_follow_up'),
-        (sub_agents, 'TaskMessageEvent', 'TaskSteeredEvent', 'sub_agents.task_message'),
-        (sub_agents, 'TaskAnswerEvent', 'TaskAnsweredEvent', 'sub_agents.task_answer'),
-        (sub_agents, 'TaskCancelRequestEvent', 'TaskCancelRequestedEvent', 'sub_agents.task_cancel_request'),
-        (sub_agents, 'TaskForceCancelEvent', 'TaskForceCancelRequestedEvent', 'sub_agents.task_force_cancel'),
-        (sub_agents, 'TaskQuestionEvent', 'TaskQuestionAskedEvent', 'sub_agents.task_question'),
-        (sub_agents, 'TaskRetryEvent', 'TaskRetriedEvent', 'sub_agents.task_retry'),
+        (old_subagents, 'DelegationStartEvent', 'DelegationStartedEvent', 'sub_agents.delegation_start'),
+        (old_subagents, 'DelegationEndEvent', 'DelegationFinishedEvent', 'sub_agents.delegation_end'),
+        (old_subagents, 'SubAgentMessage', 'SubAgentMessageEvent', ''),
+        (old_subagents, 'ParentMessage', 'ParentMessageEvent', ''),
+        (old_subagents, 'ChildMessage', 'ChildMessageEvent', ''),
+        (old_subagents, 'TaskFollowUpEvent', 'TaskResumedEvent', 'sub_agents.task_follow_up'),
+        (old_subagents, 'TaskMessageEvent', 'TaskSteeredEvent', 'sub_agents.task_message'),
+        (old_subagents, 'TaskAnswerEvent', 'TaskAnsweredEvent', 'sub_agents.task_answer'),
+        (old_subagents, 'TaskCancelRequestEvent', 'TaskCancelRequestedEvent', 'sub_agents.task_cancel_request'),
+        (old_subagents, 'TaskForceCancelEvent', 'TaskForceCancelRequestedEvent', 'sub_agents.task_force_cancel'),
+        (old_subagents, 'TaskQuestionEvent', 'TaskQuestionAskedEvent', 'sub_agents.task_question'),
+        (old_subagents, 'TaskRetryEvent', 'TaskRetriedEvent', 'sub_agents.task_retry'),
     ],
 )
-def test_renamed_event_keeps_its_old_kind(module: ModuleType, old_name: str, new_name: str, kind: str) -> None:
-    """The old class name is gone, but the wire kind is unchanged. An abstract event has no kind, which is the empty string."""
-    assert getattr(module, new_name).kind == kind
+def test_renamed_event_keeps_its_old_name_and_kind(module: ModuleType, old_name: str, new_name: str, kind: str) -> None:
+    """An abstract event has no kind, which is the empty string."""
+    event_type = getattr(module, new_name)
+    new_module = {old_filesystem: file_system, old_subagents: sub_agents}.get(module, module)
+    message = (
+        f'`{module.__name__}.{old_name}` has been renamed to `{new_module.__name__}.{new_name}`. '
+        'Update your imports; this deprecated alias will be removed in a future release.'
+    )
+    with pytest.warns(HarnessDeprecationWarning, match=re.escape(message)):
+        assert getattr(module, old_name) is event_type
+    assert event_type.kind == kind
     assert new_name in module.__all__
     assert old_name not in module.__all__
-    assert not hasattr(module, old_name)
 
 
 def test_derived_kinds_are_unchanged() -> None:
@@ -134,6 +156,7 @@ _PREVIOUS = PlanItem(id='step-1', content='draft')
                 truncated=False,
                 model=None,
                 parent_task_id='parent',
+                inherits_tools=False,
             ),
             'parent_id',
             'parent_task_id',
@@ -172,10 +195,11 @@ def test_renamed_field(event: CapabilityEvent, old: str, new: str) -> None:
     payload[old] = payload.pop(new)
     assert _EVENTS.validate_python(payload) == event
 
-    assert not hasattr(event, old)
+    with pytest.warns(HarnessDeprecationWarning, match=f'`{old}` is deprecated, use `{new}` instead'):
+        assert getattr(event, old) == getattr(event, new)
 
 
-def test_delegation_duration_seconds_payload_still_loads() -> None:
+def test_delegation_duration_seconds() -> None:
     event = sub_agents.DelegationFinishedEvent(
         agent_name='worker', outcome='ok', output='done', truncated=False, usage=None, duration_ms=1500
     )
@@ -186,4 +210,6 @@ def test_delegation_duration_seconds_payload_still_loads() -> None:
     assert _EVENTS.validate_python({**payload, 'duration_seconds': 9}) == event
     del payload['duration_ms']
     assert _EVENTS.validate_python({**payload, 'duration_seconds': 1.5}) == event
-    assert not hasattr(event, 'duration_seconds')
+
+    with pytest.warns(HarnessDeprecationWarning, match='`duration_seconds` is deprecated, use `duration_ms` instead'):
+        assert event.duration_seconds == 1.5  # pyright: ignore[reportDeprecated]

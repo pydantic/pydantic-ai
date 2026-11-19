@@ -44,7 +44,9 @@ def test_start_row_is_styled_like_a_tool_call() -> None:
     from pydantic_ai_harness.sub_agents import DelegationStartedEvent
     from pydantic_clai2.runtime.tasks import task_row
 
-    event = DelegationStartedEvent(agent_name='self', task='count\nthe files', truncated=False, model=None)
+    event = DelegationStartedEvent(
+        agent_name='self', task='count\nthe files', truncated=False, inherits_tools=True, model=None
+    )
     event.task_id = 'abcdef0123'
     row = task_row(event)
     assert row is not None
