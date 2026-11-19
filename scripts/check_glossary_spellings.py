@@ -20,6 +20,8 @@ _FENCED_BLOCK = re.compile(r'^[ \t]*(`{3,}|~{3,})[^\n]*\n.*?^[ \t]*\1[ \t]*$', r
 _CODE_SPAN = re.compile(r'(`+)(?:(?!\n[ \t]*\n)[\s\S])+?\1')
 _LINK_TARGET = re.compile(r'\]\([^)\n]*\)')
 _SPELLINGS_ROW = re.compile(r'^\|\s*([^|`]+?)\s*\|\s*(`.+`)\s*\|\s*$')
+# The words of a spelling may sit on two lines when the prose wraps.
+_WORD_GAP = r'(?:[ \t]*\n[ \t]*|[ \t]+)'
 
 
 def _blank(match: re.Match[str]) -> str:
@@ -41,7 +43,8 @@ def main() -> int:
             in_spellings = line == '## Spellings'
         elif in_spellings and (row := _SPELLINGS_ROW.match(line)):
             for spelling in re.findall(r'`([^`]+)`', row[2]):
-                rejected[re.compile(rf'(?<![\w/-]){re.escape(spelling)}(?![\w/-]|\.\w)', re.IGNORECASE)] = row[1]
+                words = _WORD_GAP.join(re.escape(word) for word in spelling.split())
+                rejected[re.compile(rf'(?<![\w/-]){words}(?![\w/-]|\.\w)', re.IGNORECASE)] = row[1]
     if not rejected:
         print(f'{args.glossary}: no "## Spellings" table rows found', file=sys.stderr)
         return 1
@@ -51,11 +54,14 @@ def main() -> int:
         text = path.read_text()
         for pattern in (_FENCED_BLOCK, _CODE_SPAN, _LINK_TARGET):
             text = pattern.sub(_blank, text)
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            for pattern, term in rejected.items():
-                for match in pattern.finditer(line):
-                    print(f'{path}:{lineno}: write "{term}", not "{match[0]}" ({args.glossary} → Spellings)')
-                    failed = True
+        found = sorted(
+            (text.count('\n', 0, match.start()) + 1, ' '.join(match[0].split()), term)
+            for pattern, term in rejected.items()
+            for match in pattern.finditer(text)
+        )
+        for lineno, spelling, term in found:
+            print(f'{path}:{lineno}: write "{term}", not "{spelling}" ({args.glossary} → Spellings)')
+            failed = True
     return 1 if failed else 0
 
 

@@ -31,8 +31,8 @@ A **hosted** review runs on GitHub against the pushed head. A **local** review r
 - **guardrail** — a capability that validates inputs or outputs, or controls tool access, such as
   `InputGuardrail` or `OutputGuardrail`.
 - **harness** — a program with an interface that runs an agent, such as pax, Claude Code or Codex. The harness
-  that runs you loads these files. A capability composition such as `Coder` is a harness once it has an
-  interface. Until then, it is a harness in development.
+  that runs you loads these files. A capability composition such as `Coder` is a harness too. Until it has an
+  interface, it is a harness in development.
 - **harness SDK** — the `pydantic-ai-harness` package in `src/pydantic_ai_harness/`, released as Pydantic AI
   Harness. In agent instructions, write "the harness SDK" for the package, such as the harness SDK's `SubAgents`.
   Keep product names and user docs as they are. In the files under `src/pydantic_ai_harness/`,

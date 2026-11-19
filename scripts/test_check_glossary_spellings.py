@@ -40,12 +40,15 @@ def test_rejects_a_spelling_in_prose(
     tmp_path: Path, glossary: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
     doc = tmp_path / 'AGENTS.md'
-    doc.write_text('Use the Policy-base checkout.\nAn obviously trivial S PR; a trivial Something.\n')
+    doc.write_text(
+        'Use the Policy-base checkout.\nAn obviously trivial S PR; a trivial Something.\nThe merge bar exempts a trivial\n  S PR from douwebot.\n'
+    )
     assert _run(monkeypatch, '--glossary', glossary, doc) == 1
     assert capsys.readouterr().out.replace(str(tmp_path), '<tmp>') == snapshot(
         """\
 <tmp>/AGENTS.md:1: write "policy base", not "Policy-base" (<tmp>/GLOSSARY.md → Spellings)
 <tmp>/AGENTS.md:2: write "trivial-S", not "trivial S" (<tmp>/GLOSSARY.md → Spellings)
+<tmp>/AGENTS.md:3: write "trivial-S", not "trivial S" (<tmp>/GLOSSARY.md → Spellings)
 """
     )
 
