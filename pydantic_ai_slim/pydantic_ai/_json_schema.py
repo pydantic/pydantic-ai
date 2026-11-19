@@ -433,8 +433,8 @@ class JsonSchemaTransformer(ABC):
         Each `$defs` `$ref` under a keyword the walk doesn't enter is written out in place by `UnwalkedRefWriter`: in
         the schema before the walk, and in each definition as the walk reaches it. A recursive one stays, and the
         definition it points at goes under `$defs`. Writing out counts toward `MAX_INLINED_SCHEMA_VALUES` like
-        inlining does. A schema whose writing out raises, the limit included, keeps `walked`, which the first pass
-        produced without raising.
+        inlining does. A schema whose writing out passes that limit, or raises `RecursionError` on a long chain of
+        definitions, keeps `walked`, which the first pass produced without raising. Any other raise propagates.
         """
         schema = self.schema
         recursive_refs, is_strict_compatible = set(self.recursive_refs), self.is_strict_compatible
@@ -443,9 +443,9 @@ class JsonSchemaTransformer(ABC):
         try:
             self.schema = writer.write_out({k: v for k, v in schema.items() if k != '$defs'}, unwalked=False)
             rewalked = self._walk_schema()
-        # Any raise, such as a `RecursionError` on a long chain of definitions the first pass never entered: the
-        # second pass must not fail a schema the first one walked.
-        except Exception:
+        # The value limit's `UserError`, or a `RecursionError` on a long chain of definitions the first pass never
+        # entered: the second pass must not fail a schema the first one walked.
+        except (UserError, RecursionError):
             self.recursive_refs, self.is_strict_compatible = recursive_refs, is_strict_compatible
             self.refs_stack.clear()
             return walked
