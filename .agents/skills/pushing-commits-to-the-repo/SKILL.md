@@ -559,6 +559,10 @@ if the head changes, capture the new SHA and restart the loop.
      complete the current-HEAD gates in steps 2 and 3. Then reply with what changed, react 👍,
      and resolve the thread.
      On an inline finding from a review bot, start the reply with `Fixed in <sha>`, naming the fixing commit.
+   - **Valid but out of scope** → file the follow-up issue the root `AGENTS.md` scope rule calls for, or find an
+     existing one. Reply with its link, react 👍, and resolve the thread.
+     On an inline finding from a review bot, start the reply with `Tracked in #<n>`.
+     Without write access, cite an issue opened at or after the finding.
    - **Invalid** → verify the claim, reply with concrete evidence, and react 👎.
      On an inline finding from a review bot, start the reply with `Declined: <reason>`.
      `Declined:` counts only from a user with write access, or from the PR author on a douwebot `Optional:` finding.

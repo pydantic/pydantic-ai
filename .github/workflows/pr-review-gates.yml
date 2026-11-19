@@ -17,8 +17,12 @@ permissions: {}
 jobs:
   review-target:
     name: Resolve review gate target
-    # PR Review Checks also runs on merge groups, which have no PR to evaluate.
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.event != 'merge_group'
+    # PR Review Checks also runs on merge groups, which have no PR to evaluate, and skips its job for unrelated
+    # label and edit events, which change nothing the gates read.
+    if: >-
+      github.event_name != 'workflow_run' || (github.event.workflow_run.event != 'merge_group' &&
+      (github.event.workflow_run.path != '.github/workflows/pr-review-checks.yml' ||
+      github.event.workflow_run.conclusion != 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
