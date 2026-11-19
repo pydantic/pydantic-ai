@@ -676,9 +676,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         supported_native_tools = supported_native_tools | {ToolSearchTool}
     if supports_advisor:
         supported_native_tools = supported_native_tools | {AdvisorTool}
-    computer_tool_version = _computer_tool_version(model_name)
-    if computer_tool_version is not None:
-        supported_native_tools = supported_native_tools | {ComputerTool}
 
     profile = AnthropicModelProfile(
         # The Anthropic API answers HEIC, AVIF, BMP and TIFF images with a 400, and so does Claude through
@@ -727,23 +724,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     )
     if supports_tool_search:
         profile['tool_deferral_mode'] = 'standalone'
-    if computer_tool_version is not None:
-        profile['anthropic_computer_tool_version'] = computer_tool_version
-    # The earlier tools scale a larger screenshot down, and Claude then gives coordinates in the smaller image's
-    # pixels. So the profile caps the screenshot size. Both limits matter: 1568x882 has an allowed longer side but too
-    # many pixels, and is scaled down too. Opus 4.7 takes the larger size on `computer_20251124`. The toolset refuses an
-    # image over 2576 pixels on a side or over 4784 image tokens, at one token per 28x28 pixels. The function tool these
-    # models get on Vertex AI or Foundry takes a larger image and scales it down. In live probes, Haiku 5.5 and Opus 4.8
-    # pointed about 5% short of the target on 2560x1600, and exactly on it on 2576x1456 (4784 tokens) and 2549x1457.
-    if model_name.startswith('claude-opus-4-7'):
-        profile['computer_use_screenshot_max_side'] = 2576
-        profile['computer_use_screenshot_max_pixels'] = 3_600_000
-    elif computer_tool_version == 'computer_toolset_20260801':
-        profile['computer_use_screenshot_max_side'] = 2576
-        profile['computer_use_screenshot_max_pixels'] = 2576 * 1456
-    elif computer_tool_version in ('computer_20251124', 'computer_20250124'):
-        profile['computer_use_screenshot_max_side'] = 1568
-        profile['computer_use_screenshot_max_pixels'] = 1_150_000
     if model_name.startswith('claude-sonnet-4-6'):
         # Sonnet 4.6 follows the application's `<system verified>` blocks and its own reminder tags only once told
         # what they mean, so it gets the announcement from the first request (see the field's docstring). It has no
@@ -752,12 +732,45 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     return profile
 
 
+def anthropic_computer_use_profile(model_name: str, profile: ModelProfile | None) -> AnthropicModelProfile:
+    """The computer use facts to merge onto `profile`, the model's profile on a client that sends Anthropic's API.
+
+    Anthropic's computer use tool is part of Anthropic's own request format. So only `AnthropicProvider` adds these.
+    The Bedrock Converse API and the OpenAI-compatible gateways that share `anthropic_model_profile()` don't get the
+    tool, its version or its screenshot limits, and Claude gets the `computer` function tool there.
+    """
+    computer_tool_version = _computer_tool_version(model_name)
+    if computer_tool_version is None:
+        return AnthropicModelProfile()
+    supported_native_tools = (profile or {}).get('supported_native_tools', _ANTHROPIC_BASE_BUILTINS)
+    computer = AnthropicModelProfile(
+        supported_native_tools=supported_native_tools | {ComputerTool},
+        anthropic_computer_tool_version=computer_tool_version,
+    )
+    # The earlier tools scale a larger screenshot down, and Claude then gives coordinates in the smaller image's
+    # pixels. So the profile caps the screenshot size. Both limits matter: 1568x882 has an allowed longer side but too
+    # many pixels, and is scaled down too. Opus 4.7 takes the larger size on `computer_20251124`. The toolset refuses an
+    # image over 2576 pixels on a side or over 4784 image tokens, at one token per 28x28 pixels. The function tool these
+    # models get on Vertex AI or Foundry takes a larger image and scales it down. In live probes, Haiku 5.5 and Opus 4.8
+    # pointed about 5% short of the target on 2560x1600, and exactly on it on 2576x1456 (4784 tokens) and 2549x1457.
+    if model_name.startswith('claude-opus-4-7'):
+        computer['computer_use_screenshot_max_side'] = 2576
+        computer['computer_use_screenshot_max_pixels'] = 3_600_000
+    elif computer_tool_version == 'computer_toolset_20260801':
+        computer['computer_use_screenshot_max_side'] = 2576
+        computer['computer_use_screenshot_max_pixels'] = 2576 * 1456
+    else:
+        computer['computer_use_screenshot_max_side'] = 1568
+        computer['computer_use_screenshot_max_pixels'] = 1_150_000
+    return computer
+
+
 def _computer_tool_version(model_name: str) -> AnthropicComputerToolVersion | None:
     """The model's computer use tool from Anthropic's compatibility table, or `None` if it gets the function tool.
 
-    A model with a tool gets `ComputerTool` in its supported native tools. It is sent on the Claude API and both
-    Bedrock APIs, the clients it has recorded test runs on. `AnthropicModel` removes it on Vertex AI, Foundry and
-    Claude Platform on AWS. Claude 5.5 and later take only the toolset. Retired and retiring models (Opus 4 and 4.1,
+    A model with a tool gets `ComputerTool` in its supported native tools on `AnthropicProvider`. It is sent on the
+    Claude API and both Bedrock APIs, the clients it has recorded test runs on. `AnthropicModel` removes it on Vertex
+    AI, Foundry and Claude Platform on AWS. Claude 5.5 and later take only the toolset. Retired and retiring models (Opus 4 and 4.1,
     Sonnet 4 and 4.5) get the function tool.
     https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
     """
