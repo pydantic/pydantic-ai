@@ -4267,6 +4267,73 @@ async def test_openai_streams_multiple_hosted_tool_searches_in_order(
 
 
 @pytest.mark.parametrize('send_item_ids', [False, True])
+@pytest.mark.parametrize('tool_search_active', [False, True])
+@pytest.mark.parametrize(
+    ('tool_call_id', 'item_id', 'effective_id'),
+    [
+        ('call_search', 'fc_old', 'fc_old'),
+        ('call_search', 'tsc_original', 'tsc_original'),
+        ('call_search', None, None),
+        ('call_search|fc_legacy', None, 'fc_legacy'),
+        ('call_search|tsc_legacy', None, 'tsc_legacy'),
+        ('call_search|fc_legacy', 'tsc_original', 'fc_legacy'),
+        ('call_search|tsc_legacy', 'fc_old', 'tsc_legacy'),
+        ('call_search|', 'fc_old', 'fc_old'),
+    ],
+)
+async def test_openai_promoted_tool_search_does_not_reuse_function_item_id(
+    send_item_ids: bool,
+    tool_search_active: bool,
+    tool_call_id: str,
+    item_id: str | None,
+    effective_id: str | None,
+) -> None:
+    """Promotion changes the item type, not the call/result correlation or stored history."""
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolSearchCallPart(
+                    args={'queries': ['exchange rate']},
+                    tool_call_id=tool_call_id,
+                    id=item_id,
+                    provider_name='openai',
+                ),
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_exchange_rate'}]},
+                    tool_call_id='call_search',
+                ),
+            ],
+        ),
+    ]
+    original = ModelMessagesTypeAdapter.dump_json(history)
+    params = _openai_hosted_tool_search_parameters() if tool_search_active else ModelRequestParameters()
+    _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history, params),
+        OpenAIResponsesModelSettings(openai_send_reasoning_ids=send_item_ids),
+        params,
+    )
+    call, result = items
+    if tool_search_active:
+        assert call['type'] == 'tool_search_call'
+        assert result['type'] == 'tool_search_output'
+    else:
+        assert call['type'] == 'function_call'
+        assert result['type'] == 'function_call_output'
+    assert call['call_id'] == result['call_id'] == 'call_search'
+    expected_id = effective_id if send_item_ids else None
+    if tool_search_active and expected_id and not expected_id.startswith('tsc'):
+        expected_id = None
+    assert call.get('id') == expected_id
+    assert ModelMessagesTypeAdapter.dump_json(history) == original
+
+
+@pytest.mark.parametrize('send_item_ids', [False, True])
 @pytest.mark.parametrize(
     ('call_status', 'output_status', 'discovered_names'),
     [

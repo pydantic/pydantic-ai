@@ -2860,7 +2860,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 'call_id': call_id,
                 'status': 'completed',
             }
-            if id and should_send_item_id:  # pragma: no branch
+            # A promoted function call can carry an fc_* item ID. OpenAI requires
+            # tsc* IDs for this item type; omit incompatible optional item identity,
+            # retaining the call_id that pairs the search output.
+            if id and should_send_item_id and id.startswith('tsc'):
                 tool_search_call['id'] = id
             context.openai_messages.append(tool_search_call)
         else:
