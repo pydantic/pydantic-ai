@@ -835,6 +835,7 @@ def test_argument_correctness_include_content_false(span_builder: Any):
     'args',
     [
         pytest.param('not-json', id='invalid-json'),
+        # deeper than `json.loads` can parse on every supported Python
         pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
     ],
 )

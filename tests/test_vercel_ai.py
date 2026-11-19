@@ -8923,7 +8923,7 @@ async def test_adapter_load_messages_json_list_args():
 
 async def test_adapter_load_messages_deeply_nested_json_args():
     """Args nested past the recursion limit are kept as the string, like any other non-JSON args."""
-    args = '[' * 100_000 + ']' * 100_000
+    args = '[' * 100_000 + ']' * 100_000  # deeper than `json.loads` can parse on every supported Python
     messages = VercelAIAdapter.load_messages(
         [
             UIMessage(

@@ -6726,7 +6726,7 @@ def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
 
 def test_tool_return_deeply_nested_json_string_stays_string() -> None:
     """A tool return nested past the recursion limit loads as the string, like any other non-JSON return."""
-    content = '[' * 100_000 + ']' * 100_000
+    content = '[' * 100_000 + ']' * 100_000  # deeper than `json.loads` can parse on every supported Python
     loaded = AGUIAdapter.load_messages(
         [
             AssistantMessage(
