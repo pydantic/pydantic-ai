@@ -193,6 +193,7 @@ end of the body, before the checklist. Skip the section entirely when the log is
 ```
 
 Do not copy the decisions template's instructions into the PR body.
+Wrap each `Fixes #N`, `Closes #N` or `Resolves #N` inside a copied entry in backticks. A bare closing keyword in the body closes that issue when the PR merges.
 The section is public. Leave out confidential or privileged reasoning. Keep session ids: a later agent uses them to find the session that made the decision.
 
 ### Keep labels current with the title and body
@@ -513,6 +514,7 @@ if the head changes, capture the new SHA and restart the loop.
      No status yet, or `pending`, means the review has not finished; wait for `success` or `failure`.
      When the status reads "Awaiting maintainer", the author lacks write access.
      Ask a maintainer to apply `pr-review-checks:run`; the label also covers later pushes.
+     It does nothing on a PR whose author has write access.
      A `failure` leaves the gate unsatisfied until a later head passes or a maintainer applies `pr-review-checks:accepted`.
      A `failure` whose description names `Incomplete`, `No result` or a rerun, and not `Blocking findings`, has no finding to triage. Rerun that `PR Review Checks` run once, then escalate.
      When the run posted findings, its `target_url` links that review. Triage the findings in step 4.
