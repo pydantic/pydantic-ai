@@ -6,13 +6,15 @@ raise a file's count. What the base already has is allowed, so existing debt pas
 
 - `readiness-constant`: a module that defines its own `READINESS_WAIT_TIMEOUT` instead of importing the shared one
   from `tests/_timeouts.py`.
-- `probe-port`: a port read from a socket that is closed before the port is used, outside `tests/_ports.py`.
+- `probe-port`: a port read from a socket that a `with` block closes before the port is used, outside
+  `tests/_ports.py`.
 - `literal-wait`: a number, or a constant the module defines, passed as the delay or timeout of `sleep`,
   `fail_after`, `move_on_after`, `asyncio.timeout` or `asyncio.wait_for`, or of a `.wait()`, `.join()` or
   `.result(timeout=)` call. A delay of zero is a checkpoint, not a wait.
-- `sleep-loop`: a loop whose body sleeps, so it polls the real clock. Its sleeps are not also counted as `literal-wait`.
+- `sleep-loop`: a loop whose body sleeps, so it polls. A `sleep(0)` counts here too: the loop then polls until
+  another task has run. Its sleeps are not also counted as `literal-wait`.
 
-A finding that moved between changed files, the same line removed from one and added to another, is not counted.
+A wait that moved between changed files, the same line removed from one and added to another, is not counted.
 A wait or loop that is about real time is left out of the count by `# real-wait: <reason>` on the line it starts on,
 or alone on the line above. Each such comment the change adds is reported, and one without a reason fails.
 
@@ -217,7 +219,10 @@ class _Finder:
         }
         end = node.end_lineno or node.lineno
         scope = _enclosing_scope(self.tree, node)
-        return any(name.id in ports and name.lineno > end for name in _call_arguments(scope))
+        rebound = {
+            n.id for n in ast.walk(scope) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store) and n.lineno > end
+        }
+        return any(name.id in ports - rebound and name.lineno > end for name in _call_arguments(scope))
 
 
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
@@ -383,17 +388,18 @@ def _added_escapes(path: str, old: _Scan, new: _Scan) -> list[tuple[str, _Escape
 def _growth(changes: list[Change]) -> tuple[list[_Growth], list[tuple[str, _Escape]]]:
     """Each rule a change raised the count of in a file, and each `# real-wait` comment it added."""
     scans = [(c, _scan(c.old_source, c.old_path or ''), _scan(c.new_source, c.new_path or '')) for c in changes]
-    moves: dict[Rule, Counter[str]] = {}
+    # Only a wait moves: the other rules have no findings left to move.
+    moves: dict[Rule, Counter[str]] = {rule: Counter() for rule in _ESCAPABLE}
     for _, old, new in scans:
-        for rule, found in old.findings.items():
-            moves.setdefault(rule, Counter()).update(_texts(found) - _texts(new.findings.get(rule, [])))
+        for rule in _ESCAPABLE & old.findings.keys():
+            moves[rule].update(_texts(old.findings[rule]) - _texts(new.findings.get(rule, [])))
     growth: list[_Growth] = []
     escapes: list[tuple[str, _Escape]] = []
     for change, old, new in scans:
         path = change.new_path or ''
         escapes += _added_escapes(path, old, new)
         for rule, found in new.findings.items():
-            grown = _rule_growth(path, rule, found, old.findings.get(rule, []), moves.setdefault(rule, Counter()))
+            grown = _rule_growth(path, rule, found, old.findings.get(rule, []), moves.get(rule, Counter()))
             if grown:
                 growth.append(grown)
     return growth, escapes

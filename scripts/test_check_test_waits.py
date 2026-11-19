@@ -195,6 +195,27 @@ def test_moving_a_wait_between_files_passes(repo: Path, capsys: pytest.CaptureFi
     )
 
 
+def test_removing_a_probe_elsewhere_does_not_excuse_a_new_one(repo: Path, capsys: pytest.CaptureFixture[str]):
+    _write(repo, 'tests/test_old.py', _RETURNED)
+    _commit(repo)
+    # Emptied, not deleted, so git does not pair the two files as a rename.
+    _write(repo, 'tests/test_old.py', '')
+
+    code, out = _staged(repo, capsys, 'tests/test_new.py', _RETURNED.replace('free_port', 'other_port'))
+
+    assert code == 1
+    assert 'tests/test_new.py: probe-port 0 -> 1' in out
+
+
+def test_a_loop_of_checkpoints_counts_as_a_sleep_loop(repo: Path, capsys: pytest.CaptureFixture[str]):
+    source = 'import anyio\n\n\nasync def t():\n    for _ in range(3):\n        await anyio.sleep(0)\n'
+
+    code, out = _staged(repo, capsys, 'tests/test_new.py', source)
+
+    assert code == 1
+    assert 'tests/test_new.py: sleep-loop 0 -> 1' in out
+
+
 def test_files_outside_tests_and_files_that_do_not_parse_are_skipped(repo: Path, capsys: pytest.CaptureFixture[str]):
     _write(repo, 'outside/test_loose.py', 'import time\ntime.sleep(1)\ntime.sleep(2)\n')
 
@@ -314,6 +335,14 @@ def handed_over(serve):
     sock = socket.socket()
     sock.bind(('127.0.0.1', 0))
     serve(sock)
+
+
+def rebound(run):
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    port = 8123
+    run(port)
 
 
 def fixed():
