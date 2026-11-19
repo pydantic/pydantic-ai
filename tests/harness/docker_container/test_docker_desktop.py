@@ -224,10 +224,18 @@ async def test_the_start_opens_the_panel_unless_it_shows(docker: FakeDocker, con
     await screen(_desktop(container_dir, image='my-desktop')).display_size()
     assert docker.panel_starts == 2
 
-    docker.close_panel()
+
+async def test_a_panel_that_exits_leaves_a_working_display(docker: FakeDocker, container_dir: Path) -> None:
+    # As tint2 does when it can't read its settings, such as under a home that doesn't exist.
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
     docker.fail_panel()
-    with pytest.raises(WorkspaceUnavailableError, match='the panel did not start:\ntint2: could not open the config'):
-        await screen(_desktop(container_dir, image='my-desktop')).display_size()
+
+    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert docker.panel_starts == 1
+    log = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop.log'
+    assert 'tint2: could not open the config' in log.read_text()
 
 
 async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, container_dir: Path) -> None:
@@ -248,7 +256,7 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
     assert 'Fatal server error' in str(error.value)
 
 
-_INSTALL = 'install -y -qq --no-install-recommends xvfb xdotool x11-utils scrot util-linux fluxbox tint2 xterm'
+_INSTALL = 'install -y -qq --no-install-recommends xvfb xdotool x11-utils scrot util-linux'
 
 # The fake docker hides a program only from its own bin directory, so a host that has it would skip the install.
 _host_without_display_programs = pytest.mark.skipif(
@@ -346,6 +354,37 @@ async def test_an_x_server_that_starts_during_the_install_is_kept(docker: FakeDo
     assert docker.x_lock_exists(backend.ref.id)
 
 
+@_host_without_display_programs
+async def test_a_desktop_program_the_package_lists_lack_leaves_the_display_working(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    # The display's own programs are installed on their own, so the missing panel can't stop them.
+    docker.remove_display()
+    docker.uninstall('xdotool', 'tint2')
+    docker.run_as(0)
+    docker.lack_packages('tint2')
+
+    assert await screen(_desktop(container_dir, image='my-desktop')).screenshot() == FAKE_SCREENSHOT
+    assert docker.apt_get_calls == ['update -qq', _INSTALL, 'install -y -qq --no-install-recommends tint2']
+    assert docker.panel_starts == 0
+
+
+@_host_without_display_programs
+async def test_a_running_x_server_gets_no_xvfb_installed(docker: FakeDocker, container_dir: Path) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    docker.leave_x_lock(backend.ref.id, owner='Xvnc')
+    docker.uninstall('scrot')
+    docker.run_as(0)
+
+    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert docker.apt_get_calls == [
+        'update -qq',
+        'install -y -qq --no-install-recommends xdotool x11-utils scrot util-linux',
+    ]
+
+
 async def test_without_root_a_missing_desktop_is_skipped(docker: FakeDocker, container_dir: Path) -> None:
     # An image with the display programs but no window manager, panel or terminal, and no way to install them.
     docker.uninstall('fluxbox', 'tint2', 'xterm')
@@ -371,6 +410,18 @@ async def test_the_desktop_settings_are_written_for_the_user_unless_present(
     # New windows fill the screen, the panel aside.
     assert (home / '.fluxbox' / 'apps').read_text() == '[app] (class!=Tint2)\n  [Maximized] {yes}\n[end]\n'
     assert (home / '.config' / 'tint2' / 'tint2rc').read_text() == 'panel_position = top\n'
+
+
+async def test_the_panel_settings_go_where_tint2_reads_them(
+    docker: FakeDocker, container_dir: Path, tmp_path: Path
+) -> None:
+    # tint2 reads its settings under `XDG_CONFIG_HOME` when the image sets it.
+    config = tmp_path / 'config'
+    docker.set_image_env('XDG_CONFIG_HOME', str(config))
+
+    await screen(_desktop(container_dir, image='my-desktop')).display_size()
+
+    assert 'panel_position = bottom left horizontal' in (config / 'tint2' / 'tint2rc').read_text().splitlines()
 
 
 @_host_without_display_programs

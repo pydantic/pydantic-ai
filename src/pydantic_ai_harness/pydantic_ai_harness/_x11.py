@@ -229,35 +229,43 @@ _X_SOCKET = f'{_X_SOCKET_DIR}/X{DISPLAY_NUMBER}'
 
 _CLIENTS = 'xdotool xwininfo scrot setsid'
 """The programs the display's commands run: every one but Xvfb, which only a start without a running X server needs."""
-_PACKAGES = 'xvfb xdotool x11-utils scrot util-linux'
-"""The Debian and Ubuntu packages that have Xvfb and `_CLIENTS`."""
+_PACKAGES = 'xdotool x11-utils scrot util-linux'
+"""The Debian and Ubuntu packages that have `_CLIENTS`. Xvfb's package, `xvfb`, is added when no X server runs."""
 
 _DESKTOP_PROGRAMS = 'fluxbox tint2 xterm'
 """The desktop's window manager, panel and terminal, each in the Debian and Ubuntu package of the same name. `xprop`,
 which tells when the window manager is up, is in `x11-utils`."""
 
-_PANEL_LOG = '/tmp/pydantic-ai-panel.log'
+_DESKTOP_LOG = '/tmp/pydantic-ai-desktop.log'
+"""Where the desktop's install and its programs write, so a desktop that didn't come up says why."""
 
 _PANEL_SHOWS = 'xdotool search --onlyvisible --class tint2 >/dev/null 2>&1'
 
 
+_FLUXBOX_DIR = '$HOME/.fluxbox'
+"""Where fluxbox reads its settings."""
+
+_TINT2_DIR = '${XDG_CONFIG_HOME:-$HOME/.config}/tint2'
+"""Where tint2 reads its settings: under `XDG_CONFIG_HOME` when it's set."""
+
+
 def _write_unless_present(path: str, *lines: str) -> str:
-    """A shell fragment that writes `lines` to `path` in the home directory, unless the file is there already."""
-    return f'[ -e "$HOME/{path}" ] || printf \'%s\\n\' {shlex.join(lines)} >"$HOME/{path}"; '
+    """A shell fragment that writes `lines` to `path`, unless the file is there already."""
+    return f'[ -e "{path}" ] || printf \'%s\\n\' {shlex.join(lines)} >"{path}"; '
 
 
 _DESKTOP_CONFIG = (
-    'mkdir -p "$HOME/.fluxbox" "$HOME/.config/tint2"; '
-    + _write_unless_present('.fluxbox/init', 'session.screen0.toolbar.visible: false')
+    f'mkdir -p "{_FLUXBOX_DIR}" "{_TINT2_DIR}"; '
+    + _write_unless_present(f'{_FLUXBOX_DIR}/init', 'session.screen0.toolbar.visible: false')
     # Every new window fills the screen above the panel, so nothing opens small in a corner.
-    + _write_unless_present('.fluxbox/apps', '[app] (class!=Tint2)', '  [Maximized] {yes}', '[end]')
+    + _write_unless_present(f'{_FLUXBOX_DIR}/apps', '[app] (class!=Tint2)', '  [Maximized] {yes}', '[end]')
     # fluxbox asks `fbsetbg` to restore this display's last wallpaper on start. Without one recorded, and without a
     # program that sets a picture as the wallpaper, `fbsetbg` opens a window saying so. This records a plain color, which
     # fluxbox's own `fbsetroot` paints. fluxbox runs it with `DISPLAY` set to `:1.0`.
-    + _write_unless_present('.fluxbox/lastwallpaper', f'fbsetroot|-solid #3b4252||{DISPLAY}.0')
+    + _write_unless_present(f'{_FLUXBOX_DIR}/lastwallpaper', f'fbsetroot|-solid #3b4252||{DISPLAY}.0')
     # A panel along the bottom with a button for each launcher whose program is installed, and a button per window.
     + _write_unless_present(
-        '.config/tint2/tint2rc',
+        f'{_TINT2_DIR}/tint2rc',
         'rounded = 0',
         'border_width = 0',
         'background_color = #2b2b2b 100',
@@ -280,25 +288,25 @@ _DESKTOP_CONFIG = (
         'task_maximum_size = 220 34',
     )
 )
-"""Writes the desktop's settings for the user the commands run as, leaving any file already there alone. A home that
-can't be written leaves fluxbox's and tint2's own defaults."""
+"""Writes the desktop's settings where the user the commands run as has fluxbox and tint2 read them, leaving any file
+already there alone. A home that can't be written leaves their own defaults."""
 
 _START_WINDOW_MANAGER = (
     f'if command -v fluxbox >/dev/null; then {{ {_DESKTOP_CONFIG}}} 2>/dev/null; '
     # A second fluxbox exits when one runs, so starting it every time recovers one that died. The wait lets the first
     # click focus and raise the window it lands on.
-    'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
+    f'setsid fluxbox >>{_DESKTOP_LOG} 2>&1 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
     '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; fi; '
     # tint2 shows only once a window manager answers, so it starts after one.
-    f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then setsid tint2 >{_PANEL_LOG} 2>&1 9>&- & '
-    f'panel=$!; i=0; until {_PANEL_SHOWS} || [ $i -ge 100 ]; do if ! kill -0 $panel 2>/dev/null; then '
-    f"echo 'the panel did not start:' >&2; tail -n 5 {_PANEL_LOG} >&2; exit 1; fi; "
+    f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then setsid tint2 >>{_DESKTOP_LOG} 2>&1 9>&- & '
+    f'panel=$!; i=0; until {_PANEL_SHOWS} || ! kill -0 $panel 2>/dev/null || [ $i -ge 100 ]; do '
     'sleep 0.1; i=$((i+1)); done; fi; '
 )
 """Starts the window manager, unless it's missing, and waits up to 10 seconds for it to answer `xprop`. Then starts
 the panel unless it shows or is missing, and waits up to 10 seconds for its window, so the first screenshot isn't
-black. It fails if the panel exits first, and goes on without it after 10 seconds."""
+black. Either one exiting, or not answering in time, leaves the display working without it; why is in
+`_DESKTOP_LOG`."""
 
 
 def start_x_server(log: str, *, desktop: bool = True) -> str:
@@ -311,8 +319,9 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
     when the environment starts its own desktop, such as E2B's XFCE.
 
     It first installs any of the programs it needs that's missing with `apt-get`, as root or through `sudo -n`, and
-    fails naming them when it can't: `_CLIENTS`, and Xvfb unless an X server runs. With `desktop`, it also installs the
-    desktop's programs, `_DESKTOP_PROGRAMS`, when it can, and goes on without them when it can't. It fails once the X
+    fails naming them when it can't: `_CLIENTS`, and Xvfb unless an X server runs. With `desktop`, it then installs the
+    desktop's programs, `_DESKTOP_PROGRAMS`, in a separate `apt-get install`, so one the package lists lack never stops
+    the display; when they can't be installed, or don't start, the display works without them. It fails once the X
     server exits, or after 10 seconds, printing the end of `log`.
 
     It takes `START_LOCK`, so a second start waits and finds the first one's install and X server. The lock is held
@@ -326,8 +335,8 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         # A running X server's lock names it, whichever server it is, such as `Xvnc`.
         f'{START_LOCK}x_runs() {{ case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in '
         'X*) return 0;; esac; return 1; }; '
-        # `xvfb` is `Xvfb` when the script will start one, and empty when an X server runs.
-        'if x_runs; then xvfb=; else xvfb=Xvfb; fi; '
+        # `xvfb` is `Xvfb` when the script will start one, and empty when an X server runs; `xvfb_package` likewise.
+        'if x_runs; then xvfb=; xvfb_package=; else xvfb=Xvfb; xvfb_package=xvfb; fi; '
         f'missing=; for p in $xvfb {_CLIENTS}; do command -v $p >/dev/null 2>&1 || missing="$missing $p"; done; '
         # `wanted` names the desktop's missing programs, which are installed when they can be and skipped otherwise.
         + (
@@ -347,9 +356,13 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         '[ -z "$missing" ] || '
         """{ echo "the display needs$missing, and there's no root or passwordless sudo to install them with" >&2; """
         'exit 1; }; '
-        'else { $elevate apt-get update -qq && $elevate env DEBIAN_FRONTEND=noninteractive '
-        f'apt-get install -y -qq --no-install-recommends {_PACKAGES}{" " + _DESKTOP_PROGRAMS if desktop else ""}; }} '
-        f'>{log} 2>&1 || [ -z "$missing" ] || {{ echo "could not install$missing:" >&2; tail -n 5 {log} >&2; exit 1; }}; '
+        'else install="$elevate env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends"; '
+        # The display's own programs first, failing the start when they can't be installed.
+        '{ $elevate apt-get update -qq && '
+        f'{{ [ -z "$missing" ] || $install $xvfb_package {_PACKAGES}; }}; }} >{log} 2>&1 || [ -z "$missing" ] || '
+        f'{{ echo "could not install$missing:" >&2; tail -n 5 {log} >&2; exit 1; }}; '
+        # Then the desktop's, alone, so a package the lists lack only leaves the desktop out. The next start tries again.
+        f'[ -z "$wanted" ] || $install $wanted >{_DESKTOP_LOG} 2>&1 || true; '
         'fi; fi; '
         # Asked again, since the image's own X server may have started during the install: its lock and socket stay.
         'if ! x_runs; then '
