@@ -1,4 +1,4 @@
-# description: Runs Claude Code when an owner, member, or collaborator mentions @claude on an issue or pull request.
+# description: Runs Claude Code when an owner, member, or collaborator mentions @claude on a fork pull request, or on an issue or pull request a maintainer opened.
 name: '@claude'
 
 on:
@@ -21,6 +21,8 @@ jobs:
   get-pr-info:
     permissions:
       contents: read
+      issues: read
+      pull-requests: read
     if: |
       (
         (github.event_name == 'issue_comment' && !contains(github.event.issue.labels.*.name, 'pydanty:meta') &&
@@ -39,6 +41,8 @@ jobs:
       pr_head_sha: ${{ steps.pr-info.outputs.pr_head_sha }}
       pr_base_sha: ${{ steps.pr-info.outputs.pr_base_sha }}
       pr_author_permission: ${{ steps.pr-info.outputs.pr_author_permission }}
+      thread_author_permission: ${{ steps.thread.outputs.author_permission }}
+      included_comment_authors: ${{ steps.thread.outputs.included_comment_authors }}
     steps:
       - name: Get PR info
         if: github.event.issue.pull_request || github.event.pull_request
@@ -55,9 +59,82 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # `at-claude` runs only on a thread a maintainer opened, and the context the action
+      # builds for Claude holds only maintainers' comments, reviews and inline review
+      # comments. Bot accounts, this repository's review bots included, are not
+      # maintainers, so their comments stay out of that context too. That includes
+      # `claude[bot]`, so a follow-up `@claude` does not see the replies of earlier runs
+      # in that context. The job's tools are unchanged.
+      #
+      # A maintainer is a user with `write` or `admin` permission, resolved one user at a
+      # time: the collaborator list endpoint omits private org members (see
+      # `maintainer_login` in `.github/scripts/issue_pr_attention_monitor.py`). The
+      # endpoint answers `read` for a non-collaborator, so a failed lookup fails the job
+      # rather than guessing. Only `User` accounts are looked up: the endpoint answers 404
+      # for some bots, such as `Copilot`, and a bot is never a maintainer.
+      #
+      # The action reads an empty `include_comments_by_actor` as "everyone", so the list
+      # always starts with the triggering actor, whom the action itself requires to have
+      # write access, and `at-claude` does not run on an empty list. The action also drops
+      # comments created or edited after the trigger.
+      - name: Resolve the thread's maintainers
+        if: steps.pr-info.outputs.is_fork != 'true'
+        id: thread
+        run: |
+          set -euo pipefail
+          permission() {
+            gh api "repos/${REPO}/collaborators/$1/permission" --jq '.permission'
+          }
+
+          author_permission=none
+          if [ "$THREAD_AUTHOR_TYPE" = User ]; then
+            author_permission=$(permission "$THREAD_AUTHOR")
+            echo "Thread author ${THREAD_AUTHOR} has ${author_permission} access."
+          fi
+          included=("$GITHUB_ACTOR")
+          case "$author_permission" in
+            write | admin)
+              endpoints=("issues/${NUMBER}/comments")
+              if [ "$IS_PR" = true ]; then
+                endpoints+=("pulls/${NUMBER}/reviews" "pulls/${NUMBER}/comments")
+              fi
+              found=""
+              for endpoint in "${endpoints[@]}"; do
+                page=$(gh api --paginate "repos/${REPO}/${endpoint}?per_page=100" --jq '.[] | select(.user.type == "User") | .user.login')
+                found+="${page}"$'\n'
+              done
+              mapfile -t authors < <(printf '%s' "$found" | sed '/^$/d' | sort -u)
+              for author in "${authors[@]}"; do
+                if [ "$author" = "$GITHUB_ACTOR" ]; then continue; fi
+                author_access=$(permission "$author")
+                case "$author_access" in
+                  write | admin) included+=("$author") ;;
+                esac
+              done
+              ;;
+            *)
+              echo "::notice::@claude runs only on issues and pull requests a maintainer opened; ${THREAD_AUTHOR} is not a maintainer."
+              ;;
+          esac
+
+          IFS=,
+          echo "Including comments by: ${included[*]}"
+          echo "author_permission=${author_permission}" >> "$GITHUB_OUTPUT"
+          echo "included_comment_authors=${included[*]}" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          IS_PR: ${{ github.event.issue.pull_request != null || github.event.pull_request != null }}
+          THREAD_AUTHOR: ${{ github.event.issue.user.login || github.event.pull_request.user.login }}
+          THREAD_AUTHOR_TYPE: ${{ github.event.issue.user.type || github.event.pull_request.user.type }}
+
   at-claude:
     needs: get-pr-info
-    if: needs.get-pr-info.outputs.is_fork != 'true'
+    if: |
+      needs.get-pr-info.outputs.is_fork != 'true' &&
+      contains(fromJSON('["write","admin"]'), needs.get-pr-info.outputs.thread_author_permission) &&
+      needs.get-pr-info.outputs.included_comment_authors != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -88,6 +165,7 @@ jobs:
       - uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          include_comments_by_actor: ${{ needs.get-pr-info.outputs.included_comment_authors }}
           additional_permissions: |
             actions: read
           claude_args: |
