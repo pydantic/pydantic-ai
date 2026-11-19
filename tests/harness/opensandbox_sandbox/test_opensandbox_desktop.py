@@ -7,7 +7,7 @@ import os
 import pytest
 from opensandbox.constants import DEFAULT_EGRESS_PORT, DEFAULT_EXECD_PORT
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, UserError
 from pydantic_ai.computer_use import ComputerReturnPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import WorkspaceUnavailableError
@@ -126,3 +126,9 @@ async def test_a_desktop_capability_runs_the_computer_tool_without_exposing_a_po
     # The SDK looks up execd's and the egress sidecar's endpoints itself; the desktop asks for no other port.
     looked_up = {int(request.rsplit('/', 1)[1]) for request in server.requests if '/endpoints/' in request}
     assert looked_up <= {DEFAULT_EXECD_PORT, DEFAULT_EGRESS_PORT}
+
+
+@pytest.mark.parametrize('desktop', [(0, 0), (1280, -1), (1280,)])
+def test_a_desktop_size_must_be_a_width_and_height_of_at_least_1(desktop: tuple[int, int]) -> None:
+    with pytest.raises(UserError, match=r'`desktop` must be a `\(width, height\)` of at least 1 pixel each'):
+        OpenSandboxBackend(image='fake-image', desktop=desktop)
