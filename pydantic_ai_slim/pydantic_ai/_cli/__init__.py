@@ -199,7 +199,9 @@ def _print_intro(
         pass
 
 
-def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5') -> int:
+def cli(
+    args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5.6-terra'
+) -> int:
     """Run the CLI and return the exit code for the process."""
     # we don't want to autocomplete or list models that don't include the provider,
     # e.g. we want to show `openai:gpt-5.2` but not `gpt-5.2`
@@ -231,7 +233,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
         '--model',
         action='append',
         dest='models',
-        help='Model to make available (can be repeated, e.g., -m openai:gpt-5 -m anthropic:claude-sonnet-4-6). '
+        help='Model to make available (can be repeated, e.g., -m openai:gpt-5.6-terra -m anthropic:claude-sonnet-4-6). '
         'Format: "provider:model_name". First model is preselected in UI; additional models appear as options.',
     )
     model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
@@ -317,7 +319,7 @@ subcommands:
     model_arg = parser.add_argument(
         '-m',
         '--model',
-        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-6". Defaults to "{default_model}".',
+        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5.6-terra" or "anthropic:claude-sonnet-4-6". Defaults to "{default_model}".',
     )
     model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
     parser.add_argument(

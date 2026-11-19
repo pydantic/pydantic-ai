@@ -1078,7 +1078,7 @@ def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
         models=['openai:gpt-5'],
         tools=['web_search'],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-5.6-terra',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1101,7 +1101,7 @@ def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..
         models=[],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-5.6-terra',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1139,7 +1139,7 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
         models=['openai:gpt-5', 'anthropic:claude-sonnet-4-6'],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-5.6-terra',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1168,7 +1168,7 @@ def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable
         models=[],
         tools=['web_search', 'code_execution'],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-5.6-terra',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1189,7 +1189,7 @@ def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv)
         models=['openai:gpt-5'],
         tools=[],
         instructions='You are a helpful coding assistant',
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-5.6-terra',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1216,7 +1216,7 @@ def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Ca
         models=[],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-5.6-terra',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1517,7 +1517,7 @@ def test_clai_web_with_html_source(mocker: MockerFixture, env: TestEnv):
         models=['openai:gpt-5'],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-5.6-terra',
         html_source=custom_url,
         allowed_hosts=[],
     )
@@ -1538,7 +1538,7 @@ def test_clai_web_with_allowed_hosts(mocker: MockerFixture, env: TestEnv):
         models=['openai:gpt-5'],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-5.6-terra',
         html_source=None,
         allowed_hosts=['ui.example.com', '*.corp.example'],
     )
@@ -1623,7 +1623,8 @@ def test_clai_intro_shows_banner(
     # clai shows the same banner a script gets, rather than heading it with its own name and version.
     assert f'pydantic-ai v{__version__}' in output
     assert 'clai - Pydantic AI CLI' not in output
-    assert 'model: openai:gpt-5 • tools: 0 • capabilities: 0' in output
+    # The detail line wraps beside the logo at a width that depends on the version string, so only the model is matched.
+    assert 'model: openai:gpt-5.6-terra' in output
     # The banner carries the observability pointer, so clai doesn't repeat its own header line.
     # Matched on the label, not the prose, which is the banner's to reword.
     assert 'observability:' in output
