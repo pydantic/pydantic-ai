@@ -189,11 +189,12 @@ class AnthropicModelProfile(ModelProfile, total=False):
     Anthropic currently documents task budgets as a Claude Opus 4.7 / 4.8 / 5 / 5.5 and Haiku 5.5 beta feature.
     """
 
-    anthropic_default_computer_tool_version: AnthropicComputerToolVersion
-    """The Anthropic computer use tool or toolset sent for a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool].
-    Default: `'computer_20250124'`.
+    anthropic_computer_tool_version: AnthropicComputerToolVersion
+    """The Anthropic computer use tool or toolset that is sent for a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool].
 
-    Whether `ComputerTool` is sent at all is up to `supported_native_tools`.
+    Whether `ComputerTool` is sent at all is up to `supported_native_tools`. The profile sets this key for every model
+    whose `supported_native_tools` it gives `ComputerTool`. A profile without it, which happens only when you add
+    `ComputerTool` to `supported_native_tools` yourself, sends `'computer_20250124'`.
     """
 
     anthropic_supports_on_demand_compaction: bool
@@ -729,7 +730,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     if supports_tool_search:
         profile['tool_deferral_mode'] = 'standalone'
     if computer_tool_version is not None:
-        profile['anthropic_default_computer_tool_version'] = computer_tool_version
+        profile['anthropic_computer_tool_version'] = computer_tool_version
     # The earlier tools scale a larger screenshot down, and Claude answers in the smaller image's pixels, so the
     # profile caps it; both numbers matter, as 1568x882 is scaled down too. Opus 4.7 takes the larger size on
     # `computer_20251124`. The toolset refuses more than 2576 pixels or 4784 image tokens of 28x28 pixels, but the
