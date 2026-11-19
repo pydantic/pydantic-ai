@@ -659,6 +659,49 @@ async def test_stream_resumed_from_checkpoint():
     ]
 
 
+async def test_stream_resumed_from_checkpoint_after_pending_mcp_call():
+    """Steps held back to classify an MCP call still count when a request resumed from a checkpoint numbers its own.
+
+    Not recorded: the resume comes from google-genai 2.34, which the locked SDK predates.
+    """
+    values: list[dict[str, JsonValue]] = [
+        {'event_type': 'interaction.created', 'interaction': {'object': 'interaction', 'model': 'gemini-test'}},
+        {'event_type': 'step.start', 'index': 0, 'step': {'type': 'thought'}},
+        {'event_type': 'step.delta', 'index': 0, 'delta': {'type': 'thought_signature', 'signature': 'first'}},
+        {'event_type': 'step.stop', 'index': 0},
+        {
+            'event_type': 'step.start',
+            'index': 1,
+            'step': {'type': 'function_call', 'id': 'mcp-call', 'name': 'docs:lookup', 'arguments': {}},
+        },
+        {'event_type': 'step.stop', 'index': 1},
+        {'event_type': 'interaction.status_update', 'status': 'in_progress', 'continuation_token': 'checkpoint'},
+        {'event_type': 'interaction.created', 'interaction': {'object': 'interaction', 'model': 'gemini-test'}},
+        {'event_type': 'step.start', 'index': 0, 'step': {'type': 'model_output'}},
+        {'event_type': 'step.delta', 'index': 0, 'delta': {'type': 'text', 'text': 'done'}},
+        {'event_type': 'step.stop', 'index': 0},
+        {'event_type': 'interaction.completed', 'interaction': {'status': 'completed'}},
+    ]
+    response = GoogleInteractionsStreamedResponse(
+        ModelRequestParameters(native_tools=[MCPServerTool(id='docs', url='https://example.com/mcp')]),
+        iter_events(values),
+        'gemini-test',
+        'google',
+        'https://example.com',
+        _mcp_server_names=frozenset({'docs'}),
+    )
+    async for _ in response:
+        pass
+
+    result = response.get()
+    assert result.provider_details is not None
+    steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(
+        result.provider_details['google_interactions_steps']
+    )
+    assert [step['type'] for step in steps] == ['thought', 'function_call', 'model_output']
+    assert [(part.provider_details or {})['google_interactions_step_index'] for part in result.parts] == [0, 1, 2]
+
+
 @pytest.mark.parametrize(
     'values,match',
     [

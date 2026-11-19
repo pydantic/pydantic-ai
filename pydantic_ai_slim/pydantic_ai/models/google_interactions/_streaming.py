@@ -52,8 +52,11 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
     _arguments: dict[int, list[str]] = field(init=False, default_factory=dict[int, list[str]])
     _completed: bool = False
     _step_offset: int = 0
-    _first_request_input_tokens: int | None = None
     """How many steps earlier requests of this stream produced, when google-genai continues a long decode in it."""
+    _next_step_index: int = 0
+    """One past the highest step index seen so far, counting steps still held back for MCP classification."""
+    _first_request_input_tokens: int | None = None
+    """The first request's input tokens, which measure the context when google-genai continues a long decode."""
     _server_calls: dict[str, str] = field(default_factory=dict[str, str])
     _content_buffers: dict[int, list[_ContentBuffer]] = field(
         init=False, default_factory=dict[int, list[_ContentBuffer]]
@@ -81,9 +84,11 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
             # earlier requests' steps here.
             if isinstance(event, gi.InteractionCreatedEvent):
                 self._completed = False
-                self._step_offset = max(self._steps, default=-1) + 1
-            elif isinstance(event, gi.StepStart | gi.StepDelta | gi.StepStop) and self._step_offset:
-                event = event.model_copy(update={'index': event.index + self._step_offset})
+                self._step_offset = self._next_step_index
+            elif isinstance(event, gi.StepStart | gi.StepDelta | gi.StepStop):
+                if self._step_offset:
+                    event = event.model_copy(update={'index': event.index + self._step_offset})
+                self._next_step_index = max(self._next_step_index, event.index + 1)
             for value in self._ready_events(event):
                 for result in self._map_event(value):
                     yield result
@@ -236,7 +241,7 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
         self.provider_response_id = response.provider_response_id
         self.finish_reason = response.finish_reason
         # Each continued request reports only its own usage, and bills its input again.
-        self._usage.incr(response.usage)
+        self._usage.incr(response.usage)  # usage-attribution: this response's own request usage, not a run's
         if self._first_request_input_tokens is None:
             self._first_request_input_tokens = response.usage.input_tokens
         else:
