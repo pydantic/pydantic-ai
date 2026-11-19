@@ -365,7 +365,7 @@ class DelegationTasks:
         self.problems: list[SavedTaskProblem] = []
         """Saved task files that `opened()` skipped, from the most recent `opened()`."""
         self._workers: dict[str, asyncio.Task[str]] = {}
-        self._released: dict[str, asyncio.Event] = {}
+        self._released: dict[str, asyncio.Event] = {}  # noqa: TID251  (not converted to anyio yet)
         self._stopping: set[str] = set()
         # Stacks, like `_emitters`: the latest registration receives, and each run removes only its own.
         self._receivers: dict[
@@ -680,7 +680,7 @@ class DelegationTasks:
             resumable=resumable,
             working_directory=working_directory,
         )
-        release = self._released[record.id] = asyncio.Event()
+        release = self._released[record.id] = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         # Persist acceptance before scheduling: cancellation here cannot leave an orphan worker.
         try:
             await self.save(record)

@@ -22,8 +22,8 @@ REFERENCES = {
     '.macroscope/correctness/review-discipline.md',
     '.macroscope/ignore.md',
     'src/pydantic_ai_harness/gh-aw/pydantic.md',
-    'src/pydantic_clai2/FILE_MAP.md',
-    'src/pydantic_clai2/pydantic_clai2/customization.md',
+    'src/pydantic_ai_pax/FILE_MAP.md',
+    'src/pydantic_ai_pax/pydantic_ai_pax/customization.md',
 }
 PRIVATE_PARTS = {'local-notes', 'handoffs', 'memory', 'memories'}
 PRIVATE_NAMES = {'PAPERCUTS.md', 'CLAUDE.local.md', 'issue-brief.md', 'pr-decisions.md', 'handoffs-index.md'}
@@ -62,7 +62,7 @@ def classify(path: str) -> Literal['editable', 'report-only', 'excluded']:
             'src/pydantic_ai_harness/gh-aw/',
             'pydantic_ai_slim/pydantic_ai/',
             'src/pydantic_ai_harness/pydantic_ai_harness/',
-            'src/pydantic_clai2/pydantic_clai2/',
+            'src/pydantic_ai_pax/pydantic_ai_pax/',
         )
     ):
         return 'report-only'

@@ -221,8 +221,8 @@ class _ResponseCheck:
     streamed: bool = False
     found: DetectedLoop | None = None
     """A loop found in the stream, waiting for `wrap_model_request` to act on it."""
-    detected: asyncio.Event = field(default_factory=asyncio.Event)
-    resumed: asyncio.Event = field(default_factory=asyncio.Event)
+    detected: asyncio.Event = field(default_factory=asyncio.Event)  # noqa: TID251  (not converted to anyio yet)
+    resumed: asyncio.Event = field(default_factory=asyncio.Event)  # noqa: TID251  (not converted to anyio yet)
     stopped: bool = False
     """Whether `wrap_model_request` stopped the stream, so the stream should pass nothing more on."""
 

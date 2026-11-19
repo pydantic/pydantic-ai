@@ -36,10 +36,10 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT
-from pydantic_clai2.cli.headless import run_headless
-from pydantic_clai2.config import Settings
-from pydantic_clai2.config.project_settings import ProjectSettings
-from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_ai_pax.cli.headless import run_headless
+from pydantic_ai_pax.config import Settings
+from pydantic_ai_pax.config.project_settings import ProjectSettings
+from pydantic_ai_pax.config.settings_store import SettingsStore
 
 sys.path.insert(0, str(Path(__file__).parent))
 

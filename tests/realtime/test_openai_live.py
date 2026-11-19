@@ -97,6 +97,7 @@ from pydantic_ai.realtime.codec import (
 from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..conftest import IsDatetime, IsNow, legacy_retry_prompt_part, no_leaked_tasks, try_import
 from .simulation._loop import SimulatedLoop
@@ -3293,9 +3294,6 @@ async def test_special_token_text_is_counted_as_live_counts_it() -> None:
 
 
 # --- idle audio -------------------------------------------------------------------------------------
-
-#: A generous bound on waiting for something the test has set in motion, so a loaded runner doesn't flake.
-READINESS_WAIT_TIMEOUT = 10
 
 
 class _AudioSink(OpenAILiveConnection):
