@@ -944,3 +944,19 @@ def test_a_taller_terminal_keeps_the_panel_inline_and_a_shorter_one_moves_it_to_
     screen.surface.paint(ROWS)
     assert screen.terminal.alternate
     assert screen.lines()[-4:] == list(ROWS)
+
+
+def test_releasing_the_inline_panel_moves_it_to_full_screen_before_others_write() -> None:
+    """A command such as `/update now` may write to the terminal itself, below rows the panel erases by count."""
+    screen = Screen(width=40, height=10, inline=True)
+    screen.terminal.write('$ clai2\r\n')
+    screen.surface.paint(ROWS)
+    screen.write('answer\n')
+    screen.surface.release()
+    assert screen.terminal.alternate
+    screen.terminal.write('written by a command\r\n')
+    screen.surface.paint(ROWS)
+    screen.surface.restore()
+    assert not screen.terminal.alternate
+    assert screen.lines() == ['$ clai2', 'answer', *[''] * 8], 'no panel rows stay behind in the scrollback'
+    assert screen.terminal.history == []

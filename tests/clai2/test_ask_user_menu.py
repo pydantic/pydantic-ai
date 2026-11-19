@@ -430,7 +430,7 @@ async def test_default_runner_reuses_editor_surface(question_pipe: PipeInput) ->
     assert response.answers == (AskUserAnswer(header='Approach', selected=('Patch',)),)
     assert 'Earlier conversation' in output.getvalue()
     assert 'How should we do it?' in '\n'.join(surface.transcript.frame(width=80, height=24).rows)
-    assert INLINE_OFF not in output.getvalue(), "the editor's panel stays on screen"
+    assert LEAVE not in output.getvalue(), "the editor's panel stays on screen"
 
 
 def test_terminal_cleanup_on_input_failure() -> None:

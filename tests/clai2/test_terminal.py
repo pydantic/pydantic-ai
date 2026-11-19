@@ -27,7 +27,7 @@ from pydantic_clai2.commands import Command, Commands, set_completions
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Plugin, TurnEnd, TurnStart
-from pydantic_clai2.ui.prompt.prompt_surface import INLINE_OFF, PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
 from pydantic_clai2.ui.rendering.splash import Splash
 from tests.clai2.cli_runner import CliRunner
 
@@ -327,7 +327,7 @@ async def test_prompt_frame_stays_visible_during_tools(
     assert 'Turn not saved' not in output.getvalue()
     assert calls == 1
     assert not store.load().thinking
-    printed = Text.from_ansi(output.getvalue().rsplit(INLINE_OFF, 1)[1]).plain
+    printed = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
     assert printed.index('Finished work') < printed.index('> next message\n')
 
 

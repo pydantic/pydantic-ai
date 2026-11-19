@@ -10,7 +10,7 @@ from rich.text import Text
 
 from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart, ThinkingPartDelta
 from pydantic_clai2 import StreamRenderer
-from pydantic_clai2.ui.prompt.prompt_surface import INLINE_OFF, PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.rendering import LinkOutput
 
@@ -171,7 +171,7 @@ async def test_streamed_link_survives_surface_resize() -> None:
     surface.paint(('prompt',))
     assert 'Opened PR #1006' in Text.from_ansi(output.getvalue()[start:]).plain
     surface.restore()
-    printed = Text.from_ansi(output.getvalue().rsplit(INLINE_OFF, 1)[1])
+    printed = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1])
     assert printed.get_style_at_offset(console, printed.plain.index('PR #1006')).link == URL
     assert printed.get_style_at_offset(console, printed.plain.index('Opened')).link is None
 

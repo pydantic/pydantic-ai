@@ -97,8 +97,6 @@ class PromptSurface(io.StringIO):
         """
         self._inline_rows: int = 0
         """How many main-screen rows the inline panel occupies, ending at the cursor's row."""
-        self._inline_text: str = ''
-        """What the inline panel last painted, so an unchanged one is not painted again."""
         self._modes = False
         self._holds = 0
         self._dirty = False
@@ -327,7 +325,7 @@ class PromptSurface(io.StringIO):
                 pinned == self._rows
                 and self._modes
                 and not self._dirty
-                and self._previous is not None
+                and (self._previous is not None or self._inline_rows > 0)
                 and self._painted_as == (width, height, theme.name())
             )
             self._rows = pinned
@@ -396,19 +394,17 @@ class PromptSurface(io.StringIO):
         if modes and not self._modes:
             parts.append(KEYS_ON)
             self._modes = True
-        text = '\r\n'.join(f'{line}\x1b[0m' for line in lines)
-        if parts or text != self._inline_text:
-            parts += [INLINE_ON, self._erase_inline() or '\r', text]
-            self.output.write('\x1b[?2026h' + ''.join(parts) + '\x1b[?2026l')
-            self.output.flush()
-        self._inline_rows, self._inline_text = len(lines), text
+        parts += [INLINE_ON, self._erase_inline() or '\r', '\r\n'.join(f'{line}\x1b[0m' for line in lines)]
+        self.output.write('\x1b[?2026h' + ''.join(parts) + '\x1b[?2026l')
+        self.output.flush()
+        self._inline_rows = len(lines)
         self._dirty = False
         self._painted_at = self.clock()
         self._painted_as = (width, height, theme.name())
 
     def _erase_inline(self) -> str:
         """Return to the inline panel's first row and clear it and everything below, or nothing without one."""
-        rows, self._inline_rows, self._inline_text = self._inline_rows, 0, ''
+        rows, self._inline_rows = self._inline_rows, 0
         if not rows:
             return ''
         return '\x1b[0m\r' + (f'\x1b[{rows - 1}A' if rows > 1 else '') + '\x1b[J'
@@ -431,9 +427,13 @@ class PromptSurface(io.StringIO):
     def release(self) -> None:
         """Drop the editor rows and input modes before a menu, command, or shell takes over.
 
-        The transcript stays on screen, and output the command prints still appears.
+        The transcript stays on screen, and output the command prints still appears. An inline panel
+        moves to the alternate screen first: what takes over may write to the terminal itself, below
+        the rows the panel would later erase by count.
         """
         with self._lock:
+            if self._inline_rows:
+                self.full_screen = self._dirty = True
             if self._partial:
                 self.transcript.write('\n')
                 self._partial = False
@@ -454,9 +454,9 @@ class PromptSurface(io.StringIO):
         Not `close`: `io.IOBase` calls that when the object is collected.
         """
         with self._lock:
-            self.release()
-            self._leave()
             self._live = False
+            self._leave()
+            self.release()
             width, _ = self._geometry()
             if printed := self.transcript.printed(width=width):
                 self.output.write(printed.replace('\n', '\r\n') if self.output.isatty() else printed)

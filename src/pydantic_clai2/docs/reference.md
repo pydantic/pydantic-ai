@@ -1226,8 +1226,9 @@ cycle and disappears when work finishes, fails, or is cancelled. It is not part
 of your draft or submitted message. CLAI starts compact, below what your shell already
 printed, and grows with the session as output arrives. Until then the terminal keeps its
 own scrolling and text selection, and Ctrl+L forgets the transcript but leaves your
-shell's output above it. Once the session fills the terminal, or you change the
-terminal's width or make it shorter, the editor sits below a Termflow live transcript panel on the
+shell's output above it. Once the session fills the terminal, you change the
+terminal's width or make it shorter, or a slash command, `!` command, menu, or question
+takes over the editor, the editor sits below a Termflow live transcript panel on the
 alternate screen, for the rest of the session. `/set display.full_screen true` starts
 there instead, from the next start. The rest of this section describes that panel.
 Both partial and completed output paint above it without repainting unchanged
