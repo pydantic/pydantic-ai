@@ -831,8 +831,15 @@ def test_argument_correctness_include_content_false(span_builder: Any):
     assert 'include_content' in result.reason
 
 
-def test_argument_correctness_invalid_json():
-    tree = _build_tree([_v3_tool_span(name='search', span_id=1, args='not-json', start_offset=0.0)])
+@pytest.mark.parametrize(
+    'args',
+    [
+        pytest.param('not-json', id='invalid-json'),
+        pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
+    ],
+)
+def test_argument_correctness_invalid_json(args: str):
+    tree = _build_tree([_v3_tool_span(name='search', span_id=1, args=args, start_offset=0.0)])
     evaluator = ArgumentCorrectness(
         tool_name='search',
         expected_arguments={'q': 'cats'},

@@ -6724,6 +6724,23 @@ def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
     )
 
 
+def test_tool_return_deeply_nested_json_string_stays_string() -> None:
+    """A tool return nested past the recursion limit loads as the string, like any other non-JSON return."""
+    content = '[' * 100_000 + ']' * 100_000
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1', tool_calls=[ToolCall(id='tc-1', function=FunctionCall(name='get_value', arguments='{}'))]
+            ),
+            ToolMessage(id='msg-2', tool_call_id='tc-1', content=content),
+        ]
+    )
+    tool_returns = list(iter_message_parts(loaded, ModelRequest, ToolReturnPart))
+    assert tool_returns == [
+        ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content, timestamp=IsDatetime())
+    ]
+
+
 def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage) -> None:
     """Multimodal `NativeToolReturnPart.content` rides inline in `ToolMessage.content` and round-trips with no flag."""
     original: list[ModelMessage] = [

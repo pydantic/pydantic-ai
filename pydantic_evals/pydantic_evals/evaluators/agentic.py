@@ -454,7 +454,7 @@ class ArgumentCorrectness(Evaluator[object, object, object]):
 
         try:
             actual_args = json.loads(selected.arguments)
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, RecursionError) as e:  # `RecursionError` on deeply nested JSON
             return EvaluationReason(
                 value=False,
                 reason=f'Tool {self.tool_name!r} arguments could not be parsed as JSON: {e}',

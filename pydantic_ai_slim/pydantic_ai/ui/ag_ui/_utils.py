@@ -448,7 +448,7 @@ def rehydrate_tool_return_content(content: Any) -> Any:
     if isinstance(content, str):
         try:
             parsed = json.loads(content)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
             return content
         if not isinstance(parsed, (dict, list)):
             return content

@@ -575,7 +575,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 parsed = json.loads(args)
                 if _is_str_dict(parsed):
                     args = parsed
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
                 pass
         elif isinstance(args, dict) or args is None:
             pass
