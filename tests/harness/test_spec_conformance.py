@@ -20,7 +20,6 @@ import inspect
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
-from typing import Any
 
 import pytest
 from pydantic import PydanticUserError
@@ -109,7 +108,7 @@ CHECKED = sorted(CLASSES.keys() - KNOWN_SCHEMA_FAILURES.keys())
 
 
 @cache
-def _schema(cls: type[AbstractCapability[Any]]) -> JsonSchema:
+def _schema(cls: type[AbstractCapability[object]]) -> JsonSchema:
     return AgentSpec.model_json_schema_with_capabilities([cls])
 
 
@@ -142,6 +141,20 @@ def test_tables_name_checked_classes():
 
 
 @pytest.mark.parametrize('name', NARROWED_FROM_SPEC)
+def test_narrowed_from_spec_keeps_init_parameters(name: str):
+    """A narrowed `from_spec` takes the parameters `__init__` takes, of the same kinds and with the same defaults.
+
+    Only the annotations may differ, so a spec-loaded instance can't drift from one built directly.
+    """
+    cls = CLASSES[name]
+
+    def parameters(signature: inspect.Signature) -> dict[str, tuple[object, object]]:
+        return {p.name: (p.kind, p.default) for p in signature.parameters.values() if p.name != 'self'}
+
+    assert parameters(inspect.signature(cls.from_spec)) == parameters(inspect.signature(cls.__init__))
+
+
+@pytest.mark.parametrize('name', NARROWED_FROM_SPEC)
 def test_subclass_loads_its_own_fields_and_defaults(name: str):
     """A subclass loads through the default `from_spec`, which takes the fields it adds and keeps the defaults it sets."""
     parent = CLASSES[name]
@@ -163,7 +176,7 @@ def test_subclass_keeps_the_from_spec_it_defines():
     @dataclass(kw_only=True)
     class Custom(AskUser[None]):
         @classmethod
-        def from_spec(cls, *args: Any, **kwargs: Any) -> AskUser[Any]:
+        def from_spec(cls, *args: object, **kwargs: object) -> AskUser[None]:
             return cls(answerer=None, description='own')
 
     class Grandchild(Custom):
