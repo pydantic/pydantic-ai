@@ -925,9 +925,7 @@ def _walk(annotation: object, found: set[type]) -> None:
 
 
 def _declared_fields(cls: type) -> set[str]:
-    """The fields `cls` declares itself, rather than inherits: none, for a class that isn't a dataclass."""
-    if not dataclasses.is_dataclass(cls):
-        return set()
+    """The fields dataclass `cls` declares itself, rather than inherits."""
     declared = inspect.get_annotations(cls)
     return {class_field.name for class_field in dataclasses.fields(cls) if class_field.name in declared}
 
@@ -1006,10 +1004,7 @@ def _assert_kept(before: object, after: object, covered: set[tuple[type, str]]) 
             declaring = next(cls for cls in type(before).__mro__ if class_field.name in _declared_fields(cls))
             entry = POLICY[declaring]
             assert isinstance(entry, Fields)
-            decision = entry.fields.get(class_field.name)
-            if decision is None:
-                # `test_every_message_field_has_a_sanitize_policy` reports a field with no entry.
-                continue
+            decision = entry.fields[class_field.name]
             # The check is about every field, so it reads them by name: a renamed field fails as unclassified first.
             value, kept = getattr(before, class_field.name), getattr(after, class_field.name)
             if isinstance(decision, Keep):
