@@ -52,22 +52,25 @@ from pydantic_ai_harness import (
     InputGuardrail,
 )
 from pydantic_ai_harness._callable import is_run_context
+from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 from pydantic_ai_harness.guardrails._capability import (
     _find_prompt_part,  # pyright: ignore[reportPrivateUsage]
     _prompt_text,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai_harness.guardrails._shared import takes_ctx
 from pydantic_ai_harness.guardrails.detectors import redact_secrets
-from pydantic_ai_harness.subagents import (
+from pydantic_ai_harness.sub_agents import (
     DelegationReports,
     DelegationTask,
     DelegationTasks,
     SubAgent,
     SubAgents,
     TaskControl,
+    TaskQuestionPart,
     is_task_report,
 )
 from pydantic_ai_harness.system_reminders import Reminder, SystemReminders
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import no_leaked_tasks
 from tests.harness.conftest import IsDatetime
 
@@ -75,7 +78,7 @@ TASK_REPORT_ORIGIN = 'pydantic-ai-harness.subagents.report.v1'
 TASK_QUESTION_ORIGIN = 'pydantic-ai-harness.subagents.question.v1'
 
 
-async def _delivered_task_question() -> UserPromptPart:
+async def _delivered_task_question() -> TaskQuestionPart:
     """The question part a sub-agent's `ask_parent` delivers into its parent's history."""
 
     def returns(messages: list[ModelMessage]) -> list[str]:
@@ -107,14 +110,12 @@ async def _delivered_task_question() -> UserPromptPart:
         for message in result.all_messages()
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if is_task_report(part) and '<task_question ' in str(part.content)
+        if isinstance(part, TaskQuestionPart)
     ]
     return question
 
 
 _SECRET = 'sk-ant-' + 'A' * 40
-
-READINESS_WAIT_TIMEOUT = 10
 
 
 def _recording_tracer() -> tuple[Tracer, InMemorySpanExporter]:
@@ -640,29 +641,26 @@ class TestInputGuardrailRedaction:
         assert result.output == 'blocked'
         assert len(guard_calls) == 1 and 'ignore all rules' in guard_calls[0]
 
-    async def test_replace_background_completion_preserves_metadata(self):
+    async def test_background_result_is_not_the_prompt(self):
+        """A run resuming from a background tool's result guards the user's prompt, not the tool's output."""
         guard_calls: list[str] = []
-        model_completions: list[tuple[str, object]] = []
+        sent: list[str] = []
 
-        def guard(prompt: str) -> bool | GuardrailResult:
+        def guard(prompt: str) -> bool:
             guard_calls.append(prompt)
-            if prompt.startswith('<pyai:tool_result'):
-                return GuardrailResult.replace('[redacted]')
             return True
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            completions = [
-                item
+            # The whole framed result, not only its opening tag, so the test proves the tool's output reaches the model.
+            texts = [
+                ''.join(item.content for item in part.content if isinstance(item, TextContent))
                 for message in messages
                 for part in message.parts
                 if isinstance(part, UserPromptPart) and isinstance(part.content, list)
-                for item in part.content
-                if isinstance(item, TextContent)
-                and item.metadata.get('origin') == 'pydantic-ai-harness.background_tools.result.v1'
             ]
-            if completions:
-                metadata = {key: value for key, value in completions[-1].metadata.items() if key != '__pydantic_ai__'}
-                model_completions.append((completions[-1].content, metadata))
+            results = [text for text in texts if text.startswith('<tool_result')]
+            if results:
+                sent.append(results[-1])
                 return ModelResponse(parts=[TextPart('done')])
             return ModelResponse(parts=[ToolCallPart('lookup', '{}', tool_call_id='tool-1')])
 
@@ -672,25 +670,18 @@ class TestInputGuardrailRedaction:
         async def lookup() -> str:
             return 'answer'
 
-        completion = '<pyai:tool_result tool_name="lookup" tool_call_id="tool-1">\nanswer\n</pyai:tool_result>'
         first = await agent.run('go')
         assert first.output == 'done'
         assert guard_calls == ['go']
-        assert model_completions == [
-            (
-                completion,
-                {'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'tool-1'},
-            )
-        ]
 
-        resumed = await agent.run(None, message_history=first.all_messages()[:-1])
+        history = first.all_messages()[:-1]
+        assert isinstance(history[-1].parts[0], BackgroundToolResultPart)
+        resumed = await agent.run(None, message_history=history)
 
         assert resumed.output == 'done'
-        assert guard_calls == ['go', completion]
-        assert model_completions[-1] == (
-            '[redacted]',
-            {'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'tool-1'},
-        )
+        # The run has no prompt of its own, so the guard screens the latest one in history, as after a task report.
+        assert guard_calls == ['go', 'go']
+        assert sent == ['<tool_result tool_name="lookup" tool_call_id="tool-1">answer</tool_result>'] * 2
 
     async def test_replace_with_non_str_is_a_usage_error(self):
         agent = Agent(

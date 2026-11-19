@@ -128,6 +128,11 @@ def test_run_griffe_reports_real_griffe_findings(tmp_path: Path, monkeypatch: py
     with pytest.raises(SystemExit, match='griffecli check missing_pkg failed with exit code 1'):
         run_griffe('missing_pkg', '.', 'v1')
 
+    # Added since the release, as `pydantic_ai_pax` was when `pydantic-clai2` was renamed: nothing to compare.
+    (tmp_path / 'new_pkg').mkdir()
+    (tmp_path / 'new_pkg' / '__init__.py').write_text('def greet(name): ...\n', encoding='utf-8')
+    assert run_griffe('new_pkg', '.', 'v1') == []
+
 
 def test_load_waivers_treats_a_missing_directory_as_empty(tmp_path: Path):
     assert load_waivers(tmp_path / 'waivers') == {}
@@ -266,6 +271,11 @@ _COLLECTION_ENTRY_CHANGES: list[tuple[str, tuple[list[str], list[str]] | None]] 
     ('{c.name: c for c in (A, B) if c.ok} -> {c.name: c for c in (A, B, C)}', None),
     ('{c.name: c for c in (A, B)} -> {c for c in (A, B, C)}', None),
     ('{c.name: c for c in TYPES} -> {c.name: c for c in TYPES}', None),
+    ("tuple(f'p:{m}' for m in ('a', 'b')) -> tuple(f'p:{m}' for m in ('c', 'a', 'b'))", (["'c'"], [])),
+    ("tuple(f'p:{m}' for m in ('a', 'b')) -> tuple(f'p:{m}' for m in ('a',))", ([], ["'b'"])),
+    ("tuple(f'p:{m}' for m in ('a',)) -> tuple(f'q:{m}' for m in ('a', 'b'))", None),
+    ("tuple(f'p:{m}' for m in ('a',)) -> list(f'p:{m}' for m in ('a', 'b'))", None),
+    ("(f'p:{m}' for m in ('a',)) -> (f'p:{m}' for m in ('a', 'b'))", None),
 ]
 
 
@@ -297,13 +307,13 @@ def test_main_allows_additions_to_listed_growing_collections(
     listed: bool,
     annotation: str,
 ):
-    finding = Finding('pydantic_clai2', 'config.py', 12, message)
+    finding = Finding('pydantic_ai_pax', 'config.py', 12, message)
     config = _config(tmp_path, {'growing_collections': [{'path': 'config.py', 'symbol': 'SETTINGS'}] if listed else []})
 
     def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
         return [finding]
 
-    monkeypatch.setattr(check_api_compatibility, 'PACKAGES', {'pydantic_clai2': 'src/pydantic_clai2'})
+    monkeypatch.setattr(check_api_compatibility, 'PACKAGES', {'pydantic_ai_pax': 'src/pydantic_ai_pax'})
     monkeypatch.setattr(check_api_compatibility, 'run_griffe', run_griffe)
     monkeypatch.setattr('sys.argv', ['check_api_compatibility.py', '--against', 'v2.32.1', *config])
 
@@ -358,13 +368,13 @@ def test_is_field_description_change_ignores_other_findings():
 def test_main_allows_field_description_changes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str], message: str, annotation: str
 ):
-    finding = Finding('pydantic_clai2', 'settings.py', 12, message)
+    finding = Finding('pydantic_ai_pax', 'settings.py', 12, message)
     config = _config(tmp_path)
 
     def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
         return [finding]
 
-    monkeypatch.setattr(check_api_compatibility, 'PACKAGES', {'pydantic_clai2': 'src/pydantic_clai2'})
+    monkeypatch.setattr(check_api_compatibility, 'PACKAGES', {'pydantic_ai_pax': 'src/pydantic_ai_pax'})
     monkeypatch.setattr(check_api_compatibility, 'run_griffe', run_griffe)
     monkeypatch.setattr('sys.argv', ['check_api_compatibility.py', '--against', 'v2.32.1', *config])
 
@@ -452,17 +462,17 @@ def test_main_warns_for_approved_breakage(
 def test_main_skips_the_clai2_web_ui_modules(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
-    plugins = 'src/pydantic_clai2/pydantic_clai2/builtin_plugins'
+    plugins = 'src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins'
     skipped = [
-        Finding('pydantic_clai2', f'{plugins}/web/__init__.py', 1, 'WebPlugin: Public object was removed'),
-        Finding('pydantic_clai2', f'{plugins}/web/service.py', 2, 'WebService.host: Public object was removed'),
-        Finding('pydantic_clai2', f'{plugins}/workspaces/sessions.py', 3, '<module>: Public object was removed'),
+        Finding('pydantic_ai_pax', f'{plugins}/web/__init__.py', 1, 'WebPlugin: Public object was removed'),
+        Finding('pydantic_ai_pax', f'{plugins}/web/service.py', 2, 'WebService.host: Public object was removed'),
+        Finding('pydantic_ai_pax', f'{plugins}/workspaces/sessions.py', 3, '<module>: Public object was removed'),
     ]
     reported = [
-        Finding('pydantic_clai2', f'{plugins}/web_search.py', 4, 'WebSearch: Public object was removed'),
+        Finding('pydantic_ai_pax', f'{plugins}/web_search.py', 4, 'WebSearch: Public object was removed'),
         Finding(
-            'pydantic_clai2',
-            'src/pydantic_clai2/pydantic_clai2/plugins/__init__.py',
+            'pydantic_ai_pax',
+            'src/pydantic_ai_pax/pydantic_ai_pax/plugins/__init__.py',
             5,
             'Plugin: Public object was removed',
         ),
@@ -472,7 +482,7 @@ def test_main_skips_the_clai2_web_ui_modules(
     def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
         return [*skipped, *reported]
 
-    monkeypatch.setattr(check_api_compatibility, 'PACKAGES', {'pydantic_clai2': 'src/pydantic_clai2'})
+    monkeypatch.setattr(check_api_compatibility, 'PACKAGES', {'pydantic_ai_pax': 'src/pydantic_ai_pax'})
     monkeypatch.setattr(check_api_compatibility, 'run_griffe', run_griffe)
     monkeypatch.setattr('sys.argv', ['check_api_compatibility.py', '--against', 'v2.32.1', *config])
 

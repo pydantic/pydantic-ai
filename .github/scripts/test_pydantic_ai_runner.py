@@ -53,8 +53,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 # tests import each from where it actually lives, not from a re-export.
 import agentic_workflow_guard
 import pydantic_ai_gh_aw_shim as pkg
-from mcp.shared.exceptions import McpError
-from mcp.types import ErrorData
+from fastmcp.exceptions import McpError
 from pydantic_ai_gh_aw_shim import (
     cli as shim,
     shared,
@@ -2157,7 +2156,11 @@ def test_runner_drops_dynamic_workflow_dependencies():
 
 
 def test_runner_resolves_pydantic_ai_from_the_workspace():
-    """The shim's code is this checkout, so its libraries must be too — see #6998, #7103."""
+    """The legacy runner installs this checkout's libraries; no workflow runs it (#12796).
+
+    Its smoke test therefore cannot catch a symbol the pinned engine runtime lacks. CI's "Import the gh-aw
+    shim on the pinned engine runtime" step checks the shim on that runtime.
+    """
     runner = (Path(__file__).parent / 'pydantic-ai-runner').read_text(encoding='utf-8')
     assert '# [tool.uv.sources]' in runner
     assert '# pydantic-ai-slim = { path = "../../pydantic_ai_slim", editable = true }' in runner
@@ -3664,7 +3667,7 @@ def test_mcp_wrapped_in_filter_when_allowlist_present(tmp_path: Path):
 # from the gh-aw gateway escaped `MCPToolset` and killed the whole run).
 # --------------------------------------------------------------------------- #
 def _mcp_error(message: str) -> McpError:
-    return McpError(ErrorData(code=-32602, message=message))
+    return McpError(code=-32602, message=message)
 
 
 def _error_hook_ctx() -> RunContext[None]:

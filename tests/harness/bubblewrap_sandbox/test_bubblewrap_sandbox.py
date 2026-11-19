@@ -45,7 +45,8 @@ from pydantic_ai_harness.bubblewrap_sandbox import (
 from pydantic_ai_harness.bubblewrap_sandbox._seccomp import NETWORK_FILTER_BASE64
 from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
 
-from .._fake_remote_tools import BWRAP_WORKS, FakeRemoteTools, install_fake_remote_tools
+from .. import _fake_remote_tools
+from .._fake_remote_tools import FakeRemoteTools, install_fake_remote_tools, require_bwrap
 
 pytestmark = [
     pytest.mark.anyio,
@@ -723,8 +724,28 @@ async def test_deprecated_bubblewrap_sandbox_alias_warns_and_wraps(tmp_path: Pat
     assert workspace_layers(result.workspace) == [BubblewrapWorkspace, LocalWorkspaceBackend]
 
 
-@pytest.mark.skipif(not BWRAP_WORKS, reason='needs a working `bwrap` (Linux with user namespaces)')
-class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
+@pytest.mark.parametrize(
+    ('works', 'require_live', 'outcome'),
+    [(True, '1', None), (False, '', pytest.skip.Exception), (False, '1', pytest.fail.Exception)],
+)
+def test_require_bwrap_fails_only_where_ci_needs_it(
+    monkeypatch: pytest.MonkeyPatch, works: bool, require_live: str, outcome: type[BaseException] | None
+) -> None:
+    """Without `bwrap` the real-sandbox tests skip, unless `BWRAP_REQUIRE_LIVE` is set, where they must fail."""
+    monkeypatch.setattr(_fake_remote_tools, 'BWRAP_WORKS', works)
+    monkeypatch.setenv('BWRAP_REQUIRE_LIVE', require_live)
+    if outcome is None:
+        require_bwrap()
+    else:
+        with pytest.raises(outcome, match='needs a working `bwrap`'):
+            require_bwrap()
+
+
+class TestRealBubblewrap:  # pragma: lax no cover - CI hosts may not have bubblewrap
+    @pytest.fixture(autouse=True)
+    def _require_bwrap(self) -> None:
+        require_bwrap()
+
     @pytest.fixture
     def host_dir(self) -> Iterator[Path]:
         """A host directory outside `/tmp`, which the sandbox replaces with its own, so only the read-only root guards it."""
@@ -885,7 +906,8 @@ class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
                         while True:
                             try:
                                 state = status.read_text(encoding='utf-8').rsplit(')', 1)[1].split()[0]
-                            except FileNotFoundError:
+                            # Reaped before the open, or between the open and the read, which then fails with ESRCH.
+                            except (FileNotFoundError, ProcessLookupError):
                                 break
                             if state == 'Z':
                                 break

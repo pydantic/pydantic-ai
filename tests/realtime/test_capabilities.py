@@ -15,7 +15,7 @@ import contextvars
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -85,7 +85,7 @@ from pydantic_ai.realtime.codec import (
 )
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import RunContext, ToolDefinition
+from pydantic_ai.tools import RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 
 from ..realtime_connections import InferredConnection
@@ -1249,17 +1249,24 @@ async def test_external_cancellation_keeps_its_type_and_settles_history() -> Non
     assert cancelled.all_messages() == session.all_messages()
 
 
-async def test_agent_realtime_session_rejects_a_deferred_tool() -> None:
+@pytest.mark.parametrize('registered_with', ['tool_plain', 'toolset'])
+async def test_agent_realtime_session_rejects_a_deferred_tool(
+    registered_with: Literal['tool_plain', 'toolset'],
+) -> None:
     # A `defer_loading=True` tool is hidden until tool search reveals it, which a session whose tools
     # are fixed at connect can never do. Advertising it silently would hand the model a `search_tools`
     # affordance that finds the tool and then can't have it — a dead end — so the session refuses to
     # open, exactly as it does for a deferred *capability* that contributes tools. The guard fires
-    # before any dial, so no provider is involved.
-    agent: Agent[None, str] = Agent()
-
-    @agent.tool_plain(defer_loading=True)
+    # before any dial, so no provider is involved. A `Tool` in a `FunctionToolset(defer_loading=True)`
+    # is deferred the same way.
     def withheld_tool() -> str:  # pragma: no cover — the session raises before any tool can run
         return 'withheld'
+
+    if registered_with == 'tool_plain':
+        agent: Agent[None, str] = Agent()
+        agent.tool_plain(defer_loading=True)(withheld_tool)
+    else:
+        agent = Agent(toolsets=[FunctionToolset([Tool(withheld_tool)], defer_loading=True)])
 
     with pytest.raises(
         UserError,

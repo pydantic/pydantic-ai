@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import RequestInput
+from pydantic_ai.capabilities import HandleDeferredToolCalls
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests
@@ -26,6 +26,7 @@ from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
 from tests.harness.dynamic_workflow._concurrent_sub_agents import (
     EXPECTED,
     SCRIPT,
+    DeferredStarts,
     build_orchestrator,
     noop,
     orchestrator_model,
@@ -293,7 +294,7 @@ def test_a_callback_in_a_branch_suspends_the_invocation_and_resumes_its_branch()
         FunctionModel(clean_up),
         name='clean',
         deps_type=type(None),
-        capabilities=[AWSLambdaDurability[None](), RequestInput[None](ask)],
+        capabilities=[AWSLambdaDurability[None](), HandleDeferredToolCalls[None](ask)],
     )
 
     @cleaner.tool_plain(requires_approval=True)
@@ -358,6 +359,22 @@ def test_sub_agents_sharing_a_serializer_share_a_parallel_operation(sealed: _Sea
     assert [operation.name for operation in service.operations.values() if operation.parent_id is None].count(
         'run_workflow'
     ) == 1
+
+
+def test_calls_a_scheduler_releases_join_the_parallel_operation() -> None:
+    calls: list[str] = []
+    events: list[str] = []
+    model = summarize_model(calls)
+    alpha, beta = (
+        Agent(model, name=name, tools=[noop], capabilities=[AWSLambdaDurability()]) for name in ('alpha', 'beta')
+    )
+    script = "import asyncio\nawait asyncio.gather(alpha(task='alpha'), beta(task='beta'))"
+    workflow = DynamicWorkflow[None](agents=[alpha, beta], call_scheduler=lambda ctx: DeferredStarts(events))
+    orchestrator = Agent(orchestrator_model(script), name='orchestrator', deps_type=type(None), capabilities=[workflow])
+    service = _Service()
+    assert service.invoke(orchestrator) == EXPECTED
+    assert events == ['register alpha', 'register beta', 'flush', 'start alpha', 'start beta']
+    assert [op.name for op in service.children('run_workflow')] == ['parallel-branch-0', 'parallel-branch-1']
 
 
 def test_a_durability_does_not_keep_its_serializer_alive() -> None:

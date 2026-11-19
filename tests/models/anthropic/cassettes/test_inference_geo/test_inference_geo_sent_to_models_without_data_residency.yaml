@@ -1,0 +1,58 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "169"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64
+        messages:
+        - role: user
+          content:
+          - text: "Reply with exactly: OK"
+            type: text
+        model: claude-haiku-4-5
+        inference_geo: us
+        stream: false
+  response:
+    status: 400
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=82
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-bca0d0675008dedbada4e690ab2d4ac3-0946a8558158bc77-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        type: error
+        error:
+          type: invalid_request_error
+          message: "'claude-haiku-4-5-20251001' does not support inference_geo."
+        request_id: req_011Ch1UCRGXKW57Xbu8vtNSG
+  recorded_at: 2026-11-13T19:20:59.854796+00:00

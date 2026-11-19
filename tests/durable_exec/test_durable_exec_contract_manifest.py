@@ -148,6 +148,7 @@ def fixture_repo(tmp_path: Path) -> Path:
             from __future__ import annotations
 
             from abc import ABC
+            from collections.abc import Mapping
             from typing import TYPE_CHECKING, Annotated, Optional
 
             from pydantic import BaseModel
@@ -179,6 +180,8 @@ def fixture_repo(tmp_path: Path) -> Path:
                 profiles: Optional[list[Profile]] = None
                 tagged: Annotated[list[Profile], 'tagged'] = []
                 unparsable: 'list[(' = []
+                profiles_by_name: 'dict[str, Profile] | None' = None
+                responses_by_name: Optional[Annotated[Mapping[str, Response], 'by name']] = None
 
                 def __init__(self, profile: Profile, response: 'Response') -> None:
                     self._profile = profile
@@ -200,6 +203,9 @@ def fixture_repo(tmp_path: Path) -> Path:
 
                 def history(self) -> list[Response]:
                     return []
+
+                def lookup(self) -> dict[str, Profile]:
+                    return {}
 
                 @staticmethod
                 def helper():
@@ -434,6 +440,44 @@ def fixture_repo(tmp_path: Path) -> Path:
                 [entry.text for entry in model.responses]
 
 
+            _RESPONSES: dict[str, Response] = {}
+
+
+            def through_a_mapping_field(model: Model, key: str) -> None:
+                if (found := model.profiles_by_name.get(key)) is not None:
+                    found.supports_tools
+
+
+            def through_a_wrapped_mapping_field(model: Model, key: str) -> None:
+                model.responses_by_name.get(key).text
+
+
+            def through_a_mapping_method(model: Model, key: str) -> None:
+                model.lookup().get(key).supports_tools
+
+
+            def through_a_mapping_parameter(named: Mapping[str, Profile], key: str) -> None:
+                named.get(key).supports_tools
+                named[key].missing
+
+
+            def through_an_enclosing_mapping(named: Mapping[str, Response]) -> None:
+                def nested(key: str) -> None:
+                    named.get(key).text
+
+
+            def through_a_module_mapping(key: str) -> None:
+                _RESPONSES.get(key).text
+
+
+            _ProfilesByName = dict[str, Profile]
+
+
+            def through_a_mapping_alias(named: _ProfilesByName, pending: Pending, key: str) -> None:
+                named.get(key).supports_tools
+                pending.get(key).missing
+
+
             def local_import() -> None:
                 from pydantic_ai._run_context import RunContext as LocalContext
 
@@ -543,12 +587,18 @@ def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
                     'spread',
                 ],
             ),
+            'models/__init__.py::Model.lookup': (['attribute_read'], ['temporal'], ['through_a_mapping_method']),
             'models/__init__.py::Model.profile': (
                 ['attribute_read'],
                 ['temporal'],
                 ['TemporalModel.build', 'TemporalModel.request', 'reflective'],
             ),
             'models/__init__.py::Model.profiles': (['attribute_read'], ['temporal'], ['iterate', 'module_level']),
+            'models/__init__.py::Model.profiles_by_name': (
+                ['attribute_read'],
+                ['temporal'],
+                ['module_level', 'through_a_mapping_field'],
+            ),
             'models/__init__.py::Model.request': (
                 ['attribute_read', 'override'],
                 ['render', 'temporal'],
@@ -558,6 +608,11 @@ def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
                 ['attribute_read'],
                 ['temporal'],
                 ['iterate', 'module_level', 'through_a_comprehension'],
+            ),
+            'models/__init__.py::Model.responses_by_name': (
+                ['attribute_read'],
+                ['temporal'],
+                ['module_level', 'through_a_wrapped_mapping_field'],
             ),
             'models/__init__.py::Model.tagged': (['attribute_read'], ['temporal'], ['iterate', 'module_level']),
             'models/__init__.py::Model.unparsable': (['attribute_read'], ['temporal'], ['iterate', 'module_level']),
@@ -587,6 +642,10 @@ def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
                 [
                     'TemporalModel.request',
                     'iterate',
+                    'through_a_mapping_alias',
+                    'through_a_mapping_field',
+                    'through_a_mapping_method',
+                    'through_a_mapping_parameter',
                     'through_a_module_variable',
                     'through_an_imported_variable',
                     'through_varargs',
@@ -596,7 +655,15 @@ def test_build_manifest_resolves_every_dependency_form(fixture_repo: Path):
             'profiles.py::Response.text': (
                 ['attribute_read'],
                 ['temporal'],
-                ['TemporalModel.stream', 'iterate', 'through_a_comprehension', 'through_a_method'],
+                [
+                    'TemporalModel.stream',
+                    'iterate',
+                    'through_a_comprehension',
+                    'through_a_method',
+                    'through_a_module_mapping',
+                    'through_a_wrapped_mapping_field',
+                    'through_an_enclosing_mapping.nested',
+                ],
             ),
             'tools.py::is_context': (['import'], ['temporal'], ['guarded']),
             'tools.py::is_run_context': (['import'], ['temporal'], ['module_level']),

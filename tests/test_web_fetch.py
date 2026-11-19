@@ -27,9 +27,7 @@ from pydantic_ai.common_tools.web_fetch import (
     web_fetch_tool,
 )
 from pydantic_ai.exceptions import ModelRetry
-
-READINESS_WAIT_TIMEOUT = 10
-
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 _CPU_SECONDS_BUDGET = 60
 """What a conversion may cost. It's counted in CPU time, which a slow algorithm uses up but a stalled runner doesn't."""
@@ -487,11 +485,14 @@ class TestWebFetchLocalTool:
         with pytest.raises(ModelRetry, match='Failed to fetch'):
             await tool('not-a-url')
 
-    async def test_idna_invalid_hostname_raises_model_retry(self):
+    async def test_idna_invalid_hostname_raises_model_retry(self, monkeypatch: pytest.MonkeyPatch):
         """A hostname httpx2's IDNA parser rejects raises ModelRetry, not `httpx2.InvalidURL`.
 
-        The URL is rejected before any name resolution, so this never reaches the network.
+        The SSRF check resolves the hostname before httpx2 parses it, and the resolver's IDNA
+        encoding accepts it. Resolution is stubbed with a public address, so the test reaches
+        httpx2's rejection without the runner's DNS, which can fail and raise first.
         """
+        monkeypatch.setattr('pydantic_ai._ssrf.resolve_hostname', AsyncMock(return_value=['93.184.215.14']))
         # A fullwidth "e" (U+FF45), spelled as an escape so the hostname survives any normalization
         # a tool might apply to this file, and so a reader can tell it apart from a plain "e".
         url = 'https://\uff45xample.com/'

@@ -23,7 +23,7 @@ pre-agent-steps:
       python3 -P -c "from pydantic_ai_harness import Coder"
 engine:
   id: pydantic-ai
-  version: "0.66.0"
+  version: "0.71.0"
   display-name: Pydantic AI
   description: CLAI 2 headless runner for Pydantic AI agents with MCP tool support
   mcp: true
@@ -86,9 +86,14 @@ engine:
       // reopen a surviving parent's stderr pipe through /proc and replace the
       // public-key header. The Python recorder writes to stderr directly after
       // protecting itself against /proc access.
+      // The capture descriptor can arrive non-blocking, and its open file description is
+      // shared with the processes that started the engine, so the recorder leaves that flag
+      // alone. A frame can be larger than the pipe, so each line is written in a loop that
+      // takes partial writes and waits for the reader to make room when the pipe is full.
       const RECORDING_MODULE = `import ctypes
       import json
       import os
+      import select
       import sys
 
       from cryptography.hazmat.primitives import serialization
@@ -100,13 +105,27 @@ engine:
               raise OSError(ctypes.get_errno(), 'Unable to protect session signing key')
       capture_fd = int(os.environ.pop('GH_AW_SESSION_CAPTURE_FD'))
       os.set_inheritable(capture_fd, False)
-      output = os.fdopen(capture_fd, 'w', encoding='utf-8', closefd=False)
+      output = os.fdopen(capture_fd, 'wb', buffering=0, closefd=False)
+      capture_poller = select.poll()
+      capture_poller.register(capture_fd, select.POLLOUT)
+
+
+      def write_line(line: str) -> None:
+          remaining = memoryview(f'{line}\\n'.encode())
+          while remaining:
+              written = output.write(remaining)
+              if written is None:
+                  capture_poller.poll()
+              else:
+                  remaining = remaining[written:]
+
+
       key = Ed25519PrivateKey.generate()
       public_key = key.public_key().public_bytes(
           encoding=serialization.Encoding.DER,
           format=serialization.PublicFormat.SubjectPublicKeyInfo,
       ).hex()
-      print(f'\\x1eGH-AW-SESSION-PUBKEY:{public_key}\\x1e', file=output, flush=True)
+      write_line(f'\\x1eGH-AW-SESSION-PUBKEY:{public_key}\\x1e')
       sequence = 0
 
 
@@ -114,7 +133,7 @@ engine:
           global sequence
           payload = json.dumps(event, separators=(',', ':'))
           signature = key.sign(f'{sequence}\\n{payload}'.encode()).hex()
-          print(f'\\x1eGH-AW-SESSION/{sequence}/{signature} {payload}', file=output, flush=True)
+          write_line(f'\\x1eGH-AW-SESSION/{sequence}/{signature} {payload}')
           sequence += 1
       `;
 

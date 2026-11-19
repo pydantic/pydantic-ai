@@ -95,6 +95,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from tests.models.conftest import items_serialized_differently_inside_a_list
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr, legacy_retry_prompt_part, message, message_part, try_import
@@ -371,6 +372,8 @@ def test_structured_content_round_trips_through_json():
     [
         ('audio/wav', 'wav'),
         ('audio/mpeg', 'mp3'),
+        ('audio/mp3', 'mp3'),
+        ('audio/x-wav', 'wav'),
     ],
 )
 def test_binary_content_audio(media_type: str, format: str):
@@ -383,6 +386,7 @@ def test_binary_content_audio(media_type: str, format: str):
     'media_type, format',
     [
         ('image/jpeg', 'jpeg'),
+        ('image/jpg', 'jpeg'),
         ('image/png', 'png'),
         ('image/gif', 'gif'),
         ('image/webp', 'webp'),
@@ -468,6 +472,8 @@ def test_binary_content_document(media_type: str, format: str):
         pytest.param(AudioUrl('foobar.aiff'), 'audio/aiff', 'aiff', id='aiff'),
         pytest.param(AudioUrl('foobar.aac'), 'audio/aac', 'aac', id='aac'),
         pytest.param(AudioUrl('foobar', media_type='audio/mpeg'), 'audio/mpeg', 'mp3', id='mp3'),
+        pytest.param(AudioUrl('foobar', media_type='audio/mp3'), 'audio/mp3', 'mp3', id='mp3-alias'),
+        pytest.param(AudioUrl('foobar', media_type='audio/x-wav'), 'audio/x-wav', 'wav', id='x-wav-alias'),
     ],
 )
 def test_audio_url(audio_url: AudioUrl, media_type: str, format: str):
@@ -1362,6 +1368,7 @@ def test_deferred_tool_events_serialization_roundtrip():
                     }
                 ],
                 'metadata': {'call_1': {'foo': 'bar'}},
+                'validated_args': {},
             },
             'event_kind': 'deferred_tool_requests',
         }
@@ -3217,6 +3224,26 @@ def test_tool_return_part_model_response_str_and_user_content():
             '</pyai:tool_result>',
         ]
     )
+
+    # Items beside a file keep the JSON form they have without one: structured values stay JSON values in the
+    # array rather than strings holding their JSON text, and a value whose JSON form is a string stays that string.
+    items = [{'temp': 20}, 3, None, [1, 2], 'sunny', datetime(2026, 1, 1, 12, 0)]
+    assert ToolReturnPart(tool_name='t', content=items, tool_call_id='c7').model_response_str() == snapshot(
+        '[{"temp":20},3,null,[1,2],"sunny","2026-01-01T12:00:00"]'
+    )
+    text, _ = ToolReturnPart(
+        tool_name='t', content=[*items, img], tool_call_id='c7'
+    ).model_response_str_and_user_content()
+    assert text == snapshot('[{"temp":20},3,null,[1,2],"sunny","2026-01-01T12:00:00","See file d5a901."]')
+
+    # Each item beside a file is serialized as it is alone: with its own settings, its keys as it dumps them, and no
+    # extra nesting level against the serializer's depth limit.
+    for item in items_serialized_differently_inside_a_list():
+        alone = ToolReturnPart(tool_name='t', content=item, tool_call_id='c8').model_response_str()
+        text, _ = ToolReturnPart(
+            tool_name='t', content=[item, img], tool_call_id='c8'
+        ).model_response_str_and_user_content()
+        assert text == f'[{alone},"See file d5a901."]'
 
 
 def test_args_as_dict_valid_json():

@@ -43,7 +43,6 @@ from pydantic_ai.capabilities import (
     PrepareTools,
     ProcessEventStream,
     ProcessHistory,
-    RequestInput,
     ResolveModelId,
     SelectModel,
     Thinking,
@@ -55,12 +54,13 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.messages import (
     CapabilityInstructionSource,
+    InstructionCapabilityPart,
     InstructionId,
     InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    SystemPromptPart,
+    OperatorSource,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -134,7 +134,6 @@ def _keep_model(ctx: ModelSelectionContext[Any]) -> Model:
 
 FIXTURES: dict[str, Fixture] = {
     'CombinedCapability': lambda _: CombinedCapability([Thinking()]),
-    'RequestInput': lambda _: RequestInput(lambda ctx, requests, token: None),
     'DynamicCapability': lambda _: DynamicCapability(lambda ctx: Thinking()),
     'FileUnderstanding': lambda _: FileUnderstanding(fallback_subagent_model=TestModel()),
     'HandleDeferredToolCalls': lambda _: HandleDeferredToolCalls(lambda ctx, requests: requests.build_results()),
@@ -163,8 +162,15 @@ EXEMPT: dict[str, Exempt] = {
         "built by the same code as the model's own request, so it's the unbatched request's (see the providers' "
         '`batch_encode` tests).'
     ),
+    'RequestInput': Exempt(
+        "Deprecated alias of `HandleDeferredToolCalls` with a handler that takes a resume token, which that class's "
+        'case covers; constructing it warns.'
+    ),
     'NativeOrLocalTool': Exempt(
         'Base class that needs a subclass; `WebSearch`, `WebFetch`, `XSearch` and `MCP` are its cases.'
+    ),
+    'WindowsWorkspace': Exempt(
+        "Builds only on Windows; it's `LocalWorkspace` with another backend, which adds nothing to the conversation."
     ),
 }
 
@@ -296,9 +302,11 @@ AGENT_FEATURES: dict[str, Scenario] = {
         serialize_history=True,
     ),
     # The models whose APIs can change effort mid-conversation (#10385); Chat Completions can't.
+    # Chat Completions uses gpt-5.2, which accepts function tools at each of the scenario's efforts. Every
+    # scenario registers a function tool, and `OpenAIChatModel` refuses that with reasoning on for GPT-6.
     'agent:effort_change': Scenario(
         run_kwargs={'model_settings': _effort_by_step},
-        model_names={'openai-responses': 'gpt-6.1-sol', 'openai-chat': 'gpt-6.1-sol'},
+        model_names={'openai-responses': 'gpt-6.1-sol', 'openai-chat': 'gpt-5.2'},
         serialize_history=True,
     ),
     # A UI endpoint that keeps the history on the server (#11372): the client sends its whole conversation back,
@@ -363,6 +371,11 @@ def _count(text: str) -> int:
     return TypeAdapter(int).validate_python(text)
 
 
+@dataclass(kw_only=True)
+class ReminderPart(InstructionCapabilityPart, namespace='test_history_append_only'):
+    """A capability's request-scoped reminder, which renders as a `SystemPromptPart(..., scope='request')`."""
+
+
 @dataclass
 class _RequestScopedNudge(AbstractCapability[Any]):
     """Add a request-scoped system prompt (#9711) to every request, the way `WarnNearLimits` does."""
@@ -370,7 +383,7 @@ class _RequestScopedNudge(AbstractCapability[Any]):
     async def before_model_request(
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        ctx.enqueue(SystemPromptPart('Keep it short.', scope='request'))
+        ctx.enqueue(ReminderPart(content='Keep it short.', source=OperatorSource(), scope='request'))
         return request_context
 
 
