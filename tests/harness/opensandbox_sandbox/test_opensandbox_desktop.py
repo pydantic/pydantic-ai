@@ -68,15 +68,15 @@ async def test_a_display_that_does_not_start_names_the_sandbox_and_what_it_needs
     server: FakeOpenSandbox, working_dir: str
 ) -> None:
     def refuse(command: str, timeout: float | None) -> tuple[str, str, int]:
-        return '', "missing Xvfb xdotool, and there's no root or passwordless sudo to install them with", 1
+        return '', "the display needs Xvfb xdotool, and there's no root or passwordless sudo to install them with", 1
 
     server.display = refuse
     backend = _backend(server, working_dir, desktop=True)
 
     with pytest.raises(
         WorkspaceUnavailableError,
-        match=r'^Could not start the display in OpenSandbox sandbox \S+: it needs Xvfb, xdotool, xwininfo, scrot '
-        r"and setsid \(missing Xvfb xdotool, and there's no root or passwordless sudo to install them with\)$",
+        match=r'^Could not start the display in OpenSandbox sandbox \S+: the display needs Xvfb xdotool, and '
+        r"there's no root or passwordless sudo to install them with$",
     ):
         await screen(backend).display_size()
     await backend.aclose()

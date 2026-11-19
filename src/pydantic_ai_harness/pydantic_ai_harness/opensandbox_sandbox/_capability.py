@@ -134,7 +134,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
     desktop: bool | tuple[int, int] = False
     """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
     for 1280x800, or its `(width, height)`. The first use installs the display's programs with `apt-get` when the
-    image's user is root or has passwordless `sudo`."""
+    image's user is root; passwordless `sudo` works only where the server allows it."""
 
     def __post_init__(self) -> None:
         reject_defer_loading('OpenSandbox', self.defer_loading)

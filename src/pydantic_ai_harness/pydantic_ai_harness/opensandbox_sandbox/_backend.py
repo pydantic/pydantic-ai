@@ -237,7 +237,8 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         desktop: Whether the sandbox has a display for
             [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or its
             `(width, height)`. The image needs Xvfb, `xdotool`, `xwininfo` (`x11-utils`), `scrot` and `setsid`,
-            which the first use installs with `apt-get` when the image's user is root or has passwordless `sudo`.
+            which the first use installs with `apt-get` when the image's user is root; passwordless `sudo` works
+            only where the server allows it.
             No port or endpoint is opened for it.
     """
 
