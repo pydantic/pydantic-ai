@@ -59,8 +59,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # `at-claude` runs only on a thread a maintainer opened, and reads only maintainers'
-      # comments. A maintainer is a user with `write` or `admin` permission, resolved one
+      # `at-claude` runs only on a thread a maintainer opened, and the context the action
+      # builds for Claude holds only maintainers' comments, reviews and inline review
+      # comments. Bot accounts, this repository's review bots included, are not
+      # maintainers, so their comments stay out of that context too. The job's tools are
+      # unchanged. A maintainer is a user with `write` or `admin` permission, resolved one
       # user at a time: the collaborator list endpoint omits private org members (see
       # `maintainer_login` in `.github/scripts/issue_pr_attention_monitor.py`). The
       # endpoint answers `read` for a non-collaborator, so a failed lookup fails the job
@@ -104,6 +107,9 @@ jobs:
                   write | admin) included+=("$author") ;;
                 esac
               done
+              ;;
+            *)
+              echo "::notice::@claude runs only on issues and pull requests a maintainer opened; ${THREAD_AUTHOR} has ${author_permission} access."
               ;;
           esac
 
