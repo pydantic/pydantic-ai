@@ -379,8 +379,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
     OpenAI adds a response to its conversation only once the response completes. When the response found was
     streamed and its stream dropped or was cancelled before it finished, Pydantic AI first lists the conversation's
-    items to check whether OpenAI completed it anyway. If it didn't, that response is sent again, with the messages
-    since the last response the conversation holds.
+    items to check whether OpenAI completed it anyway, if the response has output items to look for. If it didn't,
+    or the response has none, that response is sent again, with the messages since the last response the
+    conversation holds.
 
     `'auto'` trusts the message history for this ID, which
     [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent. With history from a client, pass a

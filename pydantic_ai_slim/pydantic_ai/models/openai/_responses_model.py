@@ -2526,8 +2526,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> tuple[str | None, list[ModelMessage]]:
         """The OpenAI conversation to send to, and the messages after the last response it holds.
 
-        Without such a response, every message is sent, to `openai_conversation_id` if one is given or found.
+        Without such a response, every message is sent, to `openai_conversation_id` if one is given, or else to
+        the conversation of a response it doesn't hold.
         """
+        conversation_id = openai_conversation_id
         trimmed_messages: list[ModelMessage] = []
         for m in reversed(messages):
             # A response from another Pydantic AI conversation doesn't continue this one.
@@ -2537,14 +2539,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 and (pydantic_ai_conversation_id is None or m.conversation_id in (None, pydantic_ai_conversation_id))
             ):
                 candidate = m.provider_details and m.provider_details.get('conversation_id')
-                if isinstance(candidate, str) and openai_conversation_id in (None, candidate):
+                if isinstance(candidate, str) and conversation_id in (None, candidate):
                     if await self._conversation_holds(candidate, m, model_settings):
                         return candidate, list(reversed(trimmed_messages))
                     # Send this response again, with what came before it, to the same conversation.
-                    openai_conversation_id = candidate
+                    conversation_id = candidate
             trimmed_messages.append(m)
 
-        return openai_conversation_id, messages
+        return conversation_id, messages
 
     async def _conversation_holds(
         self, conversation_id: str, response: ModelResponse, model_settings: OpenAIResponsesModelSettings
