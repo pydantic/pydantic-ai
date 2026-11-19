@@ -2580,6 +2580,7 @@ def test_activity_message_other_types_ignored() -> None:
         pytest.param('[1, 2, 3]', id='non-dict-list'),
         pytest.param('42', id='non-dict-number'),
         pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
+        pytest.param('{"a": ' + '1' * 5_000 + '}', id='oversized-integer'),
     ],
 )
 def test_reasoning_message_malformed_encrypted_value(encrypted_value: str) -> None:
@@ -6753,6 +6754,31 @@ async def test_tool_return_deeply_nested_json_string_stays_string(content: str) 
     ]
 
 
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param('caf\udce9', id='lone-surrogate'),
+        pytest.param('{"a": ' + '1' * 5_000 + '}', id='oversized-integer'),
+    ],
+)
+def test_tool_return_unparseable_json_string_stays_string(content: str) -> None:
+    """A tool return `pydantic_core.from_json` rejects loads as the string, like any other plain-text return.
+
+    A str holding a lone surrogate reaches it when `build_run_input` re-reads the body with `json.loads`.
+    """
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1', tool_calls=[ToolCall(id='tc-1', function=FunctionCall(name='get_value', arguments='{}'))]
+            ),
+            ToolMessage(id='msg-2', tool_call_id='tc-1', content=content),
+        ]
+    )
+    assert list(iter_message_parts(loaded, ModelRequest, ToolReturnPart)) == [
+        ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content, timestamp=IsDatetime())
+    ]
+
+
 def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage) -> None:
     """Multimodal `NativeToolReturnPart.content` rides inline in `ToolMessage.content` and round-trips with no flag."""
     original: list[ModelMessage] = [
@@ -7848,6 +7874,7 @@ The page the user is on.
             id='no-such-item',
         ),
         pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
+        pytest.param('{"a": ' + '1' * 5_000 + '}', id='oversized-integer'),
     ],
 )
 @pytest.mark.parametrize('content', [pytest.param('Hi', id='str'), pytest.param('list', id='list')])

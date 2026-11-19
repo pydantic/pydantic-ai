@@ -8800,11 +8800,15 @@ async def test_load_messages_keeps_text_with_a_malformed_structured_content_payl
                         text='!',
                         provider_metadata={'pydantic_ai': {'structured_content': '[' * 100_000 + ']' * 100_000}},
                     ),
+                    TextUIPart(
+                        text='?',
+                        provider_metadata={'pydantic_ai': {'structured_content': '{"a": ' + '1' * 5_000 + '}'}},
+                    ),
                 ],
             )
         ]
     )
-    assert request.parts == [UserPromptPart(content=['Hi', 'there', 'you', 'all', '!'], timestamp=IsDatetime())]
+    assert request.parts == [UserPromptPart(content=['Hi', 'there', 'you', 'all', '!', '?'], timestamp=IsDatetime())]
 
 
 async def test_enqueued_structured_content_round_trips_through_stream():
@@ -8921,9 +8925,15 @@ async def test_adapter_load_messages_json_list_args():
     assert tool_call.args == '[1, 2, 3]'
 
 
-def test_adapter_load_messages_deeply_nested_json_args():
-    """Args nested past the recursion limit are kept as the string, like any other non-JSON args."""
-    args = '[' * 100_000 + ']' * 100_000
+@pytest.mark.parametrize(
+    'args',
+    [
+        pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
+        pytest.param('{"a": ' + '1' * 5_000 + '}', id='oversized-integer'),
+    ],
+)
+def test_adapter_load_messages_unparseable_json_args(args: str):
+    """Args nested past the recursion limit or holding an oversized integer are kept as the string, like non-JSON args."""
     ui_message = UIMessage(
         id='msg1',
         role='assistant',

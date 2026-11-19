@@ -301,7 +301,7 @@ def _parse_encrypted_namespace(encrypted_value: str | None) -> dict[str, Any] | 
         return None
     try:
         data = json.loads(encrypted_value)
-    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
+    except (ValueError, RecursionError):  # also integers past the digit limit, and deeply nested JSON
         return None
     if not is_str_dict(data):
         return None
@@ -451,7 +451,7 @@ def rehydrate_tool_return_content(content: Any) -> Any:
     if isinstance(content, str):
         try:
             parsed = pydantic_core.from_json(content)
-        except ValueError:
+        except (ValueError, TypeError):  # `TypeError` on a str holding a lone surrogate
             return content
         if not isinstance(parsed, (dict, list)):
             return content
