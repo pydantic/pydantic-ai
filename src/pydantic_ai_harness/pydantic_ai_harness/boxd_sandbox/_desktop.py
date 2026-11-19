@@ -206,5 +206,5 @@ class BoxdDesktop:
             ):
                 raise
             raise WorkspaceError(
-                f'{error}. Releasing the left mouse button failed too, so it may still be held.'
+                f'A long drag failed ({error}), and releasing the left mouse button failed too, so it may still be held.'
             ) from error

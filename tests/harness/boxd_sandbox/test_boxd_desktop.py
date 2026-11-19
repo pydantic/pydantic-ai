@@ -157,7 +157,8 @@ async def test_a_long_drag_whose_release_fails_says_the_button_may_still_be_held
     ]
 
     with pytest.raises(
-        WorkspaceError, match=r'^move refused\. Releasing the left mouse button failed too, so it may still be held\.$'
+        WorkspaceError,
+        match=r'^A long drag failed \(move refused\), and releasing the left mouse button failed too, so it may still be held\.$',
     ):
         await screen(backend).act(Drag(path=_path(101)))
 
