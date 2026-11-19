@@ -323,6 +323,22 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
         assert connection.execute('PRAGMA user_version').fetchone() == (1,)
 
 
+def test_full_screen_preference_defaults_off_and_survives_reopen(tmp_path: Path) -> None:
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        # A database from a build without the setting.
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('display.thinking', 'false'))
+    store = SettingsStore(path)
+    assert store.load().full_screen is False
+    store.set('display.full_screen', True)
+    reopened = SettingsStore(path)
+    assert reopened.load().full_screen is True
+    assert reopened.overrides() == {'display.thinking': False, 'display.full_screen': True}
+    reopened.reset('display.full_screen')
+    assert SettingsStore(path).overrides() == {'display.thinking': False}
+
+
 def test_task_model_display_preference_survives_reopen(tmp_path: Path) -> None:
     path = tmp_path / 'config.db'
     store = SettingsStore(path)

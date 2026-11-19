@@ -532,8 +532,15 @@ in-memory `replace_messages`, so exiting immediately after `/compact` is durable
 The interactive editor owns its layout explicitly. Do not reintroduce a
 PromptSession renderer. `PromptSurface` starts inline on the main screen, repainting
 only the rows the terminal's scrollback lacks plus the editor, and switches to the
-alternate screen for good once they would fill the terminal; tests that need fixed
-frame rows pass `inline=False`. On the alternate screen it composes a termflow.live `ScreenBuffer`,
+alternate screen for good once they would fill the terminal or the width changes.
+`display.full_screen` (`LivePrompt(full_screen=True)`, `PromptSurface(inline=False)`)
+starts on the alternate screen; tests that need fixed frame rows use it. The inline
+phase pushes only `KEYS_ON`, never mouse reporting, so the terminal keeps its own wheel
+scrollback and selection; it shows every unprinted row, so it has nothing to scroll and
+follows. It erases its rows by moving up the count it painted, which a terminal that
+reflows text on a width change would invalidate, hence the switch on a width change.
+The rules below about scrolling, the mouse, and resizes are the alternate screen's.
+On the alternate screen it composes a termflow.live `ScreenBuffer`,
 `TranscriptView` draws its transcript region, and `render_diff` paints changed
 cells. Do not invent a parallel canvas. The hardware cursor stays hidden;
 the input cursor is a painted reverse-video cell. Keep terminal mutations in

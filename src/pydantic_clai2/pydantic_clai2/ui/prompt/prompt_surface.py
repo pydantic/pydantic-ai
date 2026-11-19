@@ -59,7 +59,8 @@ class PromptSurface(io.StringIO):
     """Own the terminal: every write lands in the transcript, and frames show it.
 
     The panel starts inline, below the output already in the terminal's scrollback, and grows
-    with the transcript. Once it would fill the terminal it moves to the alternate screen for good.
+    with the transcript. Once it would fill the terminal, or the terminal's width changes, it moves
+    to the alternate screen for good; `inline=False` starts there.
     There, frames are a termflow.live `ScreenBuffer`: the transcript view fills the rows above the editor's,
     and `render_diff` sends only changed cells. Nothing scrolls the terminal, so a resize, a theme
     change, or a closed menu repaints from the transcript. `restore` prints what the terminal's own
@@ -92,9 +93,9 @@ class PromptSurface(io.StringIO):
         self._screen = False
         self._full = not inline
         """Painting on the alternate screen; an inline panel switches once it fills the terminal."""
-        self._inline_rows = 0
+        self._inline_rows: int = 0
         """How many main-screen rows the inline panel occupies, ending at the cursor's row."""
-        self._inline_text = ''
+        self._inline_text: str = ''
         """What the inline panel last painted, so an unchanged one is not painted again."""
         self._modes = False
         self._holds = 0
@@ -334,12 +335,14 @@ class PromptSurface(io.StringIO):
 
     def _paint(self, *, modes: bool = False) -> None:
         width, height = self._geometry()
-        if not self._full:
+        # A terminal that reflows text on a width change moves the inline rows, so only a full-screen frame repaints.
+        reflowed = self._inline_rows > 0 and self._painted_as is not None and self._painted_as[0] != width
+        if not self._full and not reflowed:
             pinned = self._rows[-(height - 2) :] if height > 2 else ()
             if (shown := self._unprinted(width=width, limit=height - len(pinned))) is not None:
-                self._paint_inline([*shown, *pinned], modes=modes)
+                self._paint_inline([*shown, *pinned], modes=modes, width=width, height=height)
                 return
-            self._full = True
+        self._full = True
         parts: list[str] = []
         if not self._screen:
             if self._modes:
@@ -378,7 +381,7 @@ class PromptSurface(io.StringIO):
                 return None
         return shown
 
-    def _paint_inline(self, lines: list[str], *, modes: bool) -> None:
+    def _paint_inline(self, lines: list[str], *, modes: bool, width: int, height: int) -> None:
         """Paint `lines` over the inline panel's rows on the main screen, scrolling earlier output up as it grows."""
         self.view.follow()  # Every unprinted row shows, so there is nothing to scroll back to.
         parts: list[str] = []
@@ -393,7 +396,7 @@ class PromptSurface(io.StringIO):
         self._inline_rows, self._inline_text = len(lines), text
         self._dirty = False
         self._painted_at = self.clock()
-        self._painted_as = (*self._geometry(), theme.name())
+        self._painted_as = (width, height, theme.name())
 
     def _erase_inline(self) -> str:
         """Return to the inline panel's first row and clear it and everything below, or nothing without one."""

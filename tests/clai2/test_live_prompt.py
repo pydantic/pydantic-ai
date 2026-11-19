@@ -30,7 +30,7 @@ from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.live_prompt import IDLE_REPAINT, LivePrompt, PromptWakeup
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
-from pydantic_clai2.ui.prompt.prompt_surface import ENTER, KEYS_ON, LEAVE, MODES_OFF, WHEEL_ROWS, PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import ENTER, KEYS_ON, LEAVE, MODES_OFF, WHEEL_ROWS
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
 from tests.conftest import no_leaked_tasks
@@ -48,7 +48,7 @@ async def editor(
 ) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
     """An opened editor on a pipe; `key_wait_limit` fails a test left waiting for keys that never come.
 
-    The panel is full screen unless `inline`, so frames have fixed rows; production starts inline.
+    The panel is full screen, as `display.full_screen` makes it, so frames have fixed rows, unless `inline`.
 
     A test that feeds no keys and writes to a real store passes a limit no stall reaches: a slow disk is no hang.
     """
@@ -70,9 +70,7 @@ async def editor(
             toolbar=toolbar,
             clock=clock,
             panel=panel,
-        )
-        live.output = PromptSurface(
-            output=output, size=lambda: console.size, transcript=live.output.transcript, inline=inline
+            full_screen=not inline,
         )
         async with live.opened():
             yield live, pipe, output
@@ -1074,3 +1072,14 @@ async def test_the_editor_opens_compact_below_the_shell() -> None:
         assert lines[0] == '$ clai2' and lines[1] == ''
         assert any(line.startswith('draft') for line in lines[2:6])
         assert lines[-1] == '', 'the panel takes only the rows it needs'
+
+
+async def test_the_full_screen_editor_takes_the_terminal_from_the_start() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    terminal.write('$ clai2\r\n')
+    async with editor(output=terminal) as (live, _, _):
+        live.buffer.replace('draft')
+        live.paint()
+        assert terminal.alternate
+        assert terminal.lines()[0] == ''
+        assert terminal.lines()[-1].strip() == 'ready', 'the editor sits at the bottom of the terminal'

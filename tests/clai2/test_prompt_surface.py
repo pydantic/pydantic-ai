@@ -914,3 +914,27 @@ def test_the_panel_starts_compact_below_earlier_output_and_grows_to_full_screen(
     assert not terminal.alternate
     assert terminal.history == ['$ clai2']
     assert terminal.lines()[:7] == ['banner', 'answer', *(f'line {index}' for index in range(4)), '']
+
+
+def test_a_width_change_moves_the_inline_panel_to_full_screen() -> None:
+    """A terminal that reflows text moves the inline rows, so erasing them by count would guess."""
+    screen = Screen(width=40, height=10, inline=True)
+    screen.surface.paint(ROWS)
+    assert not screen.terminal.alternate
+    screen.terminal.resize(width=30, height=10)
+    screen.surface.resize_notice()
+    screen.surface.paint(ROWS)
+    assert screen.terminal.alternate
+    assert screen.lines()[-4:] == list(ROWS)
+    screen.terminal.resize(width=40, height=12)
+    screen.surface.paint(ROWS)
+    assert screen.terminal.alternate, 'full screen is for good'
+
+
+def test_a_height_change_keeps_the_panel_inline() -> None:
+    screen = Screen(width=40, height=10, inline=True)
+    screen.surface.paint(ROWS)
+    screen.terminal.resize(width=40, height=12)
+    screen.surface.paint(ROWS)
+    assert not screen.terminal.alternate
+    assert screen.lines()[:5] == ['', *ROWS]
