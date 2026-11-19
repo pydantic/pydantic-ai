@@ -10,3 +10,4 @@
         - ToolOrOutput
         - ServiceTier
         - CacheConfig
+        - RecordedModelSettings
