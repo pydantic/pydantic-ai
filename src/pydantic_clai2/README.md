@@ -177,8 +177,8 @@ settings first, such as reasoning effort or thinking.
 ![/model add showing Anthropic models with context size and prices](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/model-add.png)
 
 Each model keeps its own settings. Change them later with `/model settings`, or use the
-shortcuts: `/effort high` sets reasoning effort, and `/fast` turns on priority
-processing for Codex models.
+shortcuts: `/effort high` sets reasoning effort, and `/fast` picks the speed of Codex
+models, ultrafast by default on the models that offer it.
 
 ### Sign in: `/login` and `/accounts`
 
@@ -281,8 +281,9 @@ it back in the editor so you can change it. Rewinding does not undo changes to f
 ### Pick up where you left off: `/resume`
 
 Every conversation is saved. `/resume` opens a browser with your projects on the left
-and their sessions on the right. CLAI names sessions in the background so you can find
-them, using your current model. Press <kbd>/</kbd> to search, <kbd>→</kbd> to read a transcript, and <kbd>Enter</kbd> to resume.
+and their sessions on the right. Each session is titled from its first prompt;
+`/set sessions.naming true` has a model name them in the background instead, using your
+current model or a smaller `sessions.naming_model`. Press <kbd>/</kbd> to search, <kbd>→</kbd> to read a transcript, and <kbd>Enter</kbd> to resume.
 <kbd>a</kbd> archives a session you are done with, hiding it without deleting anything, and <kbd>h</kbd> shows archived ones.
 
 ![The /resume session browser with projects and named sessions](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/resume.png)

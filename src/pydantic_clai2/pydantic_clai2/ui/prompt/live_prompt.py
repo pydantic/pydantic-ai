@@ -74,6 +74,7 @@ class LivePrompt:
         spinner: Callable[[], Spinner] = lambda: BUILTIN_SPINNERS[DEFAULT_SPINNER],
         panel: Callable[[str], Sequence[str]] = lambda _: (),
         queue_changed: Callable[[], None] = lambda: None,
+        queue_in_toolbar: Callable[[], bool] | None = None,
     ) -> None:
         """Bind editing state, terminal ownership and per-session services.
 
@@ -84,6 +85,8 @@ class LivePrompt:
         `panel` receives the current spinner frame and returns styled rows painted above the queue,
         such as running forks; it is read on every repaint, including between turns.
         `queue_changed` is told whenever a prompt joins, leaves, or is rewritten in the queue.
+        `queue_in_toolbar=None` appends the queue count here; a callback leaves it to the toolbar,
+        except over a notice when the callback returns `True`.
         """
         self.console = console
         self.commands = commands
@@ -99,8 +102,12 @@ class LivePrompt:
         self.spinner = spinner
         self.panel = panel
         self.queue_changed = queue_changed
+        self.queue_in_toolbar = queue_in_toolbar
         self.ctrl_enter_steers = ctrl_enter_steers()
-        """Whether Ctrl+Enter steers, as Alt+Enter does; otherwise it is Enter."""
+        """Whether Ctrl+Enter (and Ctrl-J, which older terminals send for it) steers, as Alt+Enter does.
+
+        Otherwise Ctrl+Enter is Enter and Ctrl-J inserts a newline.
+        """
         self.notice = ''
         self._chord_prefix = ''
         self._last_escape: float | None = None
@@ -223,6 +230,9 @@ class LivePrompt:
         """Route editing, completion and interrupts without rendering a widget tree."""
         if key == 'ctrl-enter':
             key = 'alt-enter' if self.ctrl_enter_steers else 'enter'
+        elif key == 'ctrl-j' and self.ctrl_enter_steers:
+            # Windows Terminal sends Ctrl+Enter as LF unless it reports modified keys.
+            key = 'alt-enter'
         if key in TRANSCRIPT_KEYS:
             # Leave the draft alone, and the notice unless a drag copied text.
             if self.output.transcript_key(key, data):
@@ -615,7 +625,7 @@ class LivePrompt:
                 for style, text in self.toolbar()
             )
         )
-        if self.queued_messages:
+        if self.queued_messages and (self.queue_in_toolbar is None or (notice and self.queue_in_toolbar())):
             footer += f' | queued: {len(self.queued_messages)}'
         return footer
 
