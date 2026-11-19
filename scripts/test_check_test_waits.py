@@ -342,6 +342,28 @@ def free_url():
         return f'http://127.0.0.1:{port}'
 """
 
+_RETURNED_AFTER = """\
+import socket
+
+
+def free_port():
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        port = sock.getsockname()[1]
+    return port
+"""
+
+_YIELDED_AFTER = """\
+import socket
+
+
+def free_port():
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        port = sock.getsockname()[1]
+    yield port
+"""
+
 _ANNOTATED_READ_AFTER = """\
 import socket
 
@@ -370,6 +392,8 @@ def test_server(start):
     [
         _RETURNED,
         _RETURNED_BY_NAME,
+        _RETURNED_AFTER,
+        _YIELDED_AFTER,
         _READ_AFTER,
         _ANNOTATED_READ_AFTER,
         _UNPACKED_READ_AFTER,
@@ -425,6 +449,14 @@ def rebound(run):
         port = probe.getsockname()[1]
     port = 8123
     run(port)
+
+
+def rebound_before_return():
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    port = 8123
+    return port
 
 
 def rebound_with_annotation(run):

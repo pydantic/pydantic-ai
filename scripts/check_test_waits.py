@@ -206,7 +206,8 @@ class _Finder:
 
         A `yield` inside the block keeps the socket open for as long as the port is used, as a fixture does. A
         `return` that reads the port hands it out as the socket closes. A name read from `getsockname()` that a call
-        takes after the block uses it too late; an `assert` that only reads it does not.
+        takes, or that the function returns or yields, after the block uses it too late; an `assert` that only reads
+        it does not.
         """
         body = list(_own_nodes(node.body, _SCOPES))
         if any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in body):
@@ -227,7 +228,7 @@ class _Finder:
         rebinds = _rebinds(scope, node, ports)
         return any(
             name.id in ports and name.lineno > end and not any(end < line < name.lineno for line in rebinds[name.id])
-            for name in _call_arguments(scope)
+            for name in _handed_on(scope)
         )
 
 
@@ -362,13 +363,20 @@ def _statement_lists(scope: ast.AST) -> Iterator[list[ast.stmt]]:
                 pass
 
 
-def _call_arguments(scope: ast.AST) -> Iterator[ast.Name]:
-    """Every name read in a call's arguments in `scope`, outside `assert` statements."""
+def _handed_on(scope: ast.AST) -> Iterator[ast.Name]:
+    """Every name read in a call's arguments, or in a value `scope` returns or yields, outside `assert` statements."""
     asserted = {id(n) for a in ast.walk(scope) if isinstance(a, ast.Assert) for n in ast.walk(a)}
     for node in ast.walk(scope):
-        if isinstance(node, ast.Call) and id(node) not in asserted:
-            for argument in [*node.args, *(kw.value for kw in node.keywords)]:
-                yield from (n for n in ast.walk(argument) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load))
+        if id(node) in asserted:
+            continue
+        if isinstance(node, ast.Call):
+            values = [*node.args, *(kw.value for kw in node.keywords)]
+        elif isinstance(node, (ast.Return, ast.Yield)) and node.value is not None:
+            values = [node.value]
+        else:
+            continue
+        for value in values:
+            yield from (n for n in ast.walk(value) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load))
 
 
 def _escapes(source: str) -> list[_Escape]:
