@@ -66,6 +66,7 @@ from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.runtime.session import local_workspace_provider
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus import dialogs
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.clai2.menu_script import Script, pick, typed
 from tests.clai2.test_app_edges import inputs
 
@@ -87,8 +88,6 @@ def summary_prompt(summary_run: Sequence[ModelMessage]) -> str:
     assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, str)
     return prompt.content
 
-
-READINESS_WAIT_TIMEOUT = 10
 
 REPLY = 'hi, ' + 'here is what I found. ' * 10
 """Long enough that a short summary of it makes the history smaller."""

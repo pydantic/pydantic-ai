@@ -3,7 +3,6 @@
 import io
 import logging
 import os
-import socket
 import stat
 import subprocess
 import sys
@@ -38,6 +37,7 @@ from pydantic_clai2.mcp import (
 )
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, collect
 from pydantic_clai2.plugins.loader import PluginLoader
+from tests._ports import reserve_loopback_port
 
 
 def make_plugin(settings: dict[str, JsonValue], store: MCPStore | None = None) -> LoadedPlugin[None]:
@@ -243,7 +243,7 @@ async def test_start_stop_restart_logs_and_agent_use(tmp_path: Path) -> None:
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
     plugin = make_plugin({}, store)
     run = plugin.commands.execute_async
-    store.put('local', StdioServer(type='stdio', command=sys.executable, args=[str(script)]))
+    store.put('local', StdioServer(type='stdio', command=sys.executable, args=[str(script)], defer_loading=False))
     assert 'o local' in await run('/mcp'), 'installed servers are ready without a start'
 
     result = await Agent(TestModel(), deps_type=type(None), capabilities=plugin.capabilities).run('Use tools.')
@@ -381,9 +381,7 @@ async def test_reconfiguring_or_removing_releases_the_connection(tmp_path: Path)
 @pytest.mark.subprocess(reason='serves a real HTTP/SSE MCP server from a separate process')
 @pytest.mark.parametrize(('kind', 'path'), [('http', 'mcp'), ('sse', 'sse')])
 async def test_real_remote_server(tmp_path: Path, kind: str, path: str) -> None:
-    with socket.socket() as probe:
-        probe.bind(('127.0.0.1', 0))
-        port = probe.getsockname()[1]
+    port = reserve_loopback_port()
     script = tmp_path / 'remote_server.py'
     script.write_text(
         # SDK v2 renamed the server to `MCPServer` and takes the address when it runs, not when it is built.
@@ -401,7 +399,10 @@ async def test_real_remote_server(tmp_path: Path, kind: str, path: str) -> None:
         run = plugin.commands.execute_async
         url = HttpUrl(f'http://127.0.0.1:{port}/{path}')
         store.put(
-            'web', HTTPServer(type='http', url=url) if kind == 'http' else SSEServer(type='sse', url=url, timeout=10)
+            'web',
+            HTTPServer(type='http', url=url, defer_loading=False)
+            if kind == 'http'
+            else SSEServer(type='sse', url=url, timeout=10, defer_loading=False),
         )
         # Wait for the port before the first MCP connection: an SSE client that fails to connect
         # leaves its memory streams unclosed, which `filterwarnings = error` reports.
@@ -470,7 +471,10 @@ def test_fastmcp_info_logging_stays_off_the_prompt() -> None:
 async def test_a_server_that_cannot_connect_does_not_fail_the_prompt(tmp_path: Path) -> None:
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
     plugin = make_plugin({}, store)
-    store.put('broken', StdioServer(type='stdio', command=sys.executable, args=['-c', 'raise SystemExit(3)']))
+    store.put(
+        'broken',
+        StdioServer(type='stdio', command=sys.executable, args=['-c', 'raise SystemExit(3)'], defer_loading=False),
+    )
     result = await Agent(TestModel(), deps_type=type(None), capabilities=plugin.capabilities).run('Use tools.')
     assert result.output == 'success (no tool calls)'
     assert '! broken' in await plugin.commands.execute_async('/mcp')

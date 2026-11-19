@@ -531,7 +531,7 @@ async def _resolve_host(host: str) -> tuple[str, ...] | None:
     if cached is not None and cached[0] > now:
         return cached[1]
     try:
-        addresses = await asyncio.wait_for(_getaddrinfo(host), _RESOLUTION_TIMEOUT_SECONDS)
+        addresses = await asyncio.wait_for(_getaddrinfo(host), _RESOLUTION_TIMEOUT_SECONDS)  # noqa: TID251  (not converted to anyio yet)
     except (TimeoutError, OSError, UnicodeError):
         return None
     if len(_resolution_cache) >= _RESOLUTION_CACHE_MAX:
@@ -1361,7 +1361,7 @@ class PlaywrightBrowserSession:
         is refused as one to retry, and the next starts from what this one admitted.
         """
         try:
-            async with asyncio.timeout(_DOCUMENT_CHECK_DEADLINE_MS / 1000):
+            async with asyncio.timeout(_DOCUMENT_CHECK_DEADLINE_MS / 1000):  # noqa: TID251  (not converted to anyio yet)
                 for page in pages:
                     for index, frame in enumerate(page.frames):
                         await self._check_inherited_frame(frame, top_level=index == 0)
@@ -1547,7 +1547,7 @@ class PlaywrightBrowserSession:
         if self._launch_timeout_ms == 0:
             return await awaitable
         try:
-            return await asyncio.wait_for(awaitable, self._launch_timeout_ms / 1000)
+            return await asyncio.wait_for(awaitable, self._launch_timeout_ms / 1000)  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError as exc:
             # Raised as a Playwright timeout so the tools map it like any other
             # deadline they already handle.
@@ -1951,7 +1951,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                     texts.append(f'[frame {_without_credentials(frame.url)}]\n{text}')
 
         try:
-            await asyncio.wait_for(sweep(), budget_ms / 1000)
+            await asyncio.wait_for(sweep(), budget_ms / 1000)  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError:
             pass
         return texts
@@ -2057,7 +2057,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         if timeout_ms == 0:
             return await awaitable
         try:
-            return await asyncio.wait_for(awaitable, timeout_ms / 1000)
+            return await asyncio.wait_for(awaitable, timeout_ms / 1000)  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError as exc:
             # Map the timeout to Playwright's error type so the tool's error handler catches it.
             raise PlaywrightTimeoutError(f'Timeout {timeout_ms}ms exceeded.') from exc

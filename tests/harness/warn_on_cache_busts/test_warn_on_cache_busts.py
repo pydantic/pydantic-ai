@@ -17,6 +17,8 @@ from __future__ import annotations
 import copy
 import pickle
 import warnings
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -48,6 +50,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.warn_on_cache_busts import (
     CacheBustWarning,
     CacheNotEnabledWarning,
@@ -778,6 +781,10 @@ def test_invalid_config_rejected() -> None:
         WarnOnCacheBusts[None](min_missed_ratio=-0.1)
     with pytest.raises(ValueError, match='min_missed_tokens'):
         WarnOnCacheBusts[None](min_missed_tokens=-1)
+    with pytest.raises(ValueError, match='collapse_ratio'):
+        WarnOnCacheBusts[None](collapse_ratio=1.5)
+    with pytest.raises(ValueError, match='min_prefix_tokens'):
+        WarnOnCacheBusts[None](min_prefix_tokens=-1)
 
 
 def test_config_boundaries() -> None:
@@ -786,6 +793,66 @@ def test_config_boundaries() -> None:
         WarnOnCacheBusts[None](min_missed_ratio=1.0)
     # The lower bound is inclusive: 0.0 leaves only `min_missed_tokens` to decide.
     WarnOnCacheBusts[None](min_missed_ratio=0.0)
+
+
+@contextmanager
+def _record_deprecation_and_busts() -> Generator[list[warnings.WarningMessage]]:
+    """Record `CacheBustWarning`s and `HarnessDeprecationWarning`s, leaving every other warning to the suite's filters.
+
+    `pytest.warns` records every warning and turns off the suite's filters, so a `ResourceWarning` the suite ignores,
+    raised when the garbage collector frees another test's socket during the run, would land in the record.
+    """
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter('always', CacheBustWarning)
+        warnings.simplefilter('always', HarnessDeprecationWarning)
+        yield record
+
+
+async def test_collapse_ratio_is_deprecated_and_converted() -> None:
+    """`collapse_ratio` still works, as its `min_missed_ratio` inverse, and warns once at construction.
+
+    With `collapse_ratio=0.5`, reading back 5,000 of 8,000 tokens (37.5% missed) stays quiet where the
+    5% default would warn, and reading back 3,000 (62.5% missed) warns. A positional first argument is
+    still `collapse_ratio`.
+    """
+    with pytest.warns(HarnessDeprecationWarning, match=r'pass `min_missed_ratio=0.5`'):
+        monitor = WarnOnCacheBusts[None](collapse_ratio=0.5)
+    assert monitor.min_missed_ratio == 0.5
+    agent = _agent([_usage(read=0, write=8000), _usage(read=5000), _usage(read=3000)], monitor)
+    with _record_deprecation_and_busts() as record:
+        await agent.run('hi')
+    assert [type(w.message) for w in record] == [CacheBustWarning]
+    assert 'request 3' in str(record[0].message)
+
+    with pytest.warns(HarnessDeprecationWarning, match='collapse_ratio'):
+        assert WarnOnCacheBusts[None](0.25).min_missed_ratio == 0.75
+    with pytest.raises(TypeError, match='`collapse_ratio` is its deprecated inverse'):
+        WarnOnCacheBusts[None](collapse_ratio=0.5, min_missed_ratio=0.1)
+
+
+async def test_min_prefix_tokens_is_deprecated_and_still_honored() -> None:
+    """`min_prefix_tokens` warns once at construction and still keeps smaller prefixes from being judged."""
+    with pytest.warns(HarnessDeprecationWarning, match='min_missed_tokens'):
+        monitor = WarnOnCacheBusts[None](min_prefix_tokens=50000)
+    agent = _agent([_usage(read=0, write=40000), _usage(read=100)], monitor)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        await agent.run('hi')
+
+
+async def test_cache_ttl_seconds_is_deprecated_and_ignored() -> None:
+    """`cache_ttl_seconds` warns once, at construction, and no longer affects detection.
+
+    The collapse below comes well within the old 1-second TTL, which used to only change the
+    message; it still warns, and running the agent doesn't repeat the deprecation (the `for_run`
+    copy must not re-trigger it), which the suite's `filterwarnings=error` would turn into a failure.
+    """
+    with pytest.warns(HarnessDeprecationWarning, match=r'`WarnOnCacheBusts\(cache_ttl_seconds=...\)` is deprecated'):
+        monitor = WarnOnCacheBusts[None](cache_ttl_seconds=1.0)
+    agent = _agent([_usage(read=0, write=8000), _usage(read=100)], monitor)
+    with _record_deprecation_and_busts() as record:
+        await agent.run('hi')
+    assert [type(w.message) for w in record] == [CacheBustWarning]
 
 
 def test_bust_warning_constructed_directly_carries_its_fields() -> None:
