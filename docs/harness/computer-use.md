@@ -117,15 +117,8 @@ Some models only take screenshots up to a size, set by
 - Claude Opus 4.7: 2576 pixels on the longer side and 3.6 megapixels.
 - Claude Opus 4.5 and 4.6, Sonnet 4.6 and Haiku 4.5: 1568 pixels and about 1.15 megapixels.
 
-Claude's earlier computer use tools, and the function tool Claude gets on other APIs, scale a larger screenshot down,
-and Claude then clicks in the smaller image's pixels. The computer toolset of Opus 4.8 and the Claude 5 models refuses
-one instead.
-
 `ComputerUse` sends screenshots at the screen's size, so a larger screen stops the run with an error naming the
 largest size that fits. A 1280x800 screen fits every model.
-
-The toolset also counts image tokens, 28x28 pixels each, and refuses a screenshot over 4784 of them, such as
-2549x1457, so the run stops with Anthropic's error.
 
 GPT-5.5 clicks accurately up to 1920x1200 and GPT-5.4 up to 2048x1280, and can miss on a larger screen.
 
