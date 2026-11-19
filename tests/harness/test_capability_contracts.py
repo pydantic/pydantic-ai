@@ -192,7 +192,8 @@ async def test_every_request_counts_toward_the_run_usage(
         ).usage.requests
         if used != len(recorder.requests):
             breaks.append(
-                f'with `request_limit={limit}`, {len(recorder.requests)} requests reached a model, but `usage.requests` is {used}'
+                f'with `request_limit={limit}`, {len(recorder.requests)} requests reached a model, '
+                f'but `usage.requests` is {used}'
             )
     if len(recorder.requests) > limit:
         breaks.append(f'with `request_limit={limit}`, {len(recorder.requests)} requests reached a model')

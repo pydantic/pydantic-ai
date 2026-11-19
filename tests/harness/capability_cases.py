@@ -273,32 +273,32 @@ def _check_model_router(merged: ModelRouter[object]) -> None:
     assert (list(merged.choices), merged.default) == (['fast', 'capable'], 'capable')
 
 
-def _check_planning(merged: Any) -> None:
+def _check_planning(merged: Planning[None]) -> None:
     assert merged.inject is False
 
 
-def _check_spend_limits(merged: Any) -> None:
+def _check_spend_limits(merged: SpendLimits[None]) -> None:
     assert merged.expose_tools is False
 
 
-def _check_step_persistence(merged: Any) -> None:
+def _check_step_persistence(merged: StepPersistence[None]) -> None:
     assert merged.agent_name == 'second'
 
 
-def _check_summarizing(merged: Any) -> None:
+def _check_summarizing(merged: SummarizingCompaction[None]) -> None:
     assert merged.keep_messages == 7
 
 
-def _check_relevance(merged: Any) -> None:
+def _check_relevance(merged: RelevanceCompaction[None]) -> None:
     assert merged.keep_tokens == 7
 
 
-def _check_system_reminders(merged: Any) -> None:
+def _check_system_reminders(merged: SystemReminders[None]) -> None:
     # Additive sequences union, so every reminder either side declared still fires.
     assert [r.content for r in merged.reminders] == ['first', 'second']
 
 
-def _check_compact_on_request(merged: Any) -> None:
+def _check_compact_on_request(merged: CompactOnRequest[None]) -> None:
     assert merged.max_per_run == 2
 
 
@@ -306,7 +306,7 @@ def _check_prune_tool_results(merged: PruneToolResults[None]) -> None:
     assert merged.placeholder == '[second]'
 
 
-def _check_tool_output_limits(merged: Any) -> None:
+def _check_tool_output_limits(merged: ToolOutputLimits[None]) -> None:
     assert merged.strip_ansi is True
 
 
@@ -314,11 +314,11 @@ def _check_tool_bridge(merged: ToolBridge[None]) -> None:
     assert merged.max_results == 5
 
 
-def _check_advisor(merged: Any) -> None:
+def _check_advisor(merged: Advisor[None]) -> None:
     assert merged.max_tokens == 4096
 
 
-def _check_background_tools(merged: Any) -> None:
+def _check_background_tools(merged: BackgroundTools[None]) -> None:
     assert callable(merged.tools)
 
 
@@ -334,7 +334,7 @@ def _check_label_cross_model_history(merged: LabelCrossModelHistory[None]) -> No
     assert (merged.id, merged.notice) == ('label_cross_model_history', 'second')
 
 
-def _check_sub_agents(merged: Any) -> None:
+def _check_sub_agents(merged: SubAgents[None]) -> None:
     # Rosters union: an agent either side could reach stays reachable through one delegate tool.
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
 

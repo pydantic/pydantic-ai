@@ -5,8 +5,9 @@ from the package: every public capability class in `pydantic_ai.capabilities` an
 runs, constructed with its defaults or with the `build` of its case in `tests/capability_cases.py`, unless
 that `build` is `Unbuildable`, saying why it can't be, so a new capability is checked without anyone adding
 it; one that can't be built with its defaults fails until its case gets a `build`. Agent features that
-render state into the prompt are cases too (`AGENT_FEATURES`). Durable execution engines in `pydantic_ai.durable_exec` are left to their
-own suites, which check that a durable run sends the same requests as a plain one.
+render state into the prompt are cases too (`AGENT_FEATURES`). Durable execution engines in
+`pydantic_ai.durable_exec` are left to their own suites, which check that a durable run sends the same
+requests as a plain one.
 """
 
 from __future__ import annotations

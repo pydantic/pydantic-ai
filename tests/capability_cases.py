@@ -142,8 +142,9 @@ class Narrows:
 
     The access-boundary case in "Deciding What Two Of It Mean"
     (`src/pydantic_ai_harness/agent_docs/capability-authoring.md`), for connections to a provider: merging
-    two field by field could send one account's credential to another's server or drop `read_only`. `make` takes the class, like `Collides`, because these live in
-    optional groups that a module-level import would break.
+    two field by field could send one account's credential to another's server or drop `read_only`. `make`
+    takes the class, like `Collides`, because these live in optional groups that a module-level import would
+    break.
     """
 
     reason: str
