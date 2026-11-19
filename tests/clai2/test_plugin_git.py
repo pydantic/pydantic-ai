@@ -24,10 +24,9 @@ from pydantic_clai2.config.plugin_requirements import Requirements
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins.git import clone_repository, parse_repository
 from pydantic_clai2.plugins.loader import PluginError
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .test_plugin_loader import SEGMENT, Harness
-
-READINESS_WAIT_TIMEOUT = 30
 
 PLUGIN = """\
 from collections.abc import Sequence
