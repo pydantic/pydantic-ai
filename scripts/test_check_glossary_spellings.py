@@ -31,7 +31,7 @@ def _run(monkeypatch: pytest.MonkeyPatch, *args: str | Path) -> int:
 
 @pytest.fixture
 def glossary(tmp_path: Path) -> Path:
-    path = tmp_path / 'GLOSSARY.md'
+    path = tmp_path / 'glossary.md'
     path.write_text(_GLOSSARY)
     return path
 
@@ -46,9 +46,9 @@ def test_rejects_a_spelling_in_prose(
     assert _run(monkeypatch, '--glossary', glossary, doc) == 1
     assert capsys.readouterr().out.replace(str(tmp_path), '<tmp>') == snapshot(
         """\
-<tmp>/AGENTS.md:1: write "policy base", not "Policy-base" (<tmp>/GLOSSARY.md → Spellings)
-<tmp>/AGENTS.md:2: write "trivial-S", not "trivial S" (<tmp>/GLOSSARY.md → Spellings)
-<tmp>/AGENTS.md:3: write "trivial-S", not "trivial S" (<tmp>/GLOSSARY.md → Spellings)
+<tmp>/AGENTS.md:1: write "policy base", not "Policy-base" (<tmp>/glossary.md → Spellings)
+<tmp>/AGENTS.md:2: write "trivial-S", not "trivial S" (<tmp>/glossary.md → Spellings)
+<tmp>/AGENTS.md:3: write "trivial-S", not "trivial S" (<tmp>/glossary.md → Spellings)
 """
     )
 
@@ -72,14 +72,14 @@ cd policy-base
 def test_fails_without_a_spellings_table(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
-    empty = tmp_path / 'GLOSSARY.md'
+    empty = tmp_path / 'glossary.md'
     empty.write_text('# Glossary\n')
     assert _run(monkeypatch, '--glossary', empty) == 1
     assert capsys.readouterr().err.replace(str(tmp_path), '<tmp>') == snapshot(
-        '<tmp>/GLOSSARY.md: no "## Spellings" table rows found\n'
+        '<tmp>/glossary.md: no "## Spellings" table rows found\n'
     )
 
 
 def test_repo_glossary_passes_its_own_check(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.chdir(_REPO)
-    assert _run(monkeypatch, 'agent_docs/GLOSSARY.md') == 0
+    assert _run(monkeypatch, 'agent_docs/glossary.md') == 0

@@ -22,7 +22,7 @@ change instead of reimplementing core behavior in harness.
 
 ## Vocabulary
 
-[`agent_docs/GLOSSARY.md`](../../agent_docs/GLOSSARY.md) defines capability, hook, toolset, guardrail, harness, the harness SDK and AICA.
+[`agent_docs/glossary.md`](../../agent_docs/glossary.md) defines capability, hook, toolset, guardrail, harness, the harness SDK and AICA.
 The capability is the core abstraction of this package.
 
 ## AICA preflight
