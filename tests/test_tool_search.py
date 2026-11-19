@@ -2887,6 +2887,119 @@ async def test_openai_discovered_tool_without_native_tool_search_omits_defer_loa
     assert weather_tool['name'] == 'get_weather'
 
 
+async def test_client_tool_search_replay_omits_incompatible_fc_item_id(allow_model_requests: None) -> None:
+    """Replaying client-executed tool search must not send a function-call item ID on the
+    `tool_search_call` item.
+
+    A persisted part can carry a function-call item ID (provider swap or hand-written
+    history). With `send_item_ids` on, replay used to put that `fc_*` ID on the
+    `tool_search_call` item, which the Responses API rejects. The ID is omitted instead;
+    `call_id` and the run itself are unaffected.
+    """
+    pytest.importorskip('openai')
+
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='msg_1',
+                    content=[ResponseOutputText(text='It is noon.', type='output_text', annotations=[])],
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+    )
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model=model, capabilities=[ToolSearch(strategy='keywords')], model_settings={'openai_send_reasoning_ids': True}
+    )
+
+    @agent.tool_plain
+    def get_time() -> str:
+        return 'noon'
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+        return '0.92'
+
+    call_part = ToolSearchCallPart(args={'queries': ['time']}, tool_call_id='call_1')
+    call_part.id = 'fc_stale'
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='What time is it?')]),
+        ModelResponse(parts=[call_part], provider_name='openai'),
+        ModelRequest(
+            parts=[ToolSearchReturnPart(content={'discovered_tools': [{'name': 'get_time'}]}, tool_call_id='call_1')]
+        ),
+    ]
+
+    result = await agent.run('And in exact words?', message_history=history)
+    assert result.output == 'It is noon.'
+
+    [request] = get_mock_responses_kwargs(mock_client)
+    input_items = cast(list[dict[str, Any]], request['input'])
+    [search_item] = [item for item in input_items if item.get('type') == 'tool_search_call']
+    # The incompatible function-call item ID must not reach the wire; the call ID is untouched.
+    assert 'id' not in search_item
+    assert search_item['call_id'] == 'call_1'
+    assert 'fc_stale' not in json.dumps(input_items)
+
+
+async def test_client_tool_search_replay_preserves_real_tsc_item_id(allow_model_requests: None) -> None:
+    """A real `tsc_*` item ID survives replay on the `tool_search_call` item.
+
+    OpenAI issues these IDs on client-executed `tool_search_call` items; dropping them
+    would break server-side linkage, so only incompatible IDs are omitted.
+    """
+    pytest.importorskip('openai')
+
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='msg_1',
+                    content=[ResponseOutputText(text='It is noon.', type='output_text', annotations=[])],
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+    )
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model=model, capabilities=[ToolSearch(strategy='keywords')], model_settings={'openai_send_reasoning_ids': True}
+    )
+
+    @agent.tool_plain
+    def get_time() -> str:
+        return 'noon'
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+        return '0.92'
+
+    call_part = ToolSearchCallPart(args={'queries': ['time']}, tool_call_id='call_1')
+    call_part.id = 'tsc_real'
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='What time is it?')]),
+        ModelResponse(parts=[call_part], provider_name='openai'),
+        ModelRequest(
+            parts=[ToolSearchReturnPart(content={'discovered_tools': [{'name': 'get_time'}]}, tool_call_id='call_1')]
+        ),
+    ]
+
+    result = await agent.run('And in exact words?', message_history=history)
+    assert result.output == 'It is noon.'
+
+    [request] = get_mock_responses_kwargs(mock_client)
+    input_items = cast(list[dict[str, Any]], request['input'])
+    [search_item] = [item for item in input_items if item.get('type') == 'tool_search_call']
+    assert search_item['id'] == 'tsc_real'
+    assert search_item['call_id'] == 'call_1'
+
+
 @pytest.mark.vcr
 @pytest.mark.moves_cache_prefix(reason='dynamic tool disclosure after ToolSearch discovery')
 async def test_openai_deferred_capability_runs_on_model_without_native_tool_search(
