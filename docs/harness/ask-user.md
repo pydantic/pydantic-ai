@@ -382,9 +382,9 @@ attachments included, appear in the following model request's tool result and us
 
 ## Specs
 
-A spec can set `answerer` only to `null`, which pauses the run as
+A spec can set `answerer`, and with it `timeout`, only to `null`, which pauses the run as
 [Pausing the run until the user answers](#pausing-the-run-until-the-user-answers) describes: an answerer is a live object
-a spec has no way to name.
+a spec has no way to name, and `timeout` bounds the answerer.
 
 ## API reference
 
