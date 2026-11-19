@@ -902,9 +902,10 @@ class MemoryTool(AbstractNativeTool):
 
 @dataclass(kw_only=True)
 class ComputerTool(AbstractNativeTool):
-    """A provider's native computer use tool, sent in place of the request's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool, which runs its calls.
+    """A provider's own (native) computer use tool, sent to the model in place of the request's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool.
 
-    It is sent only when the request has exactly one `computer` tool the model can call. With none, an
+    The request's `computer` tool still runs the calls the model makes. A `ComputerTool` is sent only when the
+    request has exactly one `computer` tool the model can call. With none, an
     [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional] one is left out and a required one raises
     [`UserError`][pydantic_ai.exceptions.UserError]. With more than one, the request raises `UserError`.
     """
