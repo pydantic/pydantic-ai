@@ -17,6 +17,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.github import GITHUB_MCP_URL, GitHub
 from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
@@ -226,17 +227,18 @@ class TestGitHub:
 
     @pytest.mark.parametrize(
         'url',
-        [
-            'https:///mcp',
-            'api.githubcopilot.com/mcp',
-            'ftp://api.githubcopilot.com/mcp/',
-            'http://api.githubcopilot.com/mcp/',
-            'http://127.0.0.1:8082/mcp',
-        ],
+        ['https:///mcp', 'api.githubcopilot.com/mcp', 'ftp://api.githubcopilot.com/mcp/'],
     )
     def test_url_must_be_https(self, url: str) -> None:
         with pytest.raises(UserError, match=r"`url` must be an `https://` URL; got '"):
             GitHub(auth='token', url=url)
+
+    @pytest.mark.parametrize('url', ['http://api.githubcopilot.com/mcp/', 'http://127.0.0.1:8082/mcp'])
+    def test_plain_http_url_is_deprecated(self, url: str) -> None:
+        with pytest.warns(HarnessDeprecationWarning, match='sends the GitHub token unencrypted') as record:
+            capability = GitHub(auth='token', url=url)
+        assert record[0].filename == __file__
+        assert transport(capability.get_toolset()).url == url
 
     def test_empty_toolsets_raise(self) -> None:
         with pytest.raises(UserError, match='at least one tool group'):

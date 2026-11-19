@@ -1110,13 +1110,14 @@ def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
     return type_hints.get(first_param_name)
 
 
-def get_function_type_hints(func: Any) -> dict[str, Any]:
+def get_function_type_hints(func: Any, *, include_keys: set[str] | None = None) -> dict[str, Any]:
     """Resolve type hints for a function, including forward references.
 
     Wraps `pydantic._internal._typing_extra.get_function_type_hints` so callers
-    don't need to import Pydantic internals directly.
+    don't need to import Pydantic internals directly. With `include_keys`, only
+    those annotations are resolved.
     """
-    return _typing_extra.get_function_type_hints(func)
+    return _typing_extra.get_function_type_hints(func, include_keys=include_keys)
 
 
 def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:
@@ -1335,7 +1336,8 @@ def host_derived_id(url: str) -> str | None:
 def is_text_like_media_type(media_type: str) -> bool:
     """Check if a media type represents text-like content.
 
-    Returns True for `text/*`, JSON, XML, YAML, TOML, and their structured syntax suffixes.
+    Returns True for `text/*`, JSON, XML, YAML and TOML, and the `+json` and `+xml` structured syntax suffixes.
+    `+yaml` types aren't included: see `has_yaml_structured_suffix`.
     """
     # Media types may carry parameters (RFC 2045); classify on the bare type.
     media_type = media_type.split(';', 1)[0].strip()
@@ -1349,6 +1351,15 @@ def is_text_like_media_type(media_type: str) -> bool:
         # TOML is UTF-8 text (RFC 9519); `BinaryContent.from_path` infers it for `.toml` files.
         or media_type == 'application/toml'
     )
+
+
+def has_yaml_structured_suffix(media_type: str) -> bool:
+    """Check if a media type has the `+yaml` structured syntax suffix (RFC 9512), ignoring its parameters.
+
+    `is_text_like_media_type` doesn't include these types, so only the adapters that call this inline them as text:
+    https://github.com/pydantic/pydantic-ai/issues/13925.
+    """
+    return media_type.split(';', 1)[0].strip().endswith('+yaml')
 
 
 def format_inlined_text_file(text: str, *, media_type: str, identifier: str) -> str:

@@ -19,9 +19,18 @@ from tests.docs_model_aliases import resolve_model_aliases
 _ROOT = Path(__file__).parents[2] / 'src' / 'pydantic_ai_harness'
 _PACKAGE = _ROOT / 'pydantic_ai_harness'
 
-# The `experimental` package is a namespace for ACP, not a capability, so it
+# The `experimental` package is a namespace/warning shim, not a capability, so it
 # has no standalone README and is not listed in the top-level tables.
 _NAMESPACE_PACKAGES = {_PACKAGE / 'experimental'}
+
+
+def _is_deprecation_shim(package: Path) -> bool:
+    """A package left at a moved or renamed capability's old path re-exports it and warns.
+
+    Such shims carry no docs of their own, so they are excluded from the capability tables.
+    """
+    source = (package / '__init__.py').read_text(encoding='utf-8')
+    return 'warn_moved(' in source or 'warn_module_renamed(' in source
 
 
 # Packages that are supporting infrastructure rather than capabilities, kept out of the README
@@ -41,7 +50,7 @@ def _capability_packages() -> list[Path]:
             # A non-package dir under the capability roots does not occur in a clean tree, so this guard stays uncovered.
             if not (child / '__init__.py').exists():  # pragma: no cover
                 continue
-            if child.name in _NOT_A_CAPABILITY or child in _NAMESPACE_PACKAGES:
+            if child.name in _NOT_A_CAPABILITY or child in _NAMESPACE_PACKAGES or _is_deprecation_shim(child):
                 continue
             candidates.append(child)
     return candidates
@@ -206,6 +215,7 @@ _CAPABILITY_PAGE_META = {
     'wrap-up-at-limits.md': ('wrap_up_at_limits', 'Wrap Up At Limits'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),
+    'goal.md': ('goal', 'Goal'),
     'github.md': ('github', 'GitHub'),
     'google-workspace.md': ('google_workspace', 'Google Workspace'),
     'prompt-injection-defender.md': ('prompt_injection_defender', 'Prompt Injection Defender'),
@@ -561,7 +571,7 @@ def test_problem_to_capability_rows_match_across_surfaces() -> None:
 
 
 _PACKAGES_HEADING = '## Pydantic AI, the Harness, and CLAI'
-_PACKAGES_SURFACES = ('../../docs/harness/index.md', 'README.md', '../pydantic_clai2/README.md')
+_PACKAGES_SURFACES = ('../../docs/harness/index.md', 'README.md', '../pydantic_ai_pax/README.md')
 
 
 @pytest.mark.parametrize('surface', _PACKAGES_SURFACES[1:])
@@ -571,7 +581,7 @@ def test_package_comparison_matches_across_surfaces(surface: str) -> None:
     assert [row.split(' | ', 1)[0] for row in canonical[1:]] == [
         '| [Pydantic AI] (`pydantic-ai`)',
         '| [Pydantic AI Harness] (`pydantic-ai-harness`)',
-        '| [CLAI] (`pydantic-clai2`)',
+        '| [CLAI] (`pydantic-ai-pax`)',
     ]
     assert _without_link_targets(_section_table_rows(surface, _PACKAGES_HEADING)) == canonical
 

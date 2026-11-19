@@ -24,10 +24,11 @@ The model-name `Literal` aliases (`KnownModelName`, each provider's `*ModelName`
 advisor aliases) list the models a user would pick. They are not catalogs. Apply this rule to every id you add:
 
 - A **line** is a tier name: GPT `sol`/`terra`/`luna`/`astra`, Claude `opus`/`sonnet`/`haiku`/`fable`, Gemini
-  `pro`/`flash`/`flash-lite`, and the Gemini 4 element names `argon`/`carbon`/`hydrogen`.
+  `pro`/`flash`/`flash-lite`, and the Gemini 4 element names `argon`/`carbon`/`hydrogen`/`neon`. A new element
+  name starts a new line.
 - A **generation** is the major version, counted per provider.
-- Per line, list the newest id of the newest generation and the newest id of the previous generation. Remove
-  the older id the new one replaces, in the provider alias and in `KnownModelName`.
+- Per line, list the newest id of the newest generation and the newest id of the previous generation. Within a
+  line, remove the older id the new one replaces, in the provider alias and in `KnownModelName`.
 - Leave out dated snapshots that have an undated alias, previews that a GA id superseded, floating `-latest`
   aliases (Mistral and TypeSafe excepted: their `-latest` ids are canonical), and non-chat models.
 - On Bedrock, list one id per model: the `global.` profile when it exists, else `us.`, else the bare id.
@@ -238,7 +239,7 @@ check. Keep the model-specific evidence concise:
 - **Probe a point release against every sibling, not only its namesake.** GPT-6.1 Sol rejects `effort='none'` like GPT-6 Astra; GPT-6 Sol accepts it. The accepted-effort list decides `can_be_disabled`. Decide `supports_image_output` by forcing the tool (`tool_choice={'type': 'image_generation'}`), not from the model page's tool list.
 - **Chat Completions rejects function tools while reasoning is on** for the GPT-6 family: `Function tools with reasoning_effort are not supported`. Probe the new id with one function tool and default reasoning. When it returns that 400, `OpenAIProvider.model_profile` must set `openai_chat_function_tools_require_reasoning_off` for it, which a GPT-6 id gets from `_GPT_6_MODEL_PREFIXES`; `OpenAIChatModel` then raises a `ModelRequestRejectedError` before sending. A model that rejects `effort='none'` therefore has no Chat Completions tool calling. Document the limit in `docs/models/openai.md`.
 - **OpenRouter gates mid-conversation effort per model**: `_MID_CONVERSATION_EFFORT_MODEL_PREFIXES` in `providers/openrouter.py`. Probe each new `openai/<id>` route with the gate forced on: `OpenRouterModel(route, profile=ModelProfile(supports_mid_conversation_effort=True))`, one run, then a second run with another `thinking` level. Add the id when OpenRouter accepts the `configuration_update` system message. Leave it out on a 400. `-pro` routes stay excluded.
-- **clai2 keeps a curated Codex menu**: `CODEX_MODELS` in `src/pydantic_clai2/pydantic_clai2/model_catalog.py`. Add the id when Codex offers it. Read Codex's server model list from `~/.codex/models_cache.json` after a Codex session refreshes it: an entry with `visibility: list` is offered. `openai/codex`'s `codex_tui__chatwidget__tests__model_selection_popup.snap` lags that list. Then run `Agent('openai-codex:<id>')` with a local Codex login. Update the Codex model lists in `src/pydantic_clai2/docs/reference.md` (two of them), `src/pydantic_clai2/PLUGINS.md` and `docs/harness/clai2.md`: `rg 'openai-codex:gpt-|gpt-5.6-luna' src/pydantic_clai2 docs/harness`.
+- **clai2 keeps a curated Codex menu**: `CODEX_MODELS` in `src/pydantic_ai_pax/pydantic_ai_pax/model_catalog.py`. Add the id when Codex offers it. Read Codex's server model list from `~/.codex/models_cache.json` after a Codex session refreshes it: an entry with `visibility: list` is offered. `openai/codex`'s `codex_tui__chatwidget__tests__model_selection_popup.snap` lags that list. Then run `Agent('openai-codex:<id>')` with a local Codex login. Update the Codex model lists in `src/pydantic_ai_pax/docs/reference.md` (two of them), `src/pydantic_ai_pax/PLUGINS.md` and `docs/harness/clai2.md`: `rg 'openai-codex:gpt-|gpt-5.6-luna' src/pydantic_ai_pax docs/harness`.
 
 OpenAI image-model landmines:
 

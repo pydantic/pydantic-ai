@@ -16,6 +16,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Stop tool calls failing on trailing commas, single quotes, truncated JSON | `RepairToolArguments()` |
 | Refuse or redact a prompt before it reaches the model | `InputGuardrail(guard=...)` |
 | Block, redact, or retry the final output | `OutputGuardrail(guard=...)` |
+| Keep an unattended run going until a completion check you define accepts the output | `Goal(goal=..., verify=...)` |
 | Screen each streamed text, thinking or tool-call part before the caller sees it | `StreamGuardrail(guard=...)` |
 | Block/rewrite tool arguments, redact tool results, or hide tools | `ToolGuardrail(guard=..., result_guard=..., hidden=[...])` |
 | Mask API keys, tokens, PII in text | `guardrails.detectors.redact_secrets` / `redact_personal_data` in a guard |
@@ -89,10 +90,12 @@ validation/retry. `Coder` already includes it.
 A guard is a sync or async callable taking the value, optionally preceded by `RunContext` (taken
 when a second positional parameter is required, for `*args` with another parameter, or when the
 second has a default and the first is annotated `RunContext`; a first parameter with no annotation,
-`Any`, `object`, or an unresolvable type not naming `RunContext` gets the value). It
+`Any`, `object`, or an unresolvable type not naming `RunContext` still gets it, with a
+`HarnessDeprecationWarning`). It
 returns `bool` (`True` = allow) or a `GuardrailResult`: `allow()`, `block(message=None)`,
 `replace(value)`, `retry(message)`, `approve()`. Any other return value (a `'safe'` label, `None`, a
-`numpy.bool_`) raises `UserError`; return `bool(...)` instead.
+`numpy.bool_`) is read for truthiness with a `HarnessDeprecationWarning` (a truthy label allows the
+value); return `bool(...)` instead.
 
 | Verdict | `InputGuardrail` | `OutputGuardrail` | `StreamGuardrail` | `ToolGuardrail.guard` (args) | `ToolGuardrail.result_guard` |
 |---|---|---|---|---|---|
@@ -530,7 +533,7 @@ store=InMemorySpendStore(), price=None, on_unpriced='zero', expose_tools=False, 
   given as a callable); `await limits.exhausted(scope=...)` for an admission decision (raises if a
   scoped, run-windowed, or callable-ceiling budget cannot be resolved; `status` leaves them out of
   its list).
-- Per-response events: subscribe to `SpendRecordedEvent` with `@agent.on_event(...)`.
+- Per-response events: subscribe to `SpendRecordedEvent` with `@agent.on_event(...)` (`on_spend` is deprecated).
 - `expose_tools=True` adds a `get_spend` tool for the model.
 - `price=lambda response: Decimal(...) | None` prices models genai-prices does not know.
 
@@ -551,7 +554,7 @@ Gotchas:
   `BatchSpendStore`:
   `get_many(keys) -> Mapping[str, Spent]` (unknown keys read as zero) and `add_many(entries:
   Sequence[SpendEntry]) -> Mapping[str, Spent]` (new totals; skip an entry whose `token` was already
-  applied to its `key`, honour `ttl`), both async. Pass the
+  applied to its `key`, honour `ttl`), both async. `SpendStore` (`get`/`add`) is deprecated. Pass the
   same store object to two `SpendLimits` to share counters. `defer_loading=True` is refused.
 - `SpendLimits` counts every billed response, including one a nested hook rejects, whatever the
   capability order; cached and `SkipModelRequest` responses aren't charged.
@@ -667,8 +670,8 @@ By default, enqueues reminders at the tail of each model request as a request-sc
 (`scope='request'`): the model sees each one only in the model request it's part of, and the next
 request, even the next step of the same run, no longer shows it. It's kept in message history, and
 it sits after the cached prefix, so it doesn't invalidate it. Turn on caching on the model
-(e.g. `anthropic_cache`); its breakpoint lands before the reminder.
-With `interval>1` the model sees a reminder only on the requests where it fires, so
+(e.g. `anthropic_cache`); its breakpoint lands before the reminder. `cache_ttl` is deprecated and
+has no effect. With `interval>1` the model sees a reminder only on the requests where it fires, so
 text it must follow at every step belongs in the agent's instructions, not in a `Reminder`.
 
 ```python
@@ -682,8 +685,8 @@ agent = Agent(
     capabilities=[
         SystemReminders(
             reminders=[
-                Reminder('Stay focused on the original request.', interval=5),
-                Reminder('Run the tests before finishing.', interval=10, max_fires=2),
+                Reminder('Stay focused on the original request.', interval=5, tag=None),
+                Reminder('Run the tests before finishing.', interval=10, max_fires=2, tag=None),
             ],
             dynamic_reminders=[
                 GoalReanchor(),
@@ -697,8 +700,9 @@ agent = Agent(
 - `Reminder(content, interval=1, first_after=None, trigger=None, max_fires=None, tag=None, scope='request')`:
   requests are counted from 1 per run, so `interval=4` fires on requests 4, 8, 12; `first_after=N`
   moves the first fire to request N, then every `interval` after (`first_after=1, interval=4` fires
-  on 1, 5, 9). `trigger(ctx) -> bool` adds a condition. `tag` defaults to `None` (it used to be
-  `'system-reminder'`): a reminder needs no tag, since it's already sent as a system prompt; `tag='name'` wraps the text in `<name>`. `scope='conversation'` records each firing
+  on 1, 5, 9). `trigger(ctx) -> bool` adds a condition. Pass `tag=None`: left unset it warns that the
+  default used to be `'system-reminder'`. A reminder needs no tag, since it's already sent as a
+  system prompt; `tag='name'` wraps the text in `<name>`. `scope='conversation'` records each firing
   as a lasting `SystemPromptPart` re-sent on every later request (one more part per firing, so bound it
   with `interval`/`max_fires`); use it for guidance that must outlast its step, instructions for text
   that holds on every step, and the default `'request'` for per-step nudges or changing values.
@@ -720,7 +724,8 @@ agent = Agent(
   raises `UserError` when the `Reminder` is created. Framing tags in the transcript `LLMReminder`
   quotes to its model are escaped.
 - `LLMReminder(model=..., interval=10)` (model required) makes one extra model call every `interval`
-  requests (10th, 20th, ...). Each firing adds one `GeneratedReminderPart` to history for good, so a run of R requests
+  requests (10th, 20th, ...; pass `interval` explicitly: left unset it warns that the default used to
+  be `1`). Each firing adds one `GeneratedReminderPart` to history for good, so a run of R requests
   gains `R // interval` parts. Its agent is built on first use, so no provider key is needed at
   construction. On any error it sends `GoalReanchor` text instead, logging a warning with the
   traceback once per run under `pydantic_ai_harness.system_reminders`; only a budget too tight for
@@ -730,8 +735,9 @@ agent = Agent(
   `TrajectoryJudge` runs alongside the agent (outside durable execution), steers only when the
   run drifts, and raises an evaluation error on the run. Use `LLMReminder` for a regular goal
   refresher, the judge for course correction, and `GoalReanchor` for free re-anchoring.
-- Observe with `ReminderFiredEvent`. Turn on caching on the model (such as `anthropic_cache`):
-  `SystemReminders` places no breakpoint of its own.
+- Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
+  (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
+  gone without a warning, so turn on caching on the model (such as `anthropic_cache`).
 - Neither `SystemReminders` nor `Planning` adds a cache breakpoint; the model's caching settings
   place them.
 - Not spec-serializable.
@@ -1020,6 +1026,43 @@ print(agent.run_sync('Explain the change').output)
   every answer, the first one included.
 - Several on one agent each count their own rounds and add their instructions to a round. Emits no spans.
 
+## Goal
+
+States the run's goal in the instructions and, when you pass an async `verify(ctx, output)`, calls it
+on every final output. Return `None` to accept or a nonempty string saying
+what remains; a rejection raises `ModelRetry` with the goal and the gap, so the model keeps working
+in the same conversation. No per-run state, not serializable to an agent spec.
+
+```python
+from pydantic_ai import Agent, RunContext
+
+from pydantic_ai_harness import Goal
+
+
+async def verify(ctx: RunContext[None], output: object) -> str | None:
+    return None if output == 'done' else 'Finish the migration before answering.'
+
+
+agent = Agent('test', retries={'output': 3}, capabilities=[Goal(goal='Migrate the config.', verify=verify)])
+```
+
+- Rejections share the `retries={'output': n}` budget with other output validation, and exhaustion
+  raises `UnexpectedModelBehavior`; `UsageLimits` still end the run. For a final tool-less answer at the
+  limit add `WrapUpAtLimits`: its answer still goes through `verify`, and a rejection there raises
+  `UsageLimitExceeded` since no request is left for the retry.
+- Verify real evidence (files, tests, external state), not the model's claim. An LLM judge agent
+  inside `verify` works: pass `usage=ctx.usage` to its `run()` and give it evidence, not just the answer.
+- Output functions run before the check and can run again after a rejection, so keep them idempotent.
+- Without `verify`, `Goal` only adds the goal instructions. `headless=False` drops the
+  nobody-is-available text for interactive runs; a `verify` is still enforced. To let an interactive
+  run stop and ask, set `headless=False` and leave `verify` unset.
+- Pick `OutputGuardrail` instead for block/redact/retry policies that don't depend on a goal.
+- Default `id='goal'`: two that disagree under one `id` raise, so give each extra `Goal` its own `id`.
+  `verify` runs as the durable operation `verify` under Temporal, DBOS, and Prefect: a replay reuses
+  its result; on Temporal a structured output arrives as JSON data (validate it, don't `isinstance`),
+  `ctx.messages` is unavailable, and a verifier exception retries the activity instead of propagating.
+- Emits a `goal.verify` span (`goal.met`; `goal.description`/`goal.gap` with `trace_include_content`).
+
 ## RequireVerification
 
 When a run would end after an edit (a `FileSystem` `write_file`/`edit_file` call, matched by tool kind, or a
@@ -1112,6 +1155,7 @@ print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).outp
 
 - https://pydantic.dev/docs/ai/harness/repair-tool-arguments/
 - https://pydantic.dev/docs/ai/harness/guardrails/
+- https://pydantic.dev/docs/ai/harness/goal/
 - https://pydantic.dev/docs/ai/harness/prompt-injection-defender/
 - https://pydantic.dev/docs/ai/harness/tool-call-judge/
 - https://pydantic.dev/docs/ai/harness/approval-reviewer/

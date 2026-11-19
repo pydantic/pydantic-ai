@@ -397,6 +397,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
     'OpenSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'DockerContainer': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'DockerSandbox': Anonymous('deprecated alias of `DockerContainer`, and combines the same way'),
     'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'KubernetesSandbox': Anonymous(
         'two coexist; the first supplies the run workspace, as core picks the first supplier'
@@ -478,6 +479,10 @@ COMBINE_POLICY: dict[str, Policy] = {
         'its toolset registers `read_file` and friends under fixed names',
         lambda cls: (cls(str(_TMP_A)), cls(str(_TMP_A.parent))),
     ),
+    'Goal': Narrows(
+        'one goal per id; several goals each need their own id, and every completion check must accept',
+        lambda cls: (cls(goal='Finish'), cls(goal='Also finish')),
+    ),
     'AskUser': Narrows(
         'one `ask_user_question` tool per id, and two answerers is a conflict, not one configuration stated twice',
         lambda cls: (cls(answerer=_decline), cls(answerer=None)),
@@ -504,6 +509,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     'Notion': Narrows(
         'one Notion connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
+    ),
+    'PyaiDocs': Narrows(
+        'deprecated alias of `PydanticAIDocs`, and combines the same way',
+        lambda cls: (cls(), cls(cache=False)),
     ),
     'Macroscope': Narrows(
         'one `run_macroscope_review` tool per id; two that differ need their own ids and PrefixTools',
@@ -792,6 +801,13 @@ async def test_two_of_a_colliding_capability_still_raise(name: str, anyio_backen
     [
         pytest.param(
             'shared_capabilities', {'shared_capabilities': [Thinking(effort='high')]}, {}, id='shared_capabilities'
+        ),
+        pytest.param(
+            'inherit_tools',
+            {'inherit_tools': True},
+            {'inherit_tools': False},
+            id='inherit_tools',
+            marks=pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
         ),
         pytest.param('tool_name', {'tool_name': 'delegate_task'}, {'tool_name': 'ask_specialist'}, id='tool_name'),
         pytest.param('forward_usage', {'forward_usage': False}, {'forward_usage': True}, id='forward_usage'),

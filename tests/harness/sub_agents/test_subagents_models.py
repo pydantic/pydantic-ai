@@ -230,6 +230,7 @@ class TestRouting:
         toolset: SubAgentToolset[object] = SubAgentToolset(
             agents={'worker': SubAgent(Agent(TestModel(custom_output_text='OK'), name='worker'), max_calls=1)},
             forward_usage=True,
+            inherit_tools=False,
             shared_capabilities=[],
             event_stream_handler=None,
             tool_name='delegate_task',
@@ -247,6 +248,7 @@ class TestRouting:
         toolset: SubAgentToolset[object] = SubAgentToolset(
             agents={'worker': SubAgent(Agent(TestModel(), name='worker'))},
             forward_usage=True,
+            inherit_tools=False,
             shared_capabilities=[],
             event_stream_handler=None,
             tool_name='delegate_task',
