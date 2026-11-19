@@ -494,10 +494,10 @@ Python up to 3.14.
   `WorkspaceUnavailableError`.
 - Output is read while the command runs and for at most 2 s after it exits, so a background job never holds
   a command open; output past 10 MiB stops the command with `WorkspaceOutputLimitError`.
-- `desktop=True` gives the box a plain 1280x800 Xvfb (no window manager) for `ComputerUse()`, or pass
-  `desktop=(w, h)`. The first start installs the display programs with `apt-get`, which needs
+- `desktop=True` gives the box a 1280x800 desktop (fluxbox, a panel with a terminal button, no browser) for
+  `ComputerUse()`, or pass `desktop=(w, h)`. The first start installs its programs with `apt-get`, which needs
   `allow_internet_access=True` (and the Debian mirrors in any `allowed_hosts`), or an `image` that has them;
-  without either, `UserError`. For a browser, pass `box_options={'disk_size_gb': 4}`.
+  creating a new box without either raises `UserError`, attaching to one doesn't. For a browser, pass `box_options={'disk_size_gb': 4}`.
 
 ### DockerContainer
 

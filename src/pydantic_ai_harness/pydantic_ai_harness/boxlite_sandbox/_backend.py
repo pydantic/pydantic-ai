@@ -445,12 +445,6 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
         check_env(env)
         if reserved := sorted(_RESERVED_OPTIONS.intersection(box_options or {})):
             raise ValueError(f'box_options must not set {", ".join(reserved)}; use the named argument instead')
-        if desktop and image is None and not allow_internet_access and sandbox is None and ref is None:
-            raise UserError(
-                f'A new desktop box without an `image` runs `{DESKTOP_IMAGE}` and installs the display programs on '
-                'first use, which needs `allow_internet_access=True`. Pass that, or an `image` that has Xvfb, '
-                'xdotool, xwininfo, scrot and setsid.'
-            )
         self._options: Any = boxlite.BoxOptions(
             **(box_options or {}),
             image=DESKTOP_IMAGE if image is None and desktop else image,
@@ -465,6 +459,8 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
         self._working_dir = absolute_path('working_dir', working_dir)
         self._env = dict(env or {})
         self._desktop_size = desktop_size(desktop)
+        # Checked only when a new box is created: an existing box already has whatever its display needs.
+        self._desktop_cannot_install = bool(self._desktop_size) and image is None and not allow_internet_access
         if self._desktop_size:
             # Commands see the desktop too, so a program the agent starts from the shell opens on it.
             self._env = {'DISPLAY': DISPLAY, **self._env}
@@ -509,6 +505,12 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
             boxes = runtime()
             if (ref := self._ref) is not None:
                 return await self._acquire(boxes, ref.id, create=False)
+            if self._desktop_cannot_install:
+                raise UserError(
+                    f'A new desktop box without an `image` runs `{DESKTOP_IMAGE}` and installs the display programs '
+                    'on first use, which needs `allow_internet_access=True`. Pass that, or an `image` that has '
+                    'xdotool, xwininfo, scrot, setsid and Xvfb.'
+                )
             # Named and recorded before the creation starts, so cleanup has the ref whatever ends the run.
             ref = self._ref = WorkspaceRef(provider='boxlite', id=f'{_NAME_PREFIX}{uuid.uuid4().hex}')
             logger.info('Creating BoxLite box %s', ref.id)
