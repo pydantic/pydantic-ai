@@ -894,17 +894,18 @@ class DaytonaSandboxBackend(
                     except (WorkspaceUnavailableError, UnsupportedActionError):
                         raise
                     except WorkspaceError as error:
-                        # The desktop's own failure, such as keys it couldn't let go of, may come from a lost sandbox.
+                        # A failure the desktop reports, such as keys it couldn't let go of, may come from a lost
+                        # sandbox.
                         if (gone := await _probe(sandbox)) is not None:
                             raise gone from error
                         raise
             except daytona.DaytonaTimeoutError as error:
                 raise WorkspaceTimeoutError(f'The Daytona desktop did not answer in time: {error}') from error
             except daytona.DaytonaRateLimitError:
-                raise  # transient, so a durable engine can retry it, as for the workspace's own operations
+                raise  # temporary, so a durable execution engine can retry it, as for the workspace's other operations
             except daytona.DaytonaError as error:
-                # A server error, such as from a desktop that stopped with its sandbox, fails only this call: the
-                # display starts again on the next.
+                # A server error, such as one from a desktop that stopped with its sandbox, fails only this call. The
+                # next call starts the display again.
                 raise WorkspaceError(f'The Daytona desktop failed: {error}') from error
 
     def _attached_computer_use(self) -> AsyncComputerUse:
@@ -924,13 +925,13 @@ class DaytonaSandboxBackend(
             if not _desktop_broken(error):
                 raise
             raise WorkspaceUnavailableError(
-                f"The Daytona sandbox {sandbox.id!r}'s desktop stopped answering; stopping and starting the "
-                f'sandbox brings it back. ({error})'
+                f'The desktop of the Daytona sandbox {sandbox.id!r} stopped answering. Stop and start the sandbox '
+                f'to bring it back. ({error})'
             ) from error
 
 
 def _desktop_broken(error: daytona.DaytonaServiceUnavailableError) -> bool:
-    """Whether a 503 comes from a broken desktop, rather than a proxy briefly refusing traffic.
+    """Whether a 503 error comes from a broken desktop, not from Daytona's proxy briefly refusing traffic.
 
     A desktop that took input before it started answers every request with `connection is shut down`.
     """

@@ -1895,7 +1895,6 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
     profile = OpenRouterProvider.model_profile('anthropic/claude-sonnet-4-6')
     assert _normalize(profile) == snapshot(
         {
-            'supported_native_tools': SUPPORTED_NATIVE_TOOLS - {ComputerTool},
             'supports_json_schema_output': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'supports_video_input': False,
@@ -1948,7 +1947,6 @@ def test_openrouter_openai_gpt_5_4():
     profile = OpenRouterProvider.model_profile('openai/gpt-5.4')
     assert _normalize(profile) == snapshot(
         {
-            'supported_native_tools': SUPPORTED_NATIVE_TOOLS - {ComputerTool},
             'supports_json_schema_output': True,
             'supports_video_input': False,
             'supports_json_object_output': True,
@@ -1987,7 +1985,6 @@ def test_openrouter_google_gemini_3_pro():
     profile = OpenRouterProvider.model_profile('google/gemini-3.0-pro')
     assert _normalize(profile) == snapshot(
         {
-            'supported_native_tools': SUPPORTED_NATIVE_TOOLS - {ComputerTool},
             'supports_tool_return_schema': True,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
@@ -2048,7 +2045,6 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
     assert profile.get('google_thinking_levels') == frozenset(('LOW', 'MEDIUM', 'HIGH'))
     assert _normalize(profile) == snapshot(
         {
-            'supported_native_tools': SUPPORTED_NATIVE_TOOLS - {ComputerTool},
             'google_supported_mime_types_in_tool_returns': (
                 'image/png',
                 'image/jpeg',
@@ -2108,7 +2104,6 @@ def test_openrouter_x_ai_grok_4_7():
     profile = OpenRouterProvider.model_profile('x-ai/grok-4.7')
     assert _normalize(profile) == snapshot(
         {
-            'supported_native_tools': SUPPORTED_NATIVE_TOOLS - {ComputerTool},
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supported_image_media_types': frozenset(
                 {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
@@ -2146,7 +2141,6 @@ def test_openrouter_mistral_large():
     profile = OpenRouterProvider.model_profile('mistralai/mistral-large-latest')
     assert _normalize(profile) == snapshot(
         {
-            'supported_native_tools': SUPPORTED_NATIVE_TOOLS - {ComputerTool},
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_video_input': False,
             'tool_call_id_length': 9,
@@ -2176,7 +2170,6 @@ def test_openrouter_zai_glm_5_3():
     profile = OpenRouterProvider.model_profile('z-ai/glm-5.3')
     assert _normalize(profile) == snapshot(
         {
-            'supported_native_tools': SUPPORTED_NATIVE_TOOLS - {ComputerTool},
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_video_input': False,
             'thinking_always_enabled': True,
@@ -2206,7 +2199,6 @@ def test_openrouter_xai_grok_4():
     profile = OpenRouterProvider.model_profile('x-ai/grok-4')
     assert _normalize(profile) == snapshot(
         {
-            'supported_native_tools': SUPPORTED_NATIVE_TOOLS - {ComputerTool},
             'supports_json_schema_output': True,
             'supported_image_media_types': frozenset(
                 {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
@@ -2420,7 +2412,6 @@ def test_openrouter_qwen():
     profile = OpenRouterProvider.model_profile('qwen/qwen3-235b-a22b')
     assert _normalize(profile) == snapshot(
         {
-            'supported_native_tools': SUPPORTED_NATIVE_TOOLS - {ComputerTool},
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_video_input': False,
             'ignore_streamed_leading_whitespace': True,
@@ -2449,7 +2440,6 @@ def test_openrouter_deepseek():
     profile = OpenRouterProvider.model_profile('deepseek/deepseek-chat')
     assert _normalize(profile) == snapshot(
         {
-            'supported_native_tools': SUPPORTED_NATIVE_TOOLS - {ComputerTool},
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_video_input': False,
             'supports_thinking': True,
@@ -2477,7 +2467,6 @@ def test_openrouter_meta_llama():
     profile = OpenRouterProvider.model_profile('meta-llama/llama-3.3-70b-instruct')
     assert _normalize(profile) == snapshot(
         {
-            'supported_native_tools': SUPPORTED_NATIVE_TOOLS - {ComputerTool},
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_video_input': False,
             'openai_chat_thinking_field': 'reasoning',
@@ -2505,7 +2494,6 @@ def test_openrouter_moonshotai():
     profile = OpenRouterProvider.model_profile('moonshotai/kimi-k2-0905')
     assert _normalize(profile) == snapshot(
         {
-            'supported_native_tools': SUPPORTED_NATIVE_TOOLS - {ComputerTool},
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_video_input': False,
             'ignore_streamed_leading_whitespace': True,
@@ -2536,7 +2524,6 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
     profile = OpenRouterProvider.model_profile('unknown-lab/unknown-model')
     assert _normalize(profile) == snapshot(
         {
-            'supported_native_tools': SUPPORTED_NATIVE_TOOLS - {ComputerTool},
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_video_input': False,
             'openai_chat_thinking_field': 'reasoning',

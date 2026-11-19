@@ -1,7 +1,8 @@
-"""Anthropic's computer use tools, sent for a tool of the `computer` kind.
+"""Anthropic's computer use tools, sent in place of a tool of the `computer` kind.
 
-Not VCR tests: they pin the request and stream shapes the cassettes' body matching can miss, and cases no live model
-produces, such as stored histories and cut-off streams; the recorded runs are in `tests/harness/computer_use/`.
+These aren't recorded (VCR) tests. They check the exact request and stream shapes, which the cassettes' body matching
+can miss. They also cover cases no live model produces, such as stored histories and cut-off streams. The recorded
+runs are in `tests/harness/computer_use/`.
 """
 
 from __future__ import annotations as _annotations
@@ -73,8 +74,9 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
-    # Another thread touching `random` during a draw trips Hypothesis's check, as `tests/test_history_properties.py`
-    # explains, and `filterwarnings = error` makes it a flaky error. No strategy here uses `random`.
+    # If another thread uses `random` while Hypothesis draws an example, Hypothesis warns, as
+    # `tests/test_history_properties.py` explains. `filterwarnings = error` turns that warning into a flaky failure.
+    # No strategy here uses `random`.
     pytest.mark.filterwarnings(
         'ignore:Do not use the `random` module inside strategies:hypothesis.errors.HypothesisDeprecationWarning'
     ),
@@ -99,7 +101,7 @@ def _turn(*blocks: BetaContentBlock) -> BetaMessage:
 
 
 async def _mapped(name: str, input: dict[str, Any]) -> list[dict[str, Any]]:
-    """The actions a response with one toolset member call maps to."""
+    """The `computer` actions that a response with one toolset call becomes."""
     client = MockAnthropic.create_mock(_turn(_tool_use('toolu_1', name, input)))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
     params = ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True)
@@ -114,7 +116,7 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
         [
             _turn(
                 _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6], 'text': 'shift'}),
-                # One member, two presses, one result.
+                # One toolset call becomes two key presses, and gets one result.
                 _tool_use('toolu_2', 'key', {'text': 'ctrl+a BackSpace'}),
                 _tool_use('toolu_3', 'hold_key', {'text': 'ctrl', 'duration': 1}),
                 _tool_use('toolu_4', 'type', {'text': 'never typed'}),
@@ -144,7 +146,7 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
 
     first, second = get_mock_chat_completion_kwargs(client)
     assert first['tools'] == [{'type': 'computer_toolset_20260801'}]
-    # The member calls go back as they came, each answered by one result; both name the toolset.
+    # The toolset calls go back unchanged, each with its own result. Both name the toolset.
     calls = second['messages'][-2]['content']
     assert [(c['id'], c['name'], c['toolset_name']) for c in calls] == [
         ('toolu_1', 'left_click', 'computer'),
@@ -193,7 +195,7 @@ async def test_a_thread_continue_request_answers_every_member_call(allow_model_r
 
 @pytest.mark.parametrize('change', ['actions', 'name'])
 async def test_a_call_a_hook_changed_goes_back_as_a_plain_call(allow_model_requests: None, change: str) -> None:
-    """Sent back as the member calls Claude made, the call would say its click ran, when something else ran instead."""
+    """If it were sent back as Claude's original calls, Claude would read that its click ran, but something else ran."""
     hooks = Hooks[object]()
 
     @hooks.on.after_model_request
@@ -235,7 +237,7 @@ async def test_a_call_a_hook_changed_goes_back_as_a_plain_call(allow_model_reque
 
 @pytest.mark.parametrize('call', ['request', 'count_tokens'])
 async def test_a_forced_computer_drops_the_advisor_and_its_history(allow_model_requests: None, call: str) -> None:
-    """Requiring the computer leaves out the other native tools, and their history with them, or the API refuses it."""
+    """Requiring the computer drops the other native tools and their history. Otherwise the API refuses the request."""
     client = MockAnthropic.create_mock(_turn(_tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]})))
     model = AnthropicModel(
         'claude-sonnet-4-6',
@@ -289,7 +291,7 @@ async def test_a_failed_calls_text_goes_back_once_on_the_last_member(allow_model
     )
 
     _, second = get_mock_chat_completion_kwargs(client)
-    # The call may have acted before it failed, so no member may claim it didn't: the last carries the text.
+    # The call may have acted before it failed, so no call may say it didn't run. The last call gets the text.
     results = second['messages'][-1]['content']
     assert [(r['is_error'], [block['text'] for block in r['content']]) for r in results] == [
         (True, [ON_LAST]),
@@ -298,7 +300,7 @@ async def test_a_failed_calls_text_goes_back_once_on_the_last_member(allow_model
 
 
 async def test_a_hook_that_redacts_a_failure_redacts_every_member(allow_model_requests: None) -> None:
-    """The error in a result's metadata never reaches Claude: only the content a hook leaves does."""
+    """The error in a result's metadata never reaches Claude. Only the content left by a hook does."""
 
     async def computer(actions: list[ComputerToolAction]) -> ToolReturn:
         return ToolReturn(
@@ -357,7 +359,7 @@ async def test_an_invalid_member_is_refused_and_nothing_runs(allow_model_request
 
 
 async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_requests: None) -> None:
-    # A press with held keys would otherwise run without them, and the keys would be stored in the history.
+    # Otherwise the press would run without the held keys, and the keys would still be stored in the history.
     client = MockAnthropic.create_mock(
         [
             _turn(_tool_use('toolu_1', 'left_mouse_down', {'text': 'shift'})),
@@ -370,7 +372,7 @@ async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_
 
     assert computer.actions == []
     call = next(part for part in result.all_messages()[1].parts if isinstance(part, ToolCallPart))
-    # Under the tool's own type, so the retry names the field rather than refusing the member.
+    # The action keeps its type, so the retry message names the field instead of refusing the whole action.
     assert call.args_as_dict() == {'actions': [{'type': 'mouse_down', 'unsupported_fields': ['text']}]}
     (retry,) = [part for part in result.all_messages()[2].parts if isinstance(part, ToolReturnPart)]
     assert retry.outcome == 'retried'
@@ -439,7 +441,7 @@ async def test_a_deferred_computer_tool_stays_a_deferred_function(allow_model_re
             AnthropicModelProfile(supported_native_tools=frozenset()),
             id='a-profile-whose-native-tools-leave-it-out',
         ),
-        # As `ComputerUse(native=False)` asks, so Claude gets the tool's own actions.
+        # This is what `ComputerUse(native=False)` sets, so Claude gets the `computer` function tool's own actions.
         pytest.param('claude-sonnet-5-5', False, None, id='a-tool-that-opts-out'),
     ],
 )
@@ -476,7 +478,7 @@ async def test_the_computer_tool_stays_a_function_on_a_model_without_one_or_when
 async def test_a_profile_that_lists_it_gets_the_computer_use_tool(
     allow_model_requests: None, profile: AnthropicModelProfile, sent: str
 ) -> None:
-    """The native tools set through `profile=` decide, also on a model the compatibility table doesn't list."""
+    """The native tools set through `profile=` decide what is sent, even on a model Anthropic's table doesn't list."""
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='done', type='text')))
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client), profile=profile)
     await Agent(model, capabilities=[FakeComputer(), InMemoryProvider().capability()]).run('Go.')
@@ -514,7 +516,7 @@ def test_the_computer_use_tool_is_sent_by_default_only_on_the_clients_it_is_reco
         'foundry': False,
         'aws': False,
     }
-    # The gate is a default, so a user who has checked the tool on one of these clients can turn it on.
+    # Leaving the tool out is only a default. A user who has checked the tool on one of these clients can turn it on.
     vertex = AsyncAnthropicVertex(project_id='p', region='us-central1', access_token='x')
     opted_in = AnthropicModel(
         'claude-opus-5-5',
@@ -552,7 +554,7 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
                     {'actions': [{'type': 'screenshot'}]},
                     tool_call_id='call_1',
                     provider_name='openai',
-                    # Details shaped like Anthropic's, so only the provider keeps the call plain.
+                    # Details shaped like Anthropic's, so only the provider name keeps the call a plain call.
                     provider_details={
                         'computer_blocks': [{'id': 'call_1', 'name': 'screenshot', 'input': {}}],
                         'computer_tool': 'computer_toolset_20260801',
@@ -598,7 +600,7 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
             {'type': 'drag', 'path': [{'x': 1, 'y': 2}, {'x': 3, 'y': 4}], 'modifiers': []},
         ),
         ('left_click_drag', {'coordinate': [3, 4]}, {'type': 'drag', 'unsupported_fields': ['start_coordinate']}),
-        # A field that is missing though required, or has the wrong type, is refused rather than filled in.
+        # A required field that is missing, or a field with the wrong type, is refused, not filled in.
         ('left_click', {'coordinate': [5]}, {'type': 'click', 'unsupported_fields': ['coordinate']}),
         ('left_click', {'coordinate': ['1', '2']}, {'type': 'click', 'unsupported_fields': ['coordinate']}),
         ('triple_click', {'text': 7}, {'type': 'click', 'unsupported_fields': ['text']}),
@@ -608,7 +610,7 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ('wait', {}, {'type': 'wait', 'unsupported_fields': ['duration']}),
         ('left_mouse_down', {}, {'type': 'mouse_down'}),
         ('left_mouse_up', {}, {'type': 'mouse_up'}),
-        # Claude's earlier tools press or release at a point, so the pointer moves there first.
+        # Claude's earlier tools press or release the button at a point, so the pointer moves there first.
         ('left_mouse_down', {'coordinate': [5, 6]}, [{'type': 'mouse_move', 'x': 5, 'y': 6}, {'type': 'mouse_down'}]),
         ('left_mouse_up', {'coordinate': [7, 8]}, [{'type': 'mouse_move', 'x': 7, 'y': 8}, {'type': 'mouse_up'}]),
         (
@@ -618,7 +620,7 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ),
         ('type', {'text': 'hi'}, {'type': 'type_text', 'text': 'hi'}),
         ('key', {'text': 'ctrl+s', 'repeat': 2}, {'type': 'press_keys', 'keys': ['ctrl+s'], 'repeat': 2}),
-        # xdotool syntax: chords separated by spaces are pressed one after another.
+        # xdotool syntax: key combinations separated by spaces are pressed one after another.
         (
             'key',
             {'text': 'ctrl+a BackSpace'},
@@ -645,15 +647,15 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
 async def test_toolset_members_map_onto_the_computer_tool(
     allow_model_requests: None, name: str, input: dict[str, Any], action: dict[str, Any] | list[dict[str, Any]]
 ) -> None:
-    """Every member Anthropic documents, including ones no recording has: a VCR test would pin only what Claude sent."""
+    """Every action Anthropic documents, including ones no recording has. Recordings cover only what Claude sent."""
     expected = action if isinstance(action, list) else [action]
-    # The call's arguments leave out a field the mapping sets to `None`.
+    # The call's arguments leave out any field the conversion sets to `None`.
     assert await _mapped(name, input) == [{k: v for k, v in a.items() if v is not None} for a in expected]
 
 
 @pytest.mark.parametrize('model_name', ['claude-haiku-5-5', 'claude-opus-4-8'])
 def test_the_newest_models_get_the_computer_toolset(model_name: str) -> None:
-    """The earlier tools, and models without one, are pinned by `tests/profiles/test_resolution_matrix.py`."""
+    """`tests/profiles/test_resolution_matrix.py` checks the earlier tools and the models that get none."""
     profile = anthropic_model_profile(model_name)
     assert profile is not None
     assert profile.get('anthropic_computer_tool_version') == 'computer_toolset_20260801'
@@ -721,7 +723,7 @@ async def _streamed(events: list[BetaRawMessageStreamEvent], *function_tools: To
 async def test_a_streamed_member_call_whose_input_came_with_its_start_keeps_it(allow_model_requests: None) -> None:
     block = _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]})
     events = _stream(block)
-    # Without deltas, as an ordinary tool call's input may come: whole, with the block's start.
+    # No input deltas: the whole input comes with the block's start event, as an ordinary tool call's can.
     events[1] = BetaRawContentBlockStartEvent(type='content_block_start', index=0, content_block=block)
     del events[2]
     (call,) = (await _streamed(events)).parts
@@ -732,8 +734,8 @@ async def test_a_streamed_member_call_whose_input_came_with_its_start_keeps_it(a
 
 
 async def test_member_calls_in_one_response_are_one_call_streamed_or_not(allow_model_requests: None) -> None:
-    # Anthropic runs a response's member calls as one batch, stopped at the first failure, so text between them
-    # doesn't split it.
+    # Anthropic runs all toolset calls in a response as one batch, which stops at the first failure. Text between
+    # the calls doesn't split the batch.
     blocks = [
         _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
         _tool_use('toolu_2', 'type', {'text': 'hi'}),
@@ -773,18 +775,18 @@ async def test_member_calls_in_one_response_are_one_call_streamed_or_not(allow_m
             ),
         ]
     )
-    # The call stays where the first member was, so it runs before any call that came after it.
+    # The `computer` call sits where the first toolset call was, so it runs before any call that came after it.
     assert (
         [type(part) for part in streamed.parts] == [type(part) for part in whole.parts] == [ComputerCallPart, TextPart]
     )
     starts = [(event.index, type(event.part)) for event in events if isinstance(event, PartStartEvent)]
-    # Started once, with all its members, before the text that follows it, so events replay in the response's order.
+    # It starts once, with all its calls, before the text after it, so the events keep the response's order.
     assert starts == [(0, ComputerCallPart), (1, TextPart)]
 
 
 async def test_a_stream_that_breaks_off_keeps_every_member_call_it_got(allow_model_requests: None) -> None:
     blocks = [_tool_use('toolu_1', 'mouse_move', {'coordinate': [5, 6]}), _tool_use('toolu_2', 'type', {'text': 'hi'})]
-    # Both members arrive whole; the connection drops before the message ends.
+    # Both calls arrive whole. The connection drops before the message ends.
     events: list[BetaRawMessageStreamEvent | Exception] = [*_stream(*blocks)[:-2], httpx2.ReadError('connection lost')]
     model = AnthropicModel(
         'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(events))
@@ -851,7 +853,7 @@ def _cut_off(blocks: list[BetaContentBlock], partial_json: str) -> list[BetaRawM
     return [event for event in events if not (isinstance(event, BetaRawContentBlockStopEvent) and event.index == last)]
 
 
-# Built in the test, as collection runs without the anthropic SDK too.
+# Built inside the test, because test collection also runs without the anthropic SDK installed.
 @pytest.mark.parametrize(
     'model_name, blocks',
     [
@@ -863,7 +865,7 @@ def _cut_off(blocks: list[BetaContentBlock], partial_json: str) -> list[BetaRawM
             ],
             id='computer_20251124',
         ),
-        # The batch's part sits at its first call, so the cut-off call must still come last.
+        # The batch's part sits where its first call was, but the cut-off call must still come last.
         pytest.param(
             'claude-sonnet-5-5',
             lambda: [
@@ -891,7 +893,7 @@ async def test_a_streamed_computer_call_cut_off_mid_input_stops_the_run(
             await _agent(model, FakeComputer()).run(
                 'Go.', model_settings={'max_tokens': 60}, event_stream_handler=drain
             )
-    # The cut-off call keeps its partial input and is the response's last part, which is what the run checks.
+    # The cut-off call keeps its partial input and is the response's last part. The run checks the last part.
     *_, response = [message for message in messages if isinstance(message, ModelResponse)]
     assert response.finish_reason == 'length'
     last = response.parts[-1]
@@ -923,7 +925,7 @@ async def test_a_call_named_computer_is_a_function_tools_when_tool_choice_leaves
     (sent,) = get_mock_chat_completion_kwargs(client)
     assert [tool['name'] for tool in sent['tools']] == ['computer']
     assert isinstance(sent['betas'], Omit)  # nor the computer use beta
-    # The computer use tool wasn't sent, so the call is the function tool's, not the `desktop` tool's.
+    # The computer use tool wasn't sent, so the call is a function tool call, not a `desktop` computer call.
     (call,) = response.parts
     assert isinstance(call, ToolCallPart) and not isinstance(call, ComputerCallPart)
     assert (call.tool_name, call.args) == ('computer', {'action': 'left_click', 'coordinate': [5, 6]})
@@ -956,8 +958,8 @@ async def test_a_tool_added_mid_run_is_declared_when_tool_choice_leaves_out_the_
         model, deps_type=type(None), toolsets=[toolset], capabilities=[FakeComputer()], model_settings=settings
     )
 
-    # `tool_choice` leaves out the computer use tool, so the newcomer is the request's only tool and can't stay
-    # deferred: Anthropic rejects a request whose tools are all deferred.
+    # `tool_choice` leaves out the computer use tool, so the newly added tool is the request's only tool. It can't
+    # stay deferred, because Anthropic rejects a request whose tools are all deferred.
     assert (await agent.run('Add the new tool.')).output == 'done'
     _, sent = get_mock_chat_completion_kwargs(client)
     assert [(tool['name'], tool.get('defer_loading', False)) for tool in sent['tools']] == [('new_tool', False)]
@@ -980,11 +982,11 @@ async def _sent_results(
     metadata: dict[str, Any] | None,
     outcome: Literal['success', 'failed', 'denied', 'retried'] = 'success',
 ) -> list[dict[str, Any]]:
-    """The results a request sends for a toolset call whose result is `content`."""
+    """The results a request sends for a toolset call whose tool result is `content`."""
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    # The actions each call maps to. A count the mapping doesn't give is kept as the call's, so its actions are
-    # screenshots: what they are doesn't matter to how the result is split.
+    # The actions each call becomes. If `counts` gives a different number than the conversion, the count is used and
+    # the actions are screenshots. The kind of action doesn't affect how the result is split.
     actions: list[dict[str, Any]] = []
     for block, count in zip(blocks, counts):
         mapped = await _mapped(block['name'], block['input'])
@@ -1042,7 +1044,7 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
     allow_model_requests: None, outcome: str, content: list[str | BinaryImage], members: int
 ) -> None:
     blocks = _MEMBERS[:members]
-    # Two actions per call, so a call can fail part way.
+    # Two actions per call, so a call can fail partway through.
     counts = [2] * members
     performed = {
         'all-ran': 2 * members,
@@ -1066,12 +1068,12 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
     assert [r['tool_use_id'] for r in sent] == [block['id'] for block in blocks]
     assert all(block['type'] == 'text' for r in sent if r['is_error'] for block in r['content'])
     if unsuccessful:
-        # The text goes back once, on the last call, and the rest point there.
+        # The text goes back once, on the last call. The other calls say the result is on the last call.
         *rest, last = [[block['text'] for block in r['content']] for r in sent]
         assert rest == [[ON_LAST]] * (members - 1)
         assert len(last) == 1 and last != [ON_LAST]
     else:
-        # Besides the `OK`s, the failure and `ON_LAST`, the content goes back once, whole and in order.
+        # Apart from the `OK`s, the failure and `ON_LAST`, the content goes back once, whole and in order.
         carried = [
             _item(block)
             for r in sent
@@ -1086,7 +1088,8 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
 @pytest.mark.parametrize(
     'blocks,counts,content,metadata,results',
     [
-        # Not these calls' outcome: `OK` would say a call ran, so the last call carries it and the rest point there.
+        # The result isn't from running these calls. `OK` would say a call ran, so the last call gets the result and
+        # the others point to it.
         pytest.param(
             _MEMBERS[:2],
             [1, 1],
@@ -1095,7 +1098,7 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
             [(False, [ON_LAST]), (False, [_CHANGED, 'image'])],
             id='changed-before-it-ran',
         ),
-        # As a UI rebuilds it, or a guardrail answers: nothing says which calls ran, so no call is said to have run.
+        # A result rebuilt by a UI, or a guardrail's answer. Nothing says which calls ran, so no call claims it ran.
         pytest.param(
             _MEMBERS[:2],
             [1, 1],
@@ -1104,7 +1107,7 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
             [(False, [ON_LAST]), (False, [_FAILED, 'image'])],
             id='no-metadata',
         ),
-        # Content stored as a JSON string reads as the list it encodes, screenshot and all.
+        # Content stored as a JSON string is read as the list it encodes, including the screenshot.
         pytest.param(
             _MEMBERS[:2],
             [1, 1],
@@ -1113,7 +1116,7 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
             [(False, ['OK']), (False, ['Ran 2 actions.', 'image'])],
             id='json-string-content',
         ),
-        # The counts recorded with the call decide which calls ran, even where mapping again would split differently.
+        # The counts stored with the call decide which calls ran, even where converting again would split differently.
         pytest.param(
             [{'id': 'toolu_1', 'name': 'key', 'input': {'text': 'a b'}}, _MEMBERS[1]],
             [1, 1],
@@ -1122,7 +1125,8 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
             [(False, ['Action 2 of 2 (type_text) failed: no keyboard.', 'image']), (True, ['Failed.'])],
             id='recorded-counts',
         ),
-        # Nothing ran: the first call carries the result and states its failure in text, as an error can't hold it.
+        # Nothing ran. The first call gets the result and says it failed in text, because an error result can hold
+        # only text.
         pytest.param(
             _MEMBERS[:2],
             [1, 1],
@@ -1151,7 +1155,7 @@ async def test_a_result_answers_each_member_call(
 @pytest.mark.parametrize(
     'counts, actions',
     [
-        # A call that failed on its first action would read as having run its first member call.
+        # A call that failed on its first action would look as if its first toolset call had run.
         pytest.param([0, 2], 2, id='a-zero-count'),
         pytest.param([1, 1], 3, id='counts-short-of-the-actions'),
         pytest.param([2, 2], 3, id='counts-past-the-actions'),
@@ -1160,7 +1164,7 @@ async def test_a_result_answers_each_member_call(
 async def test_kept_counts_that_do_not_match_the_actions_send_the_call_back_plain(
     allow_model_requests: None, counts: list[int], actions: int
 ) -> None:
-    """Each member call becomes at least one action, and the result counts actions, so other counts came from elsewhere."""
+    """Each toolset call becomes at least one action, so counts that don't match the actions came from elsewhere."""
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
     blocks = [
@@ -1198,7 +1202,7 @@ async def test_kept_counts_that_do_not_match_the_actions_send_the_call_back_plai
 
     (body,) = get_mock_chat_completion_kwargs(client)
     sent = body['messages'][-1]['content']
-    # The call goes back as the `computer` call it is, answered by one plain result: no member call is told `OK`.
+    # The call goes back as one `computer` call with one plain result. No toolset call is told `OK`.
     (tool_use,) = body['messages'][1]['content']
     assert (tool_use['id'], tool_use['name'], tool_use['input'], 'toolset_name' in tool_use) == (
         'toolu_1',
@@ -1215,7 +1219,7 @@ async def test_kept_counts_that_do_not_match_the_actions_send_the_call_back_plai
 async def test_a_stored_call_whose_actions_do_not_validate_still_replays_as_its_member_calls(
     allow_model_requests: None,
 ) -> None:
-    """A click off the screen is sent back for a retry; once stored, its call is no longer typed."""
+    """A click off the screen is sent back for a retry. Once stored, its call is a plain `ToolCallPart`."""
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
     block = {'id': 'toolu_1', 'name': 'left_click', 'input': {'coordinate': [-1, 6]}}
@@ -1294,7 +1298,7 @@ async def test_without_the_toolset_past_member_calls_replay_as_plain_calls(allow
         ModelRequest(parts=[ToolReturnPart('computer', 'Ran 1 action.', tool_call_id='toolu_1')]),
     ]
 
-    # Tool choice leaves `computer` out, so the toolset isn't sent and its past calls can't name it.
+    # `tool_choice` leaves `computer` out, so the toolset isn't sent, and its past calls can't name it.
     await model.request(history, {'tool_choice': ['note', 'other']}, params)
 
     (body,) = get_mock_chat_completion_kwargs(client)
@@ -1308,7 +1312,7 @@ async def test_without_the_toolset_past_member_calls_replay_as_plain_calls(allow
 
 @pytest.mark.parametrize('stream', [False, True], ids=['whole', 'streamed'])
 async def test_a_batch_split_by_another_tool_call_is_refused(allow_model_requests: None, stream: bool) -> None:
-    """Typing would otherwise run in the window the click chose, before the tool between them focused another."""
+    """Otherwise the typing would run in the window the click chose, before the tool between them focused another."""
     focus = BetaToolUseBlock.model_validate({'id': 'toolu_f', 'type': 'tool_use', 'name': 'focus', 'input': {}})
     blocks = [
         _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
@@ -1362,7 +1366,7 @@ async def test_claude_is_told_in_a_sentence_why_a_split_batch_did_not_run(allow_
     await agent.run('Go.')
 
     assert computer.actions == []
-    # Fixed text: nothing in it comes from the history, which may come from storage or a UI.
+    # Fixed text. Nothing in it comes from the history, which may come from storage or a UI.
     refusal = (
         'No computer action ran: they run together as one batch, and another tool call came between them. Make the '
         "computer calls before or after the other tools' calls, not between them."
@@ -1396,7 +1400,7 @@ async def test_a_split_batch_a_hook_let_run_gets_its_real_retry_text(allow_model
     await agent.run('Go.')
 
     assert computer.actions == [Click(x=5, y=6), TypeText(text='hi')]
-    # The calls ran, so the refusal would be false: Claude gets the retry's own text.
+    # The calls ran, so the refusal text would be false. Claude gets the retry's own text.
     retry_text = [{'type': 'text', 'text': 'Check the window first.'}]
     assert _split_batch_results(client) == [(True, [{'type': 'text', 'text': ON_LAST}]), (True, retry_text)]
 
@@ -1412,7 +1416,7 @@ _MEMBER_NAMES = [
     *('hold_key', 'wait', 'zoom', 'screenshot', 'cursor_position', 'teleport'),
 ]
 _POINT = st.lists(st.integers(0, 4000), min_size=2, max_size=2)
-# Close to a member's input: each documented field either of its documented type or anything.
+# Inputs close to a real action's input: each documented field has either its documented type or any value.
 _NEAR_INPUT = st.fixed_dictionaries(
     {},
     optional={
@@ -1436,7 +1440,7 @@ _TOOL_ACTION: TypeAdapter[ComputerToolAction] = TypeAdapter(ComputerToolAction)
 async def test_any_member_input_maps_without_raising_and_a_refusal_is_rejected(
     allow_model_requests: None, name: str, input: dict[str, Any]
 ) -> None:
-    """The tool checks every action before running any, so one it rejects means none of the call runs."""
+    """The tool checks every action before running any. If it rejects one, none of the call runs."""
     for action in await _mapped(name, input):
         if 'unsupported_fields' in action:
             with pytest.raises(ValidationError):
@@ -1485,7 +1489,7 @@ async def test_a_hook_emptying_a_result_answers_every_call(allow_model_requests:
 async def test_a_replayed_call_and_its_results_pair_up_when_ids_are_fitted(
     allow_model_requests: None, model_name: str, build: Callable[[], list[BetaToolUseBlock]]
 ) -> None:
-    # Built in the test, so collecting the file needs no `anthropic` install.
+    # Built inside the test, so collecting the file doesn't need `anthropic` installed.
     blocks = build()
     client = MockAnthropic.create_mock([_turn(*blocks), _turn(BetaTextBlock(text='done', type='text'))])
     model = AnthropicModel(

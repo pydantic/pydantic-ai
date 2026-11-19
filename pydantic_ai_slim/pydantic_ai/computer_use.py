@@ -1,37 +1,38 @@
-"""The `computer` tool: its kind, its actions, and the shapes of its arguments and result.
+"""The `computer` tool: the actions a model can ask for, and the shapes of the tool's arguments and result.
 
-A capability that gives an agent a screen defines a tool of [`COMPUTER_KIND`][pydantic_ai.computer_use.COMPUTER_KIND]
-and drives the screen. A model adapter whose provider has a native computer tool sends that tool as the native one
-and translates its calls and results.
+A capability that gives an agent a screen adds a tool of kind
+[`COMPUTER_KIND`][pydantic_ai.computer_use.COMPUTER_KIND] and performs its actions on that screen. Some providers
+have a computer tool of their own. For those, the model adapter sends the provider's tool instead, turns the
+provider's calls into calls of this tool, and turns this tool's results back into the provider's format.
 
-Coordinates are pixels of the latest screenshot, from the top left, unless the call's
-[`coordinate_grid`][pydantic_ai.computer_use.ComputerCallPart.coordinate_grid] puts them on a grid. A click or scroll
-without coordinates happens at the pointer.
+Positions (`x` and `y`) are pixels of the latest screenshot, counted from its top left corner. A call whose
+[`coordinate_grid`][pydantic_ai.computer_use.ComputerCallPart.coordinate_grid] is set has its positions on a grid
+of that size instead. A click or scroll without a position happens where the pointer is.
 
-Actions follow the providers' computer tools. Each is picked by `type`, its class name in snake case (`click`,
-`press_keys`). A key is a single character or one of a fixed set of names. Common spellings, such as the X keysym
-`KP_Enter` or the browser name `NumpadAdd`, are normalized, and `ctrl+s` is split into its keys. A character presses
-whatever the keyboard layout needs to type it; an upper-case letter is its lower-case key.
+The actions match those of the providers' computer tools. The `type` field picks the action. Its value is the class
+name in snake case, such as `click` or `press_keys`. A key is a single character or one of a fixed set of names.
+Other common spellings are converted to those names, such as the X11 name `KP_Enter` or the browser name
+`NumpadAdd`. `ctrl+s` is split into its two keys. A character presses whatever keys the keyboard layout needs to
+type it. An upper-case letter presses the same key as its lower-case letter.
 
-How the actions change, so a tool written today keeps doing what the model asked:
+The actions only change in ways that keep an existing tool doing what the model asked:
 
-- A new kind of action is a new type in [`ComputerToolAction`][pydantic_ai.computer_use.ComputerToolAction], so an
-  older tool fails a call it doesn't know rather than ignoring it.
-- An action refuses unknown fields, so a field added later is never silently dropped.
-- An existing action only gains fields whose default is today's behaviour. Anything a tool must honour, such as
-  scrolling by pixels, is a new type.
-- The values a field accepts, such as the mouse buttons, don't grow. Key names are added only for keys no existing
-  name covers.
-- A field added later is left out of serialized data while it holds its default (`Field(exclude_if=...)`), so an
-  older version can still read actions that don't use it.
-- A new field, here or in a result, never changes what an existing field means.
+- A new action gets a new `type` in [`ComputerToolAction`][pydantic_ai.computer_use.ComputerToolAction]. An older
+  tool then rejects a call it doesn't know instead of ignoring it. For the same reason, actions reject fields they
+  don't know.
+- An existing action only gains fields whose default keeps today's behaviour. Such a field is left out of saved data
+  while it holds its default. A change a tool must act on, such as scrolling by pixels, becomes a new action type.
+- The values a field accepts, such as the mouse buttons, never grow. A new key name is added only for a key that no
+  existing name covers.
+- A new field, on an action or on a result, never changes what an existing field means.
 
-A result's content is a short summary, then what each action returned, in order, then the screenshot. The last image
-is always the screen after the call. The summary's wording isn't stable;
-[`ComputerResult`][pydantic_ai.computer_use.ComputerResult] in the result's `metadata` is.
+A result's content is a short summary, then what each action returned, in order, then a screenshot. The last image
+is always the screen after the call. The summary's wording can change between releases.
+[`ComputerResult`][pydantic_ai.computer_use.ComputerResult], in the result's `metadata`, does not.
 
-The tool's parts become [`ComputerCallPart`][pydantic_ai.computer_use.ComputerCallPart] and
-[`ComputerReturnPart`][pydantic_ai.computer_use.ComputerReturnPart], whatever the tool is called.
+In the message history, the tool's calls and results become
+[`ComputerCallPart`][pydantic_ai.computer_use.ComputerCallPart] and
+[`ComputerReturnPart`][pydantic_ai.computer_use.ComputerReturnPart], whatever name the tool has.
 """
 
 from __future__ import annotations as _annotations
@@ -153,7 +154,8 @@ _KEY_ALIASES = {
     'prtsc': 'printscreen',
     'apps': 'menu',
     'contextmenu': 'menu',
-    # X keysyms, as Claude writes keys. Right-hand modifiers are refused, so they stay free for keys such as AltGr.
+    # X11 key names (keysyms), which Claude uses. Right-hand modifiers such as `Control_R` are rejected, so those
+    # names stay free for keys such as AltGr.
     'control_l': 'ctrl',
     'shift_l': 'shift',
     'alt_l': 'alt',
@@ -172,7 +174,7 @@ _KEY_ALIASES = {
     'xf86audioplay': 'mediaplay',
     'xf86audionext': 'medianext',
     'xf86audioprev': 'mediaprev',
-    # X keysyms for punctuation, as in `ctrl+plus`.
+    # X11 names of punctuation keys, as in `ctrl+plus`.
     'plus': '+',
     'minus': '-',
     'equal': '=',
@@ -205,7 +207,7 @@ _KEY_ALIASES = {
     'braceright': '}',
     'bar': '|',
     'asciitilde': '~',
-    # DOM `key` and `code` spellings, as browser automation writes keys.
+    # Browser key names (the DOM `key` and `code` values), which browser automation tools use.
     'controlleft': 'ctrl',
     'shiftleft': 'shift',
     'altleft': 'alt',
@@ -252,7 +254,7 @@ def _normalize_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def _normalize_modifiers(modifiers: tuple[str, ...]) -> tuple[str, ...]:
-    # Checked before anything runs, so a screen can't skip an unknown modifier and act without it.
+    # Checked before any action runs, so a screen can't skip a modifier it doesn't know and act without it.
     normalized = _normalize_keys(modifiers)
     if not _MODIFIERS.issuperset(normalized):
         raise ValueError('modifiers must be ctrl, shift, alt or super')
@@ -464,7 +466,7 @@ class ComputerArgs(TypedDict):
 
 
 ComputerContent: TypeAlias = list[str | BinaryImage]
-"""What the model sees from a `computer` call; see the module docstring for its order."""
+"""What the model sees from a `computer` call: a summary, what each action returned, then the screenshot."""
 
 
 class ComputerResult(TypedDict):
@@ -474,25 +476,26 @@ class ComputerResult(TypedDict):
     """How many actions ran: all of them, or those before the one that failed."""
 
     error: NotRequired[str]
-    """Why the action after the performed ones failed; the rest did not run."""
+    """Why an action failed. It is the action right after the `performed` ones. The actions after it did not run."""
 
     changed: NotRequired[bool]
-    """Set when the actions that ran differ from those the model asked for, such as after an approval changed them.
-    A model adapter then sends the summary instead of reporting the model's own actions as run."""
+    """`True` when the actions that ran differ from those the model asked for, for example because an approval
+    changed them. A model adapter then sends the model the result's summary, instead of reporting the model's own
+    actions as the ones that ran."""
 
 
 _COORDINATE_GRID = 'coordinate_grid'
-"""The `provider_details` key under which the agent records the grid a call's positions are on."""
+"""The `provider_details` key where the agent records the size of the grid a call's positions are on."""
 
 _SCREENSHOT_MAX_SIDE = 'screenshot_max_side'
-"""The `provider_details` key under which the agent records the longest screenshot side the call's model takes."""
+"""The `provider_details` key where the agent records the longest screenshot side the call's model can see."""
 
 _SCREENSHOT_MAX_PIXELS = 'screenshot_max_pixels'
-"""The `provider_details` key under which the agent records the most screenshot pixels the call's model takes."""
+"""The `provider_details` key where the agent records the most screenshot pixels the call's model can see."""
 
 
 _LABEL_KEYS = frozenset({_COORDINATE_GRID, _SCREENSHOT_MAX_SIDE, _SCREENSHOT_MAX_PIXELS})
-"""The `provider_details` keys the agent adds to a `computer` call, which the provider never saw."""
+"""The `provider_details` keys the agent adds to a `computer` call. The provider never sent or saw them."""
 
 
 def _label(part: ToolCallPart, key: str, *, minimum: int = 1) -> int | None:
@@ -504,8 +507,10 @@ def _label(part: ToolCallPart, key: str, *, minimum: int = 1) -> int | None:
 COMPUTER_KIND = ToolKind(
     'computer_use', 'computer', args=ComputerArgs, content=ComputerContent, metadata=ComputerResult
 )
-"""The kind of the `computer` tool, whose calls a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends to a
-provider's native computer tool."""
+"""The tool kind that marks a tool as the `computer` tool.
+
+When a request includes a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool], the provider's own computer tool is
+sent to the model in place of the tool of this kind. The tool of this kind still runs the calls."""
 
 
 class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
@@ -519,32 +524,32 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
 
     @property
     def coordinate_grid(self) -> int | None:
-        """The size of the grid the call's positions are on, such as `1000` for 0 to 999, or `None` for pixels.
+        """The size of the grid the call's positions are on, such as `1000` for positions from 0 to 999.
 
-        This is the answering model's profile value, `computer_use_coordinate_grid`: a convention of the model's maker.
-        The agent records it on the call, because under `ModelFallback` the tool can't otherwise tell which model made
-        the call. A history that lost the call's `provider_details`, such as one a UI rebuilt, reads `None`.
+        `None` means the positions are pixels. The agent copies the value from the `computer_use_coordinate_grid`
+        setting in the profile of the model that made the call, and stores it in the call's `provider_details`. A
+        history that lost `provider_details`, such as one a UI rebuilt, gives `None`.
         """
         return _label(self, _COORDINATE_GRID, minimum=2)
 
     @property
     def screenshot_max_side(self) -> int | None:
-        """The longest side, in pixels, of a screenshot the call's model takes, or `None` for no limit.
+        """The longest screenshot side, in pixels, that the model that made the call can see. `None` means no limit.
 
-        This is the answering model's profile value, `computer_use_screenshot_max_side`: a limit set by the model's
-        maker. The agent records it on the call, because under `ModelFallback` the tool can't otherwise tell which
-        model made the call. A `FallbackModel`'s calls get the smallest limit across its models: its response is matched
-        to one of them only by provider, which doesn't tell two models on one provider apart. A computer use capability
-        can then refuse a screen the model can't see before the call acts. A history a UI rebuilt reads `None`.
+        The agent copies the value from the `computer_use_screenshot_max_side` setting in the model's profile. A
+        computer use capability reads it to refuse a screen the model can't see before the call does anything. For a
+        call made through a `FallbackModel`, it is the smallest limit of its models. A history a UI rebuilt gives
+        `None`.
         """
         return _label(self, _SCREENSHOT_MAX_SIDE)
 
     @property
     def screenshot_max_pixels(self) -> int | None:
-        """The most pixels in a screenshot the call's model takes, or `None` for no limit.
+        """The most pixels (width times height) in a screenshot that the model that made the call can see.
 
-        The answering model's profile value, `computer_use_screenshot_max_pixels`, recorded as
-        [`screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side] is.
+        `None` means no limit. The agent copies the value from the `computer_use_screenshot_max_pixels` setting in the
+        model's profile, the same way as
+        [`screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side].
         """
         return _label(self, _SCREENSHOT_MAX_PIXELS)
 
@@ -554,12 +559,12 @@ class ComputerReturnPart(ToolReturnPart[ComputerContent, ComputerResult], kind=C
 
     @property
     def result(self) -> ComputerResult | None:
-        """The call's outcome, or `None` when the result has none, such as one a UI rebuilt without its metadata."""
+        """The call's outcome. `None` when the result has no metadata, such as a result a UI rebuilt."""
         return self.typed_metadata
 
     @property
     def screenshot(self) -> BinaryImage | None:
-        """The screen after the call, or `None` if the result doesn't end with one, such as once it was dropped."""
+        """The screen after the call. `None` if the result doesn't end with an image, such as after it was dropped."""
         content = self.typed_content
         last = content[-1] if content else None
         return last if isinstance(last, BinaryImage) else None

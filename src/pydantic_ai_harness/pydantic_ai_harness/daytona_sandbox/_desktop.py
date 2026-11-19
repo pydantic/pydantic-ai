@@ -1,26 +1,26 @@
-"""`DaytonaDesktop`: display control for a Daytona sandbox, through Daytona's computer-use API.
+"""`DaytonaDesktop` controls a Daytona sandbox's screen through Daytona's computer-use API.
 
-How Daytona's default snapshot behaves. Re-run the live display tests in
-`tests/harness/daytona_sandbox/test_daytona_live.py` before changing the mapping:
+Below is how Daytona's default snapshot behaves. Re-run the live display tests in
+`tests/harness/daytona_sandbox/test_daytona_live.py` before changing how actions map to Daytona's API:
 
-- `computer_use.start()` returns once the display answers; starting a running desktop is harmless.
-- `VNC_RESOLUTION` on a new sandbox sets the display size, such as 800x600; without it, the size is 1024x768.
-- Screenshots are PNGs at the display's size; a region screenshot is the region at full resolution.
-- `mouse.scroll`'s amount is wheel clicks; `left` and `right` send X buttons 6 and 7.
-- Modifiers given to `click`, `scroll` and `press` are held around the event; `cmd` is `Super_L`.
+- `computer_use.start()` returns once the display answers. Starting a desktop that already runs does no harm.
+- `VNC_RESOLUTION` on a new sandbox sets the display size, such as 800x600. Without it, the size is 1024x768.
+- Screenshots are PNGs at the display's size. A region screenshot is the region at full resolution.
+- `mouse.scroll`'s amount counts wheel clicks. `left` and `right` send X buttons 6 and 7.
+- Modifiers given to `click`, `scroll` and `press` are held down around the event. `cmd` is `Super_L`.
 - `keyboard.down` and `keyboard.up` take letters and named keys, not only modifiers.
 - `keyboard.type` types Unicode up to U+FFFF and newlines as Enter, and drops characters beyond U+FFFF, such as most
   emoji.
-- `keyboard.press` refuses shifted symbols such as `!`, X keysyms such as `KP_Enter`, and print screen, pause,
-  scroll lock, media and volume keys (`unsupported key "printscreen"`), and the desktop keeps working.
+- `keyboard.press` refuses shifted symbols such as `!`, X key names such as `KP_Enter`, and print screen, pause,
+  scroll lock, media and volume keys (`unsupported key "printscreen"`). The desktop keeps working after that.
   `keyboard.down` refuses the same keys with a 500, as it does `menu` (live, 2026-11-18).
 - The mouse has `left`, `right` and `middle` buttons only (`unsupported mouse button "back"`, a 400).
 - Its keypad digits are `num0` to `num9`, which follow Num Lock, and Num Lock is `num_lock`. Its other keypad names
   type other keys (`num_plus` types `n`).
 - Pressing `f13` to `f24` crashes the computer-use process for good.
 - After the sandbox stops and starts, `get_status()` says `inactive` until `start()`. Input sent before that start
-  breaks the desktop until the sandbox stops and starts again: input answers 500 (`connection is shut down`), and
-  `start()` and `get_status()` answer 503.
+  breaks the desktop until the sandbox stops and starts again. Until then, input answers 500
+  (`connection is shut down`), and `start()` and `get_status()` answer 503.
 """
 
 from __future__ import annotations as _annotations
@@ -87,7 +87,8 @@ _MODIFIERS = frozenset({'ctrl', 'shift', 'alt', 'cmd'})
 """Daytona's names for the modifier keys."""
 
 _RENAMED_KEYS = {'super': 'cmd', **{f'numpad{n}': f'num{n}' for n in range(10)}, 'numlock': 'num_lock'}
-"""Normalized key names Daytona presses under another name; it presses the rest under their own, or refuses them."""
+"""Key names, as `ComputerUse` spells them, that Daytona knows by another name. Other keys keep their name, or Daytona
+refuses them."""
 
 _REFUSED_KEYS = frozenset(
     {
@@ -110,25 +111,28 @@ _REFUSED_KEYS = frozenset(
         'volumemute',
     }
 )
-"""Normalized key names Daytona would get wrong or refuses: `f13` to `f24` crash its desktop, its keypad operator and
-Enter keys type other characters, and it answers the rest with an error that may not mean nothing was pressed.
+"""Key names, as `ComputerUse` spells them, that Daytona gets wrong or refuses. `f13` to `f24` crash its desktop. Its
+keypad operator and Enter keys type other characters. It answers the rest with an error, and that error doesn't prove
+nothing was pressed.
 
-Refused before they're sent, as anything sent counts as possibly held until its release is confirmed."""
+They are refused before they're sent, because a key that was sent counts as possibly held until its release is
+confirmed."""
 
 _BUTTONS = frozenset({'left', 'right', 'middle'})
 """The mouse buttons Daytona has; it refuses the side buttons."""
 
 _SHIFTED = dict(zip('~!@#$%^&*()_+{}|:"<>?', "`1234567890-=[]\\;',./"))
-"""A symbol typed with shift, and the key it is on: Daytona's display has a US keyboard layout."""
+"""Each symbol typed with shift, mapped to the key it is on. Daytona's display has a US keyboard layout."""
 
 
 async def _send_input(request: Callable[[], Awaitable[_T]]) -> _T:
-    """Send one input request to Daytona, which carries out a request it accepted even if we stop waiting.
+    """Send one input request to Daytona.
 
-    So a cancel stops before the request is sent, or waits for it to finish: the next action, perhaps another run's,
-    must not reach the screen before it. Every input request goes through here. For the same reason, a request whose
-    outcome is unknown ends the run: a timeout (including a 504) doesn't stop Daytona carrying it out, nor does a dropped
-    connection, nor the 502 its proxy returns when it loses the sandbox after passing the request on.
+    Daytona carries out a request it accepted, even if we stop waiting for it. So a cancel either stops before the
+    request is sent, or waits for it to finish: the next action, perhaps from another run, must not reach the screen
+    first. Every input request goes through here. For the same reason, a request whose outcome is unknown ends the
+    run. Daytona still carries out a request after a timeout (including a 504), after a dropped connection, and after
+    the 502 its proxy returns when it loses the sandbox after passing the request on.
     """
     await anyio.lowlevel.checkpoint_if_cancelled()
     try:
@@ -140,10 +144,10 @@ async def _send_input(request: Callable[[], Awaitable[_T]]) -> _T:
 
 
 async def _let_go(error: BaseException, held: list[str], release: Callable[[str], Awaitable[object]]) -> None:
-    """After `error`, let go of each of `held`, last first; a failure that leaves any held says which.
+    """After `error`, let go of each key or button in `held`, last first. If any stay held, the error says which.
 
-    A cancel or an earlier deadline doesn't stop the releases, and propagates after them, unless a release goes
-    unconfirmed: its `WorkspaceUnavailableError` then replaces the cancel, and the run ends either way.
+    A cancel or an earlier deadline doesn't stop the releases. It is raised again after them, unless Daytona doesn't
+    confirm a release. That release's `WorkspaceUnavailableError` then replaces the cancel, and the run ends either way.
     """
     with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
         for name in reversed(list(held)):
@@ -154,8 +158,8 @@ async def _let_go(error: BaseException, held: list[str], release: Callable[[str]
                 raise  # a release that may still be running ends the run, as any unconfirmed input does
             except Exception:
                 pass
-    # An input that may still be running ends the run, so the model won't act with these held. A credential failure
-    # goes on unwrapped, for the backend to clean its text and end the run.
+    # An input that may still be running ends the run, so the model won't act while these are held. A credential
+    # failure is raised as is, so the backend can clean its text and end the run.
     if (
         held
         and isinstance(error, Exception)
@@ -221,7 +225,7 @@ class DaytonaDesktop:
         return Point(x=position.x, y=position.y)
 
     async def _at(self, x: int | None, y: int | None) -> tuple[int, int]:
-        """The position, or the pointer's: Daytona's click and scroll always take one."""
+        """The given position, or the pointer's if none is given. Daytona's click and scroll always need a position."""
         if x is None or y is None:
             point = await self.cursor_position()
             return point.x, point.y
@@ -229,7 +233,7 @@ class DaytonaDesktop:
 
     @asynccontextmanager
     async def _holding(self, keys: Sequence[str]) -> AsyncGenerator[None]:
-        """Hold Daytona's `keys` down, in order; on any failure or cancel, even while letting go, let go of them all.
+        """Hold `keys` down, in order. On any failure or cancel, even while letting go, let go of all of them.
 
         A failure that leaves keys down says which, so the model doesn't type on with them held.
         """
@@ -237,8 +241,8 @@ class DaytonaDesktop:
         pressed: list[str] = []
         try:
             for key in keys:
-                # Before the request, which may press the key whatever its answer: a key Daytona refuses is refused
-                # before it is sent, so any failure here leaves the key to let go.
+                # Recorded before the request, because the request may press the key whatever Daytona answers. Keys
+                # Daytona refuses are refused before this point, so any failure here leaves this key to let go.
                 pressed.append(key)
                 await _send_input(partial(keyboard.down, key, request_timeout=REQUEST_TIMEOUT))
             yield
@@ -262,7 +266,7 @@ class DaytonaDesktop:
                 modifiers=modifiers,
                 request_timeout=REQUEST_TIMEOUT,
             )
-            # The one call that reports a failure in its result rather than raising.
+            # Scroll is the one call that reports a failure in its result instead of raising.
             if not await _send_input(scroll):
                 raise WorkspaceError("Daytona's desktop did not scroll.")
 
@@ -271,7 +275,8 @@ class DaytonaDesktop:
         if any(ord(character) > 0xFFFF for character in text):
             raise UnsupportedActionError("Daytona's desktop cannot type characters beyond U+FFFF, such as most emoji.")
         keyboard = self._computer_use().keyboard
-        # As Daytona does per request, so a `\r\n` split across two requests isn't typed as two Enters.
+        # Daytona does this within each request. Doing it first keeps a `\r\n` split across two requests from being
+        # typed as two Enters.
         text = text.replace('\r\n', '\n')
         for start in range(0, len(text), _TYPED_PER_REQUEST):
             part = text[start : start + _TYPED_PER_REQUEST]
@@ -331,6 +336,6 @@ class DaytonaDesktop:
             if len(others) == 1:
                 keyboard = self._computer_use().keyboard
                 await _send_input(partial(keyboard.press, others[0], modifiers, request_timeout=REQUEST_TIMEOUT))
-            else:  # only modifiers, or several other keys: `press` takes one
+            else:  # only modifiers, or several other keys: `press` takes a single key
                 async with self._holding(names):
                     pass

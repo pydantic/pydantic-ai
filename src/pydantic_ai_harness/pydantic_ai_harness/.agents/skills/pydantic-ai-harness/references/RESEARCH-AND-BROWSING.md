@@ -408,11 +408,10 @@ Gotchas:
 
 ## ComputerUse
 
-One `computer` tool: the model sends a list of mouse and keyboard actions, they run on
-`ctx.workspace`'s display, and the tool returns a screenshot. Needs a workspace whose backend
-implements `SupportsDisplay` and a model that accepts images. A model without image input fails before
-its request. A workspace without a display ends the run with `UserError` at its first display read:
-the native tool's size before the first request, or the first `computer` call.
+One `computer` tool. The model calls it with a list of mouse and keyboard actions. The actions run on the screen of
+`ctx.workspace`, and the tool returns a screenshot. It needs a workspace whose backend implements `SupportsDisplay`, and
+a model that accepts images. A model without image input ends the run with `UserError` before its request. A
+workspace without a screen also ends the run with `UserError`.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -422,40 +421,45 @@ from pydantic_ai_harness import ComputerUse, DockerContainer
 agent = Agent('test', capabilities=[DockerContainer(desktop=True), ComputerUse()])
 ```
 
-Fields: `settle_seconds=2` (longest wait after acting for the screen to stop changing, with screenshots taken until two in a row match; `0` takes the screenshot at once), `native=True` (adds a `ComputerTool`
-so Claude and GPT get their own computer tool, run by this one; `False` sends this tool to every model, for example so
-GPT can zoom). Every request carries every earlier screenshot; nothing drops them, so long runs reach provider image
-limits (100 images on 200k-context Claude).
+Fields:
 
-Reading a run: calls and results are `ComputerCallPart` (`actions`) and `ComputerReturnPart` (`result`, a
-`ComputerResult`; `screenshot`) from `pydantic_ai.computer_use`; match them with `isinstance`, not the tool name. Each
-call that finishes and returns a screenshot emits `ActionsPerformedEvent` (`result`, the call's `ComputerResult`) in the
-`computer_use` namespace.
+- `settle_seconds=2`: how long, at most, to wait for the screen to stop changing after the actions run. It takes
+  screenshots until two in a row match. `0` takes the screenshot at once.
+- `native=True`: adds a `ComputerTool`, so Claude and GPT get their provider's own computer tool, and `ComputerUse`
+  runs its calls. `False` sends the `computer` function tool to every model, for example so GPT can zoom.
 
-A workspace backend with a screen implements `SupportsDisplay` (a `display` property returning a `Display` or `None`);
-`Display` and its optional `SupportsZoom` and `SupportsCursorPosition` live in
+Every request carries every earlier screenshot, and nothing drops them. A long run reaches the provider's image limit,
+such as 100 images on Claude models with a 200k-token context.
+
+Reading a run: each call is a `ComputerCallPart`, with its `actions`. Each result is a `ComputerReturnPart`, with
+`result` (a `ComputerResult`) and `screenshot`. Both come from `pydantic_ai.computer_use`. Find them with `isinstance`,
+not by the tool name. Each call that finishes with a screenshot sends an `ActionsPerformedEvent` in the `computer_use`
+namespace. Its `result` is the call's `ComputerResult`.
+
+A workspace backend with a screen implements `SupportsDisplay`: a `display` property that returns a `Display`, or
+`None` without a screen. `Display` and the optional `SupportsZoom` and `SupportsCursorPosition` are in
 `pydantic_ai_harness.computer_use`, not in core `pydantic_ai.workspaces`.
 
 Gotchas:
 
-- Calls run without asking. To ask before every action, raise `ApprovalRequired` from a `before_tool_execute` hook when
-  `tool_def.tool_kind == COMPUTER_KIND.id` (from `pydantic_ai.computer_use`), `ctx.tool_call_approved` is false and an
-  action in the validated `args['actions']` isn't `screenshot`, `zoom`, `wait` or `cursor_position`. Don't test
-  `isinstance(call, ComputerCallPart)`: a call whose arguments a hook repaired arrives as a plain `ToolCallPart`.
-- Gemini 3 models get a 0-999 coordinate grid (profile `computer_use_coordinate_grid`), scaled to
-  pixels; a `FallbackModel` keeps the grid only when every model in it uses the same one. Under `ModelFallback`,
-  each model that answers is told its own coordinates; one that can't take images, or would see the latest screenshot
-  scaled down, ends the run with a `UserError` before its request. Each `ComputerCallPart` is labelled with its
-  model's `coordinate_grid`, `screenshot_max_side` and `screenshot_max_pixels`; a custom runner reads those instead of
-  the run's model.
-- Screenshots are sent at the screen's size: a screen larger than the model takes (profile
-  `computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`) stops the run before the call acts,
-  with an error naming the largest size that fits. 1280x800 fits every model.
-- Under durable execution each `computer` call's screen work is one unit, so replay and recovery don't repeat a finished
-  call. One cut off before it was recorded retries under the engine's config for capability steps; on Temporal set
-  `activity_config` with a longer `start_to_close_timeout` and `RetryPolicy(maximum_attempts=1)`. When the engine gives
-  up, the model is told to take a screenshot first.
-- Under Temporal, screenshots pass the 2 MB payload limit after a few steps; configure external storage.
+- Calls run without asking. To approve each call that does more than look, raise `ApprovalRequired` from a
+  `before_tool_execute` hook when all three hold: `tool_def.tool_kind == COMPUTER_KIND.id` (from
+  `pydantic_ai.computer_use`), `ctx.tool_call_approved` is false, and an action in the validated `args['actions']`
+  isn't `screenshot`, `zoom`, `wait` or `cursor_position`. Don't test `isinstance(call, ComputerCallPart)`: a call
+  whose arguments a hook repaired arrives as a plain `ToolCallPart`.
+- Gemini 3 models give positions on a 0-999 grid (profile `computer_use_coordinate_grid`), which `ComputerUse`
+  converts to pixels. Under `ModelFallback`, each model that answers is told its own coordinates. A model that can't
+  take images, or would get the latest screenshot scaled down, ends the run with a `UserError` before its request. A
+  custom runner reads `coordinate_grid`, `screenshot_max_side` and `screenshot_max_pixels` from each
+  `ComputerCallPart`, not from the run's model.
+- Screenshots are sent at the screen's full size. If the screen is larger than the model accepts (profile
+  `computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`), the run stops before the call acts,
+  with an error that names the largest size that fits. 1280x800 fits every model.
+- Under durable execution, everything one `computer` call does on the screen is one durable step, so replay and
+  recovery don't repeat a finished call. A call cut off before its step was recorded is retried under the engine's
+  settings for capability steps. On Temporal, set `activity_config` with a longer `start_to_close_timeout` and
+  `RetryPolicy(maximum_attempts=1)`. When the engine stops retrying, the model is told to take a screenshot first.
+- Under Temporal, screenshots pass the 2 MB payload limit after a few steps. Configure external storage.
 
 ## See also
 
