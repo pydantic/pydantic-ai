@@ -253,8 +253,9 @@ built-in model catalog's entries. Those need a custom agent launcher or a source
 change, as explained in the guide.
 
 Custom agents can opt in with `PaxDocs()` from `pydantic_ai_pax.pax_docs`;
-`customization_guide()` from `pydantic_ai_pax.customization` keeps the legacy `ClaiDocs` capability. The
-tools only return documentation; they do not write files, activate plugins, or
+`customization_guide()` from `pydantic_ai_pax.customization` returns `ClaiDocs` for agents and saved sessions that already use
+`clai_customization`, `search_clai_docs`, and `read_clai_docs`. New agents should use `PaxDocs()`.
+Both sets of tools only return documentation; they do not write files, activate plugins, or
 grant permission to execute generated code. Keep the customization guide aligned
 with this contract when changing plugin APIs.
 
@@ -3056,7 +3057,7 @@ prompt the keyboard does:
 - `self.host.tasks` is what `/tasks` shows: the tasks the agent delegated in the current
   conversation. It is a property, `None` while no task owner runs them: before the prompt opens,
   such as in `on_session_start`, and after it closes, such as in `on_session_end`; in a headless
-  `-p` run; with an agent other tha Pax's stock one; and on a host built outside the shell. Read
+  `-p` run; with an agent other than Pax's stock one; and on a host built outside the shell. Read
   it each time you need it rather than keeping it. `listing()` returns a `TaskInfo` per task,
   each parent before its children: its ID, `parent_id`, `agent`, `model`, `prompt`, `status`
   (`running` or `finished`), `outcome`, start and finish times, whether it runs in the

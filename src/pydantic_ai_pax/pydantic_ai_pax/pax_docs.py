@@ -201,7 +201,7 @@ def _outline(sections: list[_Section]) -> str:
     return '\n'.join(f'{"  " * (section.level - top)}- {section.path}: {section.title}' for section in sections)
 
 
-def read_pax_docs(path: str = '') -> str:
+def _read_pax_docs(path: str = '') -> str:
     """Read Pax's docs: the list of docs, one doc, or one section of a doc.
 
     The docs ship with the installed package: Pax's user reference, plugin contract, and
@@ -261,7 +261,7 @@ _SearchResult: TypeAlias = tuple[int, int, int, str, str]
 """A section's match: how many words, how many in its heading, how often they occur, its path, and its summary."""
 
 
-def search_pax_docs(query: str) -> str:
+def _search_pax_docs(query: str) -> str:
     """Search Pax's docs and return the best matching sections, with a short snippet of each.
 
     Matches words, and words that contain them, in the headings and text of every doc
@@ -326,5 +326,18 @@ class PaxDocs(Capability[None]):
             description=_DESCRIPTION,
             defer_loading=True,
             instructions=_HINT,
-            tools=[Tool(search_pax_docs, name='search_pax_docs'), Tool(read_pax_docs, name='read_pax_docs')],
+            tools=[Tool(_search_pax_docs, name='search_pax_docs'), Tool(_read_pax_docs, name='read_pax_docs')],
+        )
+
+
+class ClaiDocs(Capability[None]):
+    """The former docs capability. New agents should use `PaxDocs`."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            id='clai_customization',
+            description='Compatibility name for pax_customization. New sessions should load pax_customization.',
+            defer_loading=True,
+            instructions='Use search_clai_docs and read_clai_docs for Pax documentation.',
+            tools=[Tool(_search_pax_docs, name='search_clai_docs'), Tool(_read_pax_docs, name='read_clai_docs')],
         )
