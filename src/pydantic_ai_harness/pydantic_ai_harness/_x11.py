@@ -271,6 +271,9 @@ _DESKTOP_CONFIG = (
     # program that sets a picture as the wallpaper, `fbsetbg` opens a window saying so. This records a plain color, which
     # fluxbox's own `fbsetroot` paints. fluxbox runs it with `DISPLAY` set to `:1.0`.
     + _write_unless_present(f'{_FLUXBOX_DIR}/lastwallpaper', f'fbsetroot|-solid #3b4252||{DISPLAY}.0')
+    # xterm's default font is a small bitmap one that models misread, such as `g` as `9`. xterm reads this file
+    # however it is opened, from the panel, fluxbox's run box or a shell command, unless `xrdb` loaded settings.
+    + _write_unless_present('$HOME/.Xdefaults', 'XTerm*faceName: Monospace', 'XTerm*faceSize: 14')
     # A panel along the bottom with a button for each launcher whose program is installed, and a button per window.
     + _write_unless_present(
         f'{_TINT2_DIR}/tint2rc',
