@@ -36,10 +36,11 @@ _GRACE = 0.3
 """How long output pipes may stay open after the command exits (sandboxd waits about 5 seconds)."""
 
 _MAX_ARG_STRLEN = 32 * 4096
+"""Linux's limit on one `execve` argument or environment string, with its NUL; macOS has none."""
+
 _DISPLAY_PROGRAMS = ('Xvfb', 'xwininfo', 'scrot', 'xdotool')
 DisplayHandler = Callable[[str, float | None], tuple[str, str, int]]
 """Answers an X display command with its stdout, stderr and exit code."""
-"""Linux's limit on one `execve` argument or environment string, with its NUL; macOS has none."""
 
 
 def _messages() -> dict[str, type[Message]]:

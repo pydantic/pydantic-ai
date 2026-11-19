@@ -46,15 +46,15 @@ async def test_a_desktop_size_sets_the_display_it_starts(cluster: FakeCluster, d
 async def test_an_image_without_the_display_programs_is_refused_with_what_it_needs(cluster: FakeCluster) -> None:
     # Pods run as a non-root user, so the start script cannot install the programs and says what is missing.
     def refuse(command: str, timeout: float | None) -> tuple[str, str, int]:
-        return '', "missing Xvfb xdotool, and there's no root or passwordless sudo to install them with", 1
+        return '', "the display needs Xvfb xdotool, and there's no root or passwordless sudo to install them with", 1
 
     cluster.display = refuse
     backend = KubernetesSandboxBackend(warm_pool='pool', desktop=True)
 
     with pytest.raises(
         WorkspaceUnavailableError,
-        match=r'^Could not start the display in Kubernetes sandbox default/\S+: it needs Xvfb, xdotool, xwininfo, '
-        r"scrot and setsid \(missing Xvfb xdotool, and there's no root or passwordless sudo to install them with\)$",
+        match=r'^Could not start the display in Kubernetes sandbox default/\S+: the display needs Xvfb xdotool, and '
+        r"there's no root or passwordless sudo to install them with$",
     ):
         await screen(backend).display_size()
     await backend.aclose()

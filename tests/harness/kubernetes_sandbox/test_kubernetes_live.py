@@ -390,7 +390,7 @@ async def test_an_image_without_the_display_programs_is_refused_by_name() -> Non
     """A non-root pod cannot install the programs, so the display refuses, naming what is missing."""
     backend = _new_backend(desktop=True)
     try:
-        with pytest.raises(WorkspaceUnavailableError, match=r'missing .*Xvfb.*no root or passwordless sudo'):
+        with pytest.raises(WorkspaceUnavailableError, match=r'the display needs .*Xvfb.*no root or passwordless sudo'):
             await screen(backend).display_size()
     finally:
         await _destroy(backend)
