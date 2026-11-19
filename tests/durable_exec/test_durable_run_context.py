@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Annotated, Any, Literal
@@ -18,10 +19,12 @@ from pydantic_ai.durable_exec import (
     DurabilityEngineSpec,
     DurableRunContext,
     ToolsetCallToolParams,
+    raw_tool_args_for_unit,
     revalidate_function_call,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import CustomEvent
+from pydantic_ai.messages import CustomEvent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
@@ -403,6 +406,120 @@ async def test_revalidate_function_call_reads_aliased_arguments_as_they_were_val
     else:
         with pytest.raises(ValidationError, match='Field required'):
             await revalidate_function_call(toolset, params, engine_spec=SPEC)
+
+
+@pytest.mark.parametrize(
+    'raw_tool_args',
+    [{'venue': {'roomName': 'A1'}, 'guests': 2}, '{"venue": {"roomName": "A1"}, "guests": 2}'],
+    ids=['object', 'json-string'],
+)
+async def test_revalidate_function_call_validates_the_carried_model_arguments(raw_tool_args: str | dict[str, Any]):
+    """With `raw_tool_args` carried, the unit validates the model's arguments instead of `tool_args`.
+
+    `tool_args` ships the `TypedDict` by Python name, which its schema doesn't read; the model's arguments read
+    as the run validated them. Not a VCR test: no model request is involved.
+    """
+    toolset = FunctionToolset[None]([typed_dict])
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tool = (await toolset.get_tools(ctx))['typed_dict']
+    params = ToolsetCallToolParams(
+        'typed_dict', tool_args={'venue': {'room': 'A1'}, 'guests': 2}, ctx=ctx, tool=tool, raw_tool_args=raw_tool_args
+    )
+    assert (await revalidate_function_call(toolset, params, engine_spec=SPEC)).tool_args == {
+        'venue': {'room': 'A1'},
+        'guests': 2,
+    }
+
+
+@dataclass(frozen=True)
+class RawArgsCase:
+    id: str
+    args: str | dict[str, Any] | None
+    sent: bool
+    """Whether the call's own arguments are returned for the unit to validate."""
+    changed_by_hook: bool = False
+    dump_reproduces: bool = False
+    """Whether the unit's load of the dumped arguments validates back to them."""
+
+
+RAW_ARGS_CASES = [
+    RawArgsCase('json-string', '{"pair": [1.5, "x"], "labels": {"1": 2}}', sent=True),
+    RawArgsCase('json-object', {'pair': [1.5, 'x'], 'labels': {'1': 2}}, sent=True),
+    RawArgsCase('dump-reproduces', {'pair': [1.5, 'x']}, sent=False, dump_reproduces=True),
+    RawArgsCase('no-arguments', None, sent=False),
+    RawArgsCase('tuple', {'pair': (1.5, 'x')}, sent=False),
+    RawArgsCase('infinite-float', {'pair': [math.inf, 'x']}, sent=False),
+    RawArgsCase('integer-key', {'labels': {1: 2}}, sent=False),
+    RawArgsCase('changed-by-hook', {'pair': [1.5, 'x']}, sent=False, changed_by_hook=True),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in RAW_ARGS_CASES])
+async def test_raw_tool_args_for_unit_sends_the_model_arguments_only_when_needed(case: RawArgsCase):
+    """Which function tool calls `raw_tool_args_for_unit` lets a durable unit validate from the model's arguments.
+
+    These run in-process rather than through an engine: every engine's model response crosses JSON before its tools
+    run, so a value JSON would change only reaches a unit in arguments built workflow-side, like an approval's
+    `override_args`. The engines' own suites cover the arguments a model sends.
+    """
+    calls: list[tuple[RunContext[None], dict[str, Any]]] = []
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool
+    def record(ctx: RunContext[None], pair: tuple[float, str] = (0.0, ''), labels: dict[int, int] | None = None) -> str:
+        calls.append((ctx, {'pair': pair, 'labels': labels}))
+        return 'recorded'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('record', case.args)])
+
+    await Agent(FunctionModel(respond), deps_type=type(None), toolsets=[toolset]).run('go')
+    [(ctx, tool_args)] = calls
+    if case.changed_by_hook:
+        tool_args = {**tool_args, 'pair': (9.0, 'y')}
+    tool = (await toolset.get_tools(ctx))['record']
+
+    # A dump the unit reads back as the defaults stands in for one that loses the arguments.
+    loaded_tool_args: dict[str, Any] = {}
+    if case.dump_reproduces:
+        loaded_tool_args = TypeAdapter(dict[str, Any]).dump_python(tool_args, mode='json')
+
+    params = ToolsetCallToolParams('record', tool_args=tool_args, ctx=ctx, tool=tool)
+    assert raw_tool_args_for_unit(toolset, params, loaded_tool_args=loaded_tool_args) == (
+        case.args if case.sent else None
+    )
+
+
+class Filters(BaseModel):
+    max_price: float
+
+
+async def test_raw_tool_args_for_unit_keeps_the_dump_when_a_check_raises():
+    """Validating a dump without a single model argument's key, as a hook could leave it, raises `KeyError`.
+
+    The check leaves the call on today's path, so the unit raises it there instead of the workflow.
+    """
+    calls: list[RunContext[None]] = []
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool
+    def lookup(ctx: RunContext[None], filters: Filters) -> str:
+        calls.append(ctx)
+        return 'found'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('lookup', {'max_price': 10})])
+
+    await Agent(FunctionModel(respond), deps_type=type(None), toolsets=[toolset]).run('go')
+    [ctx] = calls
+    tool = (await toolset.get_tools(ctx))['lookup']
+
+    params = ToolsetCallToolParams('lookup', tool_args={}, ctx=ctx, tool=tool)
+    assert raw_tool_args_for_unit(toolset, params, loaded_tool_args={}) is None
 
 
 async def test_validation_context_rebuilt_on_a_shallow_copy_leaves_the_original_rebuildable():
