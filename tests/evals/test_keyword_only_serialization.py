@@ -493,6 +493,8 @@ def test_init_false_field_with_init_var(tmp_path: Path):
     assert yaml.safe_load(path.read_text())['evaluators'] == [{'InitFalseWithInitVar': 'h.llo'}]
     loaded = Dataset[str, str, str].from_file(path, custom_evaluator_types=[InitFalseWithInitVar])
     assert loaded.evaluators == [evaluator]
+    report = loaded.evaluate_sync(lambda value: value)
+    assert [result.value for result in report.cases[0].assertions.values()] == [True]
 
 
 @pytest.mark.parametrize('fmt', ['json', 'yaml'])
