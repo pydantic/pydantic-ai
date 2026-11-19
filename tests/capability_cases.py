@@ -716,5 +716,15 @@ CUSTOM_ID = Contract(
 """A capability built with a custom `id` gives it to every toolset it builds, so two with distinct ids never
 share a toolset id, which a durable engine names its units after."""
 
-CONTRACTS = (RENAMED, UNSET_ID, CUSTOM_ID)
+COMBINE_FIXED_POINT = Contract(
+    'combine_fixed_point',
+    applies=lambda name, case: isinstance(case.combine, Combines) and _buildable(name, case),
+    exempt={
+        'SubAgents': Exempt(f'stating one roster twice raises on the repeated sub-agent name: {_ISSUES}13966'),
+    },
+)
+"""A configuration stated twice is the same as stating it once, for one of `make`'s pair and for what the pair
+combines into: the same instructions, tool definitions, model settings and native tools reach the model."""
+
+CONTRACTS = (RENAMED, UNSET_ID, CUSTOM_ID, COMBINE_FIXED_POINT)
 """Every contract, so a meta-test can check each one's exemptions."""

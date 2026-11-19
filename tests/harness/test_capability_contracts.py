@@ -14,25 +14,28 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.toolsets import AbstractToolset
 
 from .. import capability_cases as core
 from ..append_only import ToolCall, build_capabilities, discover_capabilities, drain_events, skip_unless_installed
 from ..capability_cases import (
+    COMBINE_FIXED_POINT,
     CONTRACTS as CORE_CONTRACTS,
     CORE_CAPABILITY_PACKAGES,
     CUSTOM_ID,
     RENAMED,
     UNSET_ID,
     CapabilityCase,
+    Combines,
     Contract,
 )
 from .capability_cases import (
@@ -217,3 +220,52 @@ def test_a_hosted_connection_takes_a_client_or_auth(name: str) -> None:
         _through_client(cls, auth='key')
     capability = _through_client(cls, auth='')
     assert _toolset_ids(capability) == [capability.id]
+
+
+async def _first_request(capabilities: list[AbstractCapability[Any]], directory: Path) -> object:
+    """What reaches the model in a run's first request, or why the agent refused the capabilities."""
+    seen: list[object] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tools = [(tool.name, tool.description, tool.parameters_json_schema) for tool in info.function_tools]
+        seen.append((info.instructions, tools, info.model_settings, info.model_request_parameters.native_tools))
+        return ModelResponse(parts=[TextPart('done')])
+
+    # A capability that uses the run's workspace needs one, unless it supplies its own.
+    supplies_workspace = any(
+        type(capability).get_workspace is not AbstractCapability.get_workspace for capability in capabilities
+    )
+    workspace = [] if supplies_workspace else [LocalWorkspace[Any](directory)]
+    try:
+        # Built off the event loop, as an app builds its agent: combining can construct capabilities, which may
+        # read files.
+        agent = await anyio.to_thread.run_sync(
+            lambda: Agent(FunctionModel(respond), capabilities=[*capabilities, *workspace])
+        )
+        await agent.run('go')
+    except (UserError, ValueError) as exc:
+        return f'{type(exc).__name__}: {exc}'
+    return seen[0]
+
+
+@pytest.mark.parametrize('name', _cases(COMBINE_FIXED_POINT))
+async def test_stating_a_configuration_twice_states_it_once(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = CASES[name]
+    assert isinstance(case.combine, Combines)
+    skip_unless_installed(name, case.requires)
+    for key, value in case.env.items():
+        monkeypatch.setenv(key, value)
+    # Built off the event loop, as an app builds them: a capability may read files when constructed.
+    first, second = await anyio.to_thread.run_sync(case.combine.make)
+    merged = await anyio.to_thread.run_sync(type(first).combine, [first, second])
+    breaks = [
+        label
+        for label, capability in (('one of the pair', first), ('the pair combined', merged))
+        if await _first_request([capability, capability], tmp_path) != await _first_request([capability], tmp_path)
+    ]
+    if exempt := COMBINE_FIXED_POINT.exempt.get(name):
+        assert breaks, f'{name} now passes: remove its `combine_fixed_point` exemption ({exempt.reason})'
+    else:
+        assert not breaks, f'stated twice, {" and ".join(breaks)} reach the model differently than stated once'
