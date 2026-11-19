@@ -273,7 +273,7 @@ async def main():
     print(result.output)
 ```
 
-A new sandbox runs E2B's `desktop` template: Ubuntu with XFCE, a terminal and Google Chrome. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. Add `Coder` to give the agent this sandbox's shell and files too.
+A new sandbox runs E2B's `desktop` template: Ubuntu with XFCE, a terminal and Google Chrome. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. Add `Coder` to give the agent the sandbox's shell and files too.
 
 XFCE takes `printscreen` (it opens its screenshot tool) and the media and volume keys itself, so the focused window never gets them.
 
@@ -281,7 +281,7 @@ A custom `template` needs Xvfb, `xdotool`, `xwininfo` (`x11-utils` on Debian/Ubu
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
-`sandbox_timeout` is the sandbox's total lifetime, an hour by default, not an idle timeout. A run still going when the timeout ends fails, so set it longer than your longest task.
+A run still going when the sandbox's `sandbox_timeout` ends fails, so set it longer than your longest task.
 
 There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](computer-use.md#watching-a-run).
 
@@ -342,7 +342,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder(), hook
 | `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
 | `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 | `network` | E2B's network options for a new sandbox, passed to `Sandbox.create` unchanged. Default: `None`. See [Keep a token out of the sandbox](#keep-a-token-out-of-the-sandbox). A spec cannot set it. |
-| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. Without a `template`, a new sandbox runs E2B's `desktop` template. The size applies when the display first starts, and a reattached sandbox keeps its display's size. Attaching drives only a display this backend started, not the windows of a sandbox made with E2B's Desktop SDK. Default: `False`. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. Without a `template`, a new sandbox runs E2B's `desktop` template. A reattached sandbox keeps its display's size. Default: `False`. |
 
 `E2BSandbox` needs asyncio: the E2B SDK runs every request on asyncio, so under Trio every operation, including `destroy`, raises `UserError` before it reaches E2B.
 
