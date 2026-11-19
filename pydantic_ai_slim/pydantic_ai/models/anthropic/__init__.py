@@ -398,8 +398,9 @@ _BATCH_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
-# Anthropic's deprecation dates apply to the platforms it operates, Microsoft Foundry and Claude Platform on AWS
-# included. Amazon Bedrock and Google Cloud's Vertex AI set their own:
+# Anthropic's deprecation dates apply to the platforms it operates, including Microsoft Foundry, Claude Platform on AWS
+# and Claude Models on Google Cloud (Anthropic managed, `AsyncAnthropicGoogleCloud`). Amazon Bedrock and Claude Models
+# on Google Cloud (Google managed, Vertex AI's `AsyncAnthropicVertex`) set their own:
 # https://platform.claude.com/docs/en/about-claude/model-deprecations#overview
 _OWN_DEPRECATION_SCHEDULE_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain

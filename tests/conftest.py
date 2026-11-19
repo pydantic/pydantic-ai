@@ -1109,7 +1109,7 @@ def ignore_deprecated_models_in_recordings(record_mode: str | None) -> None:
 
 @pytest.fixture(autouse=True)
 def replay_deprecated_models(request: pytest.FixtureRequest) -> None:
-    ignore_deprecated_models_in_recordings(cast(Any, request.config).getoption('record_mode'))
+    ignore_deprecated_models_in_recordings(request.config.getoption('record_mode'))
 
 
 @pytest.fixture

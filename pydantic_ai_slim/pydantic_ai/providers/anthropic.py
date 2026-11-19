@@ -147,13 +147,13 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
+        # The Claude API's deprecations are looked up by the unstripped name, so a Bedrock id never matches one.
+        deprecation = ANTHROPIC_MODEL_DEPRECATIONS.get(model_name)
         # When the underlying client is `AsyncAnthropicBedrock`/`AsyncAnthropicBedrockMantle`, the model
         # name carries a Bedrock `anthropic.` provider segment (and, on the legacy InvokeModel API, a
         # `-v<n>(:<m>)?` version suffix and optional cross-region geo prefix), e.g.
         # `us.anthropic.claude-haiku-4-5-20251001-v1:0`. Strip it so `anthropic_model_profile`'s
         # `claude-...` prefix checks match; the full model name still goes on the wire via `AnthropicModel._model_name`.
-        # The Claude API's deprecations are looked up by the unstripped name, so a Bedrock id never matches one.
-        deprecation = ANTHROPIC_MODEL_DEPRECATIONS.get(model_name)
         bedrock_provider, base_model_name = split_bedrock_model_id(model_name)
         if bedrock_provider == 'anthropic':
             model_name = base_model_name

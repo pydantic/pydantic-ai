@@ -20,6 +20,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, DeprecatedModelWarning, ModelAPIError, ModelDeprecation
+from pydantic_ai._unsupported_settings import suppress_warnings
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
@@ -221,6 +222,22 @@ async def test_unused_fallback_doesnt_warn(allow_model_requests: None):
         warnings.simplefilter('error', DeprecatedModelWarning)
         result = await agent.run('hello')
     assert result.output == snapshot('success (no tool calls)')
+
+
+def test_suppression_with_settings_keeps_the_warning():
+    """`suppress_warnings(settings)` silences only those settings' warnings, for a request it still sends.
+
+    A unit test, because the caller that passes settings, MCP sampling, needs a live MCP session: its request goes out,
+    so it keeps the warning, unless framework code that only prepares the request already silenced everything.
+    """
+    model = anthropic_direct()
+    with pytest.warns(DeprecatedModelWarning), suppress_warnings(['stop_sequences']):
+        model.prepare_request(None, ModelRequestParameters())
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecatedModelWarning)
+        with suppress_warnings(), suppress_warnings(['stop_sequences']):
+            model.prepare_request(None, ModelRequestParameters())
 
 
 SDK_COPY_SCRIPT = """
