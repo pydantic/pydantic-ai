@@ -62,6 +62,9 @@ REDACTED_IMAGE: dict[str, Any] = {
 }
 """The shape a `BinaryImage` is recorded as once its data is excluded: everything but `data`."""
 
+REDACTED_IMAGE_PART: dict[str, Any] = {'type': 'blob', 'mime_type': 'image/png', 'modality': 'image'}
+"""The GenAI message part an image in a tool result is recorded as once its data is excluded: no `content`."""
+
 
 class IsSingleEntryDict:
     """Matches a one-entry dict whose only value equals `value`, without pinning its key.
@@ -244,7 +247,7 @@ CASES = [
         build=image_returning_tool_agent,
         span_name='execute_tool gen_image',
         attribute='gen_ai.tool.call.result',
-        redacted=REDACTED_IMAGE,
+        redacted=REDACTED_IMAGE_PART,
     ),
     Case(
         id='tool_return_message',
@@ -265,7 +268,7 @@ CASES = [
                             'type': 'tool_call_response',
                             'id': IsStr(),
                             'name': 'gen_image',
-                            'result': REDACTED_IMAGE,
+                            'result': REDACTED_IMAGE_PART,
                         }
                     ],
                 },
@@ -282,9 +285,9 @@ CASES = [
         attribute='gen_ai.tool.call.result',
         redacted=snapshot(
             {
-                'return_value': {**REDACTED_IMAGE, 'vendor_metadata': {'thumbnail': REDACTED_IMAGE}},
-                'content': ['here it is', REDACTED_IMAGE],
-                'metadata': {'img': REDACTED_IMAGE},
+                'return_value': REDACTED_IMAGE_PART,
+                'content': ['here it is', REDACTED_IMAGE_PART],
+                'metadata': {'img': REDACTED_IMAGE_PART},
                 'tools': None,
                 'kind': 'tool-return',
             }
@@ -311,7 +314,7 @@ CASES = [
         build=image_returning_output_function_agent,
         span_name='execute_tool final_result',
         attribute='gen_ai.tool.call.result',
-        redacted=REDACTED_IMAGE,
+        redacted=REDACTED_IMAGE_PART,
     ),
     Case(
         # Reachable from the UI adapters, which rehydrate a native tool's prior result back into
@@ -331,7 +334,7 @@ CASES = [
                             'id': 'call-1',
                             'name': 'image_generation',
                             'builtin': True,
-                            'result': REDACTED_IMAGE,
+                            'result': REDACTED_IMAGE_PART,
                         }
                     ],
                 },
@@ -374,7 +377,7 @@ CASES = [
                             'type': 'tool_call_response',
                             'id': IsStr(),
                             'name': 'gen_image',
-                            'result': REDACTED_IMAGE,
+                            'result': REDACTED_IMAGE_PART,
                         }
                     ],
                 },
