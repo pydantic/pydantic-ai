@@ -243,9 +243,9 @@ async def remove_container(name: str, *, executable: str = 'docker') -> None:
 _DESKTOP_DOCKERFILE_FILE = files('pydantic_ai_harness.docker_container').joinpath('desktop.Dockerfile')
 
 DESKTOP_DOCKERFILE = _DESKTOP_DOCKERFILE_FILE.read_text()
-"""The image `DockerContainer(desktop=True)` builds on first use: an X server, a window manager, a panel that launches
-Firefox and a terminal, and fonts for most scripts and emoji. Firefox starts without first-run pages, and new
-windows fill the screen."""
+"""The Dockerfile of the image `DockerContainer(desktop=True)` builds on first use. The image has an X server, a window
+manager, a panel with buttons that open Firefox and a terminal, and fonts for most languages and for emoji. Firefox
+starts without its first-run pages, and new windows fill the screen."""
 
 _DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
 
@@ -256,19 +256,18 @@ _START_DESKTOP = (
     start_x_server(f'{_PID_DIR}/xvfb.log') + 'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
     '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; '
-    # tint2 shows only once a window manager answers, so it starts after one.
+    # The tint2 panel shows only once a window manager answers, so it starts after the window manager.
     f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then setsid tint2 >{_PID_DIR}/panel.log 2>&1 9>&- & '
     f'panel=$!; i=0; until {_PANEL_SHOWS} || [ $i -ge 100 ]; do if ! kill -0 $panel 2>/dev/null; then '
     f"echo 'the panel did not start:' >&2; tail -n 5 {_PID_DIR}/panel.log >&2; exit 1; fi; "
     'sleep 0.1; i=$((i+1)); done; fi'
 )
-"""Starts an X display of the size `$1` names unless this container's X lock names a running X server, then a
-window manager, then the panel unless it shows. A second start waits for the first, then finds its X server.
+"""Starts an X display of the size given as `$1`, then a window manager, then the panel.
 
-A second `fluxbox` exits when one runs, so starting it every time recovers one that died. It then waits up to 10
-seconds for the window manager to answer `xprop`, so the first click focuses and raises the window it lands on, and
-up to 10 seconds for the panel window, so the first screenshot isn't black. It fails if the panel exits first, and
-goes on without it after 10 seconds.
+A second `fluxbox` exits when one already runs, so starting it every time brings back one that died. The script then
+waits up to 10 seconds for the window manager to answer `xprop`, so the first click focuses and raises the window it
+lands on. It waits up to 10 more seconds for the panel window, so the first screenshot isn't black. It fails if the
+panel exits first, and goes on without the panel after 10 seconds.
 """
 
 
@@ -299,14 +298,14 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
     (Debian's `x11-utils`), `scrot` and `setsid`.
 
     Args:
-        image: The image for a new container. Pass it or `ref`, not both; with `desktop=True`, leave both out to
+        image: The image for a new container. Pass it or `ref`, not both. With `desktop=True`, leave both out to
             use an image built from `DESKTOP_DOCKERFILE` on first use.
         ref: A `WorkspaceRef(provider='docker', id=<container name>)` to attach to instead of creating one.
         working_dir: The absolute directory in the container where commands start and relative paths
             resolve; created on first use if the container doesn't have it. `None` uses the image's own
             (`WORKDIR`, or `/`).
-        env: Environment variables for every command, on top of the image's (and `DISPLAY`, with a desktop); the
-            per-call `env` goes on top.
+        env: Environment variables for every command, on top of the image's. With a desktop, `DISPLAY` is set too.
+            The per-call `env` goes on top.
         allow_internet_access: Whether a new container gets outbound network access, including this machine's
             local network; `False` runs it with `--network none`.
         docker_args: Extra `docker run` arguments for a new container, such as `['--memory', '2g']` or
@@ -403,11 +402,12 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
             return self._resolved_working_dir
 
     async def _check_network(self) -> None:
-        """Refuse a desktop on the host's network, however the container got there.
+        """Refuse a desktop on the host's network, however the container got onto it.
 
-        Its X clients could then reach an X server on the host through Linux's shared abstract socket, and drive
-        the host's screen. A `container:<id>` network is that container's, so it is followed. Podman's `ns:<path>`
-        joins whatever namespace the path names, such as the host's at `ns:/proc/1/ns/net`, so it is refused too.
+        On the host's network, programs in the container could connect to an X server on the host through Linux's
+        abstract socket, and control the host's screen. A `container:<id>` network is that other container's network,
+        so it is checked in turn. Podman's `ns:<path>` joins whatever network the path names, such as the host's at
+        `ns:/proc/1/ns/net`, so it is refused too.
         """
         container = self._name
         while True:
@@ -418,8 +418,8 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
             mode = result.stdout.strip()
             if mode == 'host' or mode.startswith('ns:'):
                 raise UserError(
-                    "a desktop can't use the host's network: its X clients could reach an X server on the host "
-                    "through Linux's shared abstract socket, and drive the host's screen"
+                    "a desktop can't use the host's network: programs in the container could connect to the host's X "
+                    'server, which draws its screen, and control that screen'
                 )
             kind, _, container = mode.partition(':')
             if kind != 'container':
@@ -509,7 +509,8 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
     async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
         """Run `argv` in the container without starting its display, as the display's own commands do.
 
-        `env`'s names are already checked: `run` checks a caller's, and the display's own are valid.
+        The names in `env` are already checked. `run` checks the names a caller passes, and the display's own names
+        are valid.
         """
         merged_env = {**self._env, **env}
         # The first command also creates the container, which isn't bounded by the command's timeout:
